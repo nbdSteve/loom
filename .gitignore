@@ -1,0 +1,33 @@
+# Kotlin / JVM / Gradle (plugin/)
+.gradle/
+build/
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+.kotlin/
+
+# Rust (cognition/)
+target/
+**/*.rs.bk
+Cargo.lock
+
+# IDEs / editors
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Local environment / secrets
+.env
+*.local
+
+# Minecraft server runtime artifacts
+server/
+world/
+world_nether/
+world_the_end/
+logs/
+*.log
