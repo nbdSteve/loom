@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loom.dev/contract/loom.schema.json",
+  "title": "Loom perception/decision contract",
+  "description": "The single source of truth for the messages exchanged between the Loom body (Kotlin Paper plugin) and mind (Rust cognition service). The body sends a Perception; the mind returns a Decision. Union types use internal tagging: a discriminator property (Trigger.event, Intent.action) selects the variant and the variant's fields are inlined alongside it.",
+
+  "$defs": {
+    "DecisionImportance": {
+      "description": "Importance tier that drives model routing on the mind side and is stamped onto every decision's provenance for the decision log.",
+      "type": "string",
+      "enum": ["ROUTINE", "NOTABLE", "PIVOTAL"]
+    },
+
+    "SelfState": {
+      "description": "The bounded self-state the body chose to reveal. Owned primitives only, so the mind cannot reach back into world state through it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["health", "position", "inventorySummary"],
+      "properties": {
+        "health": {
+          "description": "Current health of the agent's body.",
+          "type": "number"
+        },
+        "position": {
+          "description": "World position [x, y, z]. Continuous coordinates.",
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "inventorySummary": {
+          "description": "Already-summarized inventory the body chose to reveal.",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "Observation": {
+      "description": "One already-summarized observation the body chose to reveal. The perception carries a list of these instead of a live world handle.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "distance"],
+      "properties": {
+        "what": {
+          "description": "Human-readable summary of the observed thing.",
+          "type": "string"
+        },
+        "distance": {
+          "description": "Distance from the agent to the observed thing, in blocks.",
+          "type": "number"
+        }
+      }
+    },
+
+    "Trigger": {
+      "description": "The event that triggered cognition. There is intentionally no per-tick variant: cognition is event-driven, never per-tick. Internally tagged on the 'event' property.",
+      "oneOf": [
+        {
+          "title": "Spoken",
+          "description": "Another actor spoke to or near the agent.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event", "from", "text"],
+          "properties": {
+            "event": { "const": "spoken" },
+            "from": { "type": "string" },
+            "text": { "type": "string" }
+          }
+        },
+        {
+          "title": "Damaged",
+          "description": "The agent's body took damage.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event", "amount", "source"],
+          "properties": {
+            "event": { "const": "damaged" },
+            "amount": { "type": "integer" },
+            "source": { "type": "string" }
+          }
+        },
+        {
+          "title": "BlockSighted",
+          "description": "A notable block came into the agent's view.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event", "block"],
+          "properties": {
+            "event": { "const": "blockSighted" },
+            "block": { "type": "string" }
+          }
+        },
+        {
+          "title": "GoalReview",
+          "description": "A scheduled prompt for the agent to reconsider its goals. Empty variant.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event"],
+          "properties": {
+            "event": { "const": "goalReview" }
+          }
+        }
+      ]
+    },
+
+    "Perception": {
+      "description": "The bounded snapshot the body exposes to the mind. Carries no world handle: this is the entire surface the mind sees.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "agentId",
+        "trigger",
+        "importance",
+        "capturedTick",
+        "selfState",
+        "surroundings"
+      ],
+      "properties": {
+        "requestId": {
+          "description": "Correlates this perception with the decision the mind returns.",
+          "type": "string"
+        },
+        "agentId": {
+          "description": "Stable identifier of the agent whose body produced this perception.",
+          "type": "string"
+        },
+        "trigger": { "$ref": "#/$defs/Trigger" },
+        "importance": { "$ref": "#/$defs/DecisionImportance" },
+        "capturedTick": {
+          "description": "The server tick on which the body captured this snapshot.",
+          "type": "integer"
+        },
+        "selfState": { "$ref": "#/$defs/SelfState" },
+        "surroundings": {
+          "description": "The summarized observations the body chose to reveal.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/Observation" }
+        }
+      }
+    },
+
+    "Intent": {
+      "description": "A named intent the mind returns. The body validates and applies it; the mind never mutates world state directly. Internally tagged on the 'action' property.",
+      "oneOf": [
+        {
+          "title": "Say",
+          "description": "Speak a line of text.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "text"],
+          "properties": {
+            "action": { "const": "say" },
+            "text": { "type": "string" }
+          }
+        },
+        {
+          "title": "MoveTo",
+          "description": "Move toward a target block position [x, y, z].",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "target"],
+          "properties": {
+            "action": { "const": "moveTo" },
+            "target": {
+              "type": "array",
+              "items": { "type": "integer" },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          }
+        },
+        {
+          "title": "Flee",
+          "description": "Flee from a named source of threat.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "from"],
+          "properties": {
+            "action": { "const": "flee" },
+            "from": { "type": "string" }
+          }
+        },
+        {
+          "title": "Idle",
+          "description": "Do nothing this cycle. Empty variant.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action"],
+          "properties": {
+            "action": { "const": "idle" }
+          }
+        }
+      ]
+    },
+
+    "Provenance": {
+      "description": "Reproducibility stamp attached to every decision and written to the append-only decision log, so each decision's perception -> reasoning -> action -> result chain can be replayed and audited.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tier", "model", "promptVersion"],
+      "properties": {
+        "tier": { "$ref": "#/$defs/DecisionImportance" },
+        "model": {
+          "description": "Identifier of the model that produced the decision.",
+          "type": "string"
+        },
+        "promptVersion": {
+          "description": "Version of the prompt template used, for reproducibility.",
+          "type": "string"
+        }
+      }
+    },
+
+    "Decision": {
+      "description": "The structured decision the mind returns for a Perception.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "agentId", "intent", "reasoning", "provenance"],
+      "properties": {
+        "requestId": {
+          "description": "Echoes the Perception.requestId this decision answers.",
+          "type": "string"
+        },
+        "agentId": {
+          "description": "Echoes the Perception.agentId this decision is for.",
+          "type": "string"
+        },
+        "intent": { "$ref": "#/$defs/Intent" },
+        "reasoning": {
+          "description": "The mind's natural-language justification, logged for research.",
+          "type": "string"
+        },
+        "provenance": { "$ref": "#/$defs/Provenance" }
+      }
+    }
+  }
+}

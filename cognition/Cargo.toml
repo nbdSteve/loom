@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/contract"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+# Fail-the-build gates, applied to every crate in the workspace via
+# `[lints] workspace = true`. Production code may not panic, unwrap, or
+# expect; test modules opt back in with a scoped allow. Run in CI with
+# `cargo clippy --all-targets --all-features -- -D warnings`.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
