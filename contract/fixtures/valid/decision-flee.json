@@ -1,0 +1,1 @@
+{"requestId":"req-damaged-1","agentId":"agent-beta","intent":{"action":"flee","from":"zombie"},"reasoning":"health is low and a zombie is adjacent; disengage","provenance":{"tier":"PIVOTAL","model":"opus-4.8","promptVersion":"pivotal-v1"}}

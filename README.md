@@ -20,4 +20,7 @@ routes decisions to appropriately-sized models rather than always using a
 frontier model. Every decision is logged, research-grade and append-only, with
 its full perception, reasoning, action, and result.
 
-Build configuration, tooling, and CI arrive with the first working slice.
+The shared contract is the first slice to land: `contract/loom.schema.json` is
+its single source of truth, with hand-written Rust and Kotlin bindings checked
+against it by conformance tests and CI on both runtimes. See `AGENTS.md` for
+build, test, and gate commands.

@@ -1,0 +1,1 @@
+{"requestId":"req-block-1","agentId":"agent-gamma","intent":{"action":"moveTo","target":[128,11,-64]},"reasoning":"diamond ore sighted nearby; approach to mine it","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v1"}}

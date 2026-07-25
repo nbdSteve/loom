@@ -1,0 +1,1 @@
+{"requestId":"req-block-1","agentId":"agent-gamma","trigger":{"event":"blockSighted","block":"diamond_ore"},"importance":"ROUTINE","capturedTick":512,"selfState":{"health":20.0,"position":[128.0,12.0,-64.0],"inventorySummary":["stone_pickaxe"]},"surroundings":[{"what":"diamond_ore","distance":4.0}]}

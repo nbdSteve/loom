@@ -1,0 +1,53 @@
+name: contract
+
+# Enforces the single-source-of-truth property for the Loom contract on both
+# runtimes. Each job runs its side's full gate suite plus the conformance tests
+# that validate the shared fixtures against contract/loom.schema.json and assert
+# byte-for-byte round-trips. If the schema and either side's bindings drift, the
+# corresponding job fails.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cognition:
+    name: Rust cognition bindings
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cognition
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.91.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.91.0
+      - name: rustfmt --check
+        run: cargo fmt --all --check
+      - name: clippy -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: conformance tests
+        run: cargo test --all-features
+
+  plugin:
+    name: JVM plugin bindings
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Corretto 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: '21'
+      - name: gate suite + conformance tests
+        # `check` runs detekt, ktlint, ArchUnit, warnings-as-errors compile, and
+        # the conformance tests; all are configured to fail the build.
+        run: ./gradlew check --no-daemon --console=plain

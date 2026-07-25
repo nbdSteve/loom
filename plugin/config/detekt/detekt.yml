@@ -1,0 +1,14 @@
+# Loom detekt configuration. Builds upon the default rule set; this file only
+# records deliberate deviations. The gate fails the build on any violation.
+
+build:
+  maxIssues: 0
+
+style:
+  MagicNumber:
+    # Test fixtures and schema-shaped literals are inherently full of numbers.
+    excludes: ['**/test/**']
+
+# Formatting is handled by the ktlint gate, not detekt's formatting ruleset
+# (which would require the separate detekt-formatting plugin), so the same
+# finding is never reported twice.

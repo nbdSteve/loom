@@ -1,0 +1,1 @@
+{"requestId":"req-spoken-1","agentId":"agent-alpha","trigger":{"event":"spoken","from":"player-steve","text":"want to trade?"},"importance":"NOTABLE","capturedTick":1024,"selfState":{"health":20.0,"position":[10.5,64.0,-8.25],"inventorySummary":["bread x3","iron_pickaxe"]},"surroundings":[{"what":"player-steve","distance":2.5},{"what":"oak_log","distance":8.0}]}

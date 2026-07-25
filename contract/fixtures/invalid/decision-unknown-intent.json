@@ -1,0 +1,1 @@
+{"requestId":"req-x","agentId":"agent-x","intent":{"action":"teleport","target":[0,0,0]},"reasoning":"nope","provenance":{"tier":"ROUTINE","model":"m","promptVersion":"v1"}}

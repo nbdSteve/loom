@@ -1,0 +1,1 @@
+{"requestId":"req-goal-1","agentId":"agent-delta","intent":{"action":"idle"},"reasoning":"goals remain valid; no action needed this cycle","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v1"}}
