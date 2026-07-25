@@ -24,6 +24,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonClassDiscriminator
 
+/** Number of components in a world coordinate: `[x, y, z]`. */
+private const val COORDINATE_DIMENSIONS = 3
+
 /**
  * Importance tier that drives model routing on the mind side and is stamped onto
  * every decision's provenance for the decision log.
@@ -52,7 +55,13 @@ data class SelfState(
     val position: List<Double>,
     /** Already-summarized inventory the body chose to reveal. */
     val inventorySummary: List<String>,
-)
+) {
+    init {
+        require(position.size == COORDINATE_DIMENSIONS) {
+            "position must have exactly $COORDINATE_DIMENSIONS components [x, y, z], got ${position.size}"
+        }
+    }
+}
 
 /**
  * One already-summarized observation the body chose to reveal. The perception
@@ -131,7 +140,13 @@ sealed interface Intent {
     /** Move toward a target block position `[x, y, z]`. */
     @Serializable
     @SerialName("moveTo")
-    data class MoveTo(val target: List<Long>) : Intent
+    data class MoveTo(val target: List<Long>) : Intent {
+        init {
+            require(target.size == COORDINATE_DIMENSIONS) {
+                "target must have exactly $COORDINATE_DIMENSIONS components [x, y, z], got ${target.size}"
+            }
+        }
+    }
 
     /** Flee from a named source of threat. */
     @Serializable

@@ -28,7 +28,7 @@ pub enum DecisionImportance {
 /// The bounded self-state the body chose to reveal. Owned primitives only, so
 /// the mind cannot reach back into world state through it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SelfState {
     /// Current health of the agent's body.
     pub health: f64,
@@ -41,6 +41,7 @@ pub struct SelfState {
 /// One already-summarized observation the body chose to reveal. The perception
 /// carries a list of these instead of a live world handle.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Observation {
     /// Human-readable summary of the observed thing.
     pub what: String,
@@ -70,7 +71,7 @@ pub enum Trigger {
 /// The bounded snapshot the body exposes to the mind. Carries no world handle:
 /// this is the entire surface the mind sees.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Perception {
     /// Correlates this perception with the decision the mind returns.
     pub request_id: String,
@@ -111,7 +112,7 @@ pub enum Intent {
 /// append-only decision log, so each decision's
 /// perception -> reasoning -> action -> result chain can be replayed and audited.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Provenance {
     /// The importance tier the decision was routed at.
     pub tier: DecisionImportance,
@@ -123,7 +124,7 @@ pub struct Provenance {
 
 /// The structured decision the mind returns for a `Perception`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Decision {
     /// Echoes the `Perception::request_id` this decision answers.
     pub request_id: String,
