@@ -12,6 +12,7 @@
 package dev.loom.body.nms
 
 import dev.loom.body.AgentId
+import dev.loom.body.BodyDeparture
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyLocation
@@ -67,9 +68,9 @@ class NmsEntityBodyPort(
         return when {
             // Death is checked first and refused outright: Loom is permadeath, so a
             // dead agent id is never embodied again, whatever else the request says.
-            mortality.isDead(agentId) -> reject(agentId, "this agent has died, and Loom agents do not return")
-            bodies.containsKey(agentId) -> reject(agentId, "a body already exists for this agent")
-            world == null -> reject(agentId, "unknown world '${at.world}'")
+            mortality.isDead(agentId) -> journal.reject(agentId, "this agent has died, and Loom agents do not return")
+            bodies.containsKey(agentId) -> journal.reject(agentId, "a body already exists for this agent")
+            world == null -> journal.reject(agentId, "unknown world '${at.world}'")
             else -> place(agentId, at, world)
         }
     }
@@ -104,7 +105,7 @@ class NmsEntityBodyPort(
                 else -> null
             }
         if (rejection != null) {
-            return reject(agentId, rejection)
+            return journal.reject(agentId, rejection)
         }
         bodies[agentId] = body
         journal.record(agentId, BodyEvent.SPAWNED, "at ${at.world} ${position(at.x, at.y, at.z)}")
@@ -147,11 +148,20 @@ class NmsEntityBodyPort(
 
     override fun tick(tick: Long) {
         // Actuation only. Cognition is event-driven and is never called from here.
-        // Iterate a snapshot so a retired body can be removed mid-loop.
+        // Iterate a snapshot so a departed body can be handled mid-loop.
         for ((agentId, body) in bodies.entries.toList()) {
             if (!body.isAlive) {
-                reap(agentId)
+                depart(agentId, body)
                 continue
+            }
+            // Without this a body goes inactive after ten seconds and stops reaching the
+            // vanilla hook that carries out portal travel. See readyForTheEngineTick.
+            val nearlyBecame = body.readyForTheEngineTick()
+            if (nearlyBecame != null) {
+                // The agent is alive and still in the body Loom made for it, which is the
+                // whole point: being struck by lightning happens to an agent rather than
+                // ending one. Recorded on that agent's own chain.
+                journal.record(agentId, BodyEvent.CONVERTED, "refused becoming $nearlyBecame; body unchanged")
             }
             val step = body.advanceMovement()
             if (step != null) {
@@ -160,36 +170,98 @@ class NmsEntityBodyPort(
             }
         }
         // Loom has no human players, so the agents must carry their own loaded world
-        // with them. Runs after movement so the footprint follows where bodies are.
-        heldChunks.follow(bodies.values.map { BodyLocation(it.level().world.name, it.x, it.y, it.z) })
+        // with them, in whichever dimension each one is in. Runs after movement so the
+        // footprint follows where bodies are.
+        heldChunks.follow(bodies.values.map { it.whereItIs() })
     }
 
     /**
-     * Retires the body of an agent that has died in-world.
+     * Handles a body that is no longer in the world, according to why it left.
      *
-     * This removes the now-phantom body - keeping [liveBodies] honest and stopping
-     * [perceive]/[apply] from working on a dead entity - and records the death.
-     * Recording it is what makes death terminal: the agent identity dies with the
-     * body, so [spawn] refuses that id from here on. There is no revive path, by
-     * design.
+     * A body vanishing used to mean one thing, because a body could not leave the
+     * world alive: Loom holds every living agent's surroundings loaded and ticking, so
+     * a removal could not be a chunk unload, and death was the only explanation left.
+     * Travel breaks that reasoning rather than that invariant - a dimension transit
+     * removes the travelling body deliberately, alive - so the removal is classified
+     * before it is charged to the agent.
      *
-     * Treating any removal as a death is sound only because of the world-loading
-     * invariant: a living agent always sits in a chunk Loom holds loaded and ticking,
-     * so its body cannot be removed by a chunk unload. Weaken that footprint and this
-     * turns into a false-death bug, where an agent dies for want of anyone nearby.
+     * Only a departure that ends the agent reaches [Mortality]; the rest are
+     * continuity, and the agent keeps its id and everything attached to it.
      */
-    private fun reap(agentId: AgentId) {
-        // OWED SIGNAL: this is terminal news the mind is owed once cognition is wired
-        // - "this agent has DIED", not "your body is gone, take another". It is
-        // deliberately not sent from here: tick stays actuation-only and the contract
-        // carries no death Trigger yet. Retire now, signal later.
+    private fun depart(
+        agentId: AgentId,
+        body: LoomBodyEntity,
+    ) {
         bodies.remove(agentId)
-        if (mortality.recordDeath(agentId)) {
-            journal.record(agentId, BodyEvent.DIED, "died in-world; this agent will not return")
+        // OWED SIGNAL: every branch here is news the mind is owed once cognition is
+        // wired - "you have DIED", "you are somewhere else now", "you were nearly turned
+        // into a witch" - and the death one is terminal rather than an offer of another
+        // body. None is sent from here: tick stays actuation-only and the contract
+        // carries no such Trigger yet. Record now, signal later.
+        when (departureOf(body)) {
+            // Recording the death is what makes it terminal: the agent identity dies
+            // with the body, so spawn refuses that id from here on, and Mortality offers
+            // no way back. Recorded once, so the owed signal is owed once.
+            BodyDeparture.DEATH ->
+                if (mortality.recordDeath(agentId)) {
+                    journal.record(agentId, BodyEvent.DIED, "died in-world; this agent will not return")
+                }
+
+            BodyDeparture.DIMENSION_TRAVEL -> resume(agentId, body)
+
+            // Reached only if a conversion got past the refusal in BodyConversions and
+            // took the body with it. The agent survives it - this is not a death - but it
+            // is bodiless until it is embodied again, which is Loom's to do knowingly
+            // rather than something to paper over here.
+            BodyDeparture.CONVERSION ->
+                journal.record(
+                    agentId,
+                    BodyEvent.CONVERTED,
+                    "body taken by conversion into ${body.convertedInto}; the agent lives on, unembodied",
+                )
+
+            BodyDeparture.STOWED -> Unit
         }
     }
 
     override fun liveBodies(): Set<AgentId> = bodies.keys.toSet()
+
+    /**
+     * Gives the agent a body again on the far side of a portal.
+     *
+     * The engine does not carry a travelling body across: it creates a *plain vanilla*
+     * entity in the destination, copies the old body's state onto it, and removes the
+     * original. That successor is not a Loom body - it has vanilla goals, no Loom
+     * movement, and nothing driving it - so Loom cannot adopt it. It is removed, and
+     * Loom places its own body where the traveller arrived, holding the destination
+     * before the body is live there exactly as an ordinary spawn does.
+     *
+     * The agent id, and so the agent's memory and relationships, is untouched by all of
+     * this: the same agent walked in one side and walks out the other.
+     */
+    private fun resume(
+        agentId: AgentId,
+        traveller: LoomBodyEntity,
+    ) {
+        val arrival = arrivalAfterTransit(traveller)
+        val world = server.getWorld(arrival.world) as CraftWorld?
+        if (world == null) {
+            journal.record(agentId, BodyEvent.TRAVELLED, "arrived in unknown world '${arrival.world}'; body lost")
+            return
+        }
+        journal.record(
+            agentId,
+            BodyEvent.TRAVELLED,
+            "from ${traveller.level().world.name} to ${arrival.world} ${position(arrival.x, arrival.y, arrival.z)}",
+        )
+        // Re-placed through the ordinary spawn path so the destination is held before the
+        // body counts as live there, which is what keeps every living agent in a ticking
+        // chunk in every dimension.
+        place(agentId, arrival, world)
+        // The body arrives standing in the destination portal, so without the traveller's
+        // cooldown it would travel straight back, once per tick, forever.
+        bodies[agentId]?.let { carryPortalCooldown(traveller, it) }
+    }
 
     /**
      * Removes every body and lets the world go.
@@ -203,13 +275,5 @@ class NmsEntityBodyPort(
             despawn(agentId)
         }
         heldChunks.releaseAll()
-    }
-
-    private fun reject(
-        agentId: AgentId,
-        reason: String,
-    ): BodySpawnResult.Rejected {
-        journal.record(agentId, BodyEvent.SPAWN_REJECTED, reason)
-        return BodySpawnResult.Rejected(agentId, reason)
     }
 }

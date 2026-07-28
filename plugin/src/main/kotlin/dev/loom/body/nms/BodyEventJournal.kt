@@ -13,6 +13,7 @@ import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
+import dev.loom.body.BodySpawnResult
 import dev.loom.body.WORLD_AGENT_ID
 
 /**
@@ -32,6 +33,20 @@ internal class BodyEventJournal(
         detail: String,
     ) {
         eventLog.append(BodyEventRecord(currentTick(), agentId.value, event, detail))
+    }
+
+    /**
+     * Records a refused spawn and returns the refusal to hand back to the caller.
+     *
+     * Every refusal is logged, so pairing the two here means a spawn cannot be refused
+     * without the reason reaching the research record.
+     */
+    fun reject(
+        agentId: AgentId,
+        reason: String,
+    ): BodySpawnResult.Rejected {
+        record(agentId, BodyEvent.SPAWN_REJECTED, reason)
+        return BodySpawnResult.Rejected(agentId, reason)
     }
 
     /**

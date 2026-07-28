@@ -29,19 +29,33 @@ Two design constraints are load-bearing, not stylistic:
 
 **Death is terminal - Loom is permadeath.** When a body dies the agent is gone for good: no respawn, no reincarnation, no second body ever.
 New agents will come from reproduction, never from restarting a dead one.
-`NmsEntityBodyPort.tick` retires a body that has died or been removed in-world - it drops from `bodies`, the death is recorded, and `spawn` refuses that agent id from then on.
+`NmsEntityBodyPort.tick` retires a body that has left the world - it drops from `bodies` - and then asks *why* it left before charging anything to the agent.
+Only a departure that ends the agent reaches `Mortality`; then the death is recorded and `spawn` refuses that agent id from then on.
 The rule is held by `Mortality` in the engine-free domain, which records a death and deliberately offers no way to clear one, so a revive path cannot be added by accident.
+`BodyDeparture` (also engine-free) is the verdict on what a removal was, and `DEATH` is the only variant with `endsTheAgent`.
 Despawning is not death: it is how Loom puts a body away (as on plugin unload) and leaves the agent embodiable.
 A death owes the mind a *terminal* body-death `Trigger` once cognition is wired - "this agent has DIED", not "take another body".
 That signal is deliberately not sent from `tick`, and no death `Trigger` exists in the contract yet, so it is left as a marked owed signal at the retire site rather than built now.
 `Mortality` currently holds the dead in memory, so its refusal spans the server process; making death outlive a restart belongs with agent-identity persistence, which does not exist yet.
 The append-only event log is meanwhile the durable record of who has died.
 
+**Losing a body is not always losing the agent.** Loom is multi-dimension: an agent may walk into a nether or end portal, and that transit is continuity, not death.
+So a removal has to be explained before it is charged to the agent, which is what `BodyDeparture` and `dev.loom.body.nms.departureOf` are for.
+Read `BodyTransit.kt` before touching that classification; it records what the engine actually does at each seam.
+Two of those seams are counter-intuitive:
+
+- A dimension transit does not carry the body across. The engine builds a *plain vanilla* entity in the destination, copies state onto it, and removes the original with `CHANGED_DIMENSION`; the successor cannot be turned into a `LoomBodyEntity`, so Loom reads its arrival position, discards it, and re-places its own body there through the ordinary spawn path - which is also what takes the destination hold before the body counts as live.
+  Loom's replacement body therefore inherits nothing automatically, and the portal cooldown has to be carried across by hand (`carryPortalCooldown`): the body arrives *inside* the destination portal, so without it the agent travels back and forth once per tick. An in-world run caught exactly that, 1465 times in under a minute.
+- A conversion cannot be recognised after the fact: lightning turning a villager into a witch discards the original with `DISCARDED`, the same reason an ordinary discard uses. The only uniform seam is the cancellable Bukkit `EntityTransformEvent` (`BodyConversions`), which Loom cancels - a witch is not a body Loom can drive or perceive through - and records on the agent's own chain.
+
+Both are logged as `travelled` / `converted` on the travelling agent's chain, never as a death followed by a birth, so the research record keeps one continuous life per agent.
+
 **Agents carry their own loaded world, and permadeath detection depends on it.**
 Loom has no human players, so by default nothing keeps a chunk loaded and an agent nobody is watching stops ticking.
 That is not merely a liveness problem: `RemovalReason.UNLOADED_TO_CHUNK` removes a body without killing it, so a bare "removed means dead" check would mark an unwatched agent permanently dead - an agent dying for want of an observer.
-Instead Loom holds the world open around every living agent, which makes any removal of a living body a real death and needs no unload-versus-death test at all.
-The policy is `WorldFootprint` in the engine-free domain (the coalesced union of a chunk area around each living agent, so cost tracks the population's spatial footprint rather than its head count, and a group that splits off keeps its own area); `dev.loom.body.nms.HeldChunks` is the engine half that makes the holds real and records each change to the event log under the reserved world-level agent id `loom:world`, which `AgentId` refuses so no agent's records can be mistaken for the world's.
+Instead Loom holds the world open around every living agent, in *every* dimension it has agents in, so an unload is never among the removals the port has to explain.
+That is what lets `departureOf` treat an unexplained removal as a real death, and it has to hold in every dimension an agent can reach or the rule stops being sound there.
+The policy is `WorldFootprint` in the engine-free domain, keyed by world, so nether and end holds are ordinary entries rather than a special case and a body that walks through a portal simply moves its hold (the coalesced union of a chunk area around each living agent, so cost tracks the population's spatial footprint rather than its head count, and a group that splits off keeps its own area); `dev.loom.body.nms.HeldChunks` is the engine half that makes the holds real and records each change to the event log under the reserved world-level agent id `loom:world`, which `AgentId` refuses so no agent's records can be mistaken for the world's.
 The hold is taken before a body registers as live - spawn refuses rather than leave a live body unheld - and `follow` keeps it sliding with the agents from then on.
 The mechanism is Bukkit's plugin chunk ticket, which lands at chunk level 31 - `ChunkLevel.ENTITY_TICKING_LEVEL` - so a held chunk ticks its entities.
 That level *is* the invariant: hold chunks any more weakly and false deaths come back silently.
@@ -59,6 +73,7 @@ Two sharp edges are easy to reintroduce:
 
 - Spawning must use `SpawnReason.CUSTOM`; any other reason routes through natural-spawn gating that silently discards the body.
 - `Mob.serverAiStep` is `final`, so suppressing vanilla behavior means overriding **both** `Villager.customServerAiStep()` (deprecated) and `customServerAiStep(boolean)` without calling `super`. Missing one gives the body vanilla behavior back.
+- Bodies must keep renewing their own activation (`LoomBodyEntity.readyForTheEngineTick`). Spigot's activation range only activates entities near a *player*, and Loom has no players, so an untouched body drops to `inactiveTick` after ten seconds. That does not just idle it: it silently disables portal travel, because the transit is driven from `Entity.postTick`, which an inactive entity never reaches - a body would stand in a lit portal forever with nothing in any log to say why.
 
 Engine helpers specified in extents rather than radii have already caused one bug (a perception radius that covered half its documented area).
 Prefer expressing such bounds in the domain, as `PerceptionBound` does, where a test can pin them.
@@ -73,6 +88,10 @@ The plugin ships with the stable `plugin.yml` descriptor, not `paper-plugin.yml`
 Gates do not cover in-world behavior; a body change is not done until it has been seen working on a real server.
 Build the jar (`./gradlew shadowJar`), drop it into a Paper 1.21.1 server's `plugins/`, and drive it with `/loombody spawn|move|perceive|despawn|list`.
 Verify from a **client's** point of view rather than from the plugin's own log: a body that moves server-side only, or that a vanilla client cannot render, looks identical in the log to one that works.
+Dimension travel needs a lit portal and a body walked into it (`/loombody move`), then a `travelled` record and a rendering body on the far side; the driving client must be opped, since `/loombody` is op-only.
+Check the *count* of `travelled` records, not just their presence - one round trip is two, and a bouncing body is the failure this most easily hides.
+Walk one trip with no client connected too, since a body travelling unobserved is the case that would otherwise read as a death.
+Two things about the test server will otherwise waste a run: `difficulty peaceful` makes `Villager.thunderHit` skip the whole conversion path, so lightning proves nothing about the conversion seam; and `execute in <dimension> ... @e` resolves against the *command's* position, so it happily reports an entity from the dimension you were checking for orphans in. Scope such checks with `positioned ... distance=..`, or read the client's entity list.
 The append-only `plugins/Loom/body-events.jsonl` is the research record - newline-delimited JSON, one record per line, written off the main thread - and metrics should be derived from it rather than added as separate counters.
 The write queue is bounded so a stalled disk never blocks the tick; records that never reach the file are counted and surfaced as a server-log warning, so before trusting a run's metrics check the server log for "body event log" warnings.
 

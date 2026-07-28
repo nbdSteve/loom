@@ -82,6 +82,53 @@ class WorldFootprintTest {
     }
 
     @Test
+    @DisplayName("an agent in another dimension keeps that dimension loaded")
+    fun everyDimensionAnAgentIsInStaysLoaded() {
+        // Same coordinates, three dimensions: a nether agent needs the nether held, and
+        // the overworld chunks at the same x/z do nothing for it. Since travel through a
+        // portal is survivable now, this is what stops an agent in the nether or the end
+        // sitting in an unticking void - which, given a removal there would read as a
+        // death, is what stops permadeath firing on a dimension nobody is watching.
+        val nether = at(8.0, 8.0, "arena_nether")
+        val end = at(8.0, 8.0, "arena_the_end")
+
+        val covered = footprint.cover(listOf(at(8.0, 8.0), nether, end))
+
+        assertEquals(27, covered.size)
+        assertTrue(covered.containsAll(footprint.cover(listOf(nether))))
+        assertTrue(covered.containsAll(footprint.cover(listOf(end))))
+    }
+
+    @Test
+    @DisplayName("travelling through a portal holds the destination and lets the origin go")
+    fun travelMovesTheHoldBetweenDimensions() {
+        val overworld = at(8.0, 8.0)
+        val nether = at(8.0, 8.0, "arena_nether")
+        val held = footprint.cover(listOf(overworld))
+
+        val change = footprint.change(held, listOf(nether))
+
+        // The whole overworld area is released and the whole nether area taken: nothing
+        // pins the dimension the agent left, and it arrives somewhere already ticking.
+        assertEquals(footprint.cover(listOf(nether)), change.toHold)
+        assertEquals(held, change.toRelease)
+    }
+
+    @Test
+    @DisplayName("an agent left behind keeps its dimension loaded when another travels away")
+    fun oneTravellerDoesNotUnloadTheDimensionItLeft() {
+        val stayed = at(8.0, 8.0)
+        val held = footprint.cover(listOf(stayed, at(24.0, 8.0)))
+
+        val change = footprint.change(held, listOf(stayed, at(24.0, 8.0, "arena_nether")))
+
+        // The agent that stayed home must not be dragged into an unticking void by a
+        // companion walking into a portal.
+        assertTrue(change.toRelease.intersect(footprint.cover(listOf(stayed))).isEmpty())
+        assertTrue(change.toHold.all { it.world == "arena_nether" })
+    }
+
+    @Test
     @DisplayName("no living agents means nothing is kept loaded")
     fun noAgentsNoFootprint() {
         assertTrue(footprint.cover(emptyList()).isEmpty())

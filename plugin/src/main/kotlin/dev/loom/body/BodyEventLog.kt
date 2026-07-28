@@ -61,6 +61,26 @@ enum class BodyEvent {
     DIED,
 
     /**
+     * The agent's body crossed into another dimension, and the agent continued in it.
+     *
+     * Recorded on the travelling agent's own chain, deliberately as one event rather
+     * than as a death followed by a birth: the agent that arrives is the agent that
+     * left, and a log that said otherwise would make every portal look like the end
+     * of a life to anyone reading the run back.
+     */
+    @SerialName("travelled")
+    TRAVELLED,
+
+    /**
+     * Something tried to convert the body into another kind of creature.
+     *
+     * Also continuity, and also on the same agent's chain: lightning striking an
+     * agent is an event in that agent's life, not the end of it.
+     */
+    @SerialName("converted")
+    CONVERTED,
+
+    /**
      * The set of chunks Loom holds loaded around its living agents changed.
      *
      * A world-level event rather than one agent's, so it is recorded against

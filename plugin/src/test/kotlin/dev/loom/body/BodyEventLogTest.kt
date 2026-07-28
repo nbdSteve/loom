@@ -42,6 +42,9 @@ class BodyEventLogTest {
         assertTrue(names.any { it.contains(""""event":"perceived"""") })
         assertTrue(names.any { it.contains(""""event":"despawned"""") })
         assertTrue(names.any { it.contains(""""event":"died"""") })
+        assertTrue(names.any { it.contains(""""event":"travelled"""") })
+        assertTrue(names.any { it.contains(""""event":"converted"""") })
+        assertTrue(names.any { it.contains(""""event":"worldLoaded"""") })
     }
 
     @Test

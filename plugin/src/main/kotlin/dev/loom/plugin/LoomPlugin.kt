@@ -9,6 +9,7 @@ package dev.loom.plugin
 
 import dev.loom.body.FileBodyEventLog
 import dev.loom.body.nms.NmsEntityBodyPort
+import dev.loom.body.nms.bodyConversionSeam
 import org.bukkit.plugin.java.JavaPlugin
 
 /** Name of the append-only body-event log inside the plugin's data folder. */
@@ -47,6 +48,10 @@ class LoomPlugin : JavaPlugin() {
         } else {
             command.setExecutor(BodyCommand(port) { message -> logger.info(message) })
         }
+
+        // A conversion cannot be recognised after it happens, so the attempt is caught
+        // as it happens; see BodyConversions.
+        server.pluginManager.registerEvents(bodyConversionSeam(), this)
 
         // Actuation runs every tick; cognition does not, and is not called here.
         server.scheduler.runTaskTimer(this, Runnable { port.tick(server.currentTick.toLong()) }, 1L, 1L)
