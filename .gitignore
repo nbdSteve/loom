@@ -24,8 +24,11 @@ Cargo.lock
 .env
 *.local
 
-# Minecraft server runtime artifacts
+# Minecraft server runtime artifacts. A local test server is scratch: it holds a
+# server jar, generated worlds, and the plugin's own event log, none of which
+# belong to the repository.
 server/
+server-arena/
 world/
 world_nether/
 world_the_end/

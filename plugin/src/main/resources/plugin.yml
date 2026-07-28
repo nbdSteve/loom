@@ -1,0 +1,20 @@
+# The Bukkit descriptor, deliberately not paper-plugin.yml: Paper's own
+# descriptor drops the `commands:` section in favor of registering Brigadier
+# commands from code, and that API is still experimental on 1.21.1 - opting into
+# it would mean a warning, and warnings are errors here. The stable descriptor
+# registers the command declaratively with no version-fragile API at all.
+name: Loom
+version: '0.1.0'
+main: dev.loom.plugin.LoomPlugin
+api-version: '1.21'
+description: Gives Loom agents physical bodies in the world, behind a swappable body port.
+
+commands:
+  loombody:
+    description: Drives the body port - spawn, move, perceive, despawn, list.
+    usage: |
+      /loombody spawn <agentId>
+      /loombody move <agentId> <x> <y> <z>
+      /loombody perceive <agentId>
+      /loombody despawn <agentId>
+      /loombody list

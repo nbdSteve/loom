@@ -1,10 +1,15 @@
 import io.gitlab.arturbosch.detekt.Detekt
+import io.papermc.paperweight.userdev.ReobfArtifactConfiguration
 
 plugins {
     kotlin("jvm") version "2.0.21"
     kotlin("plugin.serialization") version "2.0.21"
     id("io.gitlab.arturbosch.detekt") version "1.23.7"
     id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
+    // Mojang-mapped NMS workspace. Only dev.loom.body.nms is allowed to use it;
+    // BodyBoundaryTest fails the build if any other package reaches for it.
+    id("io.papermc.paperweight.userdev") version "1.7.7"
+    id("com.gradleup.shadow") version "8.3.5"
 }
 
 group = "dev.loom"
@@ -23,6 +28,11 @@ kotlin {
 
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
+    // The Mojang-mapped Paper server. paperweight downloads, remaps, and
+    // decompiles it, so `net.minecraft` symbols are compiled against directly
+    // with no reobfuscation step (the runtime has been Mojang-mapped since 1.20.5).
+    paperweight.paperDevBundle("1.21.1-R0.1-SNAPSHOT")
 
     testImplementation(kotlin("test"))
     testImplementation(platform("org.junit:junit-bom:5.11.3"))
@@ -66,6 +76,21 @@ ktlint {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+// Paper's runtime has been Mojang-mapped since 1.20.5, so the plugin ships as
+// compiled and is never remapped to Spigot's obfuscated names. Saying so
+// explicitly keeps `reobfJar` from becoming the production artifact by default.
+paperweight.reobfArtifactConfiguration = ReobfArtifactConfiguration.MOJANG_PRODUCTION
+
+// The plugin jar must carry the Kotlin stdlib and kotlinx-serialization, which
+// Paper does not provide.
+tasks.shadowJar {
+    archiveClassifier.set("")
+}
+
+tasks.named("build") {
+    dependsOn("shadowJar")
 }
 
 // The `check` task must run every gate so CI fails on any violation.

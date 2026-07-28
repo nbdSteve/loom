@@ -1,10 +1,10 @@
 name: contract
 
-# Enforces the single-source-of-truth property for the Loom contract on both
-# runtimes. Each job runs its side's full gate suite plus the conformance tests
-# that validate the shared fixtures against contract/loom.schema.json and assert
-# byte-for-byte round-trips. If the schema and either side's bindings drift, the
-# corresponding job fails.
+# Runs each side's full gate suite. That includes the conformance tests that
+# validate the shared fixtures against contract/loom.schema.json and assert
+# byte-for-byte round-trips - so if the schema and either side's bindings drift,
+# the corresponding job fails - and, on the JVM side, the architecture rules that
+# keep engine-specific code behind the body port.
 
 on:
   push:
@@ -35,7 +35,7 @@ jobs:
         run: cargo test --all-features
 
   plugin:
-    name: JVM plugin bindings
+    name: JVM plugin and body port
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -47,7 +47,22 @@ jobs:
         with:
           distribution: corretto
           java-version: '21'
-      - name: gate suite + conformance tests
+      # The build compiles against a Mojang-mapped server that paperweight
+      # downloads, remaps, and decompiles - a few hundred MB and several minutes
+      # on a cold cache. Caching it keeps that cost off every run; the key is the
+      # build script, since that is what pins the server version.
+      - name: Cache paperweight and Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-paperweight-${{ runner.os }}-${{ hashFiles('plugin/build.gradle.kts', 'plugin/settings.gradle.kts', 'plugin/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-paperweight-${{ runner.os }}-
+      - name: gate suite, conformance and architecture tests
         # `check` runs detekt, ktlint, ArchUnit, warnings-as-errors compile, and
-        # the conformance tests; all are configured to fail the build.
+        # the tests; all are configured to fail the build.
         run: ./gradlew check --no-daemon --console=plain
+      - name: assemble the plugin jar
+        # Proves the shipped artifact still builds, not just that sources compile.
+        run: ./gradlew shadowJar --no-daemon --console=plain
