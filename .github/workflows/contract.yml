@@ -4,7 +4,13 @@ name: contract
 # validate the shared fixtures against contract/loom.schema.json and assert
 # byte-for-byte round-trips - so if the schema and either side's bindings drift,
 # the corresponding job fails - and, on the JVM side, the architecture rules that
-# keep engine-specific code behind the body port.
+# keep engine-specific code behind the body port and the cognition transport
+# behind its port.
+#
+# The third job is the one neither side's suite can do alone: it starts the real
+# Rust cognition service and drives the JVM bridge against it, so a disagreement
+# the shared fixtures cannot express - line framing, a tag only one serializer
+# emits - fails CI rather than surfacing on a server.
 
 on:
   push:
@@ -66,3 +72,57 @@ jobs:
       - name: assemble the plugin jar
         # Proves the shipped artifact still builds, not just that sources compile.
         run: ./gradlew shadowJar --no-daemon --console=plain
+
+  bridge:
+    name: Mind and body, over a real socket
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.91.0 --profile minimal
+          rustup default 1.91.0
+      - name: Set up Corretto 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: '21'
+      - name: Cache paperweight and Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-paperweight-${{ runner.os }}-${{ hashFiles('plugin/build.gradle.kts', 'plugin/settings.gradle.kts', 'plugin/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-paperweight-${{ runner.os }}-
+      - name: Start the cognition service
+        working-directory: cognition
+        # Backgrounded and then waited for: the test needs the port accepting
+        # before it runs, and a service that failed to bind must fail the job here
+        # rather than as a skipped test.
+        run: |
+          cargo build --release --bin loom-cognition
+          LOOM_COGNITION_ADDR=127.0.0.1:8642 ./target/release/loom-cognition &
+          for _ in $(seq 1 50); do
+            if nc -z 127.0.0.1 8642; then exit 0; fi
+            sleep 0.2
+          done
+          echo "cognition service never bound 127.0.0.1:8642" >&2
+          exit 1
+      - name: One decision round-trip, mind to body
+        working-directory: plugin
+        # LOOM_COGNITION_ADDR is what opts LiveCognitionServiceTest in; without it
+        # the test skips, which is why the bind check above is not optional.
+        env:
+          LOOM_COGNITION_ADDR: 127.0.0.1:8642
+        run: ./gradlew test --tests 'dev.loom.mind.tcp.LiveCognitionServiceTest' --no-daemon --console=plain
+      - name: Fail if the round-trip test was skipped
+        working-directory: plugin
+        # A skipped opt-in test passes silently, which would make this whole job
+        # green while proving nothing.
+        run: |
+          report=build/test-results/test/TEST-dev.loom.mind.tcp.LiveCognitionServiceTest.xml
+          grep -q 'skipped="0"' "$report" || {
+            echo "the live round-trip test did not run: $report" >&2
+            exit 1
+          }

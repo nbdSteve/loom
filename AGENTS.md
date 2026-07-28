@@ -14,6 +14,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 **Union wire tagging is internal.** `Trigger` is tagged on `event`, `Intent` on `action`, with the variant fields inlined. Rust uses `#[serde(tag = "...")]`; JVM uses `@JsonClassDiscriminator` (needs a file-level `@OptIn(ExperimentalSerializationApi::class)`). Empty variants (`Trigger.GoalReview`, `Intent.Idle`) are unit/`data object`, serializing to just `{"event":"goalReview"}` / `{"action":"idle"}`. Keep the two tag configs identical or the round-trip fixtures diverge.
 
+The fixtures are also the wire: the mind's integration test replays every `perception-*.json` at a real socket, and the JVM transport test uses the `decision-*.json` bytes verbatim as responses, so the two runtimes meet at the fixture rather than at a mock on either side.
+
 ## The body port
 
 `plugin/src/main/kotlin/dev/loom/body/BodyPort.kt` is the inbound port the rest of Loom uses to give an agent a physical presence.
@@ -83,10 +85,38 @@ Nothing above the port should need editing; if it does, the port is leaking. The
 
 The plugin ships with the stable `plugin.yml` descriptor, not `paper-plugin.yml`: Paper's own descriptor drops declarative `commands:` in favor of Brigadier registration, which is still experimental API on 1.21.1 and cannot be opted into under warnings-as-errors.
 
+## The mind, and the bridge to it
+
+`cognition/crates/cognition` is the mind: it accepts a `Perception` and returns a routed, provenance-stamped `Decision`.
+Four pieces, each its own module - `router` (tier to model), `model` (the backend seam), `mind` (compose and stamp), `server`/`wire` (newline-delimited JSON over TCP).
+`ScriptedBackend` is a deliberate stub: what this slice proves is the routing structure and the contract round-trip, not model quality, and a real backend is a new `ModelBackend` plus one changed line in `main.rs`.
+
+**Provenance is stamped by `Mind::decide`, never by a backend.** `ModelRoute` has private fields whose only constructor is `route(importance)`, so a decision cannot claim a model it was not routed to; `mind.rs`'s `LyingBackend` test pins that.
+Routing is total over `DecisionImportance` with no default branch - a new tier will not compile until its model is chosen, because a tier silently defaulting is how routine traffic reaches a frontier model.
+The refusal frame `{"error":...}` is deliberately **not** a contract type: a mind that could not answer has not decided anything, and inventing an `Intent` for it would put a fiction in the decision record.
+
+On the JVM side `dev.loom.mind` is the port and is engine-free by rule (`MindBoundaryTest`), with `dev.loom.mind.tcp` the one transport adapter.
+Three properties are the whole point of `AsyncCognitionBridge` and each has a test that fails if it is lost: `submit` never runs cognition, every request has a deadline, and back pressure is an explicit `Saturated` failure rather than an unbounded queue.
+Three subtleties are load-bearing:
+
+- **The watchdog frees the caller, not the worker.** A thread parked in a socket read stays parked, so `CognitionSettings.readTimeout` is derived from the bridge deadline and is deliberately shorter. Configure them independently and a stalled mind quietly consumes every worker.
+  The derivation budgets a *whole* `ask` - both connects and both reads of its one retry - not a single read, so `ATTEMPTS_PER_ASK` there and the transport's retry count are the same number stated twice and must move together.
+- **The deadline is armed before the work is queued**, so queue time counts against it. A per-attempt timer would let a request behind a stalled worker wait indefinitely.
+- **Delivery to the mind is at-most-once, and the write is the seam.** `TcpCognitionTransport` retries only a failure at or before the write, where nothing can have been decided; anything from the read onward is reported. Re-sending past the write would risk a second billed inference for one perception, and a lost decision is cheaper than a duplicated one. Widening the retry to cover the read is the easy mistake, so a test pins that a perception reaches the mind exactly once.
+
+Importance is classified above the body port by `importanceOf` (`Importance.kt`), not by the body and not by the mind: the body reports what happened, and what that costs is this side's call.
+`EmbodiedCognition` is the only place the two ports meet - perceive on the main thread, decide off it, apply back on it through the `MainThread` port.
+`BodyPort.tick` still never invokes cognition; the contract has no per-tick `Trigger` and cognition is driven by events and by `/loombody think`.
+
+A decision reaching a body is proven three ways, in increasing fidelity: `EmbodiedCognitionTest` (fake mind, queue-draining `MainThread` that asserts which thread touched the body), `TcpCognitionTransportTest` (real socket, canonical fixture bytes as responses), and `LiveCognitionServiceTest` (the real Rust service).
+The last is opt-in via `LOOM_COGNITION_ADDR=host:port` so the default suite stays hermetic - `cargo run --bin loom-cognition`, then run the plugin tests with that variable set.
+CI's `bridge` job does exactly that and then greps the JUnit XML for `skipped="0"`, because a skipped opt-in test would otherwise make the job green while proving nothing.
+
 ## Verifying a body change
 
 Gates do not cover in-world behavior; a body change is not done until it has been seen working on a real server.
-Build the jar (`./gradlew shadowJar`), drop it into a Paper 1.21.1 server's `plugins/`, and drive it with `/loombody spawn|move|perceive|despawn|list`.
+Build the jar (`./gradlew shadowJar`), drop it into a Paper 1.21.1 server's `plugins/`, and drive it with `/loombody spawn|move|perceive|think|despawn|list`.
+`think` is the round trip and needs `loom-cognition` running; the reply only confirms the perception was sent, and the decision appears in the server log a moment later with its model and prompt version.
 Verify from a **client's** point of view rather than from the plugin's own log: a body that moves server-side only, or that a vanilla client cannot render, looks identical in the log to one that works.
 Dimension travel needs a lit portal and a body walked into it (`/loombody move`), then a `travelled` record and a rendering body on the far side; the driving client must be opped, since `/loombody` is op-only.
 Check the *count* of `travelled` records, not just their presence - one round trip is two, and a bouncing body is the failure this most easily hides.
@@ -101,7 +131,7 @@ The write queue is bounded so a stalled disk never blocks the tick; records that
 - JVM: `cd plugin && ./gradlew check`. Runs detekt + ktlint + ArchUnit + warnings-as-errors compile, none ignoring failures. Build on **Corretto 21** (`jvmToolchain(21)`), Gradle wrapper pinned to 8.14. detekt config: `plugin/config/detekt/detekt.yml` (formatting delegated to ktlint).
   The plugin compiles against a Mojang-mapped server via `paperweight-userdev`; the first build downloads and decompiles it (a few hundred MB, several minutes), and later builds are fast. Paper's runtime is Mojang-mapped, so the jar ships as compiled and is never reobfuscated (`ReobfArtifactConfiguration.MOJANG_PRODUCTION`).
   detekt thresholds are treated as design feedback: clear them by splitting along a real seam rather than by adding suppressions.
-- CI runs both suites: `.github/workflows/contract.yml`.
+- CI runs both suites plus the live cross-runtime round trip: `.github/workflows/contract.yml`.
 
 - Add durable project-specific notes here as they are discovered through real work.
 

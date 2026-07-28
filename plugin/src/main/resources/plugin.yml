@@ -11,10 +11,11 @@ description: Gives Loom agents physical bodies in the world, behind a swappable 
 
 commands:
   loombody:
-    description: Drives the body port - spawn, move, perceive, despawn, list.
+    description: Drives the body port and the mind - spawn, move, perceive, think, despawn, list.
     usage: |
       /loombody spawn <agentId>
       /loombody move <agentId> <x> <y> <z>
       /loombody perceive <agentId>
+      /loombody think <agentId>
       /loombody despawn <agentId>
       /loombody list

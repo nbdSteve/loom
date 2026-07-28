@@ -1,0 +1,21 @@
+[package]
+name = "loom-cognition"
+description = "The mind: accepts a bounded Perception over the Loom contract and returns a routed, provenance-stamped Decision."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+loom-contract = { path = "../contract" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Async runtime for the request/response service. `net` and `io-util` carry the
+# TCP listener and the buffered line reader the newline-delimited JSON wire uses.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "test-util"] }
+
+[lints]
+workspace = true

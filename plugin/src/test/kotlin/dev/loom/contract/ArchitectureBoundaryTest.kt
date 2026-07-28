@@ -10,9 +10,9 @@ import org.junit.jupiter.api.Test
  *
  * The contract is the sanctioned surface the body and mind exchange. It must
  * stay plain data plus serialization: it may not reach into any Minecraft/Paper
- * server API, and it may not depend on the plugin's future runtime or bridge
- * packages. Encoding that as a test makes the perception boundary a compiler-
- * checked property rather than a convention.
+ * server API, and it may not depend on the packages that use it - the body, the
+ * mind, or the plugin's wiring. Encoding that as a test makes the perception
+ * boundary a checked property rather than a convention.
  */
 class ArchitectureBoundaryTest {
     private val contractClasses =
@@ -35,14 +35,21 @@ class ArchitectureBoundaryTest {
     }
 
     @Test
-    fun contractDoesNotDependOnPluginRuntimeOrBridge() {
+    fun contractDoesNotDependOnItsConsumers() {
+        // The dependency runs one way: body and mind both depend on the contract,
+        // and the contract knows about neither. If that inverted, the two runtimes'
+        // shared vocabulary would start carrying one side's concerns.
         noClasses()
             .should()
             .dependOnClassesThat()
             .resideInAnyPackage(
                 "dev.loom.plugin..",
-                "dev.loom.bridge..",
-                "dev.loom.runtime..",
+                "dev.loom.body..",
+                "dev.loom.mind..",
+            )
+            .because(
+                "the contract is the currency both sides exchange; it must not know " +
+                    "who spends it",
             )
             .check(contractClasses)
     }

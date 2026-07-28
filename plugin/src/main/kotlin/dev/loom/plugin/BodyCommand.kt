@@ -1,14 +1,15 @@
 /*
- * The console/in-game driver that exercises the body port end to end.
+ * The console/in-game driver that exercises the body port and the mind end to end.
  *
- * It is written against `BodyPort` alone - no adapter type, no NMS - which is what
- * makes it evidence that the port is a real seam rather than a decorative one: the
- * same commands would drive any future body flavor unchanged.
+ * It is written against `BodyPort` and `EmbodiedCognition` alone - no adapter
+ * type, no NMS, no transport - which is what makes it evidence that both ports are
+ * real seams rather than decorative ones: the same commands would drive any future
+ * body flavor or mind deployment unchanged.
  *
- * The `move` subcommand supplies a hardcoded contract `Intent.MoveTo`. That is the
- * whole of the "mind" for now, on purpose: what is being proven here is the body
- * and its port, and the Rust cognition service connects to the same
- * `Intent`/`Perception` currency later without the port changing.
+ * `move` still supplies a hardcoded contract `Intent.MoveTo`, which is how a body
+ * is driven with the mind deliberately out of the loop. `think` is the round trip:
+ * it perceives, sends that perception to the real cognition service, and the
+ * decision that comes back is applied to the body on a later tick.
  */
 package dev.loom.plugin
 
@@ -19,6 +20,7 @@ import dev.loom.body.BodySpawnResult
 import dev.loom.contract.Intent
 import dev.loom.contract.LoomJson
 import dev.loom.contract.Trigger
+import dev.loom.mind.EmbodiedCognition
 import kotlinx.serialization.encodeToString
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
@@ -37,14 +39,18 @@ private const val ARG_Z = 4
 private const val COORDINATE_COUNT = 3
 
 /**
- * Drives the body port from a command.
+ * Drives the body port and the mind from a command.
  *
  * @param bodies the port. Typed as [BodyPort]: this class must never know which
  *   flavor is behind it.
+ * @param mind the perception -> decision -> action round trip. Typed as
+ *   [EmbodiedCognition] for the same reason: which mind is behind it, and how it
+ *   is reached, is not this class's business.
  * @param report where human-readable results go in addition to the sender.
  */
 class BodyCommand(
     private val bodies: BodyPort,
+    private val mind: EmbodiedCognition,
     private val report: (String) -> Unit,
 ) : CommandExecutor {
     override fun onCommand(
@@ -77,6 +83,7 @@ class BodyCommand(
             "spawn" -> spawn(senderLocation, args)
             "move" -> move(args)
             "perceive" -> perceive(args)
+            "think" -> think(args)
             "despawn" -> despawn(args)
             "list" -> "live bodies: ${bodies.liveBodies().joinToString(", ").ifEmpty { "none" }}"
             else -> null
@@ -125,6 +132,23 @@ class BodyCommand(
             // Printed as contract JSON: the exact bytes the mind will receive.
             bodies.perceive(agent, Trigger.GoalReview)
                 ?.let { LoomJson.encodeToString(it) }
+                ?: "no body for $agentId"
+        }
+    }
+
+    /**
+     * The one full round trip: perceive, send to the mind, act on what comes back.
+     *
+     * The reply says only that the perception is on its way, because that is all
+     * that has happened by the time this returns - the whole point of the bridge
+     * is that this call does not wait for the mind. The decision itself arrives in
+     * [report] a moment later, from the main thread.
+     */
+    private fun think(args: Array<out String>): String {
+        val agentId = args.getOrNull(ARG_AGENT) ?: return "usage: think <agentId>"
+        return withAgent(agentId) { agent ->
+            mind.consider(agent, Trigger.GoalReview)
+                ?.let { "sent ${it.importance} perception ${it.requestId} for $agentId to the mind" }
                 ?: "no body for $agentId"
         }
     }
