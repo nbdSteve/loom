@@ -9,9 +9,16 @@ main: dev.loom.plugin.LoomPlugin
 api-version: '1.21'
 description: Gives Loom agents physical bodies in the world, behind a swappable body port.
 
+# `/loombody` drives live agents and, through `think`, spends a real model call on
+# the mind. A command block with no `permission:` key is open to every sender:
+# Bukkit's permission check short-circuits to "allowed" when the field is null, so
+# the node below is what actually gates the command. `PluginDescriptorTest` fails
+# the build if it goes missing again, because nothing else would notice.
 commands:
   loombody:
     description: Drives the body port and the mind - spawn, move, perceive, think, despawn, list.
+    permission: loom.body
+    permission-message: /loombody drives Loom's agents and requires the loom.body permission.
     usage: |
       /loombody spawn <agentId>
       /loombody move <agentId> <x> <y> <z>
@@ -19,3 +26,11 @@ commands:
       /loombody think <agentId>
       /loombody despawn <agentId>
       /loombody list
+
+# One node for the whole command, defaulting to op. It is deliberately not split
+# per subcommand: every subcommand names a live agent and can disturb a research
+# run, so there is no read-only half worth handing to a wider audience.
+permissions:
+  loom.body:
+    description: Drive Loom's bodies and the mind through /loombody.
+    default: op
