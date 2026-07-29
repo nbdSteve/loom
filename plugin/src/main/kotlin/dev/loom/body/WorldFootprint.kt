@@ -89,8 +89,9 @@ class WorldFootprint(
     fun cover(locations: Collection<BodyLocation>): Set<ChunkKey> {
         val covered = mutableSetOf<ChunkKey>()
         for (location in locations) {
-            val centerX = chunkOf(location.x)
-            val centerZ = chunkOf(location.z)
+            val center = chunkAt(location)
+            val centerX = center.x
+            val centerZ = center.z
             for (x in centerX - radiusChunks..centerX + radiusChunks) {
                 for (z in centerZ - radiusChunks..centerZ + radiusChunks) {
                     covered.add(ChunkKey(location.world, x, z))
@@ -99,6 +100,16 @@ class WorldFootprint(
         }
         return covered
     }
+
+    /**
+     * The one chunk [location] itself is in - the middle of its area.
+     *
+     * Called out from [cover] because the middle is not just one chunk among the
+     * nine: a body standing in an unheld margin chunk has lost the room it needs to
+     * walk, but a body standing in an unheld *middle* chunk is already in the state
+     * the footprint exists to prevent, and can be unloaded out of the world.
+     */
+    fun chunkAt(location: BodyLocation): ChunkKey = ChunkKey(location.world, chunkOf(location.x), chunkOf(location.z))
 
     /**
      * The work needed to move from [held] to the cover of [locations].

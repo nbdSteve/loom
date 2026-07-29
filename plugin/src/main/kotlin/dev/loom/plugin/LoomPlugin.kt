@@ -47,7 +47,18 @@ class LoomPlugin : JavaPlugin() {
 
         // The single line that binds a body flavor. Everything above the port
         // depends on BodyPort, so a different flavor is a different constructor here.
-        val port = NmsEntityBodyPort(server, this, log) { server.currentTick.toLong() }
+        val port =
+            NmsEntityBodyPort(
+                server,
+                this,
+                log,
+                currentTick = { server.currentTick.toLong() },
+                // A living agent in a chunk Loom could not hold is the one condition
+                // that invalidates a run's permadeath metrics, so it is surfaced here
+                // as well as recorded: an operator should not have to read the event
+                // log back to learn the footprint was incomplete.
+                onHoldFailure = { detail -> logger.warning("world hold failed: $detail") },
+            )
         bodyPort = port
 
         val mind = connectMind(port)

@@ -47,18 +47,23 @@ private const val FOLLOW_RADIUS_CHUNKS = 1
  * @param owner the plugin whose chunk tickets hold the world loaded around agents.
  * @param eventLog append-only sink every body event is recorded to.
  * @param currentTick supplies the server tick for stamping log records.
+ * @param onHoldFailure called when Loom cannot hold the world around a living agent.
+ *   Wired to the server log by the plugin: this is a broken invariant rather than an
+ *   observation about an agent, so it must be visible during a run and not only to
+ *   someone reading the event log back afterwards.
  */
 class NmsEntityBodyPort(
     private val server: Server,
     owner: Plugin,
     eventLog: BodyEventLog,
     private val currentTick: () -> Long,
+    onHoldFailure: (String) -> Unit = {},
 ) : BodyPort {
     private val bodies = mutableMapOf<AgentId, LoomBodyEntity>()
     private val journal = BodyEventJournal(eventLog, currentTick)
     private val mortality = Mortality()
-    private val heldChunks =
-        HeldChunks(server, owner, WorldFootprint(radiusChunks = FOLLOW_RADIUS_CHUNKS), journal)
+    private val footprint = WorldFootprint(radiusChunks = FOLLOW_RADIUS_CHUNKS)
+    private val heldChunks = HeldChunks(server, owner, footprint, journal, onHoldFailure)
 
     override fun spawn(
         agentId: AgentId,
@@ -97,9 +102,10 @@ class NmsEntityBodyPort(
         // would silently discard the body on a world with spawning restricted. The
         // hold is attempted first, so addFreshEntity never runs for a body Loom could
         // not keep loaded.
+        val hold = heldChunks.holdAround(at)
         val rejection =
             when {
-                !heldChunks.holdAround(at) -> "could not hold the world around the spawn"
+                !hold.isComplete -> "could not hold the world around the spawn: ${hold.describeFailures()}"
                 !world.handle.addFreshEntity(body, CreatureSpawnEvent.SpawnReason.CUSTOM) ->
                     "the world refused the spawn"
                 else -> null
@@ -172,7 +178,7 @@ class NmsEntityBodyPort(
         // Loom has no human players, so the agents must carry their own loaded world
         // with them, in whichever dimension each one is in. Runs after movement so the
         // footprint follows where bodies are.
-        heldChunks.follow(bodies.values.map { it.whereItIs() })
+        heldChunks.follow(bodies.mapValues { (_, body) -> body.whereItIs() })
     }
 
     /**

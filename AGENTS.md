@@ -63,6 +63,13 @@ The mechanism is Bukkit's plugin chunk ticket, which lands at chunk level 31 - `
 That level *is* the invariant: hold chunks any more weakly and false deaths come back silently.
 Tickets outlive the tick that added them, so they must be released on disable or the world stays pinned loaded with no Loom running.
 
+**A hold failure must never be silent, and `follow` cannot refuse.**
+Spawn can turn a bad hold down; `follow` cannot, because the bodies are already live and already there, so a hold failure during `follow` *is* the invariant broken rather than a request to decline.
+Every attempt therefore returns a `ChunkHoldOutcome` (engine-free domain) rather than a count or a boolean, and an incomplete one is recorded as its own `worldHoldFailed` event *and* raised on the plugin logger ("world hold failed: ..."), naming the agents standing in an unheld chunk.
+Before trusting any run's permadeath numbers, check the event log for `worldHoldFailed` - its presence means some removals classified as deaths may have been unloads.
+The two ways a hold can fail are kept distinct (`unknownWorld` versus `ticketDeclined`): one is a Loom-side mistake, the other the engine declining a correct request, and an earlier version collapsed both into a bare `false` that made every failure invisible.
+Note that Bukkit also returns false for a ticket already held, which is why only chunks outside the held set are ever asked for.
+
 ## The one adapter, and the NMS seam
 
 `dev.loom.body.nms` is the only package in the plugin allowed to touch `net.minecraft` or CraftBukkit, and `LoomPlugin` is the only place that names a concrete adapter.

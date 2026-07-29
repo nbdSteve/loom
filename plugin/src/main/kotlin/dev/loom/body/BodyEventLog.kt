@@ -88,6 +88,18 @@ enum class BodyEvent {
      */
     @SerialName("worldLoaded")
     WORLD_LOADED,
+
+    /**
+     * Loom failed to hold a chunk a living agent is standing in.
+     *
+     * The one body event that records a broken invariant rather than something that
+     * happened to an agent. A living body in an unheld chunk can be removed by a chunk
+     * unload, which the departure classification reads as a death, so a run that
+     * produced any of these records has metrics that cannot be trusted about
+     * permadeath. Also world-level, and searchable by itself for exactly that reason.
+     */
+    @SerialName("worldHoldFailed")
+    WORLD_HOLD_FAILED,
 }
 
 /**
