@@ -22,6 +22,8 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -35,10 +37,16 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.readText
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
+import kotlin.time.toJavaDuration
 
 private val PATIENCE = 5.seconds
+
+/** How often to re-check something another thread is expected to record shortly. */
+private const val POLL_MILLIS = 5L
 
 /**
  * A port with nothing listening on it.
@@ -61,7 +69,29 @@ private class FakeMind(
     private val threads = CopyOnWriteArrayList<Thread>()
     val requests = CopyOnWriteArrayList<String>()
 
+    /** Connections the transport dropped while this fake was mid-answer. */
+    val hangUps = CopyOnWriteArrayList<String>()
+
     val port: Int get() = server.localPort
+
+    /**
+     * How many requests have arrived, once at least [expected] have or [within] elapses.
+     *
+     * A response served from bytes the transport had already read does not wait on this
+     * fake, so a test can reach its assertion before the serving thread has recorded the
+     * request. Returns the count either way, so a genuine shortfall still fails with the
+     * number it saw rather than as a timeout.
+     */
+    fun requestsWithin(
+        within: Duration,
+        expected: Int = 2,
+    ): Int {
+        val giveUpAt = TimeSource.Monotonic.markNow() + within
+        while (requests.size < expected && giveUpAt.hasNotPassedNow()) {
+            Thread.sleep(POLL_MILLIS)
+        }
+        return requests.size
+    }
 
     init {
         accept()
@@ -96,9 +126,18 @@ private class FakeMind(
                         val line = reader.readLine() ?: return@use
                         requests.add(line)
                         val response = answer(line) ?: return@use
-                        writer.write(response)
-                        writer.write("\n")
-                        writer.flush()
+                        try {
+                            writer.write(response)
+                            writer.write("\n")
+                            writer.flush()
+                        } catch (gone: IOException) {
+                            // The transport hung up mid-answer, which for the tests about
+                            // abandoning a channel is the behavior under test rather than a
+                            // fault. Recorded rather than thrown, so a test that did not
+                            // expect it can still say what happened.
+                            hangUps.add("$gone")
+                            return@use
+                        }
                     }
                 }
             }
@@ -108,6 +147,82 @@ private class FakeMind(
     }
 
     override fun close() {
+        server.close()
+        threads.forEach { it.join(PATIENCE.inWholeMilliseconds) }
+    }
+}
+
+/**
+ * A mind that takes a perception and then drips bytes forever, never a newline.
+ *
+ * The shape of the fault a socket timeout cannot catch: every byte restarts a
+ * per-read clock, so a `readLine` waits as long as the peer keeps typing. Written
+ * as its own fake rather than as a [FakeMind] answer because the point is what it
+ * does *instead of* producing a line.
+ */
+private class DrippingMind(
+    private val interval: Duration,
+) : AutoCloseable {
+    private val server = ServerSocket(0)
+    private val threads = CopyOnWriteArrayList<Thread>()
+
+    /** Bytes the fake actually managed to send, so the test can prove it dripped. */
+    @Volatile
+    var dripped = 0
+        private set
+
+    @Volatile
+    private var stopped = false
+
+    val port: Int get() = server.localPort
+
+    init {
+        val acceptor =
+            Thread {
+                val client =
+                    try {
+                        server.accept()
+                    } catch (closed: IOException) {
+                        check(server.isClosed) { "accept failed while open: $closed" }
+                        return@Thread
+                    }
+                drip(client)
+            }
+        acceptor.isDaemon = true
+        threads.add(acceptor)
+        acceptor.start()
+    }
+
+    private fun drip(client: Socket) {
+        val worker =
+            Thread {
+                client.use {
+                    // Take the perception first: the drip has to happen where the
+                    // transport is committed and waiting, past the at-most-once seam.
+                    client.getInputStream().bufferedReader().readLine() ?: return@use
+                    val out = client.getOutputStream()
+                    // Runs until the test stops it or the transport hangs up, which is
+                    // what makes the abandon the client's own doing and not the fake's.
+                    while (!stopped) {
+                        try {
+                            out.write('x'.code)
+                            out.flush()
+                        } catch (expected: IOException) {
+                            // The transport abandoned the channel: the thing under test.
+                            return@use
+                        }
+                        dripped++
+                        Thread.sleep(interval.inWholeMilliseconds)
+                    }
+                }
+            }
+        worker.isDaemon = true
+        threads.add(worker)
+        worker.start()
+    }
+
+    override fun close() {
+        stopped = true
         server.close()
         threads.forEach { it.join(PATIENCE.inWholeMilliseconds) }
     }
@@ -224,6 +339,115 @@ class TcpCognitionTransportTest {
         } finally {
             held.countDown()
         }
+    }
+
+    @Test
+    @DisplayName("a mind dripping bytes with no newline is abandoned inside the ask budget")
+    fun aDrippingMindCannotOutlastTheBudget() {
+        // The fault a socket timeout cannot catch: every byte restarts the per-read
+        // clock, so `readLine` waits as long as the peer keeps typing. Measured at 40s
+        // inside a 2s read timeout before the whole-`ask` deadline existed.
+        val readTimeout = 300.milliseconds
+        val mind = managed(DrippingMind(interval = readTimeout / 3))
+        val transport =
+            managed(
+                TcpCognitionTransport(
+                    host = "127.0.0.1",
+                    port = mind.port,
+                    connectTimeout = PATIENCE,
+                    readTimeout = readTimeout,
+                ),
+            )
+
+        val started = TimeSource.Monotonic.markNow()
+        // Preemptively, because the regression this pins is an *unbounded* wait: without
+        // the whole-`ask` deadline the drip holds this thread until the fake stops, which
+        // it never does, and a plain assertion would hang the suite instead of failing it.
+        assertTimeoutPreemptively(PATIENCE.toJavaDuration()) {
+            assertThrows<InterruptedIOException> { transport.ask(perception()) }
+        }
+        val blocked = started.elapsedNow()
+
+        // The budget is the whole `ask`: two attempts' worth of read timeout. Generous
+        // slack for a loaded CI box, but far below the unbounded wait this pins against.
+        val budget = readTimeout * 2
+        assertTrue(
+            blocked < budget * 4,
+            "a drip held the worker for $blocked against a budget of $budget",
+        )
+        // And it really was dripping - a fake that failed to send anything would make
+        // this an ordinary silent-mind test and prove nothing about the drip.
+        assertTrue(mind.dripped > 1, "the fake mind sent ${mind.dripped} bytes; it must actually drip")
+    }
+
+    @Test
+    @DisplayName("a response line that never ends is refused rather than accumulated without limit")
+    fun anEndlessResponseLineIsCapped() {
+        // The memory half of the same fault. The mind bounds request lines at 256 KiB
+        // as bytes arrive; this side bounds response lines by the same number, so
+        // neither runtime can make the other hold memory without limit.
+        val mind = managed(FakeMind { "x".repeat(MAX_RESPONSE_LINE_BYTES * 2) })
+        // Its own transport, with a budget wide enough that the clock cannot get there
+        // first: reaching the cap is itself a byte-at-a-time loop, and against the short
+        // readTimeout the other tests use, a slow runner would trip the deadline and
+        // fail this test's own not-a-timeout assertion. The cap is byte-counted, so a
+        // wide deadline does not weaken what is being pinned - it just leaves the cap
+        // the only bound that can fire.
+        val transport =
+            managed(
+                TcpCognitionTransport(
+                    host = "127.0.0.1",
+                    port = mind.port,
+                    connectTimeout = PATIENCE,
+                    readTimeout = PATIENCE,
+                ),
+            )
+
+        // No newline arrives within the cap, so the read is abandoned on the cap rather
+        // than on the clock: this must not be a timeout in disguise.
+        val thrown = assertThrows<IOException> { transport.ask(perception()) }
+
+        assertFalse(
+            thrown is InterruptedIOException,
+            "the cap must stop this, not the deadline: ${thrown.message}",
+        )
+        assertTrue(
+            thrown.message?.contains("$MAX_RESPONSE_LINE_BYTES") == true,
+            "the diagnosis should name the cap it hit: ${thrown.message} (fake hang-ups: ${mind.hangUps})",
+        )
+    }
+
+    @Test
+    @DisplayName("a second response arriving in the same packet is answered from the bytes already read")
+    fun bytesPastTheNewlineAreKeptForTheNextResponse() {
+        val canonical = fixture("decision-idle.json")
+        val asked = asking(canonical)
+        var served = 0
+        val mind =
+            managed(
+                FakeMind {
+                    served++
+                    // Two frames in one flush, and then nothing: the reads are chunk-wise,
+                    // so the second decision arrives while the first is being framed.
+                    if (served == 1) "$canonical\n$canonical" else null
+                },
+            )
+        val transport = transportTo(mind)
+
+        assertEquals(Intent.Idle, transport.ask(asked).intent)
+        // The only place this answer can come from is the bytes read past the first
+        // newline. Drop them instead of carrying them and the connection is a frame out
+        // of step from here on - which correlation catches, but every response after it
+        // is already the wrong one.
+        assertEquals(Intent.Idle, transport.ask(asked).intent)
+        // Waited for rather than asserted outright: answering the second `ask` from carried
+        // bytes does not wait on the mind at all, so this thread can arrive before the
+        // fake's own thread has recorded the request it is already serving.
+        assertEquals(
+            2,
+            mind.requestsWithin(PATIENCE),
+            "both perceptions went out on the one connection",
+        )
     }
 
     @Test

@@ -52,7 +52,9 @@ class CognitionSettingsTest {
         // outlive the deadline that already failed its caller, leaving a worker busy
         // while later requests are refused as saturated with capacity to spare.
         val settings = CognitionSettings(timeout = 5.seconds, connectTimeout = 500.milliseconds)
-        val worstCase = (settings.connectTimeout + settings.readTimeout) * 2
+        // The shared constant rather than a restated 2, so this stays an assertion about
+        // the attempts a transport may actually make.
+        val worstCase = (settings.connectTimeout + settings.readTimeout) * ATTEMPTS_PER_ASK
         assertTrue(
             worstCase <= settings.timeout,
             "two connects plus two reads ($worstCase) must fit the deadline ${settings.timeout}",

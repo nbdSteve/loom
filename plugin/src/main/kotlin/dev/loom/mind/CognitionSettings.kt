@@ -13,6 +13,38 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
+ * How many connect-and-read attempts one `ask` may make.
+ *
+ * Two, because the transport retries once on a connection that broke before its
+ * request was written. [CognitionSettings.readTimeout] divides the bridge deadline
+ * by this, and `TcpCognitionTransport` multiplies its read timeout back up by it to
+ * get the budget for one `ask`, so raising the retry count means raising this and
+ * nothing else.
+ *
+ * Internal rather than private so the transport spending the budget reads the same
+ * number the budget was derived from, instead of restating it and drifting: a
+ * transport attempting three times against a budget reserved for two would park a
+ * worker past the point its caller had already been failed.
+ */
+internal const val ATTEMPTS_PER_ASK = 2
+
+/**
+ * Shortest timeout that survives narrowing to a socket's whole-millisecond field.
+ *
+ * A socket reads a timeout of zero as "no timeout at all", so a duration that rounds
+ * down to zero must be treated as spent rather than passed on: it would otherwise
+ * invert the property the timeouts exist for, turning the tightest-looking
+ * configuration into the only unbounded one.
+ *
+ * Internal rather than private to either side because it is one fact about the
+ * socket field, checked twice: [CognitionSettings] refuses a configured timeout
+ * below it, and `TcpCognitionTransport` treats a remaining budget below it as spent.
+ * Held in one place so raising the floor cannot leave the transport still passing a
+ * value the socket treats as infinite.
+ */
+internal const val MIN_SOCKET_TIMEOUT_MILLIS = 1L
+
+/**
  * How the body reaches the mind.
  *
  * @param host where the cognition service listens. Loopback by default: the mind
@@ -50,11 +82,11 @@ data class CognitionSettings(
         // the property this class exists to guarantee - an unbounded wait, from
         // settings that read as the tightest possible bound - so the floor is
         // checked here rather than discovered as a hung worker.
-        require(connectTimeout.inWholeMilliseconds >= MIN_TIMEOUT_MILLIS) {
-            "connectTimeout ($connectTimeout) must be at least ${MIN_TIMEOUT_MILLIS}ms, or it narrows to a " +
-                "socket timeout of zero, which means no connect timeout at all"
+        require(connectTimeout.inWholeMilliseconds >= MIN_SOCKET_TIMEOUT_MILLIS) {
+            "connectTimeout ($connectTimeout) must be at least ${MIN_SOCKET_TIMEOUT_MILLIS}ms, or it narrows " +
+                "to a socket timeout of zero, which means no connect timeout at all"
         }
-        require(readTimeout.inWholeMilliseconds >= MIN_TIMEOUT_MILLIS) {
+        require(readTimeout.inWholeMilliseconds >= MIN_SOCKET_TIMEOUT_MILLIS) {
             "timeout ($timeout) is too short: its read timeout ($readTimeout) narrows to a socket timeout of " +
                 "zero, which means an unbounded read - the opposite of bounding the wait"
         }
@@ -74,25 +106,19 @@ data class CognitionSettings(
      * bridge deadline, or a worker stays busy after its caller has already been
      * failed and later requests are refused as saturated while capacity actually
      * existed.
+     *
+     * This is a budget, not a socket setting. A socket timeout bounds one read
+     * syscall, so a mind dripping bytes without a newline would restart it forever;
+     * `TcpCognitionTransport` therefore spends [ATTEMPTS_PER_ASK] of this number as a
+     * wall-clock deadline over the *read* side of a whole `ask`, both reads of its one
+     * retry included. The connect legs are still bounded by [connectTimeout] rather
+     * than by that deadline, which is why the arithmetic here has to reserve room for
+     * them. Read that transport before changing it - the number here is only a bound
+     * because that side enforces it as one.
      */
     val readTimeout: Duration get() = (timeout - (connectTimeout * ATTEMPTS_PER_ASK)) / ATTEMPTS_PER_ASK
 
     private companion object {
         const val MAX_PORT = 65_535
-
-        /**
-         * Shortest timeout that survives narrowing to a socket's whole-millisecond
-         * field, where zero means "no timeout".
-         */
-        const val MIN_TIMEOUT_MILLIS = 1
-
-        /**
-         * How many connect-and-read attempts one `ask` may make.
-         *
-         * Two, because the transport retries once on a connection that broke before
-         * its request was written. Raising the retry count means raising this, or
-         * the read budget silently stops covering an `ask`.
-         */
-        const val ATTEMPTS_PER_ASK = 2
     }
 }
