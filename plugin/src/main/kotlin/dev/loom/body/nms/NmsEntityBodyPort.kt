@@ -21,6 +21,7 @@ import dev.loom.body.BodySpawnResult
 import dev.loom.body.IntentOutcome
 import dev.loom.body.Mortality
 import dev.loom.body.WorldFootprint
+import dev.loom.body.describe
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
@@ -135,10 +136,20 @@ class NmsEntityBodyPort(
     override fun apply(
         agentId: AgentId,
         intent: Intent,
+        requestId: String?,
     ): IntentOutcome {
+        // Nothing is journaled for a body that is gone: the loss belongs to whoever
+        // asked, and for a decision that is BodyEvent.DECISION_DISCARDED, which carries
+        // the provenance of the decision that was lost. Recording it here too would
+        // double-record every such decision.
         val body = bodies[agentId] ?: return IntentOutcome.NoSuchBody
         val outcome = body.applyIntent(intent)
-        journal.record(agentId, BodyEvent.INTENT_APPLIED, "${describe(intent)} -> ${describe(outcome)}")
+        journal.record(
+            agentId,
+            BodyEvent.INTENT_APPLIED,
+            "${describe(intent)} -> ${describe(outcome)}",
+            requestId,
+        )
         return outcome
     }
 
@@ -148,7 +159,12 @@ class NmsEntityBodyPort(
     ): Perception? {
         val body = bodies[agentId] ?: return null
         val perception = capturePerception(agentId, body, trigger, currentTick())
-        journal.record(agentId, BodyEvent.PERCEIVED, "${perception.surroundings.size} observation(s)")
+        journal.record(
+            agentId,
+            BodyEvent.PERCEIVED,
+            "${perception.surroundings.size} observation(s)",
+            perception.requestId,
+        )
         return perception
     }
 

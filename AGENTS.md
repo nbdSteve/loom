@@ -121,6 +121,13 @@ Importance is classified above the body port by `importanceOf` (`Importance.kt`)
 `EmbodiedCognition` is the only place the two ports meet - perceive on the main thread, decide off it, apply back on it through the `MainThread` port.
 `BodyPort.tick` still never invokes cognition; the contract has no per-tick `Trigger` and cognition is driven by events and by `/loombody think`.
 
+**A decision enters the research record from the applied path, and only from there.**
+`EmbodiedCognition.actOn` is the one place that holds the decision, the mind's stamp on it, and what the body did about it at the same time, so `DecisionJournal` writes `decided` there - before `apply`, so a run reads perception -> decision -> action - and `decisionDiscarded` when the body has gone in between.
+Provenance is *carried* from the `Decision`, never re-derived on this side, and the record is filed under Loom's own `AgentId` rather than the mind's echo of it.
+`requestId` is on all three records because several agents can think in one tick, so the join is by id and not by tick; `BodyPort.apply` takes one for that reason alone and defaults it to `null` for an intent no perception asked for.
+The invariant is one `intentApplied` *or* one `decisionDiscarded` per `decided`, which is why `NmsEntityBodyPort.apply` journals nothing on its `NoSuchBody` early return.
+`LoomPlugin.reportApplied` is an operator convenience for watching a round trip on a console, not the record.
+
 A decision reaching a body is proven three ways, in increasing fidelity: `EmbodiedCognitionTest` (fake mind, queue-draining `MainThread` that asserts which thread touched the body), `TcpCognitionTransportTest` (real socket, canonical fixture bytes as responses), and `LiveCognitionServiceTest` (the real Rust service).
 The last is opt-in via `LOOM_COGNITION_ADDR=host:port` so the default suite stays hermetic - `cargo run --bin loom-cognition`, then run the plugin tests with that variable set.
 CI's `bridge` job does exactly that and then greps the JUnit XML for `skipped="0"`, because a skipped opt-in test would otherwise make the job green while proving nothing.

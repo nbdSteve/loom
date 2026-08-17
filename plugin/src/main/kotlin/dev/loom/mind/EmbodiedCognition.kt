@@ -7,6 +7,10 @@
  * thread (it reads world state), cognition runs off it, and the decided intent is
  * applied back on it. Nothing else in Loom needs to know that dance.
  *
+ * It is also where a decision enters the run's durable record, because this is the
+ * one place that holds the decision, the provenance the mind stamped on it, and what
+ * the body did about it at the same time.
+ *
  * It is engine-free - it names `BodyPort`, `CognitionBridge`, and `MainThread`,
  * never a server type - so the whole round trip is testable with no server at
  * all.
@@ -27,8 +31,7 @@ import dev.loom.contract.Trigger
  * Both halves are kept because they answer different questions - the decision
  * carries the reasoning and provenance, the outcome says whether the body could
  * act on it - and a research record needs the pair. This is the
- * perception -> reasoning -> action -> result chain in one value, which is what
- * the append-only decision log will consume when it is built.
+ * perception -> reasoning -> action -> result chain in one value.
  */
 data class AppliedDecision(
     val decision: Decision,
@@ -42,6 +45,9 @@ data class AppliedDecision(
  * @param mind the cognition bridge. Called from the main thread but never waited
  *   on.
  * @param mainThread how a decision gets back to the main thread to be applied.
+ * @param journal where every decision is durably recorded. Not optional and not a
+ *   callback: a decision that reached a body without reaching the record would
+ *   leave a run unable to say why an agent acted.
  * @param onApplied called on the main thread once a decision has been applied.
  * @param onUnavailable called when the mind did not answer, so a lost decision
  *   is visible rather than silent. Called on the main thread, like [onApplied],
@@ -51,6 +57,7 @@ class EmbodiedCognition(
     private val bodies: BodyPort,
     private val mind: CognitionBridge,
     private val mainThread: MainThread,
+    private val journal: DecisionJournal,
     private val onApplied: (AppliedDecision) -> Unit = {},
     private val onUnavailable: (Perception, Throwable) -> Unit = { _, _ -> },
 ) {
@@ -94,10 +101,35 @@ class EmbodiedCognition(
                 if (decision == null) {
                     onUnavailable(perception, failure ?: missingBoth(perception))
                 } else {
-                    onApplied(AppliedDecision(decision, bodies.apply(agentId, decision.intent)))
+                    onApplied(actOn(agentId, decision))
                 }
             }
         }
+    }
+
+    /**
+     * Records [decision], asks [agentId]'s body to carry it out, and records the
+     * decision the body could no longer be asked for.
+     *
+     * The order is the record's: the decision is journaled before it is applied, so a
+     * run reads perception -> decision -> what the body did about it, in that order,
+     * however long the mind took. The request id goes to the body with the intent so
+     * the action's own record joins back to this decision.
+     */
+    private fun actOn(
+        agentId: AgentId,
+        decision: Decision,
+    ): AppliedDecision {
+        journal.decided(agentId, decision)
+        val outcome = bodies.apply(agentId, decision.intent, decision.requestId)
+        // Cognition is asynchronous, so an agent can die or cross a portal between
+        // perceiving and acting - which is the expected path for the events Loom exists
+        // to study, not an error. The body records nothing for a decision it never
+        // received, so the loss is recorded here or nowhere.
+        if (outcome == IntentOutcome.NoSuchBody) {
+            journal.discarded(agentId, decision)
+        }
+        return AppliedDecision(decision, outcome)
     }
 
     /**

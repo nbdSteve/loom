@@ -1,5 +1,6 @@
 package dev.loom.mind
 
+import dev.loom.body.BodyEventLog
 import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Intent
@@ -7,6 +8,15 @@ import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
 import dev.loom.contract.SelfState
 import dev.loom.contract.Trigger
+
+/**
+ * A journal whose records go nowhere, for the tests that are not about the record.
+ *
+ * Spelled out at every call site rather than defaulted in the class: a decision that
+ * reaches a body without reaching the record is the bug this whole seam exists to
+ * prevent, so forgetting the journal must not compile.
+ */
+fun silentJournal(): DecisionJournal = DecisionJournal(BodyEventLog { }, currentTick = { 0L })
 
 /** A perception with everything a test does not care about already filled in. */
 fun perception(

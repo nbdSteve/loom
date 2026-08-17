@@ -9,13 +9,18 @@
 package dev.loom.mind
 
 import dev.loom.body.AgentId
+import dev.loom.body.BodyEvent
+import dev.loom.body.BodyEventLog
+import dev.loom.body.BodyEventRecord
 import dev.loom.body.BodyLocation
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
 import dev.loom.body.IntentOutcome
+import dev.loom.body.describe
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
+import dev.loom.contract.Provenance
 import dev.loom.contract.Trigger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -73,16 +78,28 @@ private class FakeMainThread : MainThread {
     }
 }
 
+/** The tick a perception is captured on, and the later one its decision lands on. */
+private const val PERCEIVE_TICK = 100L
+private const val DECIDED_TICK = 140L
+
 /**
  * A body that records what was asked of it, and asserts which thread asked.
  *
  * [perceptions] is given the trigger, because a real body embeds the trigger it
  * was handed into the perception it produces - a double that dropped it would let
  * a classification bug pass unnoticed.
+ *
+ * It also writes the two event records a real body writes, from nothing but the ids
+ * it was handed, so a test can assert that a perception, the decision it caused, and
+ * the action that followed all join up. [present] tells it to behave as a body that
+ * has gone - died, or travelled through a portal - since its agent perceived.
  */
 private class RecordingBody(
     private val perceptions: (Trigger) -> Perception?,
     private val mainThread: () -> Thread?,
+    private val present: Boolean = true,
+    private val events: BodyEventLog = BodyEventLog { },
+    private val currentTick: () -> Long = { 0L },
 ) : BodyPort {
     val applied = mutableListOf<Intent>()
 
@@ -96,29 +113,48 @@ private class RecordingBody(
     override fun apply(
         agentId: AgentId,
         intent: Intent,
+        requestId: String?,
     ): IntentOutcome {
         assertEquals(
             mainThread(),
             Thread.currentThread(),
             "a decided intent must reach the body on the main thread and nowhere else",
         )
+        // A body that is gone records nothing, exactly as the adapter does: recording
+        // the loss belongs to the decision that was lost.
+        if (!present) return IntentOutcome.NoSuchBody
         applied.add(intent)
-        return IntentOutcome.Accepted("applied $intent")
+        val outcome = IntentOutcome.Accepted("applied $intent")
+        record(agentId, BodyEvent.INTENT_APPLIED, "${describe(intent)} -> ${describe(outcome)}", requestId)
+        return outcome
     }
 
     override fun perceive(
         agentId: AgentId,
         trigger: Trigger,
-    ): Perception? = perceptions(trigger)
+    ): Perception? =
+        perceptions(trigger)?.also {
+            record(agentId, BodyEvent.PERCEIVED, "${it.surroundings.size} observation(s)", it.requestId)
+        }
 
     override fun tick(tick: Long) = fail("cognition must never drive the tick")
 
     override fun liveBodies(): Set<AgentId> = fail("cognition does not enumerate bodies")
+
+    private fun record(
+        agentId: AgentId,
+        event: BodyEvent,
+        detail: String,
+        requestId: String?,
+    ) = events.append(BodyEventRecord(currentTick(), agentId.value, event, detail, requestId))
 }
 
 class EmbodiedCognitionTest {
     private val agent = AgentId("agent-alpha")
     private val main = FakeMainThread()
+
+    /** The server clock, advanced by hand so a decision can land after its perception. */
+    private var tick = PERCEIVE_TICK
 
     /** A body that always perceives [perception], whatever the trigger. */
     private fun bodyWith(perception: Perception?) = RecordingBody({ perception }, main::drainingThread)
@@ -128,6 +164,22 @@ class EmbodiedCognitionTest {
         val perceive = { trigger: Trigger -> perception(agentId = agent.value, trigger = trigger) }
         return RecordingBody(perceive, main::drainingThread)
     }
+
+    /** A body whose own records land in [records], alongside the journal's. */
+    private fun recordingBodyInto(
+        records: MutableList<BodyEventRecord>,
+        present: Boolean = true,
+    ) = RecordingBody(
+        { perception(agentId = agent.value) },
+        main::drainingThread,
+        present,
+        BodyEventLog { records.add(it) },
+        currentTick = { tick },
+    )
+
+    /** A real journal writing into [records], on the same clock as the body. */
+    private fun journalInto(records: MutableList<BodyEventRecord>) =
+        DecisionJournal(BodyEventLog { records.add(it) }, currentTick = { tick })
 
     /** The typed failure a handler was given, or a test failure if it was not one. */
     private fun typedFailure(thrown: Throwable): CognitionFailure =
@@ -144,6 +196,7 @@ class EmbodiedCognitionTest {
                 body,
                 mind = { p -> CompletableFuture.completedFuture(decisionFor(p, Intent.Say("hello"))) },
                 mainThread = main,
+                journal = silentJournal(),
                 onApplied = { applied.add(it) },
                 onUnavailable = { _, failure -> fail("unexpected failure: $failure") },
             )
@@ -179,7 +232,7 @@ class EmbodiedCognitionTest {
                 queueDepth = 1,
             )
         bridge.use {
-            EmbodiedCognition(body, bridge, main).submit(agent, captured)
+            EmbodiedCognition(body, bridge, main, silentJournal()).submit(agent, captured)
             // Drained from this thread, which is therefore "the main thread" as far
             // as the body is concerned; RecordingBody fails if apply arrives on the
             // bridge worker instead.
@@ -196,6 +249,7 @@ class EmbodiedCognitionTest {
                 bodyWith(null),
                 mind = { fail("a bodyless agent must never reach the mind: there is nothing to act with") },
                 mainThread = main,
+                journal = silentJournal(),
             )
 
         assertNull(cognition.consider(agent, Trigger.GoalReview))
@@ -220,6 +274,7 @@ class EmbodiedCognitionTest {
                 body,
                 bridge,
                 main,
+                silentJournal(),
                 onApplied = { fail("no decision was produced, so nothing may be applied") },
                 onUnavailable = { _, failure -> failures.add(failure) },
             ).submit(agent, captured)
@@ -242,6 +297,7 @@ class EmbodiedCognitionTest {
             // A transport-shaped lie: success, with nothing in it.
             mind = { CompletableFuture.completedFuture(null) },
             mainThread = main,
+            journal = silentJournal(),
             onApplied = { fail("there was no decision to apply") },
             onUnavailable = { _, failure -> failures.add(failure) },
         ).submit(agent, perception(agentId = agent.value))
@@ -269,6 +325,7 @@ class EmbodiedCognitionTest {
                     CompletableFuture.completedFuture(decisionFor(p))
                 },
                 mainThread = main,
+                journal = silentJournal(),
             )
 
         cognition.consider(agent, Trigger.Damaged(amount = 3L, source = "zombie"))
@@ -288,11 +345,98 @@ class EmbodiedCognitionTest {
                 queueDepth = 8,
             )
         bridge.use {
-            val cognition = EmbodiedCognition(body, bridge, main)
+            val cognition = EmbodiedCognition(body, bridge, main, silentJournal())
             repeat(5) { i -> cognition.submit(agent, perception(requestId = "req-$i", agentId = agent.value)) }
             main.drainUntil(5)
         }
         assertEquals(5, body.applied.size)
+    }
+
+    @Test
+    @DisplayName("a perception, the decision it caused and the action taken join up in the record")
+    fun theRecordIsOneChainPerRoundTrip() {
+        val records = mutableListOf<BodyEventRecord>()
+        val body = recordingBodyInto(records)
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p -> CompletableFuture.completedFuture(decisionFor(p, Intent.Say("hello"))) },
+                mainThread = main,
+                journal = journalInto(records),
+            )
+
+        cognition.consider(agent, Trigger.GoalReview)
+        // The mind took time, as a real one does: the decision lands on a later tick
+        // than the perception that prompted it.
+        tick = DECIDED_TICK
+        main.drain()
+
+        assertEquals(
+            listOf(BodyEvent.PERCEIVED, BodyEvent.DECIDED, BodyEvent.INTENT_APPLIED),
+            records.map { it.event },
+            "the record must read perception -> decision -> action, in that order",
+        )
+        assertEquals(
+            listOf("req-1", "req-1", "req-1"),
+            records.map { it.requestId },
+            "all three records must join by request id: several agents can think in one tick",
+        )
+        assertEquals(listOf(agent.value), records.map { it.agentId }.distinct())
+        assertEquals(listOf(PERCEIVE_TICK, DECIDED_TICK, DECIDED_TICK), records.map { it.tick })
+        assertEquals(
+            Provenance(tier = DecisionImportance.ROUTINE, model = "test-model", promptVersion = "test-v1"),
+            records[1].provenance,
+            "the decision record carries the stamp the mind put on it, whole",
+        )
+        // A perception and an action claim no model: only the decision was answered by one.
+        assertNull(records[0].provenance)
+        assertNull(records[2].provenance)
+    }
+
+    @Test
+    @DisplayName("a decision for a body that has gone is recorded, not silently dropped")
+    fun aDiscardedDecisionIsStillRecorded() {
+        val records = mutableListOf<BodyEventRecord>()
+        // A body that has died or crossed a portal since perceiving.
+        val body = recordingBodyInto(records, present = false)
+        val applied = mutableListOf<AppliedDecision>()
+        EmbodiedCognition(
+            body,
+            mind = { p -> CompletableFuture.completedFuture(decisionFor(p)) },
+            mainThread = main,
+            journal = journalInto(records),
+            onApplied = { applied.add(it) },
+        ).submit(agent, perception(agentId = agent.value))
+
+        main.drain()
+
+        assertEquals(IntentOutcome.NoSuchBody, applied.single().outcome)
+        assertEquals(
+            listOf(BodyEvent.DECIDED, BodyEvent.DECISION_DISCARDED),
+            records.map { it.event },
+            "a decision that could not be applied was still made and still billed",
+        )
+        val discarded = records.last()
+        assertEquals("req-1", discarded.requestId)
+        assertEquals("test-model", discarded.provenance?.model)
+    }
+
+    @Test
+    @DisplayName("a decision is recorded against the agent Loom asked about, not the one the answer names")
+    fun theRecordKeepsLoomsOwnAgentId() {
+        val records = mutableListOf<BodyEventRecord>()
+        EmbodiedCognition(
+            bodyWith(perception(agentId = agent.value)),
+            // A mind that answers about somebody else. The body it acts on is chosen by
+            // Loom, so the record must be filed the same way or the two disagree.
+            mind = { p -> CompletableFuture.completedFuture(decisionFor(p).copy(agentId = "agent-elsewhere")) },
+            mainThread = main,
+            journal = journalInto(records),
+        ).submit(agent, perception(agentId = agent.value))
+
+        main.drain()
+
+        assertEquals(agent.value, records.single().agentId)
     }
 
     @Test

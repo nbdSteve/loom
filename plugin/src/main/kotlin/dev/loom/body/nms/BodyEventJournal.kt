@@ -26,13 +26,20 @@ internal class BodyEventJournal(
     private val eventLog: BodyEventLog,
     private val currentTick: () -> Long,
 ) {
-    /** Stamps [event] for [agentId] with the current tick and appends it. */
+    /**
+     * Stamps [event] for [agentId] with the current tick and appends it.
+     *
+     * [requestId] names the perception the event answers, for the events that answer
+     * one - a perception and the action a decision about it produced. It stays absent
+     * on everything an agent does of its own accord.
+     */
     fun record(
         agentId: AgentId,
         event: BodyEvent,
         detail: String,
+        requestId: String? = null,
     ) {
-        eventLog.append(BodyEventRecord(currentTick(), agentId.value, event, detail))
+        eventLog.append(BodyEventRecord(currentTick(), agentId.value, event, detail, requestId))
     }
 
     /**

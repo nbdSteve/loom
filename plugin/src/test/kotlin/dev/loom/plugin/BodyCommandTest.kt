@@ -15,6 +15,7 @@ import dev.loom.contract.Trigger
 import dev.loom.mind.CognitionBridge
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.MainThread
+import dev.loom.mind.silentJournal
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
@@ -38,6 +39,7 @@ class BodyCommandTest {
             override fun apply(
                 agentId: AgentId,
                 intent: Intent,
+                requestId: String?,
             ): IntentOutcome = fail("a refused agent id must never reach the port")
 
             override fun perceive(
@@ -56,6 +58,7 @@ class BodyCommandTest {
             untouchable,
             mind = { fail("cognition must not be reached") },
             mainThread = { fail("nothing should be scheduled") },
+            journal = silentJournal(),
         )
 
     @Test
@@ -87,6 +90,7 @@ class BodyCommandTest {
                 body,
                 mind = FakeMind(Intent.Say("hello")),
                 mainThread = MainThread { scheduled.add(it) },
+                journal = silentJournal(),
             )
         val reported = mutableListOf<String>()
         val command = BodyCommand(body, mind) { reported.add(it) }
@@ -109,7 +113,8 @@ class BodyCommandTest {
     @DisplayName("think says so when the agent has no body, and does not consult the mind")
     fun thinkNeedsABody() {
         val body = SpyBody(perceives = false)
-        val command = BodyCommand(body, EmbodiedCognition(body, { fail("no body, no cognition") }, { })) { }
+        val mind = EmbodiedCognition(body, { fail("no body, no cognition") }, { }, silentJournal())
+        val command = BodyCommand(body, mind) { }
 
         assertEquals("no body for agent-alpha", command.reply(arrayOf("think", "agent-alpha"), null))
     }
@@ -127,7 +132,7 @@ class BodyCommandTest {
     @DisplayName("the reply names the tier the perception was classified at")
     fun thinkReportsTheTier() {
         val body = SpyBody()
-        val command = BodyCommand(body, EmbodiedCognition(body, FakeMind(Intent.Idle), { })) { }
+        val command = BodyCommand(body, EmbodiedCognition(body, FakeMind(Intent.Idle), { }, silentJournal())) { }
 
         val reply = command.reply(arrayOf("think", "agent-alpha"), null)
 
@@ -174,6 +179,7 @@ class BodyCommandTest {
         override fun apply(
             agentId: AgentId,
             intent: Intent,
+            requestId: String?,
         ): IntentOutcome {
             applied.add(intent)
             return IntentOutcome.Accepted("applied $intent")

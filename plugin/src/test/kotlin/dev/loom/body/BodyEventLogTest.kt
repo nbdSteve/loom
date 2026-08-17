@@ -1,10 +1,38 @@
 package dev.loom.body
 
+import dev.loom.contract.DecisionImportance
+import dev.loom.contract.LoomJson
+import dev.loom.contract.Provenance
+import kotlinx.serialization.decodeFromString
 import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import kotlin.io.path.readLines
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+
+/**
+ * The wire name every event is written under.
+ *
+ * Kept as a map so the test below can check it against the enum itself: a variant
+ * that reached the log without being named here would be a record no analysis of a
+ * run knows to look for.
+ */
+private val WIRE_NAMES =
+    mapOf(
+        BodyEvent.SPAWNED to "spawned",
+        BodyEvent.SPAWN_REJECTED to "spawnRejected",
+        BodyEvent.INTENT_APPLIED to "intentApplied",
+        BodyEvent.MOVED to "moved",
+        BodyEvent.PERCEIVED to "perceived",
+        BodyEvent.DECIDED to "decided",
+        BodyEvent.DECISION_DISCARDED to "decisionDiscarded",
+        BodyEvent.DESPAWNED to "despawned",
+        BodyEvent.DIED to "died",
+        BodyEvent.TRAVELLED to "travelled",
+        BodyEvent.CONVERTED to "converted",
+        BodyEvent.WORLD_LOADED to "worldLoaded",
+        BodyEvent.WORLD_HOLD_FAILED to "worldHoldFailed",
+    )
 
 /**
  * The append-only log is where every body metric comes from, so its two
@@ -31,21 +59,51 @@ class BodyEventLogTest {
 
     @Test
     fun `every event has a stable wire name so old logs stay readable`() {
-        val names =
-            BodyEvent.entries.map { event ->
-                BodyEventRecord(0, "a", event, "").toJsonLine()
-            }
-        assertTrue(names.any { it.contains(""""event":"spawned"""") })
-        assertTrue(names.any { it.contains(""""event":"spawnRejected"""") })
-        assertTrue(names.any { it.contains(""""event":"intentApplied"""") })
-        assertTrue(names.any { it.contains(""""event":"moved"""") })
-        assertTrue(names.any { it.contains(""""event":"perceived"""") })
-        assertTrue(names.any { it.contains(""""event":"despawned"""") })
-        assertTrue(names.any { it.contains(""""event":"died"""") })
-        assertTrue(names.any { it.contains(""""event":"travelled"""") })
-        assertTrue(names.any { it.contains(""""event":"converted"""") })
-        assertTrue(names.any { it.contains(""""event":"worldLoaded"""") })
-        assertTrue(names.any { it.contains(""""event":"worldHoldFailed"""") })
+        assertEquals(
+            BodyEvent.entries.toSet(),
+            WIRE_NAMES.keys,
+            "a new body event must be given its wire name here before it can reach a log",
+        )
+        for ((event, name) in WIRE_NAMES) {
+            // Also pins that a record claims nothing it has not got: the fields a
+            // perception-less event has no value for are absent, not null.
+            assertEquals(
+                """{"tick":0,"agentId":"a","event":"$name","detail":""}""",
+                BodyEventRecord(0, "a", event, "").toJsonLine(),
+            )
+        }
+    }
+
+    @Test
+    fun `a decision record carries the perception it answers and the provenance the mind stamped`() {
+        val record =
+            BodyEventRecord(
+                tick = 7,
+                agentId = "agent-ada",
+                event = BodyEvent.DECIDED,
+                detail = "idle: nothing worth doing",
+                requestId = "req-1",
+                provenance =
+                    Provenance(
+                        tier = DecisionImportance.NOTABLE,
+                        model = "test-model",
+                        promptVersion = "test-v1",
+                    ),
+            )
+
+        val line = record.toJsonLine()
+
+        assertTrue(line.none { it == '\n' }, "a record must occupy exactly one line")
+        assertEquals(
+            """{"tick":7,"agentId":"agent-ada","event":"decided","detail":"idle: nothing worth doing",""" +
+                """"requestId":"req-1","provenance":{"tier":"NOTABLE","model":"test-model",""" +
+                """"promptVersion":"test-v1"}}""",
+            line,
+        )
+        // Which model decided, and reacting to which perception, must come back out of
+        // the line as data: a run that had to parse rendered text for its provenance
+        // would not have a research record at all.
+        assertEquals(record, LoomJson.decodeFromString<BodyEventRecord>(line))
     }
 
     @Test

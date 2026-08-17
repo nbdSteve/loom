@@ -62,10 +62,17 @@ interface BodyPort {
      * out; the mind names an intent and never mutates world state itself. An
      * intent the adapter cannot act on yields [IntentOutcome.Unsupported] rather
      * than an exception.
+     *
+     * [requestId] is the perception this intent answers, so the record of the
+     * action joins the record of the decision that caused it. It is `null` for an
+     * intent no perception asked for - one Loom drove itself, from a command - and
+     * a record that claimed a request id it did not have would be worse than one
+     * without it.
      */
     fun apply(
         agentId: AgentId,
         intent: Intent,
+        requestId: String? = null,
     ): IntentOutcome
 
     /**

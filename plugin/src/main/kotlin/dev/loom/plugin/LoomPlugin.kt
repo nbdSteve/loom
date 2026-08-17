@@ -9,6 +9,7 @@
  */
 package dev.loom.plugin
 
+import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyPort
 import dev.loom.body.FileBodyEventLog
 import dev.loom.body.nms.NmsEntityBodyPort
@@ -16,6 +17,7 @@ import dev.loom.body.nms.bodyConversionSeam
 import dev.loom.mind.AppliedDecision
 import dev.loom.mind.AsyncCognitionBridge
 import dev.loom.mind.CognitionSettings
+import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.tcp.TcpCognitionTransport
 import org.bukkit.plugin.java.JavaPlugin
@@ -61,7 +63,7 @@ class LoomPlugin : JavaPlugin() {
             )
         bodyPort = port
 
-        val mind = connectMind(port)
+        val mind = connectMind(port, log)
 
         // Reported rather than ignored: a command missing from the descriptor would
         // otherwise leave the port with no driver and no sign of why.
@@ -108,7 +110,10 @@ class LoomPlugin : JavaPlugin() {
      * cognition was not up yet would make the body depend on the mind for its
      * existence, which is exactly backwards.
      */
-    private fun connectMind(bodies: BodyPort): EmbodiedCognition {
+    private fun connectMind(
+        bodies: BodyPort,
+        eventLog: BodyEventLog,
+    ): EmbodiedCognition {
         val settings = CognitionSettings()
         // The single line that binds a mind deployment.
         val wire =
@@ -137,6 +142,9 @@ class LoomPlugin : JavaPlugin() {
             bodies,
             async,
             BukkitMainThread(this),
+            // The same log the body writes to: one chain per agent, so a decision and
+            // the action it caused are read back together.
+            DecisionJournal(eventLog, currentTick = { server.currentTick.toLong() }),
             onApplied = ::reportApplied,
             onUnavailable = { perception, failure ->
                 logger.warning("no decision for ${perception.agentId} (request ${perception.requestId}): $failure")
@@ -148,9 +156,9 @@ class LoomPlugin : JavaPlugin() {
      * Logs one completed decision as the perception -> reasoning -> action -> result
      * chain it is.
      *
-     * A server-log line, not the research record: the durable append-only decision
-     * log is its own piece of work, and this exists so a round trip is visible from
-     * a console while driving the body by hand.
+     * An operator convenience, not the research record: the durable record is the
+     * append-only event log, written from the decision's own path. This exists so a
+     * round trip is visible from a console while driving the body by hand.
      */
     private fun reportApplied(applied: AppliedDecision) {
         val decision = applied.decision

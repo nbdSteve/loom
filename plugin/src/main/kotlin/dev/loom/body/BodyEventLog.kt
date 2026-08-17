@@ -3,8 +3,12 @@
  *
  * One JSON object per line, append-only, never rewritten - so a run's body
  * history is replayable and every metric derives from the log rather than from
- * separately-tracked counters. This mirrors the decision log's shape on the mind
- * side: a stamped, structured record of what happened and why.
+ * separately-tracked counters.
+ *
+ * The decision half of a round trip lands here too, on the same chain as the
+ * perception that prompted it and the action it caused: a decision recorded apart
+ * from what it did, or an action recorded apart from what decided it, leaves a run
+ * that cannot say why an agent acted.
  *
  * The log is part of the domain, not the adapter: any body flavor writes the
  * same records, so metrics stay comparable across flavors.
@@ -12,6 +16,7 @@
 package dev.loom.body
 
 import dev.loom.contract.LoomJson
+import dev.loom.contract.Provenance
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -23,6 +28,12 @@ import kotlinx.serialization.encodeToString
  * spawn location, the intent applied and its outcome, the despawn reason) as
  * already-rendered text, which keeps the record schema stable as new body events
  * are added.
+ *
+ * [requestId] and [provenance] are fields rather than prose because they are
+ * joined and counted across records - which perception an action answers, which
+ * model was billed for a run - and reading either back out of rendered text would
+ * make every such metric a parsing exercise. Both are absent from records that
+ * have neither, so a record only ever claims what it knows.
  */
 @Serializable
 data class BodyEventRecord(
@@ -34,6 +45,22 @@ data class BodyEventRecord(
     val event: BodyEvent,
     /** Event-specific summary, already rendered to text. */
     val detail: String,
+    /**
+     * The perception this record belongs to, when it belongs to one.
+     *
+     * Carried by the perception, the decision it produced, and the action the body
+     * took, so the three join by id rather than by tick - several agents can think
+     * in one tick, and one agent can have several decisions land in it.
+     */
+    val requestId: String? = null,
+    /**
+     * Which mind decided, at which tier, on which prompt version.
+     *
+     * Present on decision records only, and copied from the stamp the mind put on
+     * the decision - never re-derived on this side, since a body has no standing to
+     * say which model answered it.
+     */
+    val provenance: Provenance? = null,
 )
 
 /** The body events worth a durable record. */
@@ -53,6 +80,30 @@ enum class BodyEvent {
 
     @SerialName("perceived")
     PERCEIVED,
+
+    /**
+     * The mind answered a perception, and the body was about to be asked to act.
+     *
+     * The record the run is reconstructed from: it carries the perception it answers
+     * and the stamp of the model that answered, which together are the only durable
+     * evidence of *why* an agent did something. Written before the intent reaches the
+     * body, so each one is followed by exactly one [INTENT_APPLIED] or
+     * [DECISION_DISCARDED] with the same request id.
+     */
+    @SerialName("decided")
+    DECIDED,
+
+    /**
+     * A decision arrived for an agent whose body was gone, and could not be applied.
+     *
+     * Cognition is asynchronous, so between perceiving and acting an agent can die or
+     * cross a portal - the very events Loom exists to study. The decision was made and
+     * billed all the same, so it gets its own event name rather than a rendered phrase
+     * inside another one: how often the world outruns the mind is a number a run should
+     * be able to state without parsing text.
+     */
+    @SerialName("decisionDiscarded")
+    DECISION_DISCARDED,
 
     @SerialName("despawned")
     DESPAWNED,
