@@ -16,11 +16,16 @@ import dev.loom.body.nms.NmsEntityBodyPort
 import dev.loom.body.nms.bodyConversionSeam
 import dev.loom.mind.AppliedDecision
 import dev.loom.mind.AsyncCognitionBridge
+import dev.loom.mind.AutonomousDriver
 import dev.loom.mind.CognitionSettings
 import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
+import dev.loom.mind.GoalReviewSchedule
 import dev.loom.mind.tcp.TcpCognitionTransport
 import org.bukkit.plugin.java.JavaPlugin
+import org.bukkit.scheduler.BukkitTask
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.nanoseconds
 
 /** Name of the append-only body-event log inside the plugin's data folder. */
 private const val EVENT_LOG_FILE = "body-events.jsonl"
@@ -28,11 +33,15 @@ private const val EVENT_LOG_FILE = "body-events.jsonl"
 /** The command that drives the port. Must match the `commands:` key in plugin.yml. */
 private const val BODY_COMMAND = "loombody"
 
+/** Milliseconds in one server tick, for stating a schedule's period in ticks. */
+private const val MILLIS_PER_TICK = 50L
+
 class LoomPlugin : JavaPlugin() {
     private var eventLog: FileBodyEventLog? = null
     private var bodyPort: NmsEntityBodyPort? = null
     private var bridge: AsyncCognitionBridge? = null
     private var transport: TcpCognitionTransport? = null
+    private var autonomy: BukkitTask? = null
 
     override fun onEnable() {
         val log =
@@ -81,10 +90,18 @@ class LoomPlugin : JavaPlugin() {
         // Actuation runs every tick; cognition does not, and is not called here.
         server.scheduler.runTaskTimer(this, Runnable { port.tick(server.currentTick.toLong()) }, 1L, 1L)
 
+        driveAgents(port, mind)
+
         logger.info("Loom body port ready: server-side entity bodies")
     }
 
     override fun onDisable() {
+        // Stopped before the bridge it feeds: a sweep that ran after the bridge
+        // closed would perceive bodies only to fail every request, and one that ran
+        // after despawnAll would find no agents at all.
+        autonomy?.cancel()
+        autonomy = null
+
         // The transport goes first: closing its sockets is what releases a worker
         // parked in a read, so the pool shutdown that follows is prompt even when
         // the mind has stopped answering.
@@ -150,6 +167,33 @@ class LoomPlugin : JavaPlugin() {
                 logger.warning("no decision for ${perception.agentId} (request ${perception.requestId}): $failure")
             },
         )
+    }
+
+    /**
+     * Starts the loop that has agents think and act with nobody driving them.
+     *
+     * The cadence itself is the schedule's, not this file's - see
+     * `DEFAULT_GOAL_REVIEW_CADENCE`. All that happens here is the one conversion an
+     * engine-free schedule cannot do: its slice becomes a Bukkit timer period, in
+     * ticks, rounded up so a slice can never collapse into "every tick".
+     */
+    private fun driveAgents(
+        bodies: BodyPort,
+        mind: EmbodiedCognition,
+    ) {
+        val schedule = GoalReviewSchedule()
+        // Monotonic: a cadence is elapsed time, and a wall clock stepping backwards
+        // would stop every agent thinking until it caught up again.
+        val driver = AutonomousDriver(bodies, mind, schedule) { System.nanoTime().nanoseconds }
+        val period = ticks(schedule.slice)
+        autonomy = server.scheduler.runTaskTimer(this, Runnable { driver.sweep() }, period, period)
+        logger.info("Loom autonomy running: each agent reviews its goals every ${schedule.cadence}")
+    }
+
+    /** [duration] as a whole number of server ticks, never rounded down to zero. */
+    private fun ticks(duration: Duration): Long {
+        val whole = (duration.inWholeMilliseconds + MILLIS_PER_TICK - 1) / MILLIS_PER_TICK
+        return maxOf(1L, whole)
     }
 
     /**

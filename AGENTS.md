@@ -119,7 +119,14 @@ Three subtleties are load-bearing:
 
 Importance is classified above the body port by `importanceOf` (`Importance.kt`), not by the body and not by the mind: the body reports what happened, and what that costs is this side's call.
 `EmbodiedCognition` is the only place the two ports meet - perceive on the main thread, decide off it, apply back on it through the `MainThread` port.
-`BodyPort.tick` still never invokes cognition; the contract has no per-tick `Trigger` and cognition is driven by events and by `/loombody think`.
+`BodyPort.tick` still never invokes cognition; the contract has no per-tick `Trigger`, and `BodyBoundaryTest` forbids `dev.loom.body..` from depending on `dev.loom.mind..` at all, so the tick path cannot reach a mind even by accident.
+
+**Agents drive themselves, on a schedule that is policy rather than plumbing.**
+`AutonomousDriver` sweeps on its own Bukkit timer - never off the per-tick body timer - and asks `GoalReviewSchedule` whose turn it is; both are engine-free, so the cadence and the stagger are pinned by unit tests with a fake clock.
+The one knob is `DEFAULT_GOAL_REVIEW_CADENCE`, and the sweep period is *derived* from it (`GoalReviewSchedule.slice`): sweep at any other rate and the per-slice share silently stops meaning one review per agent per cadence.
+The cadence is a floor, so observed spacing is the cadence plus up to one slice - in world, 2500 ticks for a 2400-tick cadence, which is the design rather than drift.
+A never-reviewed agent is due at once, which is what keeps a single-agent demo watchable at a conservative cadence.
+The driver is cancelled explicitly in `onDisable`, before the bridge it feeds closes.
 
 **A decision enters the research record from the applied path, and only from there.**
 `EmbodiedCognition.actOn` is the one place that holds the decision, the mind's stamp on it, and what the body did about it at the same time, so `DecisionJournal` writes `decided` there - before `apply`, so a run reads perception -> decision -> action - and `decisionDiscarded` when the body has gone in between.
@@ -138,6 +145,8 @@ Gates do not cover in-world behavior; a body change is not done until it has bee
 Build the jar (`./gradlew shadowJar`), drop it into a Paper 1.21.1 server's `plugins/`, and drive it with `/loombody spawn|move|perceive|think|despawn|list`.
 `think` is the round trip and needs `loom-cognition` running; the reply only confirms the perception was sent, and the decision appears in the server log a moment later with its model and prompt version.
 Verify from a **client's** point of view rather than from the plugin's own log: a body that moves server-side only, or that a vanilla client cannot render, looks identical in the log to one that works.
+A client is not optional even for a headless run: `spawn` places the body where the *sender* stands, so it refuses the console, and a scripted client on an offline-mode server (a mineflayer bot will do) both issues the commands and reports what a player would actually see.
+Watching autonomy move a body needs a mind that decides a move: `ScriptedBackend` answers a goal review with `idle`, so a self-driving agent perceives, decides and applies on cadence while standing perfectly still - point the plugin at a stand-in mind that replies `moveTo` if motion is what is being checked.
 Dimension travel needs a lit portal and a body walked into it (`/loombody move`), then a `travelled` record and a rendering body on the far side; the driving client must be opped, since `/loombody` is gated on `loom.body` (`default: op`).
 Losing that gate is silent - the command keeps working for the op who tests it - so `PluginDescriptorTest` pins the shipped descriptor, and `plugin.yml` records why at the key itself.
 Check the *count* of `travelled` records, not just their presence - one round trip is two, and a bouncing body is the failure this most easily hides.

@@ -8,6 +8,55 @@ import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
 import dev.loom.contract.SelfState
 import dev.loom.contract.Trigger
+import org.junit.jupiter.api.Assertions.assertEquals
+import java.util.concurrent.ConcurrentLinkedQueue
+import kotlin.time.Duration.Companion.seconds
+
+/** How long a test waits on a background thread before failing rather than hanging. */
+val PATIENCE = 5.seconds
+
+/**
+ * A `MainThread` a test drains by hand, standing in for the server's scheduler.
+ *
+ * Tasks are queued and never run inline, exactly like `runTask`, so a test can
+ * assert both that a decision waited for the main thread and that it ran on it.
+ */
+class FakeMainThread : MainThread {
+    private val queue = ConcurrentLinkedQueue<() -> Unit>()
+
+    /** The thread that drains the queue: whatever last called [drain]. */
+    @Volatile
+    var drainingThread: Thread? = null
+        private set
+
+    val pending: Int get() = queue.size
+
+    override fun execute(task: () -> Unit) {
+        queue.add(task)
+    }
+
+    /** Runs everything queued so far, as one "tick". Returns how many ran. */
+    fun drain(): Int {
+        drainingThread = Thread.currentThread()
+        var ran = 0
+        while (true) {
+            val task = queue.poll() ?: return ran
+            task()
+            ran++
+        }
+    }
+
+    /** Drains until [expected] tasks have run, failing rather than hanging. */
+    fun drainUntil(expected: Int) {
+        val deadline = System.nanoTime() + PATIENCE.inWholeNanoseconds
+        var ran = 0
+        while (ran < expected && System.nanoTime() < deadline) {
+            ran += drain()
+            if (ran < expected) Thread.sleep(1)
+        }
+        assertEquals(expected, ran, "expected $expected main-thread task(s)")
+    }
+}
 
 /**
  * A journal whose records go nowhere, for the tests that are not about the record.

@@ -29,54 +29,7 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.fail
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
-
-private val PATIENCE = 5.seconds
-
-/**
- * A `MainThread` a test drains by hand, standing in for the server's scheduler.
- *
- * Tasks are queued and never run inline, exactly like `runTask`, so a test can
- * assert both that a decision waited for the main thread and that it ran on it.
- */
-private class FakeMainThread : MainThread {
-    private val queue = ConcurrentLinkedQueue<() -> Unit>()
-
-    /** The thread that drains the queue: whatever last called [drain]. */
-    @Volatile
-    var drainingThread: Thread? = null
-        private set
-
-    val pending: Int get() = queue.size
-
-    override fun execute(task: () -> Unit) {
-        queue.add(task)
-    }
-
-    /** Runs everything queued so far, as one "tick". Returns how many ran. */
-    fun drain(): Int {
-        drainingThread = Thread.currentThread()
-        var ran = 0
-        while (true) {
-            val task = queue.poll() ?: return ran
-            task()
-            ran++
-        }
-    }
-
-    /** Drains until [expected] tasks have run, failing rather than hanging. */
-    fun drainUntil(expected: Int) {
-        val deadline = System.nanoTime() + PATIENCE.inWholeNanoseconds
-        var ran = 0
-        while (ran < expected && System.nanoTime() < deadline) {
-            ran += drain()
-            if (ran < expected) Thread.sleep(1)
-        }
-        assertEquals(expected, ran, "expected $expected main-thread task(s)")
-    }
-}
 
 /** The tick a perception is captured on, and the later one its decision lands on. */
 private const val PERCEIVE_TICK = 100L

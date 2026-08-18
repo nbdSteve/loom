@@ -23,10 +23,6 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
-
-/** How long a test waits for something that should happen promptly. */
-private val PATIENCE = 5.seconds
 
 /** A deadline short enough that a test can wait out a timeout. */
 private val SHORT_DEADLINE = 150.milliseconds

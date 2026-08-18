@@ -110,6 +110,26 @@ class BodyBoundaryTest {
     }
 
     @Test
+    fun theBodySideCannotReachCognitionAtAll() {
+        // Which is what keeps `tick` incapable of thinking. Actuation runs every
+        // tick and cognition is event-driven; a body that could call a mind would
+        // make one inference per agent per tick reachable by an ordinary-looking
+        // edit, and the contract has no per-tick Trigger to make that legible.
+        // Cognition is driven from above the port instead - see AutonomousDriver.
+        noClasses()
+            .that()
+            .resideInAPackage("dev.loom.body..")
+            .should()
+            .dependOnClassesThat()
+            .resideInAPackage("dev.loom.mind..")
+            .because(
+                "the body reports what happened and applies what was decided; it " +
+                    "never decides, and BodyPort.tick must stay actuation only",
+            )
+            .check(plugin)
+    }
+
+    @Test
     fun everyBodyPortImplementationLivesInAnAdapterPackage() {
         classes()
             .that()
