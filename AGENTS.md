@@ -95,12 +95,28 @@ The plugin ships with the stable `plugin.yml` descriptor, not `paper-plugin.yml`
 ## The mind, and the bridge to it
 
 `cognition/crates/cognition` is the mind: it accepts a `Perception` and returns a routed, provenance-stamped `Decision`.
-Four pieces, each its own module - `router` (tier to model), `model` (the backend seam), `mind` (compose and stamp), `server`/`wire` (newline-delimited JSON over TCP).
-`ScriptedBackend` is a deliberate stub: what this slice proves is the routing structure and the contract round-trip, not model quality, and a real backend is a new `ModelBackend` plus one changed line in `main.rs`.
+Five pieces, each its own module - `router` (tier to model), `model` (the backend seam), `openai` (the one real backend), `mind` (compose and stamp), `server`/`wire` (newline-delimited JSON over TCP).
+`ScriptedBackend` is still the default, so a fresh checkout runs with no credentials and both suites stay hermetic, but it is the fallback rather than the state of the art: `LOOM_COGNITION_BACKEND=openai` selects real inference, and `cognition/README.md` is the operator documentation for every setting it reads.
+A misspelled backend name stops the service instead of falling back, because scripted decisions look real in the log until someone reads their provenance.
 
 **Provenance is stamped by `Mind::decide`, never by a backend.** `ModelRoute` has private fields whose only constructor is `route(importance)`, so a decision cannot claim a model it was not routed to; `mind.rs`'s `LyingBackend` test pins that.
 Routing is total over `DecisionImportance` with no default branch - a new tier will not compile until its model is chosen, because a tier silently defaulting is how routine traffic reaches a frontier model.
 The refusal frame `{"error":...}` is deliberately **not** a contract type: a mind that could not answer has not decided anything, and inventing an `Intent` for it would put a fiction in the decision record.
+
+**No failure out of `openai` may carry the prompt or the credential, and that is the module's main design constraint rather than a habit.**
+Four defences hold it, and each is easy to undo by being helpful: the credential exists only as an already-sensitive default header; the provider's error `message` is *not deserialized at all* (only its short `type`/`code` are repeated, bounded), so no code path can start logging it later; a malformed answer is reported as a `serde_json` category plus line and column, never as text, because a model answer can quote back the perception it was given; and `reqwest`'s own `Display` is used only for the residual transport case, via `root_cause`, where request data has never been.
+`tests/openai_provider.rs` sweeps every provider failure path against a credential marker and a prompt marker at once, so a leak added later fails there.
+
+**The answer's shape is enforced by a strict `json_schema`, and that schema is the one thing here that can silently fall behind the contract.**
+It mirrors the contract's `Intent` union by hand, so a new variant would compile everywhere and simply never be chosen - the provider would refuse to emit an action the schema does not list.
+`tests/openai_request_schema.rs` therefore pins it against `contract/fixtures/valid/decision-*.json` in both directions, and adding a contract case (which already means adding a fixture) fails it until the request schema follows.
+Strict mode also forbids `minItems`/`maxItems`/`oneOf`, so `moveTo`'s three coordinates are enforced by the contract type instead and arrive as a bounded malformed-answer error.
+
+Three more sharp edges in `openai`, none of them guessable from the code:
+
+- **The timeout chain spans both runtimes**: `LOOM_OPENAI_TIMEOUT_MS` (12s) < the body's `readTimeout` (14.5s) < the body's bridge `timeout` (30s). The mind's bounded "the provider did not answer" only reaches an operator if the body is still waiting for it; `CognitionSettingsTest` pins the ordering from the JVM side, restating 12s because the two runtimes share a contract and not a configuration. Moving one means moving all three.
+- **`max_completion_tokens`, and no `temperature`.** The current models refuse `max_tokens` outright and accept only the default temperature, and a request refused at the API is a decision an agent does not get. The token bound is deliberately loose because reasoning models spend hidden tokens from the same budget and running out arrives as a *truncated answer*, not an error.
+- **Nothing in the mind retries** - see the at-most-once note below. `http` base URLs are allowed only on loopback, which is what makes the crate's own mock provider possible without ever letting a credential cross a network in the clear.
 
 On the JVM side `dev.loom.mind` is the port and is engine-free by rule (`MindBoundaryTest`), with `dev.loom.mind.tcp` the one transport adapter.
 Three properties are the whole point of `AsyncCognitionBridge` and each has a test that fails if it is lost: `submit` never runs cognition, every request has a deadline, and back pressure is an explicit `Saturated` failure rather than an unbounded queue.
@@ -138,6 +154,10 @@ The invariant is one `intentApplied` *or* one `decisionDiscarded` per `decided`,
 A decision reaching a body is proven three ways, in increasing fidelity: `EmbodiedCognitionTest` (fake mind, queue-draining `MainThread` that asserts which thread touched the body), `TcpCognitionTransportTest` (real socket, canonical fixture bytes as responses), and `LiveCognitionServiceTest` (the real Rust service).
 The last is opt-in via `LOOM_COGNITION_ADDR=host:port` so the default suite stays hermetic - `cargo run --bin loom-cognition`, then run the plugin tests with that variable set.
 CI's `bridge` job does exactly that and then greps the JUnit XML for `skipped="0"`, because a skipped opt-in test would otherwise make the job green while proving nothing.
+
+The provider path is proven the same way, one layer further out: `tests/openai_provider.rs` drives the whole mind against a hand-rolled HTTP/1.1 mock on an ephemeral loopback port.
+It is hand-rolled rather than a mocking crate because several of the failures worth pinning - a provider that never answers, one that sends more than Loom will read - are socket behavior, and a mock that is not a socket cannot express them.
+**No test may reach the live provider, and no test file may contain a credential**; the mock asserts nothing itself, since a panic on its spawned task surfaces at the client as a dropped connection rather than as the assertion message.
 
 ## Verifying a body change
 

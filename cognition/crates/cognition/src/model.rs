@@ -2,19 +2,30 @@
 //!
 //! A backend is handed a resolved [`ModelRoute`] and a bounded [`Perception`]
 //! and returns the two things a model contributes to a decision: an [`Intent`]
-//! and the reasoning for it. It does not build the [`Decision`] - provenance
-//! stamping belongs to the mind, so a backend cannot misreport which model
-//! answered.
+//! and the reasoning for it. It does not build the [`loom_contract::Decision`] -
+//! provenance stamping belongs to the mind, so a backend cannot misreport which
+//! model answered.
 //!
-//! [`ScriptedBackend`] is the stand-in used until real inference is wired in.
-//! It is deliberately not a fake in the test sense: it runs in the shipped
-//! service, so the path under test is the real one. What it lacks is inference,
-//! not structure - it maps a trigger to a sensible intent by rule and has no
-//! spatial reasoning at all, which its own comments say plainly rather than
-//! implying a competence it does not have.
+//! [`ModelBackend::draft`] is async because the interesting implementations talk
+//! to something over a network. It is an `impl Future` rather than a boxed one:
+//! the mind is generic over its backend, never `dyn`, so nothing needs erasing
+//! and no allocation per decision is needed. `+ Send` is part of the signature
+//! because the service spawns a task per connection.
+//!
+//! [`ScriptedBackend`] is the deterministic stand-in. It is deliberately not a
+//! fake in the test sense: it runs in the shipped service - it is what
+//! `LOOM_COGNITION_BACKEND=scripted` selects - so the path under test is the real
+//! one. What it lacks is inference, not structure. It maps a trigger to a
+//! sensible intent by rule and has no spatial reasoning at all, which its own
+//! comments say plainly rather than implying a competence it does not have, and
+//! it names itself [`SCRIPTED_MODEL_ID`] in provenance rather than borrowing the
+//! name of a model that never saw the perception.
+
+use std::future::Future;
 
 use loom_contract::{Intent, Perception, Trigger};
 
+use crate::config::{bounded, ConfigError, Env};
 use crate::router::ModelRoute;
 
 /// The half of a decision a model produces: what to do, and why.
@@ -34,10 +45,25 @@ pub struct Draft {
 ///
 /// A backend failure must degrade one agent's decision, never the service, so
 /// this is a returned value and never a panic.
+///
+/// The message reaches the body in a refusal frame and the server log, so it is
+/// held to the same rule as any other outside-facing string: it names what went
+/// wrong and never carries a credential or the prompt. Building one from provider
+/// output means passing that output through [`crate::config::bounded`] first.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BackendError {
     /// Human-readable description, safe to log.
     pub message: String,
+}
+
+impl BackendError {
+    /// A failure described by `message`.
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for BackendError {
@@ -56,13 +82,84 @@ pub trait ModelBackend: Send + Sync {
     /// Drafts an intent and its reasoning for `perception`, at `route`.
     ///
     /// `route` is passed rather than the raw importance so a backend cannot
-    /// pick its own model: the tier has already been resolved.
+    /// pick its own model: the tier has already been resolved, and the model id
+    /// to ask for is on the route.
     ///
     /// # Errors
     ///
     /// Returns [`BackendError`] if no draft could be produced. The caller turns
     /// that into a failed request for one agent and keeps serving.
-    fn draft(&self, route: ModelRoute, perception: &Perception) -> Result<Draft, BackendError>;
+    fn draft(
+        &self,
+        route: &ModelRoute,
+        perception: &Perception,
+    ) -> impl Future<Output = Result<Draft, BackendError>> + Send;
+}
+
+/// Environment variable naming which backend answers.
+pub const BACKEND_VAR: &str = "LOOM_COGNITION_BACKEND";
+
+/// The model id [`ScriptedBackend`] stamps on its decisions.
+///
+/// Not the name of any model, on purpose. Provenance is the research record's
+/// claim about what produced a decision, so the stand-in has to be identifiable
+/// as the stand-in - a scripted decision labelled with a real model's name would
+/// be a false entry in that record, and nothing downstream could tell.
+pub const SCRIPTED_MODEL_ID: &str = "scripted-stand-in";
+
+/// Which backend the runtime answers with.
+///
+/// The default is [`BackendChoice::Scripted`], so a checkout with no credentials
+/// configured runs. An unrecognised value is a startup failure rather than a
+/// quiet fall back to the default: an operator who asked for a real model and
+/// misspelled it should be told, not served scripted decisions that look real in
+/// the log until someone reads the provenance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackendChoice {
+    /// The deterministic stand-in. No credentials, no network, no inference.
+    Scripted,
+    /// The `OpenAI` API. See [`crate::openai`].
+    OpenAi,
+}
+
+impl BackendChoice {
+    /// What [`BACKEND_VAR`] means when it is not set.
+    pub const DEFAULT: &'static str = "scripted";
+
+    /// The values [`BackendChoice::from_env`] accepts, for error messages and
+    /// for the operator documentation to quote.
+    pub const ACCEPTED: &'static str = "'scripted' or 'openai'";
+
+    /// Reads the choice from `env`.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::NotAChoice`] if [`BACKEND_VAR`] names something else, or
+    /// [`ConfigError::Blank`] if it is set to nothing.
+    pub fn from_env<F>(env: &Env<F>) -> Result<Self, ConfigError>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let raw = env.or_default(BACKEND_VAR, Self::DEFAULT)?;
+        match raw.to_ascii_lowercase().as_str() {
+            "scripted" => Ok(Self::Scripted),
+            "openai" => Ok(Self::OpenAi),
+            _ => Err(ConfigError::NotAChoice {
+                var: BACKEND_VAR,
+                value: bounded(&raw),
+                accepted: Self::ACCEPTED,
+            }),
+        }
+    }
+
+    /// The choice's name, as configuration spells it.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Scripted => "scripted",
+            Self::OpenAi => "openai",
+        }
+    }
 }
 
 /// The furthest a world coordinate can be from the origin, in blocks.
@@ -84,7 +181,7 @@ const SIGHTED_STEP_BLOCKS: i64 = 2;
     clippy::cast_possible_truncation,
     reason = "the clamp above bounds the value well inside i64, and floor() removes the fraction"
 )]
-fn block_coord(value: f64) -> i64 {
+pub(crate) fn block_coord(value: f64) -> i64 {
     if value.is_nan() {
         return 0;
     }
@@ -94,14 +191,20 @@ fn block_coord(value: f64) -> i64 {
 /// The deterministic stand-in backend: a rule per trigger, no inference.
 ///
 /// It exists so the routing structure and the contract round-trip can be real
-/// before any model credentials are. Swapping in real inference is a different
-/// [`ModelBackend`] and one changed construction line in `main`.
+/// without credentials, which is what keeps the hermetic test suite and CI's
+/// cross-runtime round trip honest. Selecting real inference instead is
+/// `LOOM_COGNITION_BACKEND=openai`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ScriptedBackend;
 
-impl ModelBackend for ScriptedBackend {
-    fn draft(&self, route: ModelRoute, perception: &Perception) -> Result<Draft, BackendError> {
-        let draft = match &perception.trigger {
+impl ScriptedBackend {
+    /// The scripted rule, without the async wrapper.
+    ///
+    /// Kept synchronous and separate so the rules can be read and tested as what
+    /// they are - a table from trigger to intent - with no runtime involved.
+    #[must_use]
+    pub fn draft_now(route: &ModelRoute, perception: &Perception) -> Draft {
+        match &perception.trigger {
             Trigger::Spoken { from, text } => Draft {
                 intent: Intent::Say {
                     text: format!("Hello, {from}."),
@@ -143,8 +246,19 @@ impl ModelBackend for ScriptedBackend {
                     tier = route.tier()
                 ),
             },
-        };
-        Ok(draft)
+        }
+    }
+}
+
+impl ModelBackend for ScriptedBackend {
+    fn draft(
+        &self,
+        route: &ModelRoute,
+        perception: &Perception,
+    ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
+        // Ready rather than `async fn`: there is nothing to await, and a future
+        // that is already complete says so to its caller.
+        std::future::ready(Ok(Self::draft_now(route, perception)))
     }
 }
 
@@ -152,9 +266,16 @@ impl ModelBackend for ScriptedBackend {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{block_coord, ModelBackend, ScriptedBackend, WORLD_LIMIT_BLOCKS};
-    use crate::router::route;
+    use super::{
+        block_coord, BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, WORLD_LIMIT_BLOCKS,
+    };
+    use crate::config::{ConfigError, Env};
+    use crate::router::{ModelCatalog, Router};
     use loom_contract::{DecisionImportance, Intent, Perception, SelfState, Trigger};
+
+    fn router() -> Router {
+        Router::new(ModelCatalog::uniform("scripted-stand-in"))
+    }
 
     fn perception(trigger: Trigger, importance: DecisionImportance) -> Perception {
         Perception {
@@ -172,8 +293,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_threat_makes_the_body_flee_its_source() {
+    fn env_of(
+        pairs: &'static [(&'static str, &'static str)],
+    ) -> Env<impl Fn(&str) -> Option<String>> {
+        Env::new(move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_owned())
+        })
+    }
+
+    #[tokio::test]
+    async fn a_threat_makes_the_body_flee_its_source() {
         let seen = perception(
             Trigger::Damaged {
                 amount: 6,
@@ -182,7 +314,8 @@ mod tests {
             DecisionImportance::Pivotal,
         );
         let draft = ScriptedBackend
-            .draft(route(seen.importance), &seen)
+            .draft(&router().route(seen.importance), &seen)
+            .await
             .expect("the stand-in backend always drafts");
         assert_eq!(
             draft.intent,
@@ -208,11 +341,10 @@ mod tests {
             },
             Trigger::GoalReview,
         ];
+        let router = router();
         for trigger in triggers {
             let seen = perception(trigger.clone(), DecisionImportance::Routine);
-            let draft = ScriptedBackend
-                .draft(route(seen.importance), &seen)
-                .expect("the stand-in backend always drafts");
+            let draft = ScriptedBackend::draft_now(&router.route(seen.importance), &seen);
             assert!(
                 !draft.reasoning.is_empty(),
                 "every decision must carry reasoning, {trigger:?} did not"
@@ -228,9 +360,7 @@ mod tests {
             },
             DecisionImportance::Routine,
         );
-        let draft = ScriptedBackend
-            .draft(route(seen.importance), &seen)
-            .expect("the stand-in backend always drafts");
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
         assert_eq!(
             draft.intent,
             Intent::MoveTo {
@@ -252,5 +382,42 @@ mod tests {
         assert!(block_coord(f64::INFINITY) > 0);
         assert!(block_coord(f64::NEG_INFINITY) < 0);
         assert_eq!(block_coord(-8.25), -9);
+    }
+
+    #[test]
+    fn an_unconfigured_runtime_answers_with_the_stand_in() {
+        let env = env_of(&[]);
+        assert_eq!(
+            BackendChoice::from_env(&env).unwrap(),
+            BackendChoice::Scripted
+        );
+    }
+
+    #[test]
+    fn a_backend_can_be_named_in_any_case() {
+        let named = |value| BackendChoice::from_env(&env_of(value)).unwrap();
+        assert_eq!(named(&[(BACKEND_VAR, "scripted")]), BackendChoice::Scripted);
+        assert_eq!(named(&[(BACKEND_VAR, "SCRIPTED")]), BackendChoice::Scripted);
+        assert_eq!(named(&[(BACKEND_VAR, "openai")]), BackendChoice::OpenAi);
+        assert_eq!(named(&[(BACKEND_VAR, "OpenAI")]), BackendChoice::OpenAi);
+    }
+
+    #[test]
+    fn a_misspelled_backend_stops_the_service_rather_than_falling_back() {
+        let env = env_of(&[(BACKEND_VAR, "opeanai")]);
+        assert_eq!(
+            BackendChoice::from_env(&env),
+            Err(ConfigError::NotAChoice {
+                var: BACKEND_VAR,
+                value: "opeanai".to_owned(),
+                accepted: BackendChoice::ACCEPTED,
+            })
+        );
+    }
+
+    #[test]
+    fn a_backend_choice_names_itself_as_configuration_spells_it() {
+        assert_eq!(BackendChoice::Scripted.label(), BackendChoice::DEFAULT);
+        assert_eq!(BackendChoice::OpenAi.label(), "openai");
     }
 }

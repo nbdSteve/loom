@@ -142,7 +142,7 @@ async fn handle_connection<B: ModelBackend>(stream: TcpStream, mind: &Mind<B>) -
                 return Ok(());
             }
             Frame::Line(request) => {
-                let response = answer(mind, request.trim_end());
+                let response = answer(mind, request.trim_end()).await;
                 write_line(&mut write_half, &response).await?;
             }
         }
@@ -191,7 +191,13 @@ async fn read_frame<R: AsyncBufRead + Unpin>(reader: &mut R) -> io::Result<Frame
 ///
 /// Split out from the socket handling so the whole request-to-response path is
 /// testable without a network.
-fn answer<B: ModelBackend>(mind: &Mind<B>, request: &str) -> String {
+///
+/// Requests on one connection are answered in order, so a real backend's latency
+/// is serialized per connection. That is the body's to manage, not this side's:
+/// the bridge owns concurrency and gives every request a deadline, and answering
+/// out of order here would break the newline-delimited framing the contract is
+/// carried in.
+async fn answer<B: ModelBackend>(mind: &Mind<B>, request: &str) -> String {
     if request.is_empty() {
         return encode_error("empty request line");
     }
@@ -199,7 +205,7 @@ fn answer<B: ModelBackend>(mind: &Mind<B>, request: &str) -> String {
         Ok(perception) => perception,
         Err(reason) => return encode_error(&reason),
     };
-    match mind.decide(&perception) {
+    match mind.decide(&perception).await {
         Ok(decision) => match encode_decision(&decision) {
             Ok(line) => line,
             Err(e) => encode_error(&format!("decision could not be encoded: {e}")),
@@ -223,21 +229,28 @@ mod tests {
         UNTERMINATED,
     };
     use crate::mind::Mind;
-    use crate::model::ScriptedBackend;
+    use crate::model::{ScriptedBackend, SCRIPTED_MODEL_ID};
+    use crate::router::{ModelCatalog, Router};
     use crate::wire::WireError;
     use loom_contract::{Decision, Intent};
     use std::io;
 
     const SPOKEN_PERCEPTION: &str = r#"{"requestId":"req-spoken-1","agentId":"agent-alpha","trigger":{"event":"spoken","from":"player-steve","text":"want to trade?"},"importance":"NOTABLE","capturedTick":1024,"selfState":{"health":20.0,"position":[10.5,64.0,-8.25],"inventorySummary":[]},"surroundings":[]}"#;
 
+    fn scripted_mind() -> Mind<ScriptedBackend> {
+        Mind::new(
+            Router::new(ModelCatalog::uniform(SCRIPTED_MODEL_ID)),
+            ScriptedBackend,
+        )
+    }
+
     fn refusal(line: &str) -> WireError {
         serde_json::from_str(line).expect("a refusal decodes as an error frame")
     }
 
-    #[test]
-    fn a_perception_line_is_answered_with_a_decision_line() {
-        let mind = Mind::new(ScriptedBackend);
-        let response = answer(&mind, SPOKEN_PERCEPTION);
+    #[tokio::test]
+    async fn a_perception_line_is_answered_with_a_decision_line() {
+        let response = answer(&scripted_mind(), SPOKEN_PERCEPTION).await;
         let decision: Decision = serde_json::from_str(&response).expect("the answer is a Decision");
         assert_eq!(decision.request_id, "req-spoken-1");
         assert_eq!(
@@ -246,20 +259,23 @@ mod tests {
                 text: "Hello, player-steve.".to_owned()
             }
         );
-        assert_eq!(decision.provenance.model, "claude-sonnet-5");
+        // The stand-in names itself, so nothing in the research record claims a
+        // model that never saw this perception.
+        assert_eq!(decision.provenance.model, SCRIPTED_MODEL_ID);
     }
 
-    #[test]
-    fn a_malformed_request_is_refused_rather_than_answered_with_a_decision() {
-        let mind = Mind::new(ScriptedBackend);
-        let response = answer(&mind, "{not json");
+    #[tokio::test]
+    async fn a_malformed_request_is_refused_rather_than_answered_with_a_decision() {
+        let response = answer(&scripted_mind(), "{not json").await;
         assert!(refusal(&response).error.contains("not a valid Perception"));
     }
 
-    #[test]
-    fn an_empty_request_line_is_refused() {
-        let mind = Mind::new(ScriptedBackend);
-        assert_eq!(refusal(&answer(&mind, "")).error, "empty request line");
+    #[tokio::test]
+    async fn an_empty_request_line_is_refused() {
+        assert_eq!(
+            refusal(&answer(&scripted_mind(), "").await).error,
+            "empty request line"
+        );
     }
 
     #[tokio::test]

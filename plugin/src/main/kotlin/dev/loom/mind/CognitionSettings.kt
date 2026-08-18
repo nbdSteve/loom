@@ -54,7 +54,14 @@ internal const val MIN_SOCKET_TIMEOUT_MILLIS = 1L
  * @param timeout how long a request may take before the caller's future is
  *   failed. Generous relative to a tick because it is not on the tick path at
  *   all - the point of the bridge is that this number cannot cost the server
- *   anything.
+ *   anything. Sized against a real model rather than against a stub: the mind
+ *   waits up to 12s for one provider call (`LOOM_OPENAI_TIMEOUT_MS`) and then
+ *   answers with a bounded, actionable "the provider did not answer", so the
+ *   body has to still be waiting for that answer to be worth anything. 30s
+ *   leaves [readTimeout] at 14.5s, which is the middle number that ordering
+ *   needs. Shortening this without shortening the mind's own timeout puts the
+ *   body's socket first and turns every provider stall into the far less useful
+ *   "the mind did not reply".
  * @param connectTimeout how long to wait for the connection itself. Short: a mind
  *   that is not listening should be known immediately, not at the request
  *   deadline.
@@ -64,7 +71,7 @@ internal const val MIN_SOCKET_TIMEOUT_MILLIS = 1L
 data class CognitionSettings(
     val host: String = "127.0.0.1",
     val port: Int = 8642,
-    val timeout: Duration = 5.seconds,
+    val timeout: Duration = 30.seconds,
     val connectTimeout: Duration = 500.milliseconds,
     val workers: Int = 4,
     val queueDepth: Int = 64,

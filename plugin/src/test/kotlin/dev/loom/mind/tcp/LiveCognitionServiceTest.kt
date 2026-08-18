@@ -26,6 +26,7 @@ import dev.loom.mind.perception
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -66,6 +67,7 @@ class LiveCognitionServiceTest {
                 Trigger.Damaged(amount = 4L, source = "zombie"),
             )
         val modelsByTier = mutableMapOf<DecisionImportance, MutableSet<String>>()
+        val promptsByTier = mutableMapOf<DecisionImportance, MutableSet<String>>()
 
         transport.use {
             bridge.use {
@@ -87,21 +89,62 @@ class LiveCognitionServiceTest {
                     assertNotEquals(null, decision.intent as Intent?)
 
                     modelsByTier.getOrPut(sent.importance) { mutableSetOf() }.add(decision.provenance.model)
+                    promptsByTier
+                        .getOrPut(sent.importance) { mutableSetOf() }
+                        .add(decision.provenance.promptVersion)
                 }
             }
         }
 
-        // Collected first, asserted after, so the check does not depend on the order
-        // the triggers happened to be sent in. The rule being pinned is the expensive
-        // one to get wrong: whatever model answers a pivotal decision must not be the
-        // model answering routine traffic.
-        val frontier = modelsByTier[DecisionImportance.PIVOTAL].orEmpty()
-        for ((tier, models) in modelsByTier.filterKeys { it != DecisionImportance.PIVOTAL }) {
-            assertEquals(
-                emptySet<String>(),
-                models intersect frontier,
-                "a $tier decision reached the frontier model",
-            )
+        // Collected during the exchange, judged after it, so the rules below do not
+        // depend on the order the triggers happened to be sent in.
+        assertRoutedByTier(modelsByTier, promptsByTier)
+    }
+
+    /**
+     * The rules the whole set of answers has to satisfy together.
+     *
+     * Separate from the exchange because these are statements about the record, not
+     * about the socket: given what every tier was answered with, they hold or they do
+     * not, and no live service is needed to read them.
+     */
+    private fun assertRoutedByTier(
+        modelsByTier: Map<DecisionImportance, Set<String>>,
+        promptsByTier: Map<DecisionImportance, Set<String>>,
+    ) {
+        // Routing is a function of the tier and of nothing else, so a tier answers
+        // with one model and one prompt version however many perceptions it is sent.
+        for ((tier, models) in modelsByTier) {
+            assertEquals(1, models.size, "one model must answer every $tier decision, saw $models")
         }
+        for ((tier, versions) in promptsByTier) {
+            assertEquals(1, versions.size, "one prompt must shape every $tier decision, saw $versions")
+        }
+
+        // The tiering a live service can always be held to from this side: the tier
+        // reached the prompt, so no two tiers share a prompt version. Two tiers may
+        // legitimately share a model, as below; they may never share a prompt.
+        val versions = promptsByTier.values.flatten()
+        assertEquals(
+            versions.size,
+            versions.toSet().size,
+            "each tier must carry its own prompt version, saw $promptsByTier",
+        )
+
+        // The expensive rule to get wrong: whatever model answers a pivotal decision
+        // must not be the model answering routine traffic. Stated as a disjunction
+        // rather than skipped, because the default service runs the scripted stand-in,
+        // which is not a model at all and honestly names itself at both classes. So a
+        // service configured with more than one model must keep the frontier one for
+        // PIVOTAL, and a service naming one thing must name it everywhere. Held
+        // against a chosen catalog in cognition/crates/cognition/src/router.rs.
+        val everyModel = modelsByTier.values.flatten().toSet()
+        val frontier = modelsByTier[DecisionImportance.PIVOTAL].orEmpty()
+        val elsewhere =
+            modelsByTier.filterKeys { it != DecisionImportance.PIVOTAL }.values.flatten().toSet()
+        assertTrue(
+            everyModel.size == 1 || (elsewhere intersect frontier).isEmpty(),
+            "a routine decision reached the frontier model: frontier=$frontier, elsewhere=$elsewhere",
+        )
     }
 }

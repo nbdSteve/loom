@@ -34,6 +34,25 @@ class CognitionSettingsTest {
     }
 
     @Test
+    @DisplayName("the default deadline outlasts the mind's own wait for a model")
+    fun theDefaultDeadlineLeavesTheMindRoomToAnswer() {
+        // A cross-runtime ordering no single side can check. The mind gives one
+        // provider call 12s and then reports a bounded "the provider did not answer",
+        // naming the setting to raise. That answer only reaches an operator if the
+        // body is still waiting for it, so the body's read must give up second.
+        // Restated here rather than read from the mind, because the two runtimes
+        // share a contract and not a configuration; the Rust default it mirrors is
+        // DEFAULT_TIMEOUT_MS in cognition/crates/cognition/src/openai/settings.rs.
+        val mindWaitsForTheProvider = 12.seconds
+        val settings = CognitionSettings()
+        assertTrue(
+            settings.readTimeout > mindWaitsForTheProvider,
+            "readTimeout ${settings.readTimeout} must outlast the mind's own $mindWaitsForTheProvider, " +
+                "or a stalled provider is reported as a stalled mind",
+        )
+    }
+
+    @Test
     @DisplayName("a connect timeout that could eat the whole deadline is refused")
     fun aConnectTimeoutMustFitInsideTheDeadline() {
         assertThrows<IllegalArgumentException> {

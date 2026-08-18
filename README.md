@@ -39,9 +39,9 @@ an agent whose body dies in-world is gone for good and is never embodied again.
 And living agents hold the world loaded around themselves, so a world with no
 human players keeps ticking and a body's removal always means a real death.
 
-The minds are connected now.
-A body's perception travels to the Rust cognition service over newline-delimited JSON, and the decision that comes back is applied to that body.
+The minds are connected now, and they are real models.
+A body's perception travels to the Rust cognition service over newline-delimited JSON, the mind routes it by importance to one of two configured models, and the decision that comes back is applied to that body.
 Agents drive themselves: each reviews its goals on its own on a cadence, with nobody asking it to, and `/loombody think` still triggers a round trip on demand.
-The scripted stand-in is still here, but it is now only the model backend inside the mind rather than a substitute for cognition itself.
-So what is proven today is the body, its port, and the bridge between them; what remains stubbed is model quality, reachable as one `ModelBackend` implementation and one changed line in `main.rs`.
-See `AGENTS.md` for build, test, and gate commands, and for the sharp edges around the engine seam.
+Every decision carries the model that made it and the prompt version that shaped it, stamped from the route rather than claimed by the backend.
+The scripted stand-in is still here and is still the default, so a fresh checkout runs with no credentials and the test suites stay hermetic; real inference is one setting away.
+See `cognition/README.md` for backend selection, the credential, and both model tiers, and `AGENTS.md` for build, test, and gate commands and for the sharp edges around the engine seam.

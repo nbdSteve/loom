@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use loom_cognition::mind::Mind;
 use loom_cognition::model::ScriptedBackend;
+use loom_cognition::router::{ModelCatalog, Router};
 use loom_cognition::server::serve;
 use loom_contract::{Decision, DecisionImportance, Perception};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -41,6 +42,16 @@ fn perception_fixtures() -> Vec<PathBuf> {
     files
 }
 
+/// The id the fixture service answers the fast class with.
+///
+/// Distinct from [`DEEP_MODEL`] on purpose: the assertion below, that a routine
+/// perception is not answered by the deep model, is a real check only where the
+/// two classes name two different things.
+const FAST_MODEL: &str = "fixture-fast-model";
+
+/// The id the fixture service answers the deep class with.
+const DEEP_MODEL: &str = "fixture-deep-model";
+
 /// Starts the service on an ephemeral port and returns the address it bound.
 ///
 /// The task is left running for the test's lifetime; the process exits with it.
@@ -48,7 +59,8 @@ async fn start_service() -> SocketAddr {
     let (ready_tx, ready_rx) = oneshot::channel();
     tokio::spawn(async move {
         let any_port = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
-        serve(any_port, Mind::new(ScriptedBackend), move |bound| {
+        let router = Router::new(ModelCatalog::new(FAST_MODEL, DEEP_MODEL));
+        serve(any_port, Mind::new(router, ScriptedBackend), move |bound| {
             let _ = ready_tx.send(bound);
         })
         .await
@@ -109,9 +121,9 @@ async fn every_shared_perception_fixture_gets_a_routed_decision_over_a_socket() 
         assert!(!decision.provenance.model.is_empty());
         assert!(!decision.provenance.prompt_version.is_empty());
         if sent.importance == DecisionImportance::Routine {
-            assert!(
-                !loom_cognition::router::is_frontier(&decision.provenance.model),
-                "a routine perception must never be answered by the frontier model"
+            assert_eq!(
+                decision.provenance.model, FAST_MODEL,
+                "a routine perception must never be answered by the deep model"
             );
         }
     }

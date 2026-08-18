@@ -7,6 +7,11 @@
 //! lets the backend say which model answered, which is what keeps provenance
 //! trustworthy.
 //!
+//! The [`Router`] is held rather than reached for, because the model ids it names
+//! are configuration: a mind wired to the `OpenAI` backend routes to the models that
+//! backend was configured with, and a mind wired to the stand-in routes to the
+//! stand-in's own name. Provenance therefore stays true whichever is running.
+//!
 //! Cognition is event-driven: one [`Perception`] is one triggering event. The
 //! contract has no per-tick trigger, so there is no path by which a tick could
 //! arrive here.
@@ -14,17 +19,27 @@
 use loom_contract::{Decision, Perception, Provenance};
 
 use crate::model::{BackendError, ModelBackend};
-use crate::router::route;
+use crate::router::Router;
 
 /// Turns perceptions into decisions, routing each to a model by importance.
 pub struct Mind<B: ModelBackend> {
+    router: Router,
     backend: B,
 }
 
 impl<B: ModelBackend> Mind<B> {
-    /// Builds a mind that drafts through `backend`.
-    pub fn new(backend: B) -> Self {
-        Self { backend }
+    /// Builds a mind that routes with `router` and drafts through `backend`.
+    ///
+    /// The two belong together: the router names the models the backend can
+    /// actually answer with. Pairing a router with a backend that does not serve
+    /// those models would stamp provenance nobody could reproduce.
+    pub const fn new(router: Router, backend: B) -> Self {
+        Self { router, backend }
+    }
+
+    /// The router this mind stamps provenance from.
+    pub const fn router(&self) -> &Router {
+        &self.router
     }
 
     /// Decides for `perception`.
@@ -38,9 +53,9 @@ impl<B: ModelBackend> Mind<B> {
     ///
     /// Returns [`BackendError`] if the backend could not draft. One failed
     /// decision degrades one agent; the service keeps serving.
-    pub fn decide(&self, perception: &Perception) -> Result<Decision, BackendError> {
-        let routed = route(perception.importance);
-        let draft = self.backend.draft(routed, perception)?;
+    pub async fn decide(&self, perception: &Perception) -> Result<Decision, BackendError> {
+        let routed = self.router.route(perception.importance);
+        let draft = self.backend.draft(&routed, perception).await?;
         Ok(Decision {
             request_id: perception.request_id.clone(),
             agent_id: perception.agent_id.clone(),
@@ -59,10 +74,19 @@ impl<B: ModelBackend> Mind<B> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+    use std::future::Future;
+
     use super::Mind;
     use crate::model::{BackendError, Draft, ModelBackend, ScriptedBackend};
-    use crate::router::{is_frontier, ModelRoute};
+    use crate::router::{ModelCatalog, ModelRoute, Router};
     use loom_contract::{DecisionImportance, Intent, Perception, SelfState, Trigger};
+
+    const FAST: &str = "a-small-model";
+    const DEEP: &str = "a-large-model";
+
+    fn router() -> Router {
+        Router::new(ModelCatalog::new(FAST, DEEP))
+    }
 
     /// A backend that misreports what it is: it names a model in its reasoning
     /// and hands back an intent unrelated to the perception. Used to show the
@@ -72,13 +96,13 @@ mod tests {
     impl ModelBackend for LyingBackend {
         fn draft(
             &self,
-            _route: ModelRoute,
+            _route: &ModelRoute,
             _perception: &Perception,
-        ) -> Result<Draft, BackendError> {
-            Ok(Draft {
+        ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
+            std::future::ready(Ok(Draft {
                 intent: Intent::Idle,
-                reasoning: "answered by definitely-not-the-routed-model".to_owned(),
-            })
+                reasoning: format!("answered by {DEEP}, honestly"),
+            }))
         }
     }
 
@@ -88,12 +112,12 @@ mod tests {
     impl ModelBackend for BrokenBackend {
         fn draft(
             &self,
-            _route: ModelRoute,
+            _route: &ModelRoute,
             _perception: &Perception,
-        ) -> Result<Draft, BackendError> {
-            Err(BackendError {
+        ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
+            std::future::ready(Err(BackendError {
                 message: "model unreachable".to_owned(),
-            })
+            }))
         }
     }
 
@@ -116,18 +140,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_decision_echoes_the_perception_it_answers() {
-        let mind = Mind::new(ScriptedBackend);
+    #[tokio::test]
+    async fn a_decision_echoes_the_perception_it_answers() {
+        let mind = Mind::new(router(), ScriptedBackend);
         let seen = perception(DecisionImportance::Notable);
-        let decided = mind.decide(&seen).expect("the stand-in backend decides");
+        let decided = mind
+            .decide(&seen)
+            .await
+            .expect("the stand-in backend decides");
         assert_eq!(decided.request_id, seen.request_id);
         assert_eq!(decided.agent_id, seen.agent_id);
     }
 
-    #[test]
-    fn every_decision_is_stamped_with_the_model_and_prompt_that_produced_it() {
-        let mind = Mind::new(ScriptedBackend);
+    #[tokio::test]
+    async fn every_decision_is_stamped_with_the_model_and_prompt_that_produced_it() {
+        let mind = Mind::new(router(), ScriptedBackend);
         for tier in [
             DecisionImportance::Routine,
             DecisionImportance::Notable,
@@ -135,6 +162,7 @@ mod tests {
         ] {
             let decided = mind
                 .decide(&perception(tier))
+                .await
                 .expect("the stand-in backend decides");
             assert_eq!(decided.provenance.tier, tier);
             assert!(!decided.provenance.model.is_empty());
@@ -142,31 +170,36 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_routine_decision_is_never_stamped_with_the_frontier_model() {
-        let mind = Mind::new(ScriptedBackend);
+    #[tokio::test]
+    async fn a_routine_decision_is_never_stamped_with_the_deep_model() {
+        let mind = Mind::new(router(), ScriptedBackend);
         let decided = mind
             .decide(&perception(DecisionImportance::Routine))
+            .await
             .expect("the stand-in backend decides");
-        assert!(!is_frontier(&decided.provenance.model));
+        assert_eq!(decided.provenance.model, FAST);
     }
 
-    #[test]
-    fn provenance_comes_from_the_route_not_from_the_backend() {
-        let mind = Mind::new(LyingBackend);
+    #[tokio::test]
+    async fn provenance_comes_from_the_route_not_from_the_backend() {
+        let mind = Mind::new(router(), LyingBackend);
         let decided = mind
             .decide(&perception(DecisionImportance::Routine))
+            .await
             .expect("the lying backend still drafts");
-        // Whatever the backend claimed, the stamp names the routed model.
-        assert!(!is_frontier(&decided.provenance.model));
+        // The backend claimed the deep model in its reasoning; the stamp names
+        // the model the route actually chose, which is the only claim the
+        // research record carries.
+        assert!(decided.reasoning.contains(DEEP));
+        assert_eq!(decided.provenance.model, FAST);
         assert_eq!(decided.provenance.tier, DecisionImportance::Routine);
         assert_eq!(decided.provenance.prompt_version, "routine-v1");
     }
 
-    #[test]
-    fn a_failing_backend_yields_an_error_rather_than_a_decision() {
-        let mind = Mind::new(BrokenBackend);
-        let failed = mind.decide(&perception(DecisionImportance::Notable));
+    #[tokio::test]
+    async fn a_failing_backend_yields_an_error_rather_than_a_decision() {
+        let mind = Mind::new(router(), BrokenBackend);
+        let failed = mind.decide(&perception(DecisionImportance::Notable)).await;
         assert_eq!(
             failed.err().map(|e| e.message),
             Some("model unreachable".to_owned())

@@ -1,0 +1,126 @@
+# loom-cognition
+
+The mind: it accepts a bounded `Perception` over the Loom contract and returns a routed, provenance-stamped `Decision`.
+
+Run it, and the body reaches it over newline-delimited JSON on a TCP socket:
+
+```sh
+cargo run --bin loom-cognition
+```
+
+It prints what it will answer with before it starts answering:
+
+```
+loom-cognition backend=openai fast=gpt-5-mini deep=gpt-5 (https://api.openai.com/v1/chat/completions, 12000ms timeout, 2048 token answers)
+loom-cognition listening on 127.0.0.1:8642
+```
+
+That line is the fastest way to tell a running service apart from another one, and it never carries the credential.
+
+## Choosing a backend
+
+`LOOM_COGNITION_BACKEND` selects which model backend answers, and it is the only switch that changes what a decision is worth.
+
+| Value | What answers | Needs a credential |
+| --- | --- | --- |
+| `scripted` (default) | A deterministic stand-in. No network, no inference. | No |
+| `openai` | The OpenAI API, at the two configured model tiers. | Yes |
+
+The default is `scripted` on purpose, and it is the safe local and test fallback:
+a fresh checkout runs with no credentials at all, the whole test suite is hermetic, and CI's cross-runtime round trip proves the wire without buying an inference.
+Use it whenever what you are working on is the contract, the bridge, or the body, and use `openai` when what you are working on is decision quality.
+
+A misspelled value stops the service at startup rather than falling back to `scripted`.
+An operator who asked for a real model and got scripted decisions would have no way to tell from the log until someone read the provenance of a decision, so the failure is made loud instead.
+
+## Settings
+
+Every setting is read once, at startup. A mistake in any of them exits non-zero with a message naming the variable, because a mind with no reachable model has nothing to offer any agent and should not look healthy while offering it.
+
+### The credential
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | none - required for `openai` | The API credential. |
+
+Named as OpenAI's own tooling names it, so a host that already has a working `OPENAI_API_KEY` needs nothing else.
+It is read from the process environment, it is never written to a file by Loom, and it is never logged:
+it lives only as an HTTP header value marked sensitive, so no `Debug` output and no error message can carry it.
+Set it in your shell or your service manager's environment, and keep it out of the repository.
+
+A value with a trailing newline is trimmed, since `export OPENAI_API_KEY=$(cat secret)` is the usual way a credential looks present and is rejected by the provider.
+
+### The model tiers
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LOOM_OPENAI_FAST_MODEL` | `gpt-5-mini` | Answers routine and notable decisions. |
+| `LOOM_OPENAI_DEEP_MODEL` | `gpt-5` | Answers pivotal decisions. |
+
+Loom classifies every perception into an importance tier on the body's side, and the mind routes that tier to one of these two models.
+Nearly every decision an agent takes is routine or notable, which is why the fast model is the small one; the deep model exists for the decisions an agent may not survive, and Loom is permadeath, so that is the one tier where the expensive answer is the cheap one.
+
+Both are settings rather than choices in the code.
+Nothing in the routing rule knows which model it names, so moving a tier to a different model - or pointing both at the same one - takes no code change.
+
+### The provider
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LOOM_OPENAI_BASE_URL` | `https://api.openai.com/v1` | API root. `/chat/completions` is appended. |
+| `LOOM_OPENAI_TIMEOUT_MS` | `12000` | Longest one provider call may take. |
+| `LOOM_OPENAI_MAX_OUTPUT_TOKENS` | `2048` | Most tokens one answer may cost. |
+
+`LOOM_OPENAI_BASE_URL` accepts `https` anywhere and `http` only on loopback, so a compatible provider on the same host is reachable for development while a credential cannot be sent in the clear across a network.
+User info in the URL (a `user:pass@` before the host) is refused under both schemes, because its only effect would be to make the host you read differ from the host the request reaches.
+
+`LOOM_OPENAI_TIMEOUT_MS` is part of an ordering that spans both runtimes:
+
+> this timeout (12s) < the body's `readTimeout` (14.5s) < the body's bridge `timeout` (30s)
+
+The mind answers "the model provider at ... did not answer within 12000ms; raise `LOOM_OPENAI_TIMEOUT_MS`" - bounded, and naming the setting to raise - but only if the body is still waiting to hear it.
+Raising this means raising both of the others, in `dev.loom.mind.CognitionSettings`.
+
+`LOOM_OPENAI_MAX_OUTPUT_TOKENS` is not tight, deliberately: reasoning models spend hidden reasoning tokens out of the same budget, and running out arrives as a truncated answer rather than as a clear error.
+If decisions start failing as cut off, this is the setting to raise.
+
+### The socket
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LOOM_COGNITION_ADDR` | `127.0.0.1:8642` | Where the service listens. |
+
+Loopback by default: the mind trusts whatever sends it a perception, so reaching it off the host should take saying so.
+
+## What a failure looks like
+
+The mind either decides or refuses, and a refusal is one line naming the setting an operator would change:
+
+```
+{"error":"cognition failed: the model provider rejected Loom's credential (HTTP 401, invalid_request_error/invalid_api_key); check OPENAI_API_KEY"}
+{"error":"cognition failed: the model provider does not know the model 'gpt-5-mimi' (HTTP 404, model_not_found); check LOOM_OPENAI_FAST_MODEL and LOOM_OPENAI_DEEP_MODEL"}
+{"error":"cognition failed: the model provider is rate limiting Loom (HTTP 429, rate_limit_error), retry after 20; this decision was not made"}
+{"error":"cognition failed: the model's answer was cut off at 2048 tokens; raise LOOM_OPENAI_MAX_OUTPUT_TOKENS"}
+```
+
+Three properties of that frame are load-bearing rather than cosmetic:
+
+- **No refusal carries the prompt or the credential.** The provider's own error `message` is the one field that can quote back what was sent, so it is not even read; only its short `type` and `code` are repeated. A malformed answer is reported as a category and a position, never as text.
+- **A refusal is not a decision.** `{"error":...}` is deliberately outside the contract: a mind that could not answer has not decided anything, and inventing an idle `Intent` for it would put a fiction in the permanent decision record.
+- **Nothing is retried.** One perception is at most one inference. The body's transport retries only up to the point where its request is written, precisely so a single perception can never be billed twice, and the mind holds the other half of that bargain. A lost decision is cheaper than a duplicated one.
+
+## Testing
+
+The suite is hermetic and credential-free, and it must stay that way: no test reaches the live OpenAI service.
+
+```sh
+cargo fmt --all --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test
+```
+
+Three levels cover the provider path:
+
+- `src/openai/` unit tests, over the classification of every status and every malformed answer.
+- `tests/openai_provider.rs`, which drives the whole mind against a mock provider on loopback - success, both tiers, 401/404/429/503, silence, an unreachable port, refusal, a cut-off answer, an oversized body - and sweeps every failure path for leaked credentials and prompts.
+- `tests/openai_request_schema.rs`, which holds the schema Loom asks a model to answer in against the shared contract fixtures, so a new `Intent` variant fails until the request schema lists it.
+
+To exercise a real credential, run the service yourself and drive it from the body with `/loombody think`; the decision appears in the server log with its model and prompt version.
