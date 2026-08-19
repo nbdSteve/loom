@@ -15,11 +15,17 @@
       "description": "The bounded self-state the body chose to reveal. Owned primitives only, so the mind cannot reach back into world state through it.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["health", "position", "inventorySummary"],
+      "required": ["health", "energy", "position", "inventorySummary"],
       "properties": {
         "health": {
           "description": "Current health of the agent's body.",
           "type": "number"
+        },
+        "energy": {
+          "description": "How much of the agent's energy reserve is left, as a fraction: 1.0 is a full reserve and 0.0 is exhaustion, which is fatal. It is a fraction rather than a count of ticks so the mind never has to know how long a reserve lasts.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
         },
         "position": {
           "description": "World position [x, y, z]. Continuous coordinates.",
@@ -180,6 +186,16 @@
           "properties": {
             "action": { "const": "flee" },
             "from": { "type": "string" }
+          }
+        },
+        {
+          "title": "Rest",
+          "description": "Rest, refilling the agent's energy reserve. The only way to restore SelfState.energy, and it costs the agent the cycle it spends on it. Empty variant.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action"],
+          "properties": {
+            "action": { "const": "rest" }
           }
         },
         {

@@ -29,10 +29,17 @@ private val BOUND = PerceptionBound(radiusBlocks = 12.0, maxObservations = 16)
  *
  * Bounded twice over - by distance and by count - and summarized to text, so the
  * perception can never widen into a live world handle.
+ *
+ * [energy] is how much of the agent's reserve is left, as the contract's fraction. It
+ * is passed in rather than read off the body because the reserve belongs to the agent
+ * and outlives any one body; only the port holds it. It reaches the mind here, in the
+ * ordinary perception, so an agent reacts to its own need through the cognition loop
+ * it already has rather than through a mechanism of its own.
  */
 internal fun capturePerception(
     agentId: AgentId,
     body: LoomBodyEntity,
+    energy: Double,
     trigger: Trigger,
     capturedTick: Long,
 ): Perception =
@@ -47,6 +54,7 @@ internal fun capturePerception(
         selfState =
             SelfState(
                 health = body.health.toDouble(),
+                energy = energy,
                 position = listOf(body.x, body.y, body.z),
                 // The body reveals a summary, never its live inventory handle.
                 inventorySummary = emptyList(),

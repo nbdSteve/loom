@@ -3,6 +3,7 @@ package dev.loom.mind
 import dev.loom.body.BodyEventLog
 import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
+import dev.loom.contract.ENERGY_FULL
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
@@ -67,12 +68,18 @@ class FakeMainThread : MainThread {
  */
 fun silentJournal(): DecisionJournal = DecisionJournal(BodyEventLog { }, currentTick = { 0L })
 
-/** A perception with everything a test does not care about already filled in. */
+/**
+ * A perception with everything a test does not care about already filled in.
+ *
+ * [energy] defaults to a full reserve so a test that is not about the survival drive
+ * is never accidentally about it.
+ */
 fun perception(
     requestId: String = "req-1",
     agentId: String = "agent-alpha",
     trigger: Trigger = Trigger.GoalReview,
     importance: DecisionImportance = DecisionImportance.ROUTINE,
+    energy: Double = ENERGY_FULL,
 ): Perception =
     Perception(
         requestId = requestId,
@@ -80,7 +87,13 @@ fun perception(
         trigger = trigger,
         importance = importance,
         capturedTick = 100L,
-        selfState = SelfState(health = 20.0, position = listOf(1.0, 64.0, 2.0), inventorySummary = emptyList()),
+        selfState =
+            SelfState(
+                health = 20.0,
+                energy = energy,
+                position = listOf(1.0, 64.0, 2.0),
+                inventorySummary = emptyList(),
+            ),
         surroundings = emptyList(),
     )
 

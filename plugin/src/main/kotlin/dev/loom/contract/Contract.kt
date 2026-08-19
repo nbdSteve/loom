@@ -28,6 +28,18 @@ import kotlinx.serialization.json.JsonClassDiscriminator
 private const val COORDINATE_DIMENSIONS = 3
 
 /**
+ * A full energy reserve, the top of the [SelfState.energy] scale.
+ *
+ * The two ends of the scale are named here rather than left as bare literals
+ * wherever energy is computed or asserted: the scale belongs to the contract, and
+ * whoever fills the field and whoever reads it must agree on which end is which.
+ */
+const val ENERGY_FULL: Double = 1.0
+
+/** An exhausted energy reserve, the bottom of the [SelfState.energy] scale. */
+const val ENERGY_EXHAUSTED: Double = 0.0
+
+/**
  * Importance tier that drives model routing on the mind side and is stamped onto
  * every decision's provenance for the decision log.
  */
@@ -51,6 +63,14 @@ enum class DecisionImportance {
 data class SelfState(
     /** Current health of the agent's body. */
     val health: Double,
+    /**
+     * How much of the agent's energy reserve is left, as a fraction: `1.0` is a
+     * full reserve and `0.0` is exhaustion, which is fatal.
+     *
+     * A fraction rather than a count of ticks, so the mind never has to know how
+     * long a reserve lasts.
+     */
+    val energy: Double,
     /** World position `[x, y, z]`. Continuous coordinates. */
     val position: List<Double>,
     /** Already-summarized inventory the body chose to reveal. */
@@ -59,6 +79,9 @@ data class SelfState(
     init {
         require(position.size == COORDINATE_DIMENSIONS) {
             "position must have exactly $COORDINATE_DIMENSIONS components [x, y, z], got ${position.size}"
+        }
+        require(energy in ENERGY_EXHAUSTED..ENERGY_FULL) {
+            "energy must be a fraction in $ENERGY_EXHAUSTED..$ENERGY_FULL, got $energy"
         }
     }
 }
@@ -152,6 +175,16 @@ sealed interface Intent {
     @Serializable
     @SerialName("flee")
     data class Flee(val from: String) : Intent
+
+    /**
+     * Rest, refilling the agent's energy reserve.
+     *
+     * The only way to restore [SelfState.energy], and it costs the agent the cycle
+     * it spends on it.
+     */
+    @Serializable
+    @SerialName("rest")
+    data object Rest : Intent
 
     /** Do nothing this cycle. */
     @Serializable

@@ -17,6 +17,15 @@ private const val COORDINATE_FORMAT = "%.2f"
 /** Formats a coordinate for the log, locale-independently so logs are comparable. */
 internal fun coordinate(value: Double): String = String.format(Locale.ROOT, COORDINATE_FORMAT, value)
 
+/**
+ * Renders a 0..1 fraction - an energy reserve - for the log.
+ *
+ * Named apart from [coordinate] though it formats identically: the two share a
+ * precision by coincidence, and an energy reading that wanted more places should not
+ * have to drag every logged coordinate along with it.
+ */
+internal fun fraction(value: Double): String = coordinate(value)
+
 /** Renders a position triple for the log. */
 internal fun position(
     x: Double,

@@ -171,6 +171,15 @@ const WORLD_LIMIT_BLOCKS: f64 = 29_999_984.0;
 /// How far the stand-in steps toward something it has sighted, in blocks.
 const SIGHTED_STEP_BLOCKS: i64 = 2;
 
+/// The fraction of reserve at or below which the stand-in rests on a goal review.
+///
+/// Well clear of exhaustion, because a goal review is the *only* moment this
+/// backend can act on the need: the margin has to cover a whole review cadence
+/// plus the stagger, or an agent would notice its reserve for the first time after
+/// it had already run out. It is a rule of thumb and nothing more - a real backend
+/// weighs resting against whatever else the agent is doing.
+const RESTING_ENERGY: f64 = 0.35;
+
 /// Converts a continuous world coordinate to the block coordinate an
 /// [`Intent::MoveTo`] target carries.
 ///
@@ -239,6 +248,16 @@ impl ScriptedBackend {
                     reasoning: format!("{block} sighted nearby; close the distance to reach it"),
                 }
             }
+            // The one survival rule the stand-in has. An agent whose reserve runs
+            // out dies for good, so a low reserve outranks every other goal; the
+            // cost of resting is only the cycle it spends.
+            Trigger::GoalReview if perception.self_state.energy <= RESTING_ENERGY => Draft {
+                intent: Intent::Rest,
+                reasoning: format!(
+                    "the energy reserve is down to {energy}; resting outranks every other goal",
+                    energy = perception.self_state.energy
+                ),
+            },
             Trigger::GoalReview => Draft {
                 intent: Intent::Idle,
                 reasoning: format!(
@@ -267,7 +286,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        block_coord, BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, WORLD_LIMIT_BLOCKS,
+        block_coord, BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, RESTING_ENERGY,
+        WORLD_LIMIT_BLOCKS,
     };
     use crate::config::{ConfigError, Env};
     use crate::router::{ModelCatalog, Router};
@@ -277,6 +297,8 @@ mod tests {
         Router::new(ModelCatalog::uniform("scripted-stand-in"))
     }
 
+    /// A perception from an agent with a full reserve, so a test that is not about
+    /// energy is never accidentally about it.
     fn perception(trigger: Trigger, importance: DecisionImportance) -> Perception {
         Perception {
             request_id: "req-1".to_owned(),
@@ -286,6 +308,7 @@ mod tests {
             captured_tick: 1,
             self_state: SelfState {
                 health: 20.0,
+                energy: 1.0,
                 position: [10.5, 64.0, -8.25],
                 inventory_summary: vec![],
             },
@@ -302,6 +325,17 @@ mod tests {
                 .find(|(key, _)| *key == name)
                 .map(|(_, value)| (*value).to_owned())
         })
+    }
+
+    /// The same perception, from an agent whose reserve is down to `energy`.
+    fn drained(seen: Perception, energy: f64) -> Perception {
+        Perception {
+            self_state: SelfState {
+                energy,
+                ..seen.self_state
+            },
+            ..seen
+        }
     }
 
     #[tokio::test]
@@ -350,6 +384,55 @@ mod tests {
                 "every decision must carry reasoning, {trigger:?} did not"
             );
         }
+    }
+
+    #[test]
+    fn a_goal_review_on_a_full_reserve_does_not_rest() {
+        let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        assert_eq!(draft.intent, Intent::Idle);
+    }
+
+    #[test]
+    fn a_goal_review_on_a_low_reserve_rests_instead() {
+        // The survival rule, at the threshold and below it. An agent that only
+        // rested strictly below the threshold would skip the review that lands
+        // exactly on it, and reviews are the only chance it gets.
+        for energy in [RESTING_ENERGY, RESTING_ENERGY / 2.0, 0.0] {
+            let seen = drained(
+                perception(Trigger::GoalReview, DecisionImportance::Routine),
+                energy,
+            );
+            let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+            assert_eq!(
+                draft.intent,
+                Intent::Rest,
+                "an agent at {energy} of its reserve must rest, not idle"
+            );
+        }
+    }
+
+    #[test]
+    fn a_low_reserve_does_not_override_a_threat() {
+        // Resting is a goal-review rule, not a reflex: an exhausted agent being
+        // eaten still runs. Losing this would have a body sit down under attack.
+        let seen = drained(
+            perception(
+                Trigger::Damaged {
+                    amount: 6,
+                    source: "zombie".to_owned(),
+                },
+                DecisionImportance::Pivotal,
+            ),
+            0.0,
+        );
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        assert_eq!(
+            draft.intent,
+            Intent::Flee {
+                from: "zombie".to_owned()
+            }
+        );
     }
 
     #[test]

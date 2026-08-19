@@ -189,6 +189,15 @@ class LoomBodyEntity(
                 IntentOutcome.Accepted("standing still")
             }
 
+            // Standing still is all of resting this body can do. Refilling the reserve
+            // is the agent's half of it, not the body's - a dimension transit replaces a
+            // body and must not replace the reserve - so the port that holds the reserve
+            // does that part and calls this for the rest. See NmsEntityBodyPort.rest.
+            is Intent.Rest -> {
+                standStill()
+                IntentOutcome.Accepted("resting")
+            }
+
             is Intent.Say -> IntentOutcome.Unsupported("say")
             is Intent.Flee -> IntentOutcome.Unsupported("flee")
         }

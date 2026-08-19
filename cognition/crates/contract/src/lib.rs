@@ -32,6 +32,11 @@ pub enum DecisionImportance {
 pub struct SelfState {
     /// Current health of the agent's body.
     pub health: f64,
+    /// How much of the agent's energy reserve is left, as a fraction: `1.0` is a
+    /// full reserve and `0.0` is exhaustion, which is fatal. A fraction rather
+    /// than a count of ticks, so the mind never has to know how long a reserve
+    /// lasts.
+    pub energy: f64,
     /// World position `[x, y, z]`. Continuous coordinates.
     pub position: [f64; 3],
     /// Already-summarized inventory the body chose to reveal.
@@ -103,6 +108,12 @@ pub enum Intent {
     /// Flee from a named source of threat.
     #[serde(rename = "flee")]
     Flee { from: String },
+    /// Rest, refilling the agent's energy reserve.
+    ///
+    /// The only way to restore [`SelfState::energy`], and it costs the agent the
+    /// cycle it spends on it.
+    #[serde(rename = "rest")]
+    Rest,
     /// Do nothing this cycle.
     #[serde(rename = "idle")]
     Idle,

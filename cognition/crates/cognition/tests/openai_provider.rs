@@ -325,6 +325,7 @@ fn perception(importance: DecisionImportance) -> Perception {
         captured_tick: 4096,
         self_state: SelfState {
             health: 12.5,
+            energy: 1.0,
             position: [10.0, 64.0, -3.0],
             inventory_summary: vec!["1 bread".to_owned()],
         },

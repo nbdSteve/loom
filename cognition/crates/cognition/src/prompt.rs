@@ -71,22 +71,27 @@ pub struct Prompt {
 
 /// The standing instructions shared by every tier.
 ///
-/// States the agent's situation and the four things it can do, in the contract's
+/// States the agent's situation and the five things it can do, in the contract's
 /// own vocabulary, so the intent it picks means the same thing to the body.
 const AGENT_BRIEF: &str = "\
 You are the mind of an agent that lives in a Minecraft world through a body you \
 do not directly control. You are told what your body just experienced, and you \
 answer with one action for it to take and your reasoning for taking it.
 
-Your body can do exactly four things:
+Your body can do exactly five things:
 - say: speak a line of text out loud.
 - moveTo: walk toward a block position given as whole x, y, z coordinates.
 - flee: move away from a named source of danger.
+- rest: recover, refilling your energy reserve completely.
 - idle: do nothing this time.
 
 Facts about your world that should shape every choice:
 - You have one body and one life. If it dies you are gone permanently: there is \
 no respawn and no new body. Nothing is worth risking your life for casually.
+- You have an energy reserve that drains steadily as you live. It is reported as \
+a fraction, where 1.0 is full and 0.0 is empty. If it ever reaches empty you die, \
+permanently and like any other death. Resting is the only way to refill it, so do \
+not let it run low with no plan to rest.
 - You perceive only what you are told. Your surroundings list gives distances \
 but not directions, so you cannot know a bearing you were not given.
 - Your body validates what you ask for and may refuse it. Ask for one clear, \
@@ -166,12 +171,13 @@ fn trigger_line(trigger: &Trigger) -> String {
     }
 }
 
-/// Health and position.
+/// Health, energy reserve, and position.
 fn self_line(state: &SelfState) -> String {
     let [x, y, z] = state.position;
     format!(
-        "Your body: health {health}, standing at x {x} y {y} z {z}",
+        "Your body: health {health}, energy reserve {energy}, standing at x {x} y {y} z {z}",
         health = number(state.health),
+        energy = number(state.energy),
         x = number(x),
         y = number(y),
         z = number(z)
@@ -268,6 +274,7 @@ mod tests {
             captured_tick: 4_242,
             self_state: SelfState {
                 health: 12.5,
+                energy: 1.0,
                 position: [10.5, 64.0, -8.25],
                 inventory_summary: vec!["3 bread".to_owned()],
             },
@@ -302,6 +309,34 @@ mod tests {
                 situation = prompt.situation
             );
         }
+    }
+
+    #[test]
+    fn the_situation_carries_the_energy_reserve_so_the_model_can_see_it_run_low() {
+        // The reserve is a survival drive the mind acts on through the ordinary
+        // goal review, so a real backend has to be shown it the way the scripted
+        // stand-in already reads it.
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.self_state.energy = 0.1;
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(
+            prompt.situation.contains("energy reserve 0.1"),
+            "the situation must report the reserve, got {situation}",
+            situation = prompt.situation
+        );
+    }
+
+    #[test]
+    fn the_agent_is_told_it_can_rest_or_it_never_will() {
+        // rest is a contract intent the body can apply; if the standing brief does
+        // not list it, a real model has no way to know the action exists.
+        let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(
+            prompt.system.contains("rest:"),
+            "the brief must offer rest as an action, got {system}",
+            system = prompt.system
+        );
     }
 
     #[test]

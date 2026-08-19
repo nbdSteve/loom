@@ -33,6 +33,7 @@ Two design constraints are load-bearing, not stylistic:
 New agents will come from reproduction, never from restarting a dead one.
 `NmsEntityBodyPort.tick` retires a body that has left the world - it drops from `bodies` - and then asks *why* it left before charging anything to the agent.
 Only a departure that ends the agent reaches `Mortality`; then the death is recorded and `spawn` refuses that agent id from then on.
+An agent can also end without anything happening to its body, by spending its energy reserve, so `NmsEntityBodyPort.die` is the single funnel both causes go through: "died once" must not depend on which cause reached the record first.
 The rule is held by `Mortality` in the engine-free domain, which records a death and deliberately offers no way to clear one, so a revive path cannot be added by accident.
 `BodyDeparture` (also engine-free) is the verdict on what a removal was, and `DEATH` is the only variant with `endsTheAgent`.
 Despawning is not death: it is how Loom puts a body away (as on plugin unload) and leaves the agent embodiable.
@@ -40,6 +41,17 @@ A death owes the mind a *terminal* body-death `Trigger` once cognition is wired 
 That signal is deliberately not sent from `tick`, and no death `Trigger` exists in the contract yet, so it is left as a marked owed signal at the retire site rather than built now.
 `Mortality` currently holds the dead in memory, so its refusal spans the server process; making death outlive a restart belongs with agent-identity persistence, which does not exist yet.
 The append-only event log is meanwhile the durable record of who has died.
+
+**The first survival drive is an energy reserve, and running it out is a death.**
+`Metabolism` (engine-free) holds the reserve, spends it from the tick the port is given, and reports it - nothing more: ending the agent that ran out is the port's job through `die`, and whether an agent has ended stays `Mortality`'s to say, so death keeps one source of truth.
+The reserve is counted in **ticks**, never in wall-clock time and never as the fraction the mind sees: the same tick sequence has to end the same agent at the same tick however fast it is replayed, a paused server must starve nobody, and a fraction decremented every tick would accumulate float error across a boundary that is a permadeath.
+`SelfState.energy` is that reserve as a 0.0-1.0 fraction, derived on demand, and it rides the ordinary perception - so an agent reacts to its own hunger through the goal review it already does, with no new `Trigger` and nothing to ask for it.
+The one knob is `DEFAULT_ENERGY_LIFESPAN_TICKS` (36 000 ticks, half an hour at twenty a second), a `Metabolism` constructor default rather than a config file: long enough that a body spawned to be looked at is not dying while it is looked at, short enough that a whole life fits in one sitting.
+The one restoration is `Intent.Rest`, which refills the reserve completely.
+It is carried out by the *port*, not the entity, because a dimension transit replaces a body and must not replace the reserve; standing still is the body flavor's half of it.
+Exhaustion is terminal in the type and not only in the record - `Metabolism.restore` refuses a spent reserve, so an agent cannot rest its way back out of a permadeath.
+The reserve is charged at the top of `NmsEntityBodyPort.tick`, so a body whose reserve has just run out takes no further step, and the deaths it causes are applied at the *end* of the tick, once every body is where the tick leaves it: an agent starving mid-transit is re-embodied on the far side first and dies there, rather than leaving the engine's leftover villager standing in the destination.
+The reserve is in memory only, like `Mortality`'s dead; making either outlive a restart belongs with agent-identity persistence, which does not exist yet.
 
 **Losing a body is not always losing the agent.** Loom is multi-dimension: an agent may walk into a nether or end portal, and that transit is continuity, not death.
 So a removal has to be explained before it is charged to the agent, which is what `BodyDeparture` and `dev.loom.body.nms.departureOf` are for.
@@ -97,6 +109,8 @@ The plugin ships with the stable `plugin.yml` descriptor, not `paper-plugin.yml`
 `cognition/crates/cognition` is the mind: it accepts a `Perception` and returns a routed, provenance-stamped `Decision`.
 Five pieces, each its own module - `router` (tier to model), `model` (the backend seam), `openai` (the one real backend), `mind` (compose and stamp), `server`/`wire` (newline-delimited JSON over TCP).
 `ScriptedBackend` is still the default, so a fresh checkout runs with no credentials and both suites stay hermetic, but it is the fallback rather than the state of the art: `LOOM_COGNITION_BACKEND=openai` selects real inference, and `cognition/README.md` is the operator documentation for every setting it reads.
+It does answer a goal review whose `energy` is at or below `RESTING_ENERGY` (0.35) with `rest`, which is what lets an unattended agent survive on the shipped stand-in.
+That is deliberately a goal-review rule and not a reflex: a damaged agent still flees, because staying alive now outranks resting.
 A misspelled backend name stops the service instead of falling back, because scripted decisions look real in the log until someone reads their provenance.
 
 **Provenance is stamped by `Mind::decide`, never by a backend.** `ModelRoute` has private fields whose only constructor is `route(importance)`, so a decision cannot claim a model it was not routed to; `mind.rs`'s `LyingBackend` test pins that.
@@ -167,6 +181,8 @@ Build the jar (`./gradlew shadowJar`), drop it into a Paper 1.21.1 server's `plu
 Verify from a **client's** point of view rather than from the plugin's own log: a body that moves server-side only, or that a vanilla client cannot render, looks identical in the log to one that works.
 A client is not optional even for a headless run: `spawn` places the body where the *sender* stands, so it refuses the console, and a scripted client on an offline-mode server (a mineflayer bot will do) both issues the commands and reports what a player would actually see.
 Watching autonomy move a body needs a mind that decides a move: `ScriptedBackend` answers a goal review with `idle`, so a self-driving agent perceives, decides and applies on cadence while standing perfectly still - point the plugin at a stand-in mind that replies `moveTo` if motion is what is being checked.
+Watching the survival drive instead needs patience or a shorter reserve: with the shipped 36 000-tick default a body rests roughly every twenty minutes, and a starvation takes half an hour of an agent whose mind never rests it.
+Read it from the record rather than from the world - `perceived` carries the reserve on every review, and the end is one `died` with detail "spent its energy reserve" - because a resting body and an idle one look identical to a client.
 Dimension travel needs a lit portal and a body walked into it (`/loombody move`), then a `travelled` record and a rendering body on the far side; the driving client must be opped, since `/loombody` is gated on `loom.body` (`default: op`).
 Losing that gate is silent - the command keeps working for the op who tests it - so `PluginDescriptorTest` pins the shipped descriptor, and `plugin.yml` records why at the key itself.
 Check the *count* of `travelled` records, not just their presence - one round trip is two, and a bouncing body is the failure this most easily hides.
@@ -178,7 +194,7 @@ The write queue is bounded so a stalled disk never blocks the tick; records that
 ## Gates (fail-the-build from commit 1)
 
 - Rust: `cd cognition && cargo fmt --all --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test`. Lint policy lives in `[workspace.lints]` in `cognition/Cargo.toml` (clippy pedantic/all denied, no unwrap/expect/panic in non-test code, `unsafe_code` forbidden).
-- JVM: `cd plugin && ./gradlew check`. Runs detekt + ktlint + ArchUnit + warnings-as-errors compile, none ignoring failures. Build on **Corretto 21** (`jvmToolchain(21)`), Gradle wrapper pinned to 8.14. detekt config: `plugin/config/detekt/detekt.yml` (formatting delegated to ktlint).
+- JVM: `cd plugin && ./gradlew check`. Runs detekt + ktlint + ArchUnit + warnings-as-errors compile, none ignoring failures. Build on **Corretto 21** (`jvmToolchain(21)`), Gradle wrapper pinned to 8.14 - which refuses a newer JDK outright, so `./gradlew` failing with nothing but a version number (`* What went wrong: 25.0.3`) means `JAVA_HOME` points at a default JDK that is too new rather than anything being wrong with the build. detekt config: `plugin/config/detekt/detekt.yml` (formatting delegated to ktlint).
   The plugin compiles against a Mojang-mapped server via `paperweight-userdev`; the first build downloads and decompiles it (a few hundred MB, several minutes), and later builds are fast. Paper's runtime is Mojang-mapped, so the jar ships as compiled and is never reobfuscated (`ReobfArtifactConfiguration.MOJANG_PRODUCTION`).
   detekt thresholds are treated as design feedback: clear them by splitting along a real seam rather than by adding suppressions.
 - CI runs both suites plus the live cross-runtime round trip: `.github/workflows/contract.yml`.

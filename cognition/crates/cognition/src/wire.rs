@@ -65,14 +65,14 @@ mod tests {
 
     #[test]
     fn a_perception_line_round_trips_into_the_contract_type() {
-        let line = r#"{"requestId":"req-goal-1","agentId":"agent-delta","trigger":{"event":"goalReview"},"importance":"ROUTINE","capturedTick":9000,"selfState":{"health":18.0,"position":[3.0,64.0,3.0],"inventorySummary":["wheat x12"]},"surroundings":[]}"#;
+        let line = r#"{"requestId":"req-goal-1","agentId":"agent-delta","trigger":{"event":"goalReview"},"importance":"ROUTINE","capturedTick":9000,"selfState":{"health":18.0,"energy":0.62,"position":[3.0,64.0,3.0],"inventorySummary":["wheat x12"]},"surroundings":[]}"#;
         let seen = decode_perception(line).expect("fixture-shaped line decodes");
         assert_eq!(seen.request_id, "req-goal-1");
     }
 
     #[test]
     fn a_perception_with_an_unknown_trigger_is_refused_not_guessed() {
-        let line = r#"{"requestId":"req-x","agentId":"agent-x","trigger":{"event":"tick"},"importance":"ROUTINE","capturedTick":1,"selfState":{"health":20.0,"position":[0.0,0.0,0.0],"inventorySummary":[]},"surroundings":[]}"#;
+        let line = r#"{"requestId":"req-x","agentId":"agent-x","trigger":{"event":"tick"},"importance":"ROUTINE","capturedTick":1,"selfState":{"health":20.0,"energy":1.0,"position":[0.0,0.0,0.0],"inventorySummary":[]},"surroundings":[]}"#;
         assert!(
             decode_perception(line).is_err(),
             "there is no per-tick trigger to decode"

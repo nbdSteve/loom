@@ -1,0 +1,1 @@
+{"requestId":"req-energy-1","agentId":"agent-epsilon","intent":{"action":"rest"},"reasoning":"the energy reserve is nearly spent; resting outranks every other goal","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v1"}}

@@ -9,7 +9,9 @@
  */
 package dev.loom.body.nms
 
+import dev.loom.body.AgentId
 import dev.loom.body.BodyDeparture
+import dev.loom.body.BodyEvent
 import dev.loom.body.BodyLocation
 import net.minecraft.world.entity.Entity
 
@@ -61,6 +63,30 @@ internal fun arrivalAfterTransit(traveller: LoomBodyEntity): BodyLocation {
             ?: return traveller.whereItIs()
     val arrival = successor.whereItIs()
     successor.discard()
+    return arrival
+}
+
+/**
+ * Records that [agentId] travelled, and says where it has to be embodied again.
+ *
+ * The record is `travelled` on the travelling agent's own chain - never a death followed
+ * by a birth - so the research record keeps one continuous life per agent however many
+ * dimensions it crosses. What the engine leaves on the far side is no use to Loom (see
+ * [arrivalAfterTransit]), so the caller gives the agent a fresh body at the returned
+ * arrival through the ordinary spawn path, which holds the destination before the body
+ * counts as live there.
+ */
+internal fun recordTransit(
+    agentId: AgentId,
+    traveller: LoomBodyEntity,
+    journal: BodyEventJournal,
+): BodyLocation {
+    val arrival = arrivalAfterTransit(traveller)
+    journal.record(
+        agentId,
+        BodyEvent.TRAVELLED,
+        "from ${traveller.level().world.name} to ${arrival.world} ${position(arrival.x, arrival.y, arrival.z)}",
+    )
     return arrival
 }
 

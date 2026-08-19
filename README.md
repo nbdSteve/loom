@@ -44,4 +44,11 @@ A body's perception travels to the Rust cognition service over newline-delimited
 Agents drive themselves: each reviews its goals on its own on a cadence, with nobody asking it to, and `/loombody think` still triggers a round trip on demand.
 Every decision carries the model that made it and the prompt version that shaped it, stamped from the route rather than claimed by the backend.
 The scripted stand-in is still here and is still the default, so a fresh checkout runs with no credentials and the test suites stay hermetic; real inference is one setting away.
+
+And the agents now have something to survive.
+Each one carries an energy reserve that is spent by living, tick by tick, and reported to its mind as part of the ordinary perception; the only way to refill it is to decide to rest.
+An agent that runs the reserve out dies of it, permanently, and exactly once.
+The reserve is spent from server ticks rather than from wall-clock time, so a run replays identically and a paused server starves nobody.
+Nothing has to be commanded for any of it: an agent meets its own hunger on the goal review it already does, and the stand-in mind rests an agent whose reserve is low - so a single agent, left entirely alone, keeps itself alive.
+
 See `cognition/README.md` for backend selection, the credential, and both model tiers, and `AGENTS.md` for build, test, and gate commands and for the sharp edges around the engine seam.

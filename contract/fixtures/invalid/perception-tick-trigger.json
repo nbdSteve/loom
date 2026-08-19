@@ -1,1 +1,1 @@
-{"requestId":"req-x","agentId":"agent-x","trigger":{"event":"tick"},"importance":"ROUTINE","capturedTick":1,"selfState":{"health":20.0,"position":[0.0,0.0,0.0],"inventorySummary":[]},"surroundings":[]}
+{"requestId":"req-x","agentId":"agent-x","trigger":{"event":"tick"},"importance":"ROUTINE","capturedTick":1,"selfState":{"health":20.0,"energy":0.5,"position":[0.0,0.0,0.0],"inventorySummary":[]},"surroundings":[]}

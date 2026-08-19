@@ -19,6 +19,7 @@ import dev.loom.body.BodyLocation
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
 import dev.loom.body.IntentOutcome
+import dev.loom.body.Metabolism
 import dev.loom.body.Mortality
 import dev.loom.body.WorldFootprint
 import dev.loom.body.describe
@@ -63,6 +64,7 @@ class NmsEntityBodyPort(
     private val bodies = mutableMapOf<AgentId, LoomBodyEntity>()
     private val journal = BodyEventJournal(eventLog, currentTick)
     private val mortality = Mortality()
+    private val metabolism = Metabolism()
     private val footprint = WorldFootprint(radiusChunks = FOLLOW_RADIUS_CHUNKS)
     private val heldChunks = HeldChunks(server, owner, footprint, journal, onHoldFailure)
 
@@ -123,8 +125,7 @@ class NmsEntityBodyPort(
      * Takes the body of [agentId] out of the world without killing the agent.
      *
      * Despawning is not death: it is how Loom itself puts a body away, as on plugin
-     * unload, so the agent id stays embodiable. Only [reap] - a body that actually
-     * died in-world - is terminal.
+     * unload, so the agent id stays embodiable. Only [die] is terminal.
      */
     override fun despawn(agentId: AgentId): Boolean {
         val body = bodies.remove(agentId) ?: return false
@@ -143,7 +144,23 @@ class NmsEntityBodyPort(
         // the provenance of the decision that was lost. Recording it here too would
         // double-record every such decision.
         val body = bodies[agentId] ?: return IntentOutcome.NoSuchBody
-        val outcome = body.applyIntent(intent)
+        // Resting is the one intent with an effect on the agent and not only on its body,
+        // so its refill happens here rather than in the entity: a dimension transit
+        // replaces a body and must not replace the reserve, so the reserve is held by the
+        // port. Standing still is the body flavor's half of it.
+        //
+        // A reserve that has already run out refuses rather than refills: exhaustion is
+        // terminal, and an agent that could rest its way back out of it would not be
+        // permadead. Unreachable while tick ends an agent on the tick it runs out, since
+        // the body is gone before any decision could arrive - and refused anyway, because
+        // that ordering is not something a caller of this port can see.
+        val spent = intent is Intent.Rest && !metabolism.restore(agentId)
+        val outcome =
+            if (spent) {
+                IntentOutcome.Rejected("the energy reserve is spent; this agent has ended")
+            } else {
+                body.applyIntent(intent)
+            }
         journal.record(
             agentId,
             BodyEvent.INTENT_APPLIED,
@@ -158,11 +175,11 @@ class NmsEntityBodyPort(
         trigger: Trigger,
     ): Perception? {
         val body = bodies[agentId] ?: return null
-        val perception = capturePerception(agentId, body, trigger, currentTick())
+        val perception = capturePerception(agentId, body, metabolism.energyOf(agentId), trigger, currentTick())
         journal.record(
             agentId,
             BodyEvent.PERCEIVED,
-            "${perception.surroundings.size} observation(s)",
+            "${perception.surroundings.size} observation(s), energy ${fraction(perception.selfState.energy)}",
             perception.requestId,
         )
         return perception
@@ -170,26 +187,32 @@ class NmsEntityBodyPort(
 
     override fun tick(tick: Long) {
         // Actuation only. Cognition is event-driven and is never called from here.
-        // Iterate a snapshot so a departed body can be handled mid-loop.
+        // The energy reserve is spent from the tick and never from the clock, so the same
+        // tick sequence always ends the same agent at the same tick and a paused server
+        // starves nobody. It is charged before anything else happens this tick, so a body
+        // whose reserve has just run out never takes another step, and the deaths it causes
+        // are applied at the end, once every body is where this tick leaves it.
+        val exhausted = metabolism.spendUpTo(tick, bodies.keys.toSet())
+        // Iterate a snapshot: retiring a body removes it from the map being iterated, and
+        // a departure can put a fresh body into it.
         for ((agentId, body) in bodies.entries.toList()) {
-            if (!body.isAlive) {
-                depart(agentId, body)
-                continue
+            when {
+                // A body the world has removed is dealt with before any reserve is read:
+                // the engine's leftovers have to be cleared up and a traveller re-embodied
+                // wherever it arrived, or an agent starving mid-transit would leave a
+                // derelict villager standing in the destination. It still dies below.
+                !body.isAlive -> depart(agentId, body)
+                // A body whose reserve ran out this tick takes no further step: it is about
+                // to be a corpse, and a movement record after a death is a lie.
+                agentId in exhausted -> Unit
+                else -> actuate(agentId, body, journal)
             }
-            // Without this a body goes inactive after ten seconds and stops reaching the
-            // vanilla hook that carries out portal travel. See readyForTheEngineTick.
-            val nearlyBecame = body.readyForTheEngineTick()
-            if (nearlyBecame != null) {
-                // The agent is alive and still in the body Loom made for it, which is the
-                // whole point: being struck by lightning happens to an agent rather than
-                // ending one. Recorded on that agent's own chain.
-                journal.record(agentId, BodyEvent.CONVERTED, "refused becoming $nearlyBecame; body unchanged")
-            }
-            val step = body.advanceMovement()
-            if (step != null) {
-                val where = position(body.x, body.y, body.z)
-                journal.record(agentId, BodyEvent.MOVED, "to $where yaw ${coordinate(step.yaw.toDouble())}")
-            }
+        }
+        // Running out of reserve is a certainty rather than an inference about a removal,
+        // so it ends the agent wherever this tick left its body - including a body just
+        // placed on the far side of a portal. Deaths already recorded stay recorded once.
+        for (agentId in exhausted) {
+            die(agentId, "spent its energy reserve")
         }
         // Loom has no human players, so the agents must carry their own loaded world
         // with them, in whichever dimension each one is in. Runs after movement so the
@@ -221,15 +244,21 @@ class NmsEntityBodyPort(
         // body. None is sent from here: tick stays actuation-only and the contract
         // carries no such Trigger yet. Record now, signal later.
         when (departureOf(body)) {
-            // Recording the death is what makes it terminal: the agent identity dies
-            // with the body, so spawn refuses that id from here on, and Mortality offers
-            // no way back. Recorded once, so the owed signal is owed once.
-            BodyDeparture.DEATH ->
-                if (mortality.recordDeath(agentId)) {
-                    journal.record(agentId, BodyEvent.DIED, "died in-world; this agent will not return")
-                }
+            BodyDeparture.DEATH -> die(agentId, "died in-world")
 
-            BodyDeparture.DIMENSION_TRAVEL -> resume(agentId, body)
+            // The agent walked out of one dimension and into another: the same agent, with
+            // its id and everything attached to it, in a new body. The engine leaves Loom
+            // nothing it can adopt on the far side, so the arrival is embodied through the
+            // ordinary spawn path - which holds the destination before the body counts as
+            // live there, and refuses, with its reason recorded, a destination Loom cannot
+            // resolve or keep loaded rather than leaving a body somewhere it cannot keep
+            // alive.
+            BodyDeparture.DIMENSION_TRAVEL -> {
+                spawn(agentId, recordTransit(agentId, body, journal))
+                // The body arrives standing in the destination portal, so without the
+                // traveller's cooldown it would travel straight back, once per tick, forever.
+                bodies[agentId]?.let { carryPortalCooldown(body, it) }
+            }
 
             // Reached only if a conversion got past the refusal in BodyConversions and
             // took the body with it. The agent survives it - this is not a death - but it
@@ -246,44 +275,33 @@ class NmsEntityBodyPort(
         }
     }
 
-    override fun liveBodies(): Set<AgentId> = bodies.keys.toSet()
-
     /**
-     * Gives the agent a body again on the far side of a portal.
+     * Ends [agentId] for good, because of [cause], recording the death exactly once.
      *
-     * The engine does not carry a travelling body across: it creates a *plain vanilla*
-     * entity in the destination, copies the old body's state onto it, and removes the
-     * original. That successor is not a Loom body - it has vanilla goals, no Loom
-     * movement, and nothing driving it - so Loom cannot adopt it. It is removed, and
-     * Loom places its own body where the traveller arrived, holding the destination
-     * before the body is live there exactly as an ordinary spawn does.
+     * The one place an agent ends, whatever ended it. A body killed in-world and a
+     * reserve run down to nothing are the same terminal event, so they are recorded by
+     * the same code: "died once" must not depend on which cause reached the record
+     * first. Recording is what makes it terminal - [spawn] refuses the id from here on
+     * and [Mortality] offers no way back - so the death signal the mind is owed is owed
+     * exactly once.
      *
-     * The agent id, and so the agent's memory and relationships, is untouched by all of
-     * this: the same agent walked in one side and walks out the other.
+     * Taking the body out of the live population is part of ending an agent rather than
+     * something each caller remembers to do: past this point nothing perceives, decides
+     * or acts for it. A body the world has already removed is simply not there to
+     * discard, which is how a death in-world differs from a reserve running out under a
+     * body that is still standing.
      */
-    private fun resume(
+    private fun die(
         agentId: AgentId,
-        traveller: LoomBodyEntity,
+        cause: String,
     ) {
-        val arrival = arrivalAfterTransit(traveller)
-        val world = server.getWorld(arrival.world) as CraftWorld?
-        if (world == null) {
-            journal.record(agentId, BodyEvent.TRAVELLED, "arrived in unknown world '${arrival.world}'; body lost")
-            return
+        bodies.remove(agentId)?.discard()
+        if (mortality.recordDeath(agentId)) {
+            journal.record(agentId, BodyEvent.DIED, "$cause; this agent will not return")
         }
-        journal.record(
-            agentId,
-            BodyEvent.TRAVELLED,
-            "from ${traveller.level().world.name} to ${arrival.world} ${position(arrival.x, arrival.y, arrival.z)}",
-        )
-        // Re-placed through the ordinary spawn path so the destination is held before the
-        // body counts as live there, which is what keeps every living agent in a ticking
-        // chunk in every dimension.
-        place(agentId, arrival, world)
-        // The body arrives standing in the destination portal, so without the traveller's
-        // cooldown it would travel straight back, once per tick, forever.
-        bodies[agentId]?.let { carryPortalCooldown(traveller, it) }
     }
+
+    override fun liveBodies(): Set<AgentId> = bodies.keys.toSet()
 
     /**
      * Removes every body and lets the world go.

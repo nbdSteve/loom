@@ -7,6 +7,7 @@ import dev.loom.body.BodySpawnResult
 import dev.loom.body.IntentOutcome
 import dev.loom.body.WORLD_AGENT_ID
 import dev.loom.contract.DecisionImportance
+import dev.loom.contract.ENERGY_FULL
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
@@ -202,6 +203,7 @@ class BodyCommandTest {
                     selfState =
                         SelfState(
                             health = 20.0,
+                            energy = ENERGY_FULL,
                             position = listOf(0.0, 64.0, 0.0),
                             inventorySummary = emptyList(),
                         ),

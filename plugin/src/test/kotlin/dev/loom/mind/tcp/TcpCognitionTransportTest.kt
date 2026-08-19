@@ -36,6 +36,8 @@ import java.nio.file.Paths
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
 import kotlin.io.path.readText
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -288,10 +290,16 @@ class TcpCognitionTransportTest {
     @Test
     @DisplayName("every valid decision fixture decodes off the wire")
     fun everyDecisionShapeDecodes() {
-        // The four intent shapes the contract allows, taken from the shared fixtures
-        // rather than restated here, so a contract change fails this test too.
+        // Every intent shape the contract allows, discovered from the shared decision
+        // fixtures on disk rather than restated here, so a new contract shape - which
+        // always means a new fixture - fails this test until the transport decodes it too.
         val fixtures =
-            listOf("decision-say.json", "decision-move-to.json", "decision-flee.json", "decision-idle.json")
+            contractDir.resolve("fixtures/valid")
+                .listDirectoryEntries("decision-*.json")
+                .map { it.name }
+                .sorted()
+        // A mis-resolved or empty fixture directory must not make this test vacuously pass.
+        assertTrue(fixtures.isNotEmpty(), "no decision fixtures found under $contractDir")
         for (name in fixtures) {
             val canonical = fixture(name)
             val mind = managed(FakeMind { canonical })

@@ -94,6 +94,13 @@ interface BodyPort {
      * Called once per server tick with the current [tick]. This drives actuation
      * only - it must never invoke cognition, which is event-driven by
      * construction (the contract's `Trigger` has no per-tick variant).
+     *
+     * It is also where time is charged against an agent's survival drive. The energy
+     * reserve ([Metabolism]) is spent per tick and never per wall-clock second, so the
+     * same tick sequence always ends the same agent at the same tick and a paused
+     * server starves nobody. An agent whose reserve runs out ends here, for good, and
+     * stops appearing in [liveBodies] - so no later perception, decision or action can
+     * reach it.
      */
     fun tick(tick: Long)
 
