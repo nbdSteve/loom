@@ -180,6 +180,15 @@ const SIGHTED_STEP_BLOCKS: i64 = 2;
 /// weighs resting against whatever else the agent is doing.
 const RESTING_ENERGY: f64 = 0.35;
 
+/// Turns a reserve fraction into the percentage a reader of the reasoning sees.
+///
+/// The reasoning is the one field carried verbatim to an operator's screen, so a
+/// reserve stated in it is read by eye rather than counted. A reserve is derived
+/// from a tick count and most of its values do not divide: an in-world run printed
+/// `the energy reserve is down to 0.3198888888888889`, which is thirteen digits of
+/// noise about a number the display beside it renders as `32/100`.
+const PERCENT: f64 = 100.0;
+
 /// Converts a continuous world coordinate to the block coordinate an
 /// [`Intent::MoveTo`] target carries.
 ///
@@ -222,12 +231,19 @@ impl ScriptedBackend {
                     "{from} said {text:?}; a greeting is the expected social response"
                 ),
             },
+            // The health is rounded for the same reason the reserve below is: this
+            // reasoning is the one field carried verbatim to an operator's screen,
+            // and a health that is an `f32` in world widens to an `f64` that does
+            // not divide - four hearts off a full villager prints as
+            // `19.899999618530273`. To a tenth, which is a half-heart, and the exact
+            // value stays in the perception where anything counting it will look.
+            // The damage `amount` is an integer and needs no such help.
             Trigger::Damaged { amount, source } => Draft {
                 intent: Intent::Flee {
                     from: source.clone(),
                 },
                 reasoning: format!(
-                    "took {amount} damage from {source} at health {health}; disengage",
+                    "took {amount} damage from {source} at health {health:.1}; disengage",
                     health = perception.self_state.health
                 ),
             },
@@ -254,8 +270,8 @@ impl ScriptedBackend {
             Trigger::GoalReview if perception.self_state.energy <= RESTING_ENERGY => Draft {
                 intent: Intent::Rest,
                 reasoning: format!(
-                    "the energy reserve is down to {energy}; resting outranks every other goal",
-                    energy = perception.self_state.energy
+                    "the energy reserve is down to {share:.0}% of capacity; resting outranks every other goal",
+                    share = perception.self_state.energy * PERCENT
                 ),
             },
             Trigger::GoalReview => Draft {
@@ -410,6 +426,48 @@ mod tests {
                 "an agent at {energy} of its reserve must rest, not idle"
             );
         }
+    }
+
+    #[test]
+    fn the_resting_reasoning_states_the_reserve_as_a_reader_reads_it() {
+        // The reasoning is the one field an operator is shown verbatim, and a
+        // reserve derived from a tick count rarely divides: this exact reading
+        // printed as `0.3198888888888889` on a boss bar in world, next to a
+        // display of its own that said `32/100`.
+        let seen = drained(
+            perception(Trigger::GoalReview, DecisionImportance::Routine),
+            0.319_888_888_888_888_9,
+        );
+
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+
+        assert_eq!(
+            draft.reasoning,
+            "the energy reserve is down to 32% of capacity; resting outranks every other goal"
+        );
+    }
+
+    #[test]
+    fn the_damage_reasoning_states_the_health_as_a_reader_reads_it() {
+        // The other number that reaches an operator's screen verbatim. A body's
+        // health is an `f32` in world, so a reading that is not exactly
+        // representable widens to thirteen digits of noise: four hearts off a full
+        // villager is `19.899999618530273` as an `f64`.
+        let mut seen = perception(
+            Trigger::Damaged {
+                amount: 4,
+                source: "zombie".to_owned(),
+            },
+            DecisionImportance::Pivotal,
+        );
+        seen.self_state.health = f64::from(19.9_f32);
+
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+
+        assert_eq!(
+            draft.reasoning,
+            "took 4 damage from zombie at health 19.9; disengage"
+        );
     }
 
     #[test]

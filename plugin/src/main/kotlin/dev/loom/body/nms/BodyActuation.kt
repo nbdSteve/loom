@@ -14,6 +14,7 @@ package dev.loom.body.nms
 
 import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
+import dev.loom.body.EventTag
 
 /**
  * Advances [body], belonging to [agentId], by one tick, recording what it did.
@@ -32,8 +33,14 @@ internal fun actuate(
     if (nearlyBecame != null) {
         // The agent is alive and still in the body Loom made for it, which is the whole
         // point: being struck by lightning happens to an agent rather than ending one.
-        // Recorded on that agent's own chain.
-        journal.record(agentId, BodyEvent.CONVERTED, "refused becoming $nearlyBecame; body unchanged")
+        // Recorded on that agent's own chain, and tagged as the refusal it is: the same
+        // event name also records a conversion that took the body, and nothing but the
+        // tag distinguishes an agent that kept its body from one that lost it.
+        journal.recordConversion(
+            agentId,
+            "refused becoming $nearlyBecame; body unchanged",
+            EventTag.CONVERSION_REFUSED,
+        )
     }
     val step = body.advanceMovement() ?: return
     val where = position(body.x, body.y, body.z)

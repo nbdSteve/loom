@@ -99,12 +99,34 @@ class EmbodiedCognition(
             // so it goes through the main thread or not at all.
             mainThread.execute {
                 if (decision == null) {
-                    onUnavailable(perception, failure ?: missingBoth(perception))
+                    lost(agentId, perception, failure ?: missingBoth(perception))
                 } else {
                     onApplied(actOn(agentId, decision))
                 }
             }
         }
+    }
+
+    /**
+     * Records a perception the mind never answered, then reports it.
+     *
+     * The record comes first and is not optional, for the same reason a decision's is
+     * not: a run that logged only the cycles that succeeded would read as though every
+     * perception got an answer, and a stalled mind would be indistinguishable from a
+     * quiet agent. [onUnavailable] stays a callback because *reporting* is an operator
+     * convenience, while recording is the research record.
+     *
+     * Runs on the main thread, like every other journal write from this class, so the
+     * log's records stay in the order the run happened in.
+     */
+    private fun lost(
+        agentId: AgentId,
+        perception: Perception,
+        failure: Throwable,
+    ) {
+        val classified = failureOf(failure)
+        journal.unavailable(agentId, perception, classified.tag, failure.message ?: classified.toString())
+        onUnavailable(perception, failure)
     }
 
     /**

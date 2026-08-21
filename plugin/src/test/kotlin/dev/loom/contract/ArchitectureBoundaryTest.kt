@@ -46,6 +46,7 @@ class ArchitectureBoundaryTest {
                 "dev.loom.plugin..",
                 "dev.loom.body..",
                 "dev.loom.mind..",
+                "dev.loom.observe..",
             )
             .because(
                 "the contract is the currency both sides exchange; it must not know " +

@@ -13,7 +13,9 @@ import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.describe
+import dev.loom.body.tagOf
 import dev.loom.contract.Decision
+import dev.loom.contract.Perception
 
 /**
  * Records decisions against [eventLog], stamped with the current server tick.
@@ -55,6 +57,38 @@ class DecisionJournal(
         )
     }
 
+    /**
+     * Records a perception the mind never answered, and what stopped it.
+     *
+     * The cycle happened - the agent perceived the world and then did nothing - so it
+     * belongs on the agent's chain like any other. Without this record a run's log shows
+     * only the cycles that worked, which overstates how much of an agent's behavior its
+     * mind actually accounts for, and leaves a stalled mind looking like a quiet agent.
+     *
+     * [reason] is the failure's own text and stays in the record's detail, where it is
+     * useful to whoever is reading the log. The countable classification goes in the
+     * outcome, and the two are deliberately not the same field: a transport message is
+     * unbounded and is not something any display should be putting in front of a person.
+     */
+    fun unavailable(
+        agentId: AgentId,
+        perception: Perception,
+        outcome: String,
+        reason: String,
+    ) {
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.COGNITION_UNAVAILABLE,
+                detail = reason,
+                requestId = perception.requestId,
+                trigger = tagOf(perception.trigger),
+                outcome = outcome,
+            ),
+        )
+    }
+
     private fun append(
         agentId: AgentId,
         decision: Decision,
@@ -71,6 +105,7 @@ class DecisionJournal(
                 detail = detail,
                 requestId = decision.requestId,
                 provenance = decision.provenance,
+                intent = tagOf(decision.intent),
             ),
         )
     }

@@ -54,19 +54,48 @@ private const val CLOSED_REASON = "the cognition bridge closed before the mind a
  * a mind that is broken or unreachable.
  */
 sealed interface CognitionFailure {
+    /**
+     * The short stable name the append-only record counts this failure by.
+     *
+     * Declared on the interface rather than derived by a `when` somewhere else, so a
+     * fourth kind of failure cannot be added without naming itself - an unnamed one
+     * would land in the log as a value no analysis knows to look for. It is also the
+     * *only* part of a failure any operator display may show: the reason text belongs
+     * to the log, where its length and its contents are nobody's problem.
+     */
+    val tag: String
+
     /** The mind did not answer within the bridge's deadline. */
     data class TimedOut(
         val after: Duration,
-    ) : CognitionFailure
+    ) : CognitionFailure {
+        override val tag: String get() = "timedOut"
+    }
 
     /** Every worker and queue slot was busy, so the request was not attempted. */
-    data object Saturated : CognitionFailure
+    data object Saturated : CognitionFailure {
+        override val tag: String get() = "saturated"
+    }
 
     /** The mind was reached but failed, refused, or answered unusably. */
     data class Failed(
         val reason: String,
-    ) : CognitionFailure
+    ) : CognitionFailure {
+        override val tag: String get() = "failed"
+    }
 }
+
+/**
+ * The typed failure behind a thrown cognition error, when there is one.
+ *
+ * A `CompletableFuture` hands a caller a `Throwable`, and only this side knows which
+ * throwables carry a classification. Anything else - a bug on a worker thread, say -
+ * has no tag of its own and is reported as [CognitionFailure.Failed] would be, since
+ * from the agent's point of view the mind failed either way.
+ */
+fun failureOf(throwable: Throwable): CognitionFailure =
+    (throwable as? CognitionUnavailableException)?.failure
+        ?: CognitionFailure.Failed(throwable.toString())
 
 /**
  * Thrown into a failed cognition future. Carries the typed [failure].

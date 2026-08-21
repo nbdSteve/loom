@@ -13,7 +13,6 @@
  */
 package dev.loom.plugin
 
-import dev.loom.body.AgentId
 import dev.loom.body.BodyLocation
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
@@ -162,26 +161,5 @@ class BodyCommand(
                 "no body for $agentId"
             }
         }
-    }
-
-    /**
-     * The single point where a raw command argument becomes an [AgentId].
-     *
-     * [AgentId] refuses ids by design (blank, the reserved world id), and a
-     * typed argument must get the same friendly reply as every other invalid
-     * input rather than escaping the command as an exception. The refusal
-     * message comes from the domain rule itself, so it is never restated here.
-     */
-    private fun withAgent(
-        raw: String,
-        body: (AgentId) -> String,
-    ): String {
-        val agent =
-            try {
-                AgentId(raw)
-            } catch (refused: IllegalArgumentException) {
-                return refused.message ?: "invalid agentId: $raw"
-            }
-        return body(agent)
     }
 }

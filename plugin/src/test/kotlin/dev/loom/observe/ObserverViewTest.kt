@@ -1,0 +1,322 @@
+/*
+ * The redaction rule, tested as a sweep rather than as a list of cases.
+ *
+ * The central test here puts one improbable marker into every record's `detail` and then
+ * asserts the marker cannot be found in anything an observer is shown. That shape is the
+ * point: a body event added later is covered the day it is added, whereas a test naming
+ * today's events one by one would pass forever while a new event quietly leaked its
+ * detail. `decided` is the one deliberate exception and is asserted separately, in both
+ * directions - it must carry the reasoning, and it must still be bounded.
+ */
+package dev.loom.observe
+
+import dev.loom.body.BodyEvent
+import dev.loom.body.BodyEventRecord
+import dev.loom.body.EnergyTrend
+import dev.loom.body.EventTag
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.Test
+
+/** A string no phrase in the view contains, so finding it means a detail was echoed. */
+private const val MARKER = "zzsecretzz"
+
+/** The events the view is deliberately silent about, and the reason each one is. */
+private val DELIBERATELY_SILENT =
+    mapOf(
+        BodyEvent.MOVED to "one a tick for a walking agent",
+        BodyEvent.ENERGY_CHANGED to "several a second while an agent regenerates",
+        BodyEvent.HEALTH_CHANGED to "one a half-heart for a body under attack",
+        BodyEvent.WORLD_LOADED to "world-level bookkeeping, not about this agent",
+    )
+
+class ObserverViewTest {
+    private val view = ObserverView()
+
+    private val walking =
+        WatchState(
+            agentId = WATCHED,
+            vitals = energy(16.0),
+            trend = EnergyTrend.DECLINING,
+            activity = AgentActivity.MOVING,
+            trigger = EventTag.GOAL_REVIEW,
+            stamp = DecisionStamp(requestId = "req-1", provenance = STAMP),
+        )
+
+    /** The note [record] produces, which this test expects there to be one of. */
+    private fun spoken(record: BodyEventRecord): Note =
+        checkNotNull(view.noteFor(record)) { "${record.event} said nothing to an operator" }
+
+    @Test
+    @DisplayName("no event but the decision may put its own detail on an operator's screen")
+    fun onlyADecisionShowsItsDetail() {
+        for (event in BodyEvent.entries) {
+            assertEquals(
+                event == BodyEvent.DECIDED,
+                view.showsDetail(event),
+                "$event must not decide for itself whether its detail is shown",
+            )
+        }
+    }
+
+    @Test
+    @DisplayName("a detail an observer may not see is not echoed by any line about it")
+    fun noNoteEchoesADetailItMayNotShow() {
+        val leaky = BodyEvent.entries.filter { it != BodyEvent.DECIDED }
+
+        for (event in leaky) {
+            val note = view.noteFor(record(event, detail = "at 128,64,-512 because $MARKER"))
+
+            assertFalse(note?.text?.contains(MARKER) ?: false, "$event echoed its detail: ${note?.text}")
+        }
+    }
+
+    @Test
+    @DisplayName("a cognition failure's reason stays where it was already refused")
+    fun aFailureReasonNeverReachesAnObserver() {
+        // The detail a real timeout carries is written a layer down, and a provider
+        // failure's text can quote back the perception - or the credential - it was
+        // given. The tag is what an operator needs; the prose is not.
+        val failed =
+            record(BodyEvent.COGNITION_UNAVAILABLE, detail = "Bearer $MARKER refused: $MARKER")
+                .copy(outcome = "timedOut")
+
+        val note = spoken(failed)
+
+        assertEquals("its mind did not answer (timed out)", note.text)
+        assertEquals(ObserverLevel.CONCERN, note.level)
+    }
+
+    @Test
+    @DisplayName("a world-hold failure is said in full, but names no chunk")
+    fun theHoldFailureCaveatIsSpokenWithoutItsChunkList() {
+        val note = spoken(record(BodyEvent.WORLD_HOLD_FAILED, detail = "chunks $MARKER"))
+
+        // An operator has to hear this while watching, not afterwards in the log: without
+        // it a chunk unload shown as a death would simply be believed.
+        assertEquals("Loom could not hold the world: a death shown here may be a chunk unload.", note.text)
+        assertEquals(ObserverLevel.ALARM, note.level)
+    }
+
+    @Test
+    @DisplayName("a decision carries the reasoning and the stamp that produced it")
+    fun aDecisionSaysWhichMindSaidWhat() {
+        val decided = record(BodyEvent.DECIDED, detail = "walk north to the village").copy(provenance = STAMP)
+
+        assertEquals("decided [test-model/test-v1 routine]: walk north to the village", spoken(decided).text)
+    }
+
+    @Test
+    @DisplayName("a model that answered with a page still costs exactly one bounded line")
+    fun reasoningIsBounded() {
+        val page = "because ".repeat(500)
+        val decided = record(BodyEvent.DECIDED, detail = page).copy(provenance = STAMP)
+
+        val shown = spoken(decided).text
+
+        assertTrue(shown.length <= ObserverBound().noteChars, "was ${shown.length}")
+        assertTrue(shown.endsWith("..."), shown)
+    }
+
+    @Test
+    @DisplayName("an ordinary answer keeps all of its reasoning, which a boss bar's width did not allow")
+    fun anOrdinaryAnswerIsNotClipped() {
+        // Verbatim what the scripted mind answers a goal review with, and the first
+        // in-world run showed it losing its second half to the standing line's bound.
+        // A note is a chat message, so it has room the standing line does not.
+        val reasoning = "idle: reviewed goals at the Routine tier; nothing outranks what is already underway"
+        val decided = record(BodyEvent.DECIDED, detail = reasoning).copy(provenance = STAMP)
+
+        val shown = spoken(decided).text
+
+        assertTrue(shown.endsWith(reasoning), shown)
+    }
+
+    @Test
+    @DisplayName("a decision with no stamp says so by omission rather than by inventing one")
+    fun anUnstampedDecisionClaimsNoModel() {
+        assertEquals("decided: rest", spoken(record(BodyEvent.DECIDED, detail = "rest")).text)
+    }
+
+    @Test
+    @DisplayName("the events worth a line get one, and the noisy ones are silent on purpose")
+    fun theStreamIsBoundedByChoice() {
+        for (event in BodyEvent.entries) {
+            val note = view.noteFor(record(event))
+            val why = DELIBERATELY_SILENT[event]
+
+            if (why == null) {
+                assertNotNull(note, "$event says nothing; give it a line or record why it is silent")
+            } else {
+                assertNull(note, "$event must stay silent: $why")
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("death is stated as permanent, because that is the whole experiment")
+    fun deathIsUnambiguous() {
+        val note = spoken(record(BodyEvent.DIED))
+
+        assertEquals("DIED. Permadeath: this agent will not return.", note.text)
+        assertEquals(ObserverLevel.ALARM, note.level)
+    }
+
+    @Test
+    @DisplayName("the standing line names the agent, its energy, what it is doing, and which mind")
+    fun theStandingLineCarriesEveryFieldAViewerNeeds() {
+        val overlay = view.render(walking)
+
+        assertEquals(
+            "$WATCHED | energy 16/20 declining | moving | goal review -> test-model/test-v1 routine",
+            overlay.text,
+        )
+    }
+
+    @Test
+    @DisplayName("health joins the line only once a body is hurt, so a full reserve stays short")
+    fun healthAppearsOnlyBelowCapacity() {
+        // The reserve owns the gauge, but a body can be beaten to death on a full reserve,
+        // so health earns a place on the line - only once there is something to say.
+        val whole = walking.copy(health = energy(20.0))
+        val hurt = walking.copy(health = energy(12.0))
+
+        assertFalse(view.render(whole).text.contains("health"), view.render(whole).text)
+        assertTrue(view.render(hurt).text.contains("health 12/20"), view.render(hurt).text)
+    }
+
+    @Test
+    @DisplayName("an energy nothing has reported yet is shown as unread, not as a full bar")
+    fun anUnreadEnergyIsSaidToBeUnread() {
+        val overlay = view.render(WatchState(agentId = WATCHED))
+
+        assertTrue(overlay.text.contains("energy not read yet"), overlay.text)
+        assertNull(overlay.progress, "a full gauge for an unknown energy would hide a dying agent")
+    }
+
+    @Test
+    @DisplayName("a tombstone reports no trend, because nothing is happening to it any more")
+    fun aDeadAgentHasNoTrend() {
+        val dead = walking.copy(vitals = energy(0.0), activity = AgentActivity.DEAD)
+
+        // The last reading a dying agent leaves is always a falling one, so without this
+        // the tombstone would read "declining" for the rest of the run.
+        assertTrue(dead.isFinal)
+        assertEquals(
+            "$WATCHED | energy 0/20 | DEAD - will not return | goal review -> test-model/test-v1 routine",
+            view.render(dead).text,
+        )
+    }
+
+    @Test
+    @DisplayName("the gauge is the energy, so a viewer reads survival without reading a number")
+    fun theGaugeFollowsTheEnergy() {
+        assertEquals(0.8, view.render(walking).progress)
+        assertEquals(0.0, view.render(walking.copy(vitals = energy(0.0))).progress)
+    }
+
+    @Test
+    @DisplayName("the loudest of what is happening, the reserve, and the body's health sets the level")
+    fun theLevelIsTheLoudestOfTheThree() {
+        val full = walking.copy(vitals = energy(20.0))
+
+        assertEquals(ObserverLevel.CALM, view.render(full).level)
+        // Half of the reserve gone is worth attention, whatever the agent is doing.
+        assertEquals(ObserverLevel.CONCERN, view.render(walking.copy(vitals = energy(10.0))).level)
+        // A quarter left is an alarm however calm the activity looks.
+        assertEquals(ObserverLevel.ALARM, view.render(walking.copy(vitals = energy(5.0))).level)
+        // And so is fleeing, on a full bar.
+        assertEquals(ObserverLevel.ALARM, view.render(full.copy(activity = AgentActivity.FLEEING)).level)
+        // A body beaten down on a full reserve is the other way an agent ends, so the
+        // health reading raises the level exactly as the reserve's own would.
+        assertEquals(ObserverLevel.CONCERN, view.render(full.copy(health = energy(9.0))).level)
+        assertEquals(ObserverLevel.ALARM, view.render(full.copy(health = energy(4.0))).level)
+    }
+
+    @Test
+    @DisplayName("a reserve that is merely being lived through is not an alarm, whatever its trend")
+    fun livingIsNotAnEmergency() {
+        // An in-world run turned yellow four seconds after the spawn and stayed yellow for
+        // the rest of the agent's life: a reserve is spent by living, so a trend-driven
+        // colour says only that time is passing and spends the one channel an operator
+        // reads at a glance. What is worth a colour is how much reserve is left.
+        val nearlyFull = walking.copy(vitals = energy(19.9), activity = AgentActivity.IDLE)
+
+        assertTrue(view.render(nearlyFull).text.contains("declining"), view.render(nearlyFull).text)
+        assertEquals(ObserverLevel.CALM, view.render(nearlyFull).level)
+    }
+
+    @Test
+    @DisplayName("a line stays one line however long the agent id or the model name is")
+    fun theStandingLineIsBoundedToo() {
+        val overlay =
+            view.render(
+                WatchState(
+                    agentId = "agent-" + "x".repeat(200),
+                    vitals = energy(20.0),
+                    activity = AgentActivity.MOVING,
+                ),
+            )
+
+        assertTrue(overlay.text.length <= ObserverBound().lineChars, "was ${overlay.text.length}")
+    }
+
+    @Test
+    @DisplayName("a trigger with no decision yet is still named, since that is why cognition ran")
+    fun theTriggerIsShownBeforeAnyAnswerArrives() {
+        val thinking =
+            WatchState(
+                agentId = WATCHED,
+                vitals = energy(20.0),
+                activity = AgentActivity.THINKING,
+                trigger = EventTag.DAMAGED,
+            )
+
+        assertEquals("$WATCHED | energy 20/20 | thinking | damaged", view.render(thinking).text)
+    }
+
+    @Test
+    @DisplayName("a refusal is distinguishable from an agent that chose to stand still")
+    fun aRefusalReadsAsARefusal() {
+        val outcomes =
+            mapOf(
+                EventTag.ACCEPTED to "the body is doing it",
+                EventTag.REJECTED to "the body refused it",
+                EventTag.UNSUPPORTED to "the body cannot do that yet",
+                EventTag.NO_SUCH_BODY to "the body did not act on it",
+            )
+
+        for ((outcome, expected) in outcomes) {
+            assertEquals(expected, spoken(record(BodyEvent.INTENT_APPLIED).copy(outcome = outcome)).text, outcome)
+        }
+    }
+
+    @Test
+    @DisplayName("a spawn refused because the body is already there is not reported as bad news")
+    fun theAlreadyEmbodiedRefusalIsSaidCalmly() {
+        val again = record(BodyEvent.SPAWN_REJECTED).copy(outcome = EventTag.ALREADY_EMBODIED)
+        val bodiless = record(BodyEvent.SPAWN_REJECTED).copy(outcome = EventTag.UNKNOWN_WORLD)
+
+        assertEquals("already has a body, so a second one was refused", spoken(again).text)
+        assertEquals(ObserverLevel.CALM, spoken(again).level)
+        assertEquals("was refused a body", spoken(bodiless).text)
+        assertEquals(ObserverLevel.CONCERN, spoken(bodiless).level)
+    }
+
+    @Test
+    @DisplayName("a conversion that took the body says so, rather than that something tried")
+    fun aConversionThatSucceededIsNotUnderstated() {
+        val refused = record(BodyEvent.CONVERTED).copy(outcome = EventTag.CONVERSION_REFUSED)
+        val taken = record(BodyEvent.CONVERTED).copy(outcome = EventTag.BODY_TAKEN)
+
+        assertEquals("something tried to turn it into another creature", spoken(refused).text)
+        assertEquals(ObserverLevel.CONCERN, spoken(refused).level)
+        // The agent is alive with nothing to act through, and nothing re-embodies it.
+        assertEquals("a conversion took its body. It is alive with nothing to act through.", spoken(taken).text)
+        assertEquals(ObserverLevel.ALARM, spoken(taken).level)
+    }
+}

@@ -15,6 +15,7 @@ import dev.loom.body.BodyEventRecord
 import dev.loom.body.BodyLocation
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
+import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.describe
 import dev.loom.contract.DecisionImportance
@@ -372,6 +373,56 @@ class EmbodiedCognitionTest {
         val discarded = records.last()
         assertEquals("req-1", discarded.requestId)
         assertEquals("test-model", discarded.provenance?.model)
+    }
+
+    @Test
+    @DisplayName("a mind that never answered is recorded as an unanswered cycle, tagged and joined up")
+    fun anUnansweredPerceptionIsRecorded() {
+        val records = mutableListOf<BodyEventRecord>()
+        val body =
+            RecordingBody(
+                { trigger -> perception(agentId = agent.value, trigger = trigger) },
+                main::drainingThread,
+                events = BodyEventLog { records.add(it) },
+                currentTick = { tick },
+            )
+        // The failure is handed over already typed rather than produced by a real
+        // deadline: what the bridge does when a mind overruns is its own test, and what
+        // this one is about is the record the loss leaves behind.
+        val timedOut =
+            CognitionUnavailableException(
+                CognitionFailure.TimedOut(PATIENCE),
+                "the mind did not answer within $PATIENCE",
+            )
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { CompletableFuture.failedFuture(timedOut) },
+                mainThread = main,
+                journal = journalInto(records),
+                onApplied = { fail("nothing was decided, so nothing may be applied") },
+            )
+
+        cognition.consider(agent, Trigger.Damaged(amount = 3L, source = "zombie"))
+        tick = DECIDED_TICK
+        main.drain()
+
+        assertEquals(
+            listOf(BodyEvent.PERCEIVED, BodyEvent.COGNITION_UNAVAILABLE),
+            records.map { it.event },
+            "a cycle the mind never answered still happened, and belongs on the agent's chain",
+        )
+        val unanswered = records.last()
+        // These two fields are the whole of what a display may show about a lost
+        // decision: what prompted the cycle, and the countable name of what stopped it.
+        // The failure's own text stays in the detail, where its length is nobody's
+        // problem, and never becomes a line on somebody's screen.
+        assertEquals(EventTag.DAMAGED, unanswered.trigger)
+        assertEquals("timedOut", unanswered.outcome)
+        assertEquals("req-1", unanswered.requestId, "the loss must join to the perception that caused it")
+        assertNull(unanswered.provenance, "no model answered, so no record of this may name one")
+        assertNull(unanswered.intent, "an unanswered perception produced no action to name")
+        assertTrue(body.applied.isEmpty(), "a lost decision must leave the body alone")
     }
 
     @Test

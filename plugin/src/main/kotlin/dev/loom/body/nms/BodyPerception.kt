@@ -11,6 +11,7 @@
 package dev.loom.body.nms
 
 import dev.loom.body.AgentId
+import dev.loom.body.AgentVitals
 import dev.loom.body.PerceptionBound
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Observation
@@ -53,13 +54,33 @@ internal fun capturePerception(
         capturedTick = capturedTick,
         selfState =
             SelfState(
-                health = body.health.toDouble(),
+                health = bodyVitals(body).energy,
                 energy = energy,
                 position = listOf(body.x, body.y, body.z),
                 // The body reveals a summary, never its live inventory handle.
                 inventorySummary = emptyList(),
             ),
         surroundings = observationsAround(body),
+    )
+
+/**
+ * Reads [body]'s health as [AgentVitals].
+ *
+ * This is the body's hit points, not the agent's energy reserve: since the reserve was
+ * added the two are separate vitals, and this reads only the health one. Health is what
+ * the world can take from a body in a fight - a body can be beaten to death on a full
+ * reserve - while the reserve is what living itself spends and what an unattended agent
+ * starves on, and the reserve is held by the port rather than the body. Keeping the health
+ * reading here - in the adapter, read through by both the perception and the operator
+ * display - means the source of the reading can change without anything that reads it.
+ *
+ * Clamped at zero because [AgentVitals] refuses a negative energy and the engine is under
+ * no obligation to have clamped first.
+ */
+internal fun bodyVitals(body: LoomBodyEntity): AgentVitals =
+    AgentVitals(
+        energy = body.health.toDouble().coerceAtLeast(0.0),
+        capacity = body.maxHealth.toDouble(),
     )
 
 private fun observationsAround(body: LoomBodyEntity): List<Observation> {

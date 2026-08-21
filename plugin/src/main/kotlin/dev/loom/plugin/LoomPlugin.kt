@@ -22,6 +22,9 @@ import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.GoalReviewSchedule
 import dev.loom.mind.tcp.TcpCognitionTransport
+import dev.loom.observe.Observatory
+import dev.loom.observe.ObservedEventLog
+import org.bukkit.command.CommandExecutor
 import org.bukkit.plugin.java.JavaPlugin
 import org.bukkit.scheduler.BukkitTask
 import kotlin.time.Duration
@@ -33,6 +36,18 @@ private const val EVENT_LOG_FILE = "body-events.jsonl"
 /** The command that drives the port. Must match the `commands:` key in plugin.yml. */
 private const val BODY_COMMAND = "loombody"
 
+/** The read-only command that watches one agent. Must match plugin.yml too. */
+private const val WATCH_COMMAND = "loomwatch"
+
+/**
+ * How often the operator display is brought up to date, in ticks.
+ *
+ * Four times a second: fast enough that an energy bar visibly falls while an agent is
+ * being hurt, and slow enough to be nothing next to a tick. It costs one comparison when
+ * nobody is watching, which is the usual case.
+ */
+private const val OBSERVER_REFRESH_TICKS = 5L
+
 /** Milliseconds in one server tick, for stating a schedule's period in ticks. */
 private const val MILLIS_PER_TICK = 50L
 
@@ -42,9 +57,11 @@ class LoomPlugin : JavaPlugin() {
     private var bridge: AsyncCognitionBridge? = null
     private var transport: TcpCognitionTransport? = null
     private var autonomy: BukkitTask? = null
+    private var observatory: Observatory? = null
+    private var display: BukkitTask? = null
 
     override fun onEnable() {
-        val log =
+        val file =
             FileBodyEventLog(
                 dataFolder.toPath().resolve(EVENT_LOG_FILE),
                 onWriteFailure = { failure ->
@@ -54,7 +71,17 @@ class LoomPlugin : JavaPlugin() {
                     logger.warning("body event log is incomplete: $count records never reached the file")
                 },
             )
-        eventLog = log
+        eventLog = file
+
+        // The operator display is a consumer of the record and never a participant in the
+        // run: it is handed each record only after the durable log has taken it, and it
+        // holds no port, no bridge, and no world handle to disturb anything with.
+        val watched = Observatory()
+        observatory = watched
+        val log =
+            ObservedEventLog(file, watched::saw) { failure ->
+                logger.warning("observer display failed: ${failure.message}")
+            }
 
         // The single line that binds a body flavor. Everything above the port
         // depends on BodyPort, so a different flavor is a different constructor here.
@@ -74,14 +101,8 @@ class LoomPlugin : JavaPlugin() {
 
         val mind = connectMind(port, log)
 
-        // Reported rather than ignored: a command missing from the descriptor would
-        // otherwise leave the port with no driver and no sign of why.
-        val command = getCommand(BODY_COMMAND)
-        if (command == null) {
-            logger.severe("command '$BODY_COMMAND' is not declared in plugin.yml; the body port has no driver")
-        } else {
-            command.setExecutor(BodyCommand(port, mind) { message -> logger.info(message) })
-        }
+        bind(BODY_COMMAND, BodyCommand(port, mind) { message -> logger.info(message) }, "the body port has no driver")
+        bind(WATCH_COMMAND, WatchCommand(watched), "a run cannot be watched")
 
         // A conversion cannot be recognised after it happens, so the attempt is caught
         // as it happens; see BodyConversions.
@@ -90,9 +111,23 @@ class LoomPlugin : JavaPlugin() {
         // Actuation runs every tick; cognition does not, and is not called here.
         server.scheduler.runTaskTimer(this, Runnable { port.tick(server.currentTick.toLong()) }, 1L, 1L)
 
+        // The display is driven from its own timer rather than from the body tick, for the
+        // same reason autonomy is: how often an operator's screen is repainted is not the
+        // rate anything else in Loom happens at. Every line an observer sees is delivered
+        // from here, which is what keeps a main-thread API off the threads that write
+        // records.
+        display =
+            server.scheduler.runTaskTimer(
+                this,
+                Runnable { watched.refresh(server.currentTick.toLong()) },
+                OBSERVER_REFRESH_TICKS,
+                OBSERVER_REFRESH_TICKS,
+            )
+
         driveAgents(port, mind)
 
         logger.info("Loom body port ready: server-side entity bodies")
+        logger.info("Loom observation ready: /loomwatch <agentId> follows one agent, read-only")
     }
 
     override fun onDisable() {
@@ -101,6 +136,17 @@ class LoomPlugin : JavaPlugin() {
         // after despawnAll would find no agents at all.
         autonomy?.cancel()
         autonomy = null
+
+        // The display goes down before the bodies do. It is only a consumer of the record,
+        // so nothing depends on the order for correctness - but a boss bar left standing
+        // after Loom unloaded would go on stating an agent's energy that nothing is
+        // watching any more, and `shutDown` is what takes it off the screen. It is the
+        // unconditional way out rather than `stop`, which belongs to one observer: Loom is
+        // going away for everybody, and there is nobody here to ask on their behalf.
+        display?.cancel()
+        display = null
+        observatory?.shutDown()
+        observatory = null
 
         // The transport goes first: closing its sockets is what releases a worker
         // parked in a read, so the pool shutdown that follows is prompt even when
@@ -116,6 +162,25 @@ class LoomPlugin : JavaPlugin() {
         bodyPort = null
         eventLog?.close()
         eventLog = null
+    }
+
+    /**
+     * Gives [name] its [executor], or says loudly why the command will not work.
+     *
+     * Reported rather than ignored: a command missing from the descriptor is registered
+     * nowhere and fails silently, so [consequence] names what an operator has just lost.
+     */
+    private fun bind(
+        name: String,
+        executor: CommandExecutor,
+        consequence: String,
+    ) {
+        val command = getCommand(name)
+        if (command == null) {
+            logger.severe("command '$name' is not declared in plugin.yml; $consequence")
+        } else {
+            command.setExecutor(executor)
+        }
     }
 
     /**

@@ -10,6 +10,7 @@
 package dev.loom.body.nms
 
 import dev.loom.body.AgentId
+import dev.loom.body.AgentVitals
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
@@ -29,17 +30,88 @@ internal class BodyEventJournal(
     /**
      * Stamps [event] for [agentId] with the current tick and appends it.
      *
-     * [requestId] names the perception the event answers, for the events that answer
-     * one - a perception and the action a decision about it produced. It stays absent
-     * on everything an agent does of its own accord.
+     * [vitals] is the energy reserve, and [health] the body's hit points, passed wherever
+     * the readings were being taken anyway - a spawn, a death, a change worth recording -
+     * which is what makes a survival curve derivable from the log itself. They stay absent
+     * elsewhere rather than being carried forward, so no record states a reading that was
+     * not actually taken.
+     *
+     * The events that answer a perception carry a request id, and they have their own
+     * methods - [recordPerception] and [recordAction] - because each also carries a fact
+     * only it has; this generic path is for the events an agent produces of its own accord.
      */
     fun record(
         agentId: AgentId,
         event: BodyEvent,
         detail: String,
-        requestId: String? = null,
+        vitals: AgentVitals? = null,
+        health: AgentVitals? = null,
     ) {
-        eventLog.append(BodyEventRecord(currentTick(), agentId.value, event, detail, requestId))
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = event,
+                detail = detail,
+                vitals = vitals,
+                health = health,
+            ),
+        )
+    }
+
+    /**
+     * Records that a perception was taken, naming what prompted it.
+     *
+     * Its own method rather than another optional argument because the trigger is the
+     * one fact only a perception has, and it is the field a run's inference cost is
+     * apportioned by. The reserve reading rides along: the perception took the reserve it
+     * handed the mind anyway. The body's health is left to the change and death records,
+     * which carry it wherever it moved.
+     */
+    fun recordPerception(
+        agentId: AgentId,
+        detail: String,
+        requestId: String?,
+        trigger: String,
+        vitals: AgentVitals?,
+    ) {
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.PERCEIVED,
+                detail = detail,
+                requestId = requestId,
+                trigger = trigger,
+                vitals = vitals,
+            ),
+        )
+    }
+
+    /**
+     * Records what the body did with an intent, and whether it did it.
+     *
+     * The pair is what makes "how often does the body refuse what the mind decided" a
+     * count rather than a scan of prose, so the two are written together or not at all.
+     */
+    fun recordAction(
+        agentId: AgentId,
+        detail: String,
+        requestId: String?,
+        intent: String,
+        outcome: String,
+    ) {
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.INTENT_APPLIED,
+                detail = detail,
+                requestId = requestId,
+                intent = intent,
+                outcome = outcome,
+            ),
+        )
     }
 
     /**
@@ -47,13 +119,54 @@ internal class BodyEventJournal(
      *
      * Every refusal is logged, so pairing the two here means a spawn cannot be refused
      * without the reason reaching the research record.
+     *
+     * [outcome] is that reason as one of `EventTag`'s refusal tags, and it is required
+     * rather than optional because the refusals do not all mean the same thing about the
+     * agent: `alreadyEmbodied` is refused *because* the agent still has its body, while
+     * the rest happen to an agent that has none. Only the tag can tell them apart - the
+     * prose in [reason] is for a person - so a new refusal has to say which it is.
      */
     fun reject(
         agentId: AgentId,
         reason: String,
+        outcome: String,
     ): BodySpawnResult.Rejected {
-        record(agentId, BodyEvent.SPAWN_REJECTED, reason)
+        classified(agentId, BodyEvent.SPAWN_REJECTED, reason, outcome)
         return BodySpawnResult.Rejected(agentId, reason)
+    }
+
+    /**
+     * Records what a conversion attempt did, and whether it took the body with it.
+     *
+     * Its own method because [outcome] is not optional here either: a conversion Loom
+     * refused and one that got past the refusal are opposite facts about whether the agent
+     * still has a body, under one event name. Which happened has to be countable, and has
+     * to be readable by a display that deliberately never reads a record's prose.
+     */
+    fun recordConversion(
+        agentId: AgentId,
+        detail: String,
+        outcome: String,
+    ) {
+        classified(agentId, BodyEvent.CONVERTED, detail, outcome)
+    }
+
+    /** Appends an [event] whose meaning is carried by a short stable [outcome] tag. */
+    private fun classified(
+        agentId: AgentId,
+        event: BodyEvent,
+        detail: String,
+        outcome: String,
+    ) {
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = event,
+                detail = detail,
+                outcome = outcome,
+            ),
+        )
     }
 
     /**

@@ -14,6 +14,10 @@ description: Gives Loom agents physical bodies in the world, behind a swappable 
 # Bukkit's permission check short-circuits to "allowed" when the field is null, so
 # the node below is what actually gates the command. `PluginDescriptorTest` fails
 # the build if it goes missing again, because nothing else would notice.
+#
+# `/loomwatch` changes nothing and is still gated, for a different reason: what it
+# shows is operator-only diagnostics - model names, prompt versions, and the mind's
+# own reasoning - which is not something every sender on a server should be handed.
 commands:
   loombody:
     description: Drives the body port and the mind - spawn, move, perceive, think, despawn, list.
@@ -26,11 +30,24 @@ commands:
       /loombody think <agentId>
       /loombody despawn <agentId>
       /loombody list
+  loomwatch:
+    description: Watches one living agent - energy, trigger, model, intent, and outcome.
+    permission: loom.observe
+    permission-message: /loomwatch watches Loom's agents and requires the loom.observe permission.
+    usage: |
+      /loomwatch <agentId>
+      /loomwatch off
+      /loomwatch
 
-# One node for the whole command, defaulting to op. It is deliberately not split
-# per subcommand: every subcommand names a live agent and can disturb a research
-# run, so there is no read-only half worth handing to a wider audience.
+# One node per command, both defaulting to op. `loom.body` is deliberately not split
+# per subcommand: every subcommand of it names a live agent and can disturb a research
+# run. `/loomwatch` is the one read-only half there is, so it gets a node of its own -
+# it only reads the record Loom already writes, and holding loom.observe cannot change
+# an agent's energy, timing, decisions, or model routing.
 permissions:
   loom.body:
     description: Drive Loom's bodies and the mind through /loombody.
+    default: op
+  loom.observe:
+    description: Watch one agent through /loomwatch. Read-only.
     default: op

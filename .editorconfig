@@ -1,0 +1,11 @@
+# The one place the Kotlin line length is stated, because two gates read it.
+#
+# detekt enforces 120 (its MaxLineLength default, which this project keeps), and ktlint
+# reads its own limit from here. With no .editorconfig ktlint assumed 140 and would
+# *require* joining a wrapped expression body onto a 128-character line that detekt then
+# refused - two gates asking for opposite things, with no way to satisfy both. Keep the
+# two numbers equal.
+root = true
+
+[*.kt]
+max_line_length = 120

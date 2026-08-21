@@ -12,17 +12,20 @@
 package dev.loom.body.nms
 
 import dev.loom.body.AgentId
+import dev.loom.body.AgentVitals
 import dev.loom.body.BodyDeparture
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyLocation
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
+import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.Metabolism
 import dev.loom.body.Mortality
 import dev.loom.body.WorldFootprint
 import dev.loom.body.describe
+import dev.loom.body.tagOf
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
@@ -65,6 +68,7 @@ class NmsEntityBodyPort(
     private val journal = BodyEventJournal(eventLog, currentTick)
     private val mortality = Mortality()
     private val metabolism = Metabolism()
+    private val vitalsWatch = VitalsWatch(journal)
     private val footprint = WorldFootprint(radiusChunks = FOLLOW_RADIUS_CHUNKS)
     private val heldChunks = HeldChunks(server, owner, footprint, journal, onHoldFailure)
 
@@ -76,9 +80,17 @@ class NmsEntityBodyPort(
         return when {
             // Death is checked first and refused outright: Loom is permadeath, so a
             // dead agent id is never embodied again, whatever else the request says.
-            mortality.isDead(agentId) -> journal.reject(agentId, "this agent has died, and Loom agents do not return")
-            bodies.containsKey(agentId) -> journal.reject(agentId, "a body already exists for this agent")
-            world == null -> journal.reject(agentId, "unknown world '${at.world}'")
+            mortality.isDead(agentId) ->
+                journal.reject(
+                    agentId,
+                    "this agent has died, and Loom agents do not return",
+                    EventTag.HAS_DIED,
+                )
+            // The one refusal that leaves the agent embodied, and tagged as such: the
+            // spawn is refused *because* the body it asks for is already standing there.
+            bodies.containsKey(agentId) ->
+                journal.reject(agentId, "a body already exists for this agent", EventTag.ALREADY_EMBODIED)
+            world == null -> journal.reject(agentId, "unknown world '${at.world}'", EventTag.UNKNOWN_WORLD)
             else -> place(agentId, at, world)
         }
     }
@@ -106,18 +118,37 @@ class NmsEntityBodyPort(
         // hold is attempted first, so addFreshEntity never runs for a body Loom could
         // not keep loaded.
         val hold = heldChunks.holdAround(at)
+        // Each refusal carries the tag that says what it leaves the agent as. Both of
+        // these leave it with no body at all, unlike the already-embodied refusal above.
         val rejection =
             when {
-                !hold.isComplete -> "could not hold the world around the spawn: ${hold.describeFailures()}"
+                !hold.isComplete ->
+                    "could not hold the world around the spawn: ${hold.describeFailures()}" to EventTag.WORLD_UNHELD
                 !world.handle.addFreshEntity(body, CreatureSpawnEvent.SpawnReason.CUSTOM) ->
-                    "the world refused the spawn"
+                    "the world refused the spawn" to EventTag.WORLD_REFUSED
                 else -> null
             }
         if (rejection != null) {
-            return journal.reject(agentId, rejection)
+            val (reason, outcome) = rejection
+            return journal.reject(agentId, reason, outcome)
         }
         bodies[agentId] = body
-        journal.record(agentId, BodyEvent.SPAWNED, "at ${at.world} ${position(at.x, at.y, at.z)}")
+        // The spawn is this agent's first energy reading, so it carries one: a survival
+        // curve has to start somewhere, and the watch is told about it so the agent's
+        // first tick does not restate what this record has just said. The reading is the
+        // energy reserve - what living spends and what an unattended agent starves on -
+        // with the body's health carried beside it, since a body can be beaten to death
+        // on a full reserve and an operator wants both.
+        val reserve = reserveVitals(metabolism.energyOf(agentId))
+        val health = bodyVitals(body)
+        vitalsWatch.noted(agentId, reserve, health)
+        journal.record(
+            agentId,
+            BodyEvent.SPAWNED,
+            "at ${at.world} ${position(at.x, at.y, at.z)}",
+            vitals = reserve,
+            health = health,
+        )
         return BodySpawnResult.Spawned(agentId, at)
     }
 
@@ -129,8 +160,11 @@ class NmsEntityBodyPort(
      */
     override fun despawn(agentId: AgentId): Boolean {
         val body = bodies.remove(agentId) ?: return false
+        val reserve = reserveVitals(metabolism.energyOf(agentId))
+        val health = bodyVitals(body)
         body.discard()
-        journal.record(agentId, BodyEvent.DESPAWNED, "removed from world")
+        vitalsWatch.forget(agentId)
+        journal.record(agentId, BodyEvent.DESPAWNED, "removed from world", vitals = reserve, health = health)
         return true
     }
 
@@ -161,11 +195,12 @@ class NmsEntityBodyPort(
             } else {
                 body.applyIntent(intent)
             }
-        journal.record(
+        journal.recordAction(
             agentId,
-            BodyEvent.INTENT_APPLIED,
             "${describe(intent)} -> ${describe(outcome)}",
             requestId,
+            tagOf(intent),
+            tagOf(outcome),
         )
         return outcome
     }
@@ -176,11 +211,18 @@ class NmsEntityBodyPort(
     ): Perception? {
         val body = bodies[agentId] ?: return null
         val perception = capturePerception(agentId, body, metabolism.energyOf(agentId), trigger, currentTick())
-        journal.record(
+        // The reading the perception itself took, recorded with it: a decision's cost and
+        // the reserve the agent had when it was made belong to the same moment. It is the
+        // reserve the perception just handed the mind; the body's health rides on the
+        // change and death records instead of being restated here.
+        val reserve = reserveVitals(metabolism.energyOf(agentId))
+        vitalsWatch.noted(agentId, reserve)
+        journal.recordPerception(
             agentId,
-            BodyEvent.PERCEIVED,
-            "${perception.surroundings.size} observation(s), energy ${fraction(perception.selfState.energy)}",
+            "${perception.surroundings.size} observation(s)",
             perception.requestId,
+            tagOf(trigger),
+            reserve,
         )
         return perception
     }
@@ -205,14 +247,30 @@ class NmsEntityBodyPort(
                 // A body whose reserve ran out this tick takes no further step: it is about
                 // to be a corpse, and a movement record after a death is a lie.
                 agentId in exhausted -> Unit
-                else -> actuate(agentId, body, journal)
+                // A body Loom drove this tick is a body whose vitals it reads. Both are
+                // sampled every tick and VitalsWatch owns the whole of the judgement about
+                // which sample deserves a record, so a run's survival curves come out of
+                // the log itself without a record per tick.
+                //
+                // Only this branch reads them, for the same reason a movement record after
+                // a death is a lie: the other two have no body of this agent's left to read.
+                // A departed body's reading would land *after* the died record that
+                // explained it - an in-world run wrote exactly that, twice, off an entity
+                // the engine had already removed - and a traveller's would be read off the
+                // body it just left behind. Nothing a survival curve needs is lost by it: a
+                // died or despawned record states the readings it ended on, and a traveller
+                // states its own from the spawn of the body it arrives in.
+                else -> {
+                    actuate(agentId, body, journal)
+                    vitalsWatch.recordChanges(agentId, reserveVitals(metabolism.energyOf(agentId)), bodyVitals(body))
+                }
             }
         }
         // Running out of reserve is a certainty rather than an inference about a removal,
         // so it ends the agent wherever this tick left its body - including a body just
         // placed on the far side of a portal. Deaths already recorded stay recorded once.
         for (agentId in exhausted) {
-            die(agentId, "spent its energy reserve")
+            die(agentId, "spent its energy reserve", bodies[agentId]?.let { bodyVitals(it) })
         }
         // Loom has no human players, so the agents must carry their own loaded world
         // with them, in whichever dimension each one is in. Runs after movement so the
@@ -238,13 +296,23 @@ class NmsEntityBodyPort(
         body: LoomBodyEntity,
     ) {
         bodies.remove(agentId)
+        // The health reading is taken before the watches forget the agent, so a death
+        // records what it died on. Forgetting matters for the departures that are not
+        // deaths: an agent that walks through a portal gets a new body, and its first
+        // reading there must not be compared against one from a body it no longer has.
+        val health = bodyVitals(body)
+        vitalsWatch.forget(agentId)
         // OWED SIGNAL: every branch here is news the mind is owed once cognition is
         // wired - "you have DIED", "you are somewhere else now", "you were nearly turned
         // into a witch" - and the death one is terminal rather than an offer of another
         // body. None is sent from here: tick stays actuation-only and the contract
         // carries no such Trigger yet. Record now, signal later.
         when (departureOf(body)) {
-            BodyDeparture.DEATH -> die(agentId, "died in-world")
+            // Recording the death is what makes it terminal, and it goes through the same
+            // funnel as a spent reserve so "died once" does not depend on which cause got
+            // there first. The health it died on rides along, since a body can be beaten
+            // to death on a full reserve.
+            BodyDeparture.DEATH -> die(agentId, "died in-world", health)
 
             // The agent walked out of one dimension and into another: the same agent, with
             // its id and everything attached to it, in a new body. The engine leaves Loom
@@ -265,10 +333,10 @@ class NmsEntityBodyPort(
             // is bodiless until it is embodied again, which is Loom's to do knowingly
             // rather than something to paper over here.
             BodyDeparture.CONVERSION ->
-                journal.record(
+                journal.recordConversion(
                     agentId,
-                    BodyEvent.CONVERTED,
                     "body taken by conversion into ${body.convertedInto}; the agent lives on, unembodied",
+                    EventTag.BODY_TAKEN,
                 )
 
             BodyDeparture.STOWED -> Unit
@@ -290,14 +358,28 @@ class NmsEntityBodyPort(
      * or acts for it. A body the world has already removed is simply not there to
      * discard, which is how a death in-world differs from a reserve running out under a
      * body that is still standing.
+     *
+     * [health] is the body's health at the moment it died, when there was a body to read
+     * it from: a starvation happens on a body that is still standing, an in-world death on
+     * one the engine has already taken. The reserve is read here, so a death always records
+     * both the reserve it had left and the health it had left.
      */
     private fun die(
         agentId: AgentId,
         cause: String,
+        health: AgentVitals?,
     ) {
+        val reserve = reserveVitals(metabolism.energyOf(agentId))
         bodies.remove(agentId)?.discard()
+        vitalsWatch.forget(agentId)
         if (mortality.recordDeath(agentId)) {
-            journal.record(agentId, BodyEvent.DIED, "$cause; this agent will not return")
+            journal.record(
+                agentId,
+                BodyEvent.DIED,
+                "$cause; this agent will not return",
+                vitals = reserve,
+                health = health,
+            )
         }
     }
 

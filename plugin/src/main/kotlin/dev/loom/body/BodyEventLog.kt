@@ -29,11 +29,12 @@ import kotlinx.serialization.encodeToString
  * already-rendered text, which keeps the record schema stable as new body events
  * are added.
  *
- * [requestId] and [provenance] are fields rather than prose because they are
- * joined and counted across records - which perception an action answers, which
- * model was billed for a run - and reading either back out of rendered text would
- * make every such metric a parsing exercise. Both are absent from records that
- * have neither, so a record only ever claims what it knows.
+ * Everything else is a field rather than prose for one reason: it is joined and
+ * counted across records - which perception an action answers, which model was billed
+ * for a run, what prompted a decision, what the body did about it, how much energy an
+ * agent had left - and reading any of that back out of rendered text would make every
+ * such metric a parsing exercise. Every one of them is absent from records that have
+ * no value for it, so a record only ever claims what it knows.
  */
 @Serializable
 data class BodyEventRecord(
@@ -61,6 +62,63 @@ data class BodyEventRecord(
      * say which model answered it.
      */
     val provenance: Provenance? = null,
+    /**
+     * Which event prompted cognition, as [tagOf] names it.
+     *
+     * On the perception records, and on the ones that say a perception went
+     * unanswered. What share of a run's inference a scheduled goal review accounts
+     * for, against damage or being spoken to, is the question this answers - and it
+     * is the same question that decides what a run costs, since the trigger is what
+     * routes a decision to a model.
+     */
+    val trigger: String? = null,
+    /**
+     * The action the mind chose, as [tagOf] names it.
+     *
+     * On the decision records and on the action ones, so "what do these minds
+     * actually do" is a count over one field rather than a scan of [detail], whose
+     * text carries the model's own reasoning alongside it.
+     */
+    val intent: String? = null,
+    /**
+     * How the record ended, as a short stable tag.
+     *
+     * Two things end a decision, and both land here: what the body did with an intent
+     * ([tagOf] over the outcome), and, on [BodyEvent.COGNITION_UNAVAILABLE], why the
+     * mind never named one. Kept as one field because both answer the same question -
+     * of the decisions this run started, how many became an action - and a run that had
+     * to ask it in two shapes would keep getting two different answers.
+     *
+     * Two events that end no decision carry it too, for a reason worth stating: their
+     * name alone does not say what happened to the agent. A [BodyEvent.SPAWN_REJECTED] of
+     * `alreadyEmbodied` was refused *because* the agent still has its body, where every
+     * other refusal happens to an agent that has none; a [BodyEvent.CONVERTED] of
+     * `bodyTaken` left the agent with no body, where a refused conversion changed nothing.
+     * Both distinctions used to live only in [detail], which no operator display may read.
+     */
+    val outcome: String? = null,
+    /**
+     * How much of its energy reserve the agent had at this point in its life.
+     *
+     * The reserve is what living spends and what an unattended agent starves on, so it is
+     * the vital a survival curve is drawn from. Present wherever the reading was taken
+     * anyway - a spawn, a perception, a change worth recording, a despawn, a death - which
+     * is what makes that curve derivable from the log rather than from a counter kept
+     * beside it. Absent elsewhere rather than carried forward, so no record states a
+     * reading that was not actually taken.
+     */
+    val vitals: AgentVitals? = null,
+    /**
+     * The body's health at this point in its life, when there was a body to read it from.
+     *
+     * A separate vital from the [vitals] reserve, and recorded beside it, because a body
+     * can be beaten to death on a full reserve: the reserve says whether the agent is
+     * starving, health says whether it is being killed. Present on the records that read a
+     * body - a spawn, either vitals change, a despawn, a death - and absent from a
+     * perception, which carries the reserve it handed the mind and nothing read off the
+     * body itself.
+     */
+    val health: AgentVitals? = null,
 )
 
 /** The body events worth a durable record. */
@@ -104,6 +162,45 @@ enum class BodyEvent {
      */
     @SerialName("decisionDiscarded")
     DECISION_DISCARDED,
+
+    /**
+     * A perception reached the mind and no decision came back.
+     *
+     * The mind timed out, was saturated, or failed. It is a body event because it is
+     * something that happened to an agent - a cycle in which it perceived the world
+     * and then did nothing, for a reason that was never its own - and a run whose log
+     * showed only the cycles that succeeded would overstate how much of an agent's
+     * behavior its mind actually accounts for. The classification is in `outcome`; the
+     * failure's own text stays in [detail], where an operator display must not go
+     * looking for it, because a transport failure's message is not bounded and has
+     * never been anything a viewer needs.
+     */
+    @SerialName("cognitionUnavailable")
+    COGNITION_UNAVAILABLE,
+
+    /**
+     * An agent's energy reserve moved far enough to be worth recording.
+     *
+     * Energy is continuous and sampled every tick, so this is a step function over it
+     * rather than a stream - see `EnergyWatch`. Sampled by the body and never by the
+     * mind: how much life an agent has left is a fact about its body.
+     */
+    @SerialName("energyChanged")
+    ENERGY_CHANGED,
+
+    /**
+     * The body's health moved far enough to be worth recording.
+     *
+     * Its own event rather than a reading folded into [ENERGY_CHANGED], because the two
+     * vitals move for different reasons and on different timescales: the reserve drains
+     * on a half-hour ramp, while health drops in one hit and can end a body in seconds.
+     * Sharing one event would leave a survival query unable to say which vital moved,
+     * and - worse in world - would leave a body being beaten to death invisible until
+     * the reserve's own next step, which an in-world run measured at up to eighteen
+     * seconds. A separate step function ([`EnergyWatch`]) gates it the same way.
+     */
+    @SerialName("healthChanged")
+    HEALTH_CHANGED,
 
     @SerialName("despawned")
     DESPAWNED,
