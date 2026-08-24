@@ -22,12 +22,77 @@ The fixtures are also the wire: the mind's integration test replays every `perce
 Its surface is exactly four capability areas - lifecycle, actuation, perception, and the server-tick hook - and it should stay that size.
 Only Loom domain and contract types appear in its signatures; no engine type and no world handle crosses it, which is what makes the body flavor replaceable.
 
-`dev.loom.body` is engine-free by rule, and the movement arithmetic (`WalkGait`), perception bound (`PerceptionBound`), mortality rule (`Mortality`), and world-loading footprint (`WorldFootprint`) live there so they are unit-testable without a server.
+`dev.loom.body` is engine-free by rule, and the movement policy (`Navigation`), perception bound (`PerceptionBound`), mortality rule (`Mortality`), and world-loading footprint (`WorldFootprint`) live there so they are unit-testable without a server.
 
 Two design constraints are load-bearing, not stylistic:
 
-- **Movement is a cheap Loom-owned step, never synchronous pathfinding.** Vanilla goal selectors with synchronous A* were measured at ~25ms/tick for 100 bodies against ~1ms for 400 stepped bodies. Adding a pathfinder to the tick path would undo that.
+- **Minecraft may find a route; it may never choose a goal.** Bodies walk with the engine's own ground navigator, so an agent sent somewhere goes round a wall and up a step instead of pressing into it - but every request carries a target the mind named, nothing below the port invents one, and an out-of-range target is refused and recorded rather than clamped, because a clamped target would be a goal Loom chose. A refusal also *drops the route the body was already walking*, because a route left running would keep the body moving toward the previous target and put `moved` records after the `rejected` one - which anything derived from the event log reads as movement Loom authorised; `NavigationPolicy.route` therefore carries the verdict out rather than only reporting it, and the rule is about the *outcome* rather than about whose bound was hit, so a refusal variant added later is covered without being named.
+  That last part is load-bearing on the case a reader would not expect: a granted request still reaches an engine with refusals of its own, and a ground navigator will not search while its body is off the ground - stepping down a slope, or mid-jump over a one-block rise - so it answers a perfectly reachable target with no route at all, on a branch that never touches the navigator.
+  The body keeps zero vanilla goal selectors and no brain, and the build enforces both halves: `BodyBoundaryTest` fails if anything under `dev.loom` calls `addGoal` or `registerGoals` or touches either selector field, and equally if anything calls `getBrain` or delegates upward to `customServerAiStep`, or the body stops overriding both of that hook's overloads - which is a stronger statement than any runtime check could make (constructing a body needs a real `Level`).
+  Read `dev/loom/body/Navigation.kt` before changing what a body may be asked to do.
 - **`BodyPort.tick` drives actuation only and must never invoke cognition.** Cognition is event-driven by construction: the contract's `Trigger` deliberately has no per-tick variant.
+
+**`FOLLOW_RANGE` is a walk budget, not a reach, and reading it as a reach is the mistake this design has already made once.**
+`PathFinder` spends the attribute on the *length of the route*: it abandons a partial route as soon as the distance walked along it reaches that number, and expands no node further than it in a straight line from the start.
+So a body sent across open ground may go the whole budget, while a body that has to go round something pays for the detour out of the same money - and, worse, a request the budget cannot afford comes back as a *best-effort* route with `canReach` false rather than as nothing, so the shortfall arrives as a body pressed against a wall.
+`PATH_REQUEST_REACH_BLOCKS` is therefore half of `BODY_FOLLOW_RANGE_BLOCKS` (8 of 16), and `NavigationTest` pins that what is left after the reach is at least the reach again.
+An in-world run found this the hard way: a body three blocks from a nine-block wall, sent seven and a half blocks to the far side, was given a four-node route that walked it into the wall and stopped, because the way round was eighteen blocks of walking.
+Two consequences worth knowing before changing either number.
+A body can be sent to less than it can see - perception reaches twelve blocks, the reach is eight - so a target the mind saw and named may be refused, and the refusal is recorded; walking there in stages is the agent's business until an intent exists for it.
+And a wall long enough that the way round it exceeds the budget is still refused in effect, as a best-effort route: the shape of obstacle a body can round is bounded by the budget, not by the reach.
+
+**The engine moves the target before it searches, so what a route reached is not what the mind named.**
+`GroundPathNavigation.createPath` adjusts the named block first: a block full of air becomes the ground *below* it, and a solid block becomes the first non-solid block *above* it.
+Only the adjusted block is searched for, and `Path.canReach` and `Path.distToTarget` both answer about *that* block, which is why a body sent three blocks into the ground was first recorded as reaching its target with nothing left to walk.
+The applied record therefore states two facts about two targets: `reaching what it searched for` is the engine's verdict on its own adjusted block, and `ending N blocks from it` is Loom's own straight-line measure from the end of the route to the block the mind named, taken with the same `blocksApart` the reach is measured with.
+So a complete route that ends three blocks away now reads as exactly that.
+Do not put `Path.distToTarget` back: it is the shortfall against the wrong target, and it reads as `0.00` in precisely the cases where the body did not go where it was sent.
+
+**Loom's token bucket bounds only the searches Loom itself asks for, and the engine asks for others.**
+`ServerLevel.sendBlockUpdated` (`ServerLevel.java:1686`) runs on every block change whose old and new collision shapes differ, walks `navigatingMobs` - which `onTrackingStart` (`ServerLevel.java:2543`) fills with *every* `Mob` in the world, Loom bodies included - and calls `recomputePath` (`PathNavigation.java:82`) on each navigator whose `shouldRecomputePath` (`:439`) says yes, which is any body with a live route whose changed block is near it.
+That is a full A* outside `NavigationPolicy`, and the tick path is not search-free either: `recomputePath` throttles itself to one per twenty game ticks and otherwise sets `hasDelayedRecomputation`, which `PathNavigation.tick` (`:257`) then acts on.
+So the earlier claim that a *request* is the only search and the tick advances a waypoint index and searches nothing was wrong once Loom started putting a path on the navigator; before this change no Loom body ever had one, so `shouldRecomputePath` was never true.
+What still bounds a recompute is per body rather than per tick: the same 256-node budget the follow range fixes, and the fact that it fires only for a body already walking near a changed block.
+Paper's `updatePathfindingOnBlockUpdate` gates the whole path and defaults to true.
+`BODY_FOLLOW_RANGE_BLOCKS` (16) bounds all of it: besides the walk budget above, the engine reads the attribute at navigator construction to fix the node budget at sixteen nodes per block, and again per request as the half-extent of the region the search reads.
+`NavigationPolicy` is server-wide rather than per agent for that reason: a hundred agents *deciding* to walk in the same tick cost the same as `DEFAULT_PATH_REQUESTS_PER_TICK` (4), and the fifth request is refused *and recorded* so a run that outgrows the budget says so in its own log instead of merely feeling sluggish.
+The budget does not accrue, and only a granted request spends a token, so a tick full of out-of-range targets leaves the budget for the requests that could have used it.
+Note before tuning that number that an `OverBudget` refusal is a refusal, so it stops the prior route like any other: with more agents deciding in one tick than the budget serves, the excess lose the route they were already walking even when the target they named is unchanged and reachable.
+Nothing retries, so those agents stand still until their next goal review, up to a whole `DEFAULT_GOAL_REVIEW_CADENCE` later - which makes the bucket a behaviour knob under contention and not merely a throughput one.
+The engine's own refusal is under the same stop and is the least defensible case of it, because there the bound is not real: a body momentarily off the ground - mid-jump over a one-block rise, or stepping down a slope - fails `canUpdatePath`, so `createPath` answers a perfectly reachable target with no route, and the agent loses a legitimate route *and* the token it spent, again with nothing retrying before its next goal review.
+Distance is a straight line, and all three axes count, because the bound it is measured against is a walk and a walk is never shorter than the straight line; a per-axis maximum reads the corner of a cube as being one side away and promises a detour that is not there.
+
+**The hold radius is derived from the follow range, and getting that wrong fails silently.**
+A path search reads the world through `PathNavigationRegion`, which never blocks and substitutes an *empty* chunk for any that is not loaded - so an unloaded chunk reads as **air**, and the search answers confidently about ground it never looked at.
+`holdRadiusChunksFor` therefore derives the `WorldFootprint` radius (2 chunks, 25 per lone agent, up from 9) from the follow range plus the engine's own hardcoded 8-block region margin, and `NavigationTest` pins the derivation so raising one cannot leave the other behind.
+Note that the region is 24 blocks around the body, wider than anywhere a body can be sent: the hold has to cover what a search *reads*, not where it may go.
+The chunk-edge case needs no allowance of its own; `Navigation.kt` carries the proof.
+Note that the approved design document states the rule as `radiusChunks * 16 >= followRange + requestRange + 16`, which conflates `createPath`'s *accuracy* parameter with the region *range* parameter and so has no single arithmetic reading.
+The engine-derived form is the one correctness depends on, and `theHoldCoversWhatASearchReads` is the only test that pins it; reason from that rather than from the design document's sum.
+
+**Pathfinding malus is a survival decision, not a tuning knob**, because Loom is permadeath and a body has no way to flee what hurts it.
+The whole policy is the pure `loomPathfindingMalusFor`, which `PathfindingMalusTest` reads without a world; the entity only applies it, over every `PathType` so a type the engine adds later cannot be missed.
+Three prices, ordered the way the danger is and every one of them positive: standing *in* fire costs twice the walk budget, the blocks *beside* fire and the wither roses and pointed dripstone of `DAMAGE_CAUTIOUS` - which vanilla charges *zero* for - cost the whole walk budget, and the shore keeps the engine's own 8.
+A step through any of them therefore costs more than any detour that could complete, and a body already standing in or beside one is not stranded.
+The cost of pricing rather than forbidding is accepted rather than welcomed: a route may step through fire or a wither rose where the only way round is a long detour.
+**Water is impassable, because this body has no swim mechanism at all.**
+`Villager`'s `setCanFloat(true)` is a node-evaluator setting that makes the *pathfinder* willing to enter water and has nothing to do with buoyancy; a villager's buoyancy is the brain behaviour `Swim`, and `customServerAiStep` never ticks the brain.
+So a body walked into two blocks of water sinks, stops advancing its route, and drowns on a route Loom itself chose.
+Rivers are deliberate walls from every tile a body can stand on that the engine does not itself price negative.
+From a tile the engine *does* price negative - a body already in water, in lava, in a fence, or in a sweet berry bush - the engine's own escape rule opens every neighbour including water, by design; that is inherent rather than a gap, because the negative water price is both what makes a river a wall and what lets a submerged body path out.
+**Water is the only type Loom may price negative.**
+What unlocks water is a negative *start* node whatever made it negative: `getStartNode` copies the malus onto the start node with no sign gate, `isNeighborValid` accepts every neighbour of a negative node, and `PathFinder` adds the malus to `g` unchecked - so a second negative type costs `1 - 1 = 0` per water step against `1` for dry ground and makes water the *cheapest* ground on the map. Pricing one more thing impassable does not build a second wall; it takes the first one down.
+Both readings of "under the body" reach it, which is why the rule cannot be narrowed to adjacency: `checkNeighbourBlocks` answers `WATER_BORDER` for an ordinary dry tile within one block of water and `DAMAGE_CAUTIOUS` for one beside a wither rose, and it returns on the first matching neighbour in `i,j,k` order, so a dripstone one block west outranks a pond one block east; while `getPathTypeStatic` answers `DAMAGE_FIRE` for a tile whose block *below* is burning, and `NodeEvaluator.isBurningBlock` counts a magma block and a lit campfire as well as fire and lava.
+An impassable `DAMAGE_CAUTIOUS` opened water from a tile merely near both, and an impassable `DAMAGE_FIRE` opened it from any magma block.
+`PathfindingMalusTest.waterIsTheOnlyImpassableType` and `nothingUnderABodyIsImpassable` pin it; note that both pin the *policy*, since running the engine's own search needs a real `Level`.
+The malus alone does the work, so `canFloat` is left on: `WalkNodeEvaluator.findAcceptedNode` builds a node only for a malus of zero or more, `isNeighborValid` rejects the blocked node the descent scan does build, and nothing in the accept path lets `canFloat` override either - while leaving it on helps a submerged body, whose start node `getStart` lifts to the surface.
+Note that `PathFinder` itself never checks the sign and would treat a negative malus as a *cheaper* node, so the impassability is `WalkNodeEvaluator`'s and not the pathfinder's.
+Nothing Loom prices strands a body: standing in fire, beside fire, on dripstone or on the shore all give a positive start node, so `isNeighborValid`'s first clause admits every neighbour on its own, and a body in water has the negative one so the second clause admits them instead - though nothing can swim it out.
+
+Three owed follow-ups.
+There is no `pathEnded` record yet: a route ending is visible only in the next `moved` detail, and a body that got stuck while already stationary produces no record at all.
+The reach is not yet stated in the agent brief the mind is given, which matters more now that it is smaller than the perception radius - a mind that knew it would ask for somewhere eight blocks off and walk again, instead of naming what it can see and being refused.
+And the engine's own `recomputePath` searches are not budgeted in total, only bounded per body, which is deliberately left for a follow-up rather than fixed here.
 
 **Death is terminal - Loom is permadeath.** When a body dies the agent is gone for good: no respawn, no reincarnation, no second body ever.
 New agents will come from reproduction, never from restarting a dead one.
@@ -84,6 +149,7 @@ The policy is `WorldFootprint` in the engine-free domain, keyed by world, so net
 The hold is taken before a body registers as live - spawn refuses rather than leave a live body unheld - and `follow` keeps it sliding with the agents from then on.
 The mechanism is Bukkit's plugin chunk ticket, which lands at chunk level 31 - `ChunkLevel.ENTITY_TICKING_LEVEL` - so a held chunk ticks its entities.
 That level *is* the invariant: hold chunks any more weakly and false deaths come back silently.
+The *radius* now serves a second invariant as well - a path search reads unloaded chunks as air - so it is derived from the follow range rather than chosen here, and narrowing it costs correct routes as well as correct deaths. See `holdRadiusChunksFor` above.
 Tickets outlive the tick that added them, so they must be released on disable or the world stays pinned loaded with no Loom running.
 
 **A hold failure must never be silent, and `follow` cannot refuse.**
@@ -101,11 +167,17 @@ A Minecraft version bump should touch this package and nothing else.
 
 Read the header of `dev/loom/body/nms/LoomBodyEntity.kt` before changing the body's mechanism.
 It records why a literally-new registered entity type is not viable here, why the body extends a vanilla class instead, and why the base type is Villager.
-Two sharp edges are easy to reintroduce:
+It also records that a Loom body is **not** safe from attack, whatever "not a monster" suggests: the whole illager line and, unless `spigot.yml` says otherwise, zombies and drowned all target `AbstractVillager` on sight, so a run measuring starvation rather than predation has to choose those settings deliberately (`DEMO.md` lists them).
+Five sharp edges are easy to reintroduce:
 
 - Spawning must use `SpawnReason.CUSTOM`; any other reason routes through natural-spawn gating that silently discards the body.
 - `Mob.serverAiStep` is `final`, so suppressing vanilla behavior means overriding **both** `Villager.customServerAiStep()` (deprecated) and `customServerAiStep(boolean)` without calling `super`. Missing one gives the body vanilla behavior back.
-- Bodies must keep renewing their own activation (`LoomBodyEntity.readyForTheEngineTick`). Spigot's activation range only activates entities near a *player*, and Loom has no players, so an untouched body drops to `inactiveTick` after ten seconds. That does not just idle it: it silently disables portal travel, because the transit is driven from `Entity.postTick`, which an inactive entity never reaches - a body would stand in a lit portal forever with nothing in any log to say why.
+- The navigator is untouched by that suppression, and that is deliberate: `Mob.serverAiStep` ticks `navigation`, `moveControl` and `lookControl` *outside* the `customServerAiStep` hook and outside the every-other-tick branch that gates the selectors, which is exactly why a body with zero goals still walks a route Loom put on it.
+- `FOLLOW_RANGE` MUST be set in the `createNavigation` override and that is the ONLY place it can be. `PathNavigation`'s constructor reads the attribute once to fix the path finder's node budget, and `Mob`'s constructor builds the navigator before any Kotlin `init` block or property initializer runs - so for the same reason that override may read no property of the class, only inlined `const val`s.
+- Bodies must keep renewing their own activation (`LoomBodyEntity.readyForTheEngineTick`). Spigot's activation range only activates entities near a *player*, and Loom has no players, so an untouched body drops to `inactiveTick` after ten seconds. That does not just idle it: it silently stops the whole server-AI chain, so a body stops walking its route, and it silently disables portal travel, because the transit is driven from `Entity.postTick`, which an inactive entity never reaches - a body would stand in a lit portal forever with nothing in any log to say why.
+
+There is no `setPos` and no `deltaMovement` write left anywhere in Loom, and there must not be one again: the navigator's `MoveControl` owns the body's position while a route runs, and a second writer would fight it.
+Movement is therefore *observed* rather than caused - `observeDisplacement` reads where the engine left the body and `describeJourney` says what its route is doing there, which is how a body walking node three of nine, a body the engine gave up on as stuck, and a body merely falling stay distinguishable in the record.
 
 Engine helpers specified in extents rather than radii have already caused one bug (a perception radius that covered half its documented area).
 Prefer expressing such bounds in the domain, as `PerceptionBound` does, where a test can pin them.
@@ -252,6 +324,12 @@ Build the jar (`./gradlew shadowJar`), drop it into a Paper 1.21.1 server's `plu
 Verify from a **client's** point of view rather than from the plugin's own log: a body that moves server-side only, or that a vanilla client cannot render, looks identical in the log to one that works.
 A client is not optional even for a headless run: `spawn` places the body where the *sender* stands, so it refuses the console, and a scripted client on an offline-mode server (a mineflayer bot will do) both issues the commands and reports what a player would actually see.
 Watching autonomy move a body needs a mind that decides a move: `ScriptedBackend` only ever answers a goal review with `idle` or, once the reserve is low, `rest`, so a self-driving agent perceives, decides and applies on cadence while standing perfectly still - point the plugin at a stand-in mind that replies `moveTo` if motion is what is being checked.
+Navigation itself is proven with `/loombody move` against three shapes and nothing less: a wall the body must go *round*, a one-block rise it must step *up*, and a target past a chunk boundary.
+A straight-line target on flat ground proves nothing - the old cheap gait passed that case - and `y` now matters, though not as a refusal: a target the engine cannot stand at is *moved* to one it can, so the height is answered in the record rather than in the verdict.
+**Size the wall to the walk budget or the run proves the wrong thing.** The way round the wall has to fit in `BODY_FOLLOW_RANGE_BLOCKS` (16) blocks of walking, so a five-block wall two blocks off is a fair test and a nine-block wall is not - the second one comes back accepted, walks the body into the wall, and looks exactly like a navigation bug.
+Read the whole `moved` detail rather than the position alone: `node 3 of 9`, `at the end of its route` and `stuck` are the difference between a body walking and a body sliding.
+Read both halves of the accepted-route line too. `reaching what it searched for` against `getting as close as it can` is the difference between a route and a best effort, and `ending N blocks from it` is how far the route's own end is from the block that was named.
+`getting as close as it can` on a case that should be reachable means the budget ran out, not that the ground did; a complete route that ends several blocks away means the engine moved the target, so check the `y`.
 Watching the survival drive instead needs patience or a shorter reserve: with the shipped 36 000-tick default a body rests roughly every twenty minutes, and a starvation takes half an hour of an agent whose mind never rests it.
 Read it from the record, or watch it with `/loomwatch`, rather than from the world: `perceived` carries the reserve on every review and the end is one `died` with detail "spent its energy reserve", while `/loomwatch` shows the reserve gauge falling and tells `resting`, `idle`, and `standing by` apart - three states that look identical to a bare client.
 Dimension travel needs a lit portal and a body walked into it (`/loombody move`), then a `travelled` record and a rendering body on the far side; the driving client must be opped, since `/loombody` is gated on `loom.body` (`default: op`).

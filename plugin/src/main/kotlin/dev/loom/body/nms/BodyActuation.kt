@@ -17,10 +17,13 @@ import dev.loom.body.BodyEvent
 import dev.loom.body.EventTag
 
 /**
- * Advances [body], belonging to [agentId], by one tick, recording what it did.
+ * Reads [body], belonging to [agentId], on one tick, recording what happened to it.
  *
- * Cheap by design: a renewed activation and at most one walk step, never a
- * pathfinding search. See `WalkGait` for why that bound is load-bearing.
+ * Cheap by design, and cheaper than it looks: a renewed activation and two reads.
+ * Nothing here searches for a path or moves anything. The body walks its route from
+ * the engine's own tick, so this tick only *observes* the movement, which is why a
+ * move record now says what the route is doing as well as where the body got to. See
+ * `Navigation.kt` for why the search cost is bounded per request and not per tick.
  */
 internal fun actuate(
     agentId: AgentId,
@@ -42,7 +45,14 @@ internal fun actuate(
             EventTag.CONVERSION_REFUSED,
         )
     }
-    val step = body.advanceMovement() ?: return
-    val where = position(body.x, body.y, body.z)
-    journal.record(agentId, BodyEvent.MOVED, "to $where yaw ${coordinate(step.yaw.toDouble())}")
+    val moved = body.observeDisplacement() ?: return
+    val where = position(moved.x, moved.y, moved.z)
+    // Where it got to, and what its route is doing there. The second half is the part a
+    // straight-line model had no way to say: a body walking node three of nine, a body
+    // the engine gave up on as stuck, and a body merely falling all displace alike.
+    journal.record(
+        agentId,
+        BodyEvent.MOVED,
+        "to $where yaw ${coordinate(body.yRot.toDouble())}, ${body.describeJourney()}",
+    )
 }

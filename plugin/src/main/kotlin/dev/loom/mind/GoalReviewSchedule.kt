@@ -4,9 +4,9 @@
  * An agent that only thinks when an operator types a command is not autonomous, so
  * something has to decide, repeatedly, whose turn it is to think. That decision is
  * the whole of this class: given who is alive and what time it is, it hands back
- * the agents due for a scheduled goal review. It runs cognition itself no more than
- * `WalkGait` moves a body - `AutonomousDriver` does that - which is what lets the
- * cadence and the stagger be pinned by unit tests with no server and no mind.
+ * the agents due for a scheduled goal review, and nothing more. Naming who is due is
+ * not the same as asking them; `AutonomousDriver` does the asking, which is what lets
+ * the cadence and the stagger be pinned by unit tests with no server and no mind.
  *
  * Two properties are load-bearing rather than incidental:
  *

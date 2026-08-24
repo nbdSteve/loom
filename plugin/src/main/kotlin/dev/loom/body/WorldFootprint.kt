@@ -14,9 +14,14 @@
  * weakens the footprint silently reintroduces false deaths.
  *
  * The arithmetic lives here, in the engine-free domain, for the same reason
- * `WalkGait`, `PerceptionBound`, and `Mortality` do: it is a Loom rule rather than
+ * `Navigation`, `PerceptionBound`, and `Mortality` do: it is a Loom rule rather than
  * an engine detail, and it is the kind of set arithmetic that should be pinned by
  * unit tests rather than discovered on a running server.
+ *
+ * The radius is not this file's to choose. It is derived from how far a path search
+ * reads, by `holdRadiusChunksFor` in `Navigation.kt`, because a search reads unloaded
+ * chunks as air and answers confidently about ground it never looked at. Build the
+ * footprint with `navigableFootprint()` rather than with a radius literal.
  *
  * Two properties are deliberate and load-bearing:
  *
@@ -30,6 +35,15 @@
  *   sit in ticking regions. No living agent is ever left in an unticking void.
  */
 package dev.loom.body
+
+/**
+ * Width of a chunk in blocks.
+ *
+ * Shared with `Navigation.kt`, which converts a path search's block reach into this
+ * many blocks of chunk: the hold radius and the chunk arithmetic that implements it
+ * must not be able to disagree about how wide a chunk is.
+ */
+internal const val CHUNK_BLOCKS: Int = 16
 
 /**
  * A chunk of the world, identified the way engines index chunks.
@@ -66,10 +80,11 @@ data class FootprintChange(
 /**
  * Computes the set of chunks Loom keeps loaded around its living agents.
  *
- * @param radiusChunks how far beyond an agent's own chunk to keep loaded, in
- *   chunks. A radius of 1 keeps the agent's chunk and its eight neighbours, which
- *   is the smallest area that leaves an agent room to walk without stepping into an
- *   unloaded chunk before the footprint is recomputed.
+ * @param radiusChunks how far beyond an agent's own chunk to keep loaded, in chunks.
+ *   A radius of `r` keeps a `(2r + 1)` square of chunks around each agent. Pass the
+ *   derived value from `holdRadiusChunksFor`, or use `navigableFootprint()`: the
+ *   radius has to cover everything a path search reads, and a search that reads an
+ *   unheld chunk gets air back rather than an error.
  */
 class WorldFootprint(
     val radiusChunks: Int,
@@ -105,7 +120,7 @@ class WorldFootprint(
      * The one chunk [location] itself is in - the middle of its area.
      *
      * Called out from [cover] because the middle is not just one chunk among the
-     * nine: a body standing in an unheld margin chunk has lost the room it needs to
+     * square: a body standing in an unheld margin chunk has lost the room it needs to
      * walk, but a body standing in an unheld *middle* chunk is already in the state
      * the footprint exists to prevent, and can be unloaded out of the world.
      */
@@ -136,9 +151,4 @@ class WorldFootprint(
      * chunk -1, not chunk 0.
      */
     private fun chunkOf(blockCoordinate: Double): Int = Math.floorDiv(Math.floor(blockCoordinate).toInt(), CHUNK_BLOCKS)
-
-    private companion object {
-        /** Width of a chunk in blocks. */
-        const val CHUNK_BLOCKS = 16
-    }
 }

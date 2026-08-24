@@ -64,6 +64,10 @@ Put the jar in the server's `plugins/`, accept the EULA, and set these in `serve
 | `allow-nether` | `true` | Needed only for the dimension-travel case. |
 | `online-mode` | `false` | Needed only for a scripted client. |
 
+A Loom body is a villager, and a villager is hunted.
+The whole illager line targets villagers on sight, and so do zombies and drowned, so a run that is measuring starvation rather than predation needs `spawn-monsters=false` above *and* `zombie-aggressive-towards-villager: false` in `spigot.yml`.
+`difficulty peaceful` covers both, but note that it also makes `Villager.thunderHit` skip the conversion path entirely, so a run checking the lightning seam has to raise the difficulty and then choose those two settings by hand.
+
 Op the account you will watch from.
 `/loombody` is gated on `loom.body` and `/loomwatch` on `loom.observe`, both defaulting to op, so an account that is not opped can do neither.
 Losing that gate is silent, because the command keeps working for the op who tests it, so `PluginDescriptorTest` pins the shipped descriptor.
@@ -396,6 +400,35 @@ The scripted stand-in only ever idles or rests, so autonomy under it is real cog
 If motion is what you are checking, point the plugin at a mind that replies `moveTo`: either the `openai` backend, or a stand-in of your own on `127.0.0.1:8642` that speaks the contract.
 `/loombody move <agentId> <x> <y> <z>` drives the body directly with the mind out of the loop, which shows the `moving` label and its decay but proves nothing about cognition.
 
+A body walks with Minecraft's own ground navigator, so it goes round a wall and up a step instead of pressing into it.
+That is the part worth checking in world, and a straight-line target on flat ground does not check it - the cheap gait this replaced passed that case.
+Three shapes do, and each takes one `/loombody move`:
+
+| Shape | Build | What to look for |
+| --- | --- | --- |
+| Round a wall | A wall about five blocks long between the body and the target, and stand the body a couple of blocks off it | The body walks *along* the wall and round its end. A body that stops against it, or slides through it, is the failure. |
+| Up a rise | One block placed on the ground, target on top of it | The body steps up. `y` is the block it stands on, so the target here is one higher than the floor. |
+| Across a chunk boundary | Nothing; pick a target in the next chunk (`/loombody perceive <agentId>` prints the body's position as contract JSON, and chunk edges fall every 16 blocks) | The body keeps walking straight through the seam. A stall at the boundary means the chunk was not held, and a search reads an unheld chunk as *air*. |
+
+**Build the wall short, and this is the one instruction here worth following exactly.**
+The engine's bound is a budget of 16 blocks of *walking*, not a radius, and it pays for the detour as well as the distance.
+The way round a five-block wall two blocks off costs about fourteen and fits; the way round a nine-block wall costs eighteen and does not.
+Over the budget, the search does not refuse - it answers with the best partial route it found, which walks the body into the wall and stops, and looks exactly like a navigation bug from the client.
+The accepted line tells the two apart: `reaching what it searched for` is a route, `getting as close as it can` is a best effort.
+
+Five things about the target that the old gait let you get away with:
+
+- **`y` matters now, and a wrong one is not refused.** The gait ignored it and walked in a plane. The navigator routes to a block, and the engine *moves* a block it cannot use: air becomes the ground below it, and a solid block becomes the first free block above it. So a target inside the ground comes back accepted, and the body may not move at all. The `ending N blocks from it` half of the accepted line is where that shows - `walking to 114,-62,100 by 1 node(s), reaching what it searched for, ending 3.00 blocks from it` is the engine saying it went somewhere else.
+- **8 blocks is the limit, measured as a straight line.** A target further off than that is refused - `target is 21 blocks away, beyond the 8 a body may be routed within` - and height counts towards it. Eight is half the walk budget on purpose: the other half is what a body goes round a wall with. Walk a long trip as several requests.
+- **A refusal also stops the route the body was already walking.** So `/loombody move` past the reach on a *walking* body does two visible things: the reply refuses, and the body halts where it stands rather than carrying on to the previous target. That is deliberate - a `rejected` record followed by `moved` records would read as movement Loom authorised - and it applies to every refusal, including the engine answering a reachable target with no route because the body happened to be off the ground at that instant. Nothing retries, so the body waits for its next goal review.
+- **A route will not cross water from dry land, and that shows up as an acceptance rather than a refusal.** Water is priced impassable because this body cannot swim and would drown. Loom refuses only on its own two bounds, the reach and the per-tick budget, so a target across a stream is *accepted*: the engine hands back the best partial route it found, and the accepted line reads `getting as close as it can, ending N blocks from it` with the route stopping short of the bank. That is the same shape as any other unreachable target. Shore blocks stay walkable, so a route round the water on dry land is the other thing to expect. The exception is a body standing somewhere the *engine* prices impassable - in water, in lava, in a fence, in a sweet berry bush - where the engine opens every neighbour so the body can escape, water included.
+- **A body can be sent less far than it can see.** Perception reaches twelve blocks, so a mind may name something it saw and be told the target is out of range. That is the current design, and the refusal is recorded.
+
+Read the `moved` records rather than the position alone.
+Each one says what the route is doing as well as where the body got to: `node 3 of 9` while it walks, `at the end of its route` when it arrives, `stuck` when the engine gave up, and `drifting` for a body that is merely falling.
+The node is the one the body is walking *toward*, counted from one, so a nine-node route runs `node 1 of 9` through `node 9 of 9` and only then reads `at the end of its route`.
+That is the difference between a body walking and a body sliding, and a client cannot tell them apart.
+
 ## What observation does not change
 
 Nothing, with one exception you should know about.
@@ -453,6 +486,13 @@ These are true of the prototype today, not of the display.
 
 - The energy reserve is the only survival drive. There is no hunger, stamina, or upkeep stat yet, and no needs framework - one drive, one knob, and a second is added when there is a second to add.
 - The reserve and the recorded deaths live in memory only. A server restart forgets both a reserve and who has died, so making either outlive a restart waits on agent-identity persistence; the append-only log is meanwhile the durable record of who died.
+- A body may be routed 8 blocks at a time - half the engine's 16-block walk budget, so the other half pays for going round something - and Loom serves four path searches per tick across the whole server. A fifth request in the same tick is refused and recorded, so a run that outgrows the budget says so in its own log rather than merely feeling sluggish.
+- An obstacle whose detour costs more than the walk budget is not refused; the engine answers with a partial route and the body stops part-way. The accepted line says `getting as close as it can` rather than `reaching what it searched for`, and that is the only place it shows.
+- Water is a wall from every tile a body can stand on that the engine does not itself price impassable, and the bank is not a wall. A body cannot swim - the villager buoyancy that would keep it afloat is a brain behaviour Loom deliberately never ticks - so water is priced impassable rather than letting Loom choose a route that drowns an agent, while the shore, the blocks beside fire and fire itself all keep positive prices so they stay walkable. Pricing any of those impassable instead would make water the *cheapest* ground on the map; `AGENTS.md` records why, and why the one remaining exception is inherent: from a tile the engine prices impassable, its own escape rule opens every neighbour so a trapped body can path out. This is pinned by `PathfindingMalusTest` rather than by an in-world run; no water case and no hazard case has been walked on a server.
+- Every refusal stops the route the body was already walking, not just the one being refused. That includes an `OverBudget` refusal under contention and the engine's own refusal for a body that is momentarily off the ground, so an agent can lose a legitimate route to a bound that was never really about its target. Nothing retries; it waits for its next goal review.
+- A target the engine cannot stand at is not refused either; it is moved vertically to one the engine can, and only then searched for. The accepted line reports both: whether the route reached the block the *engine* looked for, and how far its end is from the block *you* named.
+- Holding the world open for those searches costs 25 chunks per lone agent, up from 9. Cost tracks the population's spatial footprint rather than its head count, so agents standing together share one hold.
+- There is no `pathEnded` record. A route ending shows up in the next `moved` detail as `at the end of its route`, and a body that gets stuck while already stationary produces no record at all, because the only thing that samples the route is a body that moved.
 - `say` and `flee` are not actuated yet. A mind that chooses either gets `Unsupported`, which the display shows as `the body cannot do that yet` and `body refused it`. That is the honest reading: the decision was real and the body could not carry it out.
 - One watch at a time. A second `/loomwatch` from *somebody else* replaces the first and tells the displaced operator so. This is the one-agent demo path on purpose. Re-running it yourself is not a displacement: you keep your own bar, and switching agents keeps it too, and the reply says whether the watch kept what it knew or starts blank. `/loomwatch off` and the no-argument report are yours alone, and refuse anybody else rather than acting on their behalf.
 - The boss bar title is 96 characters wide and a long line is cut with an ellipsis. The full model stamp is always in the `decided` chat line, which has more room.

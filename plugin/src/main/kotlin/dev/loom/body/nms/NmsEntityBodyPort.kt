@@ -23,8 +23,9 @@ import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.Metabolism
 import dev.loom.body.Mortality
-import dev.loom.body.WorldFootprint
+import dev.loom.body.NavigationPolicy
 import dev.loom.body.describe
+import dev.loom.body.navigableFootprint
 import dev.loom.body.tagOf
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
@@ -33,15 +34,6 @@ import org.bukkit.Server
 import org.bukkit.craftbukkit.CraftWorld
 import org.bukkit.event.entity.CreatureSpawnEvent
 import org.bukkit.plugin.Plugin
-
-/**
- * How far around each living agent Loom keeps the world loaded, in chunks.
- *
- * One chunk of margin is the smallest that leaves a body room to walk without
- * stepping into an unloaded chunk before the next recompute, and it keeps the
- * footprint small so a spread-out population stays affordable.
- */
-private const val FOLLOW_RADIUS_CHUNKS = 1
 
 /**
  * Gives agents bodies as custom NMS entities on a vanilla type identity.
@@ -69,7 +61,28 @@ class NmsEntityBodyPort(
     private val mortality = Mortality()
     private val metabolism = Metabolism()
     private val vitalsWatch = VitalsWatch(journal)
-    private val footprint = WorldFootprint(radiusChunks = FOLLOW_RADIUS_CHUNKS)
+
+    /**
+     * The one path-request budget, shared by every agent.
+     *
+     * Server-wide on purpose: a path search is the costliest thing native navigation
+     * introduces, so what has to be bounded is the work in a tick rather than the work per
+     * agent. A refused request is recorded as a rejected intent. It bounds only the searches
+     * Loom asks for; the engine starts others of its own from a block change, which
+     * `Navigation.kt` records.
+     */
+    private val movement = NavigationPolicy()
+
+    /**
+     * The world Loom keeps loaded, sized so a path search cannot read past it.
+     *
+     * Derived rather than chosen here. A search reads unloaded chunks as *air* and
+     * answers confidently about ground it never looked at, so the hold has to cover
+     * everything a request can *read*, which is wider than anywhere a body can be sent -
+     * and that is what `navigableFootprint` works out from the body's own follow range.
+     * See `Navigation.kt`.
+     */
+    private val footprint = navigableFootprint()
     private val heldChunks = HeldChunks(server, owner, footprint, journal, onHoldFailure)
 
     override fun spawn(
@@ -193,7 +206,7 @@ class NmsEntityBodyPort(
             if (spent) {
                 IntentOutcome.Rejected("the energy reserve is spent; this agent has ended")
             } else {
-                body.applyIntent(intent)
+                body.applyIntent(intent, movement, currentTick())
             }
         journal.recordAction(
             agentId,
