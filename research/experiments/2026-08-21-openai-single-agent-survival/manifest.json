@@ -1,0 +1,579 @@
+{
+  "schemaVersion": "loom-experiment-manifest/1",
+  "experimentId": "2026-08-21-openai-single-agent-survival",
+  "title": "One agent, real model, one energy cycle",
+  "sourceCommit": "05163ebff5a2009085c1fba209ef3864714a854a",
+  "sourceCommitShort": "05163eb",
+  "sourceRepository": "loom",
+  "fieldProvenance": "Every field outside an \"attested\" block is either derived from body-events.jsonl or a setting the run was configured with. An \"attested\" block holds values the operator supplied from outside the raw evidence and names where they came from, so a reader can tell what they can re-check from this directory and what they are taking on trust. See research/README.md.",
+  "rawEvidence": {
+    "file": "body-events.jsonl",
+    "format": "newline-delimited JSON, one body event record per line, append-only",
+    "sha256": "6dd872b3bcd5312dfbdab6fc1fef7ccf761f0031ff10ff293af535bab16c88ae",
+    "records": 162,
+    "immutable": true,
+    "credentialScan": {
+      "scannedFor": "OpenAI key prefix tags, the fixed base64 landmark inside a modern key, auth header names and values, environment variable names, and any run of 40 or more characters of the key alphabet",
+      "matches": 0,
+      "note": "Loom never writes provider credentials or prompts to the event log; this scan confirms it for this file rather than assuming it."
+    }
+  },
+  "environment": {
+    "server": {
+      "software": "Paper",
+      "minecraftVersion": "1.21.1",
+      "protocol": 767,
+      "build": 133
+    },
+    "world": {
+      "name": "arena",
+      "levelType": "minecraft:flat",
+      "difficulty": "peaceful",
+      "spawnMonsters": false,
+      "spawnAnimals": false,
+      "allowNether": false,
+      "onlineMode": false
+    },
+    "clientPresence": {
+      "perceptions": 18,
+      "perceptionsThatSawAnything": 0,
+      "note": "Derived: all 18 perceptions recorded 0 observation(s), so nothing was inside the 12-block perception bound at any perception this run sampled, and the earliest of them is tick 99, so no decision was taken with anything inside it. Two things here are not derivable and are marked as such rather than left implied. The event log records no player connections at all, so it cannot say whether a client was connected outside the bound; that is the attested bootstrapClientNote below. And that note together with the spawn's placement rule - /loombody spawn places the body where the sender stands - puts the client inside the bound at the spawn tick, 56, and until it teleported 40 blocks out, which is an interval no perception sampled."
+    },
+    "attested": {
+      "source": "the operator's harness and the server log, neither of which is committed; not computable from body-events.jsonl",
+      "jvm": "Amazon Corretto 21",
+      "bootstrapClientConnectedSeconds": 7.3,
+      "bootstrapClientNote": "One client was connected for the run's first 7.3 seconds: it joined, issued the spawn, teleported 40 blocks out in the same breath, confirmed the body rendered from a client's point of view, and disconnected. The first perception is at tick 99, about 5 seconds in, so a client was connected during it and was outside the perception bound rather than absent. No client was connected after that.",
+      "watchNote": "No /loomwatch watch was ever attached, by a client or from the console, so no observer view was ever rendered. The event log cannot show this either way, which is why it is attested here: the observation path only reads records and appends none of its own."
+    }
+  },
+  "provenance": {
+    "backend": "openai",
+    "endpoint": "https://api.openai.com/v1/chat/completions",
+    "fastTierModel": "gpt-5-mini",
+    "deepTierModel": "gpt-5",
+    "providerTimeoutMs": 12000,
+    "maxCompletionTokens": 2048,
+    "decisionsByStamp": [
+      {
+        "model": "gpt-5-mini",
+        "promptVersion": "routine-v1",
+        "tier": "ROUTINE",
+        "decisions": 18
+      }
+    ],
+    "attested": {
+      "source": "hashes of the built artifacts the run used; the artifacts themselves are not committed, so these cannot be re-derived from this directory",
+      "pluginJarSha256": "25be88f39cb4941b722321291667cc2ea7c43a904223bc61aa09f0f5c3c560bf",
+      "cognitionBinarySha256": "2ea1ac7d1e76e744029f5f2cff74d671b2850bb4f2320868ba7d75e7a2e3d80a"
+    }
+  },
+  "timing": {
+    "attested": {
+      "source": "the operator's harness and the server log, neither of which is committed; the event log carries ticks, not wall-clock time or process outcomes",
+      "startedUtc": "2026-08-21T22:30:00Z",
+      "endedUtc": "2026-08-21T23:05:46Z",
+      "startToTeardownSeconds": 2146,
+      "processExitCodes": {
+        "cognition": 143,
+        "server": 0,
+        "client": 0
+      },
+      "cognitionExitNote": "143 is SIGTERM, which is how the harness stops the mind; the server and client exited 0."
+    },
+    "plannedAgentAloneWindowSeconds": 2100,
+    "firstTick": 56,
+    "lastTick": 42278,
+    "tickSpan": 42222,
+    "serverMinutes": 35.18,
+    "goalReviewCadenceSeconds": 120,
+    "driverSweepSeconds": 5,
+    "perceptionSpacingSeconds": {
+      "min": 120.0,
+      "max": 125.0,
+      "mean": 122.9,
+      "intervals": 17
+    },
+    "roundTripTicks": {
+      "definition": "Ticks from a perceived record to the decided record answering the same requestId.",
+      "min": 62,
+      "median": 88,
+      "mean": 98.2,
+      "max": 228,
+      "maxSeconds": 11.4,
+      "roundTripToProviderTimeoutMarginSecondsAtWorstCase": 0.6,
+      "marginNote": "A lower bound on provider headroom, not a measurement of it. The 228 ticks span the perceived record to the decided record, so they include the bridge's queue time, both TCP legs, and main-thread scheduling at tick granularity, while LOOM_OPENAI_TIMEOUT_MS bounds only the provider request. The provider's own elapsed time was therefore strictly less than 11.4 s and the true headroom strictly greater than 0.6 s. It is still the number to act on, because one slower answer costs that cycle its decision.",
+      "samples": 18
+    }
+  },
+  "eventCounts": {
+    "total": 162,
+    "agent": {
+      "agentId": "ada",
+      "records": 160,
+      "byEvent": {
+        "decided": 18,
+        "despawned": 1,
+        "energyChanged": 104,
+        "intentApplied": 18,
+        "perceived": 18,
+        "spawned": 1
+      }
+    },
+    "world": {
+      "agentId": "loom:world",
+      "records": 2,
+      "byEvent": {
+        "worldLoaded": 2
+      }
+    }
+  },
+  "integrityChecks": {
+    "observerContamination": {
+      "perceptions": 18,
+      "perceptionsThatSawAnything": 0,
+      "required": 0,
+      "pass": true,
+      "why": "A player inside the 12-block perception radius is an observation, so a non-zero count means a client was still an input to the run. A bootstrap client was connected at the start of the run, for the attested duration in environment.attested.bootstrapClientConnectedSeconds, so what this check establishes is that nothing was inside the bound at any of the 18 sampled perceptions rather than that the client was never present. It does not cover the spawn tick, which environment.clientPresence.note explains was inside the bound and which no perception sampled."
+    },
+    "worldHoldFailed": {
+      "records": 0,
+      "required": 0,
+      "pass": true,
+      "why": "A failed chunk hold means a removal classified as a death may have been an unload."
+    },
+    "droppedRecordWarnings": {
+      "attested": {
+        "source": "the server log, which is not committed",
+        "serverLogWarningsMatchingBodyEventLog": 0
+      },
+      "required": 0,
+      "pass": true,
+      "why": "The event log write queue is bounded; a warning means records never reached the file. This is the one precondition a reader cannot re-derive from this directory, because the warning is raised in the server log rather than in the event log it is about."
+    },
+    "cognitionUnavailable": {
+      "records": 0,
+      "required": 0,
+      "pass": true,
+      "why": "A perception with no decision back is a cycle in which the agent was not being driven."
+    },
+    "decisionAccounting": {
+      "perceived": 18,
+      "decided": 18,
+      "intentApplied": 18,
+      "decisionDiscarded": 0,
+      "pass": true,
+      "why": "The invariant is one intentApplied or one decisionDiscarded per decided."
+    },
+    "vitalsRecordsAfterDeath": {
+      "records": 0,
+      "required": 0,
+      "pass": true,
+      "why": "No died record exists in this run, so the rule is satisfied trivially rather than exercised."
+    },
+    "allPass": true
+  },
+  "decisionsNote": "energyOnPerceptionPercent and healthOnPerceptionPercent are the readings the perceived record carries, not the figures the model was shown. The prompt carries the reserve as the 0-1 fraction and health as hit points, each rendered to one decimal, so 0.998806 reached the model as 1.0, 0.31825 as 0.3, and health as 20.0. healthOnPerceptionPercent is null on every row because no perceived record carries a health field at all, which is healthTrajectory.perceptionsCarryingAHealthReading: 0, and not because health was withheld from the model: SelfState.health is set on every capture and the prompt always states it.",
+  "decisions": [
+    {
+      "cycle": 1,
+      "requestId": "149b46fc-87af-410b-9e28-4a0c185c1cf7",
+      "perceivedTick": 99,
+      "decidedTick": 205,
+      "energyOnPerceptionPercent": 99.8806,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 2,
+      "requestId": "ea5bd402-c5ad-4fba-bb69-e36e002a3383",
+      "perceivedTick": 2599,
+      "decidedTick": 2686,
+      "energyOnPerceptionPercent": 92.9361,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 3,
+      "requestId": "307063ec-313d-43e5-9b6d-dda0fd9ec5f6",
+      "perceivedTick": 5099,
+      "decidedTick": 5173,
+      "energyOnPerceptionPercent": 85.9917,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 4,
+      "requestId": "af28ca80-4a3a-4acf-a8d4-0df9dc078957",
+      "perceivedTick": 7499,
+      "decidedTick": 7583,
+      "energyOnPerceptionPercent": 79.325,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 5,
+      "requestId": "d5bedc20-1790-4208-986a-bea047a84cc4",
+      "perceivedTick": 9999,
+      "decidedTick": 10124,
+      "energyOnPerceptionPercent": 72.3806,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 6,
+      "requestId": "c42f9242-5c19-4d9f-8676-c1f3a2f1a78d",
+      "perceivedTick": 12399,
+      "decidedTick": 12475,
+      "energyOnPerceptionPercent": 65.7139,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 7,
+      "requestId": "70c73075-b908-48bd-a290-f702a16b0d5a",
+      "perceivedTick": 14799,
+      "decidedTick": 14894,
+      "energyOnPerceptionPercent": 59.0472,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 8,
+      "requestId": "20583ddb-4f17-4f65-81bd-3d59855fc14b",
+      "perceivedTick": 17199,
+      "decidedTick": 17303,
+      "energyOnPerceptionPercent": 52.3806,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 9,
+      "requestId": "5dd32ab6-e3d2-445e-8d4e-cd7da0219627",
+      "perceivedTick": 19699,
+      "decidedTick": 19784,
+      "energyOnPerceptionPercent": 45.4361,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 10,
+      "requestId": "adae5d1a-4a47-4075-ad0d-de616aabe0bc",
+      "perceivedTick": 22199,
+      "decidedTick": 22307,
+      "energyOnPerceptionPercent": 38.4917,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 11,
+      "requestId": "b09126f4-8086-42b6-b14e-ffd00052c717",
+      "perceivedTick": 24599,
+      "decidedTick": 24716,
+      "energyOnPerceptionPercent": 31.825,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "rest",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 12,
+      "requestId": "93ea406f-324c-43e7-95cc-da218222b77f",
+      "perceivedTick": 26999,
+      "decidedTick": 27227,
+      "energyOnPerceptionPercent": 93.6556,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 13,
+      "requestId": "e7a822d7-ee58-4d20-a585-bb9815eca77c",
+      "perceivedTick": 29499,
+      "decidedTick": 29562,
+      "energyOnPerceptionPercent": 86.7111,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 14,
+      "requestId": "1cedba7c-bb3c-488b-91d7-6bd6cf13df0d",
+      "perceivedTick": 31999,
+      "decidedTick": 32077,
+      "energyOnPerceptionPercent": 79.7667,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 15,
+      "requestId": "f47e17ac-8b69-4e90-94b9-c2a89a007e64",
+      "perceivedTick": 34499,
+      "decidedTick": 34571,
+      "energyOnPerceptionPercent": 72.8222,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 16,
+      "requestId": "311e769f-2829-45de-a331-55e993c7581d",
+      "perceivedTick": 36999,
+      "decidedTick": 37061,
+      "energyOnPerceptionPercent": 65.8778,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 17,
+      "requestId": "173c44c1-cdb1-4001-aab7-3734d1b11c52",
+      "perceivedTick": 39399,
+      "decidedTick": 39488,
+      "energyOnPerceptionPercent": 59.2111,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    },
+    {
+      "cycle": 18,
+      "requestId": "9b5d1ddc-a5eb-4b1e-990c-a83da61318fa",
+      "perceivedTick": 41899,
+      "decidedTick": 42014,
+      "energyOnPerceptionPercent": 52.2667,
+      "healthOnPerceptionPercent": null,
+      "trigger": "goalReview",
+      "observations": "0 observation(s)",
+      "intent": "idle",
+      "model": "gpt-5-mini",
+      "promptVersion": "routine-v1",
+      "tier": "ROUTINE",
+      "outcome": "accepted"
+    }
+  ],
+  "intentTotals": {
+    "idle": 17,
+    "rest": 1
+  },
+  "reasoningMentionsOfTheReserve": {
+    "definition": "A decision whose reasoning text states the reserve as a number or as 'full' or 'half'.",
+    "decisions": 18,
+    "mentioning": 15,
+    "upToAndIncludingTheRest": {
+      "decisions": 11,
+      "mentioning": 11
+    },
+    "note": "All eighteen reasonings weigh the reserve in words, so what this counts is the ones that state a level for it - a number, or 'full', or 'half' - rather than the ones that consider it. All eleven decisions up to and including the rest state a level, and of the ten before the rest seven justify idling by conserving the reserve while the other three state a level without making it the ground for idling (see the README's breakdown). The three that state no level are all after the rest, on a reserve between 0.94 and 0.66."
+  },
+  "energyTrajectory": {
+    "definition": "The Metabolism reserve, counted in ticks and reported as a 0-1 fraction; spent by living, restored only by Intent.Rest.",
+    "lifespanTicks": 36000,
+    "readings": 124,
+    "carriedByEvent": {
+      "despawned": 1,
+      "energyChanged": 104,
+      "perceived": 18,
+      "spawned": 1
+    },
+    "firstPercent": 100.0,
+    "firstTick": 56,
+    "lastPercent": 51.2139,
+    "lastTick": 42278,
+    "lowestPercent": 31.825,
+    "lowestTick": 24599,
+    "energyChangedRecords": 104,
+    "tickGapBetweenEnergyChangedHistogram": {
+      "357": 1,
+      "360": 80,
+      "361": 6,
+      "483": 1,
+      "598": 1,
+      "599": 1,
+      "600": 3,
+      "698": 1,
+      "699": 2,
+      "700": 6,
+      "701": 1
+    },
+    "percentDropBetweenEnergyChangedHistogram": {
+      "-67.5056": 1,
+      "1.0": 80,
+      "1.0028": 6,
+      "1.3417": 1,
+      "1.6611": 1,
+      "1.6639": 1,
+      "1.6667": 3,
+      "1.9389": 1,
+      "1.9417": 2,
+      "1.9444": 6,
+      "1.9472": 1
+    },
+    "stepNote": "The 104 energyChanged records give 103 gaps, of which the 357-tick entry is the gap spanning the rest refill, leaving 102 declining steps. The reporting gap varies but the slope does not: 80 of the 102 declining steps are exactly 360 ticks for exactly 1.0 percent and six are 361 ticks for 1.003 percent, and the 16 wider steps are one of 483 ticks for 1.342 percent, five of about 600 ticks for 1.667 percent, and ten of about 700 ticks for 1.944 percent, which is the same rate. The wider gaps are the vitals watch suppressing a restatement after a record that carried the reading anyway: there are 16 of them and each contains exactly one perception. The two perceptions inside no wide gap are the first, at tick 99 before the first energyChanged at 460, and the rest perception at 24599, where the refill step falls instead. The single negative percent entry is the rest refill.",
+    "impliedLifespanTicksPerFullReserve": {
+      "beforeTheRest": 36000.0,
+      "afterTheRest": 36000.0,
+      "configuredDefault": 36000,
+      "note": "Derived from the log's full-precision levels rather than the 4 dp values displayed elsewhere in this file. Both legs reproduce DEFAULT_ENERGY_LIFESPAN_TICKS exactly: 36000 reserve ticks down to 11457 across 24543 server ticks before the rest, and 35999 down to 18437 across 17562 server ticks after it, so exactly one reserve tick is spent per server tick on both sides of the rest. An earlier derivation divided the rounded display values and reported 36000.02 for the second leg, which was an artifact of that rounding rather than a property of the reserve."
+    },
+    "refills": [
+      {
+        "fromTick": 24599,
+        "fromPercent": 31.825,
+        "toTick": 24716,
+        "toPercent": 99.9972,
+        "ticks": 117,
+        "seconds": 5.85,
+        "cause": "Intent.Rest"
+      }
+    ]
+  },
+  "healthTrajectory": {
+    "definition": "The body's own health, hurt rather than spent; a separate vital from the reserve.",
+    "readings": 106,
+    "carriedByEvent": {
+      "despawned": 1,
+      "energyChanged": 104,
+      "spawned": 1
+    },
+    "distinctPercentReadings": [
+      100.0
+    ],
+    "healthChangedRecords": 0,
+    "perceptionsCarryingAHealthReading": 0,
+    "note": "Constant by construction: a flat peaceful arena with no monsters and no fall damage has nothing that can hurt the body, so this run does not exercise the healthChanged path."
+  },
+  "outcome": {
+    "result": "survived",
+    "diedRecords": 0,
+    "spawnTick": 56,
+    "spawnDetail": "at arena 6.50,-60.00,-3.50",
+    "despawnTick": 42278,
+    "energyAtEndPercent": 51.2139,
+    "declineAndRestCyclesObserved": 1,
+    "note": "The window closed on a living agent with reserve remaining; despawning at shutdown is not death, so agent ada remains embodiable and permadeath was not exercised."
+  },
+  "knownWarnings": [
+    {
+      "source": "Paper",
+      "severity": "ERROR line, benign",
+      "message": "No key layers in MapLike[{}]",
+      "cause": "level-type=minecraft:flat is set with no generator-settings, so Mojang's flat-generator codec decodes an empty settings object, logs the missing layers key, and falls back to the default flat preset.",
+      "affectsResults": false,
+      "attested": {
+        "source": "the server log, which is not committed: this whole entry describes a line found there, and the event log says nothing about warnings raised before the Loom plugin is enabled, so none of it can be re-derived from this directory",
+        "occurrences": 3,
+        "whenInLog": "During world creation, before the Loom plugin is enabled.",
+        "evidenceThatItIsBenign": "The lines are the only ERROR lines in the run's server log; they appear identically in every run of this harness including one with a different cognition backend."
+      }
+    }
+  ],
+  "scientificUsability": {
+    "verdict": "usable",
+    "scope": "Establishes that a real-model agent tracks its own metabolic reserve and rests before exhausting it, over one full decline-and-rest cycle, with no observation ever an input to a decision.",
+    "outOfScope": [
+      "death and permadeath, since the agent rested and never starved",
+      "health and damage, since nothing in the arena can hurt the body",
+      "movement, since no moveTo intent was ever chosen",
+      "external perception, since every perception carried zero observations",
+      "the deep tier and the notable tier, since a goal review is routine by construction, so gpt-5 was never called and neither notable-v1 nor pivotal-v1 was ever rendered",
+      "the observation path, since no /loomwatch watch was ever attached - the attestation is environment.attested.watchNote, because the path only reads records and its absence leaves no trace in this log either way",
+      "dimension transit, deliberately excluded from this run",
+      "multi-agent behaviour"
+    ]
+  }
+}

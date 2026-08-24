@@ -253,6 +253,7 @@ Walk one trip with no client connected too, since a body travelling unobserved i
 Two things about the test server will otherwise waste a run: `difficulty peaceful` makes `Villager.thunderHit` skip the whole conversion path, so lightning proves nothing about the conversion seam; and `execute in <dimension> ... @e` resolves against the *command's* position, so it happily reports an entity from the dimension you were checking for orphans in. Scope such checks with `positioned ... distance=..`, or read the client's entity list.
 The append-only `plugins/Loom/body-events.jsonl` is the research record - newline-delimited JSON, one record per line, written off the main thread - and metrics should be derived from it rather than added as separate counters.
 The write queue is bounded so a stalled disk never blocks the tick; records that never reach the file are counted and surfaced as a server-log warning, so before trusting a run's metrics check the server log for "body event log" warnings.
+`research/README.md` is the authority on a run that is kept as an experiment, and its sharpest edge is that a committed experiment's evidence must never be edited or reformatted.
 
 ## Gates (fail-the-build from commit 1)
 

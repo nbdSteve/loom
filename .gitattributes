@@ -1,0 +1,7 @@
+# An experiment's evidence file is hashed in its own manifest.json, and that hash is the
+# whole immutability proof the research record rests on - see research/README.md. `-text`
+# keeps git from rewriting the file's line endings on checkout, which a clone with
+# core.autocrlf set would otherwise do: the bytes would stop matching the recorded hash,
+# and the proof would fail for a reason that has nothing to do with the run. Scoped to
+# that one path, so every other file in the repository keeps git's ordinary handling.
+research/experiments/*/body-events.jsonl -text

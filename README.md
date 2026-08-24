@@ -8,11 +8,12 @@ build a small society together.
 
 ## Repository layout
 
-This is a monorepo with two runtimes and a shared contract:
+This is a monorepo with two runtimes, a shared contract, and the research record:
 
 - `plugin/` - the Kotlin Paper plugin: the physical world and the agent bodies.
 - `cognition/` - the Rust cognition service: the agent minds.
 - `contract/` - the shared perception/decision schema exchanged between them.
+- `research/` - one directory per experiment; see `research/README.md`, which makes everything there append-only.
 
 The body exposes only a bounded perception to the mind, and the mind never
 reaches directly into world state. Cognition is event-driven, never per-tick, and
