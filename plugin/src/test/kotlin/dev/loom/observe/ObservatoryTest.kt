@@ -243,6 +243,33 @@ class ObservatoryTest {
     }
 
     @Test
+    @DisplayName("a world-level record is said to the watcher and moves nothing about the agent")
+    fun aWorldRecordDoesNotMoveTheWatchedAgentsState() {
+        attach()
+        deliver(record(BodyEvent.SPAWNED).copy(vitals = reserve(80.0)))
+        val standing = sink.standing
+
+        // A world record carries no reading, trigger or outcome today, which is the only
+        // reason letting one through the state advance has cost nothing so far. Shaped like
+        // one that did, every field would be read as the watched agent's own - the world's
+        // number on this agent's gauge - so the record here carries the fields a future one
+        // might, and none of them may land.
+        deliver(
+            record(BodyEvent.WORLD_HOLD_FAILED, detail = "ticketDeclined 3 chunks", tick = 1L)
+                .copy(
+                    agentId = WORLD_AGENT_ID,
+                    vitals = reserve(2.0),
+                    health = energy(1.0),
+                    trigger = EventTag.DAMAGED,
+                ),
+        )
+
+        assertEquals("$WATCHED | energy 80/100 | standing by", standing?.text)
+        assertEquals(standing, sink.standing, "a fact about the world is not a reading of this agent")
+        assertEquals(HOLD_FAILURE_LINE, sink.notes.last().text, "and the caveat still has to reach the watcher")
+    }
+
+    @Test
     @DisplayName("with nobody watching, a whole run costs nothing and breaks nothing")
     fun noObserverIsTheNormalCase() {
         // The default state of a headless research run: the records still flow, and the
@@ -489,5 +516,183 @@ class ObservatoryTest {
 
         assertEquals(1, sink.releases, "a surface that cannot be painted on has to come down")
         assertTrue(reconnected.overlays.isNotEmpty(), "the new surface has to be the one used")
+    }
+
+    @Test
+    @DisplayName("re-running the command on the same agent keeps what is already known about it")
+    fun rewatchingKeepsTheStateItWasAlreadyShowing() {
+        attach()
+        deliver(
+            record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)),
+            record(BodyEvent.PERCEIVED, tick = 1L).copy(trigger = EventTag.GOAL_REVIEW),
+        )
+        val standing = sink.standing
+
+        observatory.watch(AgentId(WATCHED), RecordingSink())
+        observatory.refresh(NOW + 1)
+
+        // The state is a projection of the append-only record rather than anything about who
+        // is looking, so retyping the command changes nothing about it. Rebuilt blank, an
+        // in-world run lost the reserve reading until the next vitals-carrying record -
+        // eighteen seconds - and the activity until the next goal review, up to a whole
+        // cadence, with the gauge emptied on an agent that was not empty at all.
+        assertEquals("$WATCHED | energy 22/100 | thinking | goal review", standing?.text)
+        assertEquals(standing, sink.standing)
+        assertEquals(0.22, sink.standing?.progress, "the gauge must not empty on a live agent")
+    }
+
+    @Test
+    @DisplayName("attaching a watch answers whether it kept what was known or starts blank")
+    fun attachingSaysWhichOfTheTwoItWas() {
+        // The observatory is the only place that can see whether the state survived, so it says
+        // so rather than leaving the command to work it out from the arguments it typed: what
+        // an operator is told about their own watch is then what actually happened to it.
+        assertEquals(WatchAttachment.FRESH, observatory.watch(AgentId(WATCHED), sink))
+        deliver(record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)))
+
+        assertEquals(
+            WatchAttachment.KEPT,
+            observatory.watch(AgentId(WATCHED), RecordingSink()),
+            "retyping the command on the same agent changes nothing at all",
+        )
+        assertEquals(
+            WatchAttachment.FRESH,
+            observatory.watch(AgentId(OTHER), RecordingSink()),
+            "another agent carries nothing over",
+        )
+
+        observatory.stop(OPERATOR)
+
+        assertEquals(
+            WatchAttachment.FRESH,
+            observatory.watch(AgentId(OTHER), RecordingSink()),
+            "a stopped watch keeps no history, so starting again knows nothing",
+        )
+    }
+
+    @Test
+    @DisplayName("re-attaching before the record has said anything has kept nothing, and answers so")
+    fun aStateThatSurvivedSayingNothingIsAFreshAttachment() {
+        attach()
+
+        val attachment = observatory.watch(AgentId(WATCHED), RecordingSink())
+        observatory.refresh(NOW)
+
+        // The window the demo procedure lives in: attached before the spawn, attached again
+        // before it. A state object survived, and it says nothing - so an answer read from the
+        // object rather than from what it holds claimed readings that were never taken, beside
+        // a bar reading `energy not read yet`. Kept exactly as it was all the same: this is
+        // about which of the two the operator is told, not about resetting anything.
+        assertEquals(WatchAttachment.FRESH, attachment)
+        assertEquals("$WATCHED | energy not read yet | nothing seen yet", sink.standing?.text)
+        assertEquals(0, sink.releases, "the operator's own surface is still the one being painted")
+    }
+
+    @Test
+    @DisplayName("taking a watch over is a fresh attachment for whoever took it")
+    fun aTakeoverIsFreshForTheOperatorWhoTookIt() {
+        attach()
+        deliver(record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)))
+        val takingOver = RecordingSink(observer = OTHER_OPERATOR)
+
+        val attachment = observatory.watch(AgentId(WATCHED), takingOver)
+        observatory.refresh(NOW + 1)
+
+        // This operator has never watched anything, so there is nothing of theirs to have kept -
+        // and `KEPT` on a first-ever watch is inferable evidence that the operator they
+        // displaced was watching this very agent, which `WatchStanding.NotMine` withholds.
+        assertEquals(WatchAttachment.FRESH, attachment)
+        // The state is still inherited, and the displacement still happens: every field of it
+        // derives from records about this agent that the new observer may see anyway.
+        assertEquals("$WATCHED | energy 22/100 | standing by", takingOver.standing?.text)
+        assertEquals("no longer watching $WATCHED", sink.notes.last().text)
+        assertEquals(1, sink.releases, "the displaced display still has to come down")
+    }
+
+    @Test
+    @DisplayName("a step nothing renders leaves the display empty, and the answer says so")
+    fun aStateHoldingOnlyAnUnrenderedStepIsAFreshAttachment() {
+        attach()
+
+        // An agent already walking when the watch was attached: its `moveTo` landed before this
+        // watch existed, so the step arriving now is the only thing the state holds. A step
+        // carries no reading, says nothing in chat, and leaves the activity alone - so the bar
+        // is as empty as it was, and an answer read off the state claimed otherwise.
+        deliver(record(BodyEvent.MOVED, tick = 1L))
+        val standing = sink.standing
+
+        val attachment = observatory.watch(AgentId(WATCHED), RecordingSink())
+
+        assertEquals(WatchAttachment.FRESH, attachment)
+        assertEquals("$WATCHED | energy not read yet | nothing seen yet", standing?.text)
+        observatory.refresh(NOW + 1)
+        assertEquals(standing, sink.standing, "the preserved state is kept as it was, not reset")
+    }
+
+    @Test
+    @DisplayName("a watch whose surface was replaced still kept what was known")
+    fun aReplacedSurfaceIsStillAKeptWatch() {
+        attach()
+        deliver(record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)))
+        sink.isPresent = false
+
+        val attachment = observatory.watch(AgentId(WATCHED), RecordingSink())
+
+        // The reconnect case. The answer follows the state and not the surface, because it is
+        // the state that decides what the display still has to learn: this bar is painted from
+        // scratch, and the reading it is painted with is one the record already established.
+        assertEquals(WatchAttachment.KEPT, attachment)
+    }
+
+    @Test
+    @DisplayName("what is known follows the agent onto a new surface, which is painted with it")
+    fun aReplacedSurfaceIsPaintedWithWhatIsAlreadyKnown() {
+        attach()
+        deliver(
+            record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)),
+            record(BodyEvent.PERCEIVED, tick = 1L).copy(trigger = EventTag.GOAL_REVIEW),
+        )
+        sink.isPresent = false
+        val reconnected = RecordingSink()
+
+        observatory.watch(AgentId(WATCHED), reconnected)
+        observatory.refresh(NOW + 1)
+
+        // The reconnect case, where the surface really does have to be replaced. It has no
+        // bar up yet, so it is painted from scratch - with the state the record has already
+        // established and not with an empty one.
+        assertEquals("$WATCHED | energy 22/100 | thinking | goal review", reconnected.standing?.text)
+    }
+
+    @Test
+    @DisplayName("naming a different agent starts blank rather than carrying the last one's readings")
+    fun switchingAgentsCarriesNothingOver() {
+        attach()
+        deliver(record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)))
+
+        observatory.watch(AgentId(OTHER), RecordingSink())
+        observatory.refresh(NOW + 1)
+
+        // Nothing has been recorded about this agent since the watch was attached, and the
+        // display may only say what a record told it: carrying anything over would put one
+        // agent's reserve and activity on another agent's line.
+        assertEquals("$OTHER | energy not read yet | nothing seen yet", sink.standing?.text)
+    }
+
+    @Test
+    @DisplayName("a watch that was stopped and started again starts blank")
+    fun aStoppedWatchKeepsNoHistory() {
+        attach()
+        deliver(record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)))
+        observatory.stop(OPERATOR)
+        val restarted = RecordingSink()
+
+        observatory.watch(AgentId(WATCHED), restarted)
+        observatory.refresh(NOW + 1)
+
+        // Continuity belongs to the watch that is standing. This one's bar came down, and
+        // nothing here keeps history after that, so a new watch shows what the run tells it
+        // from now on.
+        assertEquals("$WATCHED | energy not read yet | nothing seen yet", restarted.standing?.text)
     }
 }

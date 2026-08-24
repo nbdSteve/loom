@@ -210,12 +210,13 @@ class NmsEntityBodyPort(
         trigger: Trigger,
     ): Perception? {
         val body = bodies[agentId] ?: return null
-        val perception = capturePerception(agentId, body, metabolism.energyOf(agentId), trigger, currentTick())
-        // The reading the perception itself took, recorded with it: a decision's cost and
-        // the reserve the agent had when it was made belong to the same moment. It is the
-        // reserve the perception just handed the mind; the body's health rides on the
-        // change and death records instead of being restated here.
-        val reserve = reserveVitals(metabolism.energyOf(agentId))
+        // One reading, used twice: a decision's cost and the reserve the agent had when it
+        // was made belong to the same moment, so the record must state the number the mind
+        // was handed rather than a second sample of it. The body's health rides on the change
+        // and death records instead of being restated here.
+        val energy = metabolism.energyOf(agentId)
+        val perception = capturePerception(agentId, body, energy, trigger, currentTick())
+        val reserve = reserveVitals(energy)
         vitalsWatch.noted(agentId, reserve)
         journal.recordPerception(
             agentId,
@@ -296,11 +297,10 @@ class NmsEntityBodyPort(
         body: LoomBodyEntity,
     ) {
         bodies.remove(agentId)
-        // The health reading is taken before the watches forget the agent, so a death
-        // records what it died on. Forgetting matters for the departures that are not
-        // deaths: an agent that walks through a portal gets a new body, and its first
-        // reading there must not be compared against one from a body it no longer has.
-        val health = bodyVitals(body)
+        // Forgetting matters for the departures that are not deaths: an agent that walks
+        // through a portal gets a new body, and its first reading there must not be compared
+        // against one from a body it no longer has. It clears what was recorded and reads no
+        // entity, so the death branch below still takes the health its body ended on.
         vitalsWatch.forget(agentId)
         // OWED SIGNAL: every branch here is news the mind is owed once cognition is
         // wired - "you have DIED", "you are somewhere else now", "you were nearly turned
@@ -311,8 +311,9 @@ class NmsEntityBodyPort(
             // Recording the death is what makes it terminal, and it goes through the same
             // funnel as a spent reserve so "died once" does not depend on which cause got
             // there first. The health it died on rides along, since a body can be beaten
-            // to death on a full reserve.
-            BodyDeparture.DEATH -> die(agentId, "died in-world", health)
+            // to death on a full reserve, and is read here rather than above because this is
+            // the one branch that has anything to say about it.
+            BodyDeparture.DEATH -> die(agentId, "died in-world", bodyVitals(body))
 
             // The agent walked out of one dimension and into another: the same agent, with
             // its id and everything attached to it, in a new body. The engine leaves Loom

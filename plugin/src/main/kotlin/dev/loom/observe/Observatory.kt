@@ -69,6 +69,50 @@ sealed interface WatchStanding {
 }
 
 /**
+ * Whether attaching a watch left the display with something to show.
+ *
+ * Answered by [Observatory.watch] rather than worked out by whoever called it, because only
+ * the observatory can see what the display was already showing: a caller that guessed would
+ * need its own copy of the continuity rule, and the two would drift. The one thing that turns
+ * on it is what an operator is told, and the two cases want opposite sentences - a bar that
+ * already has a reading on it makes the advice to attach before the spawn not merely useless
+ * but false.
+ *
+ * It measures what the asking operator can *see*, which is why [Observatory] asks the view
+ * rather than reading the state: a surviving state and a display with something on it differ
+ * over exactly the windows an operator meets. A watch attached before the spawn and attached
+ * again keeps a state that says nothing, and a watch attached mid-walk keeps one whose only
+ * content is the tick of a step, which no line renders.
+ */
+enum class WatchAttachment {
+    /**
+     * The asking operator's own watch went on showing what it was showing.
+     *
+     * Two cases, and both are that operator's own: they retyped the command on an agent the run
+     * had told them something about, or their surface had to be replaced and the bar was
+     * repainted with it. What is known follows the agent, so in both nothing they were looking
+     * at was lost.
+     */
+    KEPT,
+
+    /**
+     * This operator's display has nothing on it yet, and fills in from the next records.
+     *
+     * A first watch, a watch on a different agent, one attached after a stop or a dropped
+     * observer, one re-attached while nothing the line renders has been recorded yet, and a
+     * watch taken over from somebody else - the cases where the record is the only thing that
+     * can fill the display in, and where attaching before the spawn catches the first reading.
+     *
+     * A takeover belongs here even though it inherits the displaced watch's state, and that is
+     * about disclosure rather than about tidiness: the operator taking over has lost nothing,
+     * never having watched anything, and [WatchStanding.NotMine] deliberately does not say
+     * which agent somebody else is watching - an answer of [KEPT] on a first-ever watch would
+     * say it, by implying the displaced operator had been watching this very agent.
+     */
+    FRESH,
+}
+
+/**
  * A live operator view of one agent, driven entirely by the append-only record.
  *
  * @param view how records and state become bounded lines.
@@ -99,10 +143,22 @@ class Observatory(
     /**
      * Points [sink] at [agentId], replacing any watch already running.
      *
-     * The new watch knows nothing: it starts at [AgentActivity.UNSEEN] and fills in from
-     * the next records the run produces, because the record is the only thing it may
-     * read. That is why the demo procedure attaches the watch *before* spawning the
-     * agent - the spawn record then carries the first energy reading.
+     * A watch on an agent nothing was watching knows nothing: it starts at
+     * [AgentActivity.UNSEEN] and fills in from the next records the run produces, because
+     * the record is the only thing it may read. That is why the demo procedure attaches the
+     * watch *before* spawning the agent - the spawn record then carries the first energy
+     * reading.
+     *
+     * WHAT IS KNOWN FOLLOWS THE AGENT, NOT THE SURFACE. A watch already standing on
+     * [agentId] keeps its [WatchState], because that state is a projection of the append-only
+     * record rather than anything about who was looking: rebuilt blank, an operator who
+     * retyped the command they were already running lost the reserve reading until the next
+     * vitals-carrying record - eighteen seconds in world - and the activity until the next
+     * goal review, up to a whole cadence, while the gauge sat empty on an agent at full
+     * reserve. Retyping it against the same surface changes nothing at all, down to the lines
+     * not yet drained. Carried onto a *new* surface it is painted there from scratch, since
+     * that surface has no bar up yet. Only naming a different agent starts blank, and so does
+     * a watch that was stopped: the bar came down, and nothing here keeps history after that.
      *
      * An operator who is already watching keeps their own surface, and is told nothing:
      * the standing watch is only displaced when [sink] belongs to somebody else. Their
@@ -113,22 +169,47 @@ class Observatory(
      *
      * Displacing somebody speaks to their sink, so this must be called on the server main
      * thread. Unlike [saw], which is deliberately free of that constraint.
+     *
+     * @return which of the two it was, as [WatchAttachment], answered about the *asking*
+     *   observer's own display: [WatchAttachment.KEPT] needs both that the standing watch is
+     *   theirs - by [ObserverSink.observer] and not by sink identity or presence, so a replaced
+     *   surface is still their own - and that [view] renders this state differently from a blank
+     *   one for the same agent. A state that survived without reaching the line is kept exactly
+     *   as it is and answered [WatchAttachment.FRESH], because that is what the bar shows, and
+     *   so is a takeover, which has displaced a watch rather than kept one. Asking the view
+     *   keeps the question total as [WatchState] grows: a field the line does not render cannot
+     *   answer for a display it never reached, and a field it does render needs no mention here.
      */
     fun watch(
         agentId: AgentId,
         sink: ObserverSink,
-    ) {
+    ): WatchAttachment {
         synchronized(lock) {
             val standing = watch
             val kept = standing?.sink?.takeIf { it.observer == sink.observer && it.isPresent }
             if (standing != null && kept == null) {
-                if (standing.sink.isPresent) {
-                    standing.sink.note(Note("no longer watching ${standing.state.agentId}", ObserverLevel.CALM))
-                }
-                standing.sink.release()
+                displace(standing)
             }
-            watch = Watch(kept ?: sink, WatchState(agentId = agentId.value))
+            val blank = WatchState(agentId = agentId.value)
+            val known = standing?.state?.takeIf { it.agentId == agentId.value }
+            watch =
+                if (kept != null && known != null) {
+                    standing
+                } else {
+                    Watch(kept ?: sink, known ?: blank)
+                }
+            val mine = standing?.sink?.observer == sink.observer
+            val shows = mine && known != null && view.render(known) != view.render(blank)
+            return if (shows) WatchAttachment.KEPT else WatchAttachment.FRESH
         }
+    }
+
+    /** Tells a displaced watcher and takes their surface down. Callers hold [lock]. */
+    private fun displace(standing: Watch) {
+        if (standing.sink.isPresent) {
+            standing.sink.note(Note("no longer watching ${standing.state.agentId}", ObserverLevel.CALM))
+        }
+        standing.sink.release()
     }
 
     /**
@@ -192,15 +273,25 @@ class Observatory(
      * only records about that agent - plus the one world-level record that says the run's
      * permadeath figures cannot be trusted, which an operator needs while watching
      * rather than afterwards.
+     *
+     * That one exception is said to the operator and stops there. A world-level record is
+     * filed under `WORLD_AGENT_ID` and is a fact about the world rather than about this
+     * agent, so it may not move this agent's state: every field it carried would be read as
+     * the watched agent's own. It carries none today, which is the only reason letting it
+     * through has cost nothing so far - a single field added to a world record would have
+     * been silently attributed to whichever agent happened to be watched.
      */
     fun saw(record: BodyEventRecord) {
         synchronized(lock) {
             val current = watch ?: return
-            if (record.agentId != current.state.agentId && record.event != BodyEvent.WORLD_HOLD_FAILED) {
+            val itsOwn = record.agentId == current.state.agentId
+            if (!itsOwn && record.event != BodyEvent.WORLD_HOLD_FAILED) {
                 return
             }
             view.noteFor(record)?.let { current.offer(it, maxPendingNotes) }
-            current.state = advanced(current.state, record)
+            if (itsOwn) {
+                current.state = advanced(current.state, record)
+            }
         }
     }
 

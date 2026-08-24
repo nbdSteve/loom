@@ -220,13 +220,39 @@ The tombstone deliberately reports no reserve trend, because a dying agent's las
 The refusal is worth showing too, since it is the rule made visible:
 
 ```
-/loombody spawn ada
+/loombody spawn dex
 ```
 
 ```
-spawn rejected for ada: this agent has died, and Loom agents do not return
-[loom] was refused a body
+spawn rejected for dex: this agent has died, and Loom agents do not return
+[loom] had already DIED. Permadeath: this agent will not return.
+dex | energy 98.5/100 | health 0/20 | DEAD - will not return | goal review -> scripted-stand-...   (red)
 ```
+
+That refusal is the terminal state itself and not a request that failed, so it is said in the same words the death is.
+The standing bar is the tombstone unchanged, which is correct: this watch is already final, and all the refusal adds is that the agent now has no body, so both readings it had already taken carry forward.
+
+The line a watch attached *after* the death shows is the one worth seeing, and reaching it takes one step more than retyping the command.
+A watch naming the agent it is already on keeps what it knows, because that state is a projection of the record rather than a property of who is looking, so `/loomwatch dex` here would change nothing at all.
+The command says exactly that, rather than repeating the advice a fresh watch gets: `watching dex, keeping what is already known about it: what the record has said carries over, so nothing was lost.`
+Typed twice while the bar is still empty it says the opposite, and is right to: nothing that reaches the line has been recorded about that agent yet - either before its first record, or when a watch attached mid-walk has heard only the steps, which no field renders - so there is nothing to have kept and the pre-spawn advice is exactly what is wanted.
+Drop the watch first, then attach it again and refuse the spawn once more:
+
+```
+/loomwatch off
+/loomwatch dex
+/loombody spawn dex
+```
+
+```
+spawn rejected for dex: this agent has died, and Loom agents do not return
+[loom] had already DIED. Permadeath: this agent will not return.
+dex | energy not read yet | DEAD - will not return   (red)
+```
+
+The fresh bar reads `dex | energy not read yet | nothing seen yet` between the second and third command, exactly as it did before the first spawn of the run.
+That is the case the terminal wording exists for: such a watch never sees the `died` record, and this refusal is then the only record that will ever tell the operator the agent is gone for good.
+The reserve reads `energy not read yet` there, honestly: nothing has stated one to this watch.
 
 Not every refusal is bad news, and one of them means the opposite.
 `/loombody spawn ada` for an agent that already has a body is refused *because* the body is standing there, so it is reported calmly and the display goes on saying what the body is doing:
@@ -252,6 +278,7 @@ A watch belongs to the operator who started it, which matters as soon as two acc
 `off` ends your own watch and nobody else's: typed by anybody but the watcher it is refused with "somebody else is watching. Only the operator who started a watch can stop it.", and the watcher's bar stays where it is.
 The no-argument report answers the same way, and deliberately does not name the agent somebody else is watching.
 Taking a watch over is still one command - `/loomwatch <agentId>` - and that path does tell the displaced operator.
+The operator taking it over is answered exactly as a first watch of the run is, and is told nothing about the watch they displaced: their bar is painted with what the record has already said about that agent, which they may see anyway, but which agent somebody else was watching is not part of their reply.
 
 ## Reading the display
 
@@ -427,5 +454,5 @@ These are true of the prototype today, not of the display.
 - The energy reserve is the only survival drive. There is no hunger, stamina, or upkeep stat yet, and no needs framework - one drive, one knob, and a second is added when there is a second to add.
 - The reserve and the recorded deaths live in memory only. A server restart forgets both a reserve and who has died, so making either outlive a restart waits on agent-identity persistence; the append-only log is meanwhile the durable record of who died.
 - `say` and `flee` are not actuated yet. A mind that chooses either gets `Unsupported`, which the display shows as `the body cannot do that yet` and `body refused it`. That is the honest reading: the decision was real and the body could not carry it out.
-- One watch at a time. A second `/loomwatch` from *somebody else* replaces the first and tells the displaced operator so. This is the one-agent demo path on purpose. Re-running it yourself is not a displacement: you keep your own bar, and switching agents keeps it too. `/loomwatch off` and the no-argument report are yours alone, and refuse anybody else rather than acting on their behalf.
+- One watch at a time. A second `/loomwatch` from *somebody else* replaces the first and tells the displaced operator so. This is the one-agent demo path on purpose. Re-running it yourself is not a displacement: you keep your own bar, and switching agents keeps it too, and the reply says whether the watch kept what it knew or starts blank. `/loomwatch off` and the no-argument report are yours alone, and refuse anybody else rather than acting on their behalf.
 - The boss bar title is 96 characters wide and a long line is cut with an ellipsis. The full model stamp is always in the `decided` chat line, which has more room.

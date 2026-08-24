@@ -14,6 +14,7 @@ package dev.loom.plugin
 
 import dev.loom.observe.Observatory
 import dev.loom.observe.ObserverSink
+import dev.loom.observe.WatchAttachment
 import dev.loom.observe.WatchStanding
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
@@ -90,21 +91,37 @@ class WatchCommand(
         }
 
     /**
-     * Points [sink] at the agent named by [raw].
+     * Points [sink] at the agent named by [raw], and says which of two things happened.
      *
-     * The reply says what a fresh watch does *not* know, because it is the one surprising
-     * thing about a read-only display: a watcher is told nothing until the run records
-     * something, so an agent that is standing still shows no energy until its next reading.
-     * Attaching before the spawn avoids that entirely, since the spawn record carries the
-     * first reading.
+     * A watch that starts knowing nothing is told the one surprising thing about a read-only
+     * display: a watcher is told nothing until the run records something, so an agent that is
+     * standing still shows no energy until its next reading. Attaching before the spawn avoids
+     * that entirely, since the spawn record carries the first reading.
+     *
+     * An operator whose own display already has something on it is told that instead, because
+     * the same advice would be false there: the record has already stated what that bar is
+     * showing, and an operator who retyped the command they were running needs to hear that
+     * nothing was lost rather than to be told to attach earlier. A watch re-attached while the
+     * bar is still empty is not that case and keeps the advice, since the next reading is still
+     * what will fill it - true both before an agent's first record and while nothing recorded
+     * about it has reached the line. So does taking a watch over from somebody else, word for
+     * word as a first watch of the run is answered: that operator has lost nothing, and a reply
+     * that read differently would tell them which agent the operator they displaced had been
+     * watching. Which of the two it was is read from [Observatory.watch]'s own answer rather
+     * than worked out here, so the continuity rule stays in the one place that can see it.
      */
     private fun start(
         raw: String,
         sink: ObserverSink,
     ): String =
         withAgent(raw) { agent ->
-            observatory.watch(agent, sink)
-            "watching ${agent.value}. Lines appear as the record does, " +
-                "so attach before spawning to catch the first energy reading."
+            when (observatory.watch(agent, sink)) {
+                WatchAttachment.KEPT ->
+                    "watching ${agent.value}, keeping what is already known about it: " +
+                        "what the record has said carries over, so nothing was lost."
+                WatchAttachment.FRESH ->
+                    "watching ${agent.value}. Lines appear as the record does, " +
+                        "so attach before spawning to catch the first energy reading."
+            }
         }
 }

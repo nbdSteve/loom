@@ -13,6 +13,8 @@ import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.EnergyTrend
 import dev.loom.body.EventTag
+import dev.loom.contract.DecisionImportance
+import dev.loom.contract.Provenance
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -335,15 +337,30 @@ class WatchStateTest {
     }
 
     @Test
+    @DisplayName("a spawn refused because the agent has died is the terminal state, not a bodiless one")
+    fun theHasDiedRefusalIsTheTerminalState() {
+        // A watch attached *after* the death never sees the `died` record, so this refusal
+        // is the only record that will ever say the agent is gone. Read as merely bodiless
+        // it left an in-world run showing `no body` in operator yellow indefinitely, about a
+        // permadeath - and offered no reason to stop typing the command.
+        val refused = after(record(BodyEvent.SPAWN_REJECTED).copy(outcome = EventTag.HAS_DIED))
+
+        assertEquals(AgentActivity.DEAD, refused.activity)
+        assertTrue(refused.isFinal, "a permadeath is final however the display came to hear about it")
+        assertEquals("$WATCHED | energy not read yet | DEAD - will not return", ObserverView().render(refused).text)
+        assertEquals(ObserverLevel.ALARM, ObserverView().render(refused).level)
+    }
+
+    @Test
     @DisplayName("the refusals that really do leave an agent bodiless still read that way")
     fun theGenuinelyBodilessRefusalsAreUnchanged() {
-        val bodiless =
-            listOf(EventTag.UNKNOWN_WORLD, EventTag.WORLD_UNHELD, EventTag.WORLD_REFUSED, EventTag.HAS_DIED)
+        val bodiless = listOf(EventTag.UNKNOWN_WORLD, EventTag.WORLD_UNHELD, EventTag.WORLD_REFUSED)
 
         for (outcome in bodiless) {
             val refused = after(record(BodyEvent.SPAWN_REJECTED).copy(outcome = outcome))
 
             assertEquals(AgentActivity.BODILESS, refused.activity, outcome)
+            assertFalse(refused.isFinal, "$outcome is a request Loom could not meet, not an ending")
         }
     }
 
@@ -431,6 +448,116 @@ class WatchStateTest {
         // A stamp is dropped because a *new* cycle has nothing to show, not because a
         // perception arrived: the model that answered this request still answered it.
         assertEquals(STAMP, restated.provenance)
+    }
+
+    @Test
+    @DisplayName("a superseded cycle answered late does not take the line back")
+    fun anOlderCyclesAnswerArrivingLateIsIgnored() {
+        val answering = Provenance(tier = DecisionImportance.ROUTINE, model = "fast-model", promptVersion = "fast-v1")
+        val current =
+            after(
+                record(BodyEvent.PERCEIVED).copy(requestId = "req-1", trigger = EventTag.GOAL_REVIEW),
+                record(BodyEvent.PERCEIVED, tick = 1L).copy(requestId = "req-2", trigger = EventTag.GOAL_REVIEW),
+                record(BodyEvent.DECIDED, tick = 1L).copy(requestId = "req-2", provenance = answering),
+            )
+
+        assertEquals(answering, current.provenance)
+
+        // Decisions arrive in whatever order the minds answer in: one call being slower than
+        // the next is ordinary, and against a mind that took six seconds over the first
+        // review an in-world run had the boss bar credit the newest review to the model of a
+        // review already superseded - and never correct itself, since nothing later restates
+        // the stamp.
+        val late =
+            advanced(current, record(BodyEvent.DECIDED, tick = 2L).copy(requestId = "req-1", provenance = STAMP))
+
+        assertEquals(answering, late.provenance, "the line is about req-2, so req-2's model stays on it")
+        assertEquals(
+            "$WATCHED | energy not read yet | thinking | goal review -> fast-model/fast-v1 routine",
+            ObserverView().render(late).text,
+        )
+    }
+
+    @Test
+    @DisplayName("a superseded cycle's failure does not take the answered cycle's line back")
+    fun anOlderCyclesFailureArrivingLateIsIgnored() {
+        val answered =
+            after(
+                record(BodyEvent.PERCEIVED).copy(requestId = "req-1", trigger = EventTag.GOAL_REVIEW),
+                record(BodyEvent.PERCEIVED, tick = 1L).copy(requestId = "req-2", trigger = EventTag.DAMAGED),
+                record(BodyEvent.DECIDED, tick = 1L).copy(requestId = "req-2", provenance = STAMP),
+                record(BodyEvent.INTENT_APPLIED, tick = 1L)
+                    .copy(requestId = "req-2", intent = EventTag.REST, outcome = EventTag.ACCEPTED),
+            )
+
+        // Two cycles overlap for one agent whenever a `/loombody think` lands during a goal
+        // review still in flight, and req-1's call then times out at the 12s/30s chain, long
+        // after req-2 was answered and applied. Read as news it took req-2's model off the
+        // line, relabelled it with req-1's trigger, and reported `mind did not answer` about
+        // the cycle that was answered - for a whole cadence, since nothing restates a stamp.
+        val late =
+            advanced(
+                answered,
+                record(BodyEvent.COGNITION_UNAVAILABLE, tick = 2L)
+                    .copy(requestId = "req-1", trigger = EventTag.GOAL_REVIEW, outcome = "timedOut"),
+            )
+
+        assertEquals(STAMP, late.provenance, "the line is about req-2, which a model did answer")
+        assertEquals(AgentActivity.RESTING, late.activity)
+        assertEquals(EventTag.DAMAGED, late.trigger, "req-1's trigger is not what the line is about")
+        assertEquals(
+            "$WATCHED | energy not read yet | resting | damaged -> test-model/test-v1 routine",
+            ObserverView().render(late).text,
+        )
+    }
+
+    @Test
+    @DisplayName("a failure naming the cycle the line is about is still the news it always was")
+    fun theCurrentCyclesFailureStillTakesTheLine() {
+        val waiting =
+            after(
+                record(BodyEvent.PERCEIVED).copy(requestId = "req-1", trigger = EventTag.GOAL_REVIEW),
+                record(BodyEvent.DECIDED).copy(requestId = "req-1", provenance = STAMP),
+                record(BodyEvent.PERCEIVED, tick = 1L).copy(requestId = "req-2", trigger = EventTag.DAMAGED),
+            )
+
+        // Narrowing the rule to the cycle the line is about must not disable it: this is the
+        // failure an operator watching a silent mind is waiting to be told about.
+        val failed =
+            advanced(
+                waiting,
+                record(BodyEvent.COGNITION_UNAVAILABLE, tick = 2L)
+                    .copy(requestId = "req-2", trigger = EventTag.DAMAGED, outcome = "timedOut"),
+            )
+
+        assertNull(failed.provenance)
+        assertEquals(
+            "$WATCHED | energy not read yet | mind did not answer | damaged",
+            ObserverView().render(failed).text,
+        )
+
+        // And a watcher that attached between a perception and its answer has no cycle to
+        // contradict, so a failure is taken at its word there too.
+        val attachedLate =
+            after(
+                record(BodyEvent.DECIDED).copy(requestId = "req-1", provenance = STAMP),
+                record(BodyEvent.COGNITION_UNAVAILABLE, tick = 1L).copy(requestId = "req-2", outcome = "timedOut"),
+            )
+
+        assertNull(attachedLate.provenance, "a watcher with no cycle of its own has none to contradict")
+        assertEquals(AgentActivity.UNANSWERED, attachedLate.activity)
+    }
+
+    @Test
+    @DisplayName("a watch attached mid-cycle still shows the model that answers it")
+    fun aStampIsTakenWhenNoCycleIsKnownYet() {
+        // The command is typed while a perception is already in flight, so the first record
+        // this watch ever sees is the decision. Refusing its stamp because no perception
+        // named the cycle would leave the model blank for a whole cadence about a cycle that
+        // was answered on screen.
+        val attachedLate = after(record(BodyEvent.DECIDED).copy(requestId = "req-1", provenance = STAMP))
+
+        assertEquals(STAMP, attachedLate.provenance)
     }
 
     @Test

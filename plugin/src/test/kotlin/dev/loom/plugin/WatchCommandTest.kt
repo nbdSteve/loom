@@ -9,6 +9,9 @@
 package dev.loom.plugin
 
 import dev.loom.body.AgentId
+import dev.loom.body.AgentVitals
+import dev.loom.body.BodyEvent
+import dev.loom.body.BodyEventRecord
 import dev.loom.body.WORLD_AGENT_ID
 import dev.loom.observe.Note
 import dev.loom.observe.Observatory
@@ -16,6 +19,7 @@ import dev.loom.observe.ObserverSink
 import dev.loom.observe.Overlay
 import dev.loom.observe.WatchStanding
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -29,6 +33,17 @@ private const val OPERATOR = "operator-1"
 
 /** A second opped account, since `loom.observe` can be held by more than one. */
 private const val OTHER_OPERATOR = "operator-2"
+
+/** A second agent, for the case where a watch really does start knowing nothing. */
+private const val OTHER_AGENT = "agent-bo"
+
+/** What a watch with nothing known yet is told, since the record is all it may read. */
+private const val FRESH_ADVICE =
+    "Lines appear as the record does, so attach before spawning to catch the first energy reading."
+
+/** What a watch the record has already told something is told instead, where that advice is false. */
+private const val KEPT_NOTE =
+    "keeping what is already known about it: what the record has said carries over, so nothing was lost."
 
 class WatchCommandTest {
     private val observatory = Observatory()
@@ -49,17 +64,46 @@ class WatchCommandTest {
         vararg args: String,
     ): String? = command.reply(args, surface)
 
+    /**
+     * Lets the run state a reserve for [AGENT], which is what a watch can come to know.
+     *
+     * Offered rather than shown: `saw` accumulates and only a refresh delivers, so this moves
+     * what the display knows without touching a sink.
+     */
+    private fun theRunRecordsASpawn() =
+        observatory.saw(
+            BodyEventRecord(
+                tick = 0L,
+                agentId = AGENT,
+                event = BodyEvent.SPAWNED,
+                detail = "",
+                vitals = AgentVitals(energy = 98.5, capacity = 100.0),
+            ),
+        )
+
+    /**
+     * Lets the run record a step for [AGENT], which is nothing a watcher can see.
+     *
+     * A walking body records one every tick, carrying no reading and changing no activity, so
+     * this moves what the watch holds without putting anything on the display.
+     */
+    private fun theRunRecordsAStep() =
+        observatory.saw(
+            BodyEventRecord(
+                tick = 1L,
+                agentId = AGENT,
+                event = BodyEvent.MOVED,
+                detail = "",
+            ),
+        )
+
     @Test
     @DisplayName("naming an agent attaches the watch and says how a fresh watch behaves")
     fun namingAnAgentStartsTheWatch() {
         val reply = typed(AGENT)
 
         assertEquals(WatchStanding.Mine(AgentId(AGENT)), observatory.standing(OPERATOR))
-        assertEquals(
-            "watching $AGENT. Lines appear as the record does, " +
-                "so attach before spawning to catch the first energy reading.",
-            reply,
-        )
+        assertEquals("watching $AGENT. $FRESH_ADVICE", reply)
     }
 
     @Test
@@ -175,6 +219,7 @@ class WatchCommandTest {
     @DisplayName("typing the command twice does not tell the operator they stopped watching")
     fun rewatchingDoesNotDisplaceTheOperatorWhoTyped() {
         typed(AGENT)
+        theRunRecordsASpawn()
 
         val reply = retyped(InertSink(), AGENT)
 
@@ -185,11 +230,99 @@ class WatchCommandTest {
         assertEquals(WatchStanding.Mine(AgentId(AGENT)), observatory.standing(OPERATOR))
         assertEquals(0, sink.lines, "the operator was told something about their own watch")
         assertEquals(0, sink.releases, "the operator's own display was taken down under them")
+        assertEquals("watching $AGENT, $KEPT_NOTE", reply)
+    }
+
+    @Test
+    @DisplayName("retyping the command on the same agent says it kept what it knew")
+    fun retypingSaysWhatWasKeptInsteadOfAdvisingAFreshStart() {
+        typed(AGENT)
+        theRunRecordsASpawn()
+
+        val reply = retyped(InertSink(), AGENT)
+
+        // Nothing at all happened here: the surface stays, and so does the state, because what
+        // is known follows the agent. Advising this operator to attach before spawning is
+        // advice about an agent whose reserve their bar is already showing.
+        assertEquals("watching $AGENT, $KEPT_NOTE", reply)
+        assertFalse(reply?.contains("attach before spawning") ?: true, "$reply")
+    }
+
+    @Test
+    @DisplayName("retyping mid-walk keeps the advice, since a step puts nothing on the display")
+    fun retypingWhileOnlyStepsHaveLandedKeepsThePreSpawnAdvice() {
+        // The other window an operator meets: the agent was spawned and walking before this
+        // watch existed, so the only record it has heard is a step. A step states no reading,
+        // says nothing in chat and leaves the activity alone, so this bar is still empty and the
+        // advice about the next reading is the one thing worth saying.
+        typed(AGENT)
+        theRunRecordsAStep()
+
+        val reply = retyped(InertSink(), AGENT)
+
+        assertEquals("watching $AGENT. $FRESH_ADVICE", reply)
+    }
+
+    @Test
+    @DisplayName("retyping before the run has said anything is still a fresh watch")
+    fun retypingBeforeTheFirstRecordKeepsThePreSpawnAdvice() {
+        // Exactly the demo procedure: attach first, then attach again before spawning - a
+        // retype, a second client window, or simply not being sure the first one took. The
+        // state survives, but it says nothing at all, so there is nothing to have kept and the
+        // advice is the one thing this operator needs: the spawn is what gives them a reading.
+        typed(AGENT)
+
+        val reply = retyped(InertSink(), AGENT)
+
+        assertEquals("watching $AGENT. $FRESH_ADVICE", reply)
+    }
+
+    @Test
+    @DisplayName("taking a watch over says nothing about the watch it displaced")
+    fun aTakeoverIsAnsweredAsAFirstWatchWouldBe() {
+        typed(AGENT)
+        theRunRecordsASpawn()
+        val takingOver = InertSink(observer = OTHER_OPERATOR)
+
+        val reply = retyped(takingOver, AGENT)
+
+        // This operator has watched nothing, so "nothing was lost" would be a sentence about a
+        // watch they never had - and told they kept something, they could infer that the
+        // operator they displaced had been watching this very agent, which the no-argument
+        // report deliberately refuses to say. The answer is the one a first watch is given.
+        assertEquals("watching $AGENT. $FRESH_ADVICE", reply)
         assertEquals(
-            "watching $AGENT. Lines appear as the record does, " +
-                "so attach before spawning to catch the first energy reading.",
+            WatchCommand(Observatory()).reply(arrayOf(AGENT), takingOver),
             reply,
+            "a takeover must be indistinguishable from a first watch of the run",
         )
+        assertEquals(1, sink.lines, "the displaced operator is still told")
+        assertEquals(1, sink.releases, "and their own display still comes down")
+    }
+
+    @Test
+    @DisplayName("a watch on a different agent is fresh again, and gets the pre-spawn advice")
+    fun switchingAgentsIsAFreshWatch() {
+        typed(AGENT)
+
+        val reply = retyped(InertSink(), OTHER_AGENT)
+
+        // Naming another agent carries nothing over, so this watch really does know nothing
+        // and the advice is worth having: the spawn record is what gives it a first reading.
+        assertEquals("watching $OTHER_AGENT. $FRESH_ADVICE", reply)
+    }
+
+    @Test
+    @DisplayName("attaching again after off is fresh too, since a stopped watch keeps no history")
+    fun attachingAfterOffIsFreshAgain() {
+        typed(AGENT)
+        typed("off")
+
+        val reply = retyped(InertSink(), AGENT)
+
+        // The bar came down, and the observatory keeps no history past that - which is the
+        // step the demo procedure takes to see what a watch attached after a death shows.
+        assertEquals("watching $AGENT. $FRESH_ADVICE", reply)
     }
 
     @Test

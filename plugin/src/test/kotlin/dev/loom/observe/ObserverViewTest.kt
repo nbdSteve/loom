@@ -308,6 +308,18 @@ class ObserverViewTest {
     }
 
     @Test
+    @DisplayName("a spawn refused because the agent has died says the death, not that a request failed")
+    fun theHasDiedRefusalIsSaidAsAPermadeath() {
+        val gone = record(BodyEvent.SPAWN_REJECTED).copy(outcome = EventTag.HAS_DIED)
+
+        // A watch attached after the death never sees the `died` record, so this refusal is
+        // the only line that will ever tell that operator the agent is not coming back. Said
+        // as an ordinary refusal it read as a request to try again.
+        assertEquals("had already DIED. Permadeath: this agent will not return.", spoken(gone).text)
+        assertEquals(ObserverLevel.ALARM, spoken(gone).level)
+    }
+
+    @Test
     @DisplayName("a conversion that took the body says so, rather than that something tried")
     fun aConversionThatSucceededIsNotUnderstated() {
         val refused = record(BodyEvent.CONVERTED).copy(outcome = EventTag.CONVERSION_REFUSED)

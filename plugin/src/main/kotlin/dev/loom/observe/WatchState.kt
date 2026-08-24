@@ -6,6 +6,13 @@
  * and it takes a record and returns a new state - so "the operator display is derived
  * from the research record" is a property of the types rather than a claim in a comment.
  *
+ * The one reading with rules of its own is the model stamp, which belongs to a single
+ * cognition cycle and is therefore the only thing here that is dropped or refused rather
+ * than carried forward. Those rules live in `DecisionStamp.kt`, and so does the question
+ * they turn on - which cycle the standing line is about. A cognition failure's trigger and
+ * activity are refused by the same answer, because a failure names the request it was
+ * about and a superseded one is not news about the cycle on screen.
+ *
  * Nothing in this file can reach a body, a mind, or a world. That is what makes
  * attaching an observer incapable of changing an agent's energy, timing, decisions, or
  * routing: there is no call it could make to do so.
@@ -33,22 +40,6 @@ const val MOTION_IDLE_TICKS: Long = 20L
 private val IN_MOTION = setOf(AgentActivity.MOVING, AgentActivity.FLEEING)
 
 /**
- * Which mind answered one cognition cycle, and which cycle that was.
- *
- * The two travel together because a stamp only means anything about the request it
- * answered. Held apart, the stamp of a finished cycle can be shown beside the trigger of
- * the next one, which reads as "this trigger was answered by this model" about a cycle
- * nothing has answered yet - and the two would differ the day a tier other than routine
- * is reached, since the router gives each tier its own model and prompt version.
- */
-data class DecisionStamp(
-    /** The perception this stamp answered, as the record's own request id. */
-    val requestId: String?,
-    /** The mind, tier, and prompt version that answered it. */
-    val provenance: Provenance,
-)
-
-/**
  * Everything a watcher currently knows about one agent.
  *
  * Small on purpose. It is not a second store of agent state: it holds no history, it is
@@ -69,6 +60,15 @@ data class WatchState(
     val trigger: String? = null,
     /** The last decision's stamp, with the cycle it belongs to. */
     val stamp: DecisionStamp? = null,
+    /**
+     * The newest cognition cycle the records have started, as its request id.
+     *
+     * Held so [stampAfter] can tell an answer to *this* cycle from an answer to a
+     * superseded one. Several agents can think in one tick and one call can be slower than
+     * the next, so decisions arrive in whatever order the minds answer in, and the newest
+     * perception is the only cycle the standing line is about.
+     */
+    val cycle: String? = null,
     /** Whether the records so far leave this agent with no body in the world. */
     val hasNoBody: Boolean = false,
     /** The tick of the last step the body took, for [decayed]. */
@@ -114,7 +114,10 @@ data class WatchState(
  * an agent's model does not stop being known because the next record is a step - but
  * they are never invented: a watcher that has been told nothing shows nothing. The one
  * thing that is actively forgotten is the model stamp of a cycle that is over, whether it
- * ended in an answer or in silence; see [stampAfter].
+ * ended in an answer or in silence; see [stampAfter]. A cognition failure naming a cycle
+ * the line has stopped asking about is the one record that restates a tag and is not
+ * believed: it is news about neither the trigger, the stamp, nor the activity, because it
+ * speaks about a question a later perception has already replaced - see [answersTheCycle].
  */
 fun advanced(
     state: WatchState,
@@ -125,8 +128,9 @@ fun advanced(
         health = record.health ?: state.health,
         trend = trendAfter(state, record.vitals),
         activity = if (state.isFinal) state.activity else activityAfter(state, record),
-        trigger = record.trigger ?: state.trigger,
+        trigger = triggerAfter(state, record),
         stamp = stampAfter(state, record),
+        cycle = cycleAfter(state, record),
         hasNoBody = bodilessAfter(state, record),
         lastMotionTick = if (isMotion(record)) record.tick else state.lastMotionTick,
     )
@@ -165,40 +169,23 @@ private fun trendAfter(
 }
 
 /**
- * The stamp to show after [record]: the one it carries, the one already known, or none.
+ * The trigger to show after [record], carried forward when it states none.
  *
- * Carried forward like every other reading, except where carrying it would answer a
- * question nothing has answered. A stamp belongs to one cycle, so it is dropped by any
- * record that ends that cycle without an answer or starts another one - see
- * [forgetsTheStamp]. Held past either, it sits beside the *current* trigger reading "this
- * trigger was answered by this model", which is the one thing that must never be invented.
+ * Two records state one, and only one of them can be about a cycle the line has stopped
+ * asking about: a perception *starts* the cycle it names, while a cognition failure names the
+ * request it was already about. So a failure that does not [answersTheCycle] is left where it
+ * is, exactly as its stamp is - it would otherwise relabel the standing line with a
+ * superseded cycle's trigger, beside the model and the activity of a cycle that was answered
+ * and applied, with nothing until the next perception to correct it.
  */
-private fun stampAfter(
+private fun triggerAfter(
     state: WatchState,
     record: BodyEventRecord,
-): DecisionStamp? {
-    record.provenance?.let { return DecisionStamp(record.requestId, it) }
-    return if (forgetsTheStamp(state, record)) null else state.stamp
+): String? {
+    val superseded = record.event == BodyEvent.COGNITION_UNAVAILABLE && !answersTheCycle(state, record)
+    val stated = if (superseded) null else record.trigger
+    return stated ?: state.trigger
 }
-
-/**
- * Whether [record] leaves the last stamp with nothing to say.
- *
- * Two records do. A cognition failure states outright that this cycle has no model, and a
- * perception that names a *different* request has started a cycle no model has answered
- * yet - which is the whole of the wait an operator watches during a silent mind, and which
- * would otherwise show the previous cycle's model for all of it. A perception restating the
- * request the stamp came from is the same cycle, so it keeps it.
- */
-private fun forgetsTheStamp(
-    state: WatchState,
-    record: BodyEventRecord,
-): Boolean =
-    when (record.event) {
-        BodyEvent.COGNITION_UNAVAILABLE -> true
-        BodyEvent.PERCEIVED -> record.requestId != state.stamp?.requestId
-        else -> false
-    }
 
 /**
  * Whether the agent has no body in the world once [record] has landed.
@@ -272,7 +259,7 @@ private fun activityAfter(
         BodyEvent.SPAWN_REJECTED -> refusedActivity(state, record.outcome)
         BodyEvent.PERCEIVED -> AgentActivity.THINKING
         BodyEvent.INTENT_APPLIED -> activityOf(record.intent, record.outcome)
-        BodyEvent.COGNITION_UNAVAILABLE -> AgentActivity.UNANSWERED
+        BodyEvent.COGNITION_UNAVAILABLE -> unansweredActivity(state, record)
         BodyEvent.DESPAWNED -> AgentActivity.BODILESS
         BodyEvent.DIED -> AgentActivity.DEAD
         BodyEvent.TRAVELLED -> AgentActivity.TRAVELLING
@@ -296,16 +283,41 @@ private fun activityAfter(
 /**
  * What a refused spawn leaves the agent in.
  *
- * Most refusals happen to an agent that has no body, and saying so is most of the point
- * of the record. One is the opposite: a spawn refused because the agent *already* has a
- * body says the body is there, so an operator who typed the command twice must not be
- * told that the live body in front of them is gone. Read from the countable outcome the
- * refusal carries and never from its prose, which this package may not look at.
+ * One event name, three different facts, and only the countable outcome tells them apart -
+ * never the record's prose, which this package may not look at.
+ *
+ * A spawn refused because the agent *already* has a body says the body is there, so an
+ * operator who typed the command twice must not be told that the live body in front of them
+ * is gone. A spawn refused because the agent has *died* is the terminal state itself: Loom is
+ * permadeath, so the refusal is the last word about that agent rather than a request that
+ * failed. Read as merely bodiless it understated a permadeath as a temporary condition, and
+ * an in-world run left a dead agent reading `no body` in operator yellow indefinitely - a
+ * watch attached after the death never sees the `died` record, so the refusal is the only
+ * record that will ever say so. Every remaining refusal is a request Loom could not meet, to
+ * an agent that has no body and can still be given one.
  */
 private fun refusedActivity(
     state: WatchState,
     outcome: String?,
-): AgentActivity = if (outcome == EventTag.ALREADY_EMBODIED) state.activity else AgentActivity.BODILESS
+): AgentActivity =
+    when (outcome) {
+        EventTag.ALREADY_EMBODIED -> state.activity
+        EventTag.HAS_DIED -> AgentActivity.DEAD
+        else -> AgentActivity.BODILESS
+    }
+
+/**
+ * What a cognition failure leaves the agent in.
+ *
+ * A mind that did not answer *this* cycle is the one thing an operator watching a silent mind
+ * is waiting to be told. A failure naming a cycle the line has stopped asking about is not:
+ * the agent is doing whatever the answered cycle had it doing, and `mind did not answer`
+ * about a cycle that was answered and applied is a line no record ever stated.
+ */
+private fun unansweredActivity(
+    state: WatchState,
+    record: BodyEventRecord,
+): AgentActivity = if (answersTheCycle(state, record)) AgentActivity.UNANSWERED else state.activity
 
 /**
  * What a conversion leaves the agent in.

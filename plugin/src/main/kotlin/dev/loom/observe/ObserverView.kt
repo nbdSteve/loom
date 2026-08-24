@@ -239,14 +239,19 @@ class ObserverView(
          *
          * A second spawn command for an agent that already has a body is refused
          * *because* the agent is fine, so it is said calmly and without implying that the
-         * body an operator can see has gone. Every other refusal is a request Loom could
-         * not meet, and the agent has no body either way round.
+         * body an operator can see has gone. A spawn refused because the agent has died is
+         * the opposite extreme and is said in the same words the death itself is: for a
+         * watch attached after the death, this refusal is the only record that will ever
+         * say the agent is gone for good. Everything else is a request Loom could not meet,
+         * to an agent that has no body and can still be given one.
          */
         fun refusedNote(outcome: String?): Note =
-            if (outcome == EventTag.ALREADY_EMBODIED) {
-                Note("already has a body, so a second one was refused", ObserverLevel.CALM)
-            } else {
-                Note("was refused a body", ObserverLevel.CONCERN)
+            when (outcome) {
+                EventTag.ALREADY_EMBODIED ->
+                    Note("already has a body, so a second one was refused", ObserverLevel.CALM)
+                EventTag.HAS_DIED ->
+                    Note("had already DIED. Permadeath: this agent will not return.", ObserverLevel.ALARM)
+                else -> Note("was refused a body", ObserverLevel.CONCERN)
             }
 
         /**
