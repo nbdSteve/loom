@@ -135,6 +135,47 @@ fn valid_fixtures_round_trip_byte_for_byte() {
     }
 }
 
+#[test]
+fn a_nightfall_countdown_below_one_is_refused_at_decode() {
+    // Not only by the schema. Nothing on the wire is schema-validated at runtime -
+    // `read_frame` hands a line to serde and nothing else - so a rule the schema
+    // alone holds is a rule a socket can walk straight past. Zero is the value
+    // worth refusing: a countdown that had run out would carry it, and a night
+    // would then arrive as a nightfall permanently about to happen, which the mind
+    // cannot tell from one genuinely a tick away.
+    let zero = fs::read_to_string(
+        contract_dir()
+            .join("fixtures/invalid")
+            .join("perception-nightfall-not-positive.json"),
+    )
+    .unwrap();
+
+    let refused = serde_json::from_str::<Perception>(zero.trim_end_matches('\n'));
+    assert!(
+        refused.is_err(),
+        "a zero nightfall countdown decoded into a Perception"
+    );
+
+    // And a negative, which is the same mistake having gone past rather than a
+    // different one, so it must not need its own rule to be caught.
+    let negative = zero.replace("\"ticksUntilNightfall\":0", "\"ticksUntilNightfall\":-1");
+    assert_ne!(
+        zero, negative,
+        "the fixture no longer states a zero to edit"
+    );
+    assert!(
+        serde_json::from_str::<Perception>(&negative).is_err(),
+        "a negative nightfall countdown decoded into a Perception"
+    );
+
+    // The bound is exactly one tick, not "positive enough": a perception taken on
+    // the last tick before nightfall is an ordinary one and must still decode.
+    let one = zero.replace("\"ticksUntilNightfall\":0", "\"ticksUntilNightfall\":1");
+    let accepted: Perception = serde_json::from_str(&one)
+        .unwrap_or_else(|e| panic!("a one-tick nightfall countdown should decode: {e}"));
+    assert_eq!(accepted.self_state.world.ticks_until_nightfall, 1);
+}
+
 /// Produce a self-contained schema rooted at the named `$defs` entry, carrying
 /// the original `$defs` so internal `$ref`s still resolve.
 fn scoped_schema(schema: &serde_json::Value, def: &str) -> serde_json::Value {

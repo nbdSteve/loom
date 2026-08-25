@@ -19,8 +19,10 @@ package dev.loom.body.nms
 
 import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
-import dev.loom.body.PerceptionBound
+import dev.loom.body.PerceptionBound.Bounded
+import dev.loom.body.PerceptionBound.Measured
 import dev.loom.body.WorldClock
+import dev.loom.body.bodyPerceptionBound
 import dev.loom.contract.Bearing
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Observation
@@ -37,13 +39,15 @@ import java.util.UUID
 /**
  * How far a body sees, and how much of what it sees is reported.
  *
- * The radius is deliberately wider than the distance a body can be *sent* in one
- * request (`PATH_REQUEST_REACH_BLOCKS`, 8): seeing further than it can walk in one go
- * is what lets an agent choose a direction and then travel it in stages, and a mind
- * that could only see as far as it could walk would have nothing to aim at. The count
- * bound is what keeps the prompt bounded whatever the radius sees.
+ * Both numbers come from the domain (`PERCEPTION_RADIUS_BLOCKS` and
+ * `PERCEPTION_MAX_OBSERVATIONS`, via `bodyPerceptionBound`) rather than being written
+ * down here, because the radius has a second reader: the area Loom holds loaded has to
+ * cover what a perception reads as well as what a path search does, and
+ * `holdRadiusChunksFor` derives that from the same constant. A literal here would be a
+ * copy the hold could fall behind, silently - an unloaded chunk yields no entities
+ * rather than an error.
  */
-private val BOUND = PerceptionBound(radiusBlocks = 24.0, maxObservations = 16)
+private val BOUND = bodyPerceptionBound()
 
 /**
  * Builds the bounded snapshot the mind receives for [body].
@@ -138,8 +142,14 @@ internal fun bodyVitals(body: LoomBodyEntity): AgentVitals =
         capacity = body.maxHealth.toDouble(),
     )
 
-/** The living things near [body], bounded, with what the count bound left out. */
-private fun observationsAround(body: LoomBodyEntity): PerceptionBound.Bounded<LivingEntity> {
+/**
+ * The living things near [body], bounded, each with the distance it was kept for.
+ *
+ * The distance is measured once, by the bound, and carried: it decides eligibility, it
+ * decides order, and it is the number the observation reports, so the three cannot
+ * disagree about the same entity in a world where everything is moving.
+ */
+private fun observationsAround(body: LoomBodyEntity): Bounded<Measured<LivingEntity>> {
     // The box is a cheap pre-filter that the engine can answer from its entity
     // index; PerceptionBound then applies the real distance and count limits.
     val box = AABB.ofSize(body.position(), BOUND.boxExtent, BOUND.boxExtent, BOUND.boxExtent)
@@ -150,21 +160,26 @@ private fun observationsAround(body: LoomBodyEntity): PerceptionBound.Bounded<Li
     return BOUND.nearest(nearby) { body.distanceTo(it).toDouble() }
 }
 
-/** Describes [other] as [body] perceives it. */
+/** Describes [seen] - a thing near [body], already measured - as [body] perceives it. */
 private fun observationOf(
     body: LoomBodyEntity,
-    other: LivingEntity,
-): Observation =
-    Observation(
+    seen: Measured<LivingEntity>,
+): Observation {
+    val other = seen.thing
+    return Observation(
         what = other.type.descriptionId,
-        distance = body.distanceTo(other).toDouble(),
+        // The reading the bound kept it for, not a fresh one.
+        distance = seen.blocksAway,
         direction = bearingTo(body, other),
         verticalOffset = other.y - body.y,
         // A real ray trace through the world, and the engine's own: `false` means the
         // body knows something is there and cannot see it, which is the difference
-        // between a threat behind a wall and a threat in the open.
+        // between a threat behind a wall and a threat in the open. It is a line, not a
+        // field of view: the body's facing is not consulted, and the brief the mind is
+        // given says so.
         visible = body.hasLineOfSight(other),
     )
+}
 
 /**
  * The horizontal bearing from [body] to [other], as the engine's nearest axis.

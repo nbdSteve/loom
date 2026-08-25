@@ -38,9 +38,11 @@
  * truncated route, or one that walks through ground which is really there, and
  * nothing anywhere says so. The area Loom holds loaded must therefore cover
  * everything a request can read, which is what [holdRadiusChunksFor] derives from the
- * two numbers that decide it. Writing the hold radius down as a literal instead is
- * what lets the two drift apart, in the direction of paths that look fine and are
- * wrong - so it is derived, and `NavigationTest` pins the derivation.
+ * numbers that decide it - the perception radius among them, because a perception reads
+ * the world around the same body and an unloaded chunk hands back no entities rather
+ * than an error. Writing the hold radius down as a literal instead is what lets them
+ * drift apart, in the direction of paths and scenes that look fine and are wrong - so it
+ * is derived, and `NavigationTest` pins the derivation against both readers.
  *
  * Engine-free, for the same reason `PerceptionBound`, `Metabolism` and
  * `WorldFootprint` are: these are Loom's rules about movement rather than the
@@ -89,10 +91,10 @@ const val BODY_FOLLOW_RANGE_BLOCKS: Double = 16.0
  * budget for the reach and half for the detour is what buys a body its way round.
  *
  * It follows that this is *smaller than what a body can see*: the perception radius is
- * deliberately the wider of the two, and says why where it is set (`BOUND` in
- * `BodyPerception.kt`). A target the mind saw and named beyond this reach is refused, and
- * the refusal is recorded. Walking there in stages is the agent's own business until an
- * intent exists for it.
+ * deliberately the wider of the two, and says why where it is set
+ * ([PERCEPTION_RADIUS_BLOCKS] in `PerceptionBound.kt`). A target the mind saw and named
+ * beyond this reach is refused, and the refusal is recorded. Walking there in stages is
+ * the agent's own business until an intent exists for it.
  */
 const val PATH_REQUEST_REACH_BLOCKS: Double = BODY_FOLLOW_RANGE_BLOCKS / 2
 
@@ -161,12 +163,20 @@ const val DEFAULT_PATH_REQUESTS_PER_TICK: Int = 4
 
 /**
  * The chunk radius Loom must hold loaded around a living agent for a path request to
- * read the truth.
+ * read the truth, and for a perception to see what is really there.
  *
  * Derived rather than written down, because the number that matters is a
  * *relationship*: a request centred on the body reads a cube of half-extent
  * [followRangeBlocks] + [regionRangeBlocks], and every chunk that cube touches must
  * already be loaded or it reads as air.
+ *
+ * A perception reads the world around the same body, out to
+ * [perceptionRadiusBlocks], and needs the same thing for a different reason: an
+ * unloaded chunk holds no entities the engine will hand back, so a body would perceive
+ * a quiet scene rather than fail. Whichever of the two reaches further is what the hold
+ * has to cover, so the radius is taken from the larger - today the two are both 24
+ * blocks and the hold is unchanged at 2 chunks, which is exactly the coincidence that
+ * would have made a later change to either one silent.
  *
  * The chunk-edge case needs no allowance of its own, which is not obvious. With the
  * body in chunk `c` at radius `r`, Loom holds blocks `16(c - r)` through
@@ -179,10 +189,14 @@ const val DEFAULT_PATH_REQUESTS_PER_TICK: Int = 4
 fun holdRadiusChunksFor(
     followRangeBlocks: Double = BODY_FOLLOW_RANGE_BLOCKS,
     regionRangeBlocks: Int = PATH_REGION_RANGE_BLOCKS,
+    perceptionRadiusBlocks: Double = PERCEPTION_RADIUS_BLOCKS,
 ): Int {
     require(followRangeBlocks > 0.0) { "followRangeBlocks must be positive, was $followRangeBlocks" }
     require(regionRangeBlocks >= 0) { "regionRangeBlocks must not be negative, was $regionRangeBlocks" }
-    val extent = followRangeBlocks + regionRangeBlocks
+    require(perceptionRadiusBlocks > 0.0) {
+        "perceptionRadiusBlocks must be positive, was $perceptionRadiusBlocks"
+    }
+    val extent = max(followRangeBlocks + regionRangeBlocks, perceptionRadiusBlocks)
     return max(1, ceil(extent / CHUNK_BLOCKS).toInt())
 }
 
@@ -190,8 +204,8 @@ fun holdRadiusChunksFor(
  * The world-loading footprint that keeps every path request readable.
  *
  * The one way the port should build a [WorldFootprint]: the radius comes from
- * [holdRadiusChunksFor] so raising [BODY_FOLLOW_RANGE_BLOCKS] cannot leave the hold
- * behind.
+ * [holdRadiusChunksFor] so raising [BODY_FOLLOW_RANGE_BLOCKS] or
+ * [PERCEPTION_RADIUS_BLOCKS] cannot leave the hold behind.
  */
 fun navigableFootprint(): WorldFootprint = WorldFootprint(radiusChunks = holdRadiusChunksFor())
 

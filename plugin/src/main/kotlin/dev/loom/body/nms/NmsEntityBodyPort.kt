@@ -74,13 +74,15 @@ class NmsEntityBodyPort(
     private val movement = NavigationPolicy()
 
     /**
-     * The world Loom keeps loaded, sized so a path search cannot read past it.
+     * The world Loom keeps loaded, sized so neither a path search nor a perception can
+     * read past it.
      *
-     * Derived rather than chosen here. A search reads unloaded chunks as *air* and
-     * answers confidently about ground it never looked at, so the hold has to cover
-     * everything a request can *read*, which is wider than anywhere a body can be sent -
-     * and that is what `navigableFootprint` works out from the body's own follow range.
-     * See `Navigation.kt`.
+     * Derived rather than chosen here. A search reads unloaded chunks as *air*, and a
+     * perception finds no entities in one and so reports a *quiet scene* rather than
+     * failing; each answers confidently about what it never looked at. So the hold has to
+     * cover everything either one can *read*, which is wider than anywhere a body can be
+     * sent, and that is what `navigableFootprint` works out from the follow range and the
+     * perception radius. See `Navigation.kt`.
      */
     private val footprint = navigableFootprint()
     private val heldChunks = HeldChunks(server, owner, footprint, journal, onHoldFailure)

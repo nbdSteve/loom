@@ -11,6 +11,7 @@
 //! variant's fields inlined alongside. This is matched byte-for-byte by the
 //! JVM side's kotlinx-serialization configuration.
 
+use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 
 /// Importance tier that drives model routing on the mind side and is stamped
@@ -72,7 +73,38 @@ pub struct WorldState {
     /// Ticks from now until the next nightfall, wrapping the world's day. Always
     /// positive: during the night it counts to the following nightfall, and the
     /// phase is what says the night is already here.
+    ///
+    /// Enforced at decode by [`positive_nightfall_countdown`] rather than trusted,
+    /// because a value below one is the one wrong answer that reads as a right one.
+    #[serde(deserialize_with = "positive_nightfall_countdown")]
     pub ticks_until_nightfall: i64,
+}
+
+/// Refuses a nightfall countdown of less than one tick.
+///
+/// The wrap is a type rule on both sides of the contract, not a convention: the
+/// schema says `minimum: 1` and the JVM binding refuses it in its own `init`, so
+/// this side has to as well or "the contract refuses it" is only true of one
+/// runtime. Zero is the value worth refusing rather than merely an odd one - it
+/// is what a countdown that had run out would carry, so a night would arrive as a
+/// nightfall permanently about to happen, and the mind cannot tell that from a
+/// nightfall genuinely one tick away. A negative is the same mistake having gone
+/// past.
+///
+/// Only decoding is narrowed. Serialization is left as the derive wrote it, so
+/// every valid fixture still round-trips byte-for-byte.
+fn positive_nightfall_countdown<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let ticks = i64::deserialize(deserializer)?;
+    if ticks < 1 {
+        return Err(de::Error::invalid_value(
+            de::Unexpected::Signed(ticks),
+            &"a nightfall countdown of at least 1 tick",
+        ));
+    }
+    Ok(ticks)
 }
 
 /// The bounded self-state the body chose to reveal. Owned primitives only, so

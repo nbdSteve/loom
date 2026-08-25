@@ -62,13 +62,15 @@ Nothing retries, so those agents stand still until their next goal review, up to
 The engine's own refusal is under the same stop and is the least defensible case of it, because there the bound is not real: a body momentarily off the ground - mid-jump over a one-block rise, or stepping down a slope - fails `canUpdatePath`, so `createPath` answers a perfectly reachable target with no route, and the agent loses a legitimate route *and* the token it spent, again with nothing retrying before its next goal review.
 Distance is a straight line, and all three axes count, because the bound it is measured against is a walk and a walk is never shorter than the straight line; a per-axis maximum reads the corner of a cube as being one side away and promises a detour that is not there.
 
-**The hold radius is derived from the follow range, and getting that wrong fails silently.**
+**The hold radius is derived from everything that reads past the body, and getting that wrong fails silently.**
 A path search reads the world through `PathNavigationRegion`, which never blocks and substitutes an *empty* chunk for any that is not loaded - so an unloaded chunk reads as **air**, and the search answers confidently about ground it never looked at.
-`holdRadiusChunksFor` therefore derives the `WorldFootprint` radius (2 chunks, 25 per lone agent, up from 9) from the follow range plus the engine's own hardcoded 8-block region margin, and `NavigationTest` pins the derivation so raising one cannot leave the other behind.
-Note that the region is 24 blocks around the body, wider than anywhere a body can be sent: the hold has to cover what a search *reads*, not where it may go.
+An entity query is the same shape of failure with a different symptom: a chunk that is not loaded holds no entities, so a perception reaching into one is not an error and not an empty answer either but a *quiet scene*, which is the one reading a survival run must never be given.
+`holdRadiusChunksFor` therefore derives the `WorldFootprint` radius (2 chunks, 25 per lone agent, up from 9) from the **widest** of its readers - the follow range plus the engine's own hardcoded 8-block region margin, and `PERCEPTION_RADIUS_BLOCKS` - and `NavigationTest` pins the derivation against both, so raising either one cannot leave the hold behind.
+Both reach exactly 24 blocks today, which is precisely the coincidence that made the perception half invisible until the derivation took it in: the radius was covered by accident and nothing related the two numbers.
+Note that the search region is 24 blocks around the body, wider than anywhere a body can be sent: the hold has to cover what a search *reads*, not where it may go.
 The chunk-edge case needs no allowance of its own; `Navigation.kt` carries the proof.
 Note that the approved design document states the rule as `radiusChunks * 16 >= followRange + requestRange + 16`, which conflates `createPath`'s *accuracy* parameter with the region *range* parameter and so has no single arithmetic reading.
-The engine-derived form is the one correctness depends on, and `theHoldCoversWhatASearchReads` is the only test that pins it; reason from that rather than from the design document's sum.
+The engine-derived form is the one correctness depends on, and `theHoldCoversWhatASearchReads` and `theHoldCoversWhatAPerceptionReads` are the only tests that pin it; reason from those rather than from the design document's sum.
 
 **Pathfinding malus is a survival decision, not a tuning knob**, because Loom is permadeath and a body has no way to flee what hurts it.
 The whole policy is the pure `loomPathfindingMalusFor`, which `PathfindingMalusTest` reads without a world; the entity only applies it, over every `PathType` so a type the engine adds later cannot be missed.
@@ -96,8 +98,15 @@ And the engine's own `recomputePath` searches are not budgeted in total, only bo
 
 **An observation is a bearing, a height and a line of sight, and every one of those facts is the engine's own answer rather than Loom's geometry.**
 `BodyPerception.kt` reads them from `Direction.getNearest` with the vertical delta zeroed, from the two entities' `y`, and from `LivingEntity.hasLineOfSight`, which is a real ray trace: `visible` false means the body knows something is there and cannot see it, which is the difference between a threat behind a wall and one in the open.
+**`visible` is a line, not a field of view, and the brief has to say so.**
+The body's facing is never consulted and there is no cone: everything within the radius is equally known, ahead or behind, and nothing has to turn to look.
+Left unsaid, "whether you can actually see it right now" reads to a model as human sight, and an agent then believes it can be surprised from behind or that its surroundings list is only what lies in front of it - so `AGENT_BRIEF` states it outright, `prompt.rs`'s `the_brief_says_in_sight_is_a_clear_line_and_not_a_field_of_view` pins the wording, and `every_tier_names_the_same_generation_of_the_brief` pins that all three `*_PROMPT_VERSION` constants moved together, since the brief is shared by every tier.
 Bearing is horizontal on purpose and height is reported beside it, because a thing on a cliff is not reachable by walking toward it.
-Candidates are gathered within 24 blocks and then cut to 16 observations, and the cut is applied to the *entities* before anything is described, so nothing is described that the count bound then drops.
+Candidates are gathered within `PERCEPTION_RADIUS_BLOCKS` (24) and then cut to `PERCEPTION_MAX_OBSERVATIONS` (16), both stated in `PerceptionBound.kt` and reached through `bodyPerceptionBound()` rather than written down in the adapter, because the radius has a second reader - the hold above derives from it, and a literal copy here is a copy the hold can fall behind.
+The cut is applied to the *entities* before anything is described, so nothing is described that the count bound then drops.
+**A candidate's distance is measured once and carried.**
+`PerceptionBound.nearest` returns a `Measured` per survivor, so eligibility, the sort order and the distance the `Observation` reports are all one reading rather than three: the engine's own reading is a three-dimensional square root, and in a world where everything is moving three readings of one entity can disagree, which would let an observation report a distance the bound did not admit it for.
+Ties keep candidate arrival order (`sortedBy` is stable), because the same scene has to render the same prompt.
 The prompt's own `MAX_OBSERVATIONS` (24) stays the final bound on what reaches a model, and it is deliberately looser than what the body sends.
 **A cut is stated, never silent, and the mind is told the whole of it.**
 `PerceptionBound.nearest` is the only place that can still count what it dropped, so it returns a `Bounded` carrying the omission as well as the list, and that count rides *inside* the perception as `Perception.surroundingsOmitted` rather than beside it - which is what let the JVM's `CapturedPerception` wrapper be deleted, and why the `perceived` record ("N more nearby not reported") and the prompt the mind was given read the same field and cannot state different omissions for the same moment.
@@ -109,7 +118,9 @@ There is deliberately no way for a decision to *name* one of those observations 
 **The world clock is derived from the level's own time, and its countdown never reads zero.**
 `SelfState.world` carries `dayPhase`, `isDay` and `ticksUntilNightfall`; `WorldClock` (engine-free) owns what the number means and `level.isDay` answers daylight directly, because a dimension with a fixed time has a day time and no daylight and the agent needs the difference.
 `ticksUntilNightfall` counts to the *next* nightfall and wraps, so during the night it is a whole day rather than zero: zero for the length of a night would read as a nightfall permanently about to happen, and the phase is what says the night is already here.
-The contract refuses a value below 1 on both sides, so that wrap is a type rule and not a convention.
+The contract refuses a value below 1 on both sides *at decode* - `WorldState`'s `init` on the JVM, `positive_nightfall_countdown` in Rust - so that wrap is a type rule and not a convention.
+Both are needed because nothing on either wire is schema-validated at runtime: `minimum: 1` in the schema is a rule a socket walks straight past, and for a while the Rust side deserialized a bare `i64` while this file claimed otherwise.
+Only decoding is narrowed on the Rust side; serialization is left as the derive wrote it, so the fixtures still round-trip byte-for-byte.
 
 **Death is terminal - Loom is permadeath.** When a body dies the agent is gone for good: no respawn, no reincarnation, no second body ever.
 New agents will come from reproduction, never from restarting a dead one.
@@ -166,7 +177,7 @@ The policy is `WorldFootprint` in the engine-free domain, keyed by world, so net
 The hold is taken before a body registers as live - spawn refuses rather than leave a live body unheld - and `follow` keeps it sliding with the agents from then on.
 The mechanism is Bukkit's plugin chunk ticket, which lands at chunk level 31 - `ChunkLevel.ENTITY_TICKING_LEVEL` - so a held chunk ticks its entities.
 That level *is* the invariant: hold chunks any more weakly and false deaths come back silently.
-The *radius* now serves a second invariant as well - a path search reads unloaded chunks as air - so it is derived from the follow range rather than chosen here, and narrowing it costs correct routes as well as correct deaths. See `holdRadiusChunksFor` above.
+The *radius* now serves two further invariants - a path search reads unloaded chunks as air, and an entity query reads them as empty - so it is derived from the follow range and the perception radius rather than chosen here, and narrowing it costs correct routes and honest perceptions as well as correct deaths. See `holdRadiusChunksFor` above.
 Tickets outlive the tick that added them, so they must be released on disable or the world stays pinned loaded with no Loom running.
 
 **A hold failure must never be silent, and `follow` cannot refuse.**

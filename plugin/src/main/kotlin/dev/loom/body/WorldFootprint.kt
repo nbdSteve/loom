@@ -18,10 +18,11 @@
  * an engine detail, and it is the kind of set arithmetic that should be pinned by
  * unit tests rather than discovered on a running server.
  *
- * The radius is not this file's to choose. It is derived from how far a path search
- * reads, by `holdRadiusChunksFor` in `Navigation.kt`, because a search reads unloaded
- * chunks as air and answers confidently about ground it never looked at. Build the
- * footprint with `navigableFootprint()` rather than with a radius literal.
+ * The radius is not this file's to choose. It is derived from how far anything reads
+ * past the body - a path search and a perception both do - by `holdRadiusChunksFor` in
+ * `Navigation.kt`, because an unloaded chunk reads as air to a search and as empty of
+ * entities to a perception, and each answers confidently about what it never looked at.
+ * Build the footprint with `navigableFootprint()` rather than with a radius literal.
  *
  * Two properties are deliberate and load-bearing:
  *

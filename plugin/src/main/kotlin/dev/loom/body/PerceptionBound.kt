@@ -14,6 +14,44 @@
 package dev.loom.body
 
 /**
+ * How far from a body an observation may be, in blocks.
+ *
+ * Stated here rather than in the adapter that captures a perception, because it is not
+ * only that adapter's business: a perception reads the world around the body, so the
+ * area Loom holds loaded has to cover it, and [holdRadiusChunksFor] derives the hold
+ * from this number for exactly that reason. Written down twice, the two would drift and
+ * the drift would be silent - an unloaded chunk yields no entities rather than an error,
+ * so a body would simply stop perceiving whatever stood in it.
+ *
+ * Deliberately wider than the distance a body can be *sent* in one request
+ * ([PATH_REQUEST_REACH_BLOCKS], 8): seeing further than it can walk in one go is what
+ * lets an agent choose a direction and then travel it in stages, and a mind that could
+ * only see as far as it could walk would have nothing to aim at.
+ */
+const val PERCEPTION_RADIUS_BLOCKS: Double = 24.0
+
+/**
+ * How many observations one perception may carry.
+ *
+ * What keeps a prompt bounded whatever the radius sees. The mind's own cap is looser
+ * (`MAX_OBSERVATIONS` in `prompt.rs`), on purpose: each side bounds what it pays for.
+ */
+const val PERCEPTION_MAX_OBSERVATIONS: Int = 16
+
+/**
+ * The bound every Loom body perceives through.
+ *
+ * The one way to build the body's [PerceptionBound], for the same reason
+ * [navigableFootprint] is the one way to build its [WorldFootprint]: a second literal
+ * copy of either number is a copy that can fall behind.
+ */
+fun bodyPerceptionBound(): PerceptionBound =
+    PerceptionBound(
+        radiusBlocks = PERCEPTION_RADIUS_BLOCKS,
+        maxObservations = PERCEPTION_MAX_OBSERVATIONS,
+    )
+
+/**
  * Limits a perception snapshot to what is near and to how much of it is reported.
  *
  * @param radiusBlocks how far from the body an observation may be, in blocks.
@@ -49,21 +87,42 @@ data class PerceptionBound(
      * place that can still count it: once the list is cut, nothing downstream can tell a
      * quiet scene from a crowded one that was trimmed, and a survival run reading the
      * record afterwards would take the trimmed scene for the quiet one.
+     *
+     * [distance] is asked exactly once per candidate and the reading is carried out in
+     * [Measured], so eligibility, order and whatever is described from the survivors are
+     * all the same number. Measuring is real work - the engine's own reading is a
+     * three-dimensional square root - and it was being taken three times per candidate:
+     * once to filter, once to sort, once to describe. Carrying it also means the three
+     * cannot disagree, which a moving world makes possible and not merely wasteful.
      */
     fun <T> nearest(
         candidates: Sequence<T>,
         distance: (T) -> Double,
-    ): Bounded<T> {
+    ): Bounded<Measured<T>> {
         val within =
             candidates
-                .filter { distance(it) <= radiusBlocks }
-                .sortedBy(distance)
+                .map { Measured(it, distance(it)) }
+                .filter { it.blocksAway <= radiusBlocks }
+                // Stable, so equally distant things keep the order the candidates arrived
+                // in: the same scene has to render the same prompt.
+                .sortedBy { it.blocksAway }
                 .toList()
         return Bounded(
             shown = within.take(maxObservations),
             omitted = (within.size - maxObservations).coerceAtLeast(0),
         )
     }
+
+    /**
+     * One candidate, and how far away it was measured to be.
+     *
+     * @param thing the candidate itself.
+     * @param blocksAway what [nearest]'s own distance function answered for it, in blocks.
+     */
+    data class Measured<T>(
+        val thing: T,
+        val blocksAway: Double,
+    )
 
     /**
      * The bounded set, and what the count bound left out of it.

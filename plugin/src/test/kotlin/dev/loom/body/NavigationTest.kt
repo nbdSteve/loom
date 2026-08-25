@@ -35,6 +35,24 @@ class NavigationTest {
     }
 
     @Test
+    @DisplayName("the hold radius covers how far a perception reads as well")
+    fun theHoldCoversWhatAPerceptionReads() {
+        // The second reader of the hold, and the one nothing related to it before: a
+        // perception gathers the living things within PERCEPTION_RADIUS_BLOCKS of the body,
+        // and the engine hands back no entities at all from a chunk that is not loaded. So
+        // a perception past the hold is not an error and not an empty answer either - it is
+        // a *quiet scene*, which is the one reading a survival run must never be given.
+        // The 24-block radius fits inside today's two-chunk hold, and that was a
+        // coincidence of two independent numbers until holdRadiusChunksFor took it in.
+        val held = holdRadiusChunksFor() * CHUNK_BLOCKS
+
+        assertTrue(
+            held >= PERCEPTION_RADIUS_BLOCKS,
+            "a perception reads $PERCEPTION_RADIUS_BLOCKS blocks out, past the $held held",
+        )
+    }
+
+    @Test
     @DisplayName("the shipped numbers give a two-chunk hold")
     fun theShippedNumbersGiveTwoChunks() {
         // Pinned as values as well as as a relationship: the relationship alone would
@@ -44,7 +62,20 @@ class NavigationTest {
         assertEquals(8.0, PATH_REQUEST_REACH_BLOCKS)
         assertEquals(8, PATH_REGION_RANGE_BLOCKS)
         assertEquals(0, PATH_REQUEST_ACCURACY_BLOCKS)
+        assertEquals(24.0, PERCEPTION_RADIUS_BLOCKS)
+        // Two chunks still: taking the perception radius into the derivation was needed to
+        // relate the numbers, not because the existing hold was too small for them.
         assertEquals(2, holdRadiusChunksFor())
+    }
+
+    @Test
+    @DisplayName("a wider perception radius forces a wider hold")
+    fun aWiderPerceptionRadiusForcesAWiderHold() {
+        // The half of the derivation the path search cannot exercise: seeing further than a
+        // search reads has to widen the hold on its own, or the day the radius is raised is
+        // the day bodies quietly stop perceiving the far edge of what they are told they see.
+        assertEquals(4, holdRadiusChunksFor(perceptionRadiusBlocks = 56.0))
+        assertThrows<IllegalArgumentException> { holdRadiusChunksFor(perceptionRadiusBlocks = 0.0) }
     }
 
     @Test
@@ -75,8 +106,17 @@ class NavigationTest {
     @Test
     @DisplayName("even a tiny walk budget holds the ring around the body")
     fun aTinyBudgetStillHoldsARing() {
-        // Never zero: a body standing at the edge of its own chunk needs the next one.
-        assertEquals(1, holdRadiusChunksFor(followRangeBlocks = 1.0, regionRangeBlocks = 0))
+        // Never zero: a body standing at the edge of its own chunk needs the next one. Every
+        // reader has to be made tiny to reach the floor at all, which is the derivation
+        // working: the widest of them sets the hold, so one small number cannot shrink it.
+        assertEquals(
+            1,
+            holdRadiusChunksFor(
+                followRangeBlocks = 1.0,
+                regionRangeBlocks = 0,
+                perceptionRadiusBlocks = 1.0,
+            ),
+        )
     }
 
     @Test

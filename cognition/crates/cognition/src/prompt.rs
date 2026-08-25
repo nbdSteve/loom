@@ -34,13 +34,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v3";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v4";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v3";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v4";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v3";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v4";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -98,6 +98,11 @@ not let it run low with no plan to rest.
 carries how far away it is, which compass direction it lies in, how far above or \
 below you it is, and whether you can actually see it right now - a thing you \
 cannot see is one you know is there through a wall or round a corner.
+- Being in sight means only that nothing solid stands in the straight line \
+between you and it. It is not a field of view and it has nothing to do with which \
+way your body happens to be facing: everything in your surroundings list is \
+equally known to you whether it is ahead of you or behind you, and you never need \
+to turn to look at something.
 - You are also told what part of the world's day it is and how long is left \
 before nightfall. Night is more dangerous than day, and a plan that needs \
 daylight needs to fit in the daylight that is left.
@@ -420,7 +425,10 @@ fn number(value: f64) -> String {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{render, MAX_FIELD_CHARS, MAX_INVENTORY_LINES, MAX_OBSERVATIONS};
+    use super::{
+        render, MAX_FIELD_CHARS, MAX_INVENTORY_LINES, MAX_OBSERVATIONS, NOTABLE_PROMPT_VERSION,
+        PIVOTAL_PROMPT_VERSION, ROUTINE_PROMPT_VERSION,
+    };
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
         Bearing, DayPhase, DecisionImportance, Observation, Perception, SelfState, Trigger,
@@ -527,6 +535,58 @@ mod tests {
                 situation = prompt.situation
             );
         }
+    }
+
+    #[test]
+    fn the_brief_says_in_sight_is_a_clear_line_and_not_a_field_of_view() {
+        // `visible` is the engine's own ray trace between the two entities, so the
+        // only thing it reports is whether something solid stands in the straight
+        // line. Left unsaid, "whether you can actually see it right now" reads to a
+        // model like human sight - a cone in front of a face - and an agent then
+        // believes it can be surprised from behind, that it has to turn to look, or
+        // that the surroundings list is only what lies ahead of it. None of those is
+        // true of this body: the list is everything within the perception radius,
+        // and the body's facing is never consulted.
+        let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        let prompt = render(&router().route(seen.importance), &seen);
+        for expected in [
+            "nothing solid stands in the straight line",
+            "not a field of view",
+            "which way your body happens to be facing",
+            "ahead of you or behind you",
+        ] {
+            assert!(
+                prompt.system.contains(expected),
+                "the brief must say {expected:?}, got {system}",
+                system = prompt.system
+            );
+        }
+    }
+
+    #[test]
+    fn every_tier_names_the_same_generation_of_the_brief() {
+        // The brief is shared by all three tiers, so a wording change reaches all
+        // three and every version has to move with it. Bump one and leave the others
+        // and the research record claims two prompts that were in fact the same
+        // text - which is exactly the drift `promptVersion` exists to rule out.
+        let generations: Vec<&str> = [
+            ROUTINE_PROMPT_VERSION,
+            NOTABLE_PROMPT_VERSION,
+            PIVOTAL_PROMPT_VERSION,
+        ]
+        .iter()
+        .map(|version| {
+            version
+                .rsplit_once("-v")
+                .map_or("", |(_, generation)| generation)
+        })
+        .collect();
+
+        assert_eq!(
+            generations,
+            vec!["4", "4", "4"],
+            "every tier's prompt version must name the same generation of the shared brief"
+        );
     }
 
     #[test]
