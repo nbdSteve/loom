@@ -211,6 +211,7 @@ class BodyCommandTest {
                             world = WorldState(dayPhase = DayPhase.DAY, isDay = true, ticksUntilNightfall = 6_000),
                         ),
                     surroundings = emptyList(),
+                    surroundingsOmitted = 0,
                 )
             }
 

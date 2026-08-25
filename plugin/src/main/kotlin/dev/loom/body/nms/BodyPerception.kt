@@ -3,9 +3,15 @@
  *
  * This is the perception boundary in code: it reads world state around a body and
  * returns owned, summarized data. It is the only place engine world state is read
- * for the mind's benefit, and everything it hands back is a contract `Perception`
- * plus a count of what the bound left out of it - so there is no overload of it
- * that hands back anything the mind could reach through.
+ * for the mind's benefit, and everything it hands back is a contract `Perception` -
+ * so there is no overload of it that hands back anything the mind could reach
+ * through.
+ *
+ * What the count bound left out rides *inside* that perception, as
+ * `Perception.surroundingsOmitted`. It has two readers - the mind, which must not
+ * reason about "everything I can see" over a list that was trimmed, and the research
+ * record, which must not read a crowded scene afterwards as a quiet one - and one
+ * field is what keeps those two from ever disagreeing about the same moment.
  *
  * What "bounded" means is defined by `PerceptionBound` in the domain, not here.
  */
@@ -40,23 +46,6 @@ import java.util.UUID
 private val BOUND = PerceptionBound(radiusBlocks = 24.0, maxObservations = 16)
 
 /**
- * A captured perception, and what the count bound left out of it.
- *
- * The omission travels beside the perception rather than inside it because the two have
- * different readers: the mind is told what the body saw, and the research record is told
- * what the body *could* have seen and did not report. A crowded scene silently cut to the
- * bound would read afterwards as a quiet one, which is the reading a survival run must
- * not be given.
- *
- * @param omittedNearby how many living things stood within the perception radius beyond
- *   the ones reported, always zero or more.
- */
-internal data class CapturedPerception(
-    val perception: Perception,
-    val omittedNearby: Int,
-)
-
-/**
  * Builds the bounded snapshot the mind receives for [body].
  *
  * Bounded twice over - by distance and by count - and summarized to text, so the
@@ -74,30 +63,30 @@ internal fun capturePerception(
     energy: Double,
     trigger: Trigger,
     capturedTick: Long,
-): CapturedPerception {
+): Perception {
     val nearby = observationsAround(body)
-    return CapturedPerception(
-        perception =
-            Perception(
-                requestId = UUID.randomUUID().toString(),
-                agentId = agentId.value,
-                trigger = trigger,
-                // Every snapshot captured here is routine; importance is classified by the
-                // domain above the port once cognition is wired in.
-                importance = DecisionImportance.ROUTINE,
-                capturedTick = capturedTick,
-                selfState =
-                    SelfState(
-                        health = bodyVitals(body).energy,
-                        energy = energy,
-                        position = listOf(body.x, body.y, body.z),
-                        // The body reveals a summary, never its live inventory handle.
-                        inventorySummary = emptyList(),
-                        world = worldStateOf(body.level()),
-                    ),
-                surroundings = nearby.shown.map { observationOf(body, it) },
+    return Perception(
+        requestId = UUID.randomUUID().toString(),
+        agentId = agentId.value,
+        trigger = trigger,
+        // Every snapshot captured here is routine; importance is classified by the
+        // domain above the port once cognition is wired in.
+        importance = DecisionImportance.ROUTINE,
+        capturedTick = capturedTick,
+        selfState =
+            SelfState(
+                health = bodyVitals(body).energy,
+                energy = energy,
+                position = listOf(body.x, body.y, body.z),
+                // The body reveals a summary, never its live inventory handle.
+                inventorySummary = emptyList(),
+                world = worldStateOf(body.level()),
             ),
-        omittedNearby = nearby.omitted,
+        surroundings = nearby.shown.map { observationOf(body, it) },
+        // Only what the *count* bound dropped. Everything the distance filter and the
+        // living-entity filter refused was never an observation, so counting it here
+        // would tell the mind it was blind to things it was never able to see.
+        surroundingsOmitted = nearby.omitted.toLong(),
     )
 }
 
@@ -108,7 +97,7 @@ internal fun capturePerception(
  * observation total is, and empty in the ordinary case so an uncrowded run's records are
  * not padded with a standing "and 0 more".
  */
-internal fun omissionOf(omittedNearby: Int): String =
+internal fun omissionOf(omittedNearby: Long): String =
     if (omittedNearby > 0) ", $omittedNearby more nearby not reported" else ""
 
 /**

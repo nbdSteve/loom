@@ -119,9 +119,9 @@ Within about five seconds of the spawn, three lines arrive in order:
 
 ```
 [loom] perceived the world (goal review)
-[loom] decided [scripted-stand-in/routine-v2 routine]: idle: reviewed goals at the Routine tier; nothing outranks what is already underway
+[loom] decided [scripted-stand-in/routine-v3 routine]: idle: reviewed goals at the Routine tier; nothing outranks what is already underway
 [loom] the body is doing it
-ada | energy 99.8/100 declining | idle | goal review -> scripted-stand-in/routine-v2 routine   (green)
+ada | energy 99.8/100 declining | idle | goal review -> scripted-stand-in/routine-v3 routine   (green)
 ```
 
 That is the whole round trip: the bounded perception that caused cognition, the model and prompt version that answered it, the reasoning behind the intent, and what the body did about the intent.
@@ -146,9 +146,9 @@ The stand-in idles while the reserve is above `RESTING_ENERGY` (0.35 of full) an
 
 ```
 [loom] perceived the world (goal review)
-[loom] decided [scripted-stand-in/routine-v2 routine]: rest: the energy reserve is down to 32% of capacity; resting outranks every other goal
+[loom] decided [scripted-stand-in/routine-v3 routine]: rest: the energy reserve is down to 32% of capacity; resting outranks every other goal
 [loom] the body is doing it
-ada | energy 32/100 declining | resting | goal review -> scripted-stand-in/routine-v2 routine   (yellow)
+ada | energy 32/100 declining | resting | goal review -> scripted-stand-in/routine-v3 routine   (yellow)
 ```
 
 Those are one run's real numbers: the agent spawned on tick 815 and the review that decided to rest read the reserve at 31.99 of 100 on tick 25299, which is 20 minutes later.
@@ -158,7 +158,7 @@ Resting refills the reserve completely, and it is one tick, not a gradual climb:
 So the yellow clears and the gauge is green again by the next refresh, with the trend word reading the refill rather than the drain:
 
 ```
-ada | energy 100/100 recovering | resting | goal review -> scripted-stand-in/routine-v2 routine   (green)
+ada | energy 100/100 recovering | resting | goal review -> scripted-stand-in/routine-v3 routine   (green)
 ```
 
 `recovering` is the one time the trend word is news, because a living reserve is otherwise always falling.
@@ -290,7 +290,7 @@ The standing line names the agent, its reserve, what it is doing, and which mind
 Any field Loom does not know yet is left out rather than guessed, and the body's health joins only once it is below full.
 
 ```
-ada | energy 62/100 declining | health 12/20 | moving | goal review -> gpt-5-mini/routine-v2 routine
+ada | energy 62/100 declining | health 12/20 | moving | goal review -> gpt-5-mini/routine-v3 routine
  |          |                      |            |         |
  |          |                      |            |         the model, prompt version, and routing tier
  |          |                      |            the trigger that caused cognition
@@ -451,7 +451,7 @@ Derive metrics from it rather than adding counters.
 
 ```json
 {"tick":7999,"agentId":"fin","event":"perceived","detail":"1 observation(s)","requestId":"356af7c7-...","trigger":"goalReview","vitals":{"level":100.0,"capacity":100.0}}
-{"tick":8000,"agentId":"fin","event":"decided","detail":"idle: reviewed goals at the Routine tier; ...","requestId":"356af7c7-...","provenance":{"tier":"ROUTINE","model":"scripted-stand-in","promptVersion":"routine-v2"},"intent":"idle"}
+{"tick":8000,"agentId":"fin","event":"decided","detail":"idle: reviewed goals at the Routine tier; ...","requestId":"356af7c7-...","provenance":{"tier":"ROUTINE","model":"scripted-stand-in","promptVersion":"routine-v3"},"intent":"idle"}
 {"tick":8000,"agentId":"fin","event":"intentApplied","detail":"idle -> accepted: standing still","requestId":"356af7c7-...","intent":"idle","outcome":"accepted"}
 ```
 

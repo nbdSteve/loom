@@ -337,6 +337,7 @@ fn perception(importance: DecisionImportance) -> Perception {
             },
         },
         surroundings: vec![],
+        surroundings_omitted: 0,
     }
 }
 

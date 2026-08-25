@@ -162,7 +162,8 @@
         "importance",
         "capturedTick",
         "selfState",
-        "surroundings"
+        "surroundings",
+        "surroundingsOmitted"
       ],
       "properties": {
         "requestId": {
@@ -184,6 +185,11 @@
           "description": "The summarized observations the body chose to reveal.",
           "type": "array",
           "items": { "$ref": "#/$defs/Observation" }
+        },
+        "surroundingsOmitted": {
+          "description": "How many otherwise eligible observations the body's own count bound dropped before this perception was serialized: things that were in range, alive and would have been described, and are not in surroundings. Required and never negative, so a mind cannot read the absence of the field as a complete view of the scene. Zero is the ordinary case and says the list is everything the body had. Out-of-range and ineligible things are not omissions - they were never observations.",
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

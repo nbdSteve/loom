@@ -154,6 +154,18 @@ pub struct Perception {
     pub self_state: SelfState,
     /// The summarized observations the body chose to reveal.
     pub surroundings: Vec<Observation>,
+    /// How many otherwise eligible observations the body's own count bound
+    /// dropped before this perception was serialized: things in range and alive
+    /// that would have been described, and are not in
+    /// [`Perception::surroundings`].
+    ///
+    /// Required rather than optional, and never negative. A mind that was handed
+    /// a trimmed scene with no way to know it had been trimmed would reason about
+    /// "everything I can see" over a list that was not everything, so absence
+    /// must not be able to read as completeness. Zero says the list is the whole
+    /// of what the body had; out-of-range and ineligible things are not
+    /// omissions, because they were never observations.
+    pub surroundings_omitted: i64,
 }
 
 /// A named intent the mind returns. The body validates and applies it; the mind

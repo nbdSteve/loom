@@ -98,6 +98,7 @@ fun perception(
                 world = WorldState(dayPhase = DayPhase.DAY, isDay = true, ticksUntilNightfall = 6_000),
             ),
         surroundings = emptyList(),
+        surroundingsOmitted = 0,
     )
 
 /** The decision a cooperative fake mind answers [perception] with. */

@@ -99,8 +99,10 @@ And the engine's own `recomputePath` searches are not budgeted in total, only bo
 Bearing is horizontal on purpose and height is reported beside it, because a thing on a cliff is not reachable by walking toward it.
 Candidates are gathered within 24 blocks and then cut to 16 observations, and the cut is applied to the *entities* before anything is described, so nothing is described that the count bound then drops.
 The prompt's own `MAX_OBSERVATIONS` (24) stays the final bound on what reaches a model, and it is deliberately looser than what the body sends.
-**A cut is stated, never silent, on both sides of the port.**
-`PerceptionBound.nearest` is the only place that can still count what it dropped, so it returns a `Bounded` carrying the omission as well as the list, and the `perceived` record says "N more nearby not reported"; the prompt says its own cut the same way.
+**A cut is stated, never silent, and the mind is told the whole of it.**
+`PerceptionBound.nearest` is the only place that can still count what it dropped, so it returns a `Bounded` carrying the omission as well as the list, and that count rides *inside* the perception as `Perception.surroundingsOmitted` rather than beside it - which is what let the JVM's `CapturedPerception` wrapper be deleted, and why the `perceived` record ("N more nearby not reported") and the prompt the mind was given read the same field and cannot state different omissions for the same moment.
+The prompt states the **sum** of that count and its own `MAX_OBSERVATIONS` cut, because the body's figure is about things that never reached the wire while the cap is measured against the list that did, so each bound is counted exactly once.
+The field is required and non-negative on both sides, and a nonsense negative arriving off the socket is coerced to zero rather than allowed to subtract from the cut this side made for itself.
 A crowded scene trimmed to the bound and recorded as a bare observation count would read afterwards as a quiet one, which is the reading a survival run must not be given.
 There is deliberately no way for a decision to *name* one of those observations yet: request-scoped refs belong with the first intent that could consume one, which is threat flight.
 

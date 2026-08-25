@@ -34,13 +34,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v2";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v3";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v2";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v3";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v2";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v3";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -154,7 +154,10 @@ fn situation_of(perception: &Perception) -> String {
     lines.push(self_line(&perception.self_state));
     lines.push(world_line(&perception.self_state.world));
     lines.push(inventory_line(&perception.self_state.inventory_summary));
-    lines.push(surroundings_line(&perception.surroundings));
+    lines.push(surroundings_line(
+        &perception.surroundings,
+        perception.surroundings_omitted,
+    ));
     lines.join("\n")
 }
 
@@ -205,14 +208,42 @@ fn inventory_line(inventory: &[String]) -> String {
         .join(", ");
     format!(
         "You are carrying: {shown}{more}",
-        more = omitted(inventory.len(), MAX_INVENTORY_LINES, "more items")
+        more = omitted(
+            beyond(inventory.len(), MAX_INVENTORY_LINES),
+            "more item",
+            "more items"
+        )
     )
 }
 
 /// The surroundings, capped, with any omission stated.
-fn surroundings_line(surroundings: &[Observation]) -> String {
+///
+/// Two bounds can hide something here, and the agent is owed their sum. The body
+/// dropped whatever its own count bound would not carry and says how many in
+/// [`Perception::surroundings_omitted`]; this side then caps what reaches a model.
+/// Each is counted exactly once - the body's figure is about things that never
+/// reached the wire, and [`MAX_OBSERVATIONS`] is measured against the list that
+/// did - so a scene trimmed twice reads as trimmed twice rather than as trimmed
+/// by whichever bound happens to be stated last. [`MAX_OBSERVATIONS`] stays the
+/// final bound on what a model is shown; the count only tells it what it is not
+/// being shown.
+fn surroundings_line(surroundings: &[Observation], omitted_by_the_body: i64) -> String {
+    // A body's count is never negative, but perceptions come off a socket, so a
+    // nonsense value is discarded rather than allowed to subtract from what this
+    // side cut for itself.
+    let hidden = beyond(surroundings.len(), MAX_OBSERVATIONS)
+        .saturating_add(u64::try_from(omitted_by_the_body).unwrap_or(0));
     if surroundings.is_empty() {
-        return "You can see nothing of note around you.".to_owned();
+        // Nothing described, but the body may still have had things it could not
+        // carry: "nothing of note" alone would then be an assurance it never gave.
+        return match hidden {
+            0 => "You can see nothing of note around you.".to_owned(),
+            n => format!(
+                "You can see nothing of note around you, though {n} nearby {things} \
+                 went unreported.",
+                things = noun_for(n, "thing", "things")
+            ),
+        };
     }
     let shown = surroundings
         .iter()
@@ -222,7 +253,7 @@ fn surroundings_line(surroundings: &[Observation]) -> String {
         .join("; ");
     format!(
         "You can see: {shown}{more}",
-        more = omitted(surroundings.len(), MAX_OBSERVATIONS, "more things")
+        more = omitted(hidden, "more thing", "more things")
     )
 }
 
@@ -329,14 +360,41 @@ fn height_phrase(vertical_offset: f64) -> String {
     )
 }
 
-/// States what a cap left out, or nothing if it left nothing out.
+/// How many of `total` a cap of `cap` left out, and zero if it left none.
+///
+/// Separate from [`omitted`] because a list can be cut in more than one place -
+/// the body's bound before the wire, then this side's cap - and the counts have
+/// to be summed before they are phrased, or the agent hears about one cut and not
+/// the other.
+fn beyond(total: usize, cap: usize) -> u64 {
+    u64::try_from(total.saturating_sub(cap)).unwrap_or(u64::MAX)
+}
+
+/// States what the caps left out, or nothing if they left nothing out.
 ///
 /// Said rather than silently dropped, so a model that reasons about "everything
 /// I can see" is not reasoning about a truncated list it was told was complete.
-fn omitted(total: usize, cap: usize, what: &str) -> String {
-    match total.checked_sub(cap) {
-        Some(hidden) if hidden > 0 => format!(" (and {hidden} {what} not listed)"),
-        _ => String::new(),
+fn omitted(hidden: u64, one: &str, many: &str) -> String {
+    if hidden > 0 {
+        format!(
+            " (and {hidden} {what} not listed)",
+            what = noun_for(hidden, one, many)
+        )
+    } else {
+        String::new()
+    }
+}
+
+/// The noun a count of `n` needs.
+///
+/// A single dropped thing is reachable now that the body's own count feeds these
+/// sentences, and "1 more things" is a sentence no agent should be reasoning over:
+/// what is said to a model is authored text, so it has to read as text.
+fn noun_for<'a>(n: u64, one: &'a str, many: &'a str) -> &'a str {
+    if n == 1 {
+        one
+    } else {
+        many
     }
 }
 
@@ -362,7 +420,7 @@ fn number(value: f64) -> String {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{render, MAX_FIELD_CHARS, MAX_OBSERVATIONS};
+    use super::{render, MAX_FIELD_CHARS, MAX_INVENTORY_LINES, MAX_OBSERVATIONS};
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
         Bearing, DayPhase, DecisionImportance, Observation, Perception, SelfState, Trigger,
@@ -398,6 +456,7 @@ mod tests {
                 vertical_offset: 2.0,
                 visible: true,
             }],
+            surroundings_omitted: 0,
         }
     }
 
@@ -600,6 +659,146 @@ mod tests {
         let prompt = render(&router().route(seen.importance), &seen);
         assert!(prompt.situation.contains("..."));
         assert!(prompt.situation.chars().count() < MAX_FIELD_CHARS * 4);
+    }
+
+    #[test]
+    fn a_scene_the_body_cut_is_said_to_have_been_cut() {
+        // The gap this field closes: the body keeps its nearest few and drops the rest,
+        // and before the count existed the mind was handed the survivors with nothing to
+        // say the scene had been trimmed - so it reasoned about "everything I can see"
+        // over a list that was not everything.
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.surroundings_omitted = 24;
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(
+            prompt.situation.contains("24 more things not listed"),
+            "the body's own omission must reach the model, got {situation}",
+            situation = prompt.situation
+        );
+    }
+
+    #[test]
+    fn a_scene_the_body_did_not_cut_claims_no_omission() {
+        // Zero is the ordinary case and must not read as a caveat: a run whose agents
+        // always heard "and 0 more" would teach them to distrust every complete scene.
+        let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        assert_eq!(seen.surroundings_omitted, 0);
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(
+            !prompt.situation.contains("not listed"),
+            "an uncut scene must claim no omission, got {situation}",
+            situation = prompt.situation
+        );
+    }
+
+    #[test]
+    fn both_bounds_are_counted_and_neither_is_counted_twice() {
+        // Two bounds can hide something: the body's, before the wire, and this side's
+        // cap. The agent is owed their sum - stating only the larger, or adding the
+        // body's figure to a total that already contained it, are both a lie about how
+        // much of the scene it is missing.
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.surroundings = (0..MAX_OBSERVATIONS + 5)
+            .map(|i| Observation {
+                what: format!("thing-{i}"),
+                distance: 1.0,
+                direction: Bearing::North,
+                vertical_offset: 0.0,
+                visible: true,
+            })
+            .collect();
+        seen.surroundings_omitted = 7;
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(
+            prompt.situation.contains("12 more things not listed"),
+            "5 cut here plus 7 cut by the body is 12, got {situation}",
+            situation = prompt.situation
+        );
+        // MAX_OBSERVATIONS is still the final bound on what a model is shown; the
+        // count only says what it is not being shown.
+        assert!(!prompt.situation.contains("thing-24"));
+    }
+
+    #[test]
+    fn a_nonsense_omission_off_the_socket_cannot_hide_this_side_of_the_cut() {
+        // Perceptions come off a socket and the field is only non-negative by contract.
+        // A negative value must be discarded rather than allowed to subtract from what
+        // this side cut for itself.
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.surroundings = (0..MAX_OBSERVATIONS + 5)
+            .map(|i| Observation {
+                what: format!("thing-{i}"),
+                distance: 1.0,
+                direction: Bearing::North,
+                vertical_offset: 0.0,
+                visible: true,
+            })
+            .collect();
+        seen.surroundings_omitted = -1_000;
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(prompt.situation.contains("5 more things not listed"));
+    }
+
+    #[test]
+    fn an_empty_scene_the_body_cut_is_not_called_nothing_of_note() {
+        // "nothing of note around you" is an assurance. With things the body could not
+        // carry, it is one the body never gave.
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.surroundings = vec![];
+        seen.surroundings_omitted = 3;
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(
+            prompt.situation.contains("3 nearby things went unreported"),
+            "got {situation}",
+            situation = prompt.situation
+        );
+    }
+
+    #[test]
+    fn a_single_omitted_observation_reads_as_one_thing() {
+        // A count of one is reachable now that the body's own figure feeds these
+        // sentences, and "1 more things" is not a sentence to hand a model reasoning
+        // about how much of its scene it is missing.
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.surroundings_omitted = 1;
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(
+            prompt.situation.contains("(and 1 more thing not listed)"),
+            "one omission must read as one thing, got {situation}",
+            situation = prompt.situation
+        );
+    }
+
+    #[test]
+    fn a_single_omitted_observation_in_an_empty_scene_reads_as_one_thing() {
+        // The empty scene has a sentence of its own, so the singular has to hold in
+        // both branches or one of them says "1 nearby things".
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.surroundings = vec![];
+        seen.surroundings_omitted = 1;
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(
+            prompt
+                .situation
+                .contains("though 1 nearby thing went unreported"),
+            "one omission must read as one thing, got {situation}",
+            situation = prompt.situation
+        );
+    }
+
+    #[test]
+    fn a_single_omitted_inventory_line_reads_as_one_item() {
+        // The inventory shares the phrasing, so it shares the rule.
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.self_state.inventory_summary = (0..=MAX_INVENTORY_LINES)
+            .map(|i| format!("item-{i}"))
+            .collect();
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(
+            prompt.situation.contains("(and 1 more item not listed)"),
+            "one omission must read as one item, got {situation}",
+            situation = prompt.situation
+        );
     }
 
     #[test]

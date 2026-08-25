@@ -338,6 +338,7 @@ mod tests {
                 },
             },
             surroundings: vec![],
+            surroundings_omitted: 0,
         }
     }
 
