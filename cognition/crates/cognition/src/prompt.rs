@@ -26,19 +26,21 @@
 //! structurally - see [`crate::openai::wire`] - so restating it in prose would
 //! give a second, driftable statement of the same thing.
 
-use loom_contract::{DecisionImportance, Observation, Perception, SelfState, Trigger};
+use loom_contract::{
+    Bearing, DayPhase, DecisionImportance, Observation, Perception, SelfState, Trigger, WorldState,
+};
 
 use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v1";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v2";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v1";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v2";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v1";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v2";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -92,8 +94,13 @@ no respawn and no new body. Nothing is worth risking your life for casually.
 a fraction, where 1.0 is full and 0.0 is empty. If it ever reaches empty you die, \
 permanently and like any other death. Resting is the only way to refill it, so do \
 not let it run low with no plan to rest.
-- You perceive only what you are told. Your surroundings list gives distances \
-but not directions, so you cannot know a bearing you were not given.
+- You perceive only what you are told. Each thing in your surroundings list \
+carries how far away it is, which compass direction it lies in, how far above or \
+below you it is, and whether you can actually see it right now - a thing you \
+cannot see is one you know is there through a wall or round a corner.
+- You are also told what part of the world's day it is and how long is left \
+before nightfall. Night is more dangerous than day, and a plan that needs \
+daylight needs to fit in the daylight that is left.
 - Your body validates what you ask for and may refuse it. Ask for one clear, \
 achievable thing rather than a plan.
 - Your reasoning is recorded permanently for research. Say what actually drove \
@@ -145,6 +152,7 @@ fn situation_of(perception: &Perception) -> String {
         trigger_line(&perception.trigger)
     ));
     lines.push(self_line(&perception.self_state));
+    lines.push(world_line(&perception.self_state.world));
     lines.push(inventory_line(&perception.self_state.inventory_summary));
     lines.push(surroundings_line(&perception.surroundings));
     lines.join("\n")
@@ -209,18 +217,115 @@ fn surroundings_line(surroundings: &[Observation]) -> String {
     let shown = surroundings
         .iter()
         .take(MAX_OBSERVATIONS)
-        .map(|seen| {
-            format!(
-                "{what} about {distance} blocks away",
-                what = field(&seen.what),
-                distance = number(seen.distance)
-            )
-        })
+        .map(observation_phrase)
         .collect::<Vec<_>>()
         .join("; ");
     format!(
         "You can see: {shown}{more}",
         more = omitted(surroundings.len(), MAX_OBSERVATIONS, "more things")
+    )
+}
+
+/// The world clock, as a sentence.
+///
+/// The phase and the daylight flag are both stated because they can disagree: a
+/// dimension with a fixed time has a day time and no daylight, and an agent that
+/// only heard the phase would plan for a dawn that never comes.
+fn world_line(world: &WorldState) -> String {
+    format!(
+        "The world: it is {phase} and {light}; {nightfall}",
+        phase = phase_word(world.day_phase),
+        light = if world.is_day {
+            "daylight"
+        } else {
+            "not daylight"
+        },
+        nightfall = nightfall_phrase(world)
+    )
+}
+
+/// What the nightfall countdown means, which depends on whether night has already come.
+///
+/// The number wraps the world's day and never reads zero, so during the night it is a
+/// whole day rather than a moment: said plainly as "nightfall is N ticks away" it would
+/// tell an agent standing in the dark that it had most of a day of daylight left, which
+/// is the opposite of its situation and exactly the plan that gets an agent killed. The
+/// countdown is therefore named as targeting the *next* nightfall, and the night is
+/// stated as already here.
+fn nightfall_phrase(world: &WorldState) -> String {
+    if matches!(world.day_phase, DayPhase::Night) {
+        format!(
+            "night has already fallen, and the next nightfall after this one is \
+             {until} ticks away",
+            until = world.ticks_until_nightfall
+        )
+    } else {
+        format!(
+            "the next nightfall is {until} ticks away",
+            until = world.ticks_until_nightfall
+        )
+    }
+}
+
+/// One day phase, as the word the agent reads.
+const fn phase_word(phase: DayPhase) -> &'static str {
+    match phase {
+        DayPhase::Dawn => "dawn",
+        DayPhase::Day => "daytime",
+        DayPhase::Dusk => "dusk",
+        DayPhase::Night => "night",
+    }
+}
+
+/// One bearing, as the word the agent reads.
+const fn bearing_word(bearing: Bearing) -> &'static str {
+    match bearing {
+        Bearing::North => "north",
+        Bearing::East => "east",
+        Bearing::South => "south",
+        Bearing::West => "west",
+    }
+}
+
+/// One observation, as a phrase.
+///
+/// Every field the body measured is stated, including the ones that are false or
+/// absent: an agent told only about the things it can see would read a silence
+/// about the rest as their absence, which is the opposite of what the body meant.
+fn observation_phrase(seen: &Observation) -> String {
+    format!(
+        "{what} about {distance} blocks away to the {bearing}{height}, {sight}",
+        what = field(&seen.what),
+        distance = number(seen.distance),
+        bearing = bearing_word(seen.direction),
+        height = height_phrase(seen.vertical_offset),
+        sight = if seen.visible {
+            "in sight"
+        } else {
+            "out of sight behind something"
+        }
+    )
+}
+
+/// How far above or below the agent something is, or nothing if it is level.
+fn height_phrase(vertical_offset: f64) -> String {
+    if !vertical_offset.is_finite() {
+        return " at an unknown height".to_owned();
+    }
+    // Under a block either way reads as level ground: a mob standing on the same
+    // floor sits a fraction of a block off, and reporting that as a climb would
+    // make every flat scene look like terrain.
+    if vertical_offset.abs() < 1.0 {
+        return String::new();
+    }
+    format!(
+        " and {height} blocks {way}",
+        height = number(vertical_offset.abs()),
+        way = if vertical_offset > 0.0 {
+            "above"
+        } else {
+            "below"
+        }
     )
 }
 
@@ -259,7 +364,10 @@ mod tests {
 
     use super::{render, MAX_FIELD_CHARS, MAX_OBSERVATIONS};
     use crate::router::{ModelCatalog, Router};
-    use loom_contract::{DecisionImportance, Observation, Perception, SelfState, Trigger};
+    use loom_contract::{
+        Bearing, DayPhase, DecisionImportance, Observation, Perception, SelfState, Trigger,
+        WorldState,
+    };
 
     fn router() -> Router {
         Router::new(ModelCatalog::new("fast", "deep"))
@@ -277,10 +385,18 @@ mod tests {
                 energy: 1.0,
                 position: [10.5, 64.0, -8.25],
                 inventory_summary: vec!["3 bread".to_owned()],
+                world: WorldState {
+                    day_phase: DayPhase::Day,
+                    is_day: true,
+                    ticks_until_nightfall: 6_000,
+                },
             },
             surroundings: vec![Observation {
                 what: "zombie".to_owned(),
                 distance: 6.5,
+                direction: Bearing::East,
+                vertical_offset: 2.0,
+                visible: true,
             }],
         }
     }
@@ -337,6 +453,89 @@ mod tests {
             "the brief must offer rest as an action, got {system}",
             system = prompt.system
         );
+    }
+
+    #[test]
+    fn an_observation_carries_its_bearing_its_height_and_whether_it_is_in_sight() {
+        // The whole point of this payload: distance alone left the agent unable to
+        // name a target it had just been told about.
+        let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        let prompt = render(&router().route(seen.importance), &seen);
+        for expected in ["to the east", "2.0 blocks above", "in sight"] {
+            assert!(
+                prompt.situation.contains(expected),
+                "the situation must carry {expected:?}, got {situation}",
+                situation = prompt.situation
+            );
+        }
+    }
+
+    #[test]
+    fn a_thing_out_of_sight_is_said_to_be_out_of_sight() {
+        // Silence would read as absence, which is the opposite of what the body meant.
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.surroundings[0].visible = false;
+        seen.surroundings[0].vertical_offset = 0.25;
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(prompt.situation.contains("out of sight"));
+        // Under a block either way is level ground, not a climb.
+        assert!(!prompt.situation.contains("blocks above"));
+        assert!(!prompt.situation.contains("blocks below"));
+    }
+
+    #[test]
+    fn the_situation_carries_the_world_clock() {
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.self_state.world = WorldState {
+            day_phase: DayPhase::Dusk,
+            is_day: false,
+            ticks_until_nightfall: 900,
+        };
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(prompt.situation.contains("dusk"));
+        assert!(prompt.situation.contains("not daylight"));
+        assert!(prompt
+            .situation
+            .contains("the next nightfall is 900 ticks away"));
+    }
+
+    #[test]
+    fn a_night_countdown_does_not_read_as_daylight_that_is_left() {
+        // The countdown wraps the day and never reads zero, so during the night it is a
+        // whole day. Said as a plain "nightfall is N ticks away" it would promise an agent
+        // standing in the dark most of a day of daylight.
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.self_state.world = WorldState {
+            day_phase: DayPhase::Night,
+            is_day: false,
+            ticks_until_nightfall: 20_000,
+        };
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(prompt.situation.contains("night has already fallen"));
+        assert!(prompt
+            .situation
+            .contains("the next nightfall after this one is 20000 ticks away"));
+        assert!(
+            !prompt.situation.contains("nightfall is 20000 ticks away"),
+            "the bare countdown would read as daylight that is left, got {situation}",
+            situation = prompt.situation
+        );
+    }
+
+    #[test]
+    fn the_brief_no_longer_denies_the_agent_a_bearing() {
+        // The brief used to state outright that surroundings gave no directions. Left
+        // in place beside a payload that now carries them, it would be the one part of
+        // the prompt telling the agent to ignore what it was just told.
+        let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        let prompt = render(&router().route(seen.importance), &seen);
+        assert!(
+            !prompt.system.contains("cannot know a bearing"),
+            "the denial must be gone, got {system}",
+            system = prompt.system
+        );
+        assert!(prompt.system.contains("compass direction"));
+        assert!(prompt.system.contains("nightfall"));
     }
 
     #[test]
@@ -410,6 +609,9 @@ mod tests {
             .map(|i| Observation {
                 what: format!("thing-{i}"),
                 distance: 1.0,
+                direction: Bearing::North,
+                vertical_offset: 0.0,
+                visible: true,
             })
             .collect();
         let prompt = render(&router().route(seen.importance), &seen);

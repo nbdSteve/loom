@@ -42,15 +42,39 @@ data class PerceptionBound(
 
     /**
      * Reduces [candidates] to the bounded set the mind may see: those within
-     * [radiusBlocks], nearest first, at most [maxObservations] of them.
+     * [radiusBlocks], nearest first, at most [maxObservations] of them - and says how
+     * many the count bound left out.
+     *
+     * The omission is returned rather than merely implied because the bound is the only
+     * place that can still count it: once the list is cut, nothing downstream can tell a
+     * quiet scene from a crowded one that was trimmed, and a survival run reading the
+     * record afterwards would take the trimmed scene for the quiet one.
      */
     fun <T> nearest(
         candidates: Sequence<T>,
         distance: (T) -> Double,
-    ): List<T> =
-        candidates
-            .filter { distance(it) <= radiusBlocks }
-            .sortedBy(distance)
-            .take(maxObservations)
-            .toList()
+    ): Bounded<T> {
+        val within =
+            candidates
+                .filter { distance(it) <= radiusBlocks }
+                .sortedBy(distance)
+                .toList()
+        return Bounded(
+            shown = within.take(maxObservations),
+            omitted = (within.size - maxObservations).coerceAtLeast(0),
+        )
+    }
+
+    /**
+     * The bounded set, and what the count bound left out of it.
+     *
+     * @param shown the candidates within [radiusBlocks], nearest first, at most
+     *   [maxObservations] of them.
+     * @param omitted how many further candidates were within [radiusBlocks] and were not
+     *   reported, always zero or more.
+     */
+    data class Bounded<T>(
+        val shown: List<T>,
+        val omitted: Int,
+    )
 }

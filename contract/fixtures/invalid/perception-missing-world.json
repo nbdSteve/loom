@@ -1,0 +1,1 @@
+{"requestId":"req-goal-3","agentId":"agent-eta","trigger":{"event":"goalReview"},"importance":"ROUTINE","capturedTick":10,"selfState":{"health":20.0,"energy":1.0,"position":[0.0,64.0,0.0],"inventorySummary":[]},"surroundings":[]}

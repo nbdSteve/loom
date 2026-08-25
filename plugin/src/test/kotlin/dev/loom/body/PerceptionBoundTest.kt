@@ -26,13 +26,16 @@ class PerceptionBoundTest {
     @Test
     fun observationsBeyondTheRadiusAreNotReported() {
         val kept = bound.nearest(sequenceOf(1.0, 11.99, 12.0, 12.01, 40.0)) { it }
-        assertEquals(listOf(1.0, 11.99, 12.0), kept)
+        assertEquals(listOf(1.0, 11.99, 12.0), kept.shown)
+        // Out of range is not an omission: the count bound is what a reader is warned
+        // about, and counting the far-away things would make every open scene look cut.
+        assertEquals(0, kept.omitted)
     }
 
     @Test
     fun theNearestObservationsComeFirst() {
         val kept = bound.nearest(sequenceOf(9.0, 2.0, 5.0)) { it }
-        assertEquals(listOf(2.0, 5.0, 9.0), kept)
+        assertEquals(listOf(2.0, 5.0, 9.0), kept.shown)
     }
 
     @Test
@@ -41,8 +44,12 @@ class PerceptionBoundTest {
         // snapshot down - and it must, or the mind's prompt grows without limit.
         val crowd = (1..500).asSequence().map { it % 12 + 0.5 }
         val kept = bound.nearest(crowd) { it }
-        assertEquals(bound.maxObservations, kept.size)
-        assertTrue(kept.all { it <= bound.radiusBlocks })
+        assertEquals(bound.maxObservations, kept.shown.size)
+        assertTrue(kept.shown.all { it <= bound.radiusBlocks })
+        // And it says how much it held down. A trimmed scene recorded as a bare count
+        // reads afterwards as a quiet one, which is the reading a survival run must not
+        // be given.
+        assertEquals(500 - bound.maxObservations, kept.omitted)
     }
 
     @Test

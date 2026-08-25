@@ -119,9 +119,9 @@ Within about five seconds of the spawn, three lines arrive in order:
 
 ```
 [loom] perceived the world (goal review)
-[loom] decided [scripted-stand-in/routine-v1 routine]: idle: reviewed goals at the Routine tier; nothing outranks what is already underway
+[loom] decided [scripted-stand-in/routine-v2 routine]: idle: reviewed goals at the Routine tier; nothing outranks what is already underway
 [loom] the body is doing it
-ada | energy 99.8/100 declining | idle | goal review -> scripted-stand-in/routine-v1 routine   (green)
+ada | energy 99.8/100 declining | idle | goal review -> scripted-stand-in/routine-v2 routine   (green)
 ```
 
 That is the whole round trip: the bounded perception that caused cognition, the model and prompt version that answered it, the reasoning behind the intent, and what the body did about the intent.
@@ -146,9 +146,9 @@ The stand-in idles while the reserve is above `RESTING_ENERGY` (0.35 of full) an
 
 ```
 [loom] perceived the world (goal review)
-[loom] decided [scripted-stand-in/routine-v1 routine]: rest: the energy reserve is down to 32% of capacity; resting outranks every other goal
+[loom] decided [scripted-stand-in/routine-v2 routine]: rest: the energy reserve is down to 32% of capacity; resting outranks every other goal
 [loom] the body is doing it
-ada | energy 32/100 declining | resting | goal review -> scripted-stand-in/routine-v1 routine   (yellow)
+ada | energy 32/100 declining | resting | goal review -> scripted-stand-in/routine-v2 routine   (yellow)
 ```
 
 Those are one run's real numbers: the agent spawned on tick 815 and the review that decided to rest read the reserve at 31.99 of 100 on tick 25299, which is 20 minutes later.
@@ -158,7 +158,7 @@ Resting refills the reserve completely, and it is one tick, not a gradual climb:
 So the yellow clears and the gauge is green again by the next refresh, with the trend word reading the refill rather than the drain:
 
 ```
-ada | energy 100/100 recovering | resting | goal review -> scripted-stand-in/routine-v1 routine   (green)
+ada | energy 100/100 recovering | resting | goal review -> scripted-stand-in/routine-v2 routine   (green)
 ```
 
 `recovering` is the one time the trend word is news, because a living reserve is otherwise always falling.
@@ -290,7 +290,7 @@ The standing line names the agent, its reserve, what it is doing, and which mind
 Any field Loom does not know yet is left out rather than guessed, and the body's health joins only once it is below full.
 
 ```
-ada | energy 62/100 declining | health 12/20 | moving | goal review -> gpt-5-mini/routine-v1 routine
+ada | energy 62/100 declining | health 12/20 | moving | goal review -> gpt-5-mini/routine-v2 routine
  |          |                      |            |         |
  |          |                      |            |         the model, prompt version, and routing tier
  |          |                      |            the trigger that caused cognition
@@ -422,7 +422,7 @@ Five things about the target that the old gait let you get away with:
 - **8 blocks is the limit, measured as a straight line.** A target further off than that is refused - `target is 21 blocks away, beyond the 8 a body may be routed within` - and height counts towards it. Eight is half the walk budget on purpose: the other half is what a body goes round a wall with. Walk a long trip as several requests.
 - **A refusal also stops the route the body was already walking.** So `/loombody move` past the reach on a *walking* body does two visible things: the reply refuses, and the body halts where it stands rather than carrying on to the previous target. That is deliberate - a `rejected` record followed by `moved` records would read as movement Loom authorised - and it applies to every refusal, including the engine answering a reachable target with no route because the body happened to be off the ground at that instant. Nothing retries, so the body waits for its next goal review.
 - **A route will not cross water from dry land, and that shows up as an acceptance rather than a refusal.** Water is priced impassable because this body cannot swim and would drown. Loom refuses only on its own two bounds, the reach and the per-tick budget, so a target across a stream is *accepted*: the engine hands back the best partial route it found, and the accepted line reads `getting as close as it can, ending N blocks from it` with the route stopping short of the bank. That is the same shape as any other unreachable target. Shore blocks stay walkable, so a route round the water on dry land is the other thing to expect. The exception is a body standing somewhere the *engine* prices impassable - in water, in lava, in a fence, in a sweet berry bush - where the engine opens every neighbour so the body can escape, water included.
-- **A body can be sent less far than it can see.** Perception reaches twelve blocks, so a mind may name something it saw and be told the target is out of range. That is the current design, and the refusal is recorded.
+- **A body can be sent to a fraction of what it can see.** Perception reaches 24 blocks and the reach is 8, so a mind may name something it saw and be told the target is out of range. That is the current design, and the refusal is recorded.
 
 Read the `moved` records rather than the position alone.
 Each one says what the route is doing as well as where the body got to: `node 3 of 9` while it walks, `at the end of its route` when it arrives, `stuck` when the engine gave up, and `drifting` for a body that is merely falling.
@@ -439,7 +439,7 @@ Its only input is the record stream, offered to it after the real log has taken 
 The agent is never told that it is an AI, an NPC, an experiment subject, or a participant in a simulation, and the display's vocabulary of models, prompt versions, tiers, and permadeath is operator-only for exactly that reason.
 
 The exception is you, standing there.
-A body perceives the living entities around it, and a player is one, so a watcher inside the perception radius appears in the agent's perception as an observation.
+A body perceives the living entities around it, and a player is one, so a watcher inside the perception radius (24 blocks) appears in the agent's perception as an observation, with a bearing, a height, and whether the body can actually see it.
 In the runs above each perception recorded `1 observation(s)`, and that one was the watching player.
 Fly out of range, or use a scripted client that stays away, if the run must be unobserved.
 Walking one dimension transit with no client connected is worth doing anyway, because a body travelling unobserved is the case that would otherwise read as a death.
@@ -451,9 +451,12 @@ Derive metrics from it rather than adding counters.
 
 ```json
 {"tick":7999,"agentId":"fin","event":"perceived","detail":"1 observation(s)","requestId":"356af7c7-...","trigger":"goalReview","vitals":{"level":100.0,"capacity":100.0}}
-{"tick":8000,"agentId":"fin","event":"decided","detail":"idle: reviewed goals at the Routine tier; ...","requestId":"356af7c7-...","provenance":{"tier":"ROUTINE","model":"scripted-stand-in","promptVersion":"routine-v1"},"intent":"idle"}
+{"tick":8000,"agentId":"fin","event":"decided","detail":"idle: reviewed goals at the Routine tier; ...","requestId":"356af7c7-...","provenance":{"tier":"ROUTINE","model":"scripted-stand-in","promptVersion":"routine-v2"},"intent":"idle"}
 {"tick":8000,"agentId":"fin","event":"intentApplied","detail":"idle -> accepted: standing still","requestId":"356af7c7-...","intent":"idle","outcome":"accepted"}
 ```
+
+A `perceived` detail counts what the perception reported and, when the count bound held something back, what it left out: `16 observation(s), 5 more nearby not reported`.
+The second clause appears only when there was something to omit, so a scene that was trimmed can never be read afterwards as a quiet one.
 
 The `vitals` field is the energy reserve as a percentage, and it rides the records that took the reading anyway - a spawn, a perception, a change worth recording, a despawn, a death.
 The body's health is a separate `health` field, and each vital has its own event, so a run can tell a starvation from a body beaten to death:

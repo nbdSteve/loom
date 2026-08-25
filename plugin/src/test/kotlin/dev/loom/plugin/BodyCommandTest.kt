@@ -6,6 +6,7 @@ import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
 import dev.loom.body.IntentOutcome
 import dev.loom.body.WORLD_AGENT_ID
+import dev.loom.contract.DayPhase
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.ENERGY_FULL
 import dev.loom.contract.Intent
@@ -13,6 +14,7 @@ import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
 import dev.loom.contract.SelfState
 import dev.loom.contract.Trigger
+import dev.loom.contract.WorldState
 import dev.loom.mind.CognitionBridge
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.MainThread
@@ -206,6 +208,7 @@ class BodyCommandTest {
                             energy = ENERGY_FULL,
                             position = listOf(0.0, 64.0, 0.0),
                             inventorySummary = emptyList(),
+                            world = WorldState(dayPhase = DayPhase.DAY, isDay = true, ticksUntilNightfall = 6_000),
                         ),
                     surroundings = emptyList(),
                 )

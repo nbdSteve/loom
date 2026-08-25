@@ -11,11 +11,42 @@
       "enum": ["ROUTINE", "NOTABLE", "PIVOTAL"]
     },
 
+    "Bearing": {
+      "description": "A horizontal compass bearing from the agent to something it can see. Four cardinal points and no finer, because it is the engine's own nearest-axis answer for the delta and a bearing precise enough to look like a heading would be a precision the body did not measure.",
+      "type": "string",
+      "enum": ["north", "east", "south", "west"]
+    },
+
+    "DayPhase": {
+      "description": "Which part of the world's day it is. Derived from the level's own day time, so an agent can tell midday from dusk without being told the raw tick count.",
+      "type": "string",
+      "enum": ["dawn", "day", "dusk", "night"]
+    },
+
+    "WorldState": {
+      "description": "The bounded world clock the body reveals. Survival depends on it - what is safe at midday is not safe at night - and it is a fact about the world rather than about the body, which is why it is named separately from the rest of the self-state it rides in.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dayPhase", "isDay", "ticksUntilNightfall"],
+      "properties": {
+        "dayPhase": { "$ref": "#/$defs/DayPhase" },
+        "isDay": {
+          "description": "Whether it is daylight where the body stands, as the level itself answers it. Distinct from dayPhase because a dimension with a fixed time has a day time and no daylight.",
+          "type": "boolean"
+        },
+        "ticksUntilNightfall": {
+          "description": "Ticks from now until the next nightfall, wrapping the world's day. Always positive: during the night it counts to the following nightfall, and dayPhase is what says the night is already here.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+
     "SelfState": {
       "description": "The bounded self-state the body chose to reveal. Owned primitives only, so the mind cannot reach back into world state through it.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["health", "energy", "position", "inventorySummary"],
+      "required": ["health", "energy", "position", "inventorySummary", "world"],
       "properties": {
         "health": {
           "description": "Current health of the agent's body.",
@@ -38,7 +69,8 @@
           "description": "Already-summarized inventory the body chose to reveal.",
           "type": "array",
           "items": { "type": "string" }
-        }
+        },
+        "world": { "$ref": "#/$defs/WorldState" }
       }
     },
 
@@ -46,7 +78,7 @@
       "description": "One already-summarized observation the body chose to reveal. The perception carries a list of these instead of a live world handle.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["what", "distance"],
+      "required": ["what", "distance", "direction", "verticalOffset", "visible"],
       "properties": {
         "what": {
           "description": "Human-readable summary of the observed thing.",
@@ -55,6 +87,15 @@
         "distance": {
           "description": "Distance from the agent to the observed thing, in blocks.",
           "type": "number"
+        },
+        "direction": { "$ref": "#/$defs/Bearing" },
+        "verticalOffset": {
+          "description": "How far above the agent the observed thing is, in blocks; negative if it is below. Separate from the bearing because a bearing is horizontal and a thing on a cliff is not reachable by walking toward it.",
+          "type": "number"
+        },
+        "visible": {
+          "description": "Whether the body has an unobstructed line of sight to the observed thing. False means the body knows it is there and cannot see it - through a wall, or round a corner - which is a different situation from not knowing at all.",
+          "type": "boolean"
         }
       }
     },

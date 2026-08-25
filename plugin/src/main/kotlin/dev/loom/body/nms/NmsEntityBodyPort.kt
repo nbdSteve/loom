@@ -228,12 +228,17 @@ class NmsEntityBodyPort(
         // was handed rather than a second sample of it. The body's health rides on the change
         // and death records instead of being restated here.
         val energy = metabolism.energyOf(agentId)
-        val perception = capturePerception(agentId, body, energy, trigger, currentTick())
+        val captured = capturePerception(agentId, body, energy, trigger, currentTick())
+        val perception = captured.perception
         val reserve = reserveVitals(energy)
         vitalsWatch.noted(agentId, reserve)
         journal.recordPerception(
             agentId,
-            "${perception.surroundings.size} observation(s)",
+            // The omission is stated rather than left to arithmetic against a bound the
+            // record does not carry: a crowded scene trimmed to the bound would otherwise
+            // read afterwards as a quiet one, and how often an agent decides on a partial
+            // view of its surroundings is one of the numbers a survival run is read for.
+            "${perception.surroundings.size} observation(s)" + omissionOf(captured.omittedNearby),
             perception.requestId,
             tagOf(trigger),
             reserve,

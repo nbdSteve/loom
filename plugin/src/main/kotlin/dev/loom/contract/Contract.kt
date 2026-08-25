@@ -56,6 +56,77 @@ enum class DecisionImportance {
 }
 
 /**
+ * A horizontal compass bearing from the agent to something it can see.
+ *
+ * Four cardinal points and no finer: it is the engine's own nearest-axis answer for
+ * the delta, and a bearing precise enough to look like a heading would be a
+ * precision the body never measured.
+ */
+@Serializable
+enum class Bearing {
+    @SerialName("north")
+    NORTH,
+
+    @SerialName("east")
+    EAST,
+
+    @SerialName("south")
+    SOUTH,
+
+    @SerialName("west")
+    WEST,
+}
+
+/** Which part of the world's day it is. */
+@Serializable
+enum class DayPhase {
+    @SerialName("dawn")
+    DAWN,
+
+    @SerialName("day")
+    DAY,
+
+    @SerialName("dusk")
+    DUSK,
+
+    @SerialName("night")
+    NIGHT,
+}
+
+/**
+ * The bounded world clock the body reveals.
+ *
+ * Survival depends on it - what is safe at midday is not safe at night - and it is a
+ * fact about the world rather than about the body, which is why it is named
+ * separately from the self-state it rides in.
+ */
+@Serializable
+data class WorldState(
+    /** Which part of the day it is. */
+    val dayPhase: DayPhase,
+    /**
+     * Whether it is daylight where the body stands, as the level itself answers it.
+     *
+     * Distinct from [dayPhase] because a dimension with a fixed time has a day time
+     * and no daylight.
+     */
+    val isDay: Boolean,
+    /**
+     * Ticks from now until the next nightfall, wrapping the world's day.
+     *
+     * Always positive: during the night it counts to the following nightfall, and
+     * [dayPhase] is what says the night is already here.
+     */
+    val ticksUntilNightfall: Long,
+) {
+    init {
+        require(ticksUntilNightfall > 0) {
+            "ticksUntilNightfall must be positive, got $ticksUntilNightfall"
+        }
+    }
+}
+
+/**
  * The bounded self-state the body chose to reveal. Owned primitives only, so the
  * mind cannot reach back into world state through it.
  */
@@ -75,6 +146,8 @@ data class SelfState(
     val position: List<Double>,
     /** Already-summarized inventory the body chose to reveal. */
     val inventorySummary: List<String>,
+    /** The bounded world clock the body reveals. */
+    val world: WorldState,
 ) {
     init {
         require(position.size == COORDINATE_DIMENSIONS) {
@@ -96,6 +169,23 @@ data class Observation(
     val what: String,
     /** Distance from the agent to the observed thing, in blocks. */
     val distance: Double,
+    /** The horizontal bearing from the agent to the observed thing. */
+    val direction: Bearing,
+    /**
+     * How far above the agent the observed thing is, in blocks; negative if it is
+     * below.
+     *
+     * Separate from the bearing because a bearing is horizontal, and a thing on a
+     * cliff is not reachable by walking toward it.
+     */
+    val verticalOffset: Double,
+    /**
+     * Whether the body has an unobstructed line of sight to the observed thing.
+     *
+     * `false` means the body knows it is there and cannot see it - through a wall, or
+     * round a corner - which is a different situation from not knowing at all.
+     */
+    val visible: Boolean,
 )
 
 /**

@@ -1,1 +1,1 @@
-{"requestId":"req-spoken-1","agentId":"agent-alpha","intent":{"action":"say","text":"Hello, player-steve."},"reasoning":"player-steve said \"want to trade?\"; a greeting is the routine social response","provenance":{"tier":"NOTABLE","model":"sonnet-5","promptVersion":"notable-v1"}}
+{"requestId":"req-spoken-1","agentId":"agent-alpha","intent":{"action":"say","text":"Hello, player-steve."},"reasoning":"player-steve said \"want to trade?\"; a greeting is the routine social response","provenance":{"tier":"NOTABLE","model":"sonnet-5","promptVersion":"notable-v2"}}

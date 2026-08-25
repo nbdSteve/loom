@@ -38,7 +38,7 @@ So a body sent across open ground may go the whole budget, while a body that has
 `PATH_REQUEST_REACH_BLOCKS` is therefore half of `BODY_FOLLOW_RANGE_BLOCKS` (8 of 16), and `NavigationTest` pins that what is left after the reach is at least the reach again.
 An in-world run found this the hard way: a body three blocks from a nine-block wall, sent seven and a half blocks to the far side, was given a four-node route that walked it into the wall and stopped, because the way round was eighteen blocks of walking.
 Two consequences worth knowing before changing either number.
-A body can be sent to less than it can see - perception reaches twelve blocks, the reach is eight - so a target the mind saw and named may be refused, and the refusal is recorded; walking there in stages is the agent's business until an intent exists for it.
+A body can be sent to far less than it can see - perception reaches twenty-four blocks, the reach is eight - so a target the mind saw and named may be refused, and the refusal is recorded; walking there in stages is the agent's business until an intent exists for it.
 And a wall long enough that the way round it exceeds the budget is still refused in effect, as a best-effort route: the shape of obstacle a body can round is bounded by the budget, not by the reach.
 
 **The engine moves the target before it searches, so what a route reached is not what the mind named.**
@@ -91,8 +91,23 @@ Nothing Loom prices strands a body: standing in fire, beside fire, on dripstone 
 
 Three owed follow-ups.
 There is no `pathEnded` record yet: a route ending is visible only in the next `moved` detail, and a body that got stuck while already stationary produces no record at all.
-The reach is not yet stated in the agent brief the mind is given, which matters more now that it is smaller than the perception radius - a mind that knew it would ask for somewhere eight blocks off and walk again, instead of naming what it can see and being refused.
+The reach is not yet stated in the agent brief the mind is given, which matters more now that it is a third of the perception radius - a mind that knew it would ask for somewhere eight blocks off and walk again, instead of naming what it can see and being refused.
 And the engine's own `recomputePath` searches are not budgeted in total, only bounded per body, which is deliberately left for a follow-up rather than fixed here.
+
+**An observation is a bearing, a height and a line of sight, and every one of those facts is the engine's own answer rather than Loom's geometry.**
+`BodyPerception.kt` reads them from `Direction.getNearest` with the vertical delta zeroed, from the two entities' `y`, and from `LivingEntity.hasLineOfSight`, which is a real ray trace: `visible` false means the body knows something is there and cannot see it, which is the difference between a threat behind a wall and one in the open.
+Bearing is horizontal on purpose and height is reported beside it, because a thing on a cliff is not reachable by walking toward it.
+Candidates are gathered within 24 blocks and then cut to 16 observations, and the cut is applied to the *entities* before anything is described, so nothing is described that the count bound then drops.
+The prompt's own `MAX_OBSERVATIONS` (24) stays the final bound on what reaches a model, and it is deliberately looser than what the body sends.
+**A cut is stated, never silent, on both sides of the port.**
+`PerceptionBound.nearest` is the only place that can still count what it dropped, so it returns a `Bounded` carrying the omission as well as the list, and the `perceived` record says "N more nearby not reported"; the prompt says its own cut the same way.
+A crowded scene trimmed to the bound and recorded as a bare observation count would read afterwards as a quiet one, which is the reading a survival run must not be given.
+There is deliberately no way for a decision to *name* one of those observations yet: request-scoped refs belong with the first intent that could consume one, which is threat flight.
+
+**The world clock is derived from the level's own time, and its countdown never reads zero.**
+`SelfState.world` carries `dayPhase`, `isDay` and `ticksUntilNightfall`; `WorldClock` (engine-free) owns what the number means and `level.isDay` answers daylight directly, because a dimension with a fixed time has a day time and no daylight and the agent needs the difference.
+`ticksUntilNightfall` counts to the *next* nightfall and wraps, so during the night it is a whole day rather than zero: zero for the length of a night would read as a nightfall permanently about to happen, and the phase is what says the night is already here.
+The contract refuses a value below 1 on both sides, so that wrap is a type rule and not a convention.
 
 **Death is terminal - Loom is permadeath.** When a body dies the agent is gone for good: no respawn, no reincarnation, no second body ever.
 New agents will come from reproduction, never from restarting a dead one.

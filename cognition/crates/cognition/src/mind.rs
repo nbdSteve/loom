@@ -79,7 +79,9 @@ mod tests {
     use super::Mind;
     use crate::model::{BackendError, Draft, ModelBackend, ScriptedBackend};
     use crate::router::{ModelCatalog, ModelRoute, Router};
-    use loom_contract::{DecisionImportance, Intent, Perception, SelfState, Trigger};
+    use loom_contract::{
+        DayPhase, DecisionImportance, Intent, Perception, SelfState, Trigger, WorldState,
+    };
 
     const FAST: &str = "a-small-model";
     const DEEP: &str = "a-large-model";
@@ -136,6 +138,11 @@ mod tests {
                 energy: 1.0,
                 position: [0.0, 64.0, 0.0],
                 inventory_summary: vec![],
+                world: WorldState {
+                    day_phase: DayPhase::Day,
+                    is_day: true,
+                    ticks_until_nightfall: 6_000,
+                },
             },
             surroundings: vec![],
         }
@@ -194,7 +201,7 @@ mod tests {
         assert!(decided.reasoning.contains(DEEP));
         assert_eq!(decided.provenance.model, FAST);
         assert_eq!(decided.provenance.tier, DecisionImportance::Routine);
-        assert_eq!(decided.provenance.prompt_version, "routine-v1");
+        assert_eq!(decided.provenance.prompt_version, "routine-v2");
     }
 
     #[tokio::test]

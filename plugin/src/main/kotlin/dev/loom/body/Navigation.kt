@@ -88,10 +88,11 @@ const val BODY_FOLLOW_RANGE_BLOCKS: Double = 16.0
  * the way round was eighteen blocks of walking against a sixteen-block budget. Half the
  * budget for the reach and half for the detour is what buys a body its way round.
  *
- * It follows that this is *smaller than what a body can see*: perception reaches twelve
- * blocks. A target the mind saw and named between eight and twelve blocks away is
- * refused, and the refusal is recorded. Walking there in stages is the agent's own
- * business until an intent exists for it.
+ * It follows that this is *smaller than what a body can see*: the perception radius is
+ * deliberately the wider of the two, and says why where it is set (`BOUND` in
+ * `BodyPerception.kt`). A target the mind saw and named beyond this reach is refused, and
+ * the refusal is recorded. Walking there in stages is the agent's own business until an
+ * intent exists for it.
  */
 const val PATH_REQUEST_REACH_BLOCKS: Double = BODY_FOLLOW_RANGE_BLOCKS / 2
 

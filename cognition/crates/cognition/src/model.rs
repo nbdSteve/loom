@@ -251,10 +251,12 @@ impl ScriptedBackend {
                 let [x, y, z] = perception.self_state.position;
                 Draft {
                     intent: Intent::MoveTo {
-                        // The stand-in has no spatial reasoning: the perception
-                        // reports distance but not direction, so this steps a
-                        // fixed offset rather than pretending to know a bearing.
-                        // A real backend would be given, and would use, more.
+                        // The stand-in has no spatial reasoning. The perception
+                        // now carries a bearing for every observation, but the
+                        // trigger names a block rather than an observation, so
+                        // there is nothing here to read one off; this steps a
+                        // fixed offset rather than inventing a direction.
+                        // A real backend is given, and uses, the whole payload.
                         target: [
                             block_coord(x) + SIGHTED_STEP_BLOCKS,
                             block_coord(y),
@@ -307,7 +309,9 @@ mod tests {
     };
     use crate::config::{ConfigError, Env};
     use crate::router::{ModelCatalog, Router};
-    use loom_contract::{DecisionImportance, Intent, Perception, SelfState, Trigger};
+    use loom_contract::{
+        DayPhase, DecisionImportance, Intent, Perception, SelfState, Trigger, WorldState,
+    };
 
     fn router() -> Router {
         Router::new(ModelCatalog::uniform("scripted-stand-in"))
@@ -327,6 +331,11 @@ mod tests {
                 energy: 1.0,
                 position: [10.5, 64.0, -8.25],
                 inventory_summary: vec![],
+                world: WorldState {
+                    day_phase: DayPhase::Day,
+                    is_day: true,
+                    ticks_until_nightfall: 6_000,
+                },
             },
             surroundings: vec![],
         }

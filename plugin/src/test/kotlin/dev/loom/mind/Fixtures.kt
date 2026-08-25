@@ -1,6 +1,7 @@
 package dev.loom.mind
 
 import dev.loom.body.BodyEventLog
+import dev.loom.contract.DayPhase
 import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.ENERGY_FULL
@@ -9,6 +10,7 @@ import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
 import dev.loom.contract.SelfState
 import dev.loom.contract.Trigger
+import dev.loom.contract.WorldState
 import org.junit.jupiter.api.Assertions.assertEquals
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.time.Duration.Companion.seconds
@@ -93,6 +95,7 @@ fun perception(
                 energy = energy,
                 position = listOf(1.0, 64.0, 2.0),
                 inventorySummary = emptyList(),
+                world = WorldState(dayPhase = DayPhase.DAY, isDay = true, ticksUntilNightfall = 6_000),
             ),
         surroundings = emptyList(),
     )

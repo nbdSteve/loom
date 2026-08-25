@@ -3,8 +3,9 @@
  *
  * This is the perception boundary in code: it reads world state around a body and
  * returns owned, summarized data. It is the only place engine world state is read
- * for the mind's benefit, and it deliberately returns a contract `Perception` - so
- * there is no overload of it that hands back anything the mind could reach through.
+ * for the mind's benefit, and everything it hands back is a contract `Perception`
+ * plus a count of what the bound left out of it - so there is no overload of it
+ * that hands back anything the mind could reach through.
  *
  * What "bounded" means is defined by `PerceptionBound` in the domain, not here.
  */
@@ -13,17 +14,47 @@ package dev.loom.body.nms
 import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
 import dev.loom.body.PerceptionBound
+import dev.loom.body.WorldClock
+import dev.loom.contract.Bearing
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Observation
 import dev.loom.contract.Perception
 import dev.loom.contract.SelfState
 import dev.loom.contract.Trigger
+import dev.loom.contract.WorldState
+import net.minecraft.core.Direction
 import net.minecraft.world.entity.LivingEntity
+import net.minecraft.world.level.Level
 import net.minecraft.world.phys.AABB
 import java.util.UUID
 
-/** How far a body sees, and how much of what it sees is reported. */
-private val BOUND = PerceptionBound(radiusBlocks = 12.0, maxObservations = 16)
+/**
+ * How far a body sees, and how much of what it sees is reported.
+ *
+ * The radius is deliberately wider than the distance a body can be *sent* in one
+ * request (`PATH_REQUEST_REACH_BLOCKS`, 8): seeing further than it can walk in one go
+ * is what lets an agent choose a direction and then travel it in stages, and a mind
+ * that could only see as far as it could walk would have nothing to aim at. The count
+ * bound is what keeps the prompt bounded whatever the radius sees.
+ */
+private val BOUND = PerceptionBound(radiusBlocks = 24.0, maxObservations = 16)
+
+/**
+ * A captured perception, and what the count bound left out of it.
+ *
+ * The omission travels beside the perception rather than inside it because the two have
+ * different readers: the mind is told what the body saw, and the research record is told
+ * what the body *could* have seen and did not report. A crowded scene silently cut to the
+ * bound would read afterwards as a quiet one, which is the reading a survival run must
+ * not be given.
+ *
+ * @param omittedNearby how many living things stood within the perception radius beyond
+ *   the ones reported, always zero or more.
+ */
+internal data class CapturedPerception(
+    val perception: Perception,
+    val omittedNearby: Int,
+)
 
 /**
  * Builds the bounded snapshot the mind receives for [body].
@@ -43,25 +74,60 @@ internal fun capturePerception(
     energy: Double,
     trigger: Trigger,
     capturedTick: Long,
-): Perception =
-    Perception(
-        requestId = UUID.randomUUID().toString(),
-        agentId = agentId.value,
-        trigger = trigger,
-        // Every snapshot captured here is routine; importance is classified by the
-        // domain above the port once cognition is wired in.
-        importance = DecisionImportance.ROUTINE,
-        capturedTick = capturedTick,
-        selfState =
-            SelfState(
-                health = bodyVitals(body).energy,
-                energy = energy,
-                position = listOf(body.x, body.y, body.z),
-                // The body reveals a summary, never its live inventory handle.
-                inventorySummary = emptyList(),
+): CapturedPerception {
+    val nearby = observationsAround(body)
+    return CapturedPerception(
+        perception =
+            Perception(
+                requestId = UUID.randomUUID().toString(),
+                agentId = agentId.value,
+                trigger = trigger,
+                // Every snapshot captured here is routine; importance is classified by the
+                // domain above the port once cognition is wired in.
+                importance = DecisionImportance.ROUTINE,
+                capturedTick = capturedTick,
+                selfState =
+                    SelfState(
+                        health = bodyVitals(body).energy,
+                        energy = energy,
+                        position = listOf(body.x, body.y, body.z),
+                        // The body reveals a summary, never its live inventory handle.
+                        inventorySummary = emptyList(),
+                        world = worldStateOf(body.level()),
+                    ),
+                surroundings = nearby.shown.map { observationOf(body, it) },
             ),
-        surroundings = observationsAround(body),
+        omittedNearby = nearby.omitted,
     )
+}
+
+/**
+ * States what the count bound left out, or nothing if it left nothing out.
+ *
+ * Phrased for the record rather than for a count so a reader meets the caveat where the
+ * observation total is, and empty in the ordinary case so an uncrowded run's records are
+ * not padded with a standing "and 0 more".
+ */
+internal fun omissionOf(omittedNearby: Int): String =
+    if (omittedNearby > 0) ", $omittedNearby more nearby not reported" else ""
+
+/**
+ * Reads [level]'s own clock as the bounded [WorldState] the mind is told.
+ *
+ * Both facts come from the level rather than from any count Loom keeps: a `/time set`,
+ * a sleeping night, or a dimension with a fixed day must all reach the agent as what
+ * the world actually is. What the number *means* is [WorldClock]'s, in the domain.
+ */
+private fun worldStateOf(level: Level): WorldState {
+    val dayTime = level.dayTime
+    return WorldState(
+        dayPhase = WorldClock.phaseOf(dayTime),
+        // The level's own answer, not derived from the phase: a dimension with a fixed
+        // time has a day time and no daylight, and the agent needs the difference.
+        isDay = level.isDay,
+        ticksUntilNightfall = WorldClock.ticksUntilNightfall(dayTime),
+    )
+}
 
 /**
  * Reads [body]'s health as [AgentVitals].
@@ -83,7 +149,8 @@ internal fun bodyVitals(body: LoomBodyEntity): AgentVitals =
         capacity = body.maxHealth.toDouble(),
     )
 
-private fun observationsAround(body: LoomBodyEntity): List<Observation> {
+/** The living things near [body], bounded, with what the count bound left out. */
+private fun observationsAround(body: LoomBodyEntity): PerceptionBound.Bounded<LivingEntity> {
     // The box is a cheap pre-filter that the engine can answer from its entity
     // index; PerceptionBound then applies the real distance and count limits.
     val box = AABB.ofSize(body.position(), BOUND.boxExtent, BOUND.boxExtent, BOUND.boxExtent)
@@ -91,6 +158,47 @@ private fun observationsAround(body: LoomBodyEntity): List<Observation> {
         body.level()
             .getEntitiesOfClass(LivingEntity::class.java, box) { it !== body }
             .asSequence()
-            .map { Observation(what = it.type.descriptionId, distance = body.distanceTo(it).toDouble()) }
-    return BOUND.nearest(nearby) { it.distance }
+    return BOUND.nearest(nearby) { body.distanceTo(it).toDouble() }
 }
+
+/** Describes [other] as [body] perceives it. */
+private fun observationOf(
+    body: LoomBodyEntity,
+    other: LivingEntity,
+): Observation =
+    Observation(
+        what = other.type.descriptionId,
+        distance = body.distanceTo(other).toDouble(),
+        direction = bearingTo(body, other),
+        verticalOffset = other.y - body.y,
+        // A real ray trace through the world, and the engine's own: `false` means the
+        // body knows something is there and cannot see it, which is the difference
+        // between a threat behind a wall and a threat in the open.
+        visible = body.hasLineOfSight(other),
+    )
+
+/**
+ * The horizontal bearing from [body] to [other], as the engine's nearest axis.
+ *
+ * The engine picks the axis, not Loom: `Direction.getNearest` is given a delta with its
+ * vertical component zeroed, so it answers with the cardinal direction whose axis the
+ * delta points most strongly along. Height is reported separately, as
+ * [Observation.verticalOffset], because a bearing is horizontal and a thing on a cliff
+ * is not reachable by walking toward it.
+ */
+private fun bearingTo(
+    body: LoomBodyEntity,
+    other: LivingEntity,
+): Bearing =
+    when (Direction.getNearest(other.x - body.x, 0.0, other.z - body.z)) {
+        Direction.NORTH -> Bearing.NORTH
+        Direction.EAST -> Bearing.EAST
+        Direction.SOUTH -> Bearing.SOUTH
+        Direction.WEST -> Bearing.WEST
+        // Unreachable for a zeroed vertical delta - the engine scores both vertical
+        // axes at zero, and a body exactly on top of another falls through to its own
+        // default of north. Named rather than left to an `else` so the mapping stays
+        // total over `Direction`, and answered with a bearing rather than an exception:
+        // a perception must not fail over where something is standing.
+        Direction.UP, Direction.DOWN -> Bearing.NORTH
+    }
