@@ -14,6 +14,7 @@
  */
 package dev.loom.mind
 
+import dev.loom.body.PIVOTAL_THREAT_DISTANCE_BLOCKS
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
@@ -31,6 +32,13 @@ import dev.loom.contract.Trigger
  * - **Damage** is pivotal. It is the only trigger that can end the agent, and
  *   Loom is permadeath: there is no second body, so this decision is worth the
  *   frontier model every time.
+ * - A **threat sighting** is pivotal when the body can see the threat and it is
+ *   already inside [PIVOTAL_THREAT_DISTANCE_BLOCKS]. Those two facts are what make
+ *   the next few seconds able to end the agent. Any other threat sighting is notable
+ *   rather than routine - something that hunts this agent's kind is in view and that
+ *   is never ordinary - but it is not yet the moment worth the frontier model, and
+ *   tiering every distant or walled-off zombie as pivotal would spend a permadeath
+ *   budget on a threat that cannot reach.
  */
 fun importanceOf(trigger: Trigger): DecisionImportance =
     when (trigger) {
@@ -38,6 +46,29 @@ fun importanceOf(trigger: Trigger): DecisionImportance =
         is Trigger.BlockSighted -> DecisionImportance.ROUTINE
         is Trigger.Spoken -> DecisionImportance.NOTABLE
         is Trigger.Damaged -> DecisionImportance.PIVOTAL
+        is Trigger.ThreatSighted -> threatImportance(trigger)
+    }
+
+/**
+ * The tier one threat sighting warrants, given what the body already verified.
+ *
+ * Split out rather than inlined because the pivotal case is a conjunction of two
+ * separately-measured facts and a reader has to be able to see that both are required: a
+ * threat behind a wall and a threat across the perception radius are each survivable.
+ *
+ * WHAT IS NOT IN THE CONJUNCTION IS THE POINT. [Trigger.ThreatSighted.reachable] is read
+ * by the mind as evidence and is deliberately not read here, because a threat Loom cannot
+ * route *to* is not a threat that cannot reach the body - the engine answers a perfectly
+ * reachable target with no route whenever the body is off the ground, which is exactly
+ * what a body being hit is. An in-world run priced its most dangerous moment - a zombie
+ * two blocks away, in the open, landing blows - as notable for that reason, and the agent
+ * died. An inability to route must never make danger cheaper.
+ */
+private fun threatImportance(sighting: Trigger.ThreatSighted): DecisionImportance =
+    if (sighting.visible && sighting.distance <= PIVOTAL_THREAT_DISTANCE_BLOCKS) {
+        DecisionImportance.PIVOTAL
+    } else {
+        DecisionImportance.NOTABLE
     }
 
 /**
