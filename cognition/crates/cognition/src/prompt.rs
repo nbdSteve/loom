@@ -34,13 +34,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v6";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v7";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v6";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v7";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v6";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v7";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -184,6 +184,33 @@ fn trigger_line(trigger: &Trigger) -> String {
         Trigger::Damaged { amount, source } => format!(
             "you took {amount} damage from {source}",
             source = field(source)
+        ),
+        Trigger::ThreatSighted {
+            threat,
+            entity_ref,
+            distance,
+            direction,
+            visible,
+            reachable,
+        } => format!(
+            "you caught sight of {threat} (ref {entity_ref}) that hunts your kind, \
+about {distance} blocks away to the {bearing}, {sight}, and {reach}",
+            threat = field(threat),
+            entity_ref = field(entity_ref),
+            distance = number(*distance),
+            bearing = bearing_word(*direction),
+            sight = if *visible {
+                "in sight"
+            } else {
+                "out of sight behind something"
+            },
+            // Said as the search that produced it: the body asked whether it could
+            // walk to the threat, not whether the threat can walk to the body.
+            reach = if *reachable {
+                "there is walkable ground between you"
+            } else {
+                "no walkable path between you was found"
+            }
         ),
         Trigger::BlockSighted { block } => {
             format!("you caught sight of {block}", block = field(block))
@@ -513,6 +540,52 @@ mod tests {
                 situation = prompt.situation
             );
         }
+    }
+
+    #[test]
+    fn a_threat_sighting_names_the_ref_a_flight_has_to_answer_with() {
+        // The whole point of the trigger: the handle the body issued for this one
+        // creature has to reach the model, because `flee` accepts nothing else and
+        // the brief forbids inventing one. A sighting that described the threat
+        // without its ref would leave the model no way to act on it.
+        let sighting = |reachable: bool| Trigger::ThreatSighted {
+            threat: "zombie".to_owned(),
+            entity_ref: "e7".to_owned(),
+            distance: 5.5,
+            direction: Bearing::North,
+            visible: true,
+            reachable,
+        };
+
+        let seen = perception(sighting(true), DecisionImportance::Pivotal);
+        let prompt = render(&router().route(seen.importance), &seen);
+        for expected in [
+            "ref e7",
+            "zombie",
+            "hunts your kind",
+            "5.5 blocks away",
+            "north",
+            "in sight",
+            "there is walkable ground between you",
+        ] {
+            assert!(
+                prompt.situation.contains(expected),
+                "the sighting must carry {expected:?}, got {situation}",
+                situation = prompt.situation
+            );
+        }
+
+        // Unreachable is said outright rather than left off, so a model cannot read
+        // silence as a route.
+        let walled = perception(sighting(false), DecisionImportance::Pivotal);
+        let refused = render(&router().route(walled.importance), &walled);
+        assert!(
+            refused
+                .situation
+                .contains("no walkable path between you was found"),
+            "an unreachable sighting must say so, got {situation}",
+            situation = refused.situation
+        );
     }
 
     #[test]

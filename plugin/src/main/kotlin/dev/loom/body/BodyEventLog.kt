@@ -140,6 +140,23 @@ enum class BodyEvent {
     PERCEIVED,
 
     /**
+     * A body saw something that hunts its kind and Loom did not wake its mind for it.
+     *
+     * The counterpart to a threat sighting that did fire, and the reason a run can tell
+     * an agent that decided to stand still from one that was never asked. Without it,
+     * the bounds that make an event-driven trigger affordable - the debounce, the state
+     * comparison, the nightly ceiling - would each be a silent decision taken on the
+     * agent's behalf, and a death by predation would look like a choice.
+     *
+     * Which bound refused is in [BodyEventRecord.outcome], as one of `EventTag`'s
+     * `THREAT_` tags, so the three are countable apart: a run dominated by the debounce
+     * is healthy, and one dominated by the nightly cap is a run whose budget shaped its
+     * own findings.
+     */
+    @SerialName("threatSuppressed")
+    THREAT_SUPPRESSED,
+
+    /**
      * A state change in an agent's flight from a threat.
      *
      * One accepted `Flee` is a state rather than a hop - see `ActiveRetreat.kt` - so the

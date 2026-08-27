@@ -40,6 +40,9 @@ object EventTag {
     /** The agent was hurt. */
     const val DAMAGED: String = "damaged"
 
+    /** The agent noticed a living thing that hunts its kind. */
+    const val THREAT_SIGHTED: String = "threatSighted"
+
     /** The agent noticed a block worth reacting to. */
     const val BLOCK_SIGHTED: String = "blockSighted"
 
@@ -91,6 +94,33 @@ object EventTag {
 
     /** A spawn was refused because the world itself would not take the body. */
     const val WORLD_REFUSED: String = "worldRefused"
+
+    /**
+     * A threat was seen again too soon after the last one Loom reported.
+     *
+     * The ordinary way a sighting is refused, and the reason a threat standing in view
+     * does not cost a model call twenty times a second. Countable on its own so a run
+     * can state how much of its threat traffic the cadence absorbed.
+     */
+    const val THREAT_DEBOUNCED: String = "threatDebounced"
+
+    /**
+     * A threat's cadence elapsed and it is in exactly the state already reported.
+     *
+     * Kept apart from [THREAT_DEBOUNCED] because the bound that refused was not the
+     * clock but the news: a standing hostile behind the same wall at the same distance
+     * is something the mind has already been told.
+     */
+    const val THREAT_UNCHANGED: String = "threatUnchanged"
+
+    /**
+     * A threat was not reported because this agent's pivotal budget for the night is spent.
+     *
+     * The one suppression that is Loom declining to pay rather than Loom having nothing
+     * new to say, which is why it is never folded into either neighbour: a run whose
+     * agent died of a hostile it was never asked about has to be able to say which.
+     */
+    const val THREAT_OVER_NIGHTLY_CAP: String = "threatOverNightlyCap"
 
     /** A conversion was refused: the body is unchanged, and the agent still has it. */
     const val CONVERSION_REFUSED: String = "conversionRefused"
@@ -183,6 +213,7 @@ fun tagOf(trigger: Trigger): String =
         is Trigger.GoalReview -> EventTag.GOAL_REVIEW
         is Trigger.Spoken -> EventTag.SPOKEN
         is Trigger.Damaged -> EventTag.DAMAGED
+        is Trigger.ThreatSighted -> EventTag.THREAT_SIGHTED
         is Trigger.BlockSighted -> EventTag.BLOCK_SIGHTED
     }
 

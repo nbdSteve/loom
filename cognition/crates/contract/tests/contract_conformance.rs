@@ -205,6 +205,28 @@ fn a_ref_outside_its_length_is_refused_at_decode() {
         "a nine-character observation ref decoded into a Perception"
     );
 
+    // A threat sighting carries a ref of its own, and the bound has to reach it for
+    // the same reason: that handle is the one a `Flee` answering the sighting must
+    // name back, so a length no request could have issued is refused where it
+    // arrives rather than at the body. Only the first occurrence is replaced, which
+    // is the trigger's own ref - the observation below it keeps a valid one, so what
+    // the decoder refuses is the trigger.
+    let sighted = fs::read_to_string(
+        contract_dir()
+            .join("fixtures/valid")
+            .join("perception-threat-sighted.json"),
+    )
+    .unwrap();
+    let invented = sighted.replacen("\"ref\":\"e1\"", "\"ref\":\"e123456789\"", 1);
+    assert_ne!(
+        sighted, invented,
+        "the threat fixture no longer states the ref to edit"
+    );
+    assert!(
+        serde_json::from_str::<Perception>(invented.trim_end_matches('\n')).is_err(),
+        "an over-long threat ref decoded into a Perception"
+    );
+
     // The bound is the length and nothing else: a ref of exactly the maximum is an
     // ordinary one the body issues, and must still decode.
     let longest = over_long.replace("\"ref\":\"entity-42\"", "\"ref\":\"entity-4\"");
