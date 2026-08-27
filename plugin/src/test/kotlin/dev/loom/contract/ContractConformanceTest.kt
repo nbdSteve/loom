@@ -4,6 +4,7 @@ import com.networknt.schema.InputFormat
 import com.networknt.schema.JsonSchema
 import com.networknt.schema.JsonSchemaFactory
 import com.networknt.schema.SpecVersion
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -167,6 +168,48 @@ class ContractConformanceTest {
             astral,
             LoomJson.decodeFromString<Perception>(astralRef).surroundings[0].ref,
         )
+    }
+
+    /**
+     * A sighting names one creature by a handle the same perception carries.
+     *
+     * The sweeps above already validate both threat fixtures against the schema and
+     * round-trip the valid one; what they cannot state is the join the whole trigger exists
+     * for. A `Trigger.ThreatSighted` is only actionable if the ref it names appears in the
+     * observations of the very perception it arrived on, because that is the request the
+     * handle was minted in - so this asserts the two agree in the canonical fixture rather
+     * than only that each field is well typed.
+     */
+    @Test
+    fun aThreatSightingNamesAHandleItsOwnPerceptionCarries() {
+        val sighted = fixtureText("valid", "perception-threat-sighted.json")
+
+        val perception = LoomJson.decodeFromString<Perception>(sighted)
+        val trigger = perception.trigger as Trigger.ThreatSighted
+
+        assertEquals("zombie", trigger.threat)
+        assertTrue(
+            perception.surroundings.any { it.ref == trigger.ref },
+            "the threat the trigger names must be one of the observations that found it, or the " +
+                "flight it prompts names a handle the body cannot resolve",
+        )
+    }
+
+    /**
+     * A sighting with no handle is refused where it arrives, not only by the schema.
+     *
+     * Nothing on either wire is schema-validated at runtime, so `required` is a rule a socket
+     * walks straight past. A threat with no ref is worse than malformed: it describes
+     * something hunting the agent and gives the mind no way to name it back, so every flight
+     * it could prompt would be refused as a threat that was never named.
+     */
+    @Test
+    fun aSightingWithNoRefIsRefusedAtDecode() {
+        val unnamed = fixtureText("invalid", "perception-threat-missing-ref.json")
+
+        assertThrows<SerializationException>("a threat with no handle decoded into a Perception") {
+            LoomJson.decodeFromString<Perception>(unnamed)
+        }
     }
 
     private fun fixtureText(

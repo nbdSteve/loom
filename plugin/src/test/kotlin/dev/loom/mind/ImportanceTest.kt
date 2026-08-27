@@ -7,12 +7,24 @@
  */
 package dev.loom.mind
 
+import dev.loom.contract.Bearing
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Trigger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+
+/** A zombie in the open, close enough that the agent's own options are still real. */
+private val ZOMBIE_ON_TOP_OF_IT =
+    Trigger.ThreatSighted(
+        threat = "entity.minecraft.zombie",
+        ref = "e1",
+        distance = 2.0,
+        direction = Bearing.NORTH,
+        visible = true,
+        reachable = true,
+    )
 
 class ImportanceTest {
     private val everyTrigger =
@@ -21,6 +33,8 @@ class ImportanceTest {
             Trigger.BlockSighted("diamond_ore"),
             Trigger.Spoken(from = "player-steve", text = "want to trade?"),
             Trigger.Damaged(amount = 3L, source = "zombie"),
+            ZOMBIE_ON_TOP_OF_IT,
+            ZOMBIE_ON_TOP_OF_IT.copy(distance = 20.0, ref = "e2"),
         )
 
     @Test
@@ -46,11 +60,36 @@ class ImportanceTest {
     }
 
     @Test
-    @DisplayName("no trigger but damage reaches the pivotal tier")
-    fun onlyDamageIsPivotal() {
-        // The property that matters for cost: everything else stays off the frontier
-        // model, whatever the rest of the table says.
-        for (trigger in everyTrigger.filterNot { it is Trigger.Damaged }) {
+    @DisplayName("a hostile close by and in sight is pivotal: it is the other way an agent ends")
+    fun aCloseThreatIsPivotal() {
+        assertEquals(DecisionImportance.PIVOTAL, importanceOf(ZOMBIE_ON_TOP_OF_IT))
+    }
+
+    @Test
+    @DisplayName("a threat with no route to it is pivotal all the same")
+    fun anUnreachableThreatIsStillPivotal() {
+        // The engine refuses a route whenever the body is off the ground, and a body being
+        // hit is off the ground - so pricing on reachability would charge the cheap tier in
+        // the worst danger an agent will ever be in. `ThreatWatch`'s nightly ceiling counts
+        // the same conjunction, and the two have to agree or the budget stops counting what
+        // it pays for.
+        assertEquals(DecisionImportance.PIVOTAL, importanceOf(ZOMBIE_ON_TOP_OF_IT.copy(reachable = false)))
+    }
+
+    @Test
+    @DisplayName("a threat behind a wall, or across the view, is notable rather than pivotal")
+    fun aDistantOrHiddenThreatIsNotable() {
+        assertEquals(DecisionImportance.NOTABLE, importanceOf(ZOMBIE_ON_TOP_OF_IT.copy(visible = false)))
+        assertEquals(DecisionImportance.NOTABLE, importanceOf(ZOMBIE_ON_TOP_OF_IT.copy(distance = 20.0)))
+    }
+
+    @Test
+    @DisplayName("nothing but danger reaches the pivotal tier")
+    fun onlyDangerIsPivotal() {
+        // The property that matters for cost: everything that is not damage or a hostile
+        // within reach stays off the frontier model, whatever the rest of the table says.
+        val dangers = everyTrigger.filter { it is Trigger.Damaged || it == ZOMBIE_ON_TOP_OF_IT }
+        for (trigger in everyTrigger - dangers.toSet()) {
             assertNotEquals(DecisionImportance.PIVOTAL, importanceOf(trigger), "trigger $trigger")
         }
     }

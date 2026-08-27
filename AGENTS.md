@@ -167,6 +167,28 @@ Every transition is one `retreating` record with one of `EventTag`'s ten retreat
 Reading them all as failures said "could not run from a threat, and is still in range of it" about an agent whose zombie had burnt to death, and inflated the one number a survival run reads for predation with decisions that were never about the ground at all.
 `ActiveRetreatTest` is the whole of what a tick may ask; the engine half needs a live `Level` and is only provable on a real server.
 
+**A threat interrupts cognition, and the whole rule for when is `ThreatWatch.kt`.**
+Hunger is slow and the scheduled goal review is a fine place to notice it; predation is not, and an in-world run watched a zombie kill an agent whose every perception still said `goalReview`.
+So a hostile in view earns a `Trigger.ThreatSighted` at once, and the two opposite failures bound everything else: never firing early kills agents mid-cadence, and firing every tick a zombie stands there is a frontier model call twenty times a second.
+`VILLAGER_HUNTERS` is named by the engine's own entity description id rather than by class, which is why `zombie_villager` is in it: it inherits Zombie's target goals rather than declaring its own.
+A first sight fires immediately, and after that only on `THREAT_DEBOUNCE_TICKS` (100) or on a change that alters what the agent should do - stepping out from behind a wall, or crossing inside `PIVOTAL_THREAT_DISTANCE_BLOCKS`.
+The free tests run before the reachability probe on purpose, so a threat in view for a minute costs one path search per window and a suppressed sighting costs none; the probe is a function the caller supplies and must go through the same bounded navigation seam a walk pays into.
+**The nightly ceiling is per agent, which is the opposite choice from `NavigationPolicy`'s and made for the opposite reason.**
+A path search is a cost to the *server*, so agents must share one budget or the tick suffers; a model call is a cost to the *run*, and an agent that has spent nothing tonight has done nothing to deserve a refusal because its neighbour was busy being hunted - which under one shared ceiling is exactly the agent that dies unasked.
+The consequence is deliberate: `MAX_PIVOTAL_THREAT_CALLS_PER_NIGHT` (8) is multiplied by the head count, not by the server, when an operator sizes a run's inference bill.
+Reaching it suppresses the sighting rather than downgrading it to a cheaper tier, because a pivotal moment answered by a routine model reads in the record as a decision the agent made when what happened is that Loom stopped paying.
+Reset is a day *boundary* from the world's own `dayOrdinal`, never an elapsed interval, so an agent that met its first zombie at dusk gets the same allowance as one that met its first at midnight, and `ThreatWatch.forget` drops the scene an agent stood in but never its spend - a body put away and spawned again must not come back with a fresh allowance.
+`ThreatWatch`'s pivotal conjunction (`visible && insidePivotal`) is deliberately the same one `dev.loom.mind`'s `importanceOf` prices, and both leave `reachable` out: the engine refuses a route whenever the body is off the ground, and a body being hit is off the ground, so pricing on reachability would charge the cheap tier in the worst danger an agent will ever be in.
+Every refusal is one append-only `threatSuppressed` record carrying `THREAT_DEBOUNCED`, `THREAT_UNCHANGED` or `THREAT_OVER_NIGHTLY_CAP`, because a run whose agent did nothing about an approaching zombie has to be able to say which bound never asked its mind.
+It is deliberately **quiet on `/loomwatch`**: the append-only record is the evidence, and a note recorded once a second would fill all eight lines of a bounded display with the thing that did *not* happen.
+
+**The vigilance loop is a coordinator above both ports, like `AutonomousDriver` and for the same reason.**
+`BodyPort.senseThreat` is one call rather than "are there threats?" followed by `perceive`, because a ref means something only inside the request that minted it - a trigger from one capture sent with a second capture's perception names a handle the mind cannot resolve, and every flight it prompts is refused as a threat that was never named.
+`ThreatDriver.sweep` therefore submits the port's own perception unchanged, classifying it on the way past, and does not decide what matters, read the world, or journal.
+`THREAT_SCAN_CADENCE` (1 s) bounds *suppression records*, not model spend, which the debounce already bounds; scanning every tick would write twenty refusals a second for as long as anything hostile stood in view.
+Only `liveBodies()` is scanned, so no dead or put-away agent is ever looked at.
+Watching a sighting reach a mind in world needs a stand-in that answers `flee`, for the reason the verification section below records: `ScriptedBackend` answers `flee` only to a `damaged` trigger.
+
 **The world clock is derived from the level's own time, and its countdown never reads zero.**
 `SelfState.world` carries `dayPhase`, `isDay` and `ticksUntilNightfall`; `WorldClock` (engine-free) owns what the number means and `level.isDay` answers daylight directly, because a dimension with a fixed time has a day time and no daylight and the agent needs the difference.
 `ticksUntilNightfall` counts to the *next* nightfall and wraps, so during the night it is a whole day rather than zero: zero for the length of a night would read as a nightfall permanently about to happen, and the phase is what says the night is already here.
