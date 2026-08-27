@@ -53,6 +53,7 @@ package dev.loom.body
 
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.sqrt
 
@@ -380,7 +381,24 @@ class NavigationPolicy(
         from: BodyLocation,
         to: BodyLocation,
         tick: Long,
-    ): IntentOutcome {
+    ): IntentOutcome = routing(walker, from, to, tick).outcome
+
+    /**
+     * [route], with the verdict that produced the outcome kept alongside it.
+     *
+     * For the one caller that has to tell Loom's own bounds apart: a retreat treats a spent
+     * search budget as a condition to wait out and a target past the reach as an answer, and
+     * both arrive here as an [IntentOutcome.Rejected] that says nothing about which it was.
+     * Reading the verdict is what that caller needs; re-implementing request-then-walk to
+     * get at it would give this file's stop rule a second, driftable copy, which is exactly
+     * the mistake the rule above is written to prevent.
+     */
+    fun routing(
+        walker: Walker,
+        from: BodyLocation,
+        to: BodyLocation,
+        tick: Long,
+    ): Routing {
         val request = request(from, to, tick)
         val outcome =
             if (request == PathRequest.Granted) {
@@ -391,7 +409,7 @@ class NavigationPolicy(
         if (outcome !is IntentOutcome.Accepted) {
             walker.stopWalking()
         }
-        return outcome
+        return Routing(request, outcome)
     }
 
     /**
@@ -438,7 +456,88 @@ class NavigationPolicy(
 fun blocksApart(
     from: BodyLocation,
     to: BodyLocation,
-): Double = sqrt(square(to.x - from.x) + square(to.y - from.y) + square(to.z - from.z))
+): Double = straightLine(to.x - from.x, to.y - from.y, to.z - from.z)
+
+/**
+ * How far apart two whole blocks are, in blocks.
+ *
+ * The same measure as the one above, so a shortfall a record states about two blocks stays
+ * comparable with the reach a request was granted within. Stated as its own signature rather
+ * than by widening a [BodyBlock] back into a [BodyLocation]: a block has no world and no
+ * fractional part, and inventing either to reuse one function is how the two readings of a
+ * place drift.
+ */
+fun blocksApart(
+    from: BodyBlock,
+    to: BodyBlock,
+): Double =
+    straightLine(
+        (to.x - from.x).toDouble(),
+        (to.y - from.y).toDouble(),
+        (to.z - from.z).toDouble(),
+    )
+
+/** The one distance in this file, so both readings of "how far apart" cannot diverge. */
+private fun straightLine(
+    dx: Double,
+    dy: Double,
+    dz: Double,
+): Double = sqrt(square(dx) + square(dy) + square(dz))
 
 /** Reads better than `x * x` inside the sum above, and keeps that line short. */
 private fun square(n: Double): Double = n * n
+
+/**
+ * A whole block, as the thing a route is actually asked for.
+ *
+ * A [BodyLocation] is a *measurement* - where something is, to as many decimal places as the
+ * engine cares to give - and a block is not. Keeping them different types is what makes
+ * [blockAt] the only way to get from one to the other, so the block a search is asked for and
+ * the block a record names cannot be arrived at by two different roundings.
+ */
+data class BodyBlock(
+    val x: Long,
+    val y: Long,
+    val z: Long,
+)
+
+/**
+ * The block [location] is in.
+ *
+ * FLOOR, NOT TRUNCATION, AND THE DIFFERENCE IS A BUG THIS ALREADY HAD.
+ * Truncating toward zero is floor only for a non-negative coordinate, so at a negative x or z
+ * it names the block one step nearer the origin. On the walk path that never showed: the
+ * contract's `moveTo` carries three whole numbers, and the two roundings agree on every one of
+ * them. On the flight path it bites, because the ground answers a retreat search with the
+ * *bottom centre* of a block it scored - `Vec3.atBottomCenterOf`, so x and z carry a half
+ * block - and in a negative-x arena the routed block was one step back toward the very threat
+ * the body was running from, handing back up to 1.41 of the [MEANINGFUL_SEPARATION_BLOCKS]
+ * gain the choice had just insisted on. Nothing errored and no record contradicted it.
+ *
+ * This is the engine's own rule as well: `BlockPos.containing` floors each coordinate with
+ * `Mth.floor`, and `WorldFootprint.chunkOf` already floors for the same reason. Loom asking
+ * for a block by any other rounding would be asking about somewhere the engine does not think
+ * the position is.
+ */
+fun blockAt(location: BodyLocation): BodyBlock =
+    BodyBlock(
+        x = blockCoordinate(location.x),
+        y = blockCoordinate(location.y),
+        z = blockCoordinate(location.z),
+    )
+
+/** One axis of [blockAt], where the rounding rule is stated once. */
+private fun blockCoordinate(coordinate: Double): Long = floor(coordinate).toLong()
+
+/**
+ * What one routing attempt came to: the [request] verdict and the [outcome] it produced.
+ *
+ * Both, because they answer different questions. The outcome is what the agent is told and
+ * what decides whether the body was stopped; the verdict is *whose* bound refused, which is
+ * the difference between a tick that had no search budget left and a target nothing could
+ * have reached.
+ */
+data class Routing(
+    val request: PathRequest,
+    val outcome: IntentOutcome,
+)

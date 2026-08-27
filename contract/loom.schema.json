@@ -17,6 +17,13 @@
       "enum": ["north", "east", "south", "west"]
     },
 
+    "EntityRef": {
+      "description": "A short opaque handle for one living thing the body observed, valid only inside the single perception that issued it and only for the agent that perception belongs to. It carries no meaning the mind may parse: it is not a name, not a type, not an entity id, and two things that are alike in every other way still get different refs. It exists so a decision can name one particular thing back to the body without the body having to guess which of two identical creatures was meant, and a ref from any other request or any other agent is refused rather than resolved.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8
+    },
+
     "DayPhase": {
       "description": "Which part of the world's day it is. Derived from the level's own day time, so an agent can tell midday from dusk without being told the raw tick count.",
       "type": "string",
@@ -96,6 +103,10 @@
         "visible": {
           "description": "Whether the body has an unobstructed line of sight to the observed thing. False means the body knows it is there and cannot see it - through a wall, or round a corner - which is a different situation from not knowing at all.",
           "type": "boolean"
+        },
+        "ref": {
+          "description": "The handle by which a decision may name this particular thing back to the body. Present only for a living thing, because only a living thing can be acted on as itself; a block is named by its position instead, so its absence is a fact about what the observation is rather than an omission. Absent and present are therefore both ordinary, and a mind must never invent one.",
+          "$ref": "#/$defs/EntityRef"
         }
       }
     },
@@ -226,13 +237,13 @@
         },
         {
           "title": "Flee",
-          "description": "Flee from a named source of threat.",
+          "description": "Move away from one living thing, named by the ref it carried in the perception being answered. A ref rather than a name or a type on purpose: two identical creatures are different threats, and the body must retreat from the one the mind meant. The body resolves the ref against that one request only, and refuses a ref it did not issue for that request rather than guessing.",
           "type": "object",
           "additionalProperties": false,
           "required": ["action", "from"],
           "properties": {
             "action": { "const": "flee" },
-            "from": { "type": "string" }
+            "from": { "$ref": "#/$defs/EntityRef" }
           }
         },
         {

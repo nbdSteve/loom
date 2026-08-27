@@ -19,6 +19,7 @@ package dev.loom.body.nms
 
 import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
+import dev.loom.body.EntityRefs
 import dev.loom.body.PerceptionBound.Bounded
 import dev.loom.body.PerceptionBound.Measured
 import dev.loom.body.WorldClock
@@ -50,7 +51,8 @@ import java.util.UUID
 private val BOUND = bodyPerceptionBound()
 
 /**
- * Builds the bounded snapshot the mind receives for [body].
+ * Builds the bounded snapshot the mind receives for [this] body, as the perception of
+ * [trigger].
  *
  * Bounded twice over - by distance and by count - and summarized to text, so the
  * perception can never widen into a live world handle.
@@ -61,32 +63,40 @@ private val BOUND = bodyPerceptionBound()
  * ordinary perception, so an agent reacts to its own need through the cognition loop
  * it already has rather than through a mechanism of its own.
  */
-internal fun capturePerception(
+internal fun LoomBodyEntity.capturePerception(
     agentId: AgentId,
-    body: LoomBodyEntity,
     energy: Double,
     trigger: Trigger,
     capturedTick: Long,
+    refs: EntityRefs,
 ): Perception {
+    val body = this
     val nearby = observationsAround(body)
+    val requestId = UUID.randomUUID().toString()
+    // One handle per living thing, in the order the bound kept them, so a decision can
+    // name one creature back to the body. Minted from the trimmed list rather than the
+    // candidates, so nothing is bound that the mind will never be shown.
+    val bound = refs.issue(agentId, requestId, nearby.shown.map { it.thing.uuid })
+    val surroundings = nearby.shown.mapIndexed { at, seen -> observationOf(body, seen, bound[at].handle) }
+    val selfState =
+        SelfState(
+            health = bodyVitals(body).energy,
+            energy = energy,
+            position = listOf(body.x, body.y, body.z),
+            // The body reveals a summary, never its live inventory handle.
+            inventorySummary = emptyList(),
+            world = worldStateOf(body.level()),
+        )
     return Perception(
-        requestId = UUID.randomUUID().toString(),
+        requestId = requestId,
         agentId = agentId.value,
         trigger = trigger,
         // Every snapshot captured here is routine; importance is classified by the
-        // domain above the port once cognition is wired in.
+        // domain above the port, which is the only thing that knows what a trigger costs.
         importance = DecisionImportance.ROUTINE,
         capturedTick = capturedTick,
-        selfState =
-            SelfState(
-                health = bodyVitals(body).energy,
-                energy = energy,
-                position = listOf(body.x, body.y, body.z),
-                // The body reveals a summary, never its live inventory handle.
-                inventorySummary = emptyList(),
-                world = worldStateOf(body.level()),
-            ),
-        surroundings = nearby.shown.map { observationOf(body, it) },
+        selfState = selfState,
+        surroundings = surroundings,
         // Only what the *count* bound dropped. Everything the distance filter and the
         // living-entity filter refused was never an observation, so counting it here
         // would tell the mind it was blind to things it was never able to see.
@@ -160,10 +170,18 @@ private fun observationsAround(body: LoomBodyEntity): Bounded<Measured<LivingEnt
     return BOUND.nearest(nearby) { body.distanceTo(it).toDouble() }
 }
 
-/** Describes [seen] - a thing near [body], already measured - as [body] perceives it. */
+/**
+ * Describes [seen] - a thing near [body], already measured - as [body] perceives it.
+ *
+ * [handle] is the request-scoped name the mind may use to point back at this creature.
+ * Every living thing reported carries one: a description cannot distinguish two zombies
+ * the same distance away in the same direction, and an observation the mind can see and
+ * cannot name is indistinguishable on the wire from a block.
+ */
 private fun observationOf(
     body: LoomBodyEntity,
     seen: Measured<LivingEntity>,
+    handle: String,
 ): Observation {
     val other = seen.thing
     return Observation(
@@ -178,6 +196,7 @@ private fun observationOf(
         // field of view: the body's facing is not consulted, and the brief the mind is
         // given says so.
         visible = body.hasLineOfSight(other),
+        ref = handle,
     )
 }
 

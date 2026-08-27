@@ -34,13 +34,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v4";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v6";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v4";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v6";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v4";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v6";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -80,12 +80,15 @@ You are the mind of an agent that lives in a Minecraft world through a body you 
 do not directly control. You are told what your body just experienced, and you \
 answer with one action for it to take and your reasoning for taking it.
 
-Your body can do exactly five things:
+Your body accepts exactly five actions:
 - say: speak a line of text out loud.
 - moveTo: walk toward a block position given as whole x, y, z coordinates.
-- flee: move away from a named source of danger.
 - rest: recover, refilling your energy reserve completely.
 - idle: do nothing this time.
+- flee: run away from one living thing, named by the ref it carries. Your body \
+keeps running from it on its own after this, without being asked again, until it \
+is clear of it. It can still refuse: the thing may already be gone, or there may \
+be nowhere worth running to.
 
 Facts about your world that should shape every choice:
 - You have one body and one life. If it dies you are gone permanently: there is \
@@ -98,6 +101,10 @@ not let it run low with no plan to rest.
 carries how far away it is, which compass direction it lies in, how far above or \
 below you it is, and whether you can actually see it right now - a thing you \
 cannot see is one you know is there through a wall or round a corner.
+- Some things in your surroundings carry a short ref. A ref is the handle for \
+that one thing in this one message: it is the only way to name it back to your \
+body, it means nothing in any other message, and a thing without one cannot be \
+named at all. Never invent a ref and never reuse one you were given earlier.
 - Being in sight means only that nothing solid stands in the straight line \
 between you and it. It is not a field of view and it has nothing to do with which \
 way your body happens to be facing: everything in your surroundings list is \
@@ -330,8 +337,9 @@ const fn bearing_word(bearing: Bearing) -> &'static str {
 /// about the rest as their absence, which is the opposite of what the body meant.
 fn observation_phrase(seen: &Observation) -> String {
     format!(
-        "{what} about {distance} blocks away to the {bearing}{height}, {sight}",
+        "{what}{handle} about {distance} blocks away to the {bearing}{height}, {sight}",
         what = field(&seen.what),
+        handle = ref_phrase(seen.entity_ref.as_deref()),
         distance = number(seen.distance),
         bearing = bearing_word(seen.direction),
         height = height_phrase(seen.vertical_offset),
@@ -341,6 +349,18 @@ fn observation_phrase(seen: &Observation) -> String {
             "out of sight behind something"
         }
     )
+}
+
+/// The ref of a living thing, or nothing at all for something that has none.
+///
+/// Absent is ordinary rather than a gap - only a living thing can be acted on as
+/// itself - so nothing is said about its absence, which would otherwise read as an
+/// omission the body regretted.
+fn ref_phrase(entity_ref: Option<&str>) -> String {
+    match entity_ref {
+        Some(handle) => format!(" (ref {handle})", handle = field(handle)),
+        None => String::new(),
+    }
 }
 
 /// How far above or below the agent something is, or nothing if it is level.
@@ -463,6 +483,7 @@ mod tests {
                 direction: Bearing::East,
                 vertical_offset: 2.0,
                 visible: true,
+                entity_ref: None,
             }],
             surroundings_omitted: 0,
         }
@@ -538,6 +559,41 @@ mod tests {
     }
 
     #[test]
+    fn an_observation_that_carries_a_ref_puts_the_handle_in_front_of_the_model() {
+        // The one thing that makes a flee possible. A ref is the only way the model can
+        // name one particular creature back to the body, so if it never reaches the
+        // situation the model has nothing to name: every flee it chose would arrive as an
+        // unresolvable handle and be refused, with the capability silently off against a
+        // real provider while every other test here stayed green.
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.surroundings[0].entity_ref = Some("e3".to_owned());
+
+        let prompt = render(&router().route(seen.importance), &seen);
+
+        assert!(
+            prompt.situation.contains("(ref e3)"),
+            "the handle must reach the model verbatim, got {situation}",
+            situation = prompt.situation
+        );
+    }
+
+    #[test]
+    fn an_observation_with_no_ref_is_not_given_one() {
+        // The other half: only a living thing carries a ref, so a phrase where there is no
+        // handle would offer a model something to name that the body could not resolve.
+        let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        assert!(seen.surroundings[0].entity_ref.is_none());
+
+        let prompt = render(&router().route(seen.importance), &seen);
+
+        assert!(
+            !prompt.situation.contains("(ref"),
+            "a thing with no handle must not be described as having one, got {situation}",
+            situation = prompt.situation
+        );
+    }
+
+    #[test]
     fn the_brief_says_in_sight_is_a_clear_line_and_not_a_field_of_view() {
         // `visible` is the engine's own ray trace between the two entities, so the
         // only thing it reports is whether something solid stands in the straight
@@ -554,6 +610,39 @@ mod tests {
             "not a field of view",
             "which way your body happens to be facing",
             "ahead of you or behind you",
+        ] {
+            assert!(
+                prompt.system.contains(expected),
+                "the brief must say {expected:?}, got {system}",
+                system = prompt.system
+            );
+        }
+    }
+
+    #[test]
+    fn the_brief_does_not_tell_the_mind_flee_is_unsupported() {
+        // The body carries a flee out: the intent routes through a retreat and the
+        // body keeps running from the threat across ticks without being asked again.
+        // A brief that still told the model its body "cannot carry it out yet and
+        // will refuse it, so choose something else for now" would switch the whole
+        // capability off at the prompt, silently and only against a real provider,
+        // which is exactly how it reached a branch that implements flight.
+        let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        let prompt = render(&router().route(seen.importance), &seen);
+        for denial in [
+            "cannot carry it out yet",
+            "choose something else for now",
+            "not actuated",
+        ] {
+            assert!(
+                !prompt.system.contains(denial),
+                "the brief must not say {denial:?}, got {system}",
+                system = prompt.system
+            );
+        }
+        for expected in [
+            "keeps running from it on its own",
+            "without being asked again",
         ] {
             assert!(
                 prompt.system.contains(expected),
@@ -582,10 +671,17 @@ mod tests {
         })
         .collect();
 
-        assert_eq!(
-            generations,
-            vec!["4", "4", "4"],
-            "every tier's prompt version must name the same generation of the shared brief"
+        // Pinned against each other rather than against a literal: the number moves
+        // every time the shared brief is edited, and a test that had to be edited with
+        // it would be edited by whoever forgot to move a tier.
+        assert!(
+            generations.iter().all(|generation| !generation.is_empty()),
+            "every tier's prompt version must name a generation, got {generations:?}"
+        );
+        assert!(
+            generations.windows(2).all(|pair| pair[0] == pair[1]),
+            "every tier's prompt version must name the same generation of the shared \
+             brief, got {generations:?}"
         );
     }
 
@@ -765,6 +861,7 @@ mod tests {
                 direction: Bearing::North,
                 vertical_offset: 0.0,
                 visible: true,
+                entity_ref: None,
             })
             .collect();
         seen.surroundings_omitted = 7;
@@ -792,6 +889,7 @@ mod tests {
                 direction: Bearing::North,
                 vertical_offset: 0.0,
                 visible: true,
+                entity_ref: None,
             })
             .collect();
         seen.surroundings_omitted = -1_000;
@@ -871,6 +969,7 @@ mod tests {
                 direction: Bearing::North,
                 vertical_offset: 0.0,
                 visible: true,
+                entity_ref: None,
             })
             .collect();
         let prompt = render(&router().route(seen.importance), &seen);

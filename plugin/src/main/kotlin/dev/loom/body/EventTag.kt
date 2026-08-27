@@ -104,6 +104,77 @@ object EventTag {
      * `standing by` about an agent that has nothing to stand with.
      */
     const val BODY_TAKEN: String = "bodyTaken"
+
+    /** A flight was accepted and the body is walking the first hop of it. */
+    const val RETREAT_STARTED: String = "retreatStarted"
+
+    /** A route ended with the threat still there, and another hop was routed. */
+    const val RETREAT_CONTINUED: String = "retreatContinued"
+
+    /**
+     * The flight is held, waiting for the body to be back on the ground.
+     *
+     * Not a refusal: a ground navigator will not search mid-air, and a body being hit is
+     * mid-air. Counted apart from the failures because it resolves itself.
+     */
+    const val RETREAT_PENDING_GROUND: String = "retreatPendingGround"
+
+    /**
+     * A flight is held because the tick's path-search budget was already spent.
+     *
+     * Kept apart from [RETREAT_FAILED] because they are opposite facts about a run. This one
+     * says Loom's own per-tick search budget ran out under contention and the flight will ask
+     * again at its cadence; the other says the ground itself offered nothing and the agent
+     * has been left standing in range of something hunting it. A run that could not tell them
+     * apart could not say whether its agents were cornered or merely over budget.
+     */
+    const val RETREAT_PENDING_BUDGET: String = "retreatPendingBudget"
+
+    /** The agent got beyond what it can perceive of the threat. It ran away. */
+    const val RETREAT_SAFE: String = "retreatSafe"
+
+    /**
+     * The threat died, despawned, or left the world. The running was not what ended it.
+     *
+     * Filed for a flight that never started as well as for one that did. A `Flee` whose
+     * handle still names a creature the body's world no longer holds is the same fact about
+     * the run, and counting it as [RETREAT_FAILED] would say an agent was left standing in
+     * range of something that is not there.
+     */
+    const val RETREAT_THREAT_GONE: String = "retreatThreatGone"
+
+    /**
+     * A flight named its threat through a handle the agent no longer holds bindings for.
+     *
+     * Loom's own ref window rather than the world: the decision arrived after the request
+     * that minted the handle had been evicted. Counted apart from [RETREAT_FAILED] because
+     * nothing here is known about whether the agent is in range of anything - the body could
+     * not say what it had been asked to run from.
+     */
+    const val RETREAT_THREAT_FORGOTTEN: String = "retreatThreatForgotten"
+
+    /**
+     * A flight named a threat the request that answered it never issued a handle for.
+     *
+     * A different fact from the window having passed, and worth its own count: that one is
+     * Loom's latency, and this one is a mind naming something it was never given.
+     */
+    const val RETREAT_THREAT_UNNAMED: String = "retreatThreatUnnamed"
+
+    /** A later intent that was not a flight took the body over. */
+    const val RETREAT_SUPERSEDED: String = "retreatSuperseded"
+
+    /**
+     * The flight ended with the agent still in range of the threat.
+     *
+     * The one retreat outcome that is a failure rather than a resolution, and the count
+     * that says whether a run's deaths were agents that could not get away. Only the
+     * refusals that leave a *real* threat unescaped are filed here - ground that offered
+     * nowhere, and a chosen target the routing seam would not take - so a threat that had
+     * gone and a handle that named nothing are counted under their own tags rather than
+     * inflating this one.
+     */
+    const val RETREAT_FAILED: String = "retreatFailed"
 }
 
 /** Names which event prompted cognition. */

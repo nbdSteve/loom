@@ -11,6 +11,7 @@
  */
 package dev.loom.body.nms
 
+import dev.loom.body.ActiveRetreats
 import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
 import dev.loom.body.BodyDeparture
@@ -19,11 +20,14 @@ import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyLocation
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
+import dev.loom.body.EntityRefs
 import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.Metabolism
 import dev.loom.body.Mortality
 import dev.loom.body.NavigationPolicy
+import dev.loom.body.RetreatAttempt
+import dev.loom.body.RetreatEnd
 import dev.loom.body.describe
 import dev.loom.body.navigableFootprint
 import dev.loom.body.tagOf
@@ -63,6 +67,15 @@ class NmsEntityBodyPort(
     private val vitalsWatch = VitalsWatch(journal)
 
     /**
+     * The handles this port has issued for the creatures its agents observed.
+     *
+     * Held by the port rather than by a body because a handle belongs to the agent's
+     * request: a body replaced by a dimension transit must not invalidate a decision
+     * already in flight about a creature the agent saw before it crossed.
+     */
+    private val refs = EntityRefs()
+
+    /**
      * The one path-request budget, shared by every agent.
      *
      * Server-wide on purpose: a path search is the costliest thing native navigation
@@ -72,6 +85,18 @@ class NmsEntityBodyPort(
      * `Navigation.kt` records.
      */
     private val movement = NavigationPolicy()
+
+    /**
+     * The flights in progress, one per agent at most.
+     *
+     * Here rather than in the entity for the same reason the reserve is: a dimension transit
+     * replaces a body, and an agent that walked through a portal while running from
+     * something is still running from it. See `ActiveRetreat.kt`.
+     */
+    private val retreats = ActiveRetreats()
+
+    /** The tick's half of a flight: one bounded hop per eligible retreat, and no cognition. */
+    private val retreatDrive = RetreatDrive(journal, retreats, movement)
 
     /**
      * The world Loom keeps loaded, sized so neither a path search nor a perception can
@@ -85,6 +110,8 @@ class NmsEntityBodyPort(
      * perception radius. See `Navigation.kt`.
      */
     private val footprint = navigableFootprint()
+
+    /** The world Loom is holding open around its agents. */
     private val heldChunks = HeldChunks(server, owner, footprint, journal, onHoldFailure)
 
     override fun spawn(
@@ -179,6 +206,9 @@ class NmsEntityBodyPort(
         val health = bodyVitals(body)
         body.discard()
         vitalsWatch.forget(agentId)
+        // A flight belongs to the body that was running: there is nothing left to
+        // continue, and a successor body must not inherit somebody else's chase.
+        retreats.forget(agentId)
         journal.record(agentId, BodyEvent.DESPAWNED, "removed from world", vitals = reserve, health = health)
         return true
     }
@@ -204,11 +234,27 @@ class NmsEntityBodyPort(
         // the body is gone before any decision could arrive - and refused anyway, because
         // that ordering is not something a caller of this port can see.
         val spent = intent is Intent.Rest && !metabolism.restore(agentId)
+        // What a flight attempt came to, handed out by the entity because only the ref seam
+        // above can resolve the threat it names, and needed here because an accepted flight
+        // is a state rather than one hop. Null for every other intent.
+        var flight: RetreatAttempt? = null
         val outcome =
             if (spent) {
                 IntentOutcome.Rejected("the energy reserve is spent; this agent has ended")
             } else {
-                body.applyIntent(intent, movement, currentTick())
+                // The ref seam is passed as a function rather than the store itself: what a
+                // handle means is scoped to the agent and the request that minted it, and
+                // the body has no business knowing either. An intent no perception asked
+                // for carries no request, so it resolves against none and is refused as
+                // stale - the honest answer, since no request of this agent's ever named
+                // the threat it is asking to run from.
+                body.applyIntent(
+                    intent,
+                    movement,
+                    currentTick(),
+                    { handle -> refs.resolve(agentId, requestId.orEmpty(), handle) },
+                    { attempt -> flight = attempt },
+                )
             }
         journal.recordAction(
             agentId,
@@ -217,6 +263,23 @@ class NmsEntityBodyPort(
             tagOf(intent),
             tagOf(outcome),
         )
+        // A flight is the one intent that outlives the tick that applied it, so an accepted
+        // one becomes a state this port keeps and drives from its own tick. Recorded after
+        // the action it belongs to, so a reader meets the decision before its consequence.
+        flight?.let { attempt ->
+            retreats.attempted(agentId, attempt, currentTick())
+            journal.recordRetreat(agentId, describe(attempt, continued = false), tagOf(attempt, continued = false))
+        }
+        // Anything else the body actually carried out has taken it over, so the flight is
+        // over: an agent has one body and cannot walk somewhere and run away at once.
+        //
+        // Keyed on the acceptance rather than on the intent, because an intent the body
+        // refused did not take anything over - an unsupported `say` would otherwise end a
+        // flight the mind never meant to end, and a refused move leaves the retreat to
+        // re-route at its own cadence, which is the better of the two behaviours.
+        if (flight == null && outcome is IntentOutcome.Accepted && retreats.superseded(agentId)) {
+            journal.recordRetreat(agentId, describe(RetreatEnd.SUPERSEDED), tagOf(RetreatEnd.SUPERSEDED))
+        }
         return outcome
     }
 
@@ -230,7 +293,7 @@ class NmsEntityBodyPort(
         // was handed rather than a second sample of it. The body's health rides on the change
         // and death records instead of being restated here.
         val energy = metabolism.energyOf(agentId)
-        val perception = capturePerception(agentId, body, energy, trigger, currentTick())
+        val perception = body.capturePerception(agentId, energy, trigger, currentTick(), refs)
         val reserve = reserveVitals(energy)
         vitalsWatch.noted(agentId, reserve)
         journal.recordPerception(
@@ -244,7 +307,7 @@ class NmsEntityBodyPort(
             "${perception.surroundings.size} observation(s)" +
                 omissionOf(perception.surroundingsOmitted),
             perception.requestId,
-            tagOf(trigger),
+            tagOf(perception.trigger),
             reserve,
         )
         return perception
@@ -285,6 +348,10 @@ class NmsEntityBodyPort(
                 // states its own from the spawn of the body it arrives in.
                 else -> {
                     actuate(agentId, body, journal)
+                    // Still actuation: a flight the mind already decided on gets its next
+                    // bounded hop when the last one ends, and never a model call. See
+                    // RetreatDrive.kt.
+                    retreatDrive.advance(agentId, body, tick)
                     vitalsWatch.recordChanges(agentId, reserveVitals(metabolism.energyOf(agentId)), bodyVitals(body))
                 }
             }
@@ -395,6 +462,9 @@ class NmsEntityBodyPort(
         val reserve = reserveVitals(metabolism.energyOf(agentId))
         bodies.remove(agentId)?.discard()
         vitalsWatch.forget(agentId)
+        refs.forget(agentId)
+        // Loom is permadeath, so per-agent state must not outlive the agent it is about.
+        retreats.forget(agentId)
         if (mortality.recordDeath(agentId)) {
             journal.record(
                 agentId,

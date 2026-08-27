@@ -107,6 +107,69 @@ where
     Ok(ticks)
 }
 
+/// The shortest an entity ref may be, mirroring the schema's `minLength`.
+///
+/// Stated here once for this whole runtime rather than at each field that carries
+/// a ref, because two copies of a bound are two bounds that can disagree.
+const ENTITY_REF_MIN_CHARS: usize = 1;
+
+/// The longest an entity ref may be, mirroring the schema's `maxLength`.
+const ENTITY_REF_MAX_CHARS: usize = 8;
+
+/// Refuses an entity ref that is blank or longer than a ref can be.
+///
+/// The bound is a type rule on both sides of the contract for the same reason the
+/// nightfall countdown's is: nothing on either wire is schema-validated at
+/// runtime, so `minLength`/`maxLength` alone is a rule a socket walks straight
+/// past. Both ends are worth refusing rather than merely odd. A blank ref names
+/// nothing the body can resolve, and it is what an absent handle becomes if
+/// anything upstream ever fills the field instead of omitting it - so refusing it
+/// keeps "a ref is present" and "a ref means something" the same statement. An
+/// over-long one is a handle no request ever issued, which is a mind having
+/// invented or rewritten one rather than named back what it was given.
+///
+/// Length is counted in characters, as the schema counts it.
+fn refuse_unbounded_ref<E>(handle: &str) -> Result<(), E>
+where
+    E: de::Error,
+{
+    let chars = handle.chars().count();
+    if !(ENTITY_REF_MIN_CHARS..=ENTITY_REF_MAX_CHARS).contains(&chars) {
+        return Err(E::invalid_length(
+            chars,
+            &"an entity ref of 1 to 8 characters",
+        ));
+    }
+    Ok(())
+}
+
+/// Refuses an out-of-bounds ref on an observation, where the field may be absent.
+///
+/// Only decoding is narrowed. Serialization is left as the derive wrote it, so
+/// every valid fixture still round-trips byte-for-byte.
+fn bounded_optional_ref<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let handle = Option::<String>::deserialize(deserializer)?;
+    if let Some(present) = handle.as_deref() {
+        refuse_unbounded_ref(present)?;
+    }
+    Ok(handle)
+}
+
+/// Refuses an out-of-bounds ref on an intent, where the field is required.
+///
+/// Only decoding is narrowed, as with [`bounded_optional_ref`].
+fn bounded_ref<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let handle = String::deserialize(deserializer)?;
+    refuse_unbounded_ref(&handle)?;
+    Ok(handle)
+}
+
 /// The bounded self-state the body chose to reveal. Owned primitives only, so
 /// the mind cannot reach back into world state through it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -146,6 +209,23 @@ pub struct Observation {
     /// `false` means the body knows it is there and cannot see it, which is a
     /// different situation from not knowing at all.
     pub visible: bool,
+    /// The handle by which a decision may name this particular thing back to the
+    /// body, present only for a living thing.
+    ///
+    /// A block carries none, because a block is named by its position instead, so
+    /// `None` is a fact about what the observation is rather than an omission. The
+    /// field is named `entity_ref` in Rust and `ref` on the wire because `ref` is a
+    /// keyword here; it is skipped entirely when absent, which is what keeps a
+    /// block observation byte-identical on both sides of the contract. Its length
+    /// is narrowed at decode by [`bounded_optional_ref`], because a ref the body
+    /// could never have issued is worth refusing where it arrives.
+    #[serde(
+        rename = "ref",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_ref"
+    )]
+    pub entity_ref: Option<String>,
 }
 
 /// The event that triggered cognition. There is intentionally no per-tick
@@ -211,9 +291,19 @@ pub enum Intent {
     /// Move toward a target block position `[x, y, z]`.
     #[serde(rename = "moveTo")]
     MoveTo { target: [i64; 3] },
-    /// Flee from a named source of threat.
+    /// Move away from one living thing, named by the `ref` it carried in the
+    /// perception being answered.
+    ///
+    /// A ref rather than a name or a type on purpose: two identical creatures are
+    /// different threats, and the body must retreat from the one the mind meant.
+    /// The body resolves it against that one request only. Its length is narrowed
+    /// at decode by [`bounded_ref`], so a blank or over-long handle is refused as
+    /// a malformed answer rather than travelling to the body to be refused there.
     #[serde(rename = "flee")]
-    Flee { from: String },
+    Flee {
+        #[serde(deserialize_with = "bounded_ref")]
+        from: String,
+    },
     /// Rest, refilling the agent's energy reserve.
     ///
     /// The only way to restore [`SelfState::energy`], and it costs the agent the

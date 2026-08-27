@@ -52,6 +52,10 @@ An agent that runs the reserve out dies of it, permanently, and exactly once.
 The reserve is spent from server ticks rather than from wall-clock time, so a run replays identically and a paused server starves nobody.
 Nothing has to be commanded for any of it: an agent meets its own hunger on the goal review it already does, and the stand-in mind rests an agent whose reserve is low - so a single agent, left entirely alone, keeps itself alive.
 
+Running from something is a decision an agent can now make.
+Every living thing a perception reports carries a short handle, so a mind names one particular creature to run from rather than a place to walk to - and the body runs from that creature, rather than from whichever of two identical mobs it might otherwise have guessed at.
+One such decision is a state the body then keeps: it carries the flight on across ticks, putting further ground between itself and that creature for as long as the threat is still there, and no further model call is needed for any of it.
+
 A run is watchable while it happens.
 `/loomwatch <agentId>` attaches one operator to one living agent and shows, as a boss bar and a few chat lines, its energy reserve and which way that reserve is going, its body's health once that body has been hurt, the bounded trigger that caused cognition, the model and prompt version that answered it, the reasoning behind the intent, and what the body did about it.
 The two vitals are never aliased to one another: the reserve is what living spends and only resting refills, health is damage to the body, and a body can be beaten to death on a full reserve - so a run can always say which of the two ended an agent.

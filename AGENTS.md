@@ -47,6 +47,14 @@ Only the adjusted block is searched for, and `Path.canReach` and `Path.distToTar
 The applied record therefore states two facts about two targets: `reaching what it searched for` is the engine's verdict on its own adjusted block, and `ending N blocks from it` is Loom's own straight-line measure from the end of the route to the block the mind named, taken with the same `blocksApart` the reach is measured with.
 So a complete route that ends three blocks away now reads as exactly that.
 Do not put `Path.distToTarget` back: it is the shortfall against the wrong target, and it reads as `0.00` in precisely the cases where the body did not go where it was sent.
+Both facts in that measure are *blocks*, so both sides of it are one: `blockAt` (engine-free, in `Navigation.kt`) is the only way to turn a `BodyLocation` into a `BodyBlock`, and the block the navigator is asked for, the block the record names and the block the shortfall is measured against are all that one answer.
+
+**`blockAt` floors, and truncating toward zero instead is a bug this already had.**
+Truncation is floor only for a non-negative coordinate, and the walk path hides that completely: the contract's `moveTo` carries three whole numbers, on which the two roundings agree.
+The flight path does not, because `LandRandomPos.getPosAway` answers with `Vec3.atBottomCenterOf` a block it scored - x and z carry half a block - so at a negative x or z a `toInt()` named the block one step nearer the origin, which in a scene where the threat is toward the origin is one step back toward the threat, handing away up to 1.41 of the two blocks of `MEANINGFUL_SEPARATION_BLOCKS` gain `chooseRetreat` had just insisted on.
+Nothing errored and no record contradicted it; `NavigationTest.aBlockIsFlooredRatherThanTruncated` and `aWholeTargetNamesTheSameBlock` are what pin it now.
+The offered position is deliberately kept as the bottom centre for `chooseRetreat`'s arithmetic, because that is where a body actually stands on arriving, so the step and the gain are measured against the truth rather than against a block corner.
+`BodyBlock` is a separate type from `BodyLocation` for that reason: a location is a measurement and a block is not, and keeping them apart is what stops a second rounding appearing at a call site.
 
 **Loom's token bucket bounds only the searches Loom itself asks for, and the engine asks for others.**
 `ServerLevel.sendBlockUpdated` (`ServerLevel.java:1686`) runs on every block change whose old and new collision shapes differ, walks `navigatingMobs` - which `onTrackingStart` (`ServerLevel.java:2543`) fills with *every* `Mob` in the world, Loom bodies included - and calls `recomputePath` (`PathNavigation.java:82`) on each navigator whose `shouldRecomputePath` (`:439`) says yes, which is any body with a live route whose changed block is near it.
@@ -57,7 +65,8 @@ Paper's `updatePathfindingOnBlockUpdate` gates the whole path and defaults to tr
 `BODY_FOLLOW_RANGE_BLOCKS` (16) bounds all of it: besides the walk budget above, the engine reads the attribute at navigator construction to fix the node budget at sixteen nodes per block, and again per request as the half-extent of the region the search reads.
 `NavigationPolicy` is server-wide rather than per agent for that reason: a hundred agents *deciding* to walk in the same tick cost the same as `DEFAULT_PATH_REQUESTS_PER_TICK` (4), and the fifth request is refused *and recorded* so a run that outgrows the budget says so in its own log instead of merely feeling sluggish.
 The budget does not accrue, and only a granted request spends a token, so a tick full of out-of-range targets leaves the budget for the requests that could have used it.
-Note before tuning that number that an `OverBudget` refusal is a refusal, so it stops the prior route like any other: with more agents deciding in one tick than the budget serves, the excess lose the route they were already walking even when the target they named is unchanged and reachable.
+Note before tuning that number that an `OverBudget` refusal stops the prior route like any other, so with more agents deciding in one tick than the budget serves, the excess lose the route they were already walking even when the target they named is unchanged and reachable.
+A *walk* refused that way is simply lost, and nothing retries it before its next goal review; a *flight* is not, because there the same refusal is `RetreatAttempt.PendingBudget` and the retreat is held rather than ended - see the routing-seam paragraph below.
 Nothing retries, so those agents stand still until their next goal review, up to a whole `DEFAULT_GOAL_REVIEW_CADENCE` later - which makes the bucket a behaviour knob under contention and not merely a throughput one.
 The engine's own refusal is under the same stop and is the least defensible case of it, because there the bound is not real: a body momentarily off the ground - mid-jump over a one-block rise, or stepping down a slope - fails `canUpdatePath`, so `createPath` answers a perfectly reachable target with no route, and the agent loses a legitimate route *and* the token it spent, again with nothing retrying before its next goal review.
 Distance is a straight line, and all three axes count, because the bound it is measured against is a walk and a walk is never shorter than the straight line; a per-axis maximum reads the corner of a cube as being one side away and promises a detour that is not there.
@@ -72,7 +81,7 @@ The chunk-edge case needs no allowance of its own; `Navigation.kt` carries the p
 Note that the approved design document states the rule as `radiusChunks * 16 >= followRange + requestRange + 16`, which conflates `createPath`'s *accuracy* parameter with the region *range* parameter and so has no single arithmetic reading.
 The engine-derived form is the one correctness depends on, and `theHoldCoversWhatASearchReads` and `theHoldCoversWhatAPerceptionReads` are the only tests that pin it; reason from those rather than from the design document's sum.
 
-**Pathfinding malus is a survival decision, not a tuning knob**, because Loom is permadeath and a body has no way to flee what hurts it.
+**Pathfinding malus is a survival decision, not a tuning knob**, because Loom is permadeath and no flight escapes a hazard: `Intent.Flee` runs from a creature a mind named, and nothing runs from the fire or the water a route walked into.
 The whole policy is the pure `loomPathfindingMalusFor`, which `PathfindingMalusTest` reads without a world; the entity only applies it, over every `PathType` so a type the engine adds later cannot be missed.
 Three prices, ordered the way the danger is and every one of them positive: standing *in* fire costs twice the walk budget, the blocks *beside* fire and the wither roses and pointed dripstone of `DAMAGE_CAUTIOUS` - which vanilla charges *zero* for - cost the whole walk budget, and the shore keeps the engine's own 8.
 A step through any of them therefore costs more than any detour that could complete, and a body already standing in or beside one is not stranded.
@@ -113,7 +122,50 @@ The prompt's own `MAX_OBSERVATIONS` (24) stays the final bound on what reaches a
 The prompt states the **sum** of that count and its own `MAX_OBSERVATIONS` cut, because the body's figure is about things that never reached the wire while the cap is measured against the list that did, so each bound is counted exactly once.
 The field is required and non-negative on both sides, and a nonsense negative arriving off the socket is coerced to zero rather than allowed to subtract from the cut this side made for itself.
 A crowded scene trimmed to the bound and recorded as a bare observation count would read afterwards as a quiet one, which is the reading a survival run must not be given.
-There is deliberately no way for a decision to *name* one of those observations yet: request-scoped refs belong with the first intent that could consume one, which is threat flight.
+A decision may *name* one of those observations, because a living one carries a `ref` and `Intent.Flee` resolves it - see `EntityRefs.kt` for the one-agent, one-request window that makes a handle mean something, and the flight section below for what consumes it.
+
+**Running away is routing, so it goes through the one routing seam and inherits every bound already on it.**
+`Retreat.kt` is the engine-free half - the speed, the search box, which offered spot is worth taking, and what it means when there is nowhere to go - and `BodyNavigation.fleeFrom` is the two engine calls: `LandRandomPos.getPosAway` for somewhere near the body and away from the threat, then the same `NavigationPolicy.route` a walk uses.
+Nothing about a flight widens a bound: it pays for the same per-tick search token, is refused past the same `PATH_REQUEST_REACH_BLOCKS`, walks the same node budget, pays the same hazard and water prices, and loses its route on any refusal.
+The only difference from a walk is `FLEE_SPEED_MODIFIER` (0.8 against `WALK_SPEED_MODIFIER`'s 0.5), which is why `BodyWalker` and `LoomBodyEntity.followRouteTo` take the speed as a parameter rather than reading a constant.
+**The search box has to fit inside the reach, or Loom refuses retreats it chose itself.**
+The far corner of `RETREAT_SEARCH_HORIZONTAL_BLOCKS` (5) in both axes plus `RETREAT_SEARCH_VERTICAL_BLOCKS` (2) up is 7.35 blocks, and `RetreatTest` pins that against the reach (8) - widening either search bound without widening the reach would turn retreats into out-of-range refusals, and only on the diagonals, which is the shape of bug an in-world run finds late.
+Vertical is small for the same arithmetic: height counts in full against the reach, so every block of climb is a block of horizontal retreat given up.
+**Which of the ground's answers is worth walking to is Loom's, and one answer is not enough to choose from.**
+`LandRandomPos.getPosAway` scores random *blocks* for standability and never asks the navigator, so sampling it costs block probes and not path-search tokens - which is what lets `fleeFrom` ask `RETREAT_SEARCH_ATTEMPTS` (4) times and still route once.
+`chooseRetreat` then keeps only a spot at least `MEANINGFUL_RETREAT_BLOCKS` (3) off, inside the reach, and at least `MEANINGFUL_SEPARATION_BLOCKS` (2) further from the threat than the body already is, and takes the furthest of those from the threat (`maxByOrNull`, so a tie keeps the order the ground offered and the same scene replays the same).
+Asking once was fatal: an in-world run took the search's single answer 0.71 blocks away, walked a two-node route, and stood still while a zombie closed seven blocks and killed the agent.
+Distance covered is not distance gained, which is why the gain is its own bound - and it asks for less than the step, because a partly sideways retreat is still worth taking.
+**A flee names a creature, not a place, so it resolves through the request-scoped refs and can be refused five ways.**
+`retreatFrom` asks the port's `EntityRefs` what the handle means and then looks for that creature *in the body's own level*; `refusalFor` is total over `RefResolution`, and `RetreatRefusal` keeps five distinct facts apart - the ref window passed (`ThreatForgotten`), the request never named it (`ThreatUnnamed`), it is dead or despawned or in another dimension (`ThreatGone`), the ground offered nowhere (`NoRetreat`), and it offered only spots underfoot or no further away (`NoMeaningfulRetreat`).
+The last two are kept apart because they are opposite facts about the run: a body walled in had nowhere to stand, and a body in the open had plenty and none of it helped.
+The three absences collapse into one refusal deliberately: a same-level `getEntity(uuid)` cannot tell them apart, and a position in another dimension is a number with no meaning where the body is standing.
+An intent with no `requestId` resolves against no request and so reads as `ThreatForgotten`, which is honest - no request of that agent's ever named the threat.
+Every refusal stops the body before answering, for the same reason a refused move does: a route left running would put `moved` records after the `rejected` one and read as movement Loom authorised.
+
+**One accepted flee is a state the body keeps, not one hop, and the tick is what carries it on.**
+`ActiveRetreats` (engine-free, `dev/loom/body/ActiveRetreat.kt`) holds at most one retreat per agent as the threat's `UUID` and the tick of the last attempt, and decides everything about a continuation: the threat is checked before the route, a live route is left alone, and a hop is asked at most once per `RETREAT_RETRY_CADENCE_TICKS` (10).
+`RetreatDrive` (`dev/loom/body/nms/RetreatDrive.kt`) is the two engine reads and the one engine call that state needs, driven from the *actuation* branch of `NmsEntityBodyPort.tick` - so a flight costs a path search out of the same per-tick bucket a walk pays into and never a model call, which is what makes running away something an agent keeps doing between goal reviews.
+`BodyBoundaryTest` forbids `dev.loom.body..` from reaching `dev.loom.mind..` at all, so the tick cannot invoke cognition even by accident.
+An in-world run died of the absence of all this: one hop, arrival, then four seconds standing still while a zombie closed ten blocks.
+**A ground navigator will not search while its body is off the ground, so a flight asks `onGround()` before it spends anything.**
+`createPath` answers a perfectly reachable retreat with no route at all mid-air, and a body being hit is off the ground, so the same run lost a whole flight and the model call that decided it.
+`fleeFrom` therefore returns `RetreatAttempt.Grounding`, which stops the old route (a flight is not carrying on with it) and *keeps* the retreat to ask again at the cadence.
+That is reported as an `IntentOutcome.Accepted`: a flight waiting to start is not a flight that never happened, which is exactly what the log said about an agent that was in fact fleeing.
+**A refusal at the routing seam is `Unrouted`, never `Refused`.**
+A target past the reach and an engine that offered no route are answers about a *route*; the five `RetreatRefusal`s are answers about a *threat*.
+Both end the retreat and both leave an already-stopped body, but a run that could not tell them apart could not say whether its agents were cornered or merely over budget.
+**A tick whose search budget was already spent is not an answer at all, and ending a flight there is the same death arriving through Loom's own bookkeeping.**
+Nothing was searched for, the target the mind named is unchanged, and it is reachable on the very next tick - so `PathRequest.OverBudget` is `RetreatAttempt.PendingBudget`, which is retained exactly as `Grounding` is: the prior route is stopped, the agent is told its flight was accepted, and the next attempt comes at `RETREAT_RETRY_CADENCE_TICKS` rather than from another decision.
+Ended instead, the agent would stand still with a hostile on it until its next goal review, up to a whole `DEFAULT_GOAL_REVIEW_CADENCE` later, and the record would say `retreatFailed` about ground that had never been asked.
+It is a distinct tag (`RETREAT_PENDING_BUDGET`) rather than folded into either neighbour, because "waiting for a token", "waiting for the ground" and "the ground offered nothing" are three different facts about a run.
+Reading the verdict is what `NavigationPolicy.routing` exists for: `route` delegates to it and keeps the stop rule in one place, because re-implementing request-then-walk in the adapter to get at the verdict would give that rule a second copy to drift.
+**Supersession is keyed on an accepted non-`Flee` outcome**, not fired before applying one: an intent the body refused took nothing over, so an unsupported `say` cannot end a flight the mind never meant to end, and a refused move leaves the retreat to re-route at its own cadence.
+Every transition is one `retreating` record with one of `EventTag`'s ten retreat tags, written once and never per tick - a flight held for the ground says nothing a second time, because the attempt that put it there already did.
+**`RETREAT_FAILED` is the predation count, so only the ground's refusals may be filed under it.**
+`tagOf(RetreatRefusal)` in `Retreat.kt` is total over the five refusals and maps only `NoRetreat` and `NoMeaningfulRetreat` there; `ThreatGone` takes `RETREAT_THREAT_GONE` - the same tag the continuation path's `ThreatStanding.GONE` already ends on, so one fact does not get two opposite tags depending on which path reached it - and the two ref refusals take `RETREAT_THREAT_FORGOTTEN` and `RETREAT_THREAT_UNNAMED`.
+Reading them all as failures said "could not run from a threat, and is still in range of it" about an agent whose zombie had burnt to death, and inflated the one number a survival run reads for predation with decisions that were never about the ground at all.
+`ActiveRetreatTest` is the whole of what a tick may ask; the engine half needs a live `Level` and is only provable on a real server.
 
 **The world clock is derived from the level's own time, and its countdown never reads zero.**
 `SelfState.world` carries `dayPhase`, `isDay` and `ticksUntilNightfall`; `WorldClock` (engine-free) owns what the number means and `level.isDay` answers daylight directly, because a dimension with a fixed time has a day time and no daylight and the agent needs the difference.
@@ -121,6 +173,11 @@ There is deliberately no way for a decision to *name* one of those observations 
 The contract refuses a value below 1 on both sides *at decode* - `WorldState`'s `init` on the JVM, `positive_nightfall_countdown` in Rust - so that wrap is a type rule and not a convention.
 Both are needed because nothing on either wire is schema-validated at runtime: `minimum: 1` in the schema is a rule a socket walks straight past, and for a while the Rust side deserialized a bare `i64` while this file claimed otherwise.
 Only decoding is narrowed on the Rust side; serialization is left as the derive wrote it, so the fixtures still round-trip byte-for-byte.
+**An entity ref's length is narrowed the same way, and for the same reason.**
+The schema's `minLength: 1` / `maxLength: 8` is likewise a rule a socket walks past, so both `Observation.ref` and `Intent.Flee.from` refuse a blank or over-long handle at decode - `requireBoundedRef` on the JVM, `bounded_optional_ref` and `bounded_ref` in Rust, each runtime stating the bound once rather than at every field that carries a ref.
+Both ends are worth refusing rather than merely odd: a blank ref names nothing the body can resolve, and refusing it keeps "a ref is present" and "a ref means something" the same statement, while an over-long one is a handle no request ever issued and so is a mind having invented one rather than named back what it was given.
+Length is counted in **code points** on both sides, because that is what the schema's `maxLength` counts: Rust uses `chars().count()` and the JVM must use `codePointCount` rather than `String.length`, which is UTF-16 code units and measures a non-BMP handle double - one runtime accepting a ref the other refuses is exactly the drift stating the bound once per runtime is meant to rule out.
+`contract/fixtures/invalid/decision-flee-blank-ref.json` and `perception-observation-ref-too-long.json` are pinned against the schema *and* against both decoders.
 
 **Death is terminal - Loom is permadeath.** When a body dies the agent is gone for good: no respawn, no reincarnation, no second body ever.
 New agents will come from reproduction, never from restarting a dead one.
@@ -222,6 +279,7 @@ Five pieces, each its own module - `router` (tier to model), `model` (the backen
 `ScriptedBackend` is still the default, so a fresh checkout runs with no credentials and both suites stay hermetic, but it is the fallback rather than the state of the art: `LOOM_COGNITION_BACKEND=openai` selects real inference, and `cognition/README.md` is the operator documentation for every setting it reads.
 It does answer a goal review whose `energy` is at or below `RESTING_ENERGY` (0.35) with `rest`, which is what lets an unattended agent survive on the shipped stand-in.
 That is deliberately a goal-review rule and not a reflex: a damaged agent still flees, because staying alive now outranks resting.
+It flees the nearest thing in sight carrying a `ref` rather than the trigger's `source`, since a flight names one creature and not a species, and it idles when nothing in sight can be named at all - a handle the body never issued would be refused, so an agent would have spent a pivotal decision on an action that could never be carried out.
 A misspelled backend name stops the service instead of falling back, because scripted decisions look real in the log until someone reads their provenance.
 Every number a `reasoning` states is rounded where it is interpolated, because `reasoning` is the one field `ObserverView.showsDetail` carries verbatim to a boss bar: a reserve derived from a tick count printed as `down to 0.3198888888888889` in world, and a health that is an `f32` widens to `19.899999618530273`.
 The exact values stay in the perception and in the record's own fields, where anything counting them looks.
@@ -307,14 +365,15 @@ Inside either field a reading is `level` of `capacity` (`AgentVitals.energy` car
 Before the reserve existed the display used health *as* energy; that shortcut is what the wire test in `BodyEventLogTest` now pins against, with the two readings deliberately on different scales so feeding one from the other fails.
 `resting` and `idle` are likewise separate activities now that `Intent.Rest` and `Intent.Idle` are separate intents, and telling a recovering agent from a merely waiting one is most of what a survival run is about.
 
-**What a record *means* is read from a field, never from its prose, and two events need a field to say it.**
+**What a record *means* is read from a field, never from its prose, and three events need a field to say it.**
 The view reads `event` plus the countable tags, so an event whose name carries two opposite meanings is an event the display gets wrong.
 `spawnRejected` is one, and it carries three different facts rather than two.
 `alreadyEmbodied` is refused *because* the agent still has its body, where most refusals happen to an agent that has none, and reading them alike labelled a live, visible body `no body` for a whole goal-review cadence.
 `hasDied` is the opposite extreme: it is the *terminal* state itself rather than a request that failed, so it reads as `DEAD - will not return` in alarm and says the permadeath in the same words the `died` record does.
 Read as merely bodiless it understated a permadeath as a temporary condition, and it is the one refusal a watch can meet without ever seeing the death - a watch attached after the fact has no other record that will ever say the agent is gone.
-`converted` is the other such event: `conversionRefused` left the body untouched, while `bodyTaken` took it and nothing re-embodies the agent.
-All of them carry an `EventTag` in `BodyEventRecord.outcome`, `BodyEventJournal.reject` and `recordConversion` require it so a new refusal cannot forget to say which it is, and `WatchState`/`ObserverView` branch on the tag.
+`converted` is another such event: `conversionRefused` left the body untouched, while `bodyTaken` took it and nothing re-embodies the agent.
+`retreating` is the third, and the one where the tag carries the whole of the meaning: a single event name covers a flight starting, carrying on, waiting, ending safely and being left standing in range of something hunting it, which is why `ObserverView.retreatNote` reads the tag and never the detail.
+All of them carry an `EventTag` in `BodyEventRecord.outcome`, `BodyEventJournal.reject`, `recordConversion` and `recordRetreat` require it so a new refusal cannot forget to say which it is, and `WatchState`/`ObserverView` branch on the tag.
 
 **A watch belongs to an observer, not to a sink.**
 `WatchCommand.onCommand` builds a fresh `BukkitObserverSink` every time the command is typed, so `Observatory.watch` compares `ObserverSink.observer` - a player's uuid - and not sink identity.
@@ -352,6 +411,7 @@ Build the jar (`./gradlew shadowJar`), drop it into a Paper 1.21.1 server's `plu
 Verify from a **client's** point of view rather than from the plugin's own log: a body that moves server-side only, or that a vanilla client cannot render, looks identical in the log to one that works.
 A client is not optional even for a headless run: `spawn` places the body where the *sender* stands, so it refuses the console, and a scripted client on an offline-mode server (a mineflayer bot will do) both issues the commands and reports what a player would actually see.
 Watching autonomy move a body needs a mind that decides a move: `ScriptedBackend` only ever answers a goal review with `idle` or, once the reserve is low, `rest`, so a self-driving agent perceives, decides and applies on cadence while standing perfectly still - point the plugin at a stand-in mind that replies `moveTo` if motion is what is being checked.
+Watching a *flight* needs the same treatment, and the shipped stand-in cannot be used for it at all: it answers `flee` only to a `damaged` trigger, and no code in the plugin raises one - every trigger it produces is a `goalReview` - so a stand-in mind that replies `flee` naming a ref off the perception it was just given is the only way to drive one short of a real provider.
 Navigation itself is proven with `/loombody move` against three shapes and nothing less: a wall the body must go *round*, a one-block rise it must step *up*, and a target past a chunk boundary.
 A straight-line target on flat ground proves nothing - the old cheap gait passed that case - and `y` now matters, though not as a refusal: a target the engine cannot stand at is *moved* to one it can, so the height is answered in the record rather than in the verdict.
 **Size the wall to the walk budget or the run proves the wrong thing.** The way round the wall has to fit in `BODY_FOLLOW_RANGE_BLOCKS` (16) blocks of walking, so a five-block wall two blocks off is a fair test and a nine-block wall is not - the second one comes back accepted, walks the body into the wall, and looks exactly like a navigation bug.

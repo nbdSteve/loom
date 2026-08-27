@@ -328,7 +328,7 @@ fn build_decision_schema() -> Value {
                     intent_variant("flee", &json!({
                         "from": {
                             "type": "string",
-                            "description": "The name of what to move away from."
+                            "description": "The ref of the one living thing in the surroundings to move away from. A ref given in this message, never a name, a type, or an invented one."
                         }
                     })),
                     intent_variant("rest", &json!({})),
@@ -434,12 +434,12 @@ mod tests {
     #[test]
     fn a_well_formed_answer_becomes_a_draft() {
         let draft =
-            draft_from_answer(r#"{"intent":{"action":"flee","from":"zombie"},"reasoning":"hurt"}"#)
+            draft_from_answer(r#"{"intent":{"action":"flee","from":"e1"},"reasoning":"hurt"}"#)
                 .unwrap();
         assert_eq!(
             draft.intent,
             Intent::Flee {
-                from: "zombie".to_owned()
+                from: "e1".to_owned()
             }
         );
         assert_eq!(draft.reasoning, "hurt");

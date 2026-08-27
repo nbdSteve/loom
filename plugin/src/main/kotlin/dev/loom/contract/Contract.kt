@@ -28,6 +28,45 @@ import kotlinx.serialization.json.JsonClassDiscriminator
 private const val COORDINATE_DIMENSIONS = 3
 
 /**
+ * The shortest an entity ref may be, mirroring the schema's `minLength`.
+ *
+ * Stated here once for this whole runtime rather than at each field that carries a
+ * ref, because two copies of a bound are two bounds that can disagree.
+ */
+private const val ENTITY_REF_MIN_CHARS = 1
+
+/** The longest an entity ref may be, mirroring the schema's `maxLength`. */
+private const val ENTITY_REF_MAX_CHARS = 8
+
+/**
+ * Refuses an entity ref that is blank or longer than a ref can be, letting an
+ * absent one through.
+ *
+ * The bound is a type rule on both sides of the contract for the same reason
+ * [WorldState.ticksUntilNightfall]'s is: nothing on either wire is
+ * schema-validated at runtime, so `minLength`/`maxLength` alone is a rule a socket
+ * walks straight past. Both ends are worth refusing rather than merely odd. A
+ * blank ref names nothing the body can resolve, and it is what an absent handle
+ * becomes if anything upstream ever fills the field instead of omitting it - so
+ * refusing it keeps "a ref is present" and "a ref means something" the same
+ * statement. An over-long one is a handle no request ever issued, which is a mind
+ * having invented or rewritten one rather than named back what it was given.
+ *
+ * Length is counted in code points, as the schema counts it and as the Rust side's
+ * `chars().count()` counts it. `String.length` is UTF-16 code units, so a handle of
+ * non-BMP characters would measure double here: the two runtimes would then disagree
+ * about the same bound, which is exactly what stating it once per runtime is meant to
+ * rule out.
+ */
+private fun requireBoundedRef(handle: String?) {
+    if (handle == null) return
+    val characters = handle.codePointCount(0, handle.length)
+    require(characters in ENTITY_REF_MIN_CHARS..ENTITY_REF_MAX_CHARS) {
+        "ref must be $ENTITY_REF_MIN_CHARS..$ENTITY_REF_MAX_CHARS characters, got $characters"
+    }
+}
+
+/**
  * A full energy reserve, the top of the [SelfState.energy] scale.
  *
  * The two ends of the scale are named here rather than left as bare literals
@@ -186,7 +225,24 @@ data class Observation(
      * round a corner - which is a different situation from not knowing at all.
      */
     val visible: Boolean,
-)
+    /**
+     * The handle by which a decision may name this particular thing back to the body,
+     * present only for a living thing.
+     *
+     * A block carries none, because a block is named by its position instead, so
+     * `null` is a fact about what the observation is rather than an omission. Absent
+     * and present are both ordinary, and a mind must never invent one. It is the last
+     * field so a block observation serializes to the same bytes it always did.
+     *
+     * Its length is narrowed at decode by [requireBoundedRef], because a ref the body
+     * could never have issued is worth refusing where it arrives.
+     */
+    val ref: String? = null,
+) {
+    init {
+        requireBoundedRef(ref)
+    }
+}
 
 /**
  * The event that triggered cognition. There is intentionally no per-tick
@@ -280,10 +336,26 @@ sealed interface Intent {
         }
     }
 
-    /** Flee from a named source of threat. */
+    /**
+     * Move away from one living thing, named by the [Observation.ref] it carried in
+     * the perception being answered.
+     *
+     * A ref rather than a name or a type on purpose: two identical creatures are
+     * different threats, and the body must retreat from the one the mind meant. The
+     * body resolves [from] against that one request only, and refuses a ref it did not
+     * issue for that request rather than guessing.
+     *
+     * [from]'s length is narrowed at decode by [requireBoundedRef], so a blank or
+     * over-long handle is refused where it arrives rather than travelling to the body
+     * to be refused there.
+     */
     @Serializable
     @SerialName("flee")
-    data class Flee(val from: String) : Intent
+    data class Flee(val from: String) : Intent {
+        init {
+            requireBoundedRef(from)
+        }
+    }
 
     /**
      * Rest, refilling the agent's energy reserve.

@@ -176,6 +176,50 @@ fn a_nightfall_countdown_below_one_is_refused_at_decode() {
     assert_eq!(accepted.self_state.world.ticks_until_nightfall, 1);
 }
 
+#[test]
+fn a_ref_outside_its_length_is_refused_at_decode() {
+    // Same reason as the countdown above: the schema's minLength and maxLength are
+    // rules a socket walks straight past, so each end has to be a type rule too.
+    // A blank ref names nothing the body can resolve, and an over-long one is a
+    // handle no request ever issued - a mind having invented one rather than named
+    // back what it was given.
+    let blank = fs::read_to_string(
+        contract_dir()
+            .join("fixtures/invalid")
+            .join("decision-flee-blank-ref.json"),
+    )
+    .unwrap();
+    assert!(
+        serde_json::from_str::<Decision>(blank.trim_end_matches('\n')).is_err(),
+        "a blank flee ref decoded into a Decision"
+    );
+
+    let over_long = fs::read_to_string(
+        contract_dir()
+            .join("fixtures/invalid")
+            .join("perception-observation-ref-too-long.json"),
+    )
+    .unwrap();
+    assert!(
+        serde_json::from_str::<Perception>(over_long.trim_end_matches('\n')).is_err(),
+        "a nine-character observation ref decoded into a Perception"
+    );
+
+    // The bound is the length and nothing else: a ref of exactly the maximum is an
+    // ordinary one the body issues, and must still decode.
+    let longest = over_long.replace("\"ref\":\"entity-42\"", "\"ref\":\"entity-4\"");
+    assert_ne!(
+        over_long, longest,
+        "the fixture no longer states the over-long ref to edit"
+    );
+    let accepted: Perception = serde_json::from_str(&longest)
+        .unwrap_or_else(|e| panic!("an eight-character ref should decode: {e}"));
+    assert_eq!(
+        accepted.surroundings[0].entity_ref.as_deref(),
+        Some("entity-4")
+    );
+}
+
 /// Produce a self-contained schema rooted at the named `$defs` entry, carrying
 /// the original `$defs` so internal `$ref`s still resolve.
 fn scoped_schema(schema: &serde_json::Value, def: &str) -> serde_json::Value {

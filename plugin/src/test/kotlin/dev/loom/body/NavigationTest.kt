@@ -395,6 +395,53 @@ class NavigationTest {
         assertEquals(blocksApart(origin, at(x = 7.0)), blocksApart(at(x = 7.0), origin))
     }
 
+    @Test
+    @DisplayName("a route ending in the block that was named falls short by nothing")
+    fun aRouteEndingInTheNamedBlockFallsShortByNothing() {
+        // The shortfall is block against block, because both facts in it are blocks: a
+        // route's end is a node, and what Loom asked for is whatever `blockAt` made of the
+        // target. Measured instead against the *measured position* a retreat was chosen at -
+        // the bottom centre of the very block it was routed to, half a block off on x and on
+        // z - an arrival reported `0.71`, which an operator is told to read as the engine
+        // having moved the target vertically.
+        val named = blockAt(at(x = -8.5, y = -60.0, z = 8.5))
+
+        assertEquals(0.0, blocksApart(named, BodyBlock(-9L, -60L, 8L)))
+        // The reading the wording exists for still survives: the engine lifts a target out
+        // of solid ground and reports having reached the block it lifted to.
+        assertEquals(3.0, blocksApart(named, BodyBlock(-9L, -57L, 8L)))
+        assertEquals(blocksApart(named, BodyBlock(-9L, -57L, 8L)), blocksApart(BodyBlock(-9L, -57L, 8L), named))
+    }
+
+    // --- which block a place is in --------------------------------------------------
+
+    @Test
+    @DisplayName("a block is floored, so a negative target is not pulled back toward the origin")
+    fun aBlockIsFlooredRatherThanTruncated() {
+        // Truncating toward zero is floor only for a non-negative coordinate. The retreat
+        // search answers with the bottom centre of a block it scored, so x and z carry half a
+        // block, and truncation named the block one step nearer the origin: in the
+        // negative-x arena an in-world death was measured in, that is one step back toward
+        // the threat, giving away most of the MEANINGFUL_SEPARATION_BLOCKS gain the choice
+        // had just required. Nothing errors and no record contradicts it, which is why the
+        // rounding is a rule with a test rather than a conversion at a call site.
+        assertEquals(BodyBlock(-9L, -60L, 8L), blockAt(at(x = -8.5, y = -60.0, z = 8.5)))
+        assertEquals(BodyBlock(8L, -60L, -9L), blockAt(at(x = 8.5, y = -60.0, z = -8.5)))
+        // Every axis, and the fractional part is dropped rather than rounded to nearest.
+        assertEquals(BodyBlock(-1L, -1L, -1L), blockAt(at(x = -0.01, y = -0.01, z = -0.01)))
+        assertEquals(BodyBlock(0L, 0L, 0L), blockAt(at(x = 0.99, y = 0.99, z = 0.99)))
+    }
+
+    @Test
+    @DisplayName("a whole-number target names the block it always did")
+    fun aWholeTargetNamesTheSameBlock() {
+        // The walk path is untouched by the rule above: the contract's moveTo carries three
+        // whole numbers, so floor and truncate agree on every target a mind can name.
+        assertEquals(BodyBlock(-4L, 64L, -7L), blockAt(at(x = -4.0, y = 64.0, z = -7.0)))
+        assertEquals(BodyBlock(4L, 64L, 7L), blockAt(at(x = 4.0, y = 64.0, z = 7.0)))
+        assertEquals(BodyBlock(0L, 64L, 0L), blockAt(origin))
+    }
+
     // --- what a refusal says --------------------------------------------------------
 
     @Test

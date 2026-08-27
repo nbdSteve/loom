@@ -238,14 +238,28 @@ impl ScriptedBackend {
             // `19.899999618530273`. To a tenth, which is a half-heart, and the exact
             // value stays in the perception where anything counting it will look.
             // The damage `amount` is an integer and needs no such help.
-            Trigger::Damaged { amount, source } => Draft {
-                intent: Intent::Flee {
-                    from: source.clone(),
+            //
+            // `Flee` names a ref rather than a name, and a damage trigger carries
+            // only the name of what hurt the agent - so the stand-in reads the ref
+            // off the nearest observation that has one. Falling back to the damage
+            // `source` would put a creature's name where the body expects a handle
+            // it issued, which the body refuses; naming nothing when nothing in
+            // sight is alive is the honest answer.
+            Trigger::Damaged { amount, source } => match nearest_ref(perception) {
+                Some(handle) => Draft {
+                    intent: Intent::Flee { from: handle },
+                    reasoning: format!(
+                        "took {amount} damage from {source} at health {health:.1}; disengage",
+                        health = perception.self_state.health
+                    ),
                 },
-                reasoning: format!(
-                    "took {amount} damage from {source} at health {health:.1}; disengage",
-                    health = perception.self_state.health
-                ),
+                None => Draft {
+                    intent: Intent::Idle,
+                    reasoning: format!(
+                        "took {amount} damage from {source} at health {health:.1}, and nothing in sight can be named to flee from",
+                        health = perception.self_state.health
+                    ),
+                },
             },
             Trigger::BlockSighted { block } => {
                 let [x, y, z] = perception.self_state.position;
@@ -299,6 +313,18 @@ impl ModelBackend for ScriptedBackend {
     }
 }
 
+/// The ref of the nearest observed living thing, if the scene holds one.
+///
+/// The body already sorted `surroundings` nearest-first, and only a living thing
+/// carries a ref, so the first ref in the list is the nearest thing that can be
+/// named. `None` says the scene holds nothing nameable rather than nothing at all.
+fn nearest_ref(perception: &Perception) -> Option<String> {
+    perception
+        .surroundings
+        .iter()
+        .find_map(|seen| seen.entity_ref.clone())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -310,7 +336,8 @@ mod tests {
     use crate::config::{ConfigError, Env};
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
-        DayPhase, DecisionImportance, Intent, Perception, SelfState, Trigger, WorldState,
+        Bearing, DayPhase, DecisionImportance, Intent, Observation, Perception, SelfState, Trigger,
+        WorldState,
     };
 
     fn router() -> Router {
@@ -353,6 +380,24 @@ mod tests {
         })
     }
 
+    /// The same perception, with one living thing in view carrying `handle`.
+    ///
+    /// A flee names a ref rather than a species, so a scene with nothing
+    /// ref-carrying in it is a scene the stand-in has nothing to flee from. That
+    /// makes the ref part of the setup of any test about damage rather than
+    /// something such a test can leave out.
+    fn in_view(mut seen: Perception, what: &str, handle: &str) -> Perception {
+        seen.surroundings.push(Observation {
+            what: what.to_owned(),
+            distance: 3.0,
+            direction: Bearing::North,
+            vertical_offset: 0.0,
+            visible: true,
+            entity_ref: Some(handle.to_owned()),
+        });
+        seen
+    }
+
     /// The same perception, from an agent whose reserve is down to `energy`.
     fn drained(seen: Perception, energy: f64) -> Perception {
         Perception {
@@ -365,13 +410,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_threat_makes_the_body_flee_its_source() {
-        let seen = perception(
-            Trigger::Damaged {
-                amount: 6,
-                source: "zombie".to_owned(),
-            },
-            DecisionImportance::Pivotal,
+    async fn a_threat_makes_the_body_flee_the_nearest_thing_it_can_name() {
+        // The damage trigger names the species that hurt the agent; `Flee` names a
+        // ref the body issued. Handing the species name back would be a handle the
+        // body never minted, so the stand-in reads the ref off the scene instead.
+        let seen = in_view(
+            perception(
+                Trigger::Damaged {
+                    amount: 6,
+                    source: "zombie".to_owned(),
+                },
+                DecisionImportance::Pivotal,
+            ),
+            "zombie",
+            "e1",
         );
         let draft = ScriptedBackend
             .draft(&router().route(seen.importance), &seen)
@@ -380,8 +432,30 @@ mod tests {
         assert_eq!(
             draft.intent,
             Intent::Flee {
-                from: "zombie".to_owned()
+                from: "e1".to_owned()
             }
+        );
+    }
+
+    #[test]
+    fn damage_with_nothing_nameable_in_sight_idles_rather_than_inventing_a_ref() {
+        // The failure this rules out is the tempting one: falling back to the damage
+        // `source` would put a species name where the body expects a handle it
+        // issued, and the body would refuse it - so the agent would have spent a
+        // pivotal decision on an action that could never be carried out.
+        let seen = perception(
+            Trigger::Damaged {
+                amount: 6,
+                source: "zombie".to_owned(),
+            },
+            DecisionImportance::Pivotal,
+        );
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        assert_eq!(draft.intent, Intent::Idle);
+        assert!(
+            draft.reasoning.contains("nothing in sight can be named"),
+            "the reasoning must say why it did not run, got {reasoning:?}",
+            reasoning = draft.reasoning
         );
     }
 
@@ -471,6 +545,7 @@ mod tests {
             DecisionImportance::Pivotal,
         );
         seen.self_state.health = f64::from(19.9_f32);
+        let seen = in_view(seen, "zombie", "e1");
 
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
 
@@ -485,12 +560,16 @@ mod tests {
         // Resting is a goal-review rule, not a reflex: an exhausted agent being
         // eaten still runs. Losing this would have a body sit down under attack.
         let seen = drained(
-            perception(
-                Trigger::Damaged {
-                    amount: 6,
-                    source: "zombie".to_owned(),
-                },
-                DecisionImportance::Pivotal,
+            in_view(
+                perception(
+                    Trigger::Damaged {
+                        amount: 6,
+                        source: "zombie".to_owned(),
+                    },
+                    DecisionImportance::Pivotal,
+                ),
+                "zombie",
+                "e1",
             ),
             0.0,
         );
@@ -498,7 +577,7 @@ mod tests {
         assert_eq!(
             draft.intent,
             Intent::Flee {
-                from: "zombie".to_owned()
+                from: "e1".to_owned()
             }
         );
     }

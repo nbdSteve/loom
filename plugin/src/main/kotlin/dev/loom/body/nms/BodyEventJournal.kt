@@ -151,6 +151,22 @@ internal class BodyEventJournal(
         classified(agentId, BodyEvent.CONVERTED, detail, outcome)
     }
 
+    /**
+     * Records one transition in an agent's flight from a threat.
+     *
+     * [outcome] is required for the same reason a refused spawn's is: the transitions are
+     * opposite facts about the run - an agent that got away, one whose threat died, one
+     * waiting for the ground, and one left standing in range - and only the tag tells them
+     * apart, since they all share this event name.
+     */
+    fun recordRetreat(
+        agentId: AgentId,
+        detail: String,
+        outcome: String,
+    ) {
+        classified(agentId, BodyEvent.RETREATING, detail, outcome)
+    }
+
     /** Appends an [event] whose meaning is carried by a short stable [outcome] tag. */
     private fun classified(
         agentId: AgentId,

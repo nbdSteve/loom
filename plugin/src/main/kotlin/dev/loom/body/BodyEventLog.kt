@@ -140,6 +140,21 @@ enum class BodyEvent {
     PERCEIVED,
 
     /**
+     * A state change in an agent's flight from a threat.
+     *
+     * One accepted `Flee` is a state rather than a hop - see `ActiveRetreat.kt` - so the
+     * record has to say when it started, when a route end was chained into another hop,
+     * when it is waiting for the body to be back on the ground, and how it ended. Written
+     * once per transition and never per tick: the hops themselves are already `moved`
+     * records, and this is what says they were one flight.
+     *
+     * Which transition it was is `outcome`, one of `EventTag`'s retreat tags, because the
+     * one that matters most to a run is a failure and the rest are resolutions.
+     */
+    @SerialName("retreating")
+    RETREATING,
+
+    /**
      * The mind answered a perception, and the body was about to be asked to act.
      *
      * The record the run is reconstructed from: it carries the perception it answers

@@ -42,7 +42,10 @@ import dev.loom.body.BODY_FOLLOW_RANGE_BLOCKS
 import dev.loom.body.BodyLocation
 import dev.loom.body.IntentOutcome
 import dev.loom.body.NavigationPolicy
+import dev.loom.body.RefResolution
+import dev.loom.body.RetreatAttempt
 import dev.loom.body.hasTravelled
+import dev.loom.body.outcomeOf
 import dev.loom.contract.Intent
 import net.minecraft.network.chat.Component
 import net.minecraft.server.MinecraftServer
@@ -111,8 +114,9 @@ internal val IN_HAZARD_MALUS = BESIDE_HAZARD_MALUS * 2
  *
  * A pure function so the whole policy can be read, and tested, without a world: the body
  * does nothing but apply whatever this returns. Every entry is a survival decision rather
- * than a tuning knob, because Loom is permadeath and this body has no way to flee what
- * hurts it. The engine's defaults are written for mobs that respawn.
+ * than a tuning knob, because Loom is permadeath and no flight escapes a hazard: an
+ * `Intent.Flee` runs from a creature a mind named, and nothing runs from the fire or the
+ * water a route walked into. The engine's defaults are written for mobs that respawn.
  *
  * Expensive but passable, in an order that matches the danger: standing *in* fire costs
  * [IN_HAZARD_MALUS], the blocks *beside* fire and the wither roses and pointed dripstone the
@@ -337,6 +341,8 @@ class LoomBodyEntity(
         intent: Intent,
         movement: NavigationPolicy,
         tick: Long,
+        threatOf: (String) -> RefResolution,
+        onRetreat: (RetreatAttempt) -> Unit,
     ): IntentOutcome =
         when (intent) {
             is Intent.MoveTo -> {
@@ -359,7 +365,21 @@ class LoomBodyEntity(
             }
 
             is Intent.Say -> IntentOutcome.Unsupported("say")
-            is Intent.Flee -> IntentOutcome.Unsupported("flee")
+
+            // The one intent that names something the body saw rather than a place. It is
+            // resolved through the port's ref seam, which is what [threatOf] carries in:
+            // the body must not be able to turn a handle into a creature by itself, or a
+            // stale name would quietly act on whatever holds it now.
+            //
+            // It is also the one intent that outlives the tick that applied it, so the
+            // attempt itself is handed out through [onRetreat] rather than only its
+            // outcome: an accepted flight becomes a state the port keeps, and the
+            // resolution happens here once because a ref means nothing outside its request.
+            is Intent.Flee -> {
+                val attempt = retreatFrom(intent.from, threatOf, movement, tick)
+                onRetreat(attempt)
+                outcomeOf(attempt)
+            }
         }
 
     /**

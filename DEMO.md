@@ -119,9 +119,9 @@ Within about five seconds of the spawn, three lines arrive in order:
 
 ```
 [loom] perceived the world (goal review)
-[loom] decided [scripted-stand-in/routine-v4 routine]: idle: reviewed goals at the Routine tier; nothing outranks what is already underway
+[loom] decided [scripted-stand-in/routine-v6 routine]: idle: reviewed goals at the Routine tier; nothing outranks what is already underway
 [loom] the body is doing it
-ada | energy 99.8/100 declining | idle | goal review -> scripted-stand-in/routine-v4 routine   (green)
+ada | energy 99.8/100 declining | idle | goal review -> scripted-stand-in/routine-v6 routine   (green)
 ```
 
 That is the whole round trip: the bounded perception that caused cognition, the model and prompt version that answered it, the reasoning behind the intent, and what the body did about the intent.
@@ -146,9 +146,9 @@ The stand-in idles while the reserve is above `RESTING_ENERGY` (0.35 of full) an
 
 ```
 [loom] perceived the world (goal review)
-[loom] decided [scripted-stand-in/routine-v4 routine]: rest: the energy reserve is down to 32% of capacity; resting outranks every other goal
+[loom] decided [scripted-stand-in/routine-v6 routine]: rest: the energy reserve is down to 32% of capacity; resting outranks every other goal
 [loom] the body is doing it
-ada | energy 32/100 declining | resting | goal review -> scripted-stand-in/routine-v4 routine   (yellow)
+ada | energy 32/100 declining | resting | goal review -> scripted-stand-in/routine-v6 routine   (yellow)
 ```
 
 Those are one run's real numbers: the agent spawned on tick 815 and the review that decided to rest read the reserve at 31.99 of 100 on tick 25299, which is 20 minutes later.
@@ -158,7 +158,7 @@ Resting refills the reserve completely, and it is one tick, not a gradual climb:
 So the yellow clears and the gauge is green again by the next refresh, with the trend word reading the refill rather than the drain:
 
 ```
-ada | energy 100/100 recovering | resting | goal review -> scripted-stand-in/routine-v4 routine   (green)
+ada | energy 100/100 recovering | resting | goal review -> scripted-stand-in/routine-v6 routine   (green)
 ```
 
 `recovering` is the one time the trend word is news, because a living reserve is otherwise always falling.
@@ -290,7 +290,7 @@ The standing line names the agent, its reserve, what it is doing, and which mind
 Any field Loom does not know yet is left out rather than guessed, and the body's health joins only once it is below full.
 
 ```
-ada | energy 62/100 declining | health 12/20 | moving | goal review -> gpt-5-mini/routine-v4 routine
+ada | energy 62/100 declining | health 12/20 | moving | goal review -> gpt-5-mini/routine-v6 routine
  |          |                      |            |         |
  |          |                      |            |         the model, prompt version, and routing tier
  |          |                      |            the trigger that caused cognition
@@ -451,7 +451,7 @@ Derive metrics from it rather than adding counters.
 
 ```json
 {"tick":7999,"agentId":"fin","event":"perceived","detail":"1 observation(s)","requestId":"356af7c7-...","trigger":"goalReview","vitals":{"level":100.0,"capacity":100.0}}
-{"tick":8000,"agentId":"fin","event":"decided","detail":"idle: reviewed goals at the Routine tier; ...","requestId":"356af7c7-...","provenance":{"tier":"ROUTINE","model":"scripted-stand-in","promptVersion":"routine-v4"},"intent":"idle"}
+{"tick":8000,"agentId":"fin","event":"decided","detail":"idle: reviewed goals at the Routine tier; ...","requestId":"356af7c7-...","provenance":{"tier":"ROUTINE","model":"scripted-stand-in","promptVersion":"routine-v6"},"intent":"idle"}
 {"tick":8000,"agentId":"fin","event":"intentApplied","detail":"idle -> accepted: standing still","requestId":"356af7c7-...","intent":"idle","outcome":"accepted"}
 ```
 
@@ -496,6 +496,12 @@ These are true of the prototype today, not of the display.
 - A target the engine cannot stand at is not refused either; it is moved vertically to one the engine can, and only then searched for. The accepted line reports both: whether the route reached the block the *engine* looked for, and how far its end is from the block *you* named.
 - Holding the world open for those searches costs 25 chunks per lone agent, up from 9. Cost tracks the population's spatial footprint rather than its head count, so agents standing together share one hold.
 - There is no `pathEnded` record. A route ending shows up in the next `moved` detail as `at the end of its route`, and a body that gets stuck while already stationary produces no record at all, because the only thing that samples the route is a body that moved.
-- `say` and `flee` are not actuated yet. A mind that chooses either gets `Unsupported`, which the display shows as `the body cannot do that yet` and `body refused it`. That is the honest reading: the decision was real and the body could not carry it out.
+- `say` is not actuated yet. A mind that chooses it gets `Unsupported`, which the display shows as `the body cannot do that yet` and `body refused it`. That is the honest reading: the decision was real and the body could not carry it out.
+- `flee` is actuated, and it names a *creature* rather than a place. The intent carries the short `ref` the perception gave that one creature, in that one message; a ref from an earlier message means nothing, and an intent that names none reads as a threat this agent was never told about.
+- A flight is durative. One accepted `flee` is a state the body keeps: the tick path re-routes it at most once every ten ticks for as long as the threat is alive, in range and in the same world, and none of those hops costs another model call. It ends when the body is clear of the threat, when the threat is gone, when a later accepted intent takes over, or when it cannot be routed.
+- Flight is refused five ways, and the record says which: the ref window has passed, the request never named that creature, the creature is dead or despawned or in another dimension, the ground offered nowhere to stand, or it offered only spots underfoot or no further from the threat. The last two are opposite facts about the run - a body walled in against a body in the open with nowhere better to be - so they are kept apart on purpose.
+- Every transition is one `retreating` record carrying one tag, written once rather than per tick. `retreatStarted` and `retreatContinued` are a flight beginning and carrying on, `retreatPendingGround` is a flight waiting for a body that is momentarily off the ground (a ground route cannot be searched for mid-air), `retreatPendingBudget` is a flight waiting because the tick's four path searches were already spent, `retreatSafe` is the body clear of the threat, `retreatThreatGone` is the threat gone rather than escaped, `retreatThreatForgotten` and `retreatThreatUnnamed` are a `flee` whose handle the agent no longer held and one the request never issued, `retreatSuperseded` is a later accepted intent taking over, and `retreatFailed` is the one to read closely: the agent is still in range of something hunting it and has been left standing.
+- Only the ground's own refusals count as `retreatFailed`. A threat that had already gone, and a handle the body could not resolve, are filed under their own tags on purpose, because `retreatFailed` is the number a run reads for predation and a burnt-out zombie counted into it would inflate it.
+- Watching it happen needs a mind that chooses `flee`, and nothing shipped will choose one on its own. `ScriptedBackend` answers a `damaged` trigger with `flee` naming the nearest creature the perception gave a ref to, but nothing in the plugin raises a `damaged` perception yet - `/loombody think` and the autonomous driver both raise `goalReview`, and a goal review is never answered with `flee`. So a flight has to be driven from the mind side: point the plugin at a stand-in mind that replies `flee` naming a ref off the perception it was just handed, or run against a real provider, which may choose `flee` on an ordinary goal review when something hostile is in view with a ref on it.
 - One watch at a time. A second `/loomwatch` from *somebody else* replaces the first and tells the displaced operator so. This is the one-agent demo path on purpose. Re-running it yourself is not a displacement: you keep your own bar, and switching agents keeps it too, and the reply says whether the watch kept what it knew or starts blank. `/loomwatch off` and the no-argument report are yours alone, and refuse anybody else rather than acting on their behalf.
 - The boss bar title is 96 characters wide and a long line is cut with an ellipsis. The full model stamp is always in the `decided` chat line, which has more room.

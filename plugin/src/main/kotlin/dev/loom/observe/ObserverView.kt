@@ -87,6 +87,7 @@ class ObserverView(
             BodyEvent.DIED -> Note("DIED. Permadeath: this agent will not return.", ObserverLevel.ALARM)
             BodyEvent.TRAVELLED -> Note("crossed into another dimension", ObserverLevel.CONCERN)
             BodyEvent.CONVERTED -> convertedNote(record.outcome)
+            BodyEvent.RETREATING -> retreatNote(record.outcome)
             BodyEvent.WORLD_HOLD_FAILED -> Note(HOLD_FAILURE_CAVEAT, ObserverLevel.ALARM)
             // Every tick for a walking agent: the gauge and the activity already say it.
             BodyEvent.MOVED -> null
@@ -124,6 +125,7 @@ class ObserverView(
             BodyEvent.CONVERTED,
             BodyEvent.WORLD_LOADED,
             BodyEvent.WORLD_HOLD_FAILED,
+            BodyEvent.RETREATING,
             -> false
         }
 
@@ -267,6 +269,43 @@ class ObserverView(
                 Note("a conversion took its body. It is alive with nothing to act through.", ObserverLevel.ALARM)
             } else {
                 Note("something tried to turn it into another creature", ObserverLevel.CONCERN)
+            }
+
+        /**
+         * What an operator is told about a change in an agent's flight.
+         *
+         * Read from the countable tag rather than from the detail, like every other event
+         * whose one name carries opposite facts: getting away and being left standing in
+         * range are the two halves of what a survival run is measuring, and they are the
+         * same record apart from this tag. A flight in progress is an alarm because the
+         * agent is being hunted; a flight that resolved is not, and a flight refused over a
+         * handle rather than over the ground is a decision that could not be acted on -
+         * which is the same news a discarded decision is, and no more than that.
+         */
+        fun retreatNote(outcome: String?): Note =
+            when (outcome) {
+                EventTag.RETREAT_STARTED -> Note("is running from a threat", ObserverLevel.ALARM)
+                EventTag.RETREAT_CONTINUED -> Note("is still running from a threat", ObserverLevel.ALARM)
+                EventTag.RETREAT_PENDING_GROUND ->
+                    Note("cannot run until it is back on the ground", ObserverLevel.ALARM)
+                EventTag.RETREAT_PENDING_BUDGET ->
+                    Note("is waiting for a path search to run from a threat", ObserverLevel.ALARM)
+                EventTag.RETREAT_SAFE -> Note("got away from the threat", ObserverLevel.CALM)
+                // Worded to hold for a flight that never started as well as one that did:
+                // this tag is also what a Flee naming a creature the world no longer holds
+                // is filed under, and there the agent was never running from anything.
+                EventTag.RETREAT_THREAT_GONE ->
+                    Note("the threat is gone; there is nothing to run from", ObserverLevel.CALM)
+                EventTag.RETREAT_THREAT_FORGOTTEN ->
+                    Note("was told to run from a threat it could no longer name", ObserverLevel.CONCERN)
+                EventTag.RETREAT_THREAT_UNNAMED ->
+                    Note("was told to run from something it was never told about", ObserverLevel.CONCERN)
+                EventTag.RETREAT_SUPERSEDED ->
+                    Note("stopped running: a later decision took over", ObserverLevel.CONCERN)
+                // RETREAT_FAILED, and anything a later version adds without saying so here:
+                // the agent is still in range of something hunting it and has been left
+                // standing, which is the reading an unrecognised tag must not be softer than.
+                else -> Note("could not run from a threat, and is still in range of it", ObserverLevel.ALARM)
             }
     }
 }

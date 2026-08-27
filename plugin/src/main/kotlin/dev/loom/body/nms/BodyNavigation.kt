@@ -21,16 +21,32 @@
  */
 package dev.loom.body.nms
 
+import dev.loom.body.BodyBlock
 import dev.loom.body.BodyLocation
+import dev.loom.body.FLEE_SPEED_MODIFIER
 import dev.loom.body.IntentOutcome
 import dev.loom.body.NavigationPolicy
 import dev.loom.body.PATH_REQUEST_ACCURACY_BLOCKS
+import dev.loom.body.PathRequest
+import dev.loom.body.RETREAT_SEARCH_ATTEMPTS
+import dev.loom.body.RETREAT_SEARCH_HORIZONTAL_BLOCKS
+import dev.loom.body.RETREAT_SEARCH_VERTICAL_BLOCKS
+import dev.loom.body.RefResolution
+import dev.loom.body.RetreatAttempt
+import dev.loom.body.RetreatChoice
+import dev.loom.body.RetreatRefusal
 import dev.loom.body.WALK_SPEED_MODIFIER
 import dev.loom.body.Walker
+import dev.loom.body.blockAt
 import dev.loom.body.blocksApart
+import dev.loom.body.chooseRetreat
+import dev.loom.body.refusalFor
 import net.minecraft.core.BlockPos
+import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.entity.ai.navigation.PathNavigation
+import net.minecraft.world.entity.ai.util.LandRandomPos
 import net.minecraft.world.level.pathfinder.Path
+import java.util.UUID
 
 /**
  * The body's own navigator.
@@ -39,7 +55,7 @@ import net.minecraft.world.level.pathfinder.Path
  * with the navigator of whatever a mob is riding. A Loom body rides nothing, so today
  * the two are the same thing and the accessor is simply the one that stays right.
  */
-private val LoomBodyEntity.navigator: PathNavigation get() = getNavigation()
+internal val LoomBodyEntity.navigator: PathNavigation get() = getNavigation()
 
 /**
  * Routes [this] body toward the whole-block target ([x], [y], [z]) if [movement] allows
@@ -70,7 +86,175 @@ internal fun LoomBodyEntity.walkToward(
     // The contract's MoveTo names three coordinates and no world, so a target is always
     // a place in the body's own world.
     val target = BodyLocation(here.world, x.toDouble(), y.toDouble(), z.toDouble())
-    return movement.route(BodyWalker(this), here, target, tick)
+    return movement.route(BodyWalker(this, WALK_SPEED_MODIFIER), here, target, tick)
+}
+
+/**
+ * Sets [this] body running from [threat] if [movement] allows it on [tick], and says what
+ * happened either way.
+ *
+ * Engine calls and no policy. `LandRandomPos.getPosAway` is the vanilla retreat search - the
+ * same one `AvoidEntityGoal` uses - and it answers with somewhere the body can *stand*, near
+ * itself and in a cone away from [threat], or with nothing at all. Which of its answers is
+ * worth walking to is [chooseRetreat]'s, in the engine-free domain; whatever that picks is
+ * then routed to through [NavigationPolicy] exactly like a target the mind named, so a
+ * retreat inherits the reach, the per-tick search budget, the node budget and the hazard
+ * prices rather than getting a private path of its own. Loom picks the direction; the engine
+ * picks the ground and the way there.
+ *
+ * IT IS ASKED [RETREAT_SEARCH_ATTEMPTS] TIMES, AND THAT IS NOT A SEARCH BUDGET IT SPENDS.
+ * The search scores random *blocks* for standability and never asks the navigator for a
+ * route, so the samples cost block probes; only the one target the choice earns is routed
+ * to, so a flight still spends exactly one token of the per-tick path budget. Asking once
+ * was what an in-world run died of: the single answer was 0.71 blocks away, and nothing
+ * retried it before the agent's next goal review.
+ *
+ * The one thing that differs from an ordinary walk is the pace: a retreat is walked at
+ * [FLEE_SPEED_MODIFIER] rather than [WALK_SPEED_MODIFIER], which is the whole of "running".
+ *
+ * Either refusal stops the body, and for the same reason [NavigationPolicy.route] does: a
+ * body left walking its previous route would be walking it under a flee the log recorded as
+ * refused. Which refusal it was is a fact about the ground worth keeping - see
+ * [RetreatRefusal.NoRetreat] against [RetreatRefusal.NoMeaningfulRetreat].
+ *
+ * The retreat target is named in the accepted detail because it is the one fact about a
+ * flight nothing else records: the threat is in the intent, the route is in the outcome, and
+ * where the body decided to go is only knowable here.
+ */
+internal fun LoomBodyEntity.fleeFrom(
+    threat: LivingEntity,
+    movement: NavigationPolicy,
+    tick: Long,
+): RetreatAttempt {
+    // Asked before anything is spent, because a ground navigator will not search while its
+    // body is off the ground and a body being hit is off the ground: `createPath` would
+    // answer a perfectly reachable retreat with no route at all. An in-world run lost a
+    // whole flight that way, and one of a night's eight pivotal model calls with it. The
+    // route the body was walking still stops - a flight is not carrying on with the old
+    // route - but the retreat is kept and asked again once the body is back on its feet.
+    if (!onGround()) {
+        stopWalking()
+        return RetreatAttempt.Grounding(threat.uuid)
+    }
+    val here = whereItIs()
+    val threatAt = threat.position()
+    // Each answer is the *bottom centre* of a block the search scored - `Vec3.atBottomCenterOf`,
+    // so x and z carry half a block - which is where the body would stand on arriving, and so
+    // is the right position to measure a step and a gain against. Turning it back into the
+    // block a route is asked for is `blockAt`'s, in [followRouteTo].
+    val offered =
+        (1..RETREAT_SEARCH_ATTEMPTS).mapNotNull {
+            LandRandomPos.getPosAway(
+                this,
+                RETREAT_SEARCH_HORIZONTAL_BLOCKS,
+                RETREAT_SEARCH_VERTICAL_BLOCKS,
+                threatAt,
+            )?.let { away -> BodyLocation(here.world, away.x, away.y, away.z) }
+        }
+    val standing = BodyLocation(here.world, threatAt.x, threatAt.y, threatAt.z)
+    return when (val choice = chooseRetreat(here, standing, offered)) {
+        is RetreatChoice.Refuse -> {
+            stopWalking()
+            RetreatAttempt.Refused(choice.refusal)
+        }
+        is RetreatChoice.Take -> routeAway(threat.uuid, here, choice.target, movement, tick)
+    }
+}
+
+/**
+ * Routes the body from [here] to the chosen [target], away from [threat].
+ *
+ * The one place a flight meets [NavigationPolicy], so a retreat is bounded by the reach, the
+ * per-tick search budget and the hazard prices exactly as a walk the mind named is. A
+ * refusal here is [RetreatAttempt.Unrouted] rather than [RetreatAttempt.Refused] because it
+ * is an answer about a *route* rather than about a *threat* - a target past the reach, an
+ * engine that offered nothing - and the policy has already stopped the body on its way out.
+ *
+ * The one exception is a tick whose search budget was already spent, which is not an answer
+ * at all: nothing was searched for, and the same target is there to be reached on the next
+ * tick. That is [RetreatAttempt.PendingBudget], and it is what the verdict is read for.
+ */
+private fun LoomBodyEntity.routeAway(
+    threat: UUID,
+    here: BodyLocation,
+    target: BodyLocation,
+    movement: NavigationPolicy,
+    tick: Long,
+): RetreatAttempt =
+    with(movement.routing(BodyWalker(this, FLEE_SPEED_MODIFIER), here, target, tick)) {
+        when (outcome) {
+            is IntentOutcome.Accepted ->
+                RetreatAttempt.Routed(threat, "retreating to ${namedBlock(blockAt(target))}, ${outcome.effect}")
+            // A spent search budget is the one refusal here that is not about this flight:
+            // Loom grants a fixed number of searches per tick across the whole server, and
+            // the target is unchanged and still reachable on the next one. Held rather than
+            // ended, so an agent does not lose a flight to Loom's own bookkeeping.
+            is IntentOutcome.Rejected ->
+                if (request is PathRequest.OverBudget) {
+                    RetreatAttempt.PendingBudget(threat)
+                } else {
+                    RetreatAttempt.Unrouted(outcome.reason)
+                }
+            // Neither can be reached: the body is in hand and the policy answers only these
+            // three. Stated rather than defaulted so a fourth outcome has to be thought about.
+            else -> RetreatAttempt.Unrouted("the body could not be routed away")
+        }
+    }
+
+/**
+ * What [this] body's retreat asks of the ground on [tick], against the threat it is already
+ * running from.
+ *
+ * The continuation, and it obeys every rule the first hop does because it *is* the first
+ * hop's code: the threat is looked for again in the body's own world, and a threat that has
+ * gone is refused rather than routed. What decides whether this is called at all - the
+ * cadence, the live route, the ground - is `ActiveRetreats.next`, in the engine-free domain.
+ */
+internal fun LoomBodyEntity.retreatAgainFrom(
+    threat: UUID,
+    movement: NavigationPolicy,
+    tick: Long,
+): RetreatAttempt {
+    val found = livingThreat(threat)
+    if (found == null) {
+        stopWalking()
+        return RetreatAttempt.Refused(RetreatRefusal.ThreatGone)
+    }
+    return fleeFrom(found, movement, tick)
+}
+
+/**
+ * Sets [this] body running from whatever [handle] named, or says why it did not.
+ *
+ * The handle is resolved through [threatOf] - the port's request-scoped [dev.loom.body.EntityRefs]
+ * seam, the only thing that can turn a name the mind used back into a creature - and then
+ * looked for in *this body's own world*. Both halves can refuse, and the refusals mean
+ * different things ([RetreatRefusal]), so the resolution's own answer is preferred and
+ * `ThreatGone` is what is left when the handle was good and the creature is not there.
+ *
+ * A threat that is dead, despawned, or in another dimension all arrive as the same absence,
+ * which is the honest answer: the lookup is scoped to one level, so a creature in another
+ * world is simply not found, and a body must never be sent fleeing a position from a
+ * dimension it is not in.
+ *
+ * Every refusal stops the body. A flee that could not be carried out must not leave the
+ * previous route running, or the log would show `moved` records after the `rejected` one -
+ * movement under an intent Loom refused, which is the rule `NavigationPolicy.route` exists
+ * to hold for the granted path.
+ */
+internal fun LoomBodyEntity.retreatFrom(
+    handle: String,
+    threatOf: (String) -> RefResolution,
+    movement: NavigationPolicy,
+    tick: Long,
+): RetreatAttempt {
+    val resolution = threatOf(handle)
+    val threat = if (resolution is RefResolution.Bound) livingThreat(resolution.subject) else null
+    if (threat == null) {
+        stopWalking()
+        return RetreatAttempt.Refused(refusalFor(resolution) ?: RetreatRefusal.ThreatGone)
+    }
+    return fleeFrom(threat, movement, tick)
 }
 
 /**
@@ -81,8 +265,9 @@ internal fun LoomBodyEntity.walkToward(
  */
 private class BodyWalker(
     private val body: LoomBodyEntity,
+    private val speedModifier: Double,
 ) : Walker {
-    override fun followRouteTo(target: BodyLocation): IntentOutcome = body.followRouteTo(target)
+    override fun followRouteTo(target: BodyLocation): IntentOutcome = body.followRouteTo(target, speedModifier)
 
     override fun stopWalking() {
         body.stopWalking()
@@ -106,17 +291,24 @@ private class BodyWalker(
  * blocks off does not get a refusal, it gets a route somewhere else - which is why the
  * record measures the route's own end against the block the mind named. See [describeRoute].
  */
-private fun LoomBodyEntity.followRouteTo(target: BodyLocation): IntentOutcome {
-    val named = namedBlock(target)
+private fun LoomBodyEntity.followRouteTo(
+    target: BodyLocation,
+    speedModifier: Double,
+): IntentOutcome {
+    // One rounding, `blockAt`'s, for the block the search is asked for and the block the
+    // record names alike. A target that reached those two through separate conversions is a
+    // target the navigator and the log can disagree about.
+    val named = blockAt(target)
     // Accuracy 0 routes to the named block itself; this overload also fixes the region
     // margin the hold radius is derived from. See Navigation.kt.
-    val block = BlockPos(target.x.toInt(), target.y.toInt(), target.z.toInt())
+    val block = BlockPos(named.x.toInt(), named.y.toInt(), named.z.toInt())
     val path = navigator.createPath(block, PATH_REQUEST_ACCURACY_BLOCKS)
+    val stated = namedBlock(named)
     return when {
-        path == null -> IntentOutcome.Rejected("the engine offered no route to $named")
-        !navigator.moveTo(path, WALK_SPEED_MODIFIER) ->
-            IntentOutcome.Rejected("the navigator would not follow the route to $named")
-        else -> IntentOutcome.Accepted("walking to $named ${describeRoute(path, target)}")
+        path == null -> IntentOutcome.Rejected("the engine offered no route to $stated")
+        !navigator.moveTo(path, speedModifier) ->
+            IntentOutcome.Rejected("the navigator would not follow the route to $stated")
+        else -> IntentOutcome.Accepted("walking to $stated ${describeRoute(path, named)}")
     }
 }
 
@@ -137,10 +329,18 @@ private fun LoomBodyEntity.followRouteTo(target: BodyLocation): IntentOutcome {
  * Both facts are worth carrying. A route that does not reach still walks the body
  * somewhere, and an agent told only "accepted" could not tell being on its way from being
  * sent at a wall it cannot get round.
+ *
+ * IT IS BLOCK AGAINST BLOCK, AND MEASURING THE MEASURED POSITION INSTEAD READ AS A LIE.
+ * A route's end is a node, which is a block; [named] is the block Loom asked for. Measured
+ * against the position a retreat was *chosen* at - the bottom centre of that same block, so
+ * half a block off on x and on z - a flight that arrived exactly where it meant to reported
+ * `ending 0.71 blocks from it`, which an operator is told to read as the engine having moved
+ * the target vertically. There is nothing to read into a shortfall of zero, and that is the
+ * point of it.
  */
 private fun describeRoute(
     path: Path,
-    target: BodyLocation,
+    named: BodyBlock,
 ): String {
     val verdict = if (path.canReach()) "reaching what it searched for" else "getting as close as it can"
     val end = path.endNode
@@ -148,8 +348,8 @@ private fun describeRoute(
         if (end == null) {
             "ending nowhere"
         } else {
-            val stop = BodyLocation(target.world, end.x.toDouble(), end.y.toDouble(), end.z.toDouble())
-            "ending ${coordinate(blocksApart(stop, target))} blocks from it"
+            val stop = BodyBlock(end.x.toLong(), end.y.toLong(), end.z.toLong())
+            "ending ${coordinate(blocksApart(stop, named))} blocks from it"
         }
     return "by ${path.nodeCount} node(s), $verdict, $ending"
 }
@@ -158,7 +358,7 @@ private fun describeRoute(
  * The target as the mind named it: three whole blocks, without the two decimal places a
  * measured position carries. A named block is not a measurement.
  */
-private fun namedBlock(target: BodyLocation): String = "${target.x.toLong()},${target.y.toLong()},${target.z.toLong()}"
+private fun namedBlock(block: BodyBlock): String = "${block.x},${block.y},${block.z}"
 
 /**
  * Stops [this] body where it stands, dropping any route it was following.

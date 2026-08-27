@@ -222,6 +222,7 @@ private fun bodilessAfter(
         BodyEvent.ENERGY_CHANGED,
         BodyEvent.HEALTH_CHANGED,
         BodyEvent.TRAVELLED,
+        BodyEvent.RETREATING,
         BodyEvent.WORLD_LOADED,
         BodyEvent.WORLD_HOLD_FAILED,
         -> state.hasNoBody
@@ -273,6 +274,10 @@ private fun activityAfter(
         BodyEvent.ENERGY_CHANGED,
         BodyEvent.HEALTH_CHANGED,
         BodyEvent.DECISION_DISCARDED,
+        // A flight's own activity is set by the applied record that accepted it, one record
+        // earlier, and every transition after that is about the *state* of the flight
+        // rather than about a new thing the body was told to do. The note says which.
+        BodyEvent.RETREATING,
         -> state.activity
         // World-level, and true of every agent at once rather than of this one.
         BodyEvent.WORLD_LOADED,
