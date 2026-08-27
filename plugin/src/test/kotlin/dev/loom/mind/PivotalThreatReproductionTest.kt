@@ -61,6 +61,10 @@ private class HuntedBody(private val agent: AgentId) : BodyPort {
         perception(requestId = "req-1", agentId = agentId.value, trigger = trigger)
             .copy(surroundings = listOf(ZOMBIE))
 
+    override fun senseThreat(agentId: AgentId): Perception =
+        perception(requestId = "req-threat", agentId = agentId.value, trigger = sightingOf(ZOMBIE))
+            .copy(surroundings = listOf(ZOMBIE))
+
     override fun tick(tick: Long) = fail("cognition is never driven from the tick")
 
     override fun liveBodies(): Set<AgentId> = setOf(agent)

@@ -129,6 +129,8 @@ private class SurvivingBodies(
         )
     }
 
+    override fun senseThreat(agentId: AgentId): Perception? = null
+
     override fun tick(tick: Long) {
         this.tick = tick
         for (agent in metabolism.spendUpTo(tick, bodies.toSet())) {

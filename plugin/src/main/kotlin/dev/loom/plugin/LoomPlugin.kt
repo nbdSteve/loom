@@ -21,6 +21,8 @@ import dev.loom.mind.CognitionSettings
 import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.GoalReviewSchedule
+import dev.loom.mind.THREAT_SCAN_CADENCE
+import dev.loom.mind.ThreatDriver
 import dev.loom.mind.tcp.TcpCognitionTransport
 import dev.loom.observe.Observatory
 import dev.loom.observe.ObservedEventLog
@@ -57,6 +59,7 @@ class LoomPlugin : JavaPlugin() {
     private var bridge: AsyncCognitionBridge? = null
     private var transport: TcpCognitionTransport? = null
     private var autonomy: BukkitTask? = null
+    private var vigilance: BukkitTask? = null
     private var observatory: Observatory? = null
     private var display: BukkitTask? = null
 
@@ -125,6 +128,7 @@ class LoomPlugin : JavaPlugin() {
             )
 
         driveAgents(port, mind)
+        watchForThreats(port, mind)
 
         logger.info("Loom body port ready: server-side entity bodies")
         logger.info("Loom observation ready: /loomwatch <agentId> follows one agent, read-only")
@@ -136,6 +140,13 @@ class LoomPlugin : JavaPlugin() {
         // after despawnAll would find no agents at all.
         autonomy?.cancel()
         autonomy = null
+
+        // Vigilance goes down with autonomy and for exactly the same reasons: it is the
+        // other thing that submits perceptions of its own accord, so a scan surviving the
+        // bridge would fail every request it earned, and one surviving despawnAll would
+        // look for threats around bodies that are no longer in the world.
+        vigilance?.cancel()
+        vigilance = null
 
         // The display goes down before the bodies do. It is only a consumer of the record,
         // so nothing depends on the order for correctness - but a boss bar left standing
@@ -253,6 +264,25 @@ class LoomPlugin : JavaPlugin() {
         val period = ticks(schedule.slice)
         autonomy = server.scheduler.runTaskTimer(this, Runnable { driver.sweep() }, period, period)
         logger.info("Loom autonomy running: each agent reviews its goals every ${schedule.cadence}")
+    }
+
+    /**
+     * Starts the loop that has agents notice something hunting them without being asked.
+     *
+     * Its own timer rather than a share of autonomy's, because the two answer different
+     * questions on cadences three orders of magnitude apart: a goal review is due every
+     * `DEFAULT_GOAL_REVIEW_CADENCE`, while a threat is worth noticing within a second of
+     * coming into view. The cadence is [THREAT_SCAN_CADENCE]'s, not this file's; all that
+     * happens here is the same conversion to a Bukkit period in ticks.
+     */
+    private fun watchForThreats(
+        bodies: BodyPort,
+        mind: EmbodiedCognition,
+    ) {
+        val driver = ThreatDriver(bodies, mind)
+        val period = ticks(THREAT_SCAN_CADENCE)
+        vigilance = server.scheduler.runTaskTimer(this, Runnable { driver.sweep() }, period, period)
+        logger.info("Loom vigilance running: each agent looks for a threat every $THREAT_SCAN_CADENCE")
     }
 
     /** [duration] as a whole number of server ticks, never rounded down to zero. */

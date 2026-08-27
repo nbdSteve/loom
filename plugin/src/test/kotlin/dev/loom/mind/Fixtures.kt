@@ -6,6 +6,7 @@ import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.ENERGY_FULL
 import dev.loom.contract.Intent
+import dev.loom.contract.Observation
 import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
 import dev.loom.contract.SelfState
@@ -99,6 +100,29 @@ fun perception(
             ),
         surroundings = emptyList(),
         surroundingsOmitted = 0,
+    )
+
+/**
+ * The sighting trigger a body would put on a perception that found [seen].
+ *
+ * Derived from the observation rather than given its own coordinates, because the whole
+ * point of a sighting is that the trigger and the observation describe one creature at one
+ * moment: a helper that let the two drift would let a test pass on a scene no body could
+ * produce. [reachable] defaults to `false` on purpose - it is the value that must never on
+ * its own make a threat cheaper, so a test that does not mention it is testing the case
+ * that matters.
+ */
+fun sightingOf(
+    seen: Observation,
+    reachable: Boolean = false,
+): Trigger.ThreatSighted =
+    Trigger.ThreatSighted(
+        threat = seen.what,
+        ref = seen.ref ?: error("a threat is named by its handle, so the observation must carry one"),
+        distance = seen.distance,
+        direction = seen.direction,
+        visible = seen.visible,
+        reachable = reachable,
     )
 
 /** The decision a cooperative fake mind answers [perception] with. */
