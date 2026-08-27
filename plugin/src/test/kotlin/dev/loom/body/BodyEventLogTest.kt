@@ -24,6 +24,7 @@ private val WIRE_NAMES =
         BodyEvent.INTENT_APPLIED to "intentApplied",
         BodyEvent.MOVED to "moved",
         BodyEvent.PERCEIVED to "perceived",
+        BodyEvent.THREAT_SUPPRESSED to "threatSuppressed",
         BodyEvent.RETREATING to "retreating",
         BodyEvent.DECIDED to "decided",
         BodyEvent.DECISION_DISCARDED to "decisionDiscarded",
