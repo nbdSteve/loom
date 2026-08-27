@@ -125,8 +125,14 @@ class NmsEntityBodyPort(
      */
     private val footprint = navigableFootprint()
 
-    /** The world Loom is holding open around its agents. */
-    private val heldChunks = HeldChunks(server, owner, footprint, journal, onHoldFailure)
+    /**
+     * The world Loom is holding open around its agents.
+     *
+     * Visible to the file rather than to the class alone so [despawnAll] can let it go: a
+     * ticket outlives the tick that added it, so releasing is as much part of unloading as
+     * removing the bodies is.
+     */
+    internal val heldChunks = HeldChunks(server, owner, footprint, journal, onHoldFailure)
 
     override fun spawn(
         agentId: AgentId,
@@ -512,20 +518,26 @@ class NmsEntityBodyPort(
     }
 
     override fun liveBodies(): Set<AgentId> = bodies.keys.toSet()
+}
 
-    /**
-     * Removes every body and lets the world go.
-     *
-     * Called when the plugin unloads. Releasing the chunks matters as much as removing
-     * the bodies: a plugin chunk ticket outlives the tick that added it, so skipping
-     * this would leave the world pinned loaded with no Loom running.
-     */
-    fun despawnAll() {
-        for (agentId in bodies.keys.toList()) {
-            despawn(agentId)
-        }
-        heldChunks.releaseAll()
+/**
+ * Removes every body and lets the world go.
+ *
+ * Called when the plugin unloads. Releasing the chunks matters as much as removing the
+ * bodies: a plugin chunk ticket outlives the tick that added it, so skipping this would
+ * leave the world pinned loaded with no Loom running.
+ *
+ * An extension over the port's own operations rather than a method with private access,
+ * because that is all it is: putting every body away is the ordinary [BodyPort.despawn]
+ * done once per living agent, and a privileged path could quietly stop being. What is left
+ * inside the adapter is the one obligation that is not the port's - the world hold this
+ * engine took.
+ */
+fun NmsEntityBodyPort.despawnAll() {
+    for (agentId in liveBodies()) {
+        despawn(agentId)
     }
+    heldChunks.releaseAll()
 }
 
 /**

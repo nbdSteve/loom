@@ -14,6 +14,7 @@ import dev.loom.body.BodyPort
 import dev.loom.body.FileBodyEventLog
 import dev.loom.body.nms.NmsEntityBodyPort
 import dev.loom.body.nms.bodyConversionSeam
+import dev.loom.body.nms.despawnAll
 import dev.loom.mind.AppliedDecision
 import dev.loom.mind.AsyncCognitionBridge
 import dev.loom.mind.AutonomousDriver
