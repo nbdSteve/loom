@@ -225,6 +225,9 @@ private fun bodilessAfter(
         BodyEvent.RETREATING,
         BodyEvent.WORLD_LOADED,
         BodyEvent.WORLD_HOLD_FAILED,
+        // A body that looked around is a body: the record says nothing either way about
+        // whether the agent still has one, so what was already known stands.
+        BodyEvent.THREAT_SUPPRESSED,
         -> state.hasNoBody
     }
 
@@ -282,6 +285,11 @@ private fun activityAfter(
         // World-level, and true of every agent at once rather than of this one.
         BodyEvent.WORLD_LOADED,
         BodyEvent.WORLD_HOLD_FAILED,
+        -> state.activity
+        // Nothing was asked of the body and no mind was woken, so the agent is doing
+        // exactly what it was already doing. Saying otherwise would show a suppression as
+        // a state change, which is the opposite of what it records.
+        BodyEvent.THREAT_SUPPRESSED,
         -> state.activity
     }
 

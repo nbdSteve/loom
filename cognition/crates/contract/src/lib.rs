@@ -239,6 +239,47 @@ pub enum Trigger {
     /// The agent's body took damage.
     #[serde(rename = "damaged")]
     Damaged { amount: i64, source: String },
+    /// A living thing that hunts this agent's kind came into the body's view.
+    ///
+    /// Everything the body already verified about it travels with the trigger, so
+    /// the mind never has to ask a second question to decide whether to run: which
+    /// thing it is, the handle to name it back by, how far and in which direction
+    /// it lies, whether the body can actually see it, and the engine's own verdict
+    /// on whether it could be walked to.
+    #[serde(rename = "threatSighted")]
+    ThreatSighted {
+        /// What the thing is, as the body describes it.
+        ///
+        /// A description for the mind to reason with, never the handle: naming a
+        /// threat by what it is would leave the body guessing which of two
+        /// identical creatures was meant.
+        threat: String,
+        /// The handle by which a decision may name this threat back to the body.
+        ///
+        /// Narrowed at decode by [`bounded_ref`], exactly as [`Intent::Flee`]'s is:
+        /// an over-long handle is one no request ever issued. Named `entity_ref` in
+        /// Rust and `ref` on the wire because `ref` is a keyword here.
+        #[serde(rename = "ref", deserialize_with = "bounded_ref")]
+        entity_ref: String,
+        /// Distance from the agent to the threat, in blocks, measured as an
+        /// observation's is.
+        distance: f64,
+        /// The horizontal bearing from the agent to the threat.
+        direction: Bearing,
+        /// Whether the body has an unobstructed line of sight to the threat.
+        ///
+        /// `false` is not safety: it means the body knows the threat is there and
+        /// something stands between them.
+        visible: bool,
+        /// Whether the engine's own bounded ground search found a route reaching
+        /// the threat.
+        ///
+        /// Evidence for the mind, and the result of a search the body already paid
+        /// for - not an invitation to ask for another. Deliberately not part of
+        /// what makes a sighting expensive; the body's own `importanceOf` decides
+        /// that.
+        reachable: bool,
+    },
     /// A notable block came into the agent's view.
     #[serde(rename = "blockSighted")]
     BlockSighted { block: String },

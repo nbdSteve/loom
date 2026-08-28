@@ -28,6 +28,8 @@ import dev.loom.body.Mortality
 import dev.loom.body.NavigationPolicy
 import dev.loom.body.RetreatAttempt
 import dev.loom.body.RetreatEnd
+import dev.loom.body.ThreatClock
+import dev.loom.body.ThreatWatch
 import dev.loom.body.describe
 import dev.loom.body.navigableFootprint
 import dev.loom.body.tagOf
@@ -87,6 +89,18 @@ class NmsEntityBodyPort(
     private val movement = NavigationPolicy()
 
     /**
+     * Whether a hostile in view is worth waking a mind for.
+     *
+     * The rule is engine-free and this adapter only feeds it engine facts: who is in view
+     * (out of the perception the mind would be shown), whether the body has a line to
+     * them, and whether they could be walked to. Every bound it applies - the debounce,
+     * the pivotal distance, the night's ceiling - is its own, so the adapter cannot widen
+     * one by accident. Held here rather than per body because the state it keeps is the
+     * agent's, and an agent outlives any one body.
+     */
+    private val threatWatch = ThreatWatch(ServerThreatClock(server, currentTick))
+
+    /**
      * The flights in progress, one per agent at most.
      *
      * Here rather than in the entity for the same reason the reserve is: a dimension transit
@@ -111,8 +125,14 @@ class NmsEntityBodyPort(
      */
     private val footprint = navigableFootprint()
 
-    /** The world Loom is holding open around its agents. */
-    private val heldChunks = HeldChunks(server, owner, footprint, journal, onHoldFailure)
+    /**
+     * The world Loom is holding open around its agents.
+     *
+     * Visible to the file rather than to the class alone so [despawnAll] can let it go: a
+     * ticket outlives the tick that added it, so releasing is as much part of unloading as
+     * removing the bodies is.
+     */
+    internal val heldChunks = HeldChunks(server, owner, footprint, journal, onHoldFailure)
 
     override fun spawn(
         agentId: AgentId,
@@ -206,7 +226,12 @@ class NmsEntityBodyPort(
         val health = bodyVitals(body)
         body.discard()
         vitalsWatch.forget(agentId)
-        // A flight belongs to the body that was running: there is nothing left to
+        // What the watch remembered was about threats near a body that is now gone. Kept,
+        // it would debounce the first sighting the agent's *next* body makes. Only the
+        // scene goes: tonight's spend is a fact about the night, not about the body, so a
+        // body put away and spawned again does not come back with a fresh allowance.
+        threatWatch.forget(agentId)
+        // And a flight belongs to the body that was running: there is nothing left to
         // continue, and a successor body must not inherit somebody else's chase.
         retreats.forget(agentId)
         journal.record(agentId, BodyEvent.DESPAWNED, "removed from world", vitals = reserve, health = health)
@@ -283,6 +308,31 @@ class NmsEntityBodyPort(
         return outcome
     }
 
+    override fun senseThreat(agentId: AgentId): Perception? {
+        val body = bodies[agentId] ?: return null
+        val energy = metabolism.energyOf(agentId)
+        val tick = currentTick()
+        // One read of the world, and everything downstream comes from it: the candidates,
+        // the trigger's own fields, the refs in the observations, and the perception the
+        // mind is sent. See BodyScene for why the scene is captured before the trigger.
+        val scene = body.captureScene(agentId, energy, tick, refs)
+        val outcome =
+            threatWatch.consider(agentId, threatsIn(agentId, scene, refs)) { candidate ->
+                // Asked last and only for a candidate the free tests passed: this is a
+                // real search, out of the same per-tick budget a walk pays into.
+                body.canReach(candidate, movement, tick)
+            }
+        // Every refusal is recorded, once, with the bound that refused it - a suppressed
+        // sighting is a fact about the run, not an absence of one. Nothing here reaches a
+        // mind, which is the point of the whole method.
+        for (suppression in outcome.suppressed) {
+            journal.recordSuppressedThreat(agentId, suppression)
+        }
+        return outcome.sighted?.let {
+            recorded(journal, vitalsWatch, agentId, reserveVitals(energy), scene.perceptionOf(it))
+        }
+    }
+
     override fun perceive(
         agentId: AgentId,
         trigger: Trigger,
@@ -293,24 +343,13 @@ class NmsEntityBodyPort(
         // was handed rather than a second sample of it. The body's health rides on the change
         // and death records instead of being restated here.
         val energy = metabolism.energyOf(agentId)
-        val perception = body.capturePerception(agentId, energy, trigger, currentTick(), refs)
-        val reserve = reserveVitals(energy)
-        vitalsWatch.noted(agentId, reserve)
-        journal.recordPerception(
+        return recorded(
+            journal,
+            vitalsWatch,
             agentId,
-            // The omission is stated rather than left to arithmetic against a bound the
-            // record does not carry: a crowded scene trimmed to the bound would otherwise
-            // read afterwards as a quiet one, and how often an agent decides on a partial
-            // view of its surroundings is one of the numbers a survival run is read for.
-            // Read off the perception itself, so the record and the prompt the mind was
-            // given can never state different omissions for the same moment.
-            "${perception.surroundings.size} observation(s)" +
-                omissionOf(perception.surroundingsOmitted),
-            perception.requestId,
-            tagOf(perception.trigger),
-            reserve,
+            reserveVitals(energy),
+            body.capturePerception(agentId, energy, trigger, currentTick(), refs),
         )
-        return perception
     }
 
     override fun tick(tick: Long) {
@@ -463,7 +502,9 @@ class NmsEntityBodyPort(
         bodies.remove(agentId)?.discard()
         vitalsWatch.forget(agentId)
         refs.forget(agentId)
-        // Loom is permadeath, so per-agent state must not outlive the agent it is about.
+        // Loom is permadeath, so nothing this agent was told about a threat can ever
+        // matter again, and per-agent state must not outlive the agent it is about.
+        threatWatch.forget(agentId)
         retreats.forget(agentId)
         if (mortality.recordDeath(agentId)) {
             journal.record(
@@ -477,18 +518,86 @@ class NmsEntityBodyPort(
     }
 
     override fun liveBodies(): Set<AgentId> = bodies.keys.toSet()
-
-    /**
-     * Removes every body and lets the world go.
-     *
-     * Called when the plugin unloads. Releasing the chunks matters as much as removing
-     * the bodies: a plugin chunk ticket outlives the tick that added it, so skipping
-     * this would leave the world pinned loaded with no Loom running.
-     */
-    fun despawnAll() {
-        for (agentId in bodies.keys.toList()) {
-            despawn(agentId)
-        }
-        heldChunks.releaseAll()
-    }
 }
+
+/**
+ * Removes every body and lets the world go.
+ *
+ * Called when the plugin unloads. Releasing the chunks matters as much as removing the
+ * bodies: a plugin chunk ticket outlives the tick that added it, so skipping this would
+ * leave the world pinned loaded with no Loom running.
+ *
+ * An extension over the port's own operations rather than a method with private access,
+ * because that is all it is: putting every body away is the ordinary [BodyPort.despawn]
+ * done once per living agent, and a privileged path could quietly stop being. What is left
+ * inside the adapter is the one obligation that is not the port's - the world hold this
+ * engine took.
+ */
+fun NmsEntityBodyPort.despawnAll() {
+    for (agentId in liveBodies()) {
+        despawn(agentId)
+    }
+    heldChunks.releaseAll()
+}
+
+/**
+ * Records [perception] as [agentId]'s own, and hands it back.
+ *
+ * The one place a perception reaches the log, whether a goal review asked for it or a
+ * threat scan earned it: a scan that recorded its perception differently would make a
+ * run's perceptions uncountable, and one that recorded none would hide exactly the cycles
+ * a survival study is about.
+ *
+ * A function of the two things that hold a reading rather than a method of the port,
+ * because nothing about it is the port's lifecycle: it is how a perception becomes a
+ * record, and the port merely has the journal it goes to.
+ */
+private fun recorded(
+    journal: BodyEventJournal,
+    vitals: VitalsWatch,
+    agentId: AgentId,
+    reserve: AgentVitals,
+    perception: Perception,
+): Perception {
+    vitals.noted(agentId, reserve)
+    journal.recordPerception(
+        agentId,
+        // The omission is stated rather than left to arithmetic against a bound the record
+        // does not carry: a crowded scene trimmed to the bound would otherwise read
+        // afterwards as a quiet one, and how often an agent decides on a partial view of
+        // its surroundings is one of the numbers a survival run is read for. Read off the
+        // perception itself, so the record and the prompt the mind was given can never
+        // state different omissions for the same moment.
+        "${perception.surroundings.size} observation(s)" + omissionOf(perception.surroundingsOmitted),
+        perception.requestId,
+        tagOf(perception.trigger),
+        reserve,
+    )
+    return perception
+}
+
+/**
+ * The two clock readings the threat rule needs, read off the running server.
+ *
+ * The tick comes from the same supplier every record is stamped with, so a suppression and
+ * the debounce that caused it agree. The day is the *world's* own, because the night's
+ * ceiling on model calls is a fact about the world the agents are in and not about how long
+ * the process has been up: a `/time set` moves it, exactly as it moves everything else an
+ * agent perceives.
+ *
+ * The first world is the one asked, and that is deliberate even though the ceiling is spent
+ * per agent. What one clock buys is that every agent's allowance is restored by the same
+ * dawn wherever it is standing - and the nether and the end have no day at all, so an agent
+ * in either would otherwise pin its own budget to a day that never turns over.
+ */
+private class ServerThreatClock(
+    private val server: Server,
+    private val currentTick: () -> Long,
+) : ThreatClock {
+    override fun tick(): Long = currentTick()
+
+    override fun dayOrdinal(): Long = (server.worlds.firstOrNull()?.fullTime ?: 0L) / TICKS_PER_DAY
+}
+
+/** Ticks in one Minecraft day, which is what makes a day ordinal out of a world's clock. */
+private const val TICKS_PER_DAY: Long = 24_000L

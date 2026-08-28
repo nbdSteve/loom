@@ -15,6 +15,7 @@ import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.BodySpawnResult
+import dev.loom.body.ThreatSuppression
 import dev.loom.body.WORLD_AGENT_ID
 
 /**
@@ -149,6 +150,26 @@ internal class BodyEventJournal(
         outcome: String,
     ) {
         classified(agentId, BodyEvent.CONVERTED, detail, outcome)
+    }
+
+    /**
+     * Records a threat the body saw and Loom did not wake its mind for.
+     *
+     * Takes the whole [ThreatSuppression] rather than its parts because the reason is the
+     * point of the record and its tag travels with it: a suppression logged without one
+     * would leave a run unable to say whether the cadence, the state comparison or the
+     * night's ceiling is what kept an agent from reacting to something hunting it.
+     */
+    fun recordSuppressedThreat(
+        agentId: AgentId,
+        suppression: ThreatSuppression,
+    ) {
+        classified(
+            agentId,
+            BodyEvent.THREAT_SUPPRESSED,
+            "${suppression.what} in view as ${suppression.ref}, not reported",
+            suppression.reason.tag,
+        )
     }
 
     /**

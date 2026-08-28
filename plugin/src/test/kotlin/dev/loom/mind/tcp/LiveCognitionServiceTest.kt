@@ -16,6 +16,7 @@
  */
 package dev.loom.mind.tcp
 
+import dev.loom.contract.Bearing
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Intent
 import dev.loom.contract.Trigger
@@ -65,6 +66,18 @@ class LiveCognitionServiceTest {
                 Trigger.BlockSighted("diamond_ore"),
                 Trigger.Spoken(from = "player-steve", text = "want to trade?"),
                 Trigger.Damaged(amount = 4L, source = "zombie"),
+                // The one trigger a body raises of its own accord between goal reviews, and
+                // so the one whose two runtimes have to agree without a command being typed:
+                // a handle only the request that minted it can resolve has to survive the
+                // wire, or the flight it prompts names a threat the body never issued.
+                Trigger.ThreatSighted(
+                    threat = "entity.minecraft.zombie",
+                    ref = "e1",
+                    distance = 2.0,
+                    direction = Bearing.NORTH,
+                    visible = true,
+                    reachable = true,
+                ),
             )
         val modelsByTier = mutableMapOf<DecisionImportance, MutableSet<String>>()
         val promptsByTier = mutableMapOf<DecisionImportance, MutableSet<String>>()

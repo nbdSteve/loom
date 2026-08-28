@@ -29,6 +29,10 @@ private const val MARKER = "zzsecretzz"
 private val DELIBERATELY_SILENT =
     mapOf(
         BodyEvent.MOVED to "one a tick for a walking agent",
+        BodyEvent.THREAT_SUPPRESSED to
+            "the append-only record is the evidence; a note once a second for as long as " +
+            "something hostile stood in view would fill all eight lines with the thing that " +
+            "did not happen",
         BodyEvent.ENERGY_CHANGED to "several a second while an agent regenerates",
         BodyEvent.HEALTH_CHANGED to "one a half-heart for a body under attack",
         BodyEvent.WORLD_LOADED to "world-level bookkeeping, not about this agent",

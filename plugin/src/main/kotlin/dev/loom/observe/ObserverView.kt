@@ -98,6 +98,13 @@ class ObserverView(
             BodyEvent.HEALTH_CHANGED -> null
             // World-level bookkeeping, and true of every agent at once rather than this one.
             BodyEvent.WORLD_LOADED -> null
+            // Deliberately quiet, and not an oversight. A suppressed sighting is evidence
+            // about a bound Loom applied, which belongs in the append-only record where a
+            // run's numbers are read from; recorded once a second for as long as anything
+            // hostile stands in view, it would fill all eight lines of a bounded display
+            // with the one thing that did *not* happen. What an operator needs to see is
+            // the sighting that fired, which arrives as the `perceived` note above.
+            BodyEvent.THREAT_SUPPRESSED -> null
         }
 
     /**
@@ -126,6 +133,10 @@ class ObserverView(
             BodyEvent.WORLD_LOADED,
             BodyEvent.WORLD_HOLD_FAILED,
             BodyEvent.RETREATING,
+            // Names the creature and the request-scoped handle it was seen under. Neither
+            // is a secret, and neither is a line: the bound that refused it is the whole
+            // meaning, and that is a countable tag rather than prose.
+            BodyEvent.THREAT_SUPPRESSED,
             -> false
         }
 

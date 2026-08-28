@@ -75,6 +75,9 @@ private class FakeBodies(
 
     override fun tick(tick: Long) = fail("the autonomous driver must never touch the per-tick path")
 
+    override fun senseThreat(agentId: AgentId): Perception? =
+        fail("a goal review must never look for threats: that is the vigilance loop's own sweep")
+
     override fun liveBodies(): Set<AgentId> = living
 }
 

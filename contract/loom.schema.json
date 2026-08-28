@@ -139,6 +139,34 @@
           }
         },
         {
+          "title": "ThreatSighted",
+          "description": "A living thing that hunts this agent's kind came into the body's view. Everything the body already verified about it travels with the trigger, so the mind never has to ask a second question to decide whether to run: which thing it is (as a ref it can name back), how far and in which direction it lies, whether the body can actually see it, and whether the engine's own bounded ground search found a route to it.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event", "threat", "ref", "distance", "direction", "visible", "reachable"],
+          "properties": {
+            "event": { "const": "threatSighted" },
+            "threat": {
+              "description": "What the thing is, as the body describes it. A description for the mind to reason with, never the handle: naming a threat by what it is would leave the body guessing which of two identical creatures was meant.",
+              "type": "string"
+            },
+            "ref": { "$ref": "#/$defs/EntityRef" },
+            "distance": {
+              "description": "Distance from the agent to the threat, in blocks, measured the same way an observation's distance is.",
+              "type": "number"
+            },
+            "direction": { "$ref": "#/$defs/Bearing" },
+            "visible": {
+              "description": "Whether the body has an unobstructed line of sight to the threat. False is not safety: it means the body knows the threat is there and something stands between them.",
+              "type": "boolean"
+            },
+            "reachable": {
+              "description": "Whether the engine's own bounded ground search found a route that reaches the threat. It is the search the body made from itself toward the threat, not the threat's toward the body, so false means no walkable route was found within the body's own budgeted search - a fenced-off or cliff-separated threat, and not a promise that nothing is coming. It is the result of a search the body already paid for, not an invitation for the mind to ask for another.",
+              "type": "boolean"
+            }
+          }
+        },
+        {
           "title": "BlockSighted",
           "description": "A notable block came into the agent's view.",
           "type": "object",

@@ -35,8 +35,10 @@ import dev.loom.contract.Provenance
  * The two travel together because a stamp only means anything about the request it
  * answered. Held apart, the stamp of a finished cycle can be shown beside the trigger of
  * the next one, which reads as "this trigger was answered by this model" about a cycle
- * nothing has answered yet - and the two would differ the day a tier other than routine
- * is reached, since the router gives each tier its own model and prompt version.
+ * nothing has answered yet - and the two now differ in value as well, because a threat
+ * sighting is classified notable or pivotal and the router gives each tier its own model
+ * and prompt version. Until an agent could be woken by something other than its goal
+ * review, every cycle was routine and the wrong stamp named the right model by accident.
  */
 data class DecisionStamp(
     /** The perception this stamp answered, as the record's own request id. */

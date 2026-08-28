@@ -261,6 +261,18 @@ impl ScriptedBackend {
                     ),
                 },
             },
+            // A threat sighting carries its own ref, so unlike the damage rule
+            // above there is nothing to look up: the handle the body issued for
+            // this one creature travels with the trigger, and it is the only handle
+            // a `Flee` naming this threat may use.
+            Trigger::ThreatSighted {
+                threat, entity_ref, ..
+            } => Draft {
+                intent: Intent::Flee {
+                    from: entity_ref.clone(),
+                },
+                reasoning: format!("{threat} hunts my kind and is in view; retreat from it"),
+            },
             Trigger::BlockSighted { block } => {
                 let [x, y, z] = perception.self_state.position;
                 Draft {
@@ -552,6 +564,38 @@ mod tests {
         assert_eq!(
             draft.reasoning,
             "took 4 damage from zombie at health 19.9; disengage"
+        );
+    }
+
+    #[test]
+    fn a_threat_sighting_flees_the_ref_the_trigger_carries() {
+        // Unlike the damage rule, this one must not go looking: the trigger names
+        // the exact creature the body issued a handle for, and the nearest thing in
+        // sight may be a different one. Reading the surroundings here would answer a
+        // sighting of the thing behind the agent by fleeing the thing in front of it.
+        let seen = in_view(
+            perception(
+                Trigger::ThreatSighted {
+                    threat: "zombie".to_owned(),
+                    entity_ref: "e2".to_owned(),
+                    distance: 4.0,
+                    direction: Bearing::South,
+                    visible: true,
+                    reachable: true,
+                },
+                DecisionImportance::Pivotal,
+            ),
+            "pillager",
+            "e1",
+        );
+
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+
+        assert_eq!(
+            draft.intent,
+            Intent::Flee {
+                from: "e2".to_owned()
+            }
         );
     }
 

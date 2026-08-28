@@ -50,6 +50,9 @@ class BodyCommandTest {
                 trigger: Trigger,
             ): Perception? = fail("a refused agent id must never reach the port")
 
+            override fun senseThreat(agentId: AgentId): Perception? =
+                fail("a refused agent id must never reach the port")
+
             override fun tick(tick: Long) = fail("a refused agent id must never reach the port")
 
             override fun liveBodies(): Set<AgentId> = fail("a refused agent id must never reach the port")
@@ -214,6 +217,9 @@ class BodyCommandTest {
                     surroundingsOmitted = 0,
                 )
             }
+
+        override fun senseThreat(agentId: AgentId): Perception? =
+            fail("the driver command perceives what it was asked for; it never scans for threats")
 
         override fun tick(tick: Long) = fail("the driver command does not tick")
 

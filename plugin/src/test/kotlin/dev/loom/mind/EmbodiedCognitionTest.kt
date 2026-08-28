@@ -91,6 +91,9 @@ private class RecordingBody(
             record(agentId, BodyEvent.PERCEIVED, "${it.surroundings.size} observation(s)", it.requestId)
         }
 
+    override fun senseThreat(agentId: AgentId): Perception? =
+        fail("this fake answers a trigger it is handed; a threat scan is the driver's business")
+
     override fun tick(tick: Long) = fail("cognition must never drive the tick")
 
     override fun liveBodies(): Set<AgentId> = fail("cognition does not enumerate bodies")

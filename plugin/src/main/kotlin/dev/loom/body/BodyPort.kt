@@ -23,9 +23,9 @@ import dev.loom.contract.Trigger
  * Spawns, drives, observes, and despawns agent bodies.
  *
  * The surface is deliberately four capability areas and no more: lifecycle
- * ([spawn]/[despawn]), actuation ([apply]), perception ([perceive]), and the
- * server-tick hook ([tick]). Anything an agent needs beyond these belongs in the
- * domain above the port, not in the port.
+ * ([spawn]/[despawn]), actuation ([apply]), perception ([perceive]/[senseThreat]),
+ * and the server-tick hook ([tick]). Anything an agent needs beyond these belongs in
+ * the domain above the port, not in the port.
  *
  * Implementations are **not** thread-safe and every method must be called on the
  * server main thread. Cognition never calls this port directly: it hands back a
@@ -103,6 +103,33 @@ interface BodyPort {
      * reach it.
      */
     fun tick(tick: Long)
+
+    /**
+     * Looks around [agentId]'s body for a threat worth interrupting its mind for, and
+     * answers with the perception that found one - or `null` if none was earned.
+     *
+     * Perception, not actuation: this only reads. It belongs to the port rather than to
+     * the caller because the whole of it is engine facts - what is in view, whether the
+     * body has a line to it, whether it could be walked to - and the rule applied to them
+     * is engine-free and lives beside them ([ThreatWatch]). What this must *not* do is
+     * call a mind: only the coordinator above the port does that, which is why the answer
+     * is a perception handed back rather than a decision requested.
+     *
+     * The perception returned is already the perception *of* that sighting - its trigger
+     * is a [Trigger.ThreatSighted] naming a creature that appears in its own observations,
+     * under its own request. That is the whole reason this is one call rather than "are
+     * there threats?" followed by [perceive]: a ref is meaningful only inside the request
+     * that minted it, so a trigger from one capture submitted with a second capture's
+     * perception would name a handle the mind cannot resolve, and every flight it prompted
+     * would be refused as a threat that was never named.
+     *
+     * A scan that earns nothing costs no cognition. Whatever the rule refused is recorded
+     * with the reason it was refused, so a run can say which of its bounds kept an agent
+     * from reacting to something hunting it.
+     *
+     * Returns `null` for an agent with no body, exactly as [perceive] does.
+     */
+    fun senseThreat(agentId: AgentId): Perception?
 
     /** Identifiers of every body currently present in the world. */
     fun liveBodies(): Set<AgentId>
