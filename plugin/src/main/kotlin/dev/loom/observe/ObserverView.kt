@@ -33,6 +33,7 @@ import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.EnergyTrend
 import dev.loom.body.EventTag
+import dev.loom.body.INTENT_REFUSAL_TAGS
 import dev.loom.body.amountOf
 import dev.loom.contract.Provenance
 
@@ -238,12 +239,22 @@ class ObserverView(
         /** A trigger tag as words, or an honest blank when a record carried none. */
         fun triggerWords(trigger: String?): String = trigger?.let { words(it) } ?: "unnamed trigger"
 
-        /** What the body did with an intent, in the words a viewer reads. */
+        /**
+         * What the body did with an intent, in the words a viewer reads.
+         *
+         * A refusal is recognised from [INTENT_REFUSAL_TAGS] rather than from
+         * [EventTag.REJECTED] alone, because a refusal now says *why* in the same field: a meal
+         * refused six distinct ways arrives as `eatReserveFull` and its kin, and read as an
+         * unrecognised tag every one of them said "the body did not act on it" - the sentence
+         * that belongs to a decision which reached no body at all. Which refusal it was is the
+         * countable tag's business and the record's; the line says the one thing a watcher
+         * needs, which is that the agent chose something its body would not do.
+         */
         fun appliedNote(outcome: String?): Note =
-            when (outcome) {
-                EventTag.ACCEPTED -> Note("the body is doing it", ObserverLevel.CALM)
-                EventTag.REJECTED -> Note("the body refused it", ObserverLevel.CONCERN)
-                EventTag.UNSUPPORTED -> Note("the body cannot do that yet", ObserverLevel.CONCERN)
+            when {
+                outcome == EventTag.ACCEPTED -> Note("the body is doing it", ObserverLevel.CALM)
+                outcome in INTENT_REFUSAL_TAGS -> Note("the body refused it", ObserverLevel.CONCERN)
+                outcome == EventTag.UNSUPPORTED -> Note("the body cannot do that yet", ObserverLevel.CONCERN)
                 else -> Note("the body did not act on it", ObserverLevel.CONCERN)
             }
 

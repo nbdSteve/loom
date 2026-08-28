@@ -293,15 +293,40 @@ impl ScriptedBackend {
                 }
             }
             // The one survival rule the stand-in has. An agent whose reserve runs
-            // out dies for good, so a low reserve outranks every other goal; the
-            // cost of resting is only the cycle it spends.
-            Trigger::GoalReview if perception.self_state.energy <= RESTING_ENERGY => Draft {
-                intent: Intent::Rest,
-                reasoning: format!(
-                    "the energy reserve is down to {share:.0}% of capacity; resting outranks every other goal",
-                    share = perception.self_state.energy * PERCENT
-                ),
-            },
+            // out dies for good, so a low reserve outranks every other goal.
+            //
+            // Eating is the only thing that refills a reserve, so the stand-in
+            // reaches for the inventory first and rests only when it is empty. A
+            // rest buys nothing - it holds a position and restores nothing - so
+            // that branch states what it is doing rather than claiming a recovery.
+            //
+            // Which stack it names is deliberately the first one the body
+            // reported. The stand-in cannot tell food from a pickaxe: it has only
+            // the body's own description, and matching words against it would be a
+            // table of vanilla item semantics living in the wrong runtime. So it
+            // names what it was told about first and lets the body refuse what is
+            // not food, which is a refusal the body records. A demo therefore
+            // provisions the food in the body's first occupied slot.
+            Trigger::GoalReview if perception.self_state.energy <= RESTING_ENERGY => {
+                let share = perception.self_state.energy * PERCENT;
+                match perception.self_state.inventory_summary.first() {
+                    Some(stack) => Draft {
+                        intent: Intent::Eat {
+                            slot_ref: stack.slot_ref.clone(),
+                        },
+                        reasoning: format!(
+                            "the energy reserve is down to {share:.0}% of capacity; eating the {what} is the only thing that refills it",
+                            what = stack.what
+                        ),
+                    },
+                    None => Draft {
+                        intent: Intent::Rest,
+                        reasoning: format!(
+                            "the energy reserve is down to {share:.0}% of capacity and there is nothing to eat; holding position rather than spending it"
+                        ),
+                    },
+                }
+            }
             Trigger::GoalReview => Draft {
                 intent: Intent::Idle,
                 reasoning: format!(
@@ -348,8 +373,8 @@ mod tests {
     use crate::config::{ConfigError, Env};
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
-        Bearing, DayPhase, DecisionImportance, Intent, Observation, Perception, SelfState, Trigger,
-        WorldState,
+        Bearing, DayPhase, DecisionImportance, Intent, InventoryStack, Observation, Perception,
+        SelfState, Trigger, WorldState,
     };
 
     fn router() -> Router {
@@ -539,7 +564,43 @@ mod tests {
 
         assert_eq!(
             draft.reasoning,
-            "the energy reserve is down to 32% of capacity; resting outranks every other goal"
+            "the energy reserve is down to 32% of capacity and there is nothing to eat; holding position rather than spending it"
+        );
+    }
+
+    #[test]
+    fn a_low_reserve_eats_what_it_is_carrying_rather_than_resting() {
+        // Eating is the only thing that refills a reserve, so a stand-in that
+        // rested while holding food would starve an agent that had the answer in
+        // its own inventory.
+        let mut seen = drained(
+            perception(Trigger::GoalReview, DecisionImportance::Routine),
+            RESTING_ENERGY,
+        );
+        seen.self_state.inventory_summary = vec![
+            InventoryStack {
+                slot_ref: "i1".to_owned(),
+                what: "bread".to_owned(),
+                count: 3,
+            },
+            InventoryStack {
+                slot_ref: "i2".to_owned(),
+                what: "iron pickaxe".to_owned(),
+                count: 1,
+            },
+        ];
+
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+
+        assert_eq!(
+            draft.intent,
+            Intent::Eat {
+                slot_ref: "i1".to_owned()
+            }
+        );
+        assert_eq!(
+            draft.reasoning,
+            "the energy reserve is down to 35% of capacity; eating the bread is the only thing that refills it"
         );
     }
 

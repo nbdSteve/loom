@@ -14,6 +14,7 @@ import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.EnergyTrend
 import dev.loom.body.EventTag
+import dev.loom.body.INTENT_REFUSAL_TAGS
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -297,6 +298,28 @@ class ObserverViewTest {
         for ((outcome, expected) in outcomes) {
             assertEquals(expected, spoken(record(BodyEvent.INTENT_APPLIED).copy(outcome = outcome)).text, outcome)
         }
+    }
+
+    @Test
+    @DisplayName("a refusal that says why it refused still reads as a refusal")
+    fun everyRefusalTagReadsAsARefusal() {
+        // A refusal now carries the reason in the same field, so `rejected` is only what a
+        // refusal with nothing more specific to say arrives as. Read as an unrecognised tag,
+        // every eat refusal said "the body did not act on it" - the sentence reserved for a
+        // decision that reached no body at all - so an operator watching the survival run this
+        // path enables could not tell an agent that was already full from one whose decision
+        // never arrived anywhere. Swept over the derived set, so a refusal added later is
+        // covered the day it is added.
+        for (tag in INTENT_REFUSAL_TAGS) {
+            val refused = spoken(record(BodyEvent.INTENT_APPLIED).copy(outcome = tag))
+
+            assertEquals("the body refused it", refused.text, tag)
+            assertEquals(ObserverLevel.CONCERN, refused.level, tag)
+        }
+        assertTrue(
+            EventTag.EAT_RESERVE_FULL in INTENT_REFUSAL_TAGS,
+            "the eat refusals are what made this a set rather than one tag",
+        )
     }
 
     @Test

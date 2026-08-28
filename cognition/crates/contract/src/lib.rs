@@ -107,16 +107,126 @@ where
     Ok(ticks)
 }
 
-/// The shortest an entity ref may be, mirroring the schema's `minLength`.
+/// A full energy reserve, the top of the [`SelfState::energy`] scale.
+///
+/// Both ends of the scale are named rather than left as bare literals wherever
+/// energy is decoded or asserted, exactly as the JVM binding names them: the scale
+/// belongs to the contract, and whoever fills the field and whoever reads it must
+/// agree on which end is which.
+pub const ENERGY_FULL: f64 = 1.0;
+
+/// An exhausted energy reserve, the bottom of the [`SelfState::energy`] scale.
+pub const ENERGY_EXHAUSTED: f64 = 0.0;
+
+/// Refuses an energy reading outside the inclusive fraction the scale allows.
+///
+/// The bound is a type rule on both sides of the contract for the same reason the
+/// nightfall countdown's is: the schema's `minimum: 0` / `maximum: 1` is a rule a
+/// socket walks straight past, and the JVM binding refuses it in its own `init`, so
+/// this side has to as well or "the contract refuses it" is only true of one
+/// runtime. Both ends of the range are ordinary and must decode: `0.0` is exhaustion
+/// and `1.0` is a full reserve, and each is a state an agent is genuinely in.
+///
+/// What is worth refusing is a reading that is not a fraction at all. Above one it
+/// would tell a mind it had more life than a life holds, and below zero it would
+/// describe an agent that is already permadead as merely very hungry - and a `NaN`
+/// compares false against every bound, so it is refused by the same test rather than
+/// needing one of its own.
+///
+/// Only decoding is narrowed. Serialization is left as the derive wrote it, so every
+/// valid fixture still round-trips byte-for-byte.
+fn fraction_of_a_reserve<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let energy = f64::deserialize(deserializer)?;
+    if !(ENERGY_EXHAUSTED..=ENERGY_FULL).contains(&energy) {
+        return Err(de::Error::invalid_value(
+            de::Unexpected::Float(energy),
+            &"an energy reserve as a fraction from 0.0 to 1.0",
+        ));
+    }
+    Ok(energy)
+}
+
+/// The fewest items an occupied inventory slot can hold, mirroring the schema's `minimum`.
+///
+/// One, because an empty slot is left out of the summary rather than reported as nothing.
+const STACK_MIN_ITEMS: i64 = 1;
+
+/// Refuses an inventory stack holding fewer items than an occupied slot can.
+///
+/// The bound is a type rule on both sides of the contract for the same reason the nightfall
+/// countdown's is: the schema's `minimum: 1` is a rule a socket walks straight past, and the
+/// JVM binding refuses it in its own `init`, so this side has to as well. This runtime is the
+/// only decoder of the field - a `Perception` is written by the body and read by the mind - so
+/// the check that is missing here is the check that would have mattered.
+///
+/// Zero is the value worth refusing rather than merely an odd one. It reads to a model as food
+/// the agent is carrying and does not have, on the one path whose whole purpose is deciding
+/// whether to eat, and the body cannot have meant it: an empty slot is omitted from the summary
+/// instead. A negative is the same mistake having gone past.
+///
+/// Only decoding is narrowed. Serialization is left as the derive wrote it, so every valid
+/// fixture still round-trips byte-for-byte.
+fn occupied_stack_count<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let count = i64::deserialize(deserializer)?;
+    if count < STACK_MIN_ITEMS {
+        return Err(de::Error::invalid_value(
+            de::Unexpected::Signed(count),
+            &"an inventory stack of at least 1 item",
+        ));
+    }
+    Ok(count)
+}
+
+/// The most occupied slots an inventory summary can state, mirroring the schema's `maxItems`.
+///
+/// Eight, the native container an `AbstractVillager` carries. Unlike `Perception::surroundings`,
+/// whose length is the body's own policy and carries no schema bound, this one is a contract
+/// rule: a ninth slot is not a body having chosen to say more, it is a body that read something
+/// which is not its own inventory.
+const MAX_INVENTORY_STACKS: usize = 8;
+
+/// Refuses an inventory summary longer than a body's own container.
+///
+/// The last of the bounds this file narrows, and it needs narrowing for exactly the reason the
+/// others did: `maxItems` is a rule a socket walks straight past, so a summary of nine slots
+/// decoded happily on both sides and was refused only by a schema neither runtime runs. This
+/// runtime is the only decoder of the field, so the check that is missing here is the check that
+/// would have mattered.
+///
+/// Only decoding is narrowed, as with [`occupied_stack_count`]: serialization is left as the
+/// derive wrote it, so every valid fixture still round-trips byte-for-byte.
+fn bounded_inventory_summary<'de, D>(deserializer: D) -> Result<Vec<InventoryStack>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let stacks = Vec::<InventoryStack>::deserialize(deserializer)?;
+    if stacks.len() > MAX_INVENTORY_STACKS {
+        return Err(de::Error::invalid_length(
+            stacks.len(),
+            &"at most 8 occupied inventory slots",
+        ));
+    }
+    Ok(stacks)
+}
+
+/// The shortest a ref may be, mirroring the schema's `minLength`.
 ///
 /// Stated here once for this whole runtime rather than at each field that carries
-/// a ref, because two copies of a bound are two bounds that can disagree.
-const ENTITY_REF_MIN_CHARS: usize = 1;
+/// a ref, because two copies of a bound are two bounds that can disagree. The
+/// schema gives `EntityRef` and `SlotRef` the same bound deliberately: they are the
+/// same shape of handle and differ only in what they resolve to.
+const REF_MIN_CHARS: usize = 1;
 
-/// The longest an entity ref may be, mirroring the schema's `maxLength`.
-const ENTITY_REF_MAX_CHARS: usize = 8;
+/// The longest a ref may be, mirroring the schema's `maxLength`.
+const REF_MAX_CHARS: usize = 8;
 
-/// Refuses an entity ref that is blank or longer than a ref can be.
+/// Refuses a ref that is blank or longer than a ref can be.
 ///
 /// The bound is a type rule on both sides of the contract for the same reason the
 /// nightfall countdown's is: nothing on either wire is schema-validated at
@@ -134,11 +244,8 @@ where
     E: de::Error,
 {
     let chars = handle.chars().count();
-    if !(ENTITY_REF_MIN_CHARS..=ENTITY_REF_MAX_CHARS).contains(&chars) {
-        return Err(E::invalid_length(
-            chars,
-            &"an entity ref of 1 to 8 characters",
-        ));
+    if !(REF_MIN_CHARS..=REF_MAX_CHARS).contains(&chars) {
+        return Err(E::invalid_length(chars, &"a ref of 1 to 8 characters"));
     }
     Ok(())
 }
@@ -170,6 +277,33 @@ where
     Ok(handle)
 }
 
+/// One occupied slot of the body's own inventory, as the body describes it.
+///
+/// The whole of what the mind is told about what it is carrying, and the only
+/// place an [`Intent::Eat`] can get a handle from.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InventoryStack {
+    /// The handle by which a decision may name this exact stack back to the body.
+    ///
+    /// Named `slot_ref` in Rust and `ref` on the wire because `ref` is a keyword
+    /// here. Narrowed at decode by [`bounded_ref`], exactly as an entity ref is.
+    #[serde(rename = "ref", deserialize_with = "bounded_ref")]
+    pub slot_ref: String,
+    /// What the stack holds, as the body describes it. A description for the mind
+    /// to reason with, never the handle: two slots can hold the same item and be
+    /// different stacks.
+    pub what: String,
+    /// How many items the stack holds. At least one, because an empty slot is not
+    /// reported at all.
+    ///
+    /// Enforced at decode by [`occupied_stack_count`] rather than trusted, because the
+    /// schema's `minimum` is not checked by anything on the wire and a count of zero would
+    /// tell a mind it is carrying food it does not have.
+    #[serde(deserialize_with = "occupied_stack_count")]
+    pub count: i64,
+}
+
 /// The bounded self-state the body chose to reveal. Owned primitives only, so
 /// the mind cannot reach back into world state through it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -181,11 +315,20 @@ pub struct SelfState {
     /// full reserve and `0.0` is exhaustion, which is fatal. A fraction rather
     /// than a count of ticks, so the mind never has to know how long a reserve
     /// lasts.
+    ///
+    /// Enforced at decode by [`fraction_of_a_reserve`] rather than trusted, because
+    /// the schema's range is not checked by anything on the wire.
+    #[serde(deserialize_with = "fraction_of_a_reserve")]
     pub energy: f64,
     /// World position `[x, y, z]`. Continuous coordinates.
     pub position: [f64; 3],
-    /// Already-summarized inventory the body chose to reveal.
-    pub inventory_summary: Vec<String>,
+    /// The body's own inventory, one entry per occupied slot and nothing for an
+    /// empty one, bounded by the eight slots a body has.
+    ///
+    /// Enforced at decode by [`bounded_inventory_summary`] rather than trusted, because
+    /// the schema's `maxItems` is not checked by anything on the wire.
+    #[serde(deserialize_with = "bounded_inventory_summary")]
+    pub inventory_summary: Vec<InventoryStack>,
     /// The bounded world clock the body reveals.
     pub world: WorldState,
 }
@@ -345,10 +488,34 @@ pub enum Intent {
         #[serde(deserialize_with = "bounded_ref")]
         from: String,
     },
-    /// Rest, refilling the agent's energy reserve.
+    /// Eat one item from one stack of the body's own inventory, named by the `ref`
+    /// that stack carried in the perception being answered.
     ///
-    /// The only way to restore [`SelfState::energy`], and it costs the agent the
-    /// cycle it spends on it.
+    /// A ref rather than an item name on purpose: two slots can hold the same item,
+    /// and the body must consume the one the mind meant. The body resolves it
+    /// against that one request only, re-reads the slot it names, and refuses what
+    /// it finds there if it is no longer food. On acceptance exactly one item is
+    /// consumed and its vanilla nutrition is credited to [`SelfState::energy`],
+    /// which is the only way a reserve goes back up.
+    ///
+    /// Eating is instantaneous in this first version: the body swallows the item
+    /// within the tick the intent is applied, with no using time and nothing to
+    /// interrupt. Named `slot_ref` in Rust and `ref` on the wire because `ref` is a
+    /// keyword here.
+    #[serde(rename = "eat")]
+    Eat {
+        #[serde(rename = "ref", deserialize_with = "bounded_ref")]
+        slot_ref: String,
+    },
+    /// Stop, and hold this position on purpose.
+    ///
+    /// It restores nothing. Eating is the only thing that refills
+    /// [`SelfState::energy`], so a resting agent is spending its reserve waiting
+    /// rather than buying any of it back.
+    ///
+    /// Its own variant rather than a synonym for [`Intent::Idle`] because
+    /// deliberately waiting somewhere - sealed in for the night, say - is a choice a
+    /// run must be able to count separately from having decided nothing.
     #[serde(rename = "rest")]
     Rest,
     /// Do nothing this cycle.

@@ -24,6 +24,35 @@
       "maxLength": 8
     },
 
+    "SlotRef": {
+      "description": "A short opaque handle for one stack in the body's own inventory, valid only inside the single perception that issued it and only for the agent that perception belongs to. It is the same shape of handle as an EntityRef and named separately because it means something different: it resolves to one slot of the body's own container rather than to a thing in the world, and the stack standing in that slot may have changed by the time a decision arrives, so the body re-reads the slot and refuses what it finds there if it is no longer food. It carries no meaning the mind may parse, and a ref from any other request or any other agent is refused rather than resolved.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8
+    },
+
+    "InventoryStack": {
+      "description": "One occupied slot of the body's own inventory, as the body describes it. It is the whole of what the mind is told about what it is carrying, and it carries a handle so a decision can name one exact stack back rather than a kind of item.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "what", "count"],
+      "properties": {
+        "ref": {
+          "description": "The handle by which a decision may name this exact stack back to the body.",
+          "$ref": "#/$defs/SlotRef"
+        },
+        "what": {
+          "description": "What the stack holds, as the body describes it. A description for the mind to reason with, never the handle: two slots can hold the same item and be different stacks.",
+          "type": "string"
+        },
+        "count": {
+          "description": "How many items the stack holds. At least one, because an empty slot is not reported at all.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+
     "DayPhase": {
       "description": "Which part of the world's day it is. Derived from the level's own day time, so an agent can tell midday from dusk without being told the raw tick count.",
       "type": "string",
@@ -73,9 +102,10 @@
           "maxItems": 3
         },
         "inventorySummary": {
-          "description": "Already-summarized inventory the body chose to reveal.",
+          "description": "The body's own inventory, one entry per occupied slot and nothing for an empty one, bounded by the eight slots a body has. Each entry carries the handle by which an eat may name that exact stack, so what the mind may act on is exactly what it was told it is carrying.",
           "type": "array",
-          "items": { "type": "string" }
+          "items": { "$ref": "#/$defs/InventoryStack" },
+          "maxItems": 8
         },
         "world": { "$ref": "#/$defs/WorldState" }
       }
@@ -275,8 +305,19 @@
           }
         },
         {
+          "title": "Eat",
+          "description": "Eat one item from one stack of the body's own inventory, named by the ref that stack carried in the perception being answered. A ref rather than an item name on purpose: two slots can hold the same item, and the body must consume the one the mind meant. The body resolves the ref against that one request only, re-reads the slot it names, and refuses what it finds there if it is no longer food - so a stack that changed between the perception and the decision is refused rather than substituted. On acceptance exactly one item is consumed and its vanilla nutrition is credited to SelfState.energy, which is the only way a reserve goes back up. Eating is instantaneous in this first version: the body swallows the item within the tick the intent is applied, with no using time and nothing to interrupt.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "ref"],
+          "properties": {
+            "action": { "const": "eat" },
+            "ref": { "$ref": "#/$defs/SlotRef" }
+          }
+        },
+        {
           "title": "Rest",
-          "description": "Rest, refilling the agent's energy reserve. The only way to restore SelfState.energy, and it costs the agent the cycle it spends on it. Empty variant.",
+          "description": "Stop, and hold this position on purpose. It restores nothing: eating is the only thing that refills SelfState.energy, so a resting agent is spending its reserve waiting rather than buying any of it back. It is its own intent rather than a synonym for idle because deliberately waiting somewhere - sealed in for the night, say - is a choice a run must be able to count separately from having decided nothing. Empty variant.",
           "type": "object",
           "additionalProperties": false,
           "required": ["action"],

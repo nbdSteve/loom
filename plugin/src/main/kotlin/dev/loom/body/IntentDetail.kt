@@ -16,6 +16,7 @@ fun describe(intent: Intent): String =
         is Intent.MoveTo -> "moveTo ${intent.target.joinToString(",")}"
         is Intent.Say -> "say"
         is Intent.Flee -> "flee from ${intent.from}"
+        is Intent.Eat -> "eat ${intent.ref}"
         is Intent.Rest -> "rest"
         is Intent.Idle -> "idle"
     }

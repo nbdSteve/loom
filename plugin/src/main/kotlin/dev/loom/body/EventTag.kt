@@ -46,10 +46,10 @@ object EventTag {
     /** The agent noticed a block worth reacting to. */
     const val BLOCK_SIGHTED: String = "blockSighted"
 
-    /** The mind chose to rest, which is the one way an agent refills its energy reserve. */
+    /** The mind chose to stop and hold position on purpose. It refills nothing. */
     const val REST: String = "rest"
 
-    /** The mind chose to do nothing this cycle. Distinct from resting, which refills. */
+    /** The mind chose to do nothing this cycle. Distinct from a deliberate rest. */
     const val IDLE: String = "idle"
 
     /** The mind chose to walk somewhere. */
@@ -60,6 +60,9 @@ object EventTag {
 
     /** The mind chose to run from something. */
     const val FLEE: String = "flee"
+
+    /** The mind chose to eat one stack the body is carrying. It is the only refill. */
+    const val EAT: String = "eat"
 
     /** The body carried the intent out. The only outcome that means the agent acted. */
     const val ACCEPTED: String = "accepted"
@@ -205,6 +208,31 @@ object EventTag {
      * inflating this one.
      */
     const val RETREAT_FAILED: String = "retreatFailed"
+
+    /**
+     * A meal was named by a handle no request of the agent's still remembers.
+     *
+     * The six eat tags below are the countable half of an eat refusal, kept apart for
+     * the reason the retreat tags are: they are answers about different things - the
+     * handle, the slot, and the reserve - and one number covering all of them would
+     * make an agent with nothing edible indistinguishable from one that was full.
+     */
+    const val EAT_SLOT_FORGOTTEN: String = "eatSlotForgotten"
+
+    /** The request is remembered, and named no such stack. */
+    const val EAT_SLOT_UNNAMED: String = "eatSlotUnnamed"
+
+    /** The slot the handle named holds nothing now. */
+    const val EAT_SLOT_EMPTY: String = "eatSlotEmpty"
+
+    /** The slot holds something the engine does not call food. */
+    const val EAT_NOT_FOOD: String = "eatNotFood"
+
+    /** The reserve was already full, so eating would have thrown the food away. */
+    const val EAT_RESERVE_FULL: String = "eatReserveFull"
+
+    /** The reserve was spent, which is terminal: nothing eats its way out of a permadeath. */
+    const val EAT_RESERVE_SPENT: String = "eatReserveSpent"
 }
 
 /** Names which event prompted cognition. */
@@ -225,13 +253,30 @@ fun tagOf(intent: Intent): String =
         is Intent.MoveTo -> EventTag.MOVE_TO
         is Intent.Say -> EventTag.SAY
         is Intent.Flee -> EventTag.FLEE
+        is Intent.Eat -> EventTag.EAT
     }
+
+/**
+ * Every tag an [IntentOutcome.Rejected] can be filed under.
+ *
+ * Derived rather than listed, because a refusal now carries its own tag: reading a record back
+ * means asking "did the body refuse this?" of a value that is [EventTag.REJECTED] only when the
+ * refusal had nothing more specific to say. Anything that answered that question by testing
+ * for [EventTag.REJECTED] alone read a refused meal as a decision that reached no body at all -
+ * which is what the operator display did, in exactly the run the eat path enables.
+ *
+ * The eat half comes from [EAT_REFUSALS], so a refusal added there is covered the day it is
+ * added rather than the day somebody remembers to repeat it here.
+ */
+val INTENT_REFUSAL_TAGS: Set<String> = setOf(EventTag.REJECTED) + EAT_REFUSALS.map { tagOf(it) }
 
 /** Names how the body answered an intent, so refusals are countable. */
 fun tagOf(outcome: IntentOutcome): String =
     when (outcome) {
         is IntentOutcome.Accepted -> EventTag.ACCEPTED
-        is IntentOutcome.Rejected -> EventTag.REJECTED
+        // The refusal's own tag, which is EventTag.REJECTED unless it had something more
+        // specific to say: a meal refused six distinct ways has to be countable six ways.
+        is IntentOutcome.Rejected -> outcome.tag
         is IntentOutcome.Unsupported -> EventTag.UNSUPPORTED
         IntentOutcome.NoSuchBody -> EventTag.NO_SUCH_BODY
     }

@@ -1,6 +1,6 @@
 /*
- * The survival drive, driven by hand: decay, restoration, and the boundary that is a
- * permadeath.
+ * The survival drive, driven by hand: decay, what food is worth, and the boundary that
+ * is a permadeath.
  *
  * All of it runs with no server and no clock, because the reserve is spent from ticks
  * that are handed in. That is the property the whole drive rests on - a run replays
@@ -109,24 +109,91 @@ class MetabolismTest {
     }
 
     @Test
-    @DisplayName("resting refills the reserve completely")
-    fun restingRefills() {
-        spend(60, ADA)
+    @DisplayName("a whole food bar of nutrition is a whole reserve, whatever the capacity")
+    fun aFoodBarIsAReserve() {
+        // The one anchor the conversion has. Twenty nutrition is the vanilla food bar,
+        // and it buys exactly one life here: pin the relationship rather than the tick
+        // count, or a changed capacity would silently reprice every food in the game.
+        assertEquals(LIFESPAN, metabolism.ticksForNutrition(VANILLA_FOOD_BAR_NUTRITION.toInt()))
+        assertEquals(LIFESPAN / VANILLA_FOOD_BAR_NUTRITION, metabolism.ticksPerNutrition)
+    }
 
-        assertTrue(metabolism.restore(ADA))
+    @Test
+    @DisplayName("bread at nutrition five is a quarter of a reserve, exactly")
+    fun breadIsAQuarter() {
+        val bread = 5
+
+        // Exact rather than approximate: the arithmetic is integer ticks throughout, so
+        // a quarter of a reserve is a quarter of it on every replay of the same run.
+        assertEquals(LIFESPAN / 4, metabolism.ticksForNutrition(bread))
+
+        spend(LIFESPAN / 2, ADA)
+        assertTrue(metabolism.feed(ADA, metabolism.ticksForNutrition(bread)))
+
+        assertEquals(LIFESPAN / 2 + LIFESPAN / 4, metabolism.reserveOf(ADA))
+        assertEquals(0.75, metabolism.energyOf(ADA))
+    }
+
+    @Test
+    @DisplayName("eating past a full reserve fills it and no further")
+    fun feedingStopsAtCapacity() {
+        spend(10, ADA)
+
+        // A reserve banked beyond one life would make the fraction the mind reads stop
+        // being a fraction, and would let an agent store lives it could not spend.
+        assertTrue(metabolism.feed(ADA, LIFESPAN * 10))
 
         assertEquals(LIFESPAN, metabolism.reserveOf(ADA))
         assertEquals(ENERGY_FULL, metabolism.energyOf(ADA))
     }
 
     @Test
-    @DisplayName("resting one agent leaves every other agent's reserve alone")
-    fun restingIsPerAgent() {
+    @DisplayName("an absurd amount of food cannot leave an agent worse off")
+    fun feedingCannotWrapTheReserve() {
+        spend(10, ADA)
+
+        // The clamp is a comparison against the headroom rather than a sum that is
+        // capped afterwards: summed first, this would overflow to a negative and read as
+        // a smaller reserve than the agent already had.
+        assertTrue(metabolism.feed(ADA, Long.MAX_VALUE))
+
+        assertEquals(LIFESPAN, metabolism.reserveOf(ADA))
+    }
+
+    @Test
+    @DisplayName("the same food eaten at the same ticks gives the same reserve every time")
+    fun feedingReplaysIdentically() {
+        val meals = listOf(3, 1, 6, 2)
+        val reserves =
+            (1..2).map {
+                val replay = Metabolism(lifespan = LIFESPAN)
+                var tick = 0L
+                for (meal in meals) {
+                    repeat(10) { replay.spendUpTo(++tick, setOf(ADA)) }
+                    replay.feed(ADA, replay.ticksForNutrition(meal))
+                }
+                replay.reserveOf(ADA)
+            }
+
+        // Integer ticks and no clock: a run replayed is the same run, which is the whole
+        // reason the reserve is counted in ticks rather than in a fraction.
+        assertEquals(reserves.first(), reserves.last())
+    }
+
+    @Test
+    @DisplayName("feeding one agent leaves every other agent's reserve alone")
+    fun feedingIsPerAgent() {
         spend(40, setOf(ADA, GRACE))
 
-        metabolism.restore(ADA)
+        metabolism.feed(ADA, LIFESPAN)
 
         assertEquals(LIFESPAN - 40, metabolism.reserveOf(GRACE))
+    }
+
+    @Test
+    @DisplayName("a negative amount of food is a mistake, not a way to shorten a life")
+    fun feedingCannotTakeReserveAway() {
+        assertThrows<IllegalArgumentException> { metabolism.feed(ADA, -1L) }
     }
 
     @Test
@@ -177,13 +244,13 @@ class MetabolismTest {
     }
 
     @Test
-    @DisplayName("a spent reserve cannot be rested back")
+    @DisplayName("a spent reserve cannot be eaten back")
     fun exhaustionIsTerminal() {
         spend(LIFESPAN, ADA)
 
-        // Exhaustion is a permadeath. An agent that could rest its way out of one would
+        // Exhaustion is a permadeath. An agent that could eat its way out of one would
         // not be permadead, so refusing is the type's job and not the caller's.
-        assertFalse(metabolism.restore(ADA))
+        assertFalse(metabolism.feed(ADA, LIFESPAN))
 
         assertEquals(0L, metabolism.reserveOf(ADA))
         assertTrue(metabolism.isExhausted(ADA))
@@ -193,7 +260,7 @@ class MetabolismTest {
     @DisplayName("one agent running out does not touch another")
     fun exhaustionIsPerAgent() {
         spend(LIFESPAN / 2, GRACE)
-        metabolism.restore(GRACE)
+        metabolism.feed(GRACE, LIFESPAN)
         spend(LIFESPAN, ADA)
 
         assertTrue(metabolism.isExhausted(ADA))

@@ -1,0 +1,1 @@
+{"requestId":"req-energy-1","agentId":"agent-epsilon","intent":{"action":"eat","ref":"i1"},"reasoning":"the energy reserve is nearly spent and eating is the only thing that refills it; the bread is at hand","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}

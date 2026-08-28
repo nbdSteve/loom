@@ -38,15 +38,16 @@ enum class AgentActivity(
     /** Thinking: a perception has gone to the mind and no decision has come back yet. */
     THINKING("thinking", ObserverLevel.CALM),
 
-    /** Resting: the mind chose to rest, which is the one way an agent refills its reserve. */
+    /** Resting: the mind chose to stop and hold position on purpose. It restores nothing. */
     RESTING("resting", ObserverLevel.CALM),
 
     /**
      * Idle: the mind chose to do nothing this cycle.
      *
-     * Distinct from [RESTING], which is now its own decision that refills the reserve.
-     * Idling only passes the cycle, so an operator watching a survival run can tell an
-     * agent that is recovering from one that is merely waiting.
+     * Distinct from [RESTING], which is a *deliberate* wait somewhere - sealed in for
+     * the night, say. Neither restores anything, so what separates them is intent, and
+     * telling a considered wait from an unconsidered one is most of what an operator
+     * watching a survival run is reading for.
      */
     IDLE("idle", ObserverLevel.CALM),
 
@@ -55,6 +56,15 @@ enum class AgentActivity(
 
     /** Running from something. The most interesting thing a survival agent can do. */
     FLEEING("fleeing", ObserverLevel.ALARM),
+
+    /**
+     * Eating: the one thing an agent can do that refills its energy reserve.
+     *
+     * Its own state rather than a shade of resting, which is the distinction the whole
+     * survival loop turns on: an agent that rested is spending its life waiting, and an
+     * agent that ate has bought some of it back.
+     */
+    EATING("eating", ObserverLevel.CALM),
 
     /** Speaking. */
     SPEAKING("speaking", ObserverLevel.CALM),
@@ -100,6 +110,7 @@ fun activityOf(
         intent == EventTag.MOVE_TO -> AgentActivity.MOVING
         intent == EventTag.FLEE -> AgentActivity.FLEEING
         intent == EventTag.SAY -> AgentActivity.SPEAKING
+        intent == EventTag.EAT -> AgentActivity.EATING
         intent == EventTag.REST -> AgentActivity.RESTING
         intent == EventTag.IDLE -> AgentActivity.IDLE
         else -> AgentActivity.THINKING

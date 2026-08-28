@@ -289,7 +289,8 @@ class WatchStateTest {
         fun applied(intent: String) =
             after(record(BodyEvent.INTENT_APPLIED).copy(intent = intent, outcome = EventTag.ACCEPTED)).activity
 
-        // Resting refills the reserve; idling only passes the cycle. An operator watching a
+        // Resting is a deliberate wait and idling is having decided nothing; neither refills
+        // the reserve, so intent is the whole of what separates them. An operator watching a
         // survival run needs to know which of the two a motionless agent is doing.
         assertEquals(AgentActivity.RESTING, applied(EventTag.REST))
         assertEquals(AgentActivity.IDLE, applied(EventTag.IDLE))

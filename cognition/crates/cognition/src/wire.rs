@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn a_perception_line_round_trips_into_the_contract_type() {
-        let line = r#"{"requestId":"req-goal-1","agentId":"agent-delta","trigger":{"event":"goalReview"},"importance":"ROUTINE","capturedTick":9000,"selfState":{"health":18.0,"energy":0.62,"position":[3.0,64.0,3.0],"inventorySummary":["wheat x12"],"world":{"dayPhase":"day","isDay":true,"ticksUntilNightfall":6000}},"surroundings":[],"surroundingsOmitted":0}"#;
+        let line = r#"{"requestId":"req-goal-1","agentId":"agent-delta","trigger":{"event":"goalReview"},"importance":"ROUTINE","capturedTick":9000,"selfState":{"health":18.0,"energy":0.62,"position":[3.0,64.0,3.0],"inventorySummary":[{"ref":"i1","what":"wheat","count":12}],"world":{"dayPhase":"day","isDay":true,"ticksUntilNightfall":6000}},"surroundings":[],"surroundingsOmitted":0}"#;
         let seen = decode_perception(line).expect("fixture-shaped line decodes");
         assert_eq!(seen.request_id, "req-goal-1");
     }

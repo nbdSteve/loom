@@ -47,10 +47,10 @@ Every decision carries the model that made it and the prompt version that shaped
 The scripted stand-in is still here and is still the default, so a fresh checkout runs with no credentials and the test suites stay hermetic; real inference is one setting away.
 
 And the agents now have something to survive.
-Each one carries an energy reserve that is spent by living, tick by tick, and reported to its mind as part of the ordinary perception; the only way to refill it is to decide to rest.
+Each one carries an energy reserve that is spent by living, tick by tick, and reported to its mind as part of the ordinary perception; the only way to refill it is to eat one of the stacks it is carrying, and a rest holds a position and buys nothing back.
 An agent that runs the reserve out dies of it, permanently, and exactly once.
 The reserve is spent from server ticks rather than from wall-clock time, so a run replays identically and a paused server starves nobody.
-Nothing has to be commanded for any of it: an agent meets its own hunger on the goal review it already does, and the stand-in mind rests an agent whose reserve is low - so a single agent, left entirely alone, keeps itself alive.
+Nothing has to be commanded for any of it: an agent meets its own hunger on the goal review it already does, and the stand-in mind reaches for the first stack a low agent reported carrying, resting it only when there is nothing to eat - so a single agent left entirely alone feeds itself while it has food, and starves once it has none.
 
 Running from something is a decision an agent can now make.
 Every living thing a perception reports carries a short handle, so a mind names one particular creature to run from rather than a place to walk to - and the body runs from that creature, rather than from whichever of two identical mobs it might otherwise have guessed at.
@@ -62,7 +62,7 @@ What that costs is bounded and every bound is recorded: a sighting is not repeat
 
 A run is watchable while it happens.
 `/loomwatch <agentId>` attaches one operator to one living agent and shows, as a boss bar and a few chat lines, its energy reserve and which way that reserve is going, its body's health once that body has been hurt, the bounded trigger that caused cognition, the model and prompt version that answered it, the reasoning behind the intent, and what the body did about it.
-The two vitals are never aliased to one another: the reserve is what living spends and only resting refills, health is damage to the body, and a body can be beaten to death on a full reserve - so a run can always say which of the two ended an agent.
+The two vitals are never aliased to one another: the reserve is what living spends and only eating refills - a rest holds a position and buys nothing back - health is damage to the body, and a body can be beaten to death on a full reserve, so a run can always say which of the two ended an agent.
 Resting, moving, fleeing, a body that refused an intent, a mind that never answered, dimension travel, and permanent death are each a distinct word, so a survival run is legible without reading a JSON file.
 The display is a reader of the append-only record and nothing else: it holds no body port, no cognition bridge, and no world handle, so attaching it adds no perception, no decision, no tick work, and no record, and the mind's operator-only vocabulary never travels back into what an agent is told.
 See `DEMO.md` for the exact local procedure, from starting the cognition service through watching one autonomous survival cycle end to end.

@@ -28,19 +28,21 @@ import kotlinx.serialization.json.JsonClassDiscriminator
 private const val COORDINATE_DIMENSIONS = 3
 
 /**
- * The shortest an entity ref may be, mirroring the schema's `minLength`.
+ * The shortest a ref may be, mirroring the schema's `minLength`.
  *
  * Stated here once for this whole runtime rather than at each field that carries a
- * ref, because two copies of a bound are two bounds that can disagree.
+ * ref, because two copies of a bound are two bounds that can disagree. The schema
+ * gives `EntityRef` and `SlotRef` the same bound deliberately: they are the same
+ * shape of handle and differ only in what they resolve to.
  */
-private const val ENTITY_REF_MIN_CHARS = 1
+private const val REF_MIN_CHARS = 1
 
-/** The longest an entity ref may be, mirroring the schema's `maxLength`. */
-private const val ENTITY_REF_MAX_CHARS = 8
+/** The longest a ref may be, mirroring the schema's `maxLength`. */
+private const val REF_MAX_CHARS = 8
 
 /**
- * Refuses an entity ref that is blank or longer than a ref can be, letting an
- * absent one through.
+ * Refuses a ref that is blank or longer than a ref can be, letting an absent one
+ * through.
  *
  * The bound is a type rule on both sides of the contract for the same reason
  * [WorldState.ticksUntilNightfall]'s is: nothing on either wire is
@@ -61,8 +63,8 @@ private const val ENTITY_REF_MAX_CHARS = 8
 private fun requireBoundedRef(handle: String?) {
     if (handle == null) return
     val characters = handle.codePointCount(0, handle.length)
-    require(characters in ENTITY_REF_MIN_CHARS..ENTITY_REF_MAX_CHARS) {
-        "ref must be $ENTITY_REF_MIN_CHARS..$ENTITY_REF_MAX_CHARS characters, got $characters"
+    require(characters in REF_MIN_CHARS..REF_MAX_CHARS) {
+        "ref must be $REF_MIN_CHARS..$REF_MAX_CHARS characters, got $characters"
     }
 }
 
@@ -77,6 +79,22 @@ const val ENERGY_FULL: Double = 1.0
 
 /** An exhausted energy reserve, the bottom of the [SelfState.energy] scale. */
 const val ENERGY_EXHAUSTED: Double = 0.0
+
+/**
+ * The most occupied slots a [SelfState.inventorySummary] may state, mirroring the
+ * schema's `maxItems`.
+ *
+ * Eight, the native container an `AbstractVillager` carries. Unlike
+ * [Perception.surroundings], whose length is the body's own policy and carries no
+ * schema bound, this one is a contract rule: a summary of nine slots is not a body
+ * having chosen to say more, it is a body that read something which is not its own
+ * inventory.
+ *
+ * Narrowed at decode rather than left to the schema, because nothing on either wire
+ * is schema-validated at runtime - `maxItems` alone is a rule a socket walks straight
+ * past, exactly as `minimum` and `maxLength` are.
+ */
+const val MAX_INVENTORY_STACKS: Int = 8
 
 /**
  * Importance tier that drives model routing on the mind side and is stamped onto
@@ -166,6 +184,36 @@ data class WorldState(
 }
 
 /**
+ * One occupied slot of the body's own inventory, as the body describes it.
+ *
+ * The whole of what the mind is told about what it is carrying, and the only place
+ * an [Intent.Eat] can get a handle from.
+ */
+@Serializable
+data class InventoryStack(
+    /**
+     * The handle by which a decision may name this exact stack back to the body.
+     *
+     * Narrowed at decode by [requireBoundedRef], exactly as an [Observation.ref] is.
+     */
+    val ref: String,
+    /**
+     * What the stack holds, as the body describes it.
+     *
+     * A description for the mind to reason with, never the handle: two slots can hold
+     * the same item and be different stacks.
+     */
+    val what: String,
+    /** How many items the stack holds. At least one, because an empty slot is not reported. */
+    val count: Long,
+) {
+    init {
+        requireBoundedRef(ref)
+        require(count >= 1) { "an inventory stack must hold at least one item, got $count" }
+    }
+}
+
+/**
  * The bounded self-state the body chose to reveal. Owned primitives only, so the
  * mind cannot reach back into world state through it.
  */
@@ -183,8 +231,11 @@ data class SelfState(
     val energy: Double,
     /** World position `[x, y, z]`. Continuous coordinates. */
     val position: List<Double>,
-    /** Already-summarized inventory the body chose to reveal. */
-    val inventorySummary: List<String>,
+    /**
+     * The body's own inventory, one entry per occupied slot and nothing for an empty
+     * one, bounded by the [MAX_INVENTORY_STACKS] slots a body has.
+     */
+    val inventorySummary: List<InventoryStack>,
     /** The bounded world clock the body reveals. */
     val world: WorldState,
 ) {
@@ -194,6 +245,10 @@ data class SelfState(
         }
         require(energy in ENERGY_EXHAUSTED..ENERGY_FULL) {
             "energy must be a fraction in $ENERGY_EXHAUSTED..$ENERGY_FULL, got $energy"
+        }
+        require(inventorySummary.size <= MAX_INVENTORY_STACKS) {
+            "inventorySummary must state at most $MAX_INVENTORY_STACKS occupied slots, " +
+                "got ${inventorySummary.size}"
         }
     }
 }
@@ -410,10 +465,38 @@ sealed interface Intent {
     }
 
     /**
-     * Rest, refilling the agent's energy reserve.
+     * Eat one item from one stack of the body's own inventory, named by the
+     * [InventoryStack.ref] it carried in the perception being answered.
      *
-     * The only way to restore [SelfState.energy], and it costs the agent the cycle
-     * it spends on it.
+     * A ref rather than an item name on purpose: two slots can hold the same item, and
+     * the body must consume the one the mind meant. The body resolves [ref] against
+     * that one request only, re-reads the slot it names, and refuses what it finds
+     * there if it is no longer food - so a stack that changed in between is refused
+     * rather than substituted. On acceptance exactly one item is consumed and its
+     * vanilla nutrition is credited to [SelfState.energy], which is the only way a
+     * reserve goes back up.
+     *
+     * Eating is instantaneous in this first version: the body swallows the item within
+     * the tick the intent is applied, with no using time and nothing to interrupt.
+     */
+    @Serializable
+    @SerialName("eat")
+    data class Eat(val ref: String) : Intent {
+        init {
+            requireBoundedRef(ref)
+        }
+    }
+
+    /**
+     * Stop, and hold this position on purpose.
+     *
+     * It restores nothing. Eating is the only thing that refills [SelfState.energy],
+     * so a resting agent is spending its reserve waiting rather than buying any of it
+     * back.
+     *
+     * Its own intent rather than a synonym for [Idle] because deliberately waiting
+     * somewhere - sealed in for the night, say - is a choice a run must be able to
+     * count separately from having decided nothing.
      */
     @Serializable
     @SerialName("rest")

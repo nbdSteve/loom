@@ -1,5 +1,6 @@
 package dev.loom.body
 
+import dev.loom.contract.Intent
 import org.junit.jupiter.api.Test
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -308,6 +309,30 @@ class ActiveRetreatTest {
 
         assertEquals(said.size, said.distinct().size, "two endings must never read the same")
         assertTrue(said.none { it.isBlank() }, "an ending with nothing to say is one nothing can count")
+    }
+
+    @Test
+    fun `eating does not take a running flight over, and moving or stopping does`() {
+        // The sequence this refuses, and it is reachable on the shipped scripted backend: a
+        // threatSighted answered with `flee`, the retreat running and re-routing from the tick,
+        // then a goal review a moment later answered with `eat` because the reserve was low.
+        // Eating touches neither the navigator nor the body's position, so the body is still
+        // running - but read as "the body did something", it ended the retreat, the route in
+        // flight ran out, and the agent stood still with the hostile on it until its next goal
+        // review, up to a whole cadence later.
+        assertFalse(takesTheBodyOver(Intent.Eat("i1")), "eating is instantaneous and displaces nothing")
+
+        // The three that genuinely drive the body: a route of its own, or a deliberate stop.
+        assertTrue(takesTheBodyOver(Intent.MoveTo(listOf(1L, 2L, 3L))))
+        assertTrue(takesTheBodyOver(Intent.Rest))
+        assertTrue(takesTheBodyOver(Intent.Idle))
+
+        // A later flight is not a supersession: it replaces the threat through `attempted`,
+        // which keeps one retreat per agent, and an ending journaled here would be an ending
+        // for a retreat that is still running.
+        assertFalse(takesTheBodyOver(Intent.Flee("e1")))
+        // Nothing this flavor can carry out, and an agent can shout while it runs.
+        assertFalse(takesTheBodyOver(Intent.Say("run!")))
     }
 
     private val everyRefusal =

@@ -19,16 +19,18 @@ package dev.loom.body.nms
 
 import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
-import dev.loom.body.EntityRefs
+import dev.loom.body.BODY_INVENTORY_SLOTS
+import dev.loom.body.InventorySlotBinding
 import dev.loom.body.PerceptionBound.Bounded
 import dev.loom.body.PerceptionBound.Measured
-import dev.loom.body.RefResolution
+import dev.loom.body.RequestRefs
 import dev.loom.body.ThreatCandidate
 import dev.loom.body.WorldClock
 import dev.loom.body.bodyPerceptionBound
 import dev.loom.body.huntsVillagers
 import dev.loom.contract.Bearing
 import dev.loom.contract.DecisionImportance
+import dev.loom.contract.InventoryStack
 import dev.loom.contract.Observation
 import dev.loom.contract.Perception
 import dev.loom.contract.SelfState
@@ -66,16 +68,33 @@ private val BOUND = bodyPerceptionBound()
  * So the scene is captured once, and the trigger names what it turned out to be. Every
  * consumer of a scan - the candidate list, the trigger's own fields, the observation
  * refs, and the perception the mind is sent - therefore comes from the same read of the
- * world, at the same tick, under the same [requestId].
+ * world, at the same tick, under the same request.
  */
 internal class BodyScene(
-    /** The request the refs in [surroundings] were minted under. */
-    val requestId: String,
     /** What the body saw, bounded and already named. */
     val surroundings: List<Observation>,
+    /** The creature each handle in [surroundings] names, as this scene minted them. */
+    private val creatures: Map<String, UUID>,
     private val perceive: (Trigger) -> Perception,
 ) {
-    /** This same scene, as the perception of [trigger]. */
+    /**
+     * The creature [handle] names in this scene, or `null` if this scene minted no such handle.
+     *
+     * Asked of the scene rather than of the port's ref store, because the store deliberately
+     * does not hold these handles yet: they become resolvable only when the perception is
+     * actually handed to a mind, which for a threat scan is only once the sighting is earned.
+     * The scene is the thing that minted them, so it is the thing that can answer for them, and
+     * the agent and the request the store would have checked are the scene's own either way.
+     */
+    fun subjectOf(handle: String): UUID? = creatures[handle]
+
+    /**
+     * This same scene, as the perception of [trigger].
+     *
+     * Handing the perception out is what commits its handles to the agent's ref window: a
+     * decision can only name back a perception it was given, so a scene nobody is shown must
+     * not spend one of the few requests an agent keeps. See `RequestRefs.remember`.
+     */
     fun perceptionOf(trigger: Trigger): Perception = perceive(trigger)
 }
 
@@ -92,26 +111,31 @@ internal fun LoomBodyEntity.captureScene(
     agentId: AgentId,
     energy: Double,
     capturedTick: Long,
-    refs: EntityRefs,
+    refs: RequestRefs,
 ): BodyScene {
     val body = this
     val nearby = observationsAround(body)
     val requestId = UUID.randomUUID().toString()
     // One handle per living thing, in the order the bound kept them, so a decision can
     // name one creature back to the body. Minted from the trimmed list rather than the
-    // candidates, so nothing is bound that the mind will never be shown.
-    val bound = refs.issue(agentId, requestId, nearby.shown.map { it.thing.uuid })
-    val surroundings = nearby.shown.mapIndexed { at, seen -> observationOf(body, seen, bound[at].handle) }
+    // candidates, so nothing is named that the mind will never be shown.
+    val creatures = refs.creatures.mint(nearby.shown.map { it.thing.uuid })
+    val surroundings = nearby.shown.mapIndexed { at, seen -> observationOf(body, seen, creatures[at].handle) }
+    val carried = inventoryOf(body, refs)
     val selfState =
         SelfState(
             health = bodyVitals(body).energy,
             energy = energy,
             position = listOf(body.x, body.y, body.z),
             // The body reveals a summary, never its live inventory handle.
-            inventorySummary = emptyList(),
+            inventorySummary = carried.stacks,
             world = worldStateOf(body.level()),
         )
-    return BodyScene(requestId, surroundings) { trigger ->
+    return BodyScene(surroundings, creatures.associate { it.handle to it.subject }) { trigger ->
+        // Handing the perception out is what makes its handles answerable, and nothing else
+        // does: a scan whose sighting was suppressed reaches no mind, so remembering its
+        // request would evict the goal review whose decision is still in flight.
+        refs.remember(agentId, requestId, creatures, carried.bindings, capturedTick)
         Perception(
             requestId = requestId,
             agentId = agentId.value,
@@ -143,8 +167,65 @@ internal fun LoomBodyEntity.capturePerception(
     energy: Double,
     trigger: Trigger,
     capturedTick: Long,
-    refs: EntityRefs,
+    refs: RequestRefs,
 ): Perception = captureScene(agentId, energy, capturedTick, refs).perceptionOf(trigger)
+
+/**
+ * What a body is carrying: the summary the mind is told, and the bindings behind it.
+ *
+ * The two travel together and are committed apart. The stacks go straight into the perception,
+ * because a perception carries its own handles; the bindings become answerable only once that
+ * perception is handed to a mind - see [BodyScene.perceptionOf].
+ */
+private class CarriedItems(
+    /** One entry per occupied slot, as the contract states it. */
+    val stacks: List<InventoryStack>,
+    /** What each of those handles names, for the ref window to remember if the mind sees it. */
+    val bindings: List<InventorySlotBinding>,
+)
+
+/**
+ * What [body] is carrying, one entry per occupied slot and a handle for each.
+ *
+ * Bounded by the container itself: a body's inventory is the eight native slots of the
+ * villager it is, so there is nothing here for a count bound to trim. Empty slots are
+ * left out rather than reported as nothing, which is what makes a `count` of at least
+ * one a rule the contract can state.
+ *
+ * Each entry carries a handle minted for this perception, because a meal names one exact
+ * stack: two stacks of the same food in different slots are different meals, and a body
+ * handed an item name would have to guess which the mind meant. The handle names a *slot*,
+ * so the apply path re-reads it - see `Eating.kt`.
+ *
+ * The item is named by the engine's own `descriptionId` (`item.minecraft.bread`), which is
+ * the same vocabulary an [Observation]'s `what` carries (`entity.minecraft.zombie`) and for
+ * the same two reasons. It is stable, so a run counting meals by food off the append-only
+ * record counts items rather than display strings; and it cannot be rewritten in world,
+ * where `hoverName` is whatever an anvil or a datapack last called the stack - a renamed
+ * loaf would otherwise tell the mind it was carrying something it is not, on the one path
+ * whose whole purpose is deciding whether to eat.
+ */
+private fun inventoryOf(
+    body: LoomBodyEntity,
+    refs: RequestRefs,
+): CarriedItems {
+    val container = body.inventory
+    val slots = 0 until minOf(container.containerSize, BODY_INVENTORY_SLOTS)
+    val occupied = slots.filter { !container.getItem(it).isEmpty }
+    val bindings = refs.slots.mint(occupied)
+    return CarriedItems(
+        stacks =
+            bindings.map { binding ->
+                val stack = container.getItem(binding.slot)
+                InventoryStack(
+                    ref = binding.handle,
+                    what = stack.descriptionId,
+                    count = stack.count.toLong(),
+                )
+            },
+        bindings = bindings,
+    )
+}
 
 /**
  * The hostiles in [scene], as the threat rule needs them.
@@ -154,27 +235,21 @@ internal fun LoomBodyEntity.capturePerception(
  * distances, same nearest-first order, same tick, same request. A second read would let a
  * run report a threat at a distance no perception ever stated.
  *
- * Each candidate's subject comes back through [refs], resolved under the scene's own
- * [BodyScene.requestId], which is the only thing that can turn a handle into a creature.
- * An observation whose handle no longer resolves is dropped: without a subject the watch
- * could not tell this hostile from the next one, and guessing is how a body ends up
- * fleeing the wrong zombie.
+ * Each candidate's subject comes back from the scene that minted the handle, which is the
+ * only thing that can turn one into a creature at this point: the port's ref window does not
+ * hold these handles yet, because a scan that suppresses its sighting must not spend one of
+ * the few requests an agent keeps. An observation whose handle names nothing is dropped:
+ * without a subject the watch could not tell this hostile from the next one, and guessing is
+ * how a body ends up fleeing the wrong zombie.
  */
-internal fun threatsIn(
-    agentId: AgentId,
-    scene: BodyScene,
-    refs: EntityRefs,
-): List<ThreatCandidate> =
+internal fun threatsIn(scene: BodyScene): List<ThreatCandidate> =
     scene.surroundings
         .filter { huntsVillagers(it.what) }
         .mapNotNull { seen ->
             val handle = seen.ref ?: return@mapNotNull null
-            val subject = refs.resolve(agentId, scene.requestId, handle)
-            if (subject !is RefResolution.Bound) {
-                return@mapNotNull null
-            }
+            val subject = scene.subjectOf(handle) ?: return@mapNotNull null
             ThreatCandidate(
-                subject = subject.subject,
+                subject = subject,
                 what = seen.what,
                 ref = handle,
                 distance = seen.distance,

@@ -131,6 +131,14 @@ class ContractConformanceTest {
             LoomJson.decodeFromString<Decision>(blank)
         }
 
+        // An eat names a stack by the same shape of handle, so it inherits the bound rather
+        // than restating it - and this runtime is the one that decodes a `Decision` off the
+        // socket, so the check that is missing here is the check that would have mattered.
+        val blankSlot = fixtureText("invalid", "decision-eat-blank-ref.json")
+        assertThrows<IllegalArgumentException>("a blank eat ref decoded into a Decision") {
+            LoomJson.decodeFromString<Decision>(blankSlot)
+        }
+
         val overLong = fixtureText("invalid", "perception-observation-ref-too-long.json")
         assertThrows<IllegalArgumentException>("a nine-character observation ref decoded into a Perception") {
             LoomJson.decodeFromString<Perception>(overLong)
@@ -210,6 +218,32 @@ class ContractConformanceTest {
         assertThrows<SerializationException>("a threat with no handle decoded into a Perception") {
             LoomJson.decodeFromString<Perception>(unnamed)
         }
+    }
+
+    /**
+     * An inventory summary longer than a body's own container is refused where it arrives.
+     *
+     * The schema's `maxItems: 8` is a rule a socket walks straight past, like every other
+     * bound this file pins at decode. A ninth slot is not a body having chosen to say more:
+     * it has read something which is not its own inventory, and every handle past the eighth
+     * names a slot no eat could resolve.
+     */
+    @Test
+    fun anInventorySummaryLongerThanTheBodyIsRefusedAtDecode() {
+        val over = fixtureText("invalid", "perception-inventory-over-slot-count.json")
+
+        assertThrows<IllegalArgumentException>("a nine-slot inventory summary decoded into a Perception") {
+            LoomJson.decodeFromString<Perception>(over)
+        }
+
+        // The bound is exactly the container: a body carrying something in every slot is an
+        // ordinary provisioned agent, and its whole inventory must still decode.
+        val full = over.replace(",{\"ref\":\"i9\",\"what\":\"item.minecraft.bread\",\"count\":1}", "")
+        assertFalse(over == full, "the fixture no longer states a ninth slot to drop")
+        assertEquals(
+            MAX_INVENTORY_STACKS,
+            LoomJson.decodeFromString<Perception>(full).selfState.inventorySummary.size,
+        )
     }
 
     private fun fixtureText(

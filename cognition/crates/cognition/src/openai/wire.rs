@@ -331,6 +331,12 @@ fn build_decision_schema() -> Value {
                             "description": "The ref of the one living thing in the surroundings to move away from. A ref given in this message, never a name, a type, or an invented one."
                         }
                     })),
+                    intent_variant("eat", &json!({
+                        "ref": {
+                            "type": "string",
+                            "description": "The ref of the one stack in your own inventory to eat one item from. A ref given in this message, never an item name or an invented one."
+                        }
+                    })),
                     intent_variant("rest", &json!({})),
                     intent_variant("idle", &json!({})),
                 ],
@@ -397,7 +403,7 @@ mod tests {
     fn every_intent_variant_is_a_closed_tagged_object() {
         let schema = decision_schema();
         let variants = schema["properties"]["intent"]["anyOf"].as_array().unwrap();
-        assert_eq!(variants.len(), 5, "one per contract Intent variant");
+        assert_eq!(variants.len(), 6, "one per contract Intent variant");
         let mut actions = Vec::new();
         for variant in variants {
             assert_eq!(variant["additionalProperties"], false);
@@ -412,7 +418,7 @@ mod tests {
         }
         assert_eq!(
             actions,
-            vec!["say", "moveTo", "flee", "rest", "idle"],
+            vec!["say", "moveTo", "flee", "eat", "rest", "idle"],
             "the tags must be the contract's own action names"
         );
     }

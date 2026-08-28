@@ -33,8 +33,9 @@ loom-cognition listening on 127.0.0.1:8642
 ```
 
 The scripted stand-in is the default, so this needs no credential.
-It answers a goal review with `idle` while the agent's reserve is above `RESTING_ENERGY` (0.35 of a full reserve), and with `rest` once the reserve has fallen to or below it.
-So a scripted agent perceives, decides, and applies on cadence while standing still, and it keeps itself alive: it idles while its reserve is high, rests to refill it when it runs low, and idles again.
+It answers a goal review with `idle` while the agent's reserve is above `RESTING_ENERGY` (0.35 of a full reserve); once the reserve has fallen to or below it, the review names the first stack the body reported and eats it, and rests only when the body reported nothing at all.
+So a scripted agent perceives, decides, and applies on cadence while standing still, and it keeps itself alive as long as it has food: it idles while its reserve is high, eats when it runs low, and idles again.
+Resting restores nothing, so an unprovisioned scripted agent starves - which is the point of the drive, and why [Provisioning food, and watching a meal](#provisioning-food-and-watching-a-meal) is part of a full survival cycle.
 That is enough to demonstrate the whole cognition round trip, the whole display, and one full survival cycle.
 It is not enough to demonstrate motion, so see [Watching an agent actually move](#watching-an-agent-actually-move) below.
 
@@ -135,15 +136,16 @@ The next scheduled review lands one cadence later.
 The cadence is two minutes and the sweep period is a twenty-fourth of it, so observed spacing is two minutes plus up to five seconds.
 In one run the second review landed 125 seconds after the first, which is the design and not drift.
 
-### The reserve falling, and resting to refill it
+### The reserve falling, and eating to refill it
 
 The gauge is the agent's energy reserve, and it falls by itself.
-The reserve is a survival stat, not the body's health: it is spent by living, one tick at a time, whether or not anything happens to the body, and the only thing that refills it is a `rest` decision from the mind.
+The reserve is a survival stat, not the body's health: it is spent by living, one tick at a time, whether or not anything happens to the body, and the only thing that refills it is an `eat` decision the body accepts.
 A full reserve lasts `DEFAULT_ENERGY_LIFESPAN_TICKS`, which is 36000 ticks, half an hour at twenty ticks a second.
 Nothing in chat marks the fall, because it is continuous: the gauge and its percentage carry it, and a record every tick would drown the log, so the log gets one about every one percent instead.
 
-Left to the scripted stand-in, an agent keeps itself alive without being told to.
-The stand-in idles while the reserve is above `RESTING_ENERGY` (0.35 of full) and rests once it reaches it, so roughly twenty minutes after the spawn - when the reserve has fallen to about a third - the next goal review comes back `rest` rather than `idle`:
+Left to the scripted stand-in, an agent reaches for food without being told to.
+The stand-in idles while the reserve is above `RESTING_ENERGY` (0.35 of full); once it reaches it, the next goal review names the *first stack the body reported* and eats it, and it rests only when the body reported no stack at all.
+So roughly twenty minutes after the spawn - when the reserve has fallen to about a third - the review comes back `eat` on a provisioned body and `rest` on an empty one:
 
 ```
 [loom] perceived the world (goal review)
@@ -155,17 +157,67 @@ ada | energy 32/100 declining | resting | goal review -> scripted-stand-in/routi
 Those are one run's real numbers: the agent spawned on tick 815 and the review that decided to rest read the reserve at 31.99 of 100 on tick 25299, which is 20 minutes later.
 The bar had gone yellow when the reserve passed half, five minutes before that, and nothing in chat marked the crossing - the colour is the whole signal, which is why it is spent on how much is left.
 
-Resting refills the reserve completely, and it is one tick, not a gradual climb: the same tick that applied the rest recorded the reserve back at full.
-So the yellow clears and the gauge is green again by the next refresh, with the trend word reading the refill rather than the drain:
-
-```
-ada | energy 100/100 recovering | resting | goal review -> scripted-stand-in/routine-v7 routine   (green)
-```
-
-`recovering` is the one time the trend word is news, because a living reserve is otherwise always falling.
+**Resting restores nothing, and that run is what it looks like when nothing recovers.**
+The transcript above is a real one, taken when a rest still refilled the reserve; it no longer does.
+Food is the only source of recovery now, so the gauge above keeps falling through the rest, the yellow does not clear, and an agent whose mind only ever rests it starves at the same tick as one that only ever idles.
+The trend word `recovering` is therefore unreachable until an agent eats: it is news exactly because a living reserve is otherwise always falling.
 The label stays `resting` until the next review, since that is still the last thing the mind chose.
-From there the cycle repeats: idle while the reserve is high, rest when it runs low.
+From there the cycle repeats: idle while the reserve is high, reach for food when it runs low, and rest only when there is none.
 Waiting it out takes patience; shorten the reserve in `Metabolism` if you would rather watch a whole cycle quickly.
+
+### Provisioning food, and watching a meal
+
+Nothing in Loom puts food in a body, and there is no `/loombody` subcommand for it: a body's inventory is the eight native slots an `AbstractVillager` already carries, so vanilla fills it.
+Put the food in the **first** slot, because the stand-in names the first stack the body reported and cannot tell bread from a pickaxe:
+
+```
+/item replace entity @e[type=villager,limit=1,sort=nearest] villager.0 with minecraft:bread 3
+```
+
+Then wait for the reserve to fall to a third, or shorten it, and read the whole cycle on `/loomwatch`.
+Draining it with vanilla `/tick sprint 23000` is quicker and exact, since the reserve is counted in ticks - but it advances no goal review, because `GoalReviewSchedule` reads a wall clock rather than the game tick, so drive the review yourself with `/loombody think <agentId>` afterwards.
+Three meals recorded that way read like this:
+
+```
+perceived  vitals 30.691666666666666 of 100
+decided    eat iyf: the energy reserve is down to 31% of capacity; eating the Bread is the only thing that refills it
+intentApplied  eat iyf -> accepted: ate one Bread, worth 9000 ticks of reserve
+energyChanged  vitals 55.68888888888889 of 100
+```
+
+Those lines are one run's real ones, taken while a stack was named to the mind by its display name; it is now named by the engine's own id, so read `item.minecraft.bread` wherever the transcript reads `Bread`.
+That is the same vocabulary the surroundings already use for a creature (`entity.minecraft.zombie`), and it is what makes a run countable: an anvil-renamed loaf can no longer tell the mind it is carrying something else, and meals counted by food off the log count items rather than display strings.
+
+The handle is whatever the perception that prompted the review minted, and it is only valid inside that request, so it is not a name to reuse: those three meals named `iyf`, `i1bc` and `i1ow` for the same one slot.
+Three things are worth reading rather than the label alone.
+The `intentApplied` record's detail states the meal and what it was worth - `ate one Bread, worth 9000 ticks of reserve` at the shipped 36000-tick capacity, since 20 nutrition is a whole reserve and bread is 5 - and that number is the reserve the agent **actually gained**, so a nearly-full agent that ate a whole loaf states only the headroom it had.
+The stack loses exactly one item, which is the engine's own doing rather than arithmetic of Loom's: check the count in the villager's inventory, since that is the one part of the path no unit test can prove - three meals took a stack of three to `[]`, one loaf at a time.
+And the trend word `recovering` appears here and nowhere else, because a living reserve is otherwise always falling.
+
+Eating is instantaneous in this version: there is no use time and no animation, so a meal is one accepted intent with no state in between.
+The engine's own `LivingEntity.eat` does it, so the sound, the particles and any effect the food carries are the vanilla ones.
+A connected client receives the sound at the body's position on the eating tick, which is worth checking from the client rather than the log - but stay within sixteen blocks of the body, because further off the packet is simply never sent and the meal looks silent.
+
+A refused meal is the more informative case, and each refusal carries its own tag in the `intentApplied` record's `outcome` - the reason is a field rather than prose, so a run can count them:
+
+| Tag | What it means |
+| --- | --- |
+| `eatNotFood` | The mind named a stack the engine does not call food. |
+| `eatSlotEmpty` | The slot emptied between the perception that offered it and the decision that named it. |
+| `eatReserveFull` | The reserve is already full, so eating would throw the food away. |
+| `eatReserveSpent` | The reserve has run out, which is terminal: an agent cannot eat its way back out of a permadeath. |
+| `eatSlotForgotten` | The handle came from a request the agent no longer remembers - a decision that arrived after its window closed. |
+| `eatSlotUnnamed` | The request is remembered and never issued that handle, so the mind invented one. |
+
+Nothing is consumed by any of them: every refusal is settled before the engine touches the stack, so a full or spent agent keeps its food.
+
+Only the first is reachable on the shipped stand-in, and reading the others as equally easy to provoke wastes a run.
+Put a pickaxe in `villager.0` instead of bread, drain the reserve below a third, and drive a review: that is `eatNotFood`.
+The stand-in names the first stack of the perception it was just given, and only once the reserve is low, so the rest need a stand-in mind of your own - one that names a slot at a full reserve, or invents a handle the body never issued.
+`eatSlotEmpty` needs the slot cleared *inside* one round trip, which is a window only a real provider's latency makes wide enough to clear by hand.
+`eatSlotForgotten` is deliberately the hardest of the six: a request stays answerable until its decision arrives or `REQUEST_REFS_LIFETIME_TICKS` runs out, and the bridge gives up on a silent mind well before that, so a handle a perception offered is one the body still knows.
+And `eatReserveSpent` is a guard rather than an event a run meets, since an agent whose reserve has run out dies in the same tick and nothing of its is applied afterwards.
+All six are proven at a desk in `EatingTest`, which is where to read them; what the in-world run is for is the one thing no test can reach, that exactly one item leaves the stack.
 
 ### The other vital: a body that is hurt rather than spent
 
@@ -217,7 +269,8 @@ That is the two-vitals reading that matters most: a nearly-full reserve and no h
 The trend word is gone, because the display is final.
 
 A starvation is the other death, and the one the reserve exists to produce.
-Point the plugin at a mind that never rests, or shorten the reserve, and leave the agent alone: about half an hour after the spawn the reserve reaches zero and the agent dies of it, recorded as a single `died` record whose detail is `spent its energy reserve`.
+Leave an agent with no food alone, and shorten the reserve if you would rather not wait: about half an hour after the spawn the reserve reaches zero and the agent dies of it, recorded as a single `died` record whose detail is `spent its energy reserve`.
+The shipped stand-in does not prevent it, because resting buys nothing - an agent that only ever rests starves at the same tick as one that only ever idles.
 
 The display freezes on the tombstone either way, which is correct: Loom is permadeath, and the state is never left.
 The tombstone deliberately reports no reserve trend, because a dying agent's last reading is always a falling one and a live trend would sit on the tombstone saying something was still happening.
@@ -308,8 +361,9 @@ The activity word is the one an operator reads at a glance, and every value it c
 | `nothing seen yet` | The watch is attached and the record has said nothing about this agent yet. |
 | `standing by` | It has a body and nothing is underway. |
 | `thinking` | A perception has gone to the mind and no decision has come back. |
-| `resting` | The mind chose to rest, which is the one way an agent refills its reserve. |
-| `idle` | The mind chose to do nothing this cycle. Distinct from resting, which refills. |
+| `eating` | The mind named a stack and the body ate it, which is the one way an agent refills its reserve. |
+| `resting` | The mind chose to hold position and wait. It restores nothing; only eating does. |
+| `idle` | The mind chose to do nothing this cycle. Distinct from resting, which is a deliberate wait. |
 | `moving` | Walking somewhere it chose. |
 | `fleeing` | Running from something. |
 | `speaking` | Speaking. |
@@ -320,7 +374,7 @@ The activity word is the one an operator reads at a glance, and every value it c
 | `DEAD - will not return` | Gone for good. |
 
 `standing by`, `resting`, and `idle` are deliberately three different words.
-A body that has arrived where it was going, one whose mind chose to rest and refill its reserve, and one whose mind chose to do nothing all look identical in world, and which one you are seeing is most of what a survival run is about.
+A body that has arrived where it was going, one whose mind chose to wait out a night, and one whose mind chose to do nothing all look identical in world, and which one you are seeing is most of what a survival run is about.
 `resting` and `body refused it` are separated for the same reason.
 
 Three colours carry how much attention the line deserves, on the bar and on the text at once:

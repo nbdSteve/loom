@@ -7,8 +7,9 @@
  * same shape, so a run's survival curves stay comparable across flavors.
  *
  * WHAT THIS MEASURES. It is the shape a vital is reported in, not one particular vital.
- * Loom now has two: the energy reserve, which living spends and only resting refills, and
- * the body's health. The reserve is what a survival curve is drawn from and what an
+ * Loom now has two: the energy reserve, which living spends and only eating refills - a rest
+ * holds a position and buys nothing back - and the body's health. The reserve is what a
+ * survival curve is drawn from and what an
  * unattended agent starves on; health is the other way a body can end, beaten down on a
  * full reserve. Both are read as this same [AgentVitals], so the log, the step function,
  * and the operator display work on either without having to know which they were handed.

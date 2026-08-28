@@ -6,10 +6,11 @@
  * bodies, while "which vitals there are, what scale each is read on, and how often either
  * reaches the log" lives here.
  *
- * The two are deliberately not one number. The energy reserve is what living spends and
- * only resting refills, and it is what an unattended agent starves on. Health is physical
- * damage to the body, and a body can be beaten to death on a full reserve. Aliasing either
- * to the other would make a run unable to say what ended an agent.
+ * The two are deliberately not one number. The energy reserve is what living spends and only
+ * eating refills - resting holds a position and buys nothing back - and it is what an
+ * unattended agent starves on. Health is physical damage to the body, and a body can be beaten
+ * to death on a full reserve. Aliasing either to the other would make a run unable to say what
+ * ended an agent.
  */
 package dev.loom.body.nms
 

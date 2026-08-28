@@ -1,5 +1,8 @@
 package dev.loom.mind
 
+import dev.loom.body.FASTEST_PERCEPTION_CADENCE_TICKS
+import dev.loom.body.MAX_REQUESTS_IN_FLIGHT_PER_AGENT
+import dev.loom.body.REQUEST_REFS_LIFETIME_TICKS
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
@@ -9,6 +12,9 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+
+/** One server tick, at the twenty a second a server runs at. */
+private val SERVER_TICK = 50.milliseconds
 
 class CognitionSettingsTest {
     @Test
@@ -49,6 +55,53 @@ class CognitionSettingsTest {
             settings.readTimeout > mindWaitsForTheProvider,
             "readTimeout ${settings.readTimeout} must outlast the mind's own $mindWaitsForTheProvider, " +
                 "or a stalled provider is reported as a stalled mind",
+        )
+    }
+
+    @Test
+    @DisplayName("a request's handles outlast the deadline its own decision is allowed")
+    fun theRefWindowOutlastsTheBridgeDeadline() {
+        // The other half of the same cross-package ordering, and the one relation neither
+        // side can state alone: `dev.loom.body` may not depend on `dev.loom.mind`, so the
+        // window's lifetime is a tick constant over there, and this is the only place both
+        // numbers are visible at once.
+        //
+        // A window that closed first would refuse a decision Loom itself was still waiting
+        // for - a meal or a flight naming a handle that was valid when the mind chose it,
+        // recorded as a slot the body had forgotten. Raising the bridge deadline without
+        // raising the lifetime fails here rather than in a run.
+        val deadline = CognitionSettings().timeout
+        val windowCloses = SERVER_TICK * REQUEST_REFS_LIFETIME_TICKS.toDouble()
+        assertTrue(
+            windowCloses > deadline,
+            "handles held for $windowCloses must outlast the bridge deadline $deadline",
+        )
+    }
+
+    @Test
+    @DisplayName("the ceiling on held requests allows for a perception every scan")
+    fun theInFlightCeilingCoversTheFastestPerceptionCadence() {
+        // The other cross-package number `dev.loom.body` has to restate, and the one that
+        // was wrong: the ceiling used to be justified by `THREAT_DEBOUNCE_TICKS`, but a
+        // sighting is only debounced while nothing about it changes - a hostile stepping in
+        // and out of line of sight earns one on every scan. So the fastest a perception can
+        // reach one agent is the scan cadence, and the ceiling is derived from it.
+        //
+        // Shortening the scan without shortening this constant would let a hunted agent
+        // outrun the ceiling and lose the window its goal review's decision needs.
+        val restated = SERVER_TICK * FASTEST_PERCEPTION_CADENCE_TICKS.toDouble()
+        assertTrue(
+            restated <= THREAT_SCAN_CADENCE,
+            "the body's $restated must be no longer than the scan cadence $THREAT_SCAN_CADENCE",
+        )
+
+        // And the ceiling has to hold every request that cadence can produce inside one
+        // window, or it stops being a safety valve and becomes the rule again.
+        val perLifetime = REQUEST_REFS_LIFETIME_TICKS / FASTEST_PERCEPTION_CADENCE_TICKS
+        assertTrue(
+            MAX_REQUESTS_IN_FLIGHT_PER_AGENT > perLifetime,
+            "a ceiling of $MAX_REQUESTS_IN_FLIGHT_PER_AGENT must exceed the $perLifetime " +
+                "perceptions one lifetime can hand out",
         )
     }
 

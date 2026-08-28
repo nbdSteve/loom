@@ -1,6 +1,6 @@
 /*
  * Loom's first survival drive: an energy reserve, spent by living and refilled only
- * by resting.
+ * by eating.
  *
  * It lives in the domain rather than in a body flavor because it is a rule about
  * agents and not about entities: every flavor must spend a reserve the same way, and
@@ -25,12 +25,27 @@ package dev.loom.body
  *
  * Half an hour at twenty ticks a second. Long enough that a body spawned to be looked
  * at is not dying while it is being looked at, and short enough that a whole life -
- * reserve spent down, rested, spent again, exhausted - fits in one sitting at a test
+ * reserve spent down, fed, spent again, exhausted - fits in one sitting at a test
  * server. It is a development-safe default in the sense that matters here: nothing
  * dies unexpectedly early, but an agent that is never driven does still starve,
  * because starving is the outcome the drive exists to produce.
  */
 const val DEFAULT_ENERGY_LIFESPAN_TICKS: Long = 36_000L
+
+/**
+ * How many points of nutrition fill a whole reserve.
+ *
+ * Twenty, which is the vanilla food bar. Anchoring the conversion to a number the
+ * engine already uses is what keeps nutrition explainable without a tuning knob of
+ * Loom's own: twenty nutrition is one reserve, so bread at `FoodProperties.nutrition`
+ * 5 is a quarter of one, and every food in the game is priced by the engine rather
+ * than by a table here that would have to be maintained against it.
+ *
+ * Deliberately not `Villager.FOOD_POINTS`, which encodes villager *breeding*
+ * semantics over four items and disagrees with the engine's own nutrition - bread is
+ * 4 there and 5 in `FoodProperties`.
+ */
+const val VANILLA_FOOD_BAR_NUTRITION: Long = 20L
 
 /**
  * How much of each agent's energy reserve is left, in server ticks.
@@ -78,6 +93,14 @@ class Metabolism(private val lifespan: Long = DEFAULT_ENERGY_LIFESPAN_TICKS) {
      */
     fun energyOf(agentId: AgentId): Double = reserveOf(agentId).toDouble() / lifespan
 
+    /**
+     * Whether [agentId]'s reserve is already full, so a meal would add nothing.
+     *
+     * Asked before an agent eats rather than after: [feed] would silently clamp, and the
+     * item would be gone for nothing. A refusal keeps the food.
+     */
+    fun isSated(agentId: AgentId): Boolean = reserveOf(agentId) == lifespan
+
     /** Whether [agentId] has spent its whole reserve. Terminal: nothing refills one. */
     fun isExhausted(agentId: AgentId): Boolean = reserveOf(agentId) == 0L
 
@@ -108,16 +131,45 @@ class Metabolism(private val lifespan: Long = DEFAULT_ENERGY_LIFESPAN_TICKS) {
     }
 
     /**
-     * Refills the reserve of [agentId], and reports whether it could be.
+     * How many ticks of reserve one point of vanilla nutrition is worth.
      *
-     * The only way a reserve goes back up, and false only for a reserve that has
-     * already run out: exhaustion is terminal, and an agent that could rest its way
-     * back out of it would not be permadead. Refusing is structural rather than a
-     * check the caller is trusted to make first.
+     * Derived from the capacity rather than chosen, so the whole conversion is one
+     * fact: [VANILLA_FOOD_BAR_NUTRITION] points fill a reserve of any size. Integer
+     * division, rounding down, because no float may ever touch a reserve - the
+     * boundary it would drift across is a permadeath.
+     *
+     * At the shipped 36 000-tick capacity that is 1 800 ticks a point, so bread at
+     * nutrition 5 restores 9 000 ticks: exactly a quarter of a life.
      */
-    fun restore(agentId: AgentId): Boolean {
+    val ticksPerNutrition: Long = lifespan / VANILLA_FOOD_BAR_NUTRITION
+
+    /** What [nutrition] points of vanilla nutrition are worth, in ticks of reserve. */
+    fun ticksForNutrition(nutrition: Int): Long = nutrition.toLong() * ticksPerNutrition
+
+    /**
+     * Adds [ticks] of reserve to [agentId], and reports whether it could be.
+     *
+     * The only way a reserve goes back up. Food is the whole of it: resting holds a
+     * position and restores nothing, so an agent that never eats starves however
+     * carefully it waits.
+     *
+     * Never past the capacity, so a reserve cannot be banked beyond one life and the
+     * fraction the mind reads stays a fraction. False only for a reserve that has
+     * already run out: exhaustion is terminal, and an agent that could eat its way
+     * back out of it would not be permadead. Both are structural rather than checks a
+     * caller is trusted to make first.
+     */
+    fun feed(
+        agentId: AgentId,
+        ticks: Long,
+    ): Boolean {
+        require(ticks >= 0) { "ticks fed must not be negative, was $ticks" }
         if (isExhausted(agentId)) return false
-        remaining[agentId] = lifespan
+        val before = reserveOf(agentId)
+        // Compared against the headroom rather than summed and then clamped, so an
+        // absurd number of ticks cannot wrap a Long into a reserve smaller than the
+        // one the agent had.
+        remaining[agentId] = if (ticks >= lifespan - before) lifespan else before + ticks
         return true
     }
 

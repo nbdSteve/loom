@@ -27,20 +27,21 @@
 //! give a second, driftable statement of the same thing.
 
 use loom_contract::{
-    Bearing, DayPhase, DecisionImportance, Observation, Perception, SelfState, Trigger, WorldState,
+    Bearing, DayPhase, DecisionImportance, InventoryStack, Observation, Perception, SelfState,
+    Trigger, WorldState,
 };
 
 use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v7";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v9";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v7";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v9";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v7";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v9";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -73,17 +74,23 @@ pub struct Prompt {
 
 /// The standing instructions shared by every tier.
 ///
-/// States the agent's situation and the five things it can do, in the contract's
+/// States the agent's situation and the six things it can do, in the contract's
 /// own vocabulary, so the intent it picks means the same thing to the body.
 const AGENT_BRIEF: &str = "\
 You are the mind of an agent that lives in a Minecraft world through a body you \
 do not directly control. You are told what your body just experienced, and you \
 answer with one action for it to take and your reasoning for taking it.
 
-Your body accepts exactly five actions:
+Your body accepts exactly six actions:
 - say: speak a line of text out loud.
 - moveTo: walk toward a block position given as whole x, y, z coordinates.
-- rest: recover, refilling your energy reserve completely.
+- eat: eat one item from one stack you are carrying, named by the ref that stack \
+carries. It is the only thing that refills your energy reserve. It happens at \
+once, and it can be refused: the stack may no longer be food, or your reserve may \
+already be full or already spent.
+- rest: stop where you are and hold that position on purpose. It restores \
+nothing: it passes the time deliberately, and your reserve keeps draining while \
+you do it.
 - idle: do nothing this time.
 - flee: run away from one living thing, named by the ref it carries. Your body \
 keeps running from it on its own after this, without being asked again, until it \
@@ -95,16 +102,18 @@ Facts about your world that should shape every choice:
 no respawn and no new body. Nothing is worth risking your life for casually.
 - You have an energy reserve that drains steadily as you live. It is reported as \
 a fraction, where 1.0 is full and 0.0 is empty. If it ever reaches empty you die, \
-permanently and like any other death. Resting is the only way to refill it, so do \
-not let it run low with no plan to rest.
+permanently and like any other death. Eating is the only way to refill it, and \
+you can only eat something you are already carrying. Resting does not refill it, \
+so do not let it run low with no plan to eat.
 - You perceive only what you are told. Each thing in your surroundings list \
 carries how far away it is, which compass direction it lies in, how far above or \
 below you it is, and whether you can actually see it right now - a thing you \
 cannot see is one you know is there through a wall or round a corner.
-- Some things in your surroundings carry a short ref. A ref is the handle for \
-that one thing in this one message: it is the only way to name it back to your \
-body, it means nothing in any other message, and a thing without one cannot be \
-named at all. Never invent a ref and never reuse one you were given earlier.
+- Some things in your surroundings carry a short ref, and every stack you are \
+carrying carries one. A ref is the handle for that one thing in this one message: \
+it is the only way to name it back to your body, it means nothing in any other \
+message, and a thing without one cannot be named at all. Never invent a ref and \
+never reuse one you were given earlier.
 - Being in sight means only that nothing solid stands in the straight line \
 between you and it. It is not a field of view and it has nothing to do with which \
 way your body happens to be facing: everything in your surroundings list is \
@@ -235,14 +244,26 @@ fn self_line(state: &SelfState) -> String {
 }
 
 /// The inventory, capped, with any omission stated.
-fn inventory_line(inventory: &[String]) -> String {
+///
+/// Every stack is named with the ref it carries, because a ref the model is not
+/// shown is a stack it cannot eat: an `eat` may only name a handle from this one
+/// message, so a stack described without its handle is a stack the mind can see
+/// and never reach.
+fn inventory_line(inventory: &[InventoryStack]) -> String {
     if inventory.is_empty() {
         return "You are carrying nothing.".to_owned();
     }
     let shown = inventory
         .iter()
         .take(MAX_INVENTORY_LINES)
-        .map(|item| field(item))
+        .map(|stack| {
+            format!(
+                "{count} {what} (ref {handle})",
+                count = stack.count,
+                what = field(&stack.what),
+                handle = field(&stack.slot_ref)
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ");
     format!(
@@ -478,12 +499,22 @@ mod tests {
     };
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
-        Bearing, DayPhase, DecisionImportance, Observation, Perception, SelfState, Trigger,
-        WorldState,
+        Bearing, DayPhase, DecisionImportance, InventoryStack, Observation, Perception, SelfState,
+        Trigger, WorldState,
     };
 
     fn router() -> Router {
         Router::new(ModelCatalog::new("fast", "deep"))
+    }
+
+    /// One inventory stack, so a test that is not about the inventory says so in
+    /// one line.
+    fn stack(handle: &str, what: &str, count: i64) -> InventoryStack {
+        InventoryStack {
+            slot_ref: handle.to_owned(),
+            what: what.to_owned(),
+            count,
+        }
     }
 
     fn perception(trigger: Trigger, importance: DecisionImportance) -> Perception {
@@ -497,7 +528,7 @@ mod tests {
                 health: 12.5,
                 energy: 1.0,
                 position: [10.5, 64.0, -8.25],
-                inventory_summary: vec!["3 bread".to_owned()],
+                inventory_summary: vec![stack("i1", "bread", 3)],
                 world: WorldState {
                     day_phase: DayPhase::Day,
                     is_day: true,
@@ -654,14 +685,39 @@ mod tests {
     fn an_observation_with_no_ref_is_not_given_one() {
         // The other half: only a living thing carries a ref, so a phrase where there is no
         // handle would offer a model something to name that the body could not resolve.
-        let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
         assert!(seen.surroundings[0].entity_ref.is_none());
+        // Every carried stack states a handle of its own, so the inventory is
+        // emptied to leave the surroundings as the only thing that could state one.
+        seen.self_state.inventory_summary = vec![];
 
         let prompt = render(&router().route(seen.importance), &seen);
 
         assert!(
             !prompt.situation.contains("(ref"),
             "a thing with no handle must not be described as having one, got {situation}",
+            situation = prompt.situation
+        );
+    }
+
+    #[test]
+    fn a_carried_stack_names_the_ref_an_eat_has_to_answer_with() {
+        // The same rule on the other handle space, and the one thing that makes an `eat`
+        // possible: the action accepts nothing but a handle from this one message, so a
+        // stack described without its ref is food the mind can see and can never reach.
+        // Every eat it chose would arrive as an unresolvable handle and be refused, with
+        // the only source of recovery in the run silently off against a real provider.
+        //
+        // Pinned here rather than left to the situation test above, because that test's
+        // neighbour empties the inventory to isolate the observation half: without a test
+        // of its own the handle could stop being rendered and nothing would say so.
+        let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+
+        let prompt = render(&router().route(seen.importance), &seen);
+
+        assert!(
+            prompt.situation.contains("3 bread (ref i1)"),
+            "the stack's handle must reach the model verbatim, got {situation}",
             situation = prompt.situation
         );
     }
@@ -884,7 +940,7 @@ mod tests {
     #[test]
     fn a_long_world_string_is_cut_and_the_cut_is_visible() {
         let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
-        seen.self_state.inventory_summary = vec!["a".repeat(MAX_FIELD_CHARS * 4)];
+        seen.self_state.inventory_summary = vec![stack("i1", &"a".repeat(MAX_FIELD_CHARS * 4), 1)];
         let prompt = render(&router().route(seen.importance), &seen);
         assert!(prompt.situation.contains("..."));
         assert!(prompt.situation.chars().count() < MAX_FIELD_CHARS * 4);
@@ -1022,7 +1078,7 @@ mod tests {
         // The inventory shares the phrasing, so it shares the rule.
         let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
         seen.self_state.inventory_summary = (0..=MAX_INVENTORY_LINES)
-            .map(|i| format!("item-{i}"))
+            .map(|i| stack(&format!("i{i}"), &format!("item-{i}"), 1))
             .collect();
         let prompt = render(&router().route(seen.importance), &seen);
         assert!(

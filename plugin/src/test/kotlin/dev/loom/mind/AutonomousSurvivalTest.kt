@@ -7,11 +7,16 @@
  * decision back to a body. Only the entity is a double, because an entity is the one
  * part that needs a world. What it stands in for is `NmsEntityBodyPort` and the seams
  * it shares with it are deliberately thin: charge the reserve on the tick, end whoever
- * ran out, report the reserve in the ordinary perception, refill it on a rest.
+ * ran out, report the reserve in the ordinary perception.
+ *
+ * Nothing here refills a reserve, because nothing an agent can decide today does. Food
+ * is the only source of recovery, and resting is a deliberate hold rather than a meal -
+ * so a mind that answers every low reserve with a rest starves its agent on exactly the
+ * tick a mind that answered with idle would have.
  *
  * Time is ticks throughout, and the clock the schedule reads is derived from the tick
- * count, so a whole life - spent down, rested, spent again, starved - runs in
- * milliseconds and runs the same way every time.
+ * count, so a whole life - spent down, waited out, starved - runs in milliseconds and
+ * runs the same way every time.
  */
 package dev.loom.mind
 
@@ -104,15 +109,10 @@ private class SurvivingBodies(
         requestId: String?,
     ): IntentOutcome {
         if (agentId !in bodies) return IntentOutcome.NoSuchBody
-        // The shape the adapter has: resting refills the reserve, and a reserve that has
-        // already run out refuses instead of refilling.
-        val spent = intent is Intent.Rest && !metabolism.restore(agentId)
-        if (!spent) applied.add(tick to intent)
-        return if (spent) {
-            IntentOutcome.Rejected("the energy reserve is spent; this agent has ended")
-        } else {
-            IntentOutcome.Accepted("applied $intent")
-        }
+        // The shape the adapter has: every intent is applied on its own terms, and none
+        // of them touches the reserve. A rest stops the body and buys no time.
+        applied.add(tick to intent)
+        return IntentOutcome.Accepted("applied $intent")
     }
 
     override fun perceive(
@@ -172,6 +172,8 @@ class AutonomousSurvivalTest {
     private fun live(
         ticks: Long,
         mind: CognitionBridge,
+        bodies: SurvivingBodies = this.bodies,
+        events: MutableList<BodyEventRecord> = this.events,
     ) {
         val schedule = GoalReviewSchedule(SURVIVAL_CADENCE, SURVIVAL_SLICES)
         val cognition =
@@ -207,23 +209,51 @@ class AutonomousSurvivalTest {
             CompletableFuture.completedFuture(decisionFor(perception, Intent.Idle))
         }
 
-    private fun rests(): Int = bodies.applied.count { (_, intent) -> intent == Intent.Rest }
+    /** How many times [world]'s body was actually rested, as its own record of applied intents shows. */
+    private fun rests(world: SurvivingBodies = bodies): Int =
+        world.applied.count { (_, intent) -> intent == Intent.Rest }
+
+    /**
+     * Runs a fresh world to two whole reserves with [mind] answering, and answers with
+     * the world it left behind.
+     *
+     * A world of its own rather than this test's, so two minds can be compared without
+     * either inheriting the other's reserve - and returned rather than reduced to a death
+     * tick, because what a mind actually got the body to *do* is half of what a comparison
+     * of two minds is worth.
+     */
+    private fun aLifeUnder(
+        events: MutableList<BodyEventRecord>,
+        mind: CognitionBridge,
+    ): SurvivingBodies {
+        val world = SurvivingBodies(events)
+        world.spawn(agent, HOME)
+        live(LIFESPAN_TICKS * 2, mind, world, events)
+        return world
+    }
+
+    /** The tick the one agent in [events] starved on. */
+    private fun starvedAt(events: List<BodyEventRecord>): Long = events.single { it.event == BodyEvent.DIED }.tick
 
     @Test
-    @DisplayName("an agent nobody attends to keeps itself alive, for many times the length of one reserve")
-    fun anAgentSurvivesOnItsOwn() {
-        bodies.spawn(agent, HOME)
+    @DisplayName("an agent that only rests starves on the same tick as one that only idles")
+    fun restingBuysNoTime() {
+        val restingEvents = mutableListOf<BodyEventRecord>()
+        val idlingEvents = mutableListOf<BodyEventRecord>()
 
-        // No command, no operator, no help: the agent's own goal reviews are the only
-        // thing that happens to it for five lifespans.
-        live(LIFESPAN_TICKS * 5, aMindThatRests())
+        // Two runs of the same length, differing only in what the mind decides. Resting
+        // is a deliberate wait and food is the only recovery, so the two agents must end
+        // at the identical tick - a rest that bought even one tick would show up here.
+        val resting = aLifeUnder(restingEvents, aMindThatRests())
+        val idling = aLifeUnder(idlingEvents, aMindThatNeverRests())
 
-        assertEquals(setOf(agent), bodies.liveBodies(), "an agent that rested when it needed to must still be here")
-        assertTrue(events.none { it.event == BodyEvent.DIED }, "nothing may have died: ${events.map { it.detail }}")
-        // It was not merely lucky: it read a reserve worth resting on, several times,
-        // and each reading came from the body it was standing in.
-        assertTrue(asked.minOf { it.selfState.energy } <= RESTS_AT, "the mind must have seen a low reserve")
-        assertTrue(rests() >= 4, "five lifespans of unattended running must have taken several rests, took ${rests()}")
+        assertEquals(starvedAt(idlingEvents), starvedAt(restingEvents), "a rest must not buy an agent a single tick")
+        assertEquals(LIFESPAN_TICKS, starvedAt(restingEvents), "the reserve is spent by living, at one tick a tick")
+        // And the two runs really did differ, which is the whole of what makes their equal
+        // ends evidence: one agent was rested by its mind, repeatedly, and the other never
+        // was. Comparing two runs that both only idled would pass this test for ever.
+        assertTrue(rests(resting) > 0, "the resting mind must have answered rest, and the body applied it")
+        assertEquals(0, rests(idling), "the run it is compared against must never have rested")
     }
 
     @Test

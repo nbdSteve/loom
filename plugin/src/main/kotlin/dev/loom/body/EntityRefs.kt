@@ -35,19 +35,6 @@ import java.util.UUID
  */
 const val MAX_REFS_PER_REQUEST: Int = PERCEPTION_MAX_OBSERVATIONS
 
-/**
- * How many requests' worth of handles one agent keeps.
- *
- * Two rather than one because an agent can have more than one cognition in flight, and
- * each perception is its own request: remembering only the newest would make an earlier
- * one's answer unresolvable purely because something else happened first - a flee
- * refused for a reason that has nothing to do with the threat it named. Two rather
- * than many because every retained request is a longer window in
- * which a decision may act on a creature that has since moved or died, and the bound
- * is what makes this a seam rather than a cache.
- */
-const val REQUESTS_REMEMBERED_PER_AGENT: Int = 2
-
 /** The character a handle starts with, so it never reads to a model as a number. */
 private const val HANDLE_PREFIX = "e"
 
@@ -68,9 +55,9 @@ private const val HANDLE_BODY_CHARS = 7
  *
  * The counter wraps here rather than overflowing the width. Two live bindings can only
  * collide if their ordinals are this far apart, and an agent retains at most
- * [REQUESTS_REMEMBERED_PER_AGENT] * [MAX_REFS_PER_REQUEST] of them minted within a
- * goal-review cadence of each other, so a wrap cannot put the same handle twice into
- * one agent's retained set.
+ * [MAX_REQUESTS_IN_FLIGHT_PER_AGENT] * [MAX_REFS_PER_REQUEST] of them minted within
+ * [REQUEST_REFS_LIFETIME_TICKS] of each other, so a wrap cannot put the same handle twice
+ * into one agent's retained set.
  */
 private val HANDLE_SPACE: Long = List(HANDLE_BODY_CHARS) { HANDLE_RADIX.toLong() }.reduce(Long::times)
 
@@ -100,10 +87,10 @@ sealed interface RefResolution {
     /**
      * This agent holds no bindings for that request any more.
      *
-     * Either the request has been evicted by newer ones, or it was never this agent's.
-     * The two are indistinguishable by construction and both are refused: telling them
-     * apart would mean remembering every request an agent ever made, which is the
-     * unbounded growth this type exists to avoid.
+     * Either its decision has already been dealt with, or its window has closed, or it was
+     * never this agent's. All three are indistinguishable by construction and all are
+     * refused: telling them apart would mean remembering every request an agent ever made,
+     * which is the unbounded growth this type exists to avoid.
      */
     data object Stale : RefResolution
 
@@ -114,44 +101,33 @@ sealed interface RefResolution {
 /**
  * The handles a body has issued, bounded per request and per agent.
  *
- * Holds no lock. Both callers are on the server's main thread - a perception is taken
- * there and a decision is applied back there through the `MainThread` port - so a
- * handle minted off it would be a perception taken off it, which no body flavor does.
+ * The window itself - how long a request stays answerable, and what closes it - is
+ * [RequestWindow]'s, shared with the slot handles that ride the same perception.
  *
  * @param maxRefsPerRequest how many handles one request may issue.
- * @param requestsRemembered how many requests' worth of handles one agent keeps.
+ * @param lifetimeTicks how long a request's handles stay answerable.
+ * @param requestsInFlight how many unanswered requests one agent may hold handles for.
  */
 class EntityRefs(
     private val maxRefsPerRequest: Int = MAX_REFS_PER_REQUEST,
-    private val requestsRemembered: Int = REQUESTS_REMEMBERED_PER_AGENT,
+    lifetimeTicks: Long = REQUEST_REFS_LIFETIME_TICKS,
+    requestsInFlight: Int = MAX_REQUESTS_IN_FLIGHT_PER_AGENT,
 ) {
     init {
         require(maxRefsPerRequest > 0) { "maxRefsPerRequest must be positive, got $maxRefsPerRequest" }
-        require(requestsRemembered > 0) { "requestsRemembered must be positive, got $requestsRemembered" }
     }
 
-    /**
-     * Per agent, the requests it still holds handles for, oldest first.
-     *
-     * Keyed by agent rather than flat so [forget] can drop a whole agent at once and so
-     * one agent's traffic cannot evict another's: an agent thinking often would
-     * otherwise starve a quiet one of its own refs.
-     */
-    private val issuedByAgent: MutableMap<AgentId, LinkedHashMap<String, Map<String, UUID>>> = mutableMapOf()
+    /** What each agent still holds, and every rule about when it stops holding it. */
+    private val window = RequestWindow<UUID>(lifetimeTicks, requestsInFlight)
 
     /** How many handles have ever been minted, which is what makes each one distinct. */
     private var minted: Long = 0
 
     /**
-     * Mints one handle per subject, in the order given, and binds them to this request.
+     * Mints one handle per subject and binds them to this request, in one step.
      *
-     * The subjects beyond [maxRefsPerRequest] get none: the caller is expected to have
-     * applied the perception's own count bound first, so a truncation here would mean
-     * the two bounds had drifted.
-     *
-     * Issuing twice for one [requestId] replaces what it had rather than adding to it,
-     * so a re-taken perception cannot leave the handles of the one it replaced
-     * resolvable, and the request counts as the newest either way.
+     * [mint] then [remember], for the caller that already knows the perception it is
+     * describing will be handed to a mind.
      *
      * @return the bindings, in the order the subjects were given.
      */
@@ -159,48 +135,73 @@ class EntityRefs(
         agent: AgentId,
         requestId: String,
         subjects: List<UUID>,
-    ): List<EntityRefBinding> {
-        require(requestId.isNotBlank()) { "requestId must not be blank" }
-        val issued =
-            subjects.take(maxRefsPerRequest).map { subject ->
-                EntityRefBinding(handle = mint(), subject = subject)
-            }
-        val forAgent = issuedByAgent.getOrPut(agent) { LinkedHashMap() }
-        forAgent.remove(requestId)
-        forAgent[requestId] = issued.associate { it.handle to it.subject }
-        while (forAgent.size > requestsRemembered) {
-            forAgent.remove(forAgent.keys.first())
-        }
-        return issued
-    }
+        atTick: Long = 0,
+    ): List<EntityRefBinding> = mint(subjects).also { remember(agent, requestId, it, atTick) }
 
     /**
-     * What [handle] names, for [agent] answering [requestId].
+     * Mints one handle per subject, in the order given, and binds them to nothing yet.
+     *
+     * Separate from [remember] because a perception has to carry its handles before anything
+     * knows whether it will be sent: a threat scan reads the world, mints a handle per living
+     * thing so it can say *which* hostile it found, and then usually suppresses the sighting -
+     * at which point no mind will ever see those handles. Remembering them anyway would hold a
+     * window open for a perception nobody was shown, and count it against the ceiling
+     * [MAX_REQUESTS_IN_FLIGHT_PER_AGENT] puts on the ones that can still be answered. Minting
+     * costs a counter and nothing else.
+     *
+     * The subjects beyond [maxRefsPerRequest] get none: the caller is expected to have
+     * applied the perception's own count bound first, so a truncation here would mean
+     * the two bounds had drifted.
+     */
+    fun mint(subjects: List<UUID>): List<EntityRefBinding> =
+        subjects.take(maxRefsPerRequest).map { subject ->
+            EntityRefBinding(handle = nextHandle(), subject = subject)
+        }
+
+    /**
+     * Makes [bindings] answerable for [agent] under [requestId], as of [atTick].
+     *
+     * The one place the window opens, so it is the one place a handle becomes answerable.
+     */
+    fun remember(
+        agent: AgentId,
+        requestId: String,
+        bindings: List<EntityRefBinding>,
+        atTick: Long,
+    ) = window.remember(agent, requestId, bindings.associate { it.handle to it.subject }, atTick)
+
+    /**
+     * What [handle] names, for [agent] answering [requestId] at [atTick].
      *
      * Both the agent and the request are required, and neither is a formality: a handle
      * is only ever valid for the one agent it was minted for and the one request that
      * carried it, and resolving without checking either is how a decision would come to
-     * act on another agent's creature.
+     * act on another agent's creature. [atTick] is required for the same kind of reason:
+     * a handle is only valid while its window is open, and the window is measured in ticks.
      */
     fun resolve(
         agent: AgentId,
         requestId: String,
         handle: String,
+        atTick: Long = 0,
     ): RefResolution {
-        val forRequest = issuedByAgent[agent]?.get(requestId) ?: return RefResolution.Stale
+        val forRequest = window.bindingsFor(agent, requestId, atTick) ?: return RefResolution.Stale
         return forRequest[handle]?.let(RefResolution::Bound) ?: RefResolution.Unknown
     }
+
+    /** Drops what [agent] holds for [requestId], its decision having been dealt with. */
+    fun settle(
+        agent: AgentId,
+        requestId: String,
+    ) = window.settle(agent, requestId)
 
     /**
      * Drops every handle held for [agent].
      *
      * For an agent that has ended: Loom is permadeath, so its handles can never be
-     * answered, and the bound per agent is not a bound across agents. Nothing else is
-     * needed, because a live agent's own next request evicts its oldest.
+     * answered, and the bound per agent is not a bound across agents.
      */
-    fun forget(agent: AgentId) {
-        issuedByAgent.remove(agent)
-    }
+    fun forget(agent: AgentId) = window.forget(agent)
 
     /**
      * The next handle, distinct from every other handle in flight.
@@ -210,7 +211,7 @@ class EntityRefs(
      * fail loudly as [RefResolution.Unknown] instead of quietly resolving to whatever
      * stands there now.
      */
-    private fun mint(): String {
+    private fun nextHandle(): String {
         val ordinal = minted % HANDLE_SPACE
         minted += 1
         return HANDLE_PREFIX + ordinal.toString(HANDLE_RADIX)

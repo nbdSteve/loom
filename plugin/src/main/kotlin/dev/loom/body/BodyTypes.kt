@@ -71,9 +71,16 @@ sealed interface IntentOutcome {
     /**
      * The body understood the intent but rejected it, e.g. a target outside the
      * bounds it is willing to act on.
+     *
+     * [reason] is for a person and [tag] is for a count. One intent can be refused several
+     * distinct ways - a meal by six of them - and a run that read them all as `rejected`
+     * could not say whether its agents had nothing edible or were already full, since the
+     * difference would be in the prose. A refusal that has nothing more specific to say
+     * keeps the generic tag, so only the refusals worth counting apart carry one.
      */
     data class Rejected(
         val reason: String,
+        val tag: String = EventTag.REJECTED,
     ) : IntentOutcome
 
     /**

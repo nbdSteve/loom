@@ -18,7 +18,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use loom_contract::{Decision, Perception};
+use loom_contract::{Decision, Perception, ENERGY_EXHAUSTED, ENERGY_FULL};
 
 /// Absolute path to the repository's `contract/` directory, resolved from this
 /// crate's manifest dir so the test is independent of the working directory.
@@ -177,6 +177,130 @@ fn a_nightfall_countdown_below_one_is_refused_at_decode() {
 }
 
 #[test]
+fn an_energy_reading_outside_its_range_is_refused_at_decode() {
+    // Same reason as the countdown above: the schema's `minimum`/`maximum` is a rule
+    // a socket walks straight past, and the JVM binding refuses it in its own `init`,
+    // so this side has to as well or the contract only refuses it on one runtime.
+    let above = fs::read_to_string(
+        contract_dir()
+            .join("fixtures/invalid")
+            .join("perception-energy-out-of-range.json"),
+    )
+    .unwrap();
+    let above = above.trim_end_matches('\n').to_owned();
+
+    assert!(
+        serde_json::from_str::<Perception>(&above).is_err(),
+        "an energy of 1.5 decoded into a Perception"
+    );
+
+    // Below zero is the more dangerous end rather than a symmetrical curiosity: it
+    // describes an agent that is already permadead as merely very hungry.
+    let below = above.replace("\"energy\":1.5", "\"energy\":-0.1");
+    assert_ne!(
+        above, below,
+        "the fixture no longer states an energy to edit"
+    );
+    assert!(
+        serde_json::from_str::<Perception>(&below).is_err(),
+        "a negative energy decoded into a Perception"
+    );
+
+    // And a NaN, which compares false against every bound and so is refused by the
+    // range check itself rather than by a rule of its own. JSON has no NaN literal,
+    // so this is the nearest thing a wire can carry.
+    assert!(
+        serde_json::from_str::<Perception>(&above.replace("\"energy\":1.5", "\"energy\":null"))
+            .is_err(),
+        "a null energy decoded into a Perception"
+    );
+
+    // Both ends of the range are ordinary states an agent is genuinely in, and each
+    // must decode: exhaustion is the tick a permadeath is recorded on, and a full
+    // reserve is what every agent spawns with.
+    for boundary in [ENERGY_EXHAUSTED, ENERGY_FULL] {
+        let at_boundary = above.replace("\"energy\":1.5", &format!("\"energy\":{boundary}"));
+        let accepted: Perception = serde_json::from_str(&at_boundary)
+            .unwrap_or_else(|e| panic!("an energy of {boundary} should decode: {e}"));
+        assert!((accepted.self_state.energy - boundary).abs() < f64::EPSILON);
+    }
+}
+
+#[test]
+fn an_inventory_summary_longer_than_the_body_is_refused_at_decode() {
+    // The last of the schema's bounds on this field, and the one that was left to the schema
+    // alone: `maxItems: 8` is a rule a socket walks straight past, so a ninth slot decoded
+    // happily here. A summary longer than a body's own container is a body that read
+    // something which is not its inventory, and every handle past the eighth names a slot no
+    // eat could ever resolve.
+    let over = fs::read_to_string(
+        contract_dir()
+            .join("fixtures/invalid")
+            .join("perception-inventory-over-slot-count.json"),
+    )
+    .unwrap();
+    let over = over.trim_end_matches('\n').to_owned();
+
+    assert!(
+        serde_json::from_str::<Perception>(&over).is_err(),
+        "a nine-slot inventory summary decoded into a Perception"
+    );
+
+    // The bound is exactly the container: a body carrying something in every slot is an
+    // ordinary provisioned agent, and its whole inventory must still reach the mind.
+    let full = over.replace(
+        ",{\"ref\":\"i9\",\"what\":\"item.minecraft.bread\",\"count\":1}",
+        "",
+    );
+    assert_ne!(
+        over, full,
+        "the fixture no longer states a ninth slot to drop"
+    );
+    let accepted: Perception = serde_json::from_str(&full)
+        .unwrap_or_else(|e| panic!("a full eight-slot inventory should decode: {e}"));
+    assert_eq!(accepted.self_state.inventory_summary.len(), 8);
+}
+
+#[test]
+fn an_inventory_stack_holding_nothing_is_refused_at_decode() {
+    // Same reason as the readings above, and this is the field where only one runtime ever
+    // decodes: a `Perception` is written by the body and read here, so the schema's
+    // `minimum: 1` and the JVM's own `init` never see this line at all. A count of zero
+    // renders as "0 bread (ref i1)" in the prompt - food the agent is carrying and does not
+    // have, on the one path whose whole purpose is deciding whether to eat.
+    let empty = fs::read_to_string(
+        contract_dir()
+            .join("fixtures/invalid")
+            .join("perception-inventory-empty-stack.json"),
+    )
+    .unwrap();
+    let empty = empty.trim_end_matches('\n').to_owned();
+
+    assert!(
+        serde_json::from_str::<Perception>(&empty).is_err(),
+        "a stack of zero items decoded into a Perception"
+    );
+
+    // A negative is the same mistake having gone past, and must not need a rule of its own.
+    let negative = empty.replace("\"count\":0", "\"count\":-1");
+    assert_ne!(
+        empty, negative,
+        "the fixture no longer states a count to edit"
+    );
+    assert!(
+        serde_json::from_str::<Perception>(&negative).is_err(),
+        "a negative stack count decoded into a Perception"
+    );
+
+    // The bound is exactly one item: the last loaf an agent has is an ordinary stack, and it
+    // is the one a survival run most needs the mind to be told about.
+    let last_one = empty.replace("\"count\":0", "\"count\":1");
+    let accepted: Perception = serde_json::from_str(&last_one)
+        .unwrap_or_else(|e| panic!("a stack of one item should decode: {e}"));
+    assert_eq!(accepted.self_state.inventory_summary[0].count, 1);
+}
+
+#[test]
 fn a_ref_outside_its_length_is_refused_at_decode() {
     // Same reason as the countdown above: the schema's minLength and maxLength are
     // rules a socket walks straight past, so each end has to be a type rule too.
@@ -192,6 +316,19 @@ fn a_ref_outside_its_length_is_refused_at_decode() {
     assert!(
         serde_json::from_str::<Decision>(blank.trim_end_matches('\n')).is_err(),
         "a blank flee ref decoded into a Decision"
+    );
+
+    // An eat names a stack by the same shape of handle, so it inherits the bound
+    // rather than restating it: a blank slot ref names no slot the body can read.
+    let blank_slot = fs::read_to_string(
+        contract_dir()
+            .join("fixtures/invalid")
+            .join("decision-eat-blank-ref.json"),
+    )
+    .unwrap();
+    assert!(
+        serde_json::from_str::<Decision>(blank_slot.trim_end_matches('\n')).is_err(),
+        "a blank eat ref decoded into a Decision"
     );
 
     let over_long = fs::read_to_string(

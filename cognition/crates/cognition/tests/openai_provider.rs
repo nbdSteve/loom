@@ -40,7 +40,8 @@ use loom_cognition::openai::settings::{
 use loom_cognition::openai::{OpenAiBackend, OpenAiConfig, MAX_RESPONSE_BYTES};
 use loom_cognition::router::Router;
 use loom_contract::{
-    DayPhase, Decision, DecisionImportance, Intent, Perception, SelfState, Trigger, WorldState,
+    DayPhase, Decision, DecisionImportance, Intent, InventoryStack, Perception, SelfState, Trigger,
+    WorldState,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -329,7 +330,11 @@ fn perception(importance: DecisionImportance) -> Perception {
             health: 12.5,
             energy: 1.0,
             position: [10.0, 64.0, -3.0],
-            inventory_summary: vec!["1 bread".to_owned()],
+            inventory_summary: vec![InventoryStack {
+                slot_ref: "i1".to_owned(),
+                what: "bread".to_owned(),
+                count: 1,
+            }],
             world: WorldState {
                 day_phase: DayPhase::Day,
                 is_day: true,

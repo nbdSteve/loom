@@ -12,6 +12,7 @@
  */
 package dev.loom.body
 
+import dev.loom.contract.Bearing
 import dev.loom.contract.Intent
 import dev.loom.contract.LoomJson
 import dev.loom.contract.Trigger
@@ -35,6 +36,14 @@ private val EVERY_TRIGGER =
         Trigger.GoalReview,
         Trigger.Spoken(from = "agent-bo", text = "hello"),
         Trigger.Damaged(amount = 3L, source = "zombie"),
+        Trigger.ThreatSighted(
+            threat = "minecraft:zombie",
+            ref = "e0",
+            distance = 6.5,
+            direction = Bearing.NORTH,
+            visible = true,
+            reachable = true,
+        ),
         Trigger.BlockSighted(block = "minecraft:chest"),
     )
 
@@ -46,6 +55,7 @@ private val EVERY_INTENT =
         Intent.MoveTo(target = listOf(1L, 64L, 2L)),
         Intent.Say(text = "hello"),
         Intent.Flee(from = "zombie"),
+        Intent.Eat(ref = "i0"),
     )
 
 /** Every outcome a body can answer an intent with, one of each. */

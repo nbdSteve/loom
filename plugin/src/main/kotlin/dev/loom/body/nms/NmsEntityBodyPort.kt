@@ -20,19 +20,21 @@ import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyLocation
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
-import dev.loom.body.EntityRefs
 import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.Metabolism
 import dev.loom.body.Mortality
 import dev.loom.body.NavigationPolicy
+import dev.loom.body.RequestRefs
 import dev.loom.body.RetreatAttempt
 import dev.loom.body.RetreatEnd
 import dev.loom.body.ThreatClock
 import dev.loom.body.ThreatWatch
 import dev.loom.body.describe
 import dev.loom.body.navigableFootprint
+import dev.loom.body.reserveFor
 import dev.loom.body.tagOf
+import dev.loom.body.takesTheBodyOver
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
@@ -75,7 +77,7 @@ class NmsEntityBodyPort(
      * request: a body replaced by a dimension transit must not invalidate a decision
      * already in flight about a creature the agent saw before it crossed.
      */
-    private val refs = EntityRefs()
+    private val refs = RequestRefs()
 
     /**
      * The one path-request budget, shared by every agent.
@@ -248,39 +250,29 @@ class NmsEntityBodyPort(
         // the provenance of the decision that was lost. Recording it here too would
         // double-record every such decision.
         val body = bodies[agentId] ?: return IntentOutcome.NoSuchBody
-        // Resting is the one intent with an effect on the agent and not only on its body,
-        // so its refill happens here rather than in the entity: a dimension transit
-        // replaces a body and must not replace the reserve, so the reserve is held by the
-        // port. Standing still is the body flavor's half of it.
-        //
-        // A reserve that has already run out refuses rather than refills: exhaustion is
-        // terminal, and an agent that could rest its way back out of it would not be
-        // permadead. Unreachable while tick ends an agent on the tick it runs out, since
-        // the body is gone before any decision could arrive - and refused anyway, because
-        // that ordering is not something a caller of this port can see.
-        val spent = intent is Intent.Rest && !metabolism.restore(agentId)
         // What a flight attempt came to, handed out by the entity because only the ref seam
         // above can resolve the threat it names, and needed here because an accepted flight
         // is a state rather than one hop. Null for every other intent.
         var flight: RetreatAttempt? = null
+        // The ref seam is passed as a function rather than the store itself: what a
+        // handle means is scoped to the agent and the request that minted it, and
+        // the body has no business knowing either. An intent no perception asked
+        // for carries no request, so it resolves against none and is refused as
+        // stale - the honest answer, since no request of this agent's ever named
+        // the threat it is asking to run from.
         val outcome =
-            if (spent) {
-                IntentOutcome.Rejected("the energy reserve is spent; this agent has ended")
-            } else {
-                // The ref seam is passed as a function rather than the store itself: what a
-                // handle means is scoped to the agent and the request that minted it, and
-                // the body has no business knowing either. An intent no perception asked
-                // for carries no request, so it resolves against none and is refused as
-                // stale - the honest answer, since no request of this agent's ever named
-                // the threat it is asking to run from.
-                body.applyIntent(
-                    intent,
-                    movement,
-                    currentTick(),
-                    { handle -> refs.resolve(agentId, requestId.orEmpty(), handle) },
-                    { attempt -> flight = attempt },
-                )
-            }
+            body.applyIntent(
+                intent,
+                movement,
+                currentTick(),
+                refs.seamFor(agentId, requestId.orEmpty(), metabolism.reserveFor(agentId), currentTick()),
+                { attempt -> flight = attempt },
+            )
+        // The request has had its answer, so its handles have nothing left to name. Closing
+        // the window here rather than leaving it to run out keeps it as narrow as the round
+        // trip actually was, and it is done for a refusal as well as an acceptance: either
+        // way this perception's one decision has arrived.
+        requestId?.let { refs.settle(agentId, it) }
         journal.recordAction(
             agentId,
             "${describe(intent)} -> ${describe(outcome)}",
@@ -295,14 +287,16 @@ class NmsEntityBodyPort(
             retreats.attempted(agentId, attempt, currentTick())
             journal.recordRetreat(agentId, describe(attempt, continued = false), tagOf(attempt, continued = false))
         }
-        // Anything else the body actually carried out has taken it over, so the flight is
-        // over: an agent has one body and cannot walk somewhere and run away at once.
+        // Something else driving the body has taken the flight over, so the flight is over: an
+        // agent has one body and cannot walk somewhere and run away at once.
         //
-        // Keyed on the acceptance rather than on the intent, because an intent the body
-        // refused did not take anything over - an unsupported `say` would otherwise end a
-        // flight the mind never meant to end, and a refused move leaves the retreat to
-        // re-route at its own cadence, which is the better of the two behaviours.
-        if (flight == null && outcome is IntentOutcome.Accepted && retreats.superseded(agentId)) {
+        // Both halves are required and neither implies the other. An intent the body *refused*
+        // took nothing over, so an unsupported `say` cannot end a flight the mind never meant
+        // to end, and a refused move leaves the retreat to re-route at its own cadence. And an
+        // accepted intent that displaces nothing - eating, which touches neither the navigator
+        // nor the position - is not a supersession either; `takesTheBodyOver` is the rule for
+        // which is which, stated in the domain where it is total over the intents.
+        if (takesTheBodyOver(intent) && outcome is IntentOutcome.Accepted && retreats.superseded(agentId)) {
             journal.recordRetreat(agentId, describe(RetreatEnd.SUPERSEDED), tagOf(RetreatEnd.SUPERSEDED))
         }
         return outcome
@@ -317,7 +311,7 @@ class NmsEntityBodyPort(
         // mind is sent. See BodyScene for why the scene is captured before the trigger.
         val scene = body.captureScene(agentId, energy, tick, refs)
         val outcome =
-            threatWatch.consider(agentId, threatsIn(agentId, scene, refs)) { candidate ->
+            threatWatch.consider(agentId, threatsIn(scene)) { candidate ->
                 // Asked last and only for a candidate the free tests passed: this is a
                 // real search, out of the same per-tick budget a walk pays into.
                 body.canReach(candidate, movement, tick)

@@ -22,6 +22,7 @@
  */
 package dev.loom.body
 
+import dev.loom.contract.Intent
 import java.util.UUID
 
 /**
@@ -180,6 +181,38 @@ sealed interface RetreatAttempt {
         val reason: String,
     ) : RetreatAttempt
 }
+
+/**
+ * Whether carrying [intent] out takes the body away from a flight it is already on.
+ *
+ * What ends a retreat is the body being *driven* by something else, not the mind having been
+ * answered: an agent has one body and cannot walk somewhere and run away at once, so a walk or
+ * a deliberate stop displaces a flight - but an instantaneous act that touches neither the
+ * navigator nor the body's position displaces nothing, and a flight it ended would leave the
+ * agent standing still with a hostile on it until its next goal review.
+ *
+ * Eating is the first such intent and the reason this is a rule rather than a test for
+ * acceptance. It consumes an item and credits a reserve; the route the body is walking is
+ * untouched, and the retreat has to keep re-routing at its own cadence afterwards.
+ *
+ * [Intent.Flee] answers `false` because a flight is not a supersession: a later `Flee` replaces
+ * the threat through [ActiveRetreats.attempted], which keeps one retreat per agent, and reading
+ * it here as well would journal an ending for a retreat that is still running.
+ *
+ * Total over [Intent] with no default branch, so an intent added later has to say which it is
+ * rather than silently inheriting the answer that ends flights.
+ */
+fun takesTheBodyOver(intent: Intent): Boolean =
+    when (intent) {
+        // A route of its own, or a deliberate stop: either way the body is no longer running.
+        is Intent.MoveTo, is Intent.Rest, is Intent.Idle -> true
+        // Instantaneous, and nothing to do with where the body is going.
+        is Intent.Eat -> false
+        // Nothing this flavor can carry out, and speaking would not stop a flight in one that
+        // could: an agent can shout while it runs.
+        is Intent.Say -> false
+        is Intent.Flee -> false
+    }
 
 /**
  * How the port answers an [attempt].

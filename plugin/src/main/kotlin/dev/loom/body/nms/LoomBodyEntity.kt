@@ -41,8 +41,8 @@ import dev.loom.body.AgentId
 import dev.loom.body.BODY_FOLLOW_RANGE_BLOCKS
 import dev.loom.body.BodyLocation
 import dev.loom.body.IntentOutcome
+import dev.loom.body.IntentSeam
 import dev.loom.body.NavigationPolicy
-import dev.loom.body.RefResolution
 import dev.loom.body.RetreatAttempt
 import dev.loom.body.hasTravelled
 import dev.loom.body.outcomeOf
@@ -341,7 +341,7 @@ class LoomBodyEntity(
         intent: Intent,
         movement: NavigationPolicy,
         tick: Long,
-        threatOf: (String) -> RefResolution,
+        seam: IntentSeam,
         onRetreat: (RetreatAttempt) -> Unit,
     ): IntentOutcome =
         when (intent) {
@@ -355,14 +355,23 @@ class LoomBodyEntity(
                 IntentOutcome.Accepted("standing still")
             }
 
-            // Standing still is all of resting this body can do. Refilling the reserve
-            // is the agent's half of it, not the body's - a dimension transit replaces a
-            // body and must not replace the reserve - so the port that holds the reserve
-            // does that part and calls this for the rest. See NmsEntityBodyPort.rest.
+            // Resting is stopping and holding this position on purpose, and that is the
+            // whole of it: it restores nothing. Food is the only thing that refills a
+            // reserve, so a resting agent is spending its life waiting rather than
+            // buying any of it back. Kept as its own intent rather than folded into
+            // Idle because sealing a hole and waiting for dawn is the play that wins a
+            // night, and a deliberate wait and an unconsidered one are the two states a
+            // survival run most needs to tell apart.
             is Intent.Rest -> {
                 stopWalking()
                 IntentOutcome.Accepted("resting")
             }
+
+            // The one intent that names something the body is carrying. It resolves
+            // through a seam of its own for the reason a flight does - a handle means
+            // something only inside the request that minted it - and it is the only
+            // intent that adds to a reserve.
+            is Intent.Eat -> eatFrom(intent.ref, seam.slotOf, seam.reserve)
 
             is Intent.Say -> IntentOutcome.Unsupported("say")
 
@@ -376,7 +385,7 @@ class LoomBodyEntity(
             // outcome: an accepted flight becomes a state the port keeps, and the
             // resolution happens here once because a ref means nothing outside its request.
             is Intent.Flee -> {
-                val attempt = retreatFrom(intent.from, threatOf, movement, tick)
+                val attempt = retreatFrom(intent.from, seam.threatOf, movement, tick)
                 onRetreat(attempt)
                 outcomeOf(attempt)
             }
