@@ -1,0 +1,1029 @@
+{
+ "schemaVersion": "loom-experiment-manifest/2",
+ "experimentId": "2026-08-27-hostile-sighting-cognition",
+ "title": "Does a hostile in view reach an agent's mind before its next goal review, and what does noticing it cost?",
+ "sourceCommit": "f1d03a36e95e9cccff7a00185fbd14353ec028ff",
+ "sourceCommitShort": "f1d03a3",
+ "sourceCommitNote": "f1d03a3 is the product-code tree this run exercised. The branch moved on before the run by exactly one commit, d074099, which changes nine files: three Markdown documents (AGENTS.md, DEMO.md, README.md), KDoc prose in three Kotlin sources, one JSON Schema description string with one indentation fix, and two test files. No executable code differs and the prompt version strings are identical, so the plugin and the mind under test are f1d03a3's. f1d03a3 is not an ancestor of the default branch, because the work landed there as the squash commit 70d0859. Check ancestry against pull request 21, whose head ref is d074099 and outlives the fm/loom-threat-trigger branch that a squash merge normally prunes.",
+ "sourceRepository": "loom",
+ "sourceBranch": "fm/loom-threat-trigger",
+ "fieldProvenance": "Every field outside an \"attested\" block is either derived from body-events.jsonl or a setting the run was configured with. An \"attested\" block holds values the operator supplied from outside the raw evidence and names where they came from, so a reader can tell what they can re-check from this directory and what they are taking on trust. See research/README.md.",
+ "rawEvidence": {
+  "file": "body-events.jsonl",
+  "format": "newline-delimited JSON, one BodyEventRecord per line",
+  "sha256": "53811a4f0e27565d296e1c2d00217a1a9242374a3f0d8dd8e350ccf24cc3a5a7",
+  "bytes": 277864,
+  "records": 2043,
+  "immutable": true,
+  "credentialScan": {
+   "scannedFor": [
+    "sk-",
+    "api[_-]?key",
+    "secret",
+    "token=",
+    "bearer",
+    "password",
+    "credential",
+    "Authorization"
+   ],
+   "scannedFile": "body-events.jsonl",
+   "matches": 0,
+   "note": "Case-insensitive regex sweep of the patterns above over body-events.jsonl, plus a sweep of the same file for local filesystem paths, machine names, loopback addresses and the client's account name. Zero matches: this scan confirms it for this file rather than assuming it, and re-running it over this file reproduces the zero. manifest.json and README.md were swept for the same patterns and the same paths, names and addresses; their only hits are this manifest's own description of the scan and both files' statements that no credential existed in the run, so neither count is quoted here, because a count in prose would drift the next time either file is edited. No credential, key pattern, local path, machine name, loopback address or account identity appears in any of the three files."
+  }
+ },
+ "environment": {
+  "server": {
+   "software": "Paper",
+   "minecraftVersion": "1.21.1",
+   "protocol": 767,
+   "build": 133,
+   "attested": {
+    "source": "the operator's sha256 of the server jar, which is not committed. Paper publishes this hash for build 133 on its own build API, and it was verified against that published value before the jar was run, so unlike the plugin jar and cognition binary hashes in provenance.attested, which are hashes of artefacts nothing publishes, this one is re-checkable upstream rather than only on the operator's word. The software, version, protocol and build above are settings the protocol states and a repeat run would set again.",
+    "buildSha256": "39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9"
+   }
+  },
+  "world": {
+   "levelType": "minecraft:flat",
+   "difficulty": "normal",
+   "spawnMonsters": true,
+   "doMobSpawning": false,
+   "doDaylightCycle": false,
+   "randomTickSpeed": 0,
+   "timeOfDay": 18000,
+   "allowNether": false,
+   "onlineMode": false,
+   "viewDistance": 6,
+   "simulationDistance": 6,
+   "note": "Hostile behaviour was left on (difficulty normal, spawn-monsters true) but ambient spawning off, so the only hostile in the world was the one deliberately summoned. Time was pinned at night before anything was spawned so the zombie could not burn away mid-run, and random ticks were off so nothing else in the world changed. All four were set from the console before the client joined, which is before the experiment window opens."
+  },
+  "scene": {
+   "bodySpawn": "100.50,-60.00,100.50",
+   "threat": "minecraft:zombie, ordinary and AI-enabled, summoned at 100.5,-60,106.5",
+   "threatSeparationBlocks": 6.0,
+   "note": "6 blocks is inside PIVOTAL_THREAT_DISTANCE_BLOCKS (8), so the first sighting was priced Pivotal. No NoAI tag, no attribute change and no teleport: the zombie was summoned once and never touched again."
+  },
+  "attested": {
+   "source": "the operator's harness and the server log, neither of which is committed; not computable from body-events.jsonl",
+   "jvm": "OpenJDK 25.0.3, the JVM the server ran on. The plugin jar itself is built on Corretto 21 per the project's Gradle toolchain.",
+   "freshDataDirectory": true,
+   "freshDataDirectoryNote": "The server data directory was created for this run with no world and no plugins/Loom directory, so body-events.jsonl holds this run and nothing else. No output of any earlier run was reused.",
+   "watchNote": "No /loomwatch watch was ever attached, by a client or from the console, so no observer view was rendered at any point in the run.",
+   "consoleInputAfterExperimentStart": "none but the terminating stop",
+   "consoleInputNote": "Between the summon and the stop the operator sent no client, console, watch or operator input of any kind. No command blocks, no scheduled commands and no automated stimuli were used at any point."
+  }
+ },
+ "clientPresence": {
+  "perceptionsWhileClientConnected": 1,
+  "perceptionsWhileClientConnectedDerivation": "A log count of perceived records at or before clientLeftTickApprox in the attested block below, so the count itself is derived from body-events.jsonl but the boundary it was counted against is attested rather than derivable from this directory. The only perception before that boundary is at tick 499 and the next is at tick 879, so the count stays 1 across the whole stated 20-tick uncertainty and nothing downstream depends on the attested tick being exact.",
+  "perceptionsInExperimentWindow": 63,
+  "observationCountsInExperimentWindow": {
+   "0 observation(s)": 1,
+   "1 observation(s)": 62
+  },
+  "playerObservationsInExperimentWindow": 0,
+  "why": "One temporary offline-mode client was needed to place the body, because /loombody spawn puts the body where the sender stands and so refuses the console. It disconnected before the threat existed and the console confirmed zero players online before the summon, so no player entity existed in the world for any window perception to observe. Of the 63 window perceptions, 62 carry exactly one observation, which is the zombie, and the goal review at tick 2899 carries none because the body had outrun it.",
+  "attested": {
+   "source": "the server log, which is not committed",
+   "clientsConnectedDuringExperimentWindow": 0,
+   "clientJoinedUtc": "2026-08-27T23:18:51Z",
+   "clientLeftUtc": "2026-08-27T23:19:02Z",
+   "playersOnlineBeforeSummon": 0,
+   "playersOnlineNote": "A console list at 23:19:15Z reported 0 of a max of 2 players online, and the whole server log holds exactly one join and one leave, both before the summon.",
+   "clientLeftTickApprox": 540,
+   "clientLeftTickDerivation": "Attested wall clock: tick 0 is the server's Done line at 23:18:35Z and the leave line is 23:19:02Z, so about tick 540, roughly 340 ticks before the experiment window opens. Second resolution, so about 20 ticks either way."
+  }
+ },
+ "provenance": {
+  "backend": "scripted-stand-in",
+  "backendNote": "LOOM_COGNITION_BACKEND unset, so the shipped ScriptedBackend answered every request over the ordinary TCP bridge. No provider was configured and no credential existed in the run. ScriptedBackend answers a ThreatSighted trigger with Intent::Flee naming the trigger's own entityRef, which is the composition under test and none of the judgement.",
+  "decisionsByStamp": [
+   {
+    "tier": "NOTABLE",
+    "model": "scripted-stand-in",
+    "promptVersion": "notable-v7",
+    "decisions": 59
+   },
+   {
+    "tier": "PIVOTAL",
+    "model": "scripted-stand-in",
+    "promptVersion": "pivotal-v7",
+    "decisions": 3
+   },
+   {
+    "tier": "ROUTINE",
+    "model": "scripted-stand-in",
+    "promptVersion": "routine-v7",
+    "decisions": 2
+   }
+  ],
+  "promptVersionsCurrent": true,
+  "promptVersionsNote": "Every decision in this run is stamped with the prompt versions the source tree declares (routine-v7, notable-v7, pivotal-v7). An earlier rehearsal of this protocol ran against a stale binary that stamped v5 and was discarded rather than reported.",
+  "attested": {
+   "source": "sha256 of the artefacts the run used, which are not committed",
+   "pluginJarSha256": "387654c231a98a5e79945effdccba4f193cfef7b1a570368589ade41d67708e0",
+   "cognitionBinarySha256": "05c62aede5d025ea704e0028bdd7224474554e6fce4a7ce4b217e68ce53e6997",
+   "cognitionBinaryNote": "Built with cargo build --release from the source tree in this repository immediately before the run, and checked to contain routine-v7, notable-v7 and pivotal-v7 and none of the earlier v5 strings."
+  }
+ },
+ "timing": {
+  "ticksPerSecond": 20,
+  "firstTick": 440,
+  "lastTick": 4321,
+  "tickSpan": 3881,
+  "spanSeconds": 194.1,
+  "experimentStartTick": 879,
+  "experimentStartTickNote": "The first threatSighted tick, used as the window start. It is not the summon tick, which the event log does not record: see threatAccounting.immediacy.attested for its bracket.",
+  "experimentWindowTicks": 3442,
+  "experimentWindowSeconds": 172.1,
+  "attested": {
+   "source": "the server log's own timestamps, which are not committed; local clock UTC+10",
+   "serverReadyUtc": "2026-08-27T23:18:35Z",
+   "bodySpawnedUtc": "2026-08-27T23:18:57Z",
+   "threatSummonedUtc": "2026-08-27T23:19:18Z",
+   "stopWrittenUtc": "2026-08-27T23:21:57Z",
+   "serverActedOnStopUtc": "2026-08-27T23:22:11Z",
+   "unattendedWindowSeconds": 159,
+   "unattendedWindowNote": "159 s is the attested floor: the interval between the summon and the moment the operator wrote the stop, during which nothing was sent. The server acted on that stop 173 s after the summon, and the window's own tick span is 172.1 s, so the run was unattended for the whole of it.",
+   "endedBy": "an operator-issued stop; the agent was alive at capacity health and the despawn at lastTick is Loom putting the body away on disable, not a death.",
+   "processExitCodes": {
+    "server": 0,
+    "serverNote": "exited cleanly through its own stop command, saving all dimensions",
+    "cognition": "terminated by signal after the run rather than by exit; no exit code was captured"
+   }
+  }
+ },
+ "eventCounts": {
+  "total": 2043,
+  "agent": {
+   "agentId": "agent-final",
+   "records": 2006,
+   "byEvent": {
+    "decided": 64,
+    "despawned": 1,
+    "energyChanged": 1,
+    "intentApplied": 64,
+    "moved": 1646,
+    "perceived": 64,
+    "retreating": 139,
+    "spawned": 1,
+    "threatSuppressed": 26
+   }
+  },
+  "world": {
+   "agentId": "loom:world",
+   "records": 37,
+   "byEvent": {
+    "worldLoaded": 37
+   }
+  }
+ },
+ "perceptions": {
+  "total": 64,
+  "byTrigger": {
+   "goalReview": 2,
+   "threatSighted": 62
+  },
+  "observationCounts": {
+   "0": 2,
+   "1": 62
+  },
+  "firstThreatSightedTick": 879,
+  "lastThreatSightedTick": 4239,
+  "goalReviews": [
+   {
+    "tick": 499,
+    "observations": 0
+   },
+   {
+    "tick": 2899,
+    "observations": 0
+   }
+  ]
+ },
+ "threatAccounting": {
+  "sightingsThatReachedTheMind": 62,
+  "sightingsSuppressed": 26,
+  "suppressionsByTag": {
+   "threatDebounced": 21,
+   "threatUnchanged": 5
+  },
+  "pivotalCallsSpent": 3,
+  "pivotalCallsPerNightConfigured": 8,
+  "pivotalTicks": [
+   880,
+   2800,
+   4240
+  ],
+  "nightlyCapReached": false,
+  "nightlyCapNote": "This run spent 3 of the 8 calls, so it does not prove the ceiling in-world. The exact ceiling and its per-agent independence are proved by the deterministic test suite instead.",
+  "immediacy": {
+   "firstThreatSightedPerceptionTick": 879,
+   "firstAnswerTick": 880,
+   "perceptionToAnswerTicks": 1,
+   "scanCadenceTicks": 20,
+   "goalReviewCadenceTicks": 2400,
+   "why": "The sighting reached the mind within one scan cadence of the threat appearing, so at most 20 ticks, and was answered in the tick after it. Without the vigilance path the scene would have waited for the next scheduled goal review, up to 2400 ticks away.",
+   "attested": {
+    "source": "the server log's own timestamps, which are not committed. Nothing in body-events.jsonl records the summon itself, so it is bracketed rather than stated as a point.",
+    "threatSummonTickEarliest": 860,
+    "threatSummonTickLatest": 879,
+    "threatSummonTickBracketDerivation": "Two independent bounds agree on 860 to 879. From the event log: every threatSighted and threatSuppressed record in the run falls on a tick congruent to 19 modulo 20, because the vigilance sweep runs once per THREAT_SCAN_CADENCE, and the sweep at tick 859 wrote nothing, so the zombie appeared in (859, 879]. From the attested wall clock: tick 0 is serverReadyUtc 23:18:35Z, confirmed exactly by bodySpawnedUtc 23:18:57Z being tick 440, so threatSummonedUtc 23:19:18Z spans ticks 860 to 879 at second resolution.",
+    "why": "The summon is what the sighting is measured against, so restating it as the sighting tick would let the immediacy claim confirm itself. Bracketed, what the evidence supports is that the sighting followed the summon within one scan cadence, which the event log bounds on its own ticks without the wall clock. The sighting-to-answer figures above are derived and need no attestation."
+   }
+  }
+ },
+ "retreatAccounting": {
+  "records": 139,
+  "byTag": {
+   "retreatContinued": 19,
+   "retreatFailed": 2,
+   "retreatSafe": 58,
+   "retreatStarted": 60
+  },
+  "fleeDecisions": 62,
+  "fleeOutcomes": {
+   "accepted": 60,
+   "rejected": 2
+  },
+  "refChain": {
+   "requestId": "1ae0d5fb-9005-4b2c-a872-443cd22345e6",
+   "perceptionTick": 879,
+   "perceptionTrigger": "threatSighted",
+   "decisionTick": 880,
+   "decisionDetail": "flee from e2: entity.minecraft.zombie hunts my kind and is in view; retreat from it",
+   "appliedTick": 880,
+   "appliedDetail": "flee from e2 -> accepted: retreating to 95,-60,95, walking to 95,-60,95 by 6 node(s), reaching what it searched for, ending 0.00 blocks from it",
+   "ref": "e2",
+   "why": "One request, one handle: the trigger carried a request-scoped ref, the mind named that exact ref back, and the body resolved it to the creature the ref was minted for. A handle from another request or one no request issued would have been refused as retreatThreatForgotten or retreatThreatUnnamed, and neither tag occurs."
+  },
+  "distinctRefsNamed": 62,
+  "distinctRefsNote": "A ref window is per request, so each request names the same creature by a fresh handle. The count is how many requests named a threat, not how many threats there were, and the world held exactly one.",
+  "tagsNeverExercised": [
+   "retreatPendingGround",
+   "retreatPendingBudget",
+   "retreatThreatGone",
+   "retreatThreatForgotten",
+   "retreatThreatUnnamed",
+   "retreatSuperseded"
+  ],
+  "tagsNeverExercisedWhy": "Six of EventTag's ten retreat tags never occurred, so nothing here proves them. A flight held for the ground or for a search token, a threat that died or despawned, a ref from the wrong request, and a flight superseded by another intent are all untested in-world.",
+  "refusalReasons": {
+   "nothing worth retreating to in 4 look(s): none was 3.0 blocks off and 2.0 blocks further from the threat": 2
+  },
+  "continuationsWithoutAModelCall": {
+   "continuations": 19,
+   "continuationsSharingATickWithADecision": 0,
+   "movedRecords": 1646,
+   "decisions": 64,
+   "why": "A continuation is driven from the actuation branch of the body tick, and dev.loom.body may not depend on dev.loom.mind at all, which BodyBoundaryTest enforces, so a continuation cannot reach a mind and costs no model call. In this run no continuation shared a tick with a decision. Nineteen continuations and 1646 moved records against 64 decisions is the flight being carried by the body rather than re-decided."
+  }
+ },
+ "decisionsNote": "One row per decided record, joined on requestId to the perception it answers and to what the body did with it.",
+ "decisions": [
+  {
+   "tick": 500,
+   "requestId": "2807e671-1a90-4ec7-8b11-0f547a82e2f9",
+   "trigger": "goalReview",
+   "observations": 0,
+   "tier": "ROUTINE",
+   "promptVersion": "routine-v7",
+   "intent": "idle",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 880,
+   "requestId": "1ae0d5fb-9005-4b2c-a872-443cd22345e6",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "PIVOTAL",
+   "promptVersion": "pivotal-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 980,
+   "requestId": "7a1aee98-daf2-4e23-b469-4f7e9fcb28a9",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1020,
+   "requestId": "737690d6-ad3b-47b0-a7ea-057fff13b5eb",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1060,
+   "requestId": "71df26ec-2ee5-49c2-a3bb-6f1c89d6e43b",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1100,
+   "requestId": "8f87028a-a095-4573-aa36-38f45b724665",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1140,
+   "requestId": "d0ebcec1-c0ed-4502-8e8b-11ef0ae45dc2",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1200,
+   "requestId": "d3a672bc-0f10-4e4b-b7a8-56582c9ba371",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1240,
+   "requestId": "efa2437c-f3cc-40d1-be78-efc6b9ca4e48",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1280,
+   "requestId": "08ab7cfe-343e-4020-9a1d-03f20cd69e01",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1320,
+   "requestId": "4bdb2056-bd51-4ca3-90b3-2e61fe9d2189",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1360,
+   "requestId": "68c5580c-bf98-4211-801e-fad4d32d08f6",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1400,
+   "requestId": "36fa7408-cf92-43ca-8ee8-bf55243de154",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1460,
+   "requestId": "a83a5dd2-cae9-4e09-808c-924958e08a11",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1540,
+   "requestId": "4a0478d9-fe5f-4a15-90ad-446b8a9ae04f",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1600,
+   "requestId": "c9b6abd6-c4a1-4c27-b624-1fa5fb5c0910",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1640,
+   "requestId": "13729df0-587f-4fb5-90ee-b1a6366e3681",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1680,
+   "requestId": "bcbaf3a3-1c1e-4a9f-bcae-ddb88c32c703",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1740,
+   "requestId": "cc1b0768-75cb-40d3-9804-602ad2c477e0",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1780,
+   "requestId": "99816f97-c3c5-43b4-9c54-8f36d9588ecd",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1820,
+   "requestId": "4ce6e470-202d-4fc7-8ed1-83e6c2991abe",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1880,
+   "requestId": "909620c5-18b1-462f-8d42-eda49d48940b",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1920,
+   "requestId": "96233607-2bcb-41ed-97d2-fe7ee00dd883",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 1980,
+   "requestId": "9d6e0f0c-18a5-409d-9ec3-bb027b102f86",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2040,
+   "requestId": "bf389576-aa3f-4625-a44c-6420adab57d4",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2100,
+   "requestId": "5bee3e32-2b1a-4b69-9aa5-c1d4f0f16943",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2180,
+   "requestId": "77e9acea-94ca-47d9-b637-2e207145927d",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2220,
+   "requestId": "c0d792f5-a0be-4d74-8ac7-ee69cd17ca04",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2260,
+   "requestId": "8589f155-112d-45a0-a735-e1b5e2f9bbb5",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2300,
+   "requestId": "c5aa2340-9a3c-4032-b41d-b843937900ff",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2340,
+   "requestId": "27d77dae-633e-4b12-96c1-d4bea8d5ae6e",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2400,
+   "requestId": "38c08502-ca95-43d4-add5-0e4b967162e5",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2440,
+   "requestId": "0e56d739-6761-4f67-9474-1aec9ea44d13",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2500,
+   "requestId": "b2a5fbd1-c55d-41d5-ae3c-c02635d36da9",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2540,
+   "requestId": "50e7965b-12c0-4aaf-9c76-c6734a4210f0",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2600,
+   "requestId": "fe696bdb-9a69-4867-8345-ae25a8af013e",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2660,
+   "requestId": "d3055888-13ce-4814-9e81-32d9527d193f",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "rejected"
+  },
+  {
+   "tick": 2800,
+   "requestId": "329e69ff-cd7b-430d-b831-6a0463430c37",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "PIVOTAL",
+   "promptVersion": "pivotal-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2900,
+   "requestId": "c7434cc1-adf3-4434-8ce5-40ac6e7343a0",
+   "trigger": "goalReview",
+   "observations": 0,
+   "tier": "ROUTINE",
+   "promptVersion": "routine-v7",
+   "intent": "idle",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2920,
+   "requestId": "fe69bdeb-46ab-4f81-b5fc-bc4751518641",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 2960,
+   "requestId": "20701595-9055-4a2c-b4b4-b52a48f85a2b",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3020,
+   "requestId": "df32eeac-bc00-4082-9661-921dd85d11e1",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3060,
+   "requestId": "0cc643da-5c13-4efa-874a-151fcf7c5ee3",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3120,
+   "requestId": "0bbf1207-db6d-4faa-8460-76d85ccec11c",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3160,
+   "requestId": "dd874847-af94-46f6-9431-357881f8c50b",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3200,
+   "requestId": "bfbd5637-9b7e-4eea-b5af-2fe07174ac0a",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3260,
+   "requestId": "f3675543-2ebd-4943-9717-63e6bc28977e",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3300,
+   "requestId": "7f4ba0bf-da24-42f6-bdeb-b1c8ae931b2c",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3360,
+   "requestId": "7cd540b5-a21f-46e3-85f0-8490118edc6d",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3420,
+   "requestId": "3b8582d9-8ba6-43ae-a070-c74e54c6648f",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3480,
+   "requestId": "e6fc58c9-1f5f-4842-9d08-d5db63f826fd",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3540,
+   "requestId": "6515bc60-9d2b-4067-b602-5ff3f3faf872",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3580,
+   "requestId": "42714c27-2001-4bb2-8b77-a54bc7f1609f",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3640,
+   "requestId": "f4dd9164-1dc5-4aa7-8647-203192dec2ce",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3680,
+   "requestId": "63b954c4-3ff3-406d-b6f0-697796a095fb",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3740,
+   "requestId": "c929a0a5-33d4-4755-9369-ffbeaddb0112",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3780,
+   "requestId": "da6b859b-bcd9-4535-88bc-f36ad9fce101",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3820,
+   "requestId": "5e67ce2b-7061-4a27-8baf-52632f3ae761",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3860,
+   "requestId": "44cfa084-bb6e-4897-980f-8cfd740a332a",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3900,
+   "requestId": "a85c6b07-4925-4bf0-bfb5-43b527a75834",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 3960,
+   "requestId": "b0a0a3d8-2a28-45e2-bc87-f3ef5a0eafb1",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 4020,
+   "requestId": "3a8acb2e-f6d8-441e-8e3d-ca83a1844626",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  },
+  {
+   "tick": 4080,
+   "requestId": "13674d44-8106-4e00-bc25-29e33c51938f",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "NOTABLE",
+   "promptVersion": "notable-v7",
+   "intent": "flee",
+   "outcome": "rejected"
+  },
+  {
+   "tick": 4240,
+   "requestId": "79515b7b-b3be-4774-ab8a-4bcd25f9895b",
+   "trigger": "threatSighted",
+   "observations": 1,
+   "tier": "PIVOTAL",
+   "promptVersion": "pivotal-v7",
+   "intent": "flee",
+   "outcome": "accepted"
+  }
+ ],
+ "vitals": {
+  "reserveFirst": 100.0,
+  "reserveLast": 89.21944444444443,
+  "reserveSpent": 10.7806,
+  "healthFirst": 20.0,
+  "healthMin": 20.0,
+  "healthLast": 20.0,
+  "healthChangedRecords": 0,
+  "note": "Health never left capacity and no healthChanged record exists, so the zombie landed no blow in the whole run: the flight kept the body out of its reach. The reserve fell only to ordinary metabolism."
+ },
+ "integrityChecks": {
+  "worldHoldFailed": {
+   "records": 0,
+   "required": 0,
+   "pass": true,
+   "why": "A failed chunk hold means a removal classified as a death may have been an unload, and that a search or a perception may have read an unloaded chunk as empty ground or a quiet scene."
+  },
+  "cognitionUnavailable": {
+   "records": 0,
+   "required": 0,
+   "pass": true,
+   "why": "Every request the body submitted was answered, so no suppression or refusal here is a mind that simply failed to reply."
+  },
+  "decisionAccounting": {
+   "decided": 64,
+   "intentApplied": 64,
+   "decisionDiscarded": 0,
+   "unanswered": [],
+   "pass": true,
+   "why": "Exactly one intentApplied or decisionDiscarded per decided, joined on requestId."
+  },
+  "perceptionDecisionPairing": {
+   "decisionsWithNoPerception": [],
+   "pass": true,
+   "why": "Every decision answers a perception this log recorded, so no decision was taken on a scene the evidence does not contain."
+  },
+  "entityRefResolution": {
+   "fleeDecisions": 62,
+   "refusedForTheRef": 0,
+   "pass": true,
+   "why": "A flee names one creature by a request-scoped handle. A handle from the wrong request, or one no request issued, would have been refused, and none was."
+  },
+  "playerObservationsInWindow": {
+   "windowPerceptions": 63,
+   "perceptionsCarryingMoreThanTheThreat": 0,
+   "pass": true,
+   "why": "The scene the mind was shown during the experiment window contained the zombie and nothing else. No perception carries more than one observation, and each threatSighted perception's joined decision names entity.minecraft.zombie as the ref it fled, so the single observation is the zombie. That no client was connected for any of them is an attestation rather than a derivation and is stated once, in clientPresence.attested, since body-events.jsonl records no client connection at all."
+  },
+  "vitalsRecordsAfterDeath": {
+   "deaths": 0,
+   "vitalsRecordsAfter": 0,
+   "pass": true,
+   "why": "No death occurred, so the rule that no vitals record may follow one is untested rather than proved."
+  },
+  "droppedRecordWarnings": {
+   "attested": {
+    "source": "the server log, which is not committed",
+    "warnings": 0,
+    "pass": true,
+    "why": "The body event log's write queue is bounded, and records that never reach the file are counted and surfaced as a server-log warning. No such warning was raised, so these counts are the whole run."
+   }
+  }
+ },
+ "knownWarnings": [
+  {
+   "text": "No key layers in MapLike[{}]",
+   "benign": true,
+   "why": "A Paper and Mojang datapack-parsing complaint about an empty layers entry in the flat-world preset. It concerns world generation, not Loom, and precedes the plugin.",
+   "attested": {
+    "source": "the server log, which is not committed: this whole entry describes lines found there, and body-events.jsonl begins at tick 440 with the plugin already enabled and says nothing about warnings at all, so none of this entry can be re-derived from this directory",
+    "occurrences": 3,
+    "when": "during world load, before the plugin enabled"
+   }
+  },
+  {
+   "text": "JDK native-access and sun.misc.Unsafe deprecation warnings from netty and jansi",
+   "benign": true,
+   "why": "The server ran on a newer JVM than its libraries were written for. They are launcher warnings about future JDK releases and concern neither Loom nor the run.",
+   "attested": {
+    "source": "the server log, which is not committed: this whole entry describes lines found there, and body-events.jsonl begins at tick 440 with the plugin already enabled and says nothing about warnings at all, so none of this entry can be re-derived from this directory",
+    "occurrences": 6,
+    "when": "at JVM startup, before the server started"
+   }
+  }
+ ],
+ "outcome": "The agent survived the run untouched. A zombie summoned 6 blocks away was noticed within one scan cadence of appearing, answered by a Pivotal flee naming it by the handle the body had just issued, and then outrun for 172 s of unattended running that cost 63 decisions and no injury at all.",
+ "scientificUsability": {
+  "verdict": "usable as a composition proof of the threat-and-flight path, not as behavioural data",
+  "scope": [
+   "that a hostile in view raises a trigger within one scan cadence rather than waiting for a goal review",
+   "that the sighting is priced Pivotal while the threat is close and Notable once it is not",
+   "that the resulting flee names one creature by the request-scoped handle the body issued, and that the body resolves it",
+   "that an accepted flight then carries on from the body's own tick without a further model call",
+   "that a repeat sighting of the same standing threat is suppressed with a record naming the bound that refused it",
+   "that all of it happens with nothing watching: no player in the world and no observer view attached"
+  ],
+  "outOfScope": [
+   "anything about a model's judgement: the mind was the scripted stand-in",
+   "the eight-call nightly ceiling, which this run did not reach",
+   "the per-agent independence of that ceiling, since the run had one agent",
+   "survival under attack, since no blow ever landed",
+   "starvation, since 3881 ticks is a tenth of the reserve's lifespan",
+   "path-search contention, since one agent cannot exhaust the per-tick bucket"
+  ]
+ }
+}
