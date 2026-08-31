@@ -1,17 +1,19 @@
-# The body-control protocol, Node side
+# The Loom body process, and the Node side of the body-control protocol
 
-This package is the Node half of Loom's **body-control** contract: the versioned,
-newline-delimited JSON protocol a body process is driven over.
+This package is two things: the **body process**, one persistent Mineflayer player
+driven over a loopback control channel, and the Node half of Loom's **body-control**
+contract, which is the versioned newline-delimited JSON protocol it is driven over.
 
-It is currently the contract and nothing else - one pure module, `src/protocol.js`,
-which decodes a frame, encodes a frame, and refuses everything the contract forbids.
-There is no socket here, no Mineflayer, no process to run, and nothing is wired into
-the Paper plugin.
-**This package does not replace the Villager body**, and Loom's runtime does not know this
-package exists.
-The process that opens a loopback socket and drives a real player comes in a later
-slice; the contract lands first so both runtimes are already agreed on the wire before
-either of them speaks it.
+**It is inert, and nothing in Loom speaks to it.**
+No Paper wiring exists yet: the plugin does not start this process, does not connect to
+its control channel, and does not know this package exists.
+**This package does not replace the Villager body.**
+`/loombody` is unchanged and the Villager body is still the only body Loom's runtime
+drives; the Paper runtime wiring, and the cutover that eventually retires the Villager,
+come in later slices.
+What lands here is the foundation both of those need: a process that can be started,
+asked how it is, and told to stop, and a contract two runtimes already agree on before
+either of them speaks it in anger.
 
 ## Build and test
 
@@ -21,21 +23,124 @@ npm ci          # installs exactly the committed lockfile
 npm run check   # lint (standard) + tests (node:test)
 ```
 
-There is no build step - the package is plain CommonJS - and no network is touched by
-the tests.
+There is no build step - the package is plain CommonJS - and no network beyond loopback
+is touched by the tests: they need no Paper server, no Minecraft account and no
+credential of any kind.
 `npm run format` applies `standard --fix`.
 
-Node 20.11 or newer, as `package.json` states.
-The tests run under the built-in `node:test` runner, invoked as bare `node --test`:
-on Node 25 a directory positional such as `node --test test/` is `require()`d rather
-than scanned, so it fails with `MODULE_NOT_FOUND`.
+Node 22 or newer, as `package.json` states.
+The tests run under the built-in `node:test` runner, over an explicit `test/*.test.js`
+glob rather than a bare directory: a directory positional such as `node --test test/`
+is `require()`d rather than scanned on Node 25, and the glob also keeps
+`test/fixtures/` - which holds a fault injector rather than a suite - out of the run.
+
+## Running it against a disposable Paper server
+
+The process is configured by environment only, and every value is explicit rather than
+discovered.
+There is nothing here that reads a secret: the body logs in with `auth: 'offline'` to a
+loopback address, which is the whole of its authentication.
+
+| Variable | |
+| --- | --- |
+| `LOOM_BODY_AGENT_ID` | required. 1 to 64 of `[A-Za-z0-9._:-]` |
+| `LOOM_BODY_USERNAME` | required. 3 to 16 of `[A-Za-z0-9_]`, which is Minecraft's own rule |
+| `LOOM_BODY_MC_HOST` | default `127.0.0.1`. A loopback literal, never a name |
+| `LOOM_BODY_MC_PORT` | default 25565 |
+| `LOOM_BODY_MC_VERSION` | optional. Negotiated by Mineflayer when unset or blank, which needs a server-list ping |
+| `LOOM_BODY_CONTROL_HOST` | default `127.0.0.1`. A loopback literal, never a name |
+| `LOOM_BODY_CONTROL_PORT` | required |
+
+The server it connects to must be **disposable**, in **offline mode**, and bound to
+loopback, which in `server.properties` is `online-mode=false` and
+`server-ip=127.0.0.1`.
+Offline mode is what lets a bounded username log in with no credential; it also means
+anything that can reach the port can be that player, which is why the address is a
+loopback literal and why the server is one you can throw away.
+
+**Set `LOOM_BODY_MC_VERSION` unless the server answers a server-list ping.**
+With no version configured, Mineflayer negotiates one by pinging the server first, so a
+server with `enable-status=false` resets that ping and the login never happens.
+A **blank** value counts as no version, because blanking a variable is how a setting is
+turned off in an env file or a unit file: carried through as an empty string it would
+reach Mineflayer as an explicit version instead of leaving it to negotiate one.
+Surrounding whitespace is dropped for the same reason, so the value that decides whether
+a version was configured is the value Mineflayer is given: a trailing newline picked up
+from a here-doc is otherwise a version nothing can match and nothing names, since the
+version is deliberately not a field this process refuses by name.
+Because everything this process says is bounded, all an operator gets for it is
+`failed`, with no attempt recorded on the server side either - a real run lost its first
+attempt to exactly this and had to diagnose it with a separate probe.
+Naming the version (`LOOM_BODY_MC_VERSION=1.21.1`) skips the ping altogether and needs
+nothing of the server; `enable-status=true` is the other way, and the more fragile one,
+since it is a setting a hardened disposable server is likely to have turned off.
+
+```sh
+cd body
+LOOM_BODY_AGENT_ID=loom.demo.body \
+LOOM_BODY_USERNAME=loom_demo \
+LOOM_BODY_CONTROL_PORT=25585 \
+  npm start
+```
+
+Every line it writes is bounded: one lifecycle state per transition, the name of the
+one configuration field it refused, or a closed startup code.
+A value, a path, a host name and a transport error's own text are all deliberately
+absent, because a body process's output is a log somebody keeps.
+
+Drive it over the control channel, on one connection, since a handshake is per
+connection and each `requestId` may be used once:
+
+```sh
+{ printf '{"op":"handshake","protocol":1,"requestId":"h1","agentId":"loom.demo.body"}\n'
+  sleep 1
+  printf '{"op":"status","protocol":1,"requestId":"s1","agentId":"loom.demo.body"}\n'
+  sleep 1
+  printf '{"op":"shutdown","protocol":1,"requestId":"x1","agentId":"loom.demo.body"}\n'
+  sleep 1
+} | nc 127.0.0.1 25585
+```
+
+A `status` answer carries the lifecycle state and three counts; a `shutdown` is answered
+`stopping` **before** anything closes, and then the Minecraft connection, the control
+channel and the process itself go, in that order.
+`SIGINT` and `SIGTERM` do the same thing without a frame.
+Keep a connection busier than `CONTROL_IDLE_MS` (30 s) or the body closes it with
+`timeout`, which is the protocol's own word for a controller that stopped saying
+anything.
+
+The exit status is what a supervisor reads, and each one means something different
+about whether restarting is worth trying: **0** is this process being asked to go, by a
+`shutdown` frame or by a signal; **1** is a failure a restart might well fix, such as a
+lost connection; **2** is a refused configuration, which will be refused identically
+until something outside this process changes; and **3** is a control channel that could
+not be bound, which is the same.
 
 ## What is in here
 
+- `src/body.js` - the process: the configuration it refuses, the Mineflayer options it
+  chooses, the lifecycle it follows, and the bounded control server. See the rules
+  below before changing it.
+- `bin/loom-body.js` - the executable. Reads the environment, starts one body, and
+  stops it once however this process came to be ending.
 - `src/protocol.js` - every bound the contract states, and the codec that enforces
   them. It is pure: no `require`, no I/O, no clock. The bounds are declared here
-  rather than in the reader that will enforce them, because they are facts about the
-  contract and a future framing layer needs one place to read them from.
+  rather than in the reader that enforces them, because they are facts about the
+  contract and every reader of it needs one place to read them from.
+- `test/body.test.js` - the process, driven the way a controller drives it: over a real
+  loopback socket, against a fake Mineflayer client that emits exactly the events the
+  real one emits. The client is fake and the socket is not, because the two halves fail
+  in different ways - a lifecycle is Mineflayer's event order and can be stated at a
+  desk, while framing, flood behaviour and a deterministic close are socket behaviour,
+  and a mock that is not a socket cannot express them.
+- `test/plugins.test.js` - the plugin policy, proven against the **real** Mineflayer
+  loader over a fake minecraft-protocol client. `body.test.js` proves which options
+  this process asks for; only this file proves what those options actually load, which
+  is the claim that matters.
+- `test/entry.test.js` - the executable, run as a process, because that is the only
+  place two of its properties exist: an exit status, and a signal.
+- `test/fixtures/faults.js` - the fault injector those process tests install with
+  `node --require`, so that the shipped executable carries no test seam of its own.
 - `test/protocol.test.js` - focused codec tests, including that the longest frame the
   encoder can produce fits well inside `MAX_FRAME_BYTES`, that an id is bounded in
   code points rather than UTF-16 units, that a refusal can only carry a code from
@@ -46,6 +151,150 @@ than scanned, so it fails with `MODULE_NOT_FOUND`.
   re-encoded to the same bytes, every invalid fixture is refused for the reason its
   name gives, and the numeric-spelling cases are swept separately. A fixture this file
   cannot classify fails the suite.
+
+## Rules the process depends on
+
+**It holds no policy, and that is what it is for.**
+The whole Mineflayer subscription is five lifecycle events - `login`, `spawn`, `death`,
+`end`, `error` - and nothing else: no tick listener, no physics, no chat, so this process
+cannot choose a meal, a threat, a resource, a target, a route, or a fight, and cannot do
+repeated work of its own.
+No action plugin is installed either, and none belongs here: pathfinder, auto-eat, PVP,
+collectblock and tool all decide things, and every one of those decisions is the mind's.
+A disconnected body is left disconnected rather than reconnected, because when and
+whether to come back is the controller's call and a reconnect loop here would be
+gameplay policy in the one place that must hold none.
+
+**One Mineflayer internal plugin is loaded, and the login half of the lifecycle is
+Loom's own.**
+Mineflayer's default is to load all of them, which would put a physics interval,
+autonomous position updates, an automatic respawn and a whole shelf of action plugins
+inside a process whose purpose is to make no choices - so `loadInternalPlugins` is off
+and `INTERNAL_LIFECYCLE_PLUGINS` is the whole of what is kept, which is `health`, for
+`spawn` and `death`.
+`login` is `announceLogin`, a plugin of Loom's own that emits the lifecycle event off the
+raw packet and reads nothing out of it.
+Mineflayer's own `game` plugin is **not loadable here whatever else it is useful for**:
+on a `win_game` game-state change it writes `client_command` back at the server, which is
+the vanilla client's *respawn* - exactly the automatic respawn `respawn: false` exists to
+prevent, arriving by another route and reachable by any server that sends the packet.
+What is given up with it is `bot.game`, the dimension codec, the client brand and the
+`ping`/`pong` latency reply, none of which this process reports and none of which keeps a
+connection alive: `keep_alive` is answered by minecraft-protocol's own client, below any
+plugin.
+`test/plugins.test.js` proves that against the real loader, because an option map is not
+evidence about what a loader does with it.
+
+**`respawn: false` is set explicitly, because Mineflayer defaults it to true.**
+Left alone, coming back to life would be a decision this process took by omission, which
+is exactly the kind of decision it may not take.
+It is pinned in a test rather than trusted to the option list.
+
+**A lifecycle is not a wait for `spawn`.**
+A body that logs in already dead gets `login` then `death` with no `spawn` at all, so a
+process that reported readiness on `spawn` alone would sit in `connecting` through a
+whole death.
+Every state in `LIFECYCLE_STATES` is reached from the event that actually means it.
+
+**Only a loopback literal is accepted, to bind or to connect, and the *name*
+`localhost` is refused.**
+A name means whatever the host's resolver last said, and the one thing this process must
+be able to promise is that neither the player nor the control channel left the machine.
+
+**An inherited debug setting is cleared before a dependency can read it, and one of them
+cannot be.**
+The `debug` package decides whether each of its loggers writes at the moment the logger
+is *created*, which is when its module is required, so `silenceDependencyDebug` runs
+ahead of `require('mineflayer')` - after which an inherited `DEBUG=*` would print peer
+text, host names and local paths straight to stderr, outside the bounded output path this
+process promises.
+`NODE_DEBUG` is Node's own equivalent and is the exception worth knowing: Node writes its
+core debug output while *bootstrapping* the entry point, before a line of this process has
+run, so no process can suppress its own and re-execing does not help because the parent
+leaks first.
+It is cleared all the same, for any logger created later and for any child process.
+
+**`bot.end` and not `bot.quit`, and the lifecycle listeners stay attached.**
+`quit` is a plugin function Mineflayer injects during login, while `end` is defined on
+the bot at construction, so a body stopped while still connecting - which is every body
+whose server is not there - had no `quit` to call and left its socket open.
+Removing the listeners on the way out is the other half of the same mistake: it takes
+Mineflayer's own `error` listener with them, after which a late client error is an
+uncaught exception rather than a disconnection.
+Leaving them attached is safe because the lifecycle is terminal at `stopping`.
+
+**Shutdown closes the Minecraft connection first, then the control channel, then the
+process, and the order is a promise rather than a coincidence.**
+A controller must not be able to read a live state off a body that is already leaving, so
+`stop` waits for the client's own `end` - bounded by `SHUTDOWN_GRACE_MS` (2 s), because a
+client that will never answer must not hold the process - before the control channel goes.
+That ordering was passing vacuously until the wait was added: a synchronous fake client
+always finishes before a socket that has to be closed, so the test's fake now takes time
+to go, which is the only case in which an order exists to observe.
+A shutdown arriving *after* the client has already dropped must not spend that grace at
+all, since there is no `end` still to come: a real run measured one taking the whole of
+`CONTROL_IDLE_MS` - 30 s of a mute process holding the username it logged in with -
+against 11 ms for the same shutdown from `ready`.
+
+**A repeated `shutdown` is an acknowledgement, not a refusal, and teardown still runs
+once.**
+A controller that did not see the first answer retries, and a process being asked to do
+what it is already doing has not been asked for anything it cannot do.
+So `createBody`'s `stop` puts its promise in place *before* announcing `stopping`, and a
+second call is handed the same promise rather than closing everything again; anything
+else pipelined behind the shutdown is told `shuttingDown` on the socket it is still
+holding rather than served or dropped silently.
+
+**A stopped body must not outlive its own shutdown, so `bin/loom-body.js` exits
+explicitly.**
+No teardown route frees the Node event loop: a real client leaves two sockets and two
+timers behind, and a body stopped before it ever logged in kept its process alive
+indefinitely with nothing to show for it.
+**Every route out therefore ends at `leave`, including a `stopping` reached over the
+control channel**, and the first status given to it is the one the process exits with.
+Reaching `leave` only from `failed` and from a signal was not a smaller version of that
+rule but a different one, and it is what left the 30 s shutdown above waiting on whatever
+handle happened to be outstanding.
+Everything that file says is written with `fs.writeSync`, because
+`process.stderr.write` queues into libuv when standard error is a pipe and the last
+thing a stopping body says is exactly the line that would be lost to the exit.
+
+**One bad channel is not a reason to abandon a live player.**
+The process admits at most `MAX_CONTROL_CONNECTIONS` (32) control connections at once,
+and an excess connection is refused `tooManyRequests` and closed.
+A connection is closed after `MAX_REFUSALS_PER_CONNECTION` (8) refusals or
+`CONTROL_IDLE_MS` (30 s) of silence, and one connection is remembered for at most
+`MAX_TRACKED_REQUESTS` (64) request ids.
+A line with no newline in it is bounded by `MAX_FRAME_BYTES` as a finished frame is,
+since a peer that never terminates a line is the one case a per-frame bound cannot see.
+That bound is **unconditional**, and a shutdown is when it matters most: a stopping
+process reads on until the client's own `end` arrives, so a peer that asks it to stop and
+then sends a newline-free blob has a whole `SHUTDOWN_GRACE_MS` of loopback to spend, on a
+scan that rereads the accumulation per chunk.
+Relaxed while stopping, one shutdown frame turned that bound off for every connection at
+once, and what ends such a run is the unbounded fatal report `bin/loom-body.js` exists to
+keep off stderr.
+The process itself carries on, and the control channel keeps serving other connections.
+
+**A correlated refusal spends its request id and counts as a request handled, and the
+one exception is the id bound itself.**
+Read the other way round a controller could spend one id for ever: a refusal that
+reserved nothing would let the same id be retried indefinitely, and `requestsHandled`
+would not reconcile against what the controller sent.
+So a refusal a `requestId` can be echoed into reserves it - the same id afterwards is a
+`duplicateRequestId`, not a second refusal of the original kind - while an
+*uncorrelated* refusal, such as a line that could not be parsed at all, reserves nothing
+because there is nothing to reserve.
+Past `MAX_TRACKED_REQUESTS` a further id is refused `tooManyRequests` and **never
+recorded**, which is what makes that bound a bound: duplicate detection stays exact for
+every id the process did accept, the refusal is repeatable rather than turning into a
+duplicate, and both the process and a fresh connection stay usable.
+Every *correlated* refusal counts in `requestsHandled` all the same - the id bound's own
+refusal included, since it is still a request this process answered - so a flood is
+bounded in bytes, in answers and in memory while the traffic a controller correlated
+stays reconcilable from the outside.
+An uncorrelated refusal counts in neither, so the number is short by however many lines
+a controller sent that could not be read as a request at all.
 
 ## The contract itself
 
@@ -87,8 +336,8 @@ proves the two statements agree.
 the whole of that guarantee.** `MAX_FRAME_BYTES` is 8 KiB against a largest legal frame
 of 297 bytes - two orders of magnitude tighter than the cognition wire's 256 KiB, which
 is sized for a whole perception rather than for a lifecycle question - and it is
-enforced at *every* public decode rather than in the framing layer a body process will
-one day put in front of the decoders, since a controller can reach one without it. A
+enforced at *every* public decode rather than only in the framing reader `src/body.js`
+puts in front of the decoders, since a controller can reach a decoder without it. A
 bound applied after the work it exists to bound is not a bound, so it runs ahead of the
 duplicate scan and ahead of the parse, both of which walk the whole line. It is counted
 in UTF-8 bytes, because that is what the wire carries: eight thousand astral characters

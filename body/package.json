@@ -2,17 +2,24 @@
   "name": "loom-body",
   "version": "0.1.0",
   "private": true,
-  "description": "Loom body-control protocol: the Node side of the versioned newline-delimited JSON contract a player body is driven over.",
+  "description": "Loom body: the Mineflayer player body process, and the Node side of the versioned newline-delimited JSON body-control contract it is driven over.",
   "license": "MIT",
   "type": "commonjs",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=22"
+  },
+  "bin": {
+    "loom-body": "bin/loom-body.js"
   },
   "scripts": {
-    "test": "node --test",
+    "start": "node bin/loom-body.js",
+    "test": "node --test \"test/*.test.js\"",
     "lint": "standard",
     "format": "standard --fix",
     "check": "npm run lint && npm test"
+  },
+  "dependencies": {
+    "mineflayer": "4.38.0"
   },
   "devDependencies": {
     "standard": "17.1.2"

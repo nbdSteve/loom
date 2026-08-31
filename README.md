@@ -13,10 +13,11 @@ This is a monorepo with two runtimes, shared contracts, and the research record:
 - `plugin/` - the Kotlin Paper plugin: the physical world and the agent bodies.
 - `cognition/` - the Rust cognition service: the agent minds.
 - `contract/` - the shared schemas: the perception/decision contract exchanged
-  between plugin and cognition, and the body-control contract for a future
-  player body.
-- `body/` - the Node half of the body-control contract; a codec only today,
-  with no process to run. See `body/README.md`.
+  between plugin and cognition, and the body-control contract the player body
+  process is driven over.
+- `body/` - the Node half of the body-control contract, and the Mineflayer player
+  body process it drives. Runnable, and inert: nothing in Loom's runtime speaks to
+  it yet. See `body/README.md`.
 - `research/` - one directory per experiment; see `research/README.md`, which makes everything there append-only.
 
 The body exposes only a bounded perception to the mind, and the mind never
@@ -33,8 +34,12 @@ conformance tests and CI on both runtimes.
 A second contract sits beside it, inert for now: `contract/body-control.schema.json`
 carries only whether a body process is alive, which lifecycle state it is in, and
 when to stop, with hand-written Node and Kotlin codecs held together by a shared
-conformance corpus - the wire agreed on before either runtime speaks it. See
-`body/README.md`.
+conformance corpus - the wire agreed on before either runtime speaks it.
+The process on the far end of that wire is runnable too: `body/` starts one
+persistent offline-mode Mineflayer player against a loopback Paper server and answers
+its bounded control channel, holding no gameplay policy of its own.
+It is also inert - the Paper plugin does not start it, does not connect to it, and the
+Villager body is still the only body Loom's runtime drives. See `body/README.md`.
 
 Bodies are in place on top of it. An agent can be given a body in a live world,
 handed a movement intent expressed as a contract `Intent`, observed through a
