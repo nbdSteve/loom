@@ -1,0 +1,25 @@
+{
+  "name": "loom-body",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Loom body-control protocol: the Node side of the versioned newline-delimited JSON contract a player body is driven over.",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "test": "node --test",
+    "lint": "standard",
+    "format": "standard --fix",
+    "check": "npm run lint && npm test"
+  },
+  "devDependencies": {
+    "standard": "17.1.2"
+  },
+  "standard": {
+    "env": [
+      "node"
+    ]
+  }
+}

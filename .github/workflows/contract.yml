@@ -1,13 +1,18 @@
 name: contract
 
-# Runs each side's full gate suite. That includes the conformance tests that
+# Runs each runtime's full gate suite. That includes the conformance tests that
 # validate the shared fixtures against contract/loom.schema.json and assert
 # byte-for-byte round-trips - so if the schema and either side's bindings drift,
 # the corresponding job fails - and, on the JVM side, the architecture rules that
 # keep engine-specific code behind the body port and the cognition transport
 # behind its port.
 #
-# The third job is the one neither side's suite can do alone: it starts the real
+# The `body` job is the same discipline for the second contract: it runs the Node
+# half of contract/body-control.schema.json's conformance suite, whose JVM half
+# runs inside `plugin`. Neither job proves the other, which is the point - three
+# hand-written descriptions of one wire agree only because the shared corpus makes them.
+#
+# The `bridge` job is the one no single suite can do alone: it starts the real
 # Rust cognition service and drives the JVM bridge against it, so a disagreement
 # the shared fixtures cannot express - line framing, a tag only one serializer
 # emits - fails CI rather than surfacing on a server.
@@ -39,6 +44,29 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: conformance tests
         run: cargo test --all-features
+
+  body:
+    name: Node body-control protocol
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: body
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: body/package-lock.json
+      # `ci` rather than `install`: it installs exactly the committed lockfile and
+      # fails if package.json and the lockfile disagree, so a dependency added
+      # without regenerating the lockfile fails here instead of resolving to
+      # whatever is newest on the day the job runs.
+      - name: Install the pinned tree
+        run: npm ci
+      - name: lint and tests
+        run: npm run check
 
   plugin:
     name: JVM plugin and body port

@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loom.dev/contract/body-control.schema.json",
+  "title": "Loom body-control protocol",
+  "description": "The single source of truth for the control messages exchanged with a Loom player-body process (the Node/Mineflayer body in body/). A controller sends a BodyRequest; the process answers with exactly one BodyResponse or one BodyError, on the same line-delimited loopback socket. This is deliberately NOT the perception/decision contract in loom.schema.json: that one carries what an agent knows and decides, this one carries only whether a body process is alive, which lifecycle state it is in, and when to stop. Nothing here perceives the world or acts in it. Union types use internal tagging: BodyRequest.op and BodyResponse.op select the variant and the variant's fields are inlined alongside it. JSON Schema sees a parsed number rather than the literal that carried it, so validation keywords cannot express this wire's numeric work guard: both codecs refuse a numeric literal longer than 32 characters, or one whose decimal-point shift would make exact integrality or range checking unbounded. Those are contract rules stated in prose here and enforced before either codec materialises such a value.",
+
+  "$defs": {
+    "ProtocolVersion": {
+      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted, so a controller and a body process that disagree find out on the first frame rather than by misreading a field. A readable requestId may still be retained solely to correlate that refusal. There is exactly one generation today; a frame naming any other is refused with unsupportedProtocol rather than interpreted. The const is a number rather than a spelling, so 1, 1.0 and 1e0 all name this generation: to this schema and to JSON.parse an integer is any number whose fractional part is zero. Subject to the wire's numeric work guard above, both bindings therefore read every integral spelling and refuse every fractional one, which is a rule neither serialization library states on its own.",
+      "const": 1
+    },
+
+    "ControlId": {
+      "description": "A bounded identifier: a requestId correlating one request with its one answer, or the agentId naming whose body the process is. Length-bounded because it is echoed back into a frame and into logs, and character-bounded to the set below because an id is a handle rather than free text - a newline would break the framing, and a path separator or whitespace is how a local path or a free-text transport error would arrive in something that gets logged.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+
+    "Username": {
+      "description": "The Minecraft account name the body process logs in under, bounded by Minecraft's own rule rather than by one of Loom's, because a name outside it cannot log in at all. Offline mode derives a uuid from this name, so it is also what makes an agent's identity stable across runs - and what makes a dead identity come back dead.",
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 16,
+      "pattern": "^[A-Za-z0-9_]+$"
+    },
+
+    "StatusCount": {
+      "description": "A millisecond duration or a tally, as a status report carries it. The upper bound is JavaScript's largest exactly-representable integer, not the widest integer either binding could hold: left unbounded above, this schema admitted a number the JVM binding encodes happily and the Node binding cannot read back, so a frame was valid to the contract and to one runtime and invalid to the other - and there was then no largest legal frame for either codec's frame-size bound to be measured against. Bounded to what the narrower runtime can represent is the only version of the bound both sides can hold. Each binding states the same number for itself, because nothing on this wire is schema-validated at runtime. The type is a number's value and not its spelling, as with ProtocolVersion above: 1000 and 1e3 are the same count, while 5.5 is no count at all however it is written.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+
+    "LifecycleState": {
+      "description": "Where the body process is in its one life. Seven states and no gameplay: this says whether there is a player on the server and whether it is still usable, never what the player should do. 'connecting' is before the server has accepted the login; 'loggedIn' is after the login packet and before the first spawn; 'ready' is a spawned, live player; 'dead' is a player the server has killed, which the process reports and never respawns; 'disconnected' is a connection the server or the network ended; 'stopping' is a shutdown in progress; 'failed' is a client error the process could not continue from. 'loggedIn' and 'dead' are separate from 'ready' for a reason found in world: a dead identity reconnecting arrives on the death screen, so it reaches loggedIn and then dead without ever reaching ready.",
+      "type": "string",
+      "enum": [
+        "connecting",
+        "loggedIn",
+        "ready",
+        "dead",
+        "disconnected",
+        "stopping",
+        "failed"
+      ]
+    },
+
+    "ControlOperation": {
+      "description": "What a controller may ask for. Three operations and no more: this generation of the protocol exists to prove a body process can be reached, identified and stopped. There is deliberately no operation that perceives the world or moves the body - those belong to the perception/decision contract and to later work.",
+      "type": "string",
+      "enum": ["handshake", "status", "shutdown"]
+    },
+
+    "ErrorCode": {
+      "description": "Why a request was refused, as one value from a closed set. It is an enum and not a message on purpose, and this is the one place the body-control protocol is deliberately stricter than the cognition wire's free-text refusal: an exception string, a file path, a host name or a token cannot reach a controller or a log through a field that can only hold one of these words. A controller that needs more than the code has the code to search for.",
+      "type": "string",
+      "enum": [
+        "unsupportedProtocol",
+        "malformedFrame",
+        "frameTooLarge",
+        "unknownOperation",
+        "invalidField",
+        "duplicateRequestId",
+        "tooManyRequests",
+        "handshakeRequired",
+        "wrongAgent",
+        "shuttingDown",
+        "timeout"
+      ]
+    },
+
+    "BodyRequest": {
+      "description": "One request from a controller to a body process. Internally tagged on the 'op' property. Every variant carries the protocol generation, the correlation id its one answer will echo, and the agent whose body is being addressed - so a frame is self-describing and a reply can never be matched to the wrong request. No variant carries a payload: everything this generation can ask for is asked by naming the operation.",
+      "oneOf": [
+        {
+          "title": "Handshake",
+          "description": "Agree the protocol generation and learn who the process is. It must be the first request on a connection: any other operation before it is refused with handshakeRequired, so a controller cannot read a field this generation happens to share with the next. Repeating it on the same connection is allowed and answered the same way, because a handshake reports state rather than changing it.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "handshake" }
+          }
+        },
+        {
+          "title": "Status",
+          "description": "Ask what state the body is in. This is also the protocol's correlated ping: an answer echoing the requestId is itself the proof that the process is alive and reading its socket, so there is no separate ping operation to keep in step with it.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "status" }
+          }
+        },
+        {
+          "title": "Shutdown",
+          "description": "Stop the body process. It is answered before anything is closed, so a controller learns the shutdown was accepted rather than inferring it from a dropped socket. Repeating it is answered the same way rather than refused: a controller that did not see the first answer must be able to ask again without having to know whether it arrived.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "shutdown" }
+          }
+        }
+      ]
+    },
+
+    "BodyResponse": {
+      "description": "The answer to one request the process understood. Internally tagged on the same 'op' the request named, and carrying that request's own requestId and agentId back, so a controller matches an answer by id rather than by arrival order. Exactly one BodyResponse or one BodyError is written per request.",
+      "oneOf": [
+        {
+          "title": "HandshakeAccepted",
+          "description": "The protocol generation is agreed and the process names itself. The username is the identity a controller would see on the server's own player list, which is what lets an operator tie a control channel to a player without the process reporting anything about the world.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "state", "username"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "handshake" },
+            "state": { "$ref": "#/$defs/LifecycleState" },
+            "username": { "$ref": "#/$defs/Username" }
+          }
+        },
+        {
+          "title": "StatusReport",
+          "description": "Where the body is in its life, and how long it has been there. Both durations are milliseconds measured by the process's own monotonic clock rather than a wall clock, so neither goes backwards when the host's time is adjusted. Deliberately no position, health, hunger or inventory: those are perception, and a control channel that reported them would be a second perception path with no bound and no contract behind it.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "protocol",
+            "requestId",
+            "agentId",
+            "op",
+            "state",
+            "uptimeMs",
+            "stateMs",
+            "requestsHandled"
+          ],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "status" },
+            "state": { "$ref": "#/$defs/LifecycleState" },
+            "uptimeMs": {
+              "$ref": "#/$defs/StatusCount",
+              "description": "How long the process has been running."
+            },
+            "stateMs": {
+              "$ref": "#/$defs/StatusCount",
+              "description": "How long the process has been in the state it reports. Never larger than uptimeMs, since a process starts in a state. Draft 2020-12 cannot compare one property with another, so that relation is enforced by both codecs and asserted semantically by the conformance suites rather than by this schema - which is why it is stated here as a rule and not merely as prose."
+            },
+            "requestsHandled": {
+              "$ref": "#/$defs/StatusCount",
+              "minimum": 1,
+              "description": "How many requests the process has answered, refusals included, counting this one. At least one, because answering this status request is itself handling a request: a report of zero has miscounted its own answer. A controller comparing it with its own count learns whether anything was lost without the process having to log a request."
+            }
+          }
+        },
+        {
+          "title": "ShutdownAccepted",
+          "description": "The shutdown was accepted and is under way. The state is always 'stopping': it is the one terminal state the protocol reports, and it is written before the Minecraft connection or the control channel is closed.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "state"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "shutdown" },
+            "state": { "const": "stopping" }
+          }
+        }
+      ]
+    },
+
+    "BodyError": {
+      "description": "A refusal. It is not a BodyResponse and carries no 'op', because a frame the process could not decode has no operation to name - the same reasoning that keeps the cognition wire's refusal frame outside the perception/decision contract. The agentId is always present, since the process knows its own identity whatever arrived on the socket; the requestId is present only when the frame carried a readable one, because echoing an id the process never received would put a fiction on the wire and let a controller match a refusal to a request that does not exist.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "agentId", "error"],
+      "properties": {
+        "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+        "requestId": { "$ref": "#/$defs/ControlId" },
+        "agentId": { "$ref": "#/$defs/ControlId" },
+        "error": { "$ref": "#/$defs/ErrorCode" }
+      }
+    }
+  }
+}

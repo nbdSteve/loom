@@ -39,12 +39,18 @@ class ArchitectureBoundaryTest {
         // The dependency runs one way: body and mind both depend on the contract,
         // and the contract knows about neither. If that inverted, the two runtimes'
         // shared vocabulary would start carrying one side's concerns.
+        //
+        // `dev.loom.bodycontrol` is named separately rather than covered by
+        // `dev.loom.body..`, which does not match it: it is the sibling body-control
+        // contract, and two contracts that reached into each other would be one
+        // contract with two schemas. BodyControlBoundaryTest states the other half.
         noClasses()
             .should()
             .dependOnClassesThat()
             .resideInAnyPackage(
                 "dev.loom.plugin..",
                 "dev.loom.body..",
+                "dev.loom.bodycontrol..",
                 "dev.loom.mind..",
                 "dev.loom.observe..",
             )

@@ -38,7 +38,7 @@ dependencies {
     testImplementation(platform("org.junit:junit-bom:5.11.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    // Validates the shared fixtures against contract/loom.schema.json (draft 2020-12).
+    // Validates the shared fixtures against both JSON Schema 2020-12 contracts.
     testImplementation("com.networknt:json-schema-validator:1.5.4")
     // Fail-the-build architecture boundary rules.
     testImplementation("com.tngtech.archunit:archunit-junit5:1.3.0")

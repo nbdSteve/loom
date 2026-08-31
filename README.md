@@ -8,11 +8,15 @@ build a small society together.
 
 ## Repository layout
 
-This is a monorepo with two runtimes, a shared contract, and the research record:
+This is a monorepo with two runtimes, shared contracts, and the research record:
 
 - `plugin/` - the Kotlin Paper plugin: the physical world and the agent bodies.
 - `cognition/` - the Rust cognition service: the agent minds.
-- `contract/` - the shared perception/decision schema exchanged between them.
+- `contract/` - the shared schemas: the perception/decision contract exchanged
+  between plugin and cognition, and the body-control contract for a future
+  player body.
+- `body/` - the Node half of the body-control contract; a codec only today,
+  with no process to run. See `body/README.md`.
 - `research/` - one directory per experiment; see `research/README.md`, which makes everything there append-only.
 
 The body exposes only a bounded perception to the mind, and the mind never
@@ -26,6 +30,11 @@ its full perception, reasoning, action, and result.
 The shared contract is in place: `contract/loom.schema.json` is its single source
 of truth, with hand-written Rust and Kotlin bindings checked against it by
 conformance tests and CI on both runtimes.
+A second contract sits beside it, inert for now: `contract/body-control.schema.json`
+carries only whether a body process is alive, which lifecycle state it is in, and
+when to stop, with hand-written Node and Kotlin codecs held together by a shared
+conformance corpus - the wire agreed on before either runtime speaks it. See
+`body/README.md`.
 
 Bodies are in place on top of it. An agent can be given a body in a live world,
 handed a movement intent expressed as a contract `Intent`, observed through a

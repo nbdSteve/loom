@@ -16,6 +16,11 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 The fixtures are also the wire: the mind's integration test replays every `perception-*.json` at a real socket, and the JVM transport test uses the `decision-*.json` bytes verbatim as responses, so the two runtimes meet at the fixture rather than at a mock on either side.
 
+**`contract/body-control.schema.json` is a second, sibling contract, not part of this one.**
+It carries only body-process lifecycle (alive, which state, when to stop) for the future Mineflayer player body, shares no binding types or dependencies with the perception/decision contract, and is inert today: nothing in Loom's runtime speaks it yet.
+`body/README.md` owns its rules.
+Its codecs are `body/src/protocol.js` (Node) and `plugin/src/main/kotlin/dev/loom/bodycontrol/` (JVM), kept in step by the shared conformance corpus under `contract/fixtures/body-control`, and `BodyControlBoundaryTest` pins that `dev.loom.bodycontrol` depends on nothing else in Loom.
+
 ## The body port
 
 `plugin/src/main/kotlin/dev/loom/body/BodyPort.kt` is the inbound port the rest of Loom uses to give an agent a physical presence.
@@ -513,7 +518,8 @@ The write queue is bounded so a stalled disk never blocks the tick; records that
 - JVM: `cd plugin && ./gradlew check`. Runs detekt + ktlint + ArchUnit + warnings-as-errors compile, none ignoring failures. Build on **Corretto 21** (`jvmToolchain(21)`), Gradle wrapper pinned to 8.14 - which refuses a newer JDK outright, so `./gradlew` failing with nothing but a version number (`* What went wrong: 25.0.3`) means `JAVA_HOME` points at a default JDK that is too new rather than anything being wrong with the build. detekt config: `plugin/config/detekt/detekt.yml` (formatting delegated to ktlint), and the Kotlin line length *both* gates enforce is stated once in the root `.editorconfig`, which records why the two numbers have to stay equal.
   The plugin compiles against a Mojang-mapped server via `paperweight-userdev`; the first build downloads and decompiles it (a few hundred MB, several minutes), and later builds are fast. Paper's runtime is Mojang-mapped, so the jar ships as compiled and is never reobfuscated (`ReobfArtifactConfiguration.MOJANG_PRODUCTION`).
   detekt thresholds are treated as design feedback: clear them by splitting along a real seam rather than by adding suppressions.
-- CI runs both suites plus the live cross-runtime round trip: `.github/workflows/contract.yml`.
+- Node (body-control contract): `cd body && npm ci && npm run check`. Runs `standard` lint plus the `node:test` suites; there is no build step, and the tests make no network calls. Node 20.11 or newer, and the committed `package-lock.json` is deliberately not ignored - `npm ci` fails if it and `package.json` disagree.
+- CI runs all three suites plus the live cross-runtime round trip: `.github/workflows/contract.yml`.
 
 - Add durable project-specific notes here as they are discovered through real work.
 
