@@ -119,6 +119,38 @@ data class BodyEventRecord(
      * body itself.
      */
     val health: AgentVitals? = null,
+    /**
+     * Which server-visible player the record is evidence about, when there is one.
+     *
+     * Present only on the witness records, which are the ones whose whole purpose is to be
+     * cross-checked against something outside Loom - a server log line, a `playerdata` file,
+     * a Mineflayer process's own account. An agent id alone cannot be cross-checked that
+     * way, so the correlation data has to ride the record rather than be reconstructed from
+     * a registration that is only in memory. Absent everywhere else, since a Villager body
+     * has no player identity to state.
+     */
+    val witness: WitnessedPlayer? = null,
+)
+
+/**
+ * The player identity a witness record is evidence about.
+ *
+ * Both halves are needed and neither substitutes for the other. The [uuid] is what the
+ * server files `playerdata` under, so it is the join to vanilla's own durable state; the
+ * [username] is what appears in a server log line and in the body process's configuration,
+ * so it is the join to everything a human reads. In Loom's offline mode the two are related
+ * by a hash, and reconstructing either from the other is exactly the inference the witness
+ * refuses to make.
+ *
+ * Held as a [String] rather than a `java.util.UUID` because this is a wire type and the
+ * canonical [dev.loom.contract.LoomJson] has no serializer for the platform class.
+ */
+@Serializable
+data class WitnessedPlayer(
+    /** The connection's uuid, in the server's own canonical dashed form. */
+    val uuid: String,
+    /** The connection's username, exactly as the server saw it. */
+    val username: String,
 )
 
 /** The body events worth a durable record. */
@@ -280,6 +312,60 @@ enum class BodyEvent {
      */
     @SerialName("worldHoldFailed")
     WORLD_HOLD_FAILED,
+
+    /**
+     * A registered agent's player joined the server, and the server saw it arrive.
+     *
+     * The first of the witness events, which are what a body Loom does not itself construct
+     * has instead of a spawn: an external process drives the player, so the only account of
+     * it Loom can vouch for is the server's own. Recorded from the main thread on the
+     * server's own join event, and carrying [BodyEventRecord.witness] so it joins to
+     * vanilla's `playerdata` and to a server log line rather than only to Loom's own memory.
+     *
+     * Deliberately not [SPAWNED], which says Loom put a body into the world. Nothing here
+     * did: the record is a witness statement, not an action.
+     */
+    @SerialName("witnessJoined")
+    WITNESS_JOINED,
+
+    /**
+     * A registered agent's player disconnected, and the agent is not dead.
+     *
+     * Continuity rather than an ending, for the same reason [TRAVELLED] is: a body process
+     * that was restarted, or a network that dropped, has not killed anybody, and a log that
+     * read every disconnect as a death would make permadeath unmeasurable. The distinction is
+     * made by the witness rather than by whoever reads the log back - a quit after a recorded
+     * death is part of that death and produces no record at all.
+     */
+    @SerialName("witnessQuit")
+    WITNESS_QUIT,
+
+    /**
+     * A login was refused, and the identity it named will never connect again.
+     *
+     * The one record a dead agent may still accumulate, and the reason it may: a permadeath
+     * that is enforced silently is indistinguishable from a body process that simply stopped
+     * being started, so the refusal is the evidence that the enforcement is working. Which
+     * bound refused is [BodyEventRecord.outcome], as one of `EventTag`'s `LOGIN_` tags,
+     * because "denied because the agent is dead" and "denied because Loom could not read its
+     * own death ledger" are opposite facts about a run: the first is the design working and
+     * the second is a run whose survival numbers cannot be trusted.
+     */
+    @SerialName("witnessDenied")
+    WITNESS_DENIED,
+
+    /**
+     * A dead agent's player is in the world again, which permadeath forbids.
+     *
+     * The witness counterpart to [WORLD_HOLD_FAILED]: a record of a broken invariant rather
+     * than of something that happened to an agent. Every other layer is meant to make this
+     * impossible - the login refusal, the removal on death, the body process's own
+     * `respawn: false` - so a run that produced one of these has had a permadeath breached
+     * and its findings about survival are suspect until the route is understood. How it got
+     * back in is [BodyEventRecord.outcome], as one of `EventTag`'s `REVIVED_` tags.
+     */
+    @SerialName("witnessRevived")
+    WITNESS_REVIVED,
 }
 
 /**

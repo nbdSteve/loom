@@ -163,6 +163,57 @@ class ObserverViewTest {
     }
 
     @Test
+    @DisplayName("a refused login says which bound refused it, because they are opposite facts")
+    fun everyLoginRefusalSaysWhichOneItWas() {
+        // One event name over four different situations, and the tag is the whole of what tells
+        // them apart. Read as one sentence, an operator could not tell an agent that had died
+        // from a run whose ledger is unreadable - one of which is the experiment's result and
+        // the other a fault to go and fix.
+        val died = spoken(record(BodyEvent.WITNESS_DENIED).copy(outcome = EventTag.LOGIN_DEAD_IDENTITY))
+        assertEquals("was refused a login: it had already DIED and does not return.", died.text)
+        assertEquals(ObserverLevel.ALARM, died.level)
+
+        val sealed = spoken(record(BodyEvent.WITNESS_DENIED).copy(outcome = EventTag.LOGIN_LEDGER_UNSAFE))
+        assertEquals("was refused a login: Loom cannot read its own death records.", sealed.text)
+        assertEquals(ObserverLevel.ALARM, sealed.level, "a sealed ledger stops every agent and needs a human")
+
+        val claimed = spoken(record(BodyEvent.WITNESS_DENIED).copy(outcome = EventTag.LOGIN_IDENTITY_MISMATCH))
+        assertEquals("was refused a login: its name was claimed from another account", claimed.text)
+        assertEquals(ObserverLevel.CONCERN, claimed.level, "somebody else's account is not this agent's death")
+
+        // A refusal with no tag at all is the one case with nothing more to say, and it must
+        // not borrow the wording of the case that reports a permadeath.
+        val bare = spoken(record(BodyEvent.WITNESS_DENIED))
+        assertEquals("was refused a login", bare.text)
+        assertEquals(ObserverLevel.CONCERN, bare.level)
+    }
+
+    @Test
+    @DisplayName("a managed player arriving and leaving is said plainly, and a quit is not a death")
+    fun aPlayerBodyComingAndGoingIsNotAnAlarm() {
+        val joined = spoken(record(BodyEvent.WITNESS_JOINED))
+        assertEquals("connected to the server and has a body now", joined.text)
+        assertEquals(ObserverLevel.CALM, joined.level)
+
+        // The one thing this line has to do is stop an operator reading a disconnect as the
+        // end of the agent: the process reconnects, and Loom writes no tombstone for a quit.
+        val quit = spoken(record(BodyEvent.WITNESS_QUIT))
+        assertEquals("disconnected. It is not dead; the agent continues.", quit.text)
+        assertEquals(ObserverLevel.CALM, quit.level)
+    }
+
+    @Test
+    @DisplayName("a body in the world after a terminal death is an alarm about permadeath itself")
+    fun aBreachedPermadeathIsTheLoudestThingOnTheScreen() {
+        val revived = spoken(record(BodyEvent.WITNESS_REVIVED).copy(outcome = EventTag.REVIVED_AFTER_RESPAWN))
+
+        // This one should be impossible, which is exactly why it has a line: an operator whose
+        // run has produced it is looking at numbers that no longer measure permadeath.
+        assertEquals("is in the world again after a terminal DEATH. Permadeath was not enforced.", revived.text)
+        assertEquals(ObserverLevel.ALARM, revived.level)
+    }
+
+    @Test
     @DisplayName("death is stated as permanent, because that is the whole experiment")
     fun deathIsUnambiguous() {
         val note = spoken(record(BodyEvent.DIED))

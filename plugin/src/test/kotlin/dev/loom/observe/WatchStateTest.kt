@@ -384,6 +384,112 @@ class WatchStateTest {
     }
 
     @Test
+    @DisplayName("a managed player connecting and disconnecting is a body arriving and going")
+    fun aPlayerBodyIsABodyLikeAnyOther() {
+        val connected = after(record(BodyEvent.WITNESS_JOINED).copy(vitals = reserve(100.0)))
+
+        assertEquals(AgentActivity.EMBODIED, connected.activity)
+        assertFalse(connected.hasNoBody, "a player in the world is a body in the world")
+
+        val gone = advanced(connected, record(BodyEvent.WITNESS_QUIT, tick = 20L))
+
+        // A disconnect is continuity: the process can reconnect and the agent is not dead.
+        // What it does mean is that nothing is spending the reserve until it does.
+        assertEquals(AgentActivity.BODILESS, gone.activity)
+        assertTrue(gone.hasNoBody)
+        assertFalse(gone.isFinal, "a quit is not an ending")
+        assertTrue(gone.isReserveFrozen)
+    }
+
+    @Test
+    @DisplayName("a login refused because the agent has died is the terminal state, not a bodiless one")
+    fun theDeadIdentityLoginRefusalIsTheTerminalState() {
+        // A dead player body's process keeps reconnecting for as long as it is running, so a
+        // watch attached after the death sees nothing but these refusals. Read as merely
+        // bodiless, the one record that will ever say the agent is gone says `no body` instead.
+        val refused = after(record(BodyEvent.WITNESS_DENIED).copy(outcome = EventTag.LOGIN_DEAD_IDENTITY))
+
+        assertEquals(AgentActivity.DEAD, refused.activity)
+        assertTrue(refused.isFinal, "a permadeath is final however the display came to hear about it")
+        assertEquals("$WATCHED | energy not read yet | DEAD - will not return", ObserverView().render(refused).text)
+
+        // The one refusal that is a fact about the agent rather than about a connection, so it is
+        // also the one that overrides what the display already knew: a watch that had seen the
+        // player join must not go on showing an embodied agent with a running reserve.
+        val connected = after(record(BodyEvent.WITNESS_JOINED).copy(vitals = reserve(80.0)))
+        val died =
+            advanced(
+                connected,
+                record(BodyEvent.WITNESS_DENIED, tick = 20L).copy(outcome = EventTag.LOGIN_DEAD_IDENTITY),
+            )
+
+        assertEquals(AgentActivity.DEAD, died.activity)
+        assertTrue(died.hasNoBody)
+        assertTrue(died.isReserveFrozen, "nothing is spending a dead agent's reserve")
+    }
+
+    @Test
+    @DisplayName("a login refusal that is not about a death says nothing about the agent's body")
+    fun theOtherLoginRefusalsAreNeitherTerminalNorAboutTheBody() {
+        val notFinal = listOf(EventTag.LOGIN_LEDGER_UNSAFE, EventTag.LOGIN_IDENTITY_MISMATCH)
+
+        for (outcome in notFinal) {
+            val connected = after(record(BodyEvent.WITNESS_JOINED).copy(vitals = reserve(80.0)))
+            val refused = advanced(connected, record(BodyEvent.WITNESS_DENIED, tick = 20L).copy(outcome = outcome))
+
+            // A sealed ledger and a claimed username are both conditions an operator can fix,
+            // and the agent behind them is alive. Reading either as a death would report a
+            // permadeath that never happened, in a run whose whole subject is permadeath.
+            assertFalse(refused.isFinal, "$outcome is a refusal Loom chose, not an ending")
+            // And neither says anything about the agent's own body. The refusal reaches whichever
+            // agent's identity was named, so a second body process - or something that took a live
+            // agent's username - is refused while that agent is standing in the world. Read as
+            // bodilessness it labelled a connected agent `no body` and froze its reserve trend,
+            // with no per-tick record from a player body ever able to correct it.
+            assertEquals(AgentActivity.EMBODIED, refused.activity, outcome)
+            assertFalse(refused.hasNoBody, "$outcome is about a connection attempt, not about a body")
+            assertFalse(refused.isReserveFrozen, "$outcome must leave the reserve trend running: $outcome")
+        }
+    }
+
+    @Test
+    @DisplayName("a player in the world after a terminal death is shown as dead, with the breach as an alarm")
+    fun aRevivalIsShownHonestlyRatherThanTidily() {
+        val dead = after(record(BodyEvent.DIED).copy(vitals = reserve(40.0)))
+
+        val breached = advanced(dead, record(BodyEvent.WITNESS_REVIVED, tick = 20L))
+
+        // The agent really has died, and the live player the world is holding is the breach rather
+        // than a body. The note is what says permadeath was momentarily broken; the state says what
+        // the agent actually is, because a permadeath is not something the display gets to soften.
+        assertEquals(AgentActivity.DEAD, breached.activity)
+        assertTrue(breached.isFinal)
+        assertTrue(breached.hasNoBody, "a dead agent has no body, whatever the world is holding")
+        assertTrue(breached.isReserveFrozen, "nothing is spending a dead agent's reserve")
+        assertTrue(
+            ObserverView().render(breached).text.contains("DEAD"),
+            ObserverView().render(breached).text,
+        )
+    }
+
+    @Test
+    @DisplayName("a watch attached after the death still reads a revival as the permadeath it proves")
+    fun aRevivalStatesThePermadeathToAWatchThatNeverSawTheDeath() {
+        // The operator types `/loomwatch` after the agent has already died, so this state has
+        // processed nothing at all. Every path that writes a revival has already established the
+        // death - a death-respawn records it first, a non-death respawn revives only an agent the
+        // durable state already calls dead, and a join revives only a dead identity - so the record
+        // is itself proof, and reading it as news about an agent of unknown state showed a
+        // non-final, unfrozen line beside an alarm saying it had died.
+        val breached = advanced(fresh, record(BodyEvent.WITNESS_REVIVED, tick = 20L))
+
+        assertEquals(AgentActivity.DEAD, breached.activity)
+        assertTrue(breached.isFinal)
+        assertTrue(breached.hasNoBody)
+        assertTrue(breached.isReserveFrozen)
+    }
+
+    @Test
     @DisplayName("a cycle no mind answered carries no model stamp, even after one that was answered")
     fun anUnansweredCycleDropsTheStampOfTheOneBeforeIt() {
         val answered =

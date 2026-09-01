@@ -5,8 +5,11 @@ driven over a loopback control channel, and the Node half of Loom's **body-contr
 contract, which is the versioned newline-delimited JSON protocol it is driven over.
 
 **It is inert, and nothing in Loom speaks to it.**
-No Paper wiring exists yet: the plugin does not start this process, does not connect to
-its control channel, and does not know this package exists.
+No Paper wiring exists yet: the plugin does not start this process and does not connect to
+its control channel.
+What the plugin does now hold is a server-authoritative witness for the *player identity* a
+body like this logs in as - `dev.loom.witness`, whose rules `AGENTS.md` owns - and that is
+inert for the same kind of reason: nothing registers an identity in it yet.
 **This package does not replace the Villager body.**
 `/loombody` is unchanged and the Villager body is still the only body Loom's runtime
 drives; the Paper runtime wiring, and the cutover that eventually retires the Villager,
@@ -189,6 +192,10 @@ evidence about what a loader does with it.
 Left alone, coming back to life would be a decision this process took by omission, which
 is exactly the kind of decision it may not take.
 It is pinned in a test rather than trusted to the option list.
+It is deliberately *not* the mechanism that keeps a dead agent dead: the server witnesses
+that and refuses the login, and this option and vanilla's own playerdata are independent
+protections beside it, so three things must fail before a dead agent walks again.
+`AGENTS.md` records why the witness is server-side.
 
 **A lifecycle is not a wait for `spawn`.**
 A body that logs in already dead gets `login` then `death` with no `spawn` at all, so a

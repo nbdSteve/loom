@@ -243,7 +243,8 @@ The rule is held by `Mortality` in the engine-free domain, which records a death
 Despawning is not death: it is how Loom puts a body away (as on plugin unload) and leaves the agent embodiable.
 A death owes the mind a *terminal* body-death `Trigger` once cognition is wired - "this agent has DIED", not "take another body".
 That signal is deliberately not sent from `tick`, and no death `Trigger` exists in the contract yet, so it is left as a marked owed signal at the retire site rather than built now.
-`Mortality` currently holds the dead in memory, so its refusal spans the server process; making death outlive a restart belongs with agent-identity persistence, which does not exist yet.
+`Mortality` holds the dead in memory, so for a Villager body its refusal spans the server process, and making *that* death outlive a restart belongs with agent-identity persistence, which does not exist yet.
+A *player* body's death is already durable, because a player account outlives the server and can reconnect where a Villager cannot: `DurablePermadeath` wraps this same rule with a tombstone ledger, and the player-witness section below owns how.
 The append-only event log is meanwhile the durable record of who has died.
 
 **The first survival drive is an energy reserve, and running it out is a death.**
@@ -260,7 +261,7 @@ Deliberately not `Villager.FOOD_POINTS`, which encodes villager *breeding* seman
 Feeding is carried out by the *port*, not the entity, because a dimension transit replaces a body and must not replace the reserve.
 Exhaustion is terminal in the type and not only in the record - `Metabolism.feed` refuses a spent reserve, so an agent cannot eat its way back out of a permadeath.
 The reserve is charged at the top of `NmsEntityBodyPort.tick`, so a body whose reserve has just run out takes no further step, and the deaths it causes are applied at the *end* of the tick, once every body is where the tick leaves it: an agent starving mid-transit is re-embodied on the far side first and dies there, rather than leaving the engine's leftover villager standing in the destination.
-The reserve is in memory only, like `Mortality`'s dead; making either outlive a restart belongs with agent-identity persistence, which does not exist yet.
+The reserve is in memory only, like the Villager body's `Mortality`; making either outlive a restart belongs with agent-identity persistence, which does not exist yet.
 
 **A meal names one exact stack rather than a food, and `Eating.kt` is the whole rule for what may refuse it.**
 `Intent.Eat` carries a handle the perception minted for one slot of the body's own eight-slot native container, so two stacks of bread are two different meals - one of them may be the last food the agent has.
@@ -315,6 +316,104 @@ Every attempt therefore returns a `ChunkHoldOutcome` (engine-free domain) rather
 Before trusting any run's permadeath numbers, check the event log for `worldHoldFailed` - its presence means some removals classified as deaths may have been unloads.
 The two ways a hold can fail are kept distinct (`unknownWorld` versus `ticketDeclined`): one is a Loom-side mistake, the other the engine declining a correct request, and an earlier version collapsed both into a bare `false` that made every failure invisible.
 Note that Bukkit also returns false for a ticket already held, which is why only chunks outside the held set are ever asked for.
+
+## The player witness
+
+`dev.loom.witness` is the server-authoritative witness for Loom's *player* bodies - the Mineflayer flavor of `body/` - and it is a second, independent permadeath enforcement point rather than a helper for the Villager one.
+It is inert as shipped: `LoomPlugin.managedPlayers` is an empty `WitnessRegistry`, nothing in Loom registers a player, and the runtime cutover that will is later work.
+`dev.loom.witness` is engine-free by rule and `dev.loom.witness.bukkit` is its one adapter, both pinned by `WitnessBoundaryTest`.
+
+**Paper is the witness because Node cannot be one.**
+A Mineflayer client reports what it was told; the server knows what happened, and a client that has crashed or been tampered with reports nothing at all.
+So the plugin listens to `AsyncPlayerPreLoginEvent`, `PlayerJoinEvent`, `PlayerQuitEvent`, `PlayerDeathEvent` and `PlayerRespawnEvent`, and Mineflayer's `respawn: false` plus vanilla playerdata stay *independent* protections rather than the mechanism - three things must fail before a dead agent walks again.
+
+**Death is terminal across restarts, which `Mortality` alone cannot give a player body.**
+A Villager exists only inside a running Loom, so an in-memory death set is enough for it; a player *account* outlives the server and can reconnect, so a death held only in memory is a death a restart undoes.
+`DurablePermadeath` therefore wraps `Mortality` with a `DeathLedger`, and the two files Loom writes are not the same kind of thing.
+`plugins/Loom/body-events.jsonl` is **evidence**: asynchronous, bounded queue, may drop records, and cheap to lose a moment of.
+`plugins/Loom/player-deaths.jsonl` is an **authorisation input**: one tombstone per line, written synchronously with `StandardOpenOption.SYNC` before the death is reported as final, and read exactly once.
+Being synchronous costs one file sync per agent lifetime, which is why it is affordable at all.
+
+**The replay ordering is a constructor, not a call to remember.**
+`DurablePermadeath`'s `init` reads the ledger, so the object cannot exist in a state that has not caught up with previous runs - that *is* the requirement that tombstones replay before login admission begins, and `LoomPlugin.witnessPlayers` constructs it before registering the listener.
+
+**The ledger is authoritative for admission, and the replay therefore keeps the whole identity rather than the agent id.**
+An agent id can only be compared against a registration, and a registration lives in the memory of one process: the body driving a dead agent's account is started by something Loom does not own, so it can reconnect before - or without - anything registering the identity again, at which point an agent-id-keyed answer has nothing to compare and the dead walk in unrecorded, after exactly the restart the ledger is written synchronously to survive.
+So `DurablePermadeath.deadIdentityFor` answers from the uuid and the username the tombstone itself carries, `PlayerWitness.admitLogin` asks it *first* - before the registry and before the seal - and the `witnessDenied` record is filed under the agent id the tombstone names.
+Either half is enough, because a tombstoned uuid connecting under a new username and a tombstoned username connecting from a new account are both a dead agent's account trying to get back in.
+`admitKnown` still asks `isDead` afterwards, and that is not the same question: it is keyed on the agent behind the registration, which is what catches an agent re-registered against a different account after it died.
+A tombstone Loom cannot read back *at all* seals rather than being passed over, since skipping it would reopen the gap for that one agent, and a throw would leave the server with no witness at all - but the two halves of a tombstone fail independently and `remember` takes whichever it can.
+A mangled uuid still leaves the agent id and the username perfectly legible, so `remember` takes each field that reads on its own: the agent id records the death, and whichever of the uuid and the username re-validates is indexed so a connection presenting it is still refused.
+Discarding the whole line made `isDead` answer false for an agent the file names, and the login was then refused as a ledger Loom could not read rather than as the death it plainly is; indexing neither half was worse, because the seal cannot stand in for an index - it is consulted only for a connection a *registration* has already matched, so after a restart it refuses nobody, and a hand-edited uuid was enough to re-admit an agent whose death the file still stated by name.
+That is what `DeadMatch` distinguishes: a tombstone that read back whole hands back the identity it named, and one that did not hands back the agent id alone, so a refusal from it states the connection and never a uuid no file ever held.
+The death index and `WitnessRegistry.byUsername` read a username the same way, both through `usernameKeyOf`, which lowercases with `Locale.ROOT` because the default locale would make a lookup depend on the operator's machine.
+`BodyEventRecord.witness` means one thing on every witness record, including a refusal: the connection the server actually saw.
+A tombstone is matched on *either* half, so filling those fields from the tombstone instead named a player that never presented itself - a username nobody offered, or a dead agent's uuid for a connection from another account entirely - and those two fields are the join to a server log line and to a `playerdata` file, so a record naming a player that never connected lands that join on the wrong row.
+The tombstone's own identity is kept in the `detail` beside the connection, which is what shows an operator that only one half of the recorded identity matched; a refusal filed under the tombstone's agent with neither stated would read as that agent's own account trying to get back in.
+That is the rule on the *ordinary* records too - a join, a quit, a death, a revival - which is why `sawJoin`, `sawQuit`, `sawDeath` and `sawRespawn` all take the username beside the uuid and `subjectOf(agentId, uuid, username)` is the only way the witness builds a subject.
+It diverges there without any breach at all: after a login the lookup is by uuid alone, so an account renamed against a stale registration was recorded under a name nobody offered, and a `Matched` login agrees on both halves only up to case.
+The two halves answer different questions and are never interchangeable - the agent is Loom's own resolution and the player is the server's report - which is also why a death writes its *tombstone* from the registration: that file is an authorisation input matched against every later login, not evidence of one connection.
+
+**An unreadable ledger is unsafe, never empty, and sealing and enforcing are not alternatives.**
+A *missing* file means nobody has died yet, which is the ordinary state of a fresh run and the one absence safe to read as "no deaths".
+A file that exists and will not parse - including a torn final line from a crash mid-append - means Loom does not know who is dead, which is not the same as knowing nobody is, so it seals the witness one-way and refuses every *managed* login until a human looks.
+The run loses availability for its player bodies and keeps the invariant, which is the right way round here.
+**Every death the replay could read is still enforced, and the seal covers only the line it could not.**
+`LedgerReplay` carries its tombstones on *both* variants for that reason: a crash mid-append tears the last line only, and the whole synced lines before it state their deaths perfectly well, so `FileDeathLedger` accumulates up to the first line it cannot read and stops there rather than throwing the lot away.
+Reading the two as alternatives was a real hole, because the seal alone refuses only the identities a *registration* names, and after the restart it exists to survive there are none - so a torn final line let every earlier death's account walk back in unrecorded.
+Fail-closed never reaches a stranger, torn ledger or not: the seal is only reached for a connection the ledger or the registry has already identified as Loom's, so an unrelated player is admitted and nothing is recorded about it, not even a refusal.
+Sealing does not throw, because a plugin that failed to enable would leave the server with no witness at all - failing closed only works if the thing that failed is still there to refuse.
+A seal states *every* fault it found, since a partly readable tombstone and a torn final line can be in one file at once and each is a different thing to go and look at, and each fault names its own unit (`tombstone 2` counts tombstones, `line 3` counts file lines, and the two diverge as soon as a blank line is present).
+The `loginLedgerUnsafe` record's `detail` is the seal and nothing else, because that detail is capped at `MAX_WITNESS_DETAIL_CHARS` (192) and prefixing it with the notice the *client* is told spent 114 of those on a sentence the record's own tag already carries - which cut the second fault out of the one place an operator reads the faults back after the fact.
+For the same budget a fault states only what went wrong, identifier first, and leaves the consequence to the alert and the notice that each state it once.
+That budget is the record's alone, and `sealReasonWithin` is where it is spent: the operator alert reads `sealReason`, which is bounded only by how many faults are worth naming, because a server log line has no width to run out of and it is the one place a fault the record had to elide can still be recovered from.
+One string for both readers made the tightest bound everybody's, so the log named fewer faults than it could and dropped exactly the ones the record had.
+
+**A login is resolved against the ledger first, then by uuid *and* username; everything after it by uuid alone.**
+A tombstoned identity is a managed identity by definition, so consulting the ledger first does not widen what Loom has an opinion about: a connection matching neither a tombstone nor a registration is still `Unmanaged`, still admitted, and still recorded nowhere at all, which `PlayerWitnessTest` covers with tombstones sitting in the ledger.
+Login is otherwise the one moment something can claim to be a managed body without being one, so a connection matching half a registration is `Mismatched` and refused rather than resolved.
+After that the server's own uuid is authoritative - resolved against the registry and, for the two breach failsafes only, against the death ledger as well - and there is deliberately no *username* fallback anywhere after the login, which is what makes "an unrelated player is never recorded" a property of the lookup rather than of a check somebody must remember to write.
+`breachSubject` is that whole rule and sits beside `claimOf`, taking its two sources explicitly for the same reason.
+The ledger half of it is what makes a breach visible in the run the ledger is synchronous for: reaching `sawJoin` or `sawRespawn` with a dead agent means the login refusal did not hold, and after a restart nothing is registered - so a registry-only lookup left exactly that breach with no record, no alert and no removal.
+`sawQuit` and `sawDeath` stay registry-only, because a quit or a death of an unregistered player is not a breach and recording one would witness a player Loom was never asked about.
+
+**Exactly one death record per agent is decided in one place.**
+`DurablePermadeath.recordDeath` takes the in-memory claim and writes the tombstone under one lock, and answers `Terminal` / `AlreadyRecorded` / `Unpersisted`; only `Terminal` writes a `died` record.
+The lock is not an optimisation: a login refusal runs on a Netty thread during async pre-login while a death is witnessed on the main thread, and `Mortality` holds a plain `HashSet`.
+`Unpersisted` still records the death and still seals, because the agent is dead either way and what was lost is only that it stays dead.
+
+**A quit after a recorded death records nothing.**
+That is what keeps a terminal death the last thing in an agent's chain apart from bounded `witnessDenied` records: the death asks for a removal, and Bukkit reports that removal as an ordinary quit.
+An ordinary quit *before* a death is continuity and writes no tombstone.
+
+**`PlayerRespawnEvent` is not the after-a-death event its name suggests, and reading it as one is an irreversible false permadeath.**
+`RespawnReason` has three values, and only `DEATH` reports a death: `END_PORTAL` fires for a perfectly *live* player stepping into the End's exit portal, because vanilla sends that player to its respawn position rather than through an ordinary portal (`EndPortalBlock.getPortalDestination` calls `findRespawnPositionAndUseSpawnBlock(..., RespawnReason.END_PORTAL)`), and `PLUGIN` fires for anything that respawns a player itself.
+Handed to the witness undifferentiated, an agent walking home from the End was recorded dead, tombstoned synchronously and kicked for good, with nothing in any log to contradict it.
+So `dev.loom.witness.bukkit`'s `respawnCauseOf` translates the reason into `RespawnCause` and does nothing else, total over the enum so a reason a version bump adds cannot default into being read as a death; a dimension return is continuity for a living agent, exactly as `BodyTransit.kt` already treats it for the Villager body.
+The in-world proof drove deaths only with the console `kill`, which is why it could not have caught this - a run that means to prove the respawn path has to walk a body through the End's exit portal.
+
+**The reason alone is not the rule, though, which is why the decision is the witness's and not the adapter's.**
+A respawn the server reports as following a death is always a breach and always witnessed.
+A respawn with no death behind it is a breach only when the agent is *already* tombstoned - something on the server has put a dead agent back in the world, and the run has to say so - and is nothing at all for a living agent, which is what keeps a body walking home from the End free of a `died` record, a tombstone, a `witnessRevived` record, an alert and a removal.
+Both halves need the durable death state, which `dev.loom.witness.bukkit` deliberately cannot see; `RespawnCause` carries the server's meaning across that seam without the Bukkit enum crossing it.
+
+**`witnessRevived` is the impossible case, and it exists to make an incorrect run visible.**
+A `PlayerRespawnEvent` cannot be cancelled, so by the time one fires for a breach the world already holds a live player for a dead agent; the same is true of a join the pre-login refusal did not stop.
+Every one of them records a revival, alerts the operator, and asks for the removal, and the two respawn paths are indistinguishable in kind - the same event, the same `revivedAfterRespawn` tag - because anything counting breaches reads those rather than the prose.
+A respawn *from a death* records the death first, because it is itself a report that the player died and the ordinary death path may be what failed; a respawn with no death behind it records none, since the agent it is about is already in the log with exactly one.
+Neither failsafe needs a registration to fire, and a breach reached without one records neither a second death nor a second tombstone: the tombstone the ledger already holds *is* the death, and `recordDeath` would answer `AlreadyRecorded` for it anyway.
+Such a revival is filed under the agent id the tombstone names, with the presented uuid and username in its `witness` fields, so a breach reads the same whether or not a registration happened to exist.
+It reads as a contradiction of "no records after a terminal death" and is not one: a `witnessRevived` record means the invariant was already broken before Loom could say anything.
+On the display it is read as the permadeath it proves - `DEAD`, final, with the reserve frozen - because every path that writes one has already established the death, so the record needs no `died` record beside it to be believed; that is what a watch attached *after* the fact gets, exactly as `loginDeadIdentity` already gives it.
+The live player the world is holding is the breach rather than a body, and the `ALARM` note is what says so: a state that called it a body would have to call the agent alive, which is the one thing a permadeath display may not do.
+
+The witness owns no removal mechanism.
+It answers `WitnessAction.Remove` and the adapter kicks on the next tick, which is what lets exactly-once death be proved at a desk with no server to be kicked from.
+
+**Proving the witness in world needs something outside Loom to register an identity**, because the registry is inert on purpose.
+Write a throwaway `depend: [Loom]` plugin that calls `loom.managedPlayers.register(...)`; `tasks.shadowJar` does no relocation, so Loom's shaded Kotlin stdlib is resolvable from that plugin's classloader, and `AgentId` being a `value class` is why such a harness is easier in Kotlin than in Java.
+Offline-mode uuids are name-derived and stable (`UUID.nameUUIDFromBytes("OfflinePlayer:$name".toByteArray())`), so a harness and a Mineflayer client agree on the uuid with no lookup.
+Drive the deaths with the vanilla console `kill <username>`, and read `player-deaths.jsonl` beside `body-events.jsonl` - a run that proves nothing else must still show one tombstone per death and none for a quit.
 
 ## The one adapter, and the NMS seam
 
@@ -438,8 +537,10 @@ Inside either field a reading is `level` of `capacity` (`AgentVitals.energy` car
 Before the reserve existed the display used health *as* energy; that shortcut is what the wire test in `BodyEventLogTest` now pins against, with the two readings deliberately on different scales so feeding one from the other fails.
 `resting` and `idle` are likewise separate activities now that `Intent.Rest` and `Intent.Idle` are separate intents, and telling a deliberate wait from an unconsidered one is most of what a survival run is about - neither restores anything, so what separates them is intent alone.
 
-**What a record *means* is read from a field, never from its prose, and four events need a field to say it.**
+**What a record *means* is read from a field, never from its prose, and five events need a field to say it.**
 The view reads `event` plus the countable tags, so an event whose name carries two opposite meanings is an event the display gets wrong.
+The five are `spawnRejected`, `converted`, `retreating`, `intentApplied` and `witnessDenied`, which is the set the *note* has to read; `WatchState.kt`'s own header counts a different four, because `TaggedActivity.kt` answers the narrower question of which events change the *activity* and that set drops `retreating` and `intentApplied` while adding `cognitionUnavailable`.
+Neither count is the other's, and both are stated where they are because the two questions are asked in different places.
 `spawnRejected` is one, and it carries three different facts rather than two.
 `alreadyEmbodied` is refused *because* the agent still has its body, where most refusals happen to an agent that has none, and reading them alike labelled a live, visible body `no body` for a whole goal-review cadence.
 `hasDied` is the opposite extreme: it is the *terminal* state itself rather than a request that failed, so it reads as `DEAD - will not return` in alarm and says the permadeath in the same words the `died` record does.
@@ -448,7 +549,8 @@ Read as merely bodiless it understated a permadeath as a temporary condition, an
 `retreating` is the third, and the one where the tag carries the whole of the meaning: a single event name covers a flight starting, carrying on, waiting, ending safely and being left standing in range of something hunting it, which is why `ObserverView.retreatNote` reads the tag and never the detail.
 `intentApplied` is the fourth, and it is the one where a *set* rather than a single value is what the display has to read: since `IntentOutcome.Rejected` carries its own tag, `rejected` is only what a refusal with nothing more specific to say arrives as, so `ObserverView.appliedNote` tests `INTENT_REFUSAL_TAGS` (derived in `EventTag.kt` from `EAT_REFUSALS`, so a refusal added there is covered the day it is added).
 Testing for `rejected` alone made every eat refusal read as `the body did not act on it` - the sentence reserved for a decision that reached no body at all - so an operator could not tell an agent that was already full from one whose decision never arrived anywhere.
-All of them carry an `EventTag` in `BodyEventRecord.outcome`, `BodyEventJournal.reject`, `recordConversion` and `recordRetreat` require it so a new refusal cannot forget to say which it is, and `WatchState`/`ObserverView` branch on the tag.
+`witnessDenied` is the fifth, and its three `LOGIN_` tags are the whole of what it means: `loginDeadIdentity` is the terminal state itself, for the same reason `hasDied` is, while `loginLedgerUnsafe` and `loginIdentityMismatch` are facts about one *connection attempt* and say nothing about the watched agent - read alike they labelled a live, connected agent `no body` and froze its reserve trend, with no per-tick record from a player body able to correct it.
+All of them carry an `EventTag` in `BodyEventRecord.outcome`, `BodyEventJournal.reject`, `recordConversion`, `recordRetreat`, `WitnessJournal.denied` and `WitnessJournal.revived` require it so a new refusal cannot forget to say which it is, and `WatchState`/`TaggedActivity`/`ObserverView` branch on the tag.
 
 **A watch belongs to an observer, not to a sink.**
 `WatchCommand.onCommand` builds a fresh `BukkitObserverSink` every time the command is typed, so `Observatory.watch` compares `ObserverSink.observer` - a player's uuid - and not sink identity.

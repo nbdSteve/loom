@@ -90,6 +90,15 @@ class ObserverView(
             BodyEvent.CONVERTED -> convertedNote(record.outcome)
             BodyEvent.RETREATING -> retreatNote(record.outcome)
             BodyEvent.WORLD_HOLD_FAILED -> Note(HOLD_FAILURE_CAVEAT, ObserverLevel.ALARM)
+            BodyEvent.WITNESS_JOINED -> Note("connected to the server and has a body now", ObserverLevel.CALM)
+            BodyEvent.WITNESS_QUIT ->
+                Note("disconnected. It is not dead; the agent continues.", ObserverLevel.CALM)
+            BodyEvent.WITNESS_DENIED -> deniedNote(record.outcome)
+            BodyEvent.WITNESS_REVIVED ->
+                Note(
+                    "is in the world again after a terminal DEATH. Permadeath was not enforced.",
+                    ObserverLevel.ALARM,
+                )
             // Every tick for a walking agent: the gauge and the activity already say it.
             BodyEvent.MOVED -> null
             // Several a second while an agent regenerates; the standing line carries it.
@@ -138,6 +147,16 @@ class ObserverView(
             // is a secret, and neither is a line: the bound that refused it is the whole
             // meaning, and that is a countable tag rather than prose.
             BodyEvent.THREAT_SUPPRESSED,
+            // The four witness events carry the one kind of detail in Loom that was written
+            // by neither Loom nor a model: a server death message names the weapon that did
+            // it, and a weapon can be renamed on an anvil to anything at all. It is bounded
+            // on the way into the record, which is what makes it safe to *keep*; showing it
+            // would put a stranger's chosen text on an operator's screen, and the meaning of
+            // every one of these events is a countable tag anyway.
+            BodyEvent.WITNESS_JOINED,
+            BodyEvent.WITNESS_QUIT,
+            BodyEvent.WITNESS_DENIED,
+            BodyEvent.WITNESS_REVIVED,
             -> false
         }
 
@@ -276,6 +295,29 @@ class ObserverView(
                 EventTag.HAS_DIED ->
                     Note("had already DIED. Permadeath: this agent will not return.", ObserverLevel.ALARM)
                 else -> Note("was refused a body", ObserverLevel.CONCERN)
+            }
+
+        /**
+         * What to say about a refused login, which is not always bad news either.
+         *
+         * The dead-identity refusal is permadeath working as designed, and is said in the same
+         * words the death itself is, for the same reason a spawn refused to a dead agent is:
+         * for a watch attached after the death, this may be the only record that will ever say
+         * the agent is gone. It is still an alarm, because something is trying to bring a dead
+         * agent back and an operator wants to know that a body process is running that should
+         * not be. The ledger refusal is a different alarm - it says nothing about this agent and
+         * everything about Loom having lost track of which agents are dead, so a run's survival
+         * numbers cannot be trusted until it is understood.
+         */
+        fun deniedNote(outcome: String?): Note =
+            when (outcome) {
+                EventTag.LOGIN_DEAD_IDENTITY ->
+                    Note("was refused a login: it had already DIED and does not return.", ObserverLevel.ALARM)
+                EventTag.LOGIN_LEDGER_UNSAFE ->
+                    Note("was refused a login: Loom cannot read its own death records.", ObserverLevel.ALARM)
+                EventTag.LOGIN_IDENTITY_MISMATCH ->
+                    Note("was refused a login: its name was claimed from another account", ObserverLevel.CONCERN)
+                else -> Note("was refused a login", ObserverLevel.CONCERN)
             }
 
         /**

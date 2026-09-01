@@ -37,6 +37,10 @@ private val WIRE_NAMES =
         BodyEvent.CONVERTED to "converted",
         BodyEvent.WORLD_LOADED to "worldLoaded",
         BodyEvent.WORLD_HOLD_FAILED to "worldHoldFailed",
+        BodyEvent.WITNESS_JOINED to "witnessJoined",
+        BodyEvent.WITNESS_QUIT to "witnessQuit",
+        BodyEvent.WITNESS_DENIED to "witnessDenied",
+        BodyEvent.WITNESS_REVIVED to "witnessRevived",
     )
 
 /**

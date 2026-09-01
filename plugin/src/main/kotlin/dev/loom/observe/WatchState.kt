@@ -13,6 +13,10 @@
  * activity are refused by the same answer, because a failure names the request it was
  * about and a superseded one is not news about the cycle on screen.
  *
+ * The four events whose *name* does not settle what they mean are answered in
+ * `TaggedActivity.kt`, which owns the rule that such a fact is read from the record's countable
+ * outcome tag and never from its prose.
+ *
  * Nothing in this file can reach a body, a mind, or a world. That is what makes
  * attaching an observer incapable of changing an agent's energy, timing, decisions, or
  * routing: there is no call it could make to do so.
@@ -202,6 +206,21 @@ private fun triggerAfter(
  * [WatchState.isFinal] is what a tombstone is read from. Everything else says nothing about
  * it, and is grouped below rather than defaulted so a new body event has to answer this
  * question as well as the one [activityAfter] asks.
+ *
+ * A player body speaks about the same fact in its own vocabulary: a managed player that joined
+ * is a body in the world, one that quit has none, and one that is in the world again after a
+ * terminal death has none either - because it is *dead*, and a revival record is itself proof of
+ * that death. The live player the world is holding is the breach rather than the body, and the
+ * `ALARM` note is what says so; a reading that called that a body would have to call the agent
+ * alive too, and a permadeath is not something the display gets to soften.
+ *
+ * A refused login is the one witness record that speaks about a body only sometimes, and only the
+ * countable tag says when. A refusal because the agent *died* leaves no body by definition. Every
+ * other refusal is a fact about a connection attempt and not about the agent - a second body
+ * process, or something that took a live agent's username, refused while that agent is standing in
+ * the world - so what was already known stands. Read as bodilessness it labelled a connected agent
+ * `no body` and froze its reserve trend, with no per-tick record from a player body able to correct
+ * it; `refusedLoginActivity` states the other half of the same rule.
  */
 private fun bodilessAfter(
     state: WatchState,
@@ -213,6 +232,10 @@ private fun bodilessAfter(
         BodyEvent.DIED -> true
         BodyEvent.SPAWN_REJECTED -> record.outcome != EventTag.ALREADY_EMBODIED
         BodyEvent.CONVERTED -> record.outcome == EventTag.BODY_TAKEN
+        BodyEvent.WITNESS_JOINED -> false
+        BodyEvent.WITNESS_QUIT -> true
+        BodyEvent.WITNESS_DENIED -> record.outcome == EventTag.LOGIN_DEAD_IDENTITY || state.hasNoBody
+        BodyEvent.WITNESS_REVIVED -> true
         BodyEvent.PERCEIVED,
         BodyEvent.DECIDED,
         BodyEvent.INTENT_APPLIED,
@@ -272,6 +295,16 @@ private fun activityAfter(
         // intent as briefly carried out.
         BodyEvent.DECIDED -> state.activity
         BodyEvent.CONVERTED -> convertedActivity(state, record.outcome)
+        BodyEvent.WITNESS_JOINED -> AgentActivity.EMBODIED
+        BodyEvent.WITNESS_QUIT -> AgentActivity.BODILESS
+        BodyEvent.WITNESS_DENIED -> refusedLoginActivity(state, record.outcome)
+        // A revival record is itself proof of the permadeath: every path that writes one has
+        // already established the death - a respawn from a death records it first, a non-death
+        // respawn revives only an agent the durable state already calls dead, and a join revives
+        // only a dead identity. So this may state the death without having seen the `died` record,
+        // which is what a watch attached *after* the fact needs, exactly as `loginDeadIdentity`
+        // already does. The note is what states the breach; see `ObserverView.noteFor`.
+        BodyEvent.WITNESS_REVIVED -> AgentActivity.DEAD
         // Something happened *to* the agent without changing what it is doing.
         BodyEvent.MOVED,
         BodyEvent.ENERGY_CHANGED,
@@ -292,55 +325,3 @@ private fun activityAfter(
         BodyEvent.THREAT_SUPPRESSED,
         -> state.activity
     }
-
-/**
- * What a refused spawn leaves the agent in.
- *
- * One event name, three different facts, and only the countable outcome tells them apart -
- * never the record's prose, which this package may not look at.
- *
- * A spawn refused because the agent *already* has a body says the body is there, so an
- * operator who typed the command twice must not be told that the live body in front of them
- * is gone. A spawn refused because the agent has *died* is the terminal state itself: Loom is
- * permadeath, so the refusal is the last word about that agent rather than a request that
- * failed. Read as merely bodiless it understated a permadeath as a temporary condition, and
- * an in-world run left a dead agent reading `no body` in operator yellow indefinitely - a
- * watch attached after the death never sees the `died` record, so the refusal is the only
- * record that will ever say so. Every remaining refusal is a request Loom could not meet, to
- * an agent that has no body and can still be given one.
- */
-private fun refusedActivity(
-    state: WatchState,
-    outcome: String?,
-): AgentActivity =
-    when (outcome) {
-        EventTag.ALREADY_EMBODIED -> state.activity
-        EventTag.HAS_DIED -> AgentActivity.DEAD
-        else -> AgentActivity.BODILESS
-    }
-
-/**
- * What a cognition failure leaves the agent in.
- *
- * A mind that did not answer *this* cycle is the one thing an operator watching a silent mind
- * is waiting to be told. A failure naming a cycle the line has stopped asking about is not:
- * the agent is doing whatever the answered cycle had it doing, and `mind did not answer`
- * about a cycle that was answered and applied is a line no record ever stated.
- */
-private fun unansweredActivity(
-    state: WatchState,
-    record: BodyEventRecord,
-): AgentActivity = if (answersTheCycle(state, record)) AgentActivity.UNANSWERED else state.activity
-
-/**
- * What a conversion leaves the agent in.
- *
- * One event name, two opposite facts. Loom refuses a conversion, so the ordinary case is
- * a body that never changed and an agent still doing whatever it was. A conversion that
- * got past the refusal took the body with it and nothing re-embodies the agent, so the
- * display has to stop claiming it is standing anywhere.
- */
-private fun convertedActivity(
-    state: WatchState,
-    outcome: String?,
-): AgentActivity = if (outcome == EventTag.BODY_TAKEN) AgentActivity.BODILESS else state.activity

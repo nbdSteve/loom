@@ -27,6 +27,12 @@ import dev.loom.mind.ThreatDriver
 import dev.loom.mind.tcp.TcpCognitionTransport
 import dev.loom.observe.Observatory
 import dev.loom.observe.ObservedEventLog
+import dev.loom.witness.DurablePermadeath
+import dev.loom.witness.FileDeathLedger
+import dev.loom.witness.PlayerWitness
+import dev.loom.witness.WitnessJournal
+import dev.loom.witness.WitnessRegistry
+import dev.loom.witness.bukkit.playerWitnessSeam
 import org.bukkit.command.CommandExecutor
 import org.bukkit.plugin.java.JavaPlugin
 import org.bukkit.scheduler.BukkitTask
@@ -35,6 +41,17 @@ import kotlin.time.Duration.Companion.nanoseconds
 
 /** Name of the append-only body-event log inside the plugin's data folder. */
 private const val EVENT_LOG_FILE = "body-events.jsonl"
+
+/**
+ * Name of the durable permadeath ledger inside the plugin's data folder.
+ *
+ * A second file rather than a query over [EVENT_LOG_FILE], because the two answer different
+ * questions with different failure modes. The event log is evidence: written off the main
+ * thread, bounded so a stalled disk cannot block a tick, and allowed to lose records rather
+ * than stall - which is exactly the wrong trade for the input to an authorisation decision.
+ * This one is small, written synchronously, and read once at startup.
+ */
+private const val DEATH_LEDGER_FILE = "player-deaths.jsonl"
 
 /** The command that drives the port. Must match the `commands:` key in plugin.yml. */
 private const val BODY_COMMAND = "loombody"
@@ -63,6 +80,16 @@ class LoomPlugin : JavaPlugin() {
     private var vigilance: BukkitTask? = null
     private var observatory: Observatory? = null
     private var display: BukkitTask? = null
+
+    /**
+     * The managed set the server-authoritative witness judges against.
+     *
+     * Deliberately empty, and stays empty until something registers a player body in it. That
+     * is what keeps the witness inert: with nothing registered, every login is `Unmanaged`, no
+     * record is written and nobody is denied. The runtime cutover that starts a Mineflayer body
+     * is what will put an identity here.
+     */
+    val managedPlayers: WitnessRegistry = WitnessRegistry()
 
     override fun onEnable() {
         val file =
@@ -111,6 +138,8 @@ class LoomPlugin : JavaPlugin() {
         // A conversion cannot be recognised after it happens, so the attempt is caught
         // as it happens; see BodyConversions.
         server.pluginManager.registerEvents(bodyConversionSeam(), this)
+
+        witnessPlayers(log)
 
         // Actuation runs every tick; cognition does not, and is not called here.
         server.scheduler.runTaskTimer(this, Runnable { port.tick(server.currentTick.toLong()) }, 1L, 1L)
@@ -244,6 +273,36 @@ class LoomPlugin : JavaPlugin() {
                 logger.warning("no decision for ${perception.agentId} (request ${perception.requestId}): $failure")
             },
         )
+    }
+
+    /**
+     * Puts the server-authoritative witness on Loom's own player accounts.
+     *
+     * The construction order is the requirement that tombstones are replayed before login
+     * admission begins: [DurablePermadeath]'s constructor reads the ledger, and only once it has
+     * returned is a listener registered that could admit anybody. Registering the listener first
+     * and replaying afterwards would leave a window in which a dead agent could reconnect, which
+     * is a window measured in whatever a server's startup takes.
+     *
+     * Nothing here starts a player body or registers an identity. With [managedPlayers] empty the
+     * witness has no opinion about any connection, which is what makes this inert until the
+     * runtime cutover.
+     */
+    private fun witnessPlayers(eventLog: BodyEventLog) {
+        val permadeath = DurablePermadeath(FileDeathLedger(dataFolder.toPath().resolve(DEATH_LEDGER_FILE)))
+        val witness =
+            PlayerWitness(
+                managedPlayers,
+                permadeath,
+                WitnessJournal(eventLog),
+                currentTick = { server.currentTick.toLong() },
+                // `severe` rather than `warning`: both conditions it reports mean an invariant
+                // this plugin exists to hold is not holding, and an operator has to see it in a
+                // log they are already reading rather than only in the event record.
+                alert = { detail -> logger.severe(detail) },
+            )
+        server.pluginManager.registerEvents(playerWitnessSeam(witness, this), this)
+        logger.info("Loom player witness ready: ${managedPlayers.size} managed identities, permadeath is durable")
     }
 
     /**

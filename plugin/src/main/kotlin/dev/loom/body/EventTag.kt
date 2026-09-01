@@ -233,6 +233,51 @@ object EventTag {
 
     /** The reserve was spent, which is terminal: nothing eats its way out of a permadeath. */
     const val EAT_RESERVE_SPENT: String = "eatReserveSpent"
+
+    /**
+     * A login was refused because the agent has died, and Loom agents do not return.
+     *
+     * The tag that says permadeath is working, and the only one of the three login refusals
+     * that is a design outcome rather than a fault. Counting a run's refusals by tag is how
+     * an operator tells "the dead stayed dead" from "Loom stopped being able to tell".
+     */
+    const val LOGIN_DEAD_IDENTITY: String = "loginDeadIdentity"
+
+    /**
+     * A login was refused because Loom could not read or write its own death ledger.
+     *
+     * Fail-closed: with the durable state unreadable, Loom cannot say who is dead, so it
+     * admits nobody rather than risk admitting a dead agent. Kept apart from
+     * [LOGIN_DEAD_IDENTITY] because it is the opposite fact about the run - this one says the
+     * refusals carry no information about who died, so the run's survival numbers are
+     * suspect until the ledger is understood.
+     */
+    const val LOGIN_LEDGER_UNSAFE: String = "loginLedgerUnsafe"
+
+    /**
+     * A login named a registered identity with the wrong half of it.
+     *
+     * The username matched a registration and the uuid did not, or the reverse. In Loom's
+     * offline mode the two are related by a hash and this cannot happen, so it fires only
+     * where the assumption has stopped holding - a mode change, or something claiming a
+     * managed name. Refused rather than resolved, because guessing which half is authoritative
+     * is how a witness starts recording evidence about the wrong agent.
+     */
+    const val LOGIN_IDENTITY_MISMATCH: String = "loginIdentityMismatch"
+
+    /**
+     * A dead agent's player got back in through a respawn.
+     *
+     * The two `REVIVED_` tags name how a permadeath was breached, which is the whole content
+     * of a revival record: the removal on death did not take effect before the client asked
+     * to respawn. Distinct from [REVIVED_AFTER_LOGIN] because they implicate different layers
+     * - this one the removal, the other the login refusal - and a run cannot fix the layer it
+     * cannot name.
+     */
+    const val REVIVED_AFTER_RESPAWN: String = "revivedAfterRespawn"
+
+    /** A dead agent's player got back in through a login the refusal should have stopped. */
+    const val REVIVED_AFTER_LOGIN: String = "revivedAfterLogin"
 }
 
 /** Names which event prompted cognition. */
