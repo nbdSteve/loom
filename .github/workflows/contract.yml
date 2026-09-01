@@ -12,6 +12,12 @@ name: contract
 # runs inside `plugin`. Neither job proves the other, which is the point - three
 # hand-written descriptions of one wire agree only because the shared corpus makes them.
 #
+# The `research` job is a third, unrelated contract: the versioned shape of an
+# experiment manifest. It validates every committed manifest against the exact
+# generation that manifest declares, so a schema edit that would reject evidence
+# already published fails here rather than being discovered by rewriting the
+# evidence. It shares no types or dependencies with the other two.
+#
 # The `bridge` job is the one no single suite can do alone: it starts the real
 # Rust cognition service and drives the JVM bridge against it, so a disagreement
 # the shared fixtures cannot express - line framing, a tag only one serializer
@@ -63,6 +69,25 @@ jobs:
       # fails if package.json and the lockfile disagree, so a dependency added
       # without regenerating the lockfile fails here instead of resolving to
       # whatever is newest on the day the job runs.
+      - name: Install the pinned tree
+        run: npm ci
+      - name: lint and tests
+        run: npm run check
+
+  research:
+    name: Research manifest schema versioning
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: research
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: research/package-lock.json
       - name: Install the pinned tree
         run: npm ci
       - name: lint and tests

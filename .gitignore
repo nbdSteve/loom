@@ -11,9 +11,9 @@ target/
 **/*.rs.bk
 Cargo.lock
 
-# Node (body/). The lockfile is deliberately NOT ignored: the body package pins
-# its dependencies exactly, and the lockfile is what makes a checkout resolve the
-# same tree the gate was run against.
+# Node (body/, research/). The lockfile is deliberately NOT ignored: both packages
+# pin their dependencies exactly, and the lockfile is what makes a checkout resolve
+# the same tree the gate was run against.
 node_modules/
 
 # IDEs / editors

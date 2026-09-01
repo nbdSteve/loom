@@ -1,0 +1,28 @@
+{
+  "name": "loom-research",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The versioned schema for Loom research experiment manifests, the validator that selects a version, and the semantic suite that pins every committed manifest against the version it declares.",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "lint": "standard",
+    "format": "standard --fix",
+    "check": "npm run lint && npm test"
+  },
+  "dependencies": {
+    "ajv": "8.20.0"
+  },
+  "devDependencies": {
+    "standard": "17.1.2"
+  },
+  "standard": {
+    "env": [
+      "node"
+    ]
+  }
+}

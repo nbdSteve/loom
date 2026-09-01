@@ -1,0 +1,231 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loom.dev/research/loom-experiment-manifest-2.schema.json",
+  "title": "Loom experiment manifest, generation 2",
+  "description": "The shared core every Loom research experiment manifest carries, as of generation 2. It constrains only the fields a reader needs in order to find the evidence, know where the numbers came from, and read the integrity verdict; every other section of a manifest is that experiment's own measurement and is deliberately unconstrained here. Four shared-core shapes differ from generation 1 and each one alone would have required the bump: rawEvidence.credentialScan.scannedFor became an array, outcome became a prose statement, scientificUsability.scope became an array, and clientPresence moved from inside environment to the root. This is the generation a new manifest declares, and it is selected by being the highest-numbered schema in this directory rather than by any constant written down elsewhere. The whole rule, and why, is research/schema/README.md.",
+
+  "$comment": "Self-contained on purpose: this generation shares no $ref with any other, so editing another generation cannot change what generation 2 means. No object here sets additionalProperties false - that is what keeps experiment-specific measurement sections schema-neutral rather than something each generation has to enumerate.",
+
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "experimentId",
+    "title",
+    "sourceCommit",
+    "sourceCommitShort",
+    "sourceRepository",
+    "fieldProvenance",
+    "rawEvidence",
+    "environment",
+    "clientPresence",
+    "provenance",
+    "timing",
+    "eventCounts",
+    "integrityChecks",
+    "knownWarnings",
+    "outcome",
+    "scientificUsability"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "description": "The generation of the shared core this manifest is written in. A const rather than a pattern: the tag is what selects this file, so a manifest cannot declare one generation and be read as another.",
+      "const": "loom-experiment-manifest/2"
+    },
+
+    "experimentId": {
+      "description": "The experiment's directory name: the date the run happened, then a slug naming the question rather than the outcome.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9][a-z0-9-]*$"
+    },
+
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+
+    "sourceCommit": {
+      "description": "The full commit the run was made against, so a reader can check out the code that produced the evidence.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+
+    "sourceCommitShort": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+
+    "sourceRepository": {
+      "type": "string",
+      "minLength": 1
+    },
+
+    "fieldProvenance": {
+      "description": "The statement of what a reader may re-derive from this directory and what they are taking on trust. Required rather than assumed, because a manifest that does not say which of its numbers are attested is one a reader cannot audit at all.",
+      "type": "string",
+      "minLength": 1
+    },
+
+    "rawEvidence": {
+      "description": "Where the evidence is and how to prove the file in hand is the file the numbers came from.",
+      "type": "object",
+      "required": ["file", "format", "sha256", "records", "immutable", "credentialScan"],
+      "properties": {
+        "file": { "type": "string", "minLength": 1 },
+        "format": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "records": { "type": "integer", "minimum": 1 },
+        "immutable": {
+          "description": "A const rather than a boolean: committed evidence is immutable, so a manifest declaring otherwise is describing something this directory does not hold.",
+          "const": true
+        },
+        "credentialScan": {
+          "description": "The scan that proves this particular file carries no credential, rather than trusting that Loom never writes one.",
+          "type": "object",
+          "required": ["scannedFor", "matches", "note"],
+          "properties": {
+            "scannedFor": {
+              "description": "One entry per pattern the file was scanned for, rather than generation 1's single prose sentence. An array is what makes the scan's coverage countable and comparable between runs, and adding a pattern to a later run is then an extra item rather than a reshaped field - which is exactly why this generation exists and why no further generation is owed for a new pattern.",
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "matches": { "type": "integer", "minimum": 0 },
+            "note": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+
+    "environment": {
+      "description": "What the run ran on and in. Generation 2 carries clientPresence at the root instead of nesting it here, because whether anything was watching is a fact about the run rather than a property of the server it ran on.",
+      "type": "object",
+      "required": ["server", "world", "attested"],
+      "properties": {
+        "server": {
+          "type": "object",
+          "required": ["software", "minecraftVersion"],
+          "properties": {
+            "software": { "type": "string", "minLength": 1 },
+            "minecraftVersion": { "type": "string", "minLength": 1 }
+          }
+        },
+        "world": { "type": "object" },
+        "attested": { "$ref": "#/$defs/attested" }
+      }
+    },
+
+    "clientPresence": {
+      "description": "Whether anything was watching, and what that would have contributed to the run. Required at the root in this generation.",
+      "type": "object",
+      "minProperties": 1
+    },
+
+    "provenance": {
+      "description": "Which mind answered, and what each decision was stamped with.",
+      "type": "object",
+      "required": ["backend", "decisionsByStamp", "attested"],
+      "properties": {
+        "backend": { "type": "string", "minLength": 1 },
+        "decisionsByStamp": {
+          "description": "One entry per distinct provenance stamp the run produced. Empty is legal: a run whose mind never answered still has to be able to say so.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["tier", "model", "promptVersion", "decisions"],
+            "properties": {
+              "tier": { "type": "string", "minLength": 1 },
+              "model": { "type": "string", "minLength": 1 },
+              "promptVersion": { "type": "string", "minLength": 1 },
+              "decisions": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "attested": { "$ref": "#/$defs/attested" }
+      }
+    },
+
+    "timing": {
+      "description": "The run's extent in ticks, which is the clock the event log actually carries.",
+      "type": "object",
+      "required": ["firstTick", "lastTick", "tickSpan", "attested"],
+      "properties": {
+        "firstTick": { "type": "integer", "minimum": 0 },
+        "lastTick": { "type": "integer", "minimum": 0 },
+        "tickSpan": { "type": "integer", "minimum": 0 },
+        "attested": { "$ref": "#/$defs/attested" }
+      }
+    },
+
+    "eventCounts": {
+      "description": "The record census, so a reader can tell what the run wrote before reading what it means.",
+      "type": "object",
+      "required": ["total", "agent"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "agent": { "$ref": "#/$defs/recordCensus" },
+        "world": { "$ref": "#/$defs/recordCensus" }
+      }
+    },
+
+    "integrityChecks": {
+      "description": "The preconditions that had to hold for the run to be evidence for the thing it measured. Which checks a run states is that run's business; that it states some is not.",
+      "type": "object",
+      "minProperties": 1
+    },
+
+    "knownWarnings": {
+      "description": "Required even when empty: an absent list and an empty list are the difference between a run that found no warnings and one that never looked.",
+      "type": "array"
+    },
+
+    "outcome": {
+      "description": "What became of the agent, as one prose statement. Generation 1 carried a structured object here, which is why the two generations differ: a reader written against that one reads fields off this string.",
+      "type": "string",
+      "minLength": 1
+    },
+
+    "scientificUsability": {
+      "description": "The verdict on what this run may be cited for, and what it may not.",
+      "type": "object",
+      "required": ["verdict", "scope", "outOfScope"],
+      "properties": {
+        "verdict": { "type": "string", "minLength": 1 },
+        "scope": {
+          "description": "One entry per claim the run supports, rather than generation 1's single sentence, so a citation can name the claim it rests on.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "outOfScope": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "attested": {
+      "description": "A block of values the operator supplied from outside the raw evidence. It must name its source, because an attestation whose source is not stated is a number a reader can neither check nor decide how far to trust.",
+      "type": "object",
+      "required": ["source"],
+      "properties": {
+        "source": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "recordCensus": {
+      "description": "How many records one chain holds, broken down by event.",
+      "type": "object",
+      "required": ["agentId", "records", "byEvent"],
+      "properties": {
+        "agentId": { "type": "string", "minLength": 1 },
+        "records": { "type": "integer", "minimum": 0 },
+        "byEvent": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

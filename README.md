@@ -18,7 +18,10 @@ This is a monorepo with two runtimes, shared contracts, and the research record:
 - `body/` - the Node half of the body-control contract, and the Mineflayer player
   body process it drives. Runnable, and inert: nothing in Loom's runtime speaks to
   it yet. See `body/README.md`.
-- `research/` - one directory per experiment; see `research/README.md`, which makes everything there append-only.
+- `research/` - one directory per experiment, plus the versioned schema a manifest
+  is validated against; see `research/README.md`, which makes everything there
+  append-only, and `research/schema/README.md` for when a manifest's
+  `schemaVersion` changes.
 
 The body exposes only a bounded perception to the mind, and the mind never
 reaches directly into world state. Cognition is event-driven, never per-tick, and

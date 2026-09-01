@@ -39,7 +39,8 @@ They come from the harness and the server log, and neither is committed.
 Every one of them sits inside an `attested` block naming its source, or inside an entry whose own `attested` block declares the whole entry to be log-sourced, so a reader can tell at a glance which numbers they can check and which they are taking on trust.
 An attestation that the event log could have produced instead is a derivation that was not done.
 
-The manifest carries `schemaVersion`, and a change to the shape of the manifest raises it rather than editing past manifests to match.
+The manifest carries `schemaVersion`, and which changes raise it - and which do not - is `schema/README.md`, beside the schemas that enforce it.
+Ask `schema/manifest-schema.js` for the version a new manifest declares rather than copying a tag from the run before it.
 
 ### `README.md` is the argument
 
