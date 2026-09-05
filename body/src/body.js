@@ -22,12 +22,14 @@
  *   A name such as `localhost` is refused rather than resolved: what it means is
  *   whatever the host's resolver last said, so a loopback promise checked against a
  *   name is not a promise at all.
- * - **One internal plugin is loaded, and the rest of the lifecycle is Loom's own.**
- *   See `INTERNAL_LIFECYCLE_PLUGINS` and `announceLogin`: Mineflayer's default is to
- *   load all of them, which puts a physics interval, autonomous position updates, an
- *   automatic respawn and a whole shelf of action plugins inside a process whose
- *   purpose is to make no choices. `respawn: false` on top of that keeps the decision
- *   to come back to life out of the one internal plugin that would make it.
+ * - **Only the plugins that *report* are loaded, and what they leave out is Loom's
+ *   own.** See `INTERNAL_REPORTING_PLUGINS` and `body/src/gamestate.js`: Mineflayer's
+ *   default is to load all of them, which puts a physics interval, autonomous position
+ *   updates, an automatic respawn and a shelf of action plugins inside a process whose
+ *   purpose is to make no choices. What is loaded is what turns the server's own
+ *   packets into readable state - the world, the entities, the clock, the vitals and
+ *   the inventory - and `respawn: false` on top of that keeps the decision to come
+ *   back to life out of the one loaded plugin able to make it.
  * - **The dependency tree's own debug logging is switched off before it is loaded.**
  *   See `silenceDependencyDebug`: `debug` decides whether a logger writes at the
  *   moment it is created, which is `require` time, so an inherited `DEBUG` has to be
@@ -36,12 +38,14 @@
  *   the protocol's own.** This module adds only the bounds a *socket* needs, which
  *   `protocol.js` cannot state because it has no socket: how long an unterminated
  *   line may grow, how many connections may be admitted, how many request ids one
- *   connection may be remembered for, how many refusals a connection may earn, and
- *   how long a silent one may hold.
+ *   connection may be remembered for, how many peer errors a connection may earn, how
+ *   many *not ready* answers it may earn for asking early, and how long a silent one
+ *   may hold.
  * - **A refusal is a request answered.** A correlated one reserves its request id
  *   and counts in `requestsHandled` before its verdict is read, so a duplicate stays
  *   a duplicate after a refusal and a controller cannot spend one id over and over.
- *   See `handle`.
+ *   `notReady` gives the id back, because it is the one answer that asks for the same
+ *   request again. See `handle` and `refuse`.
  * - **An authenticated shutdown is always acknowledged.** Repeating it is an
  *   acknowledgement and not a `shuttingDown` refusal, and only the first one starts
  *   teardown. See `answer`.
@@ -57,15 +61,21 @@ const { performance } = require('node:perf_hooks')
 const {
   LIFECYCLE_STATES,
   MAX_FRAME_BYTES,
+  eatReport,
   handshakeAccepted,
   isControlId,
   isUsername,
   decodeRequest,
   encodeResponse,
   refusal,
+  senseReport,
   shutdownAccepted,
   statusReport
 } = require('./protocol')
+
+const { followWorldState } = require('./gamestate')
+const { eatFromSlot, senseMemory } = require('./eating')
+const { senseReading, vitalsOf } = require('./sensing')
 
 /** Every frame this generation ends with, and the byte a reader splits on. */
 const FRAME_TERMINATOR = '\n'
@@ -79,11 +89,19 @@ const MAX_CONTROL_CONNECTIONS = 32
  * This is what bounds "outstanding requests" on a wire whose answers are
  * synchronous: nothing can be in flight here, so the unbounded thing is the *set*
  * a duplicate is detected against. Past this bound a further id is refused as
- * `tooManyRequests` and is the one correlated refusal that reserves nothing - which
- * is what makes the bound a bound. It still counts in `requestsHandled`, because it
- * is a request this process answered. Duplicate detection therefore stays exact for
- * every id the process did reserve, and neither the process nor a fresh connection
- * is any less usable for having reached it.
+ * `tooManyRequests`, which reserves nothing - that is what makes the bound a bound. It
+ * still counts in `requestsHandled`, because it is a request this process answered.
+ * Duplicate detection therefore stays exact for every id the process did reserve, and
+ * neither the process nor a fresh connection is any less usable for having reached it.
+ *
+ * A `notReady` answer reserves nothing either, and for a different reason: its id is
+ * reserved and then **released**, because that round trip minted no handle and completed
+ * nothing a duplicate could contradict. Retained, an expected poll spent this bound -
+ * so a controller asking early through a slow login filled it in 63 frames and then
+ * earned `tooManyRequests`, which *is* a peer error and closed the channel out of the
+ * abuse budget after eight more. That put the failure [MAX_NOT_READY_PER_CONNECTION]
+ * exists to remove back on the same connection, 72 frames later instead of 8. See
+ * `refuse`.
  */
 const MAX_TRACKED_REQUESTS = 64
 
@@ -94,8 +112,38 @@ const MAX_TRACKED_REQUESTS = 64
  * rather than free - and a peer sending nothing this process can read is not a
  * controller. The connection is closed rather than the process stopped, because
  * one bad channel is not a reason to abandon a live player.
+ *
+ * This is a budget for *peer errors* alone - `malformedFrame`, `wrongAgent`,
+ * `duplicateRequestId` and the rest - which is what its rationale above is about.
+ * `notReady` is not one of them and has [MAX_NOT_READY_PER_CONNECTION] instead.
  */
 const MAX_REFUSALS_PER_CONNECTION = 8
+
+/**
+ * Most `notReady` answers one control connection may earn before it is closed.
+ *
+ * Its own counter rather than a share of [MAX_REFUSALS_PER_CONNECTION], because a
+ * `notReady` is not a peer error at all: it is the ordinary answer to a sense taken while
+ * the body is still connecting or still loading the chunks around it, and to an eat that
+ * arrived while the previous meal is still in the mouth. `sense`'s own header tells a
+ * controller what to do about one - ask again - so counted as abuse a controller polling at
+ * 1 Hz through a real login lost its channel after eight seconds of doing exactly that,
+ * and `offered.forget` took every slot handle on it as well.
+ *
+ * It is still a bound, because a controller that polls for ever is still holding one of the
+ * connections this process admits. The boundary is the one
+ * [MAX_REFUSALS_PER_CONNECTION] has, stated here because the two counters are read
+ * separately and a reader must not have to infer it twice: the 64th `notReady` is
+ * **written**, and the connection is closed behind it, so there is no 65th request on that
+ * channel.
+ *
+ * That boundary is the one a controller actually meets, which it was not while a `notReady`
+ * kept its request id: [MAX_TRACKED_REQUESTS] is the same 64 and was reached first, so the
+ * 64th poll earned `tooManyRequests` rather than this. Releasing the id is what makes this
+ * counter the one that governs, and the two numbers are independent again rather than
+ * related by coincidence.
+ */
+const MAX_NOT_READY_PER_CONNECTION = 64
 
 /**
  * How long a control connection may say nothing before it is closed.
@@ -133,45 +181,66 @@ const UNCONFIGURED = 'the loom body refuses this configuration'
 const QUIT_REASON = 'disconnect.quitting'
 
 /**
- * The only Mineflayer internal plugin this process loads, with
- * `loadInternalPlugins` off so that this list is the whole of it.
+ * Every Mineflayer internal plugin this process loads, with `loadInternalPlugins` off
+ * so that this list is the whole of it.
  *
  * The loader keeps an internal plugin when `options.plugins[key] || loadInternalPlugins`
- * is true, so naming this one with the flag off loads exactly this one.
+ * is true, so naming these with the flag off loads exactly these.
  *
- * `health` is where `spawn` and `death` are, and `respawn: false` is what keeps it
- * from making the one gameplay decision it is able to make. `end`, `error` and
- * `connect` are wired to the raw client by the loader itself and need no plugin at
- * all, and `login` is `announceLogin` below. Everything left out is a choice this
- * process must not make - `physics` runs a movement interval and sends autonomous
- * position updates, `kick` performs an automatic respawn, and the rest are action
- * plugins (dig, place, attack, craft, inventory, chat) that exist to do things in
- * the world.
+ * The line the list is drawn on is **report against act**. Every plugin here turns
+ * packets the server sends of its own accord into state a reader can ask about, and
+ * none of them decides anything:
+ *
+ *  - `health` is where `spawn` and `death` are, and where `bot.health`, `bot.food` and
+ *    `bot.foodSaturation` come from. `respawn: false` is what keeps it from making the
+ *    one gameplay decision it is able to make.
+ *  - `entities` is the entity index - `bot.entities`, and `bot.entity` for this body.
+ *  - `blocks` is the world - `bot.blockAt` and `bot.world`, whose `raycast` is what a
+ *    line of sight is measured with.
+ *  - `time` is the clock - `bot.time.timeOfDay` and the day count.
+ *  - `inventory` is the window state behind `bot.inventory`, and the two operations an
+ *    explicit meal is made of, `bot.equip` and `bot.consume`.
+ *  - `simple_inventory` is what `inventory`'s own `equip` is defined in.
+ *
+ * Everything left out is a choice this process must not make. `physics` runs a movement
+ * interval and sends autonomous position updates; `kick` performs an automatic respawn;
+ * `game` writes the vanilla client's respawn on a `win_game` game-state change; and the
+ * rest are action plugins (dig, place, craft, chat, villager trading, creative mode)
+ * that exist to do things in the world.
+ *
+ * The line is drawn per *plugin* and not per method, and two of the plugins above bring
+ * actions with them that nothing here wants: `entities` defines `bot.attack`, `bot.mount`
+ * and `bot.useOn` beside the entity index, and `simple_inventory` defines `bot.toss` and
+ * `bot.tossStack` beside the `equip` a meal needs. They cannot be left behind - the index
+ * and `equip` are exactly what a `sense` and an `eat` are read and carried out through -
+ * so what keeps them from being taken is that no operation on this wire calls one. That is
+ * the *wire* being five operations rather than a list of methods being withheld, which is
+ * why it is pinned as behaviour in `test/plugins.test.js` rather than stated here alone.
+ * Note that `bot.quit` is *not* among them: it is `kick`'s, and `kick` is not loaded, which
+ * is why `quitBot` cannot rely on it.
+ *
+ * `end`, `error` and `connect` are wired to the raw client by the loader itself and need
+ * no plugin at all. `login`, `bot.game` and the clientbound `position` packet are
+ * `body/src/gamestate.js`, which is the reporting half of `game` and `physics` with none
+ * of the deciding half - and which that file, not this one, states the reasons for.
+ *
+ * Two loaded plugins write a packet unasked, and both are protocol flow control rather
+ * than gameplay. `blocks` answers a chunk batch with `chunk_batch_received`, which is
+ * how the server is told what rate to send terrain at; without it a body is sent one
+ * batch and no more. `inventory` answers a window's `state_id` when it acknowledges a
+ * click, which is only reached by a click this process makes on purpose. Neither is a
+ * choice about the world, in the same category as the `keep_alive` minecraft-protocol's
+ * own client answers below any plugin
+ * (`minecraft-protocol/src/client/keepalive.js`).
  */
-const INTERNAL_LIFECYCLE_PLUGINS = Object.freeze(['health'])
-
-/**
- * The login half of the lifecycle, as a plugin of Loom's own.
- *
- * Mineflayer emits `login` from its `game` plugin, and that plugin is not loadable
- * here whatever else it is useful for: on a `win_game` game-state change it writes
- * `client_command` back at the server, which is the vanilla client's *respawn* -
- * exactly the automatic respawn `respawn: false` exists to prevent, arriving by
- * another route and reachable by any server that sends the packet. Loading it for
- * one event would have put a gameplay decision inside a process whose whole purpose
- * is to make none.
- *
- * So this is the whole of what was wanted from it: the raw `login` packet, said once
- * as the lifecycle event. Nothing is read out of the packet and nothing is written
- * back. What is deliberately given up with the rest of that plugin is `bot.game`,
- * the dimension codec, the client brand and the `ping`/`pong` latency reply - none
- * of which this process reports, and none of which keeps a connection alive:
- * `keep_alive` is answered by minecraft-protocol's own client
- * (`minecraft-protocol/src/client/keepalive.js`), below any plugin.
- */
-function announceLogin (bot) {
-  bot._client.on('login', () => bot.emit('login'))
-}
+const INTERNAL_REPORTING_PLUGINS = Object.freeze([
+  'blocks',
+  'entities',
+  'health',
+  'inventory',
+  'simple_inventory',
+  'time'
+])
 
 /**
  * Every environment variable the dependency tree reads to turn on unbounded
@@ -298,8 +367,8 @@ function checkedConfiguration ({ agentId, username, minecraft, control }) {
  * Five of them are decisions rather than settings. `auth: 'offline'` is why no
  * credential is embedded anywhere in this package: the only server this process
  * will connect to is a loopback one in offline mode. `loadInternalPlugins: false`
- * with `plugins` naming `INTERNAL_LIFECYCLE_PLUGINS` and `announceLogin` is the
- * policy-free invariant, and `respawn: false` keeps the one internal plugin that
+ * with `plugins` naming `INTERNAL_REPORTING_PLUGINS` and `followWorldState` is the
+ * policy-free invariant, and `respawn: false` keeps the one loaded plugin that
  * would make a gameplay decision from making it. `hideErrors: true` stops Mineflayer
  * printing a raw transport error, which is unbounded text that has carried a local
  * path before now; this process reports the bounded `failed` state instead, which is
@@ -310,8 +379,8 @@ function checkedConfiguration ({ agentId, username, minecraft, control }) {
  * caller's own to inject (`mineflayer/lib/loader.js`).
  */
 function botOptionsFor ({ username, minecraft }) {
-  const plugins = { loomLifecycle: announceLogin }
-  for (const name of INTERNAL_LIFECYCLE_PLUGINS) plugins[name] = true
+  const plugins = { loomWorldState: followWorldState }
+  for (const name of INTERNAL_REPORTING_PLUGINS) plugins[name] = true
   const options = {
     host: minecraft.host,
     port: minecraft.port,
@@ -372,6 +441,20 @@ function createBody (options) {
   // a controller that pipelined a status behind its shutdown is refused rather than
   // served, and gets that refusal on the socket it is still holding.
   let closing = false
+  // One meal at a time. `bot.consume` cancels an eating task that is still running, so a
+  // second eat arriving mid-meal would make the *first* one throw and be reported as
+  // `slotInaccessible` - a fault to go and look at, about a meal that was in fact
+  // interrupted by the controller's own next request. The second is refused as `notReady`
+  // instead, which is the truthful answer: a body with its mouth full is not ready to be
+  // given something else to eat.
+  let eating = false
+  // The slots recent sense answers offered, which is the whole of what makes a slot handle
+  // request-scoped. One memory for the whole body, so no number of peers can make it grow,
+  // but every entry in it names the connection the answer went out on as well as the
+  // request id: two of the connections this process allows may each sense under one id, and
+  // a handle that meant different slots on two sockets would be a handle that named
+  // nothing. `eating.js` carries why.
+  const offered = senseMemory()
   const sockets = new Set()
   const server = net.createServer({ allowHalfOpen: false }, (socket) => accept(socket))
   server.on('error', failControlServer)
@@ -543,7 +626,7 @@ function createBody (options) {
    * construction. A body stopped while still connecting - which is every body whose
    * server is not there - therefore had no `quit` to call at all, so nothing ended
    * its socket and the process it was stopping stayed alive. `kick` is not among
-   * `INTERNAL_LIFECYCLE_PLUGINS` either, so `quit` is never injected here at all.
+   * `INTERNAL_REPORTING_PLUGINS` either, so `quit` is never injected here at all.
    * All it adds is a default reason, which `QUIT_REASON` states instead.
    *
    * The lifecycle listeners are deliberately **left attached**. `transition` is
@@ -593,12 +676,18 @@ function createBody (options) {
 
   /** Takes one control connection, with every per-connection bound it has. */
   function accept (socket) {
-    const session = { pending: '', seen: new Set(), refusals: 0, handshaken: false }
+    const session = { pending: '', seen: new Set(), refusals: 0, notReady: 0, handshaken: false }
     socket.setNoDelay(true)
     // A control channel is not a reason to fail: a peer that resets its connection
     // has said nothing about the player.
     socket.on('error', () => closeSocket(socket))
-    socket.on('close', () => sockets.delete(socket))
+    socket.on('close', () => {
+      sockets.delete(socket)
+      // Nothing can name one of this connection's sense answers again, so keeping them
+      // would spend the body's bounded memory on handles no controller can still eat
+      // against.
+      offered.forget(session)
+    })
     if (sockets.size >= MAX_CONTROL_CONNECTIONS) {
       refuse(socket, session, { code: 'tooManyRequests', close: true })
       return
@@ -670,6 +759,11 @@ function createBody (options) {
    * unreadable line and a line whose `requestId` is not a bounded control id are
    * both refused without one, and echoing anything there would be inventing a
    * correlation the controller never sent.
+   *
+   * One correlated answer gives its id back rather than keeping it, and only one:
+   * `refuse` releases the id of a `notReady`, which is the answer that asks the
+   * controller to send the same request again. Everything else a readable id earns here
+   * it keeps.
    */
   function handle (socket, session, line) {
     if (Buffer.byteLength(line) > MAX_FRAME_BYTES) {
@@ -697,27 +791,33 @@ function createBody (options) {
     if (verdict.request.agentId !== agentId) {
       return refuse(socket, session, { code: 'wrongAgent', requestId })
     }
-    return answer(socket, session, verdict.request.op, requestId)
+    return answer(socket, session, verdict.request, requestId)
   }
 
   /**
-   * The three operations of this generation.
+   * The five operations of this generation.
    *
    * A handshake is answered first, and refused while stopping: a process that has
    * begun leaving has nothing true to say about the generation it is agreeing to.
-   * The handshake gate is next, and applies to both remaining operations, because a
-   * status or a shutdown from a peer that has not agreed the protocol generation is
-   * a controller acting on a guess.
+   * The handshake gate is next, and applies to every remaining operation, because a
+   * request from a peer that has not agreed the protocol generation is a controller
+   * acting on a guess.
    *
    * A shutdown is then **always acknowledged**, and only the first one starts
    * teardown. Refused as `shuttingDown` once stopping had begun - the way this once
    * was - a controller that retried a shutdown it had not yet seen answered, or
    * whose acknowledgement was lost with its connection, would be told its request
-   * was rejected by a process that was in fact doing exactly what it asked. A status
-   * is the operation that genuinely cannot be answered while stopping, so it is the
-   * one refused there.
+   * was rejected by a process that was in fact doing exactly what it asked. Every
+   * other operation genuinely cannot be answered while stopping, so all three are
+   * refused there: a status would report a process that is going away, and a sense or
+   * an eat would read or use a player that is being taken out of the world.
+   *
+   * A status is the residual rather than a branch of its own, which is total because
+   * `decodeRequest` admits exactly `OPERATIONS` and the four above are the rest of
+   * them.
    */
-  function answer (socket, session, op, requestId) {
+  function answer (socket, session, request, requestId) {
+    const op = request.op
     if (op === 'handshake') {
       if (closing) {
         return refuse(socket, session, { code: 'shuttingDown', requestId })
@@ -739,6 +839,8 @@ function createBody (options) {
     if (closing) {
       return refuse(socket, session, { code: 'shuttingDown', requestId })
     }
+    if (op === 'sense') return sense(socket, session, request, requestId)
+    if (op === 'eat') return eat(socket, session, request, requestId)
     const { stateMs, uptimeMs } = snapshot()
     return write(socket, statusReport({
       requestId,
@@ -751,13 +853,194 @@ function createBody (options) {
   }
 
   /**
+   * Answers one sense with what the body read, or refuses it as `notReady`.
+   *
+   * The whole reading is synchronous, which is a property of the client library rather
+   * than of this code: `bot.world` is the *sync* world, so a line of sight is a return
+   * value and not a promise, and nothing else a sense reads is a round trip either.
+   *
+   * `notReady` covers both ways a body cannot answer - it is not in the world, or it is
+   * and the library has not yet reported something the wire requires - because they are
+   * one fact to a controller: ask again. Neither is a fault, and neither may be answered
+   * with a default, which is the rule `sensing.js` holds and this refusal is the other
+   * half of.
+   *
+   * The answer is built before anything is remembered about it, so a frame that never
+   * went out leaves no slot handle behind: an eat naming it is then `senseForgotten`,
+   * which is true, rather than a meal resolved against an inventory no controller was
+   * ever shown.
+   */
+  function sense (socket, session, request, requestId) {
+    const answer = senseAnswer(request, requestId)
+    if (answer === undefined) {
+      return refuse(socket, session, { code: 'notReady', requestId })
+    }
+    // Remembered against the connection this answer goes out on as well as the request id,
+    // because that pair is the round trip a slot handle is scoped to: the duplicate-id
+    // guard is `session.seen`, which is per connection, so an id alone names an answer
+    // another peer may have given.
+    offered.remember(session, requestId, answer.inventory)
+    return write(socket, answer.frame)
+  }
+
+  /**
+   * The whole of one sense answer - the reading, and the frame that would carry it - or
+   * `undefined` for a body that cannot state one.
+   *
+   * Both halves are inside one guard because both are ways this body can fail to produce
+   * an answer, and a controller has one thing to do about either: ask again. The library
+   * reads a scene it does not own, so a throw from below is always possible; the encoder
+   * refuses a frame this process would not read back, and `senseReport` therefore throws
+   * rather than returning something unsendable.
+   *
+   * The encoding half is defence in depth rather than a reachable case today, and that is
+   * worth stating so it is not read as dead: `MAX_FRAME_BYTES` is derived as a *sum* over
+   * the very bounds `sensing.js` refuses outside of, so a legal reading cannot overrun it.
+   * The point is that this runs inside a socket `data` listener, where an exception is not
+   * a refused request but the end of the process, taking every other agent's connection
+   * with it and printing unbounded text from below this process on the way out.
+   *
+   * Nothing is logged here, for the reason `settleMeal` gives: there is nothing to log
+   * except that unbounded text.
+   */
+  function senseAnswer (request, requestId) {
+    if (state !== 'ready') return undefined
+    try {
+      const reading = senseReading(bot, { radius: request.radius, limit: request.limit })
+      if (reading === undefined) return undefined
+      return { inventory: reading.inventory, frame: senseReport({ requestId, agentId, ...reading }) }
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Takes one eat, and answers it later.
+   *
+   * This is the one operation of this generation that cannot be answered inside the
+   * frame that asked for it: bringing a stack to hand and using it are both round trips
+   * to the server. So the answer is written when the meal is over, on the socket that
+   * asked for it, and `receive` goes on draining whatever else the controller had already
+   * sent - which is what makes the one-meal-at-a-time rule necessary rather than tidy.
+   *
+   * **Admission is where an eat's `state` and its `vitals` come from**, and both are read
+   * here rather than at write time. The lifecycle state is checked, and the three vitals are
+   * read with it, because an eat answer states `ready` by contract and a reading has to come
+   * from the body that was in that state: this is the moment the body was `ready` and the
+   * moment those numbers were true of it. A body whose vitals cannot be stated *now* is
+   * refused `notReady` before anything is consumed, which is honest - nothing has happened,
+   * so asking again costs nothing - and it is what leaves `settleMeal` a whole reading to
+   * fall back on rather than a refusal to invent for a meal that already happened.
+   */
+  function eat (socket, session, request, requestId) {
+    const admitted = state === 'ready' && !eating ? vitalsOf(bot) : undefined
+    if (admitted === undefined) {
+      return refuse(socket, session, { code: 'notReady', requestId })
+    }
+    eating = true
+    // Nothing awaits this here - the answer goes on the socket rather than to a caller -
+    // so its own residual failure is caught rather than left to become an unhandled
+    // rejection: a body must not abort over one meal it could not answer.
+    settleMeal(socket, session, request, requestId, admitted).catch(() => {})
+    return true
+  }
+
+  /**
+   * Carries out one meal and answers it.
+   *
+   * Every path answers, including a body that could not state an answer at all: a meal
+   * with no reply would leave a controller holding a request id for ever and would
+   * eventually close a channel that was working perfectly, on its own idle timer.
+   *
+   * The vitals are read after the meal where that reading can be stated, because they are
+   * the evidence a run counts consumption from - the food level an eat left behind, not the
+   * one it started with. They are read on a refusal too, for the reason `eatReport` states.
+   *
+   * **The reading `eat` was admitted under is the fallback, and never a refusal.** A fresher
+   * reading is preferred only while the body is still in the state the frame claims and the
+   * three vitals can still be stated together; otherwise `admitted` is carried whole and
+   * unchanged. Both are real readings of this body and neither is a mix of the two.
+   *
+   * Each half of that condition is a case this reached. A vitals read fails after a meal for
+   * reasons that have nothing to do with the meal - a server plugin raising the food level
+   * past vanilla's own ceiling is enough, since nothing clamps it - and answering that with
+   * `notReady` told a controller to ask again for a loaf that was already gone and left the
+   * run with no `eaten` record of it at all. And a body that died or disconnected mid-meal
+   * reads back perfectly statable numbers that are *not* the body this answer is about: the
+   * frame says `ready` because that is the state the meal was taken on in, so a reading from
+   * after the body left it would be a reading of one body under another one's label.
+   *
+   * A handle a meal was in fact eaten against is spent here, so one sense answer's offer of
+   * one slot buys one meal and no more. `senseMemory.spend` carries why that cannot be left
+   * to the re-read at apply time.
+   *
+   * `eaten` is the whole of that condition because `eatFromSlot` answers it on every path
+   * where `bot.consume` resolved and on no other, which is a property that file states and
+   * keeps rather than a coincidence of labels: an answer of anything else after a resolved
+   * `consume` would leave the handle live, and a controller re-sending its eat would be
+   * served a second meal from a snapshot the first one had already contradicted.
+   *
+   * So the `notReady` below is reached only for a meal that never started - a missing
+   * inventory window or a missing food table, both settled before anything is brought to
+   * hand - which is what keeps "nothing after `bot.consume` resolves is answered `notReady`"
+   * true one level up from `eatFromSlot` as well as inside it.
+   *
+   * Nothing is logged when this throws, for the same reason `quitBot` logs nothing: the
+   * only thing there would be to log is unbounded text from below this process.
+   */
+  async function settleMeal (socket, session, request, requestId, admitted) {
+    try {
+      const report = await eatFromSlot(bot, {
+        // Resolved against this connection's own answers, so a sense id another peer used
+        // is `senseForgotten` here rather than a snapshot of an inventory this controller
+        // was never shown.
+        offered: offered.recall(session, request.senseId),
+        slot: request.slot
+      })
+      if (report?.outcome === 'eaten') offered.spend(session, request.senseId, request.slot)
+      if (report !== undefined) {
+        const vitals = (state === 'ready' ? vitalsOf(bot) : undefined) ?? admitted
+        return write(socket, eatReport({ requestId, agentId, vitals, ...report }))
+      }
+    } catch {
+      // Answered as `notReady` below, like any other meal this body cannot state.
+    } finally {
+      eating = false
+    }
+    return refuse(socket, session, { code: 'notReady', requestId })
+  }
+
+  /**
    * Refuses one frame, and closes the connection once it has earned enough
    * refusals. Returns whether the connection is still worth reading.
+   *
+   * Two budgets rather than one, because a `notReady` is not a peer error but the answer a
+   * controller is told to ask again after - see [MAX_NOT_READY_PER_CONNECTION]. The
+   * counters are independent in both directions: asking early can never spend the abuse
+   * budget, and a malformed frame in between can never be paid for out of the looser one.
+   * Both close the same way, once whichever budget the code belongs to is spent.
+   *
+   * A `notReady` also **releases the request id** `handle` reserved for it, because it is
+   * the one answer this process gives that leaves nothing behind: no handle was minted, no
+   * state moved, and the controller was told to ask again. Held, the poll it invites spent
+   * [MAX_TRACKED_REQUESTS] instead and the channel died of `tooManyRequests` - so the
+   * release is what makes the looser budget the one that governs. An id offered again is
+   * therefore not a duplicate, which is exactly what "ask again" has to mean; every id an
+   * *answered* request spent is kept, so duplicate detection is unchanged for the round
+   * trips that completed.
    */
   function refuse (socket, session, { code, requestId, close = false }) {
     write(socket, refusal({ requestId, agentId, code }))
-    session.refusals += 1
-    if (close || code === 'frameTooLarge' || session.refusals >= MAX_REFUSALS_PER_CONNECTION) {
+    let spent
+    if (code === 'notReady') {
+      if (requestId !== undefined) session.seen.delete(requestId)
+      session.notReady += 1
+      spent = session.notReady >= MAX_NOT_READY_PER_CONNECTION
+    } else {
+      session.refusals += 1
+      spent = session.refusals >= MAX_REFUSALS_PER_CONNECTION
+    }
+    if (close || code === 'frameTooLarge' || spent) {
       closeSocket(socket)
       return false
     }
@@ -783,15 +1066,15 @@ function createBody (options) {
 module.exports = {
   CONTROL_IDLE_MS,
   DEBUG_VARIABLES,
-  INTERNAL_LIFECYCLE_PLUGINS,
+  INTERNAL_REPORTING_PLUGINS,
   LIFECYCLE_STATES,
   MAX_CONTROL_CONNECTIONS,
+  MAX_NOT_READY_PER_CONNECTION,
   MAX_REFUSALS_PER_CONNECTION,
   MAX_TRACKED_REQUESTS,
   SHUTDOWN_GRACE_MS,
   CONFIGURATION_FIELDS,
   ConfigurationRefusal,
-  announceLogin,
   botOptionsFor,
   createBody,
   isLoopbackAddress,

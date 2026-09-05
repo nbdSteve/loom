@@ -43,14 +43,23 @@ const PROTOCOL_VERSION = 1
 /**
  * Longest frame this protocol will carry, in bytes.
  *
- * The largest legal frame in this generation is a status report with both ids at
- * their full length, the longest state name, and all three counters at
- * `MAX_COUNT` - 297 bytes - so 8 KiB is generous by a factor of twenty-seven
- * while still being a real bound, two orders of magnitude tighter than the
- * cognition wire's 256 KiB, which is sized for a whole perception rather than
- * for a lifecycle question. That there *is* a largest legal frame is what
- * `MAX_COUNT` buys: an `integer` bounded only from below admits arbitrarily many
- * digits, so before it this margin was a claim about no particular number.
+ * The largest legal frame in this generation is a sense report at every one of its
+ * own bounds - both ids at their full length, [MAX_SENSE_ENTITIES] entities and a
+ * full [MAX_SENSE_STACKS] slots of inventory, every resource name at
+ * [MAX_RESOURCE_NAME_CHARS] and every coordinate at its widest - which measures a
+ * little over 7 KiB, so 8 KiB is a real bound with room left rather than a generous
+ * one. That is a change of kind from the earlier generation of this note, where the
+ * largest frame was a 297-byte status report and the margin was a factor of
+ * twenty-seven: the bound is now sized by the widest answer rather than chosen well
+ * clear of every answer, which is why [MAX_SENSE_ENTITIES] and [MAX_SENSE_STACKS]
+ * are derived from what fits here rather than from what a caller might like.
+ * `protocol.test.js` measures the worst case rather than trusting this arithmetic.
+ *
+ * It is still two orders of magnitude tighter than the cognition wire's 256 KiB,
+ * which is sized for a whole perception with its prose. That there *is* a largest
+ * legal frame is what `MAX_COUNT` buys: an `integer` bounded only from below admits
+ * arbitrarily many digits, so before it this margin was a claim about no particular
+ * number.
  *
  * It is stated here, with the rest of the protocol's bounds, and enforced by
  * [inadmissibleFrame] at every public decode - so the codec and its future framing
@@ -83,10 +92,11 @@ const MAX_FRAME_BYTES = 8192
  * the work a peer can ask the scans below to do.
  *
  * Eight is far above anything this generation can legally hold and far below anything
- * either parser is troubled by. No frame here nests at all - every field is a string, a
- * number or a bare enum, so a legal frame's depth is one - and a nested value could only
- * ever arrive under a key this generation does not know, which is refused on its own
- * with the more precise `invalidField`. So the slack costs nothing and the bound refuses
+ * either parser is troubled by. The deepest legal frame is a sense answer at **four**: the
+ * top object, its `entities` array, an entity object, and that entity's `position` array.
+ * Raising `MAX_SENSE_ENTITIES` or `MAX_SENSE_STACKS` widens those lists rather than nesting
+ * them, so the headroom this bound leaves is spent by a *shape* the generation does not have
+ * rather than by any list bound growing. So the slack costs nothing and the bound refuses
  * only a line that is asking to be expensive. The JVM binding states the same number for
  * itself, where it is load-bearing.
  */
@@ -172,6 +182,149 @@ const MIN_REQUESTS_HANDLED = 1
 const STATUS_COUNTS = ['uptimeMs', 'stateMs', 'requestsHandled']
 
 /**
+ * Longest a resource name may be, in characters.
+ *
+ * The longest name vanilla ships is 35 characters, so this admits every one of them
+ * and a little room for a modded registry. It is a bound on *arithmetic* as much as
+ * on the name: a resource name is one byte per character, so the largest legal frame
+ * is a sum rather than a guess - see [MAX_FRAME_BYTES].
+ */
+const MAX_RESOURCE_NAME_CHARS = 40
+
+/**
+ * What a resource name may be shaped like: an optional namespace, then a path of one
+ * or more non-empty segments.
+ *
+ * Lowercase because a Minecraft resource location is lowercase by the game's own rule,
+ * so a name outside this set is not a name the registry could have held. Narrow for
+ * the reason [ID_PATTERN] is narrow: a name is echoed into a frame and into a log, and
+ * a free-text error, a host name or a local path must not be able to arrive through a
+ * field that looks like a registry name.
+ *
+ * The segment structure is what makes that last part true rather than nearly true. A
+ * flat character class of the same characters admitted `/tmp/secret`, which is
+ * lowercase throughout and so passed every other guard this module has - the one
+ * leak-bearing shape left on the wire. A resource location never begins or ends with
+ * `/` and never doubles one, so requiring non-empty segments refuses every absolute
+ * path while still admitting the nested paths a modded registry can hold. A *relative*
+ * lowercase token like `tmp/secret` is still admitted, and honestly so: it is
+ * indistinguishable from a legal nested id, exactly as a dotted host name is
+ * indistinguishable from a legal [ID_PATTERN] id.
+ */
+const RESOURCE_NAME_PATTERN = /^([a-z0-9_.-]+:)?[a-z0-9_.-]+(\/[a-z0-9_.-]+)*$/
+
+/**
+ * How far from the origin a coordinate may be, in blocks.
+ *
+ * The world border's own limit. It bounds the value, and a position is a known width - but
+ * the width is not this number's: a real's contribution to a frame is the length of its
+ * decimal *text*, and where a formatter writes most is nowhere near the border. The
+ * coordinate of largest magnitude is nineteen characters and the widest legal one is
+ * twenty-five, so the width is measured rather than read off here. `protocol.test.js`
+ * derives it, and `MAX_FRAME_BYTES` is what carries it.
+ */
+const MAX_WORLD_COORDINATE = 30000000
+
+/** How many numbers a position is. Three, in x, y, z order. */
+const WORLD_POSITION_AXES = 3
+
+/** Widest a caller may ask a sense to look, in blocks. */
+const MAX_SENSE_RADIUS = 48
+
+/**
+ * Most entities one sense answer may carry.
+ *
+ * One number rather than two equal ones: it bounds what a caller may ask for and what
+ * an answer may hold, because those are the same bound seen from the two ends - a
+ * caller allowed to ask for more than an answer can carry would be promised a cut it
+ * could not be told about. What fixes it is [MAX_FRAME_BYTES]: this many entities
+ * beside a full inventory is the widest answer that fits.
+ */
+const MAX_SENSE_ENTITIES = 24
+
+/** Highest slot index of a player's own inventory window. */
+const MAX_SLOT_INDEX = 45
+
+/**
+ * Most stacks one sense answer may carry.
+ *
+ * How many slots the window has, so a complete inventory always fits and no answer
+ * has to leave a stack out. There is deliberately no omission count beside the
+ * inventory, and this is what makes that safe.
+ */
+const MAX_SENSE_STACKS = 46
+
+/**
+ * Fewest items a reported stack may hold.
+ *
+ * One, because an empty slot is left out of the answer rather than reported as a stack
+ * of nothing: a slot reported as holding zero would tell a mind it is carrying food it
+ * does not have.
+ */
+const MIN_STACK_COUNT = 1
+
+/**
+ * Most items one slot may be reported as holding.
+ *
+ * One byte's worth rather than vanilla's own stack limit of 64. A server that
+ * over-stacks a slot is reported rather than refused, because refusing the frame would
+ * blind the body over a count it read correctly.
+ */
+const MAX_STACK_COUNT = 255
+
+/**
+ * Highest hit points a body may report.
+ *
+ * The game's own ceiling on a max-health attribute rather than vanilla's twenty, so a
+ * server that raises it is reported rather than refused.
+ */
+const MAX_HEALTH = 1024
+
+/** Highest food level and highest saturation, as vanilla counts both. */
+const MAX_FOOD = 20
+
+/** The last tick of a day. */
+const MAX_TIME_OF_DAY = 23999
+
+/** The one outcome that consumed something, and so the one that reports what. */
+const OUTCOME_EATEN = 'eaten'
+
+/** The one lifecycle state a sense or an eat is answered in. */
+const READY = 'ready'
+
+/** The three vitals, in the order the schema declares them. */
+const VITALS_FIELDS = ['health', 'food', 'saturation']
+
+/** The world clock's three readings, in declaration order. */
+const TIME_FIELDS = ['timeOfDay', 'day', 'isDay']
+
+/** The two blocks a footing is made of, in declaration order. */
+const GROUND_FIELDS = ['standingIn', 'standingOn']
+
+/** What one sensed entity carries, in declaration order. */
+const SENSED_ENTITY_FIELDS = ['what', 'position', 'visible']
+
+/** What one sensed stack carries, in declaration order. */
+const SENSED_STACK_FIELDS = ['slot', 'what', 'count']
+
+/** What a sense answer carries beyond the envelope, in declaration order. */
+const SENSE_FIELDS = [
+  'position',
+  'vitals',
+  'time',
+  'ground',
+  'entities',
+  'entitiesOmitted',
+  'inventory'
+]
+
+/** What an eat answer carries beyond the envelope, in declaration order. */
+const EAT_FIELDS = ['outcome', 'vitals', 'what', 'remaining']
+
+/** The envelope every request shares, before its own payload. */
+const REQUEST_ENVELOPE = ['protocol', 'requestId', 'agentId', 'op']
+
+/**
  * What an id may contain. Deliberately narrow: an id is echoed into a frame and
  * into logs, so a newline would break the framing, and a path separator or
  * whitespace is how a local path or a free-text transport error would arrive in
@@ -193,8 +346,17 @@ const LIFECYCLE_STATES = Object.freeze([
   'failed'
 ])
 
-/** Every operation a controller may ask for. */
-const OPERATIONS = Object.freeze(['handshake', 'status', 'shutdown'])
+/**
+ * Every operation a controller may ask for.
+ *
+ * This list grows and never changes, which is what lets the generation stay at 1: a
+ * controller of this generation that meets an operation it does not know is a
+ * controller that will never send one, and a body of this generation meeting an
+ * operation it does not know refuses it as `unknownOperation` - which is the answer a
+ * newer controller needs anyway. Renaming or removing one, or changing what an existing
+ * one carries, is what would move the generation.
+ */
+const OPERATIONS = Object.freeze(['handshake', 'status', 'shutdown', 'sense', 'eat'])
 
 /** Every refusal, as a closed set. */
 const ERROR_CODES = Object.freeze([
@@ -208,7 +370,30 @@ const ERROR_CODES = Object.freeze([
   'handshakeRequired',
   'wrongAgent',
   'shuttingDown',
-  'timeout'
+  'timeout',
+  'notReady'
+])
+
+/**
+ * Every way an eat can end, as a closed set.
+ *
+ * A refusal is a *reported outcome* rather than an error frame, because all seven of them
+ * are answers about the agent's own inventory and reserve rather than about the frame
+ * the controller sent - and every one of them is a fact a mind should learn from. They
+ * are kept apart for the reason Loom's own eat refusals are: read as one uncountable
+ * failure, a run could not tell an agent that had nothing edible from one that ate to a
+ * standstill and wasted the rest - which is `notEdible` against `reserveFull`, the pair
+ * that reading would collapse.
+ */
+const EAT_OUTCOMES = Object.freeze([
+  'eaten',
+  'senseForgotten',
+  'slotUnnamed',
+  'slotEmpty',
+  'slotChanged',
+  'notEdible',
+  'reserveFull',
+  'slotInaccessible'
 ])
 
 /** JSON's four whitespace characters, which may sit between a name and its colon. */
@@ -256,7 +441,35 @@ function isCount (value) {
 }
 
 /**
- * Whether the literal `name` was written with spells a whole number in bounds.
+ * Whether the one literal at `name` spells a whole number in bounds.
+ *
+ * The single-literal case of [spellsWholeNumbers], which every integer field of one
+ * value is checked with. A missing literal answers false, because every number of a
+ * frame this module has already parsed is found by [numberLiterals], so an absent one
+ * means the field held something that is not a number at all.
+ */
+function spellsWholeNumber (literals, name) {
+  return spellsWholeNumbers(literals, name, 1)
+}
+
+/**
+ * Whether `name` holds exactly `expected` literals and every one spells a whole number.
+ *
+ * The count is part of the check rather than beside it, because a path can hold more
+ * than one literal - `inventory.count` is one per stack - and a rule stated only over
+ * the literals that happen to be there would pass a frame that carried none. An
+ * optional integer field is therefore checked with an `expected` of 0 when it is
+ * absent, which says outright that no number was written where none belongs.
+ */
+function spellsWholeNumbers (literals, name, expected) {
+  const written = literals.get(name)
+  if (written === undefined) return expected === 0
+  if (written.length !== expected) return false
+  return written.every(wholeNumberLiteral)
+}
+
+/**
+ * Whether the text `literal` spells a whole number within `0..MAX_COUNT`.
  *
  * This is the half of a number's contract that `JSON.parse` destroys, and it is
  * the reason every number on this wire is read from the frame's own text as well
@@ -268,12 +481,13 @@ function isCount (value) {
  * numbers to the schema - so both runtimes now read the same rule off the same
  * bytes rather than each inheriting its own parser's idea of an integer.
  *
- * A missing literal answers false. Every top-level number in a frame this module
- * has already parsed is found by [topLevelNumbers], so an absent one means the
- * field held something that is not a number at all.
+ * Only an *integer* field needs this. A real one does not, and deliberately gets no
+ * literal check at all: the two runtimes round a decimal to the same IEEE 754 double
+ * and both answer `Infinity` for an exponent past the double range, so a bound on the
+ * parsed value already agrees across the wire where a bound on its spelling would only
+ * add a rule one side could hold more strictly than the other.
  */
-function spellsWholeNumber (literals, name) {
-  const literal = literals.get(name)
+function wholeNumberLiteral (literal) {
   if (typeof literal !== 'string' || literal.length > MAX_NUMBER_LITERAL_CHARS) return false
   const parts = NUMBER_LITERAL.exec(literal)
   if (parts === null) return false
@@ -335,7 +549,7 @@ function isInRange (sign, digits, shift) {
 }
 
 /**
- * Every top-level member of `text` whose value is a number, as written.
+ * Every number in `text`, as written, keyed by the member names that lead to it.
  *
  * A frame's numbers have to be read from its bytes, and by the time either decoder
  * holds an object the text of them is gone - so this walks the line the way
@@ -344,41 +558,76 @@ function isInRange (sign, digits, shift) {
  *
  * It runs only on text `JSON.parse` has already accepted, which is what lets it
  * stay a plain walk: it does not have to recognise malformed JSON, because a frame
- * that is not JSON was refused as `malformedFrame` before this is called. A number
- * nested inside an object or an array is deliberately not collected, since no
- * field of this generation holds either and an unknown key is refused anyway.
+ * that is not JSON was refused as `malformedFrame` before this is called.
+ *
+ * The key is the member names of the enclosing objects joined with a dot, and an array
+ * contributes nothing to it - so `time.day` names one literal and `inventory.count`
+ * names one per stack, both as a list. Leaving the index out is what keeps this a plain
+ * walk, and it costs nothing that matters: every rule stated over these literals is
+ * stated over all of them at once ("every count spells a whole number"), and *which*
+ * stack a bad spelling was in is a question the parsed object answers. A collision
+ * between a nested path and a literal dotted key can only lengthen a list, so it can
+ * only cause a refusal and never an acceptance - and such a top-level key is refused as
+ * an unknown one anyway.
+ *
+ * An earlier generation of this collected only the numbers at depth one, on the grounds
+ * that no field held an object or an array. Two do now, and a scan that stopped at the
+ * top level would have left every nested integer with no spelling check at all - so
+ * this side would accept `{"vitals":{"food":19.0000000000000001}}` (which parses to 19)
+ * where the JVM reads the raw literal and refuses it, which is exactly the drift the
+ * shared fixture corpus exists to catch.
  */
-function topLevelNumbers (text) {
+function numberLiterals (text) {
   const literals = new Map()
-  let depth = 0
-  let name
+  const open = []
   let index = 0
   while (index < text.length) {
     const character = text[index]
     if (character === '{' || character === '[') {
-      depth += 1
+      open.push({ object: character === '{', name: undefined })
       index += 1
     } else if (character === '}' || character === ']') {
-      depth -= 1
-      name = undefined
+      open.pop()
+      if (open.length > 0) open[open.length - 1].name = undefined
       index += 1
     } else if (character === '"') {
       const after = endOfStringLiteral(text, index)
       if (after === undefined) return literals
-      if (depth === 1 && isFollowedByColon(text, after)) name = memberName(text.slice(index, after))
+      const frame = open[open.length - 1]
+      if (frame !== undefined && frame.object && isFollowedByColon(text, after)) {
+        frame.name = memberName(text.slice(index, after))
+      }
       index = after
     } else if (NUMBER_START.test(character)) {
       const after = endOfNumberLiteral(text, index)
-      if (depth === 1 && name !== undefined) {
-        literals.set(name, text.slice(index, after))
-        name = undefined
-      }
+      recordLiteral(literals, open, text.slice(index, after))
       index = after
     } else {
       index += 1
     }
   }
   return literals
+}
+
+/**
+ * Files `literal` under the path the open frames spell, and closes the innermost name.
+ *
+ * Closing the name is what keeps one member from claiming the next member's number: a
+ * name is set by its own string and cleared by the value that follows it. An array
+ * frame holds no name, so the name a list of numbers is filed under survives every one
+ * of them.
+ */
+function recordLiteral (literals, open, literal) {
+  let path = ''
+  for (const frame of open) {
+    if (!frame.object || frame.name === undefined) continue
+    path = path === '' ? frame.name : `${path}.${frame.name}`
+  }
+  const written = literals.get(path)
+  if (written === undefined) literals.set(path, [literal])
+  else written.push(literal)
+  const innermost = open[open.length - 1]
+  if (innermost !== undefined) innermost.name = undefined
 }
 
 /**
@@ -408,6 +657,186 @@ function endOfNumberLiteral (text, open) {
  */
 function isCoherentStatus (raw) {
   return raw.stateMs <= raw.uptimeMs && raw.requestsHandled >= MIN_REQUESTS_HANDLED
+}
+
+/** Whether `value` is a whole number within an inclusive range. */
+function isBoundedInteger (value, least, most) {
+  return Number.isSafeInteger(value) && value >= least && value <= most
+}
+
+/**
+ * Whether `value` is a real number within an inclusive range.
+ *
+ * Finiteness is what the range buys beyond the schema's own bounds: `1e400` parses to
+ * `Infinity` on both runtimes, and a comparison against `Infinity` fails every bound,
+ * so a nonsense exponent is refused here without a second rule about its spelling.
+ * `NaN` cannot arrive at all, since JSON has no spelling for it.
+ */
+function isReal (value, least, most) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= least && value <= most
+}
+
+/** Whether `value` is a resource name of a length and shape a registry could hold. */
+function isResourceName (value) {
+  return typeof value === 'string' &&
+    [...value].length >= 1 &&
+    [...value].length <= MAX_RESOURCE_NAME_CHARS &&
+    RESOURCE_NAME_PATTERN.test(value)
+}
+
+/** Whether `value` is a position: three real numbers inside the world border. */
+function isWorldPosition (value) {
+  return Array.isArray(value) &&
+    value.length === WORLD_POSITION_AXES &&
+    value.every((axis) => isReal(axis, -MAX_WORLD_COORDINATE, MAX_WORLD_COORDINATE))
+}
+
+/**
+ * Whether `raw` is a coherent set of vitals, with `food` spelled as a whole number.
+ *
+ * The relation is the part no JSON Schema can state, and it is a real one rather than a
+ * tidy one: saturation is the reserve *behind* the food bar, so vanilla holds it at or
+ * below the food level and a report claiming more has read one of the two wrongly.
+ * Health is deliberately unrelated to either, which is the whole point of carrying
+ * three numbers - a body can starve on full health and be beaten to death on a full
+ * stomach, and a run that could not tell those apart could not say what ended an agent.
+ *
+ * `vitals` is a top-level member of both frames that carry it, so the one literal path
+ * checked here is right for a sense answer and for an eat answer alike.
+ */
+function isSensedVitals (raw, literals) {
+  return isPlainObject(raw) &&
+    isReal(raw.health, 0, MAX_HEALTH) &&
+    isBoundedInteger(raw.food, 0, MAX_FOOD) &&
+    spellsWholeNumber(literals, 'vitals.food') &&
+    isReal(raw.saturation, 0, MAX_FOOD) &&
+    raw.saturation <= raw.food &&
+    noUnknownKeys(raw, VITALS_FIELDS)
+}
+
+/** Whether `raw` is a world clock reading, with both its numbers spelled whole. */
+function isSensedTime (raw, literals) {
+  return isPlainObject(raw) &&
+    isBoundedInteger(raw.timeOfDay, 0, MAX_TIME_OF_DAY) &&
+    spellsWholeNumber(literals, 'time.timeOfDay') &&
+    isCount(raw.day) &&
+    spellsWholeNumber(literals, 'time.day') &&
+    typeof raw.isDay === 'boolean' &&
+    noUnknownKeys(raw, TIME_FIELDS)
+}
+
+/** Whether `raw` names the two blocks a footing is made of. */
+function isSensedGround (raw) {
+  return isPlainObject(raw) &&
+    isResourceName(raw.standingIn) &&
+    isResourceName(raw.standingOn) &&
+    noUnknownKeys(raw, GROUND_FIELDS)
+}
+
+/** Whether `raw` is one sensed entity. */
+function isSensedEntity (raw) {
+  return isPlainObject(raw) &&
+    isResourceName(raw.what) &&
+    isWorldPosition(raw.position) &&
+    typeof raw.visible === 'boolean' &&
+    noUnknownKeys(raw, SENSED_ENTITY_FIELDS)
+}
+
+/** Whether `raw` is one occupied slot. */
+function isSensedStack (raw) {
+  return isPlainObject(raw) &&
+    isBoundedInteger(raw.slot, 0, MAX_SLOT_INDEX) &&
+    isResourceName(raw.what) &&
+    isBoundedInteger(raw.count, MIN_STACK_COUNT, MAX_STACK_COUNT) &&
+    noUnknownKeys(raw, SENSED_STACK_FIELDS)
+}
+
+/**
+ * Whether `raw` is a whole sense answer.
+ *
+ * Three relations here are beyond what the schema's keywords can say, and each is a
+ * fact about the body rather than about the frame.
+ *
+ * An omission count above zero with no entity reported cannot have happened: a caller
+ * may ask for as few as one, so anything left out was left out *after* the limit was
+ * filled. Reported alone it would say "there were things here and I am telling you
+ * about none of them", which is the one reading a survival run must never be given.
+ *
+ * The slots are strictly increasing, which is both the slot order the schema's prose
+ * asks for and the statement that no slot is described twice. A repeated slot is a body
+ * that read its own window wrongly, and an eat naming it would then resolve against
+ * whichever description happened to be found first.
+ *
+ * The entities are ordered nearest first, and that is deliberately *not* checked: the
+ * distance the body ordered by is measured from its eyes rather than from the position
+ * this wire carries, so a check here would be a second, disagreeing measurement. It is
+ * pinned where it is decided instead, in the body's own tests.
+ */
+function isSenseReport (raw, literals) {
+  if (!isWorldPosition(raw.position)) return false
+  if (!isSensedVitals(raw.vitals, literals)) return false
+  if (!isSensedTime(raw.time, literals)) return false
+  if (raw.ground !== undefined && !isSensedGround(raw.ground)) return false
+  if (!Array.isArray(raw.entities) || raw.entities.length > MAX_SENSE_ENTITIES) return false
+  if (!raw.entities.every(isSensedEntity)) return false
+  if (!isCount(raw.entitiesOmitted) || !spellsWholeNumber(literals, 'entitiesOmitted')) return false
+  if (raw.entitiesOmitted > 0 && raw.entities.length === 0) return false
+  if (!Array.isArray(raw.inventory) || raw.inventory.length > MAX_SENSE_STACKS) return false
+  if (!raw.inventory.every(isSensedStack)) return false
+  if (!spellsWholeNumbers(literals, 'inventory.slot', raw.inventory.length)) return false
+  if (!spellsWholeNumbers(literals, 'inventory.count', raw.inventory.length)) return false
+  return raw.inventory.every(
+    (stack, at) => at === 0 || stack.slot > raw.inventory[at - 1].slot
+  )
+}
+
+/**
+ * Whether `raw` is a whole eat answer.
+ *
+ * `what` and `remaining` are present exactly when something was eaten, and that is one
+ * relation rather than two optional fields: every other outcome is a refusal, and a
+ * refusal that named a food would be reporting a meal it did not serve. Stating it as
+ * an equivalence also refuses the other direction - an `eaten` with nothing to say what
+ * it ate is an answer a mind cannot learn anything from, and the accepted-meal record
+ * is the only place a run says what an agent consumed.
+ */
+function isEatReport (raw, literals) {
+  if (!EAT_OUTCOMES.includes(raw.outcome)) return false
+  if (!isSensedVitals(raw.vitals, literals)) return false
+  const ate = raw.outcome === OUTCOME_EATEN
+  if (ate !== (raw.what !== undefined)) return false
+  if (ate !== (raw.remaining !== undefined)) return false
+  if (ate && !isResourceName(raw.what)) return false
+  if (ate && !isBoundedInteger(raw.remaining, 0, MAX_STACK_COUNT)) return false
+  return spellsWholeNumbers(literals, 'remaining', ate ? 1 : 0)
+}
+
+/**
+ * The payload `raw` carries beyond the envelope, or undefined when it is not coherent.
+ *
+ * The keys of what comes back are what the unknown-key check then allows, so a payload
+ * and the fields a caller may send cannot drift apart. Every one of these numbers is a
+ * top-level member, so none needs the nested literal paths an answer does.
+ *
+ * A radius or a limit of zero is refused rather than answered with nothing: a caller
+ * asking to see no blocks or no entities has not asked a question, and a sense that
+ * reported an empty world would look exactly like one taken somewhere empty.
+ */
+function requestPayload (raw, literals) {
+  if (raw.op === 'sense') {
+    const bounded = isBoundedInteger(raw.radius, 1, MAX_SENSE_RADIUS) &&
+      spellsWholeNumber(literals, 'radius') &&
+      isBoundedInteger(raw.limit, 1, MAX_SENSE_ENTITIES) &&
+      spellsWholeNumber(literals, 'limit')
+    return bounded ? { radius: raw.radius, limit: raw.limit } : undefined
+  }
+  if (raw.op === 'eat') {
+    const bounded = isControlId(raw.senseId) &&
+      isBoundedInteger(raw.slot, 0, MAX_SLOT_INDEX) &&
+      spellsWholeNumber(literals, 'slot')
+    return bounded ? { senseId: raw.senseId, slot: raw.slot } : undefined
+  }
+  return {}
 }
 
 /**
@@ -500,7 +929,7 @@ function decodeRequest (line) {
     return { ok: false, code: 'malformedFrame' }
   }
   if (!isPlainObject(raw)) return { ok: false, code: 'malformedFrame' }
-  const literals = topLevelNumbers(line)
+  const literals = numberLiterals(line)
 
   // Echoed on every refusal below, so a controller can retire the right request.
   const requestId = isControlId(raw.requestId) ? raw.requestId : undefined
@@ -514,15 +943,22 @@ function decodeRequest (line) {
   if (!OPERATIONS.includes(raw.op)) {
     return { ok: false, code: 'unknownOperation', requestId }
   }
+  const payload = requestPayload(raw, literals)
+  if (payload === undefined) return { ok: false, code: 'invalidField', requestId }
   // Extra data is refused rather than ignored: a field this generation does not
   // know is a controller believing something the process will not do.
-  const known = new Set(['protocol', 'requestId', 'agentId', 'op'])
-  if (Object.keys(raw).some((key) => !known.has(key))) {
+  if (!noUnknownKeys(raw, [...REQUEST_ENVELOPE, ...Object.keys(payload)])) {
     return { ok: false, code: 'invalidField', requestId }
   }
   return {
     ok: true,
-    request: { op: raw.op, protocol: raw.protocol, requestId: raw.requestId, agentId: raw.agentId }
+    request: {
+      op: raw.op,
+      protocol: raw.protocol,
+      requestId: raw.requestId,
+      agentId: raw.agentId,
+      ...payload
+    }
   }
 }
 
@@ -545,7 +981,7 @@ function decodeResponse (line) {
     return { ok: false, code: 'malformedFrame' }
   }
   if (!isPlainObject(raw)) return { ok: false, code: 'malformedFrame' }
-  const literals = topLevelNumbers(line)
+  const literals = numberLiterals(line)
   if (raw.protocol !== PROTOCOL_VERSION || !spellsWholeNumber(literals, 'protocol')) {
     return { ok: false, code: 'unsupportedProtocol' }
   }
@@ -582,6 +1018,28 @@ function decodeResponse (line) {
     if (!counted) return { ok: false, code: 'invalidField' }
     if (!isCoherentStatus(raw)) return { ok: false, code: 'invalidField' }
     return noUnknownKeys(raw, [...envelope, ...STATUS_COUNTS])
+      ? { ok: true, response: raw }
+      : { ok: false, code: 'invalidField' }
+  }
+  // A sense and an eat are answers only a live, spawned body can give, so the state is
+  // fixed at `ready` for both: any other state is a `notReady` refusal instead, and an
+  // answer claiming to have read a world from a body that is not in one is a lie about
+  // where its numbers came from. The state an answer names is the state the request was
+  // *admitted under*, which is the same turn for a sense and an earlier one for an eat -
+  // see `eatReport`.
+  if (raw.op === 'sense') {
+    if (raw.state !== READY || !isSenseReport(raw, literals)) {
+      return { ok: false, code: 'invalidField' }
+    }
+    return noUnknownKeys(raw, [...envelope, ...SENSE_FIELDS])
+      ? { ok: true, response: raw }
+      : { ok: false, code: 'invalidField' }
+  }
+  if (raw.op === 'eat') {
+    if (raw.state !== READY || !isEatReport(raw, literals)) {
+      return { ok: false, code: 'invalidField' }
+    }
+    return noUnknownKeys(raw, [...envelope, ...EAT_FIELDS])
       ? { ok: true, response: raw }
       : { ok: false, code: 'invalidField' }
   }
@@ -762,7 +1220,50 @@ function canonicalResponse (frame) {
     canonical.stateMs = frame.stateMs
     canonical.requestsHandled = frame.requestsHandled
   }
+  if (frame.op === 'sense') {
+    canonical.position = [...frame.position]
+    canonical.vitals = canonicalVitals(frame.vitals)
+    canonical.time = {
+      timeOfDay: frame.time.timeOfDay,
+      day: frame.time.day,
+      isDay: frame.time.isDay
+    }
+    if (frame.ground !== undefined) {
+      canonical.ground = {
+        standingIn: frame.ground.standingIn,
+        standingOn: frame.ground.standingOn
+      }
+    }
+    canonical.entities = frame.entities.map((entity) => ({
+      what: entity.what,
+      position: [...entity.position],
+      visible: entity.visible
+    }))
+    canonical.entitiesOmitted = frame.entitiesOmitted
+    canonical.inventory = frame.inventory.map((stack) => ({
+      slot: stack.slot,
+      what: stack.what,
+      count: stack.count
+    }))
+  }
+  if (frame.op === 'eat') {
+    canonical.outcome = frame.outcome
+    canonical.vitals = canonicalVitals(frame.vitals)
+    if (frame.what !== undefined) canonical.what = frame.what
+    if (frame.remaining !== undefined) canonical.remaining = frame.remaining
+  }
   return canonical
+}
+
+/**
+ * One reading of the three vitals, in declaration order.
+ *
+ * Rebuilt rather than passed through for the reason the whole of [canonicalResponse] is:
+ * key order is what the shared fixtures agree on byte-for-byte, and a nested object a
+ * peer sent in its own order would carry that order into the line this side writes.
+ */
+function canonicalVitals (vitals) {
+  return { health: vitals.health, food: vitals.food, saturation: vitals.saturation }
 }
 
 /** `frame` as JSON text, or a bounded throw if it is not JSON at all. */
@@ -823,6 +1324,75 @@ function statusReport ({ requestId, agentId, state, uptimeMs, stateMs, requestsH
   })
 }
 
+/**
+ * The answer to a sense: what the body read, at the bounds this protocol carries.
+ *
+ * `ground` is left out when the block the body stands in or on could not be read, which
+ * is an ordinary answer rather than a fault: a chunk the client has not been sent yet
+ * has no blocks in it, and a body that reported stone it never saw would be inventing
+ * evidence. Absent means "not known", and there is deliberately no stand-in value for
+ * it - `minecraft:air` is a real answer a real reading gives.
+ */
+function senseReport ({
+  requestId,
+  agentId,
+  position,
+  vitals,
+  time,
+  ground,
+  entities,
+  entitiesOmitted,
+  inventory
+}) {
+  const frame = {
+    op: 'sense',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    position,
+    vitals,
+    time
+  }
+  if (ground !== undefined) frame.ground = ground
+  frame.entities = entities
+  frame.entitiesOmitted = entitiesOmitted
+  frame.inventory = inventory
+  return checkedResponse(frame)
+}
+
+/**
+ * The answer to an eat: what became of it, and the vitals of the body that took it on.
+ *
+ * The vitals are on every outcome, refusals included, because a refusal is still an
+ * answer taken at a moment - a mind that asked to eat and was told the slot was empty
+ * needs to know how full the agent is as of that answer rather than as of the decision
+ * that led to it.
+ *
+ * **`state` and `vitals` are both the moment the request was admitted, not the moment the
+ * frame is written**, and this is the one operation where those differ: a meal is answered
+ * after two round trips to the server, so the body can die, disconnect or be handed a
+ * nonsense food level in between. `ready` is therefore not re-read here and is not a claim
+ * about now - it is the state the body was in when the meal was taken on, which is where
+ * every number beside it came from. The caller prefers a fresher vitals reading only while
+ * the body is still in that state and the reading can still be stated, and carries the
+ * admitted one otherwise; `src/eating.js`'s header owns that rule for both fields at once.
+ */
+function eatReport ({ requestId, agentId, outcome, vitals, what, remaining }) {
+  const frame = {
+    op: 'eat',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    outcome,
+    vitals
+  }
+  if (what !== undefined) frame.what = what
+  if (remaining !== undefined) frame.remaining = remaining
+  return checkedResponse(frame)
+}
+
 /** The answer to a shutdown, written before anything is closed. */
 function shutdownAccepted ({ requestId, agentId }) {
   return checkedResponse({
@@ -867,19 +1437,35 @@ module.exports = {
   MAX_ID_CHARS,
   MAX_COUNT,
   MIN_REQUESTS_HANDLED,
+  MAX_RESOURCE_NAME_CHARS,
+  MAX_WORLD_COORDINATE,
+  MAX_SENSE_RADIUS,
+  MAX_SENSE_ENTITIES,
+  MAX_SLOT_INDEX,
+  MAX_SENSE_STACKS,
+  MIN_STACK_COUNT,
+  MAX_STACK_COUNT,
+  MAX_HEALTH,
+  MAX_FOOD,
+  MAX_TIME_OF_DAY,
   ID_PATTERN,
   USERNAME_PATTERN,
+  RESOURCE_NAME_PATTERN,
   LIFECYCLE_STATES,
   OPERATIONS,
   ERROR_CODES,
+  EAT_OUTCOMES,
   isControlId,
   isUsername,
+  isResourceName,
   decodeRequest,
   decodeResponse,
   encodeRequest,
   encodeResponse,
   handshakeAccepted,
   statusReport,
+  senseReport,
+  eatReport,
   shutdownAccepted,
   refusal
 }

@@ -278,6 +278,24 @@ object EventTag {
 
     /** A dead agent's player got back in through a login the refusal should have stopped. */
     const val REVIVED_AFTER_LOGIN: String = "revivedAfterLogin"
+
+    /**
+     * A player body's account of its own vitals did not match the server's reading.
+     *
+     * The three `DISPUTED_` tags say which kind of evidence a body got wrong, and they are
+     * three rather than one because the causes differ and a run has to count them apart: a
+     * wrong vital is a client reporting a state it was never sent, while a wrong inventory
+     * is a client's item model having fallen behind the server's. Only the server is
+     * authoritative, so every one of them is the body's disagreement and never the
+     * server's.
+     */
+    const val DISPUTED_VITALS: String = "disputedVitals"
+
+    /** A player body's account of what it is carrying did not match the server's. */
+    const val DISPUTED_INVENTORY: String = "disputedInventory"
+
+    /** One cross-check found both kinds of disagreement at once. */
+    const val DISPUTED_BOTH: String = "disputedBoth"
 }
 
 /** Names which event prompted cognition. */

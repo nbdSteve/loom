@@ -5,10 +5,7 @@
  * socket, against a fake Mineflayer client that emits exactly the events the real
  * one emits.
  *
- * The client is fake and the socket is not, because the two halves fail in different
- * ways. A lifecycle is Mineflayer's event order and can be stated at a desk; framing,
- * flood behaviour and a deterministic close are socket behaviour, and a mock that is
- * not a socket cannot express them.
+ * The client is fake and the socket is not, and `test/harness.js` records why.
  *
  * Nothing here reads the module's source text. Every bound is proven by being
  * reached, every refusal by being read off a wire, and the shutdown order by which
@@ -17,198 +14,32 @@
 
 const assert = require('node:assert/strict')
 const net = require('node:net')
-const { EventEmitter } = require('node:events')
-const { once } = require('node:events')
 const { test } = require('node:test')
 
 const {
   DEBUG_VARIABLES,
   MAX_CONTROL_CONNECTIONS,
+  MAX_NOT_READY_PER_CONNECTION,
   MAX_REFUSALS_PER_CONNECTION,
   MAX_TRACKED_REQUESTS,
-  announceLogin,
+  INTERNAL_REPORTING_PLUGINS,
   createBody
 } = require('../src/body')
+const { followWorldState } = require('../src/gamestate')
 const { MAX_FRAME_BYTES } = require('../src/protocol')
-
-const AGENT = 'loom.test.body'
-const OTHER_AGENT = 'loom.test.other'
-const USERNAME = 'loom_test'
-
-/**
- * A Mineflayer client, as far as this process is concerned.
- *
- * `end` is present from the start and `quit` appears only at `login`, because that is
- * what Mineflayer does: `end` is defined on the bot at construction
- * (`mineflayer/lib/loader.js`) while `quit` is injected by a plugin during login
- * (`mineflayer/lib/plugins/kick.js`). A fake that offered `quit` throughout hid the
- * fact that a body stopped before login had nothing to call.
- *
- * `end()` answers with an `end` *event* rather than returning, which is also what
- * Mineflayer does, and `endDelayMs` is what a real socket close costs. A fake that
- * ended instantly made every shutdown order look correct, because a synchronous
- * client always finishes before a socket that has to be closed over the network.
- */
-function fakeBot () {
-  const bot = new EventEmitter()
-  bot.subscribed = []
-  bot.ends = 0
-  bot.endDelayMs = 0
-  const on = bot.on.bind(bot)
-  bot.on = (event, listener) => {
-    bot.subscribed.push(event)
-    return on(event, listener)
-  }
-  bot.end = () => {
-    bot.ends += 1
-    setTimeout(() => bot.emit('end'), bot.endDelayMs)
-  }
-  // Subscribed with the raw `on`, so this fake's own bookkeeping is not mistaken for
-  // a subscription the body under test made.
-  on('login', () => { bot.quit = (reason) => bot.end(reason) })
-  return bot
-}
-
-/** A port nothing is listening on, so a test never has to guess one. */
-async function freePort () {
-  const probe = net.createServer()
-  await new Promise((resolve) => probe.listen({ host: '127.0.0.1', port: 0 }, resolve))
-  const { port } = probe.address()
-  await new Promise((resolve) => probe.close(resolve))
-  return port
-}
-
-/**
- * Starts a body with a fake client on a free control port.
- *
- * `created` is the options the body handed to `createBot`, which is where the
- * Mineflayer decisions this process makes are observable.
- */
-async function startedBody (overrides = {}) {
-  const { bot = fakeBot(), ...rest } = overrides
-  let created
-  const states = []
-  const body = createBody({
-    agentId: AGENT,
-    username: USERNAME,
-    minecraft: { host: '127.0.0.1', port: 25565 },
-    control: { host: '127.0.0.1', port: await freePort() },
-    createBot: (options) => {
-      created = options
-      return bot
-    },
-    onState: (state) => states.push(state),
-    ...rest
-  })
-  const { control } = await body.start()
-  return { body, bot, created, states, port: control.port }
-}
-
-/** A controller: sends whole frames, and reads whole frames back. */
-function controller (port) {
-  const socket = net.connect({ host: '127.0.0.1', port })
-  socket.setEncoding('utf8')
-  // A controller that keeps writing at a channel the body has closed earns a reset,
-  // which is the ordinary end of a flood rather than a failure of the test.
-  socket.on('error', () => {})
-  const taken = []
-  const waiting = []
-  let pending = ''
-  socket.on('data', (chunk) => {
-    pending += chunk
-    let end = pending.indexOf('\n')
-    while (end !== -1) {
-      const line = pending.slice(0, end)
-      pending = pending.slice(end + 1)
-      if (waiting.length > 0) waiting.shift()(line)
-      else taken.push(line)
-      end = pending.indexOf('\n')
-    }
-  })
-  return {
-    socket,
-    connected: once(socket, 'connect'),
-    // Resolved rather than `once(socket, 'close')`, which attaches an `error`
-    // listener of its own and *rejects* on it - and a connection the body closed
-    // under a bound is exactly the one whose last act is a reset. Waiting for a close
-    // must not depend on how quietly it arrived.
-    closed: new Promise((resolve) => socket.once('close', resolve)),
-    send (frame) {
-      socket.write(typeof frame === 'string' ? frame + '\n' : JSON.stringify(frame) + '\n')
-    },
-    /** Writes several frames as one chunk, so a pipelined batch is drained together. */
-    pipeline (frames) {
-      socket.write(frames.map((frame) => JSON.stringify(frame) + '\n').join(''))
-    },
-    next () {
-      return new Promise((resolve) => {
-        if (taken.length > 0) resolve(taken.shift())
-        else waiting.push(resolve)
-      })
-    },
-    async read () {
-      return JSON.parse(await this.next())
-    },
-    async answer (frame) {
-      this.send(frame)
-      return JSON.parse(await this.next())
-    },
-    stop () {
-      socket.destroy()
-    }
-  }
-}
-
-/**
- * Retries `attempt` until it succeeds or the wait runs out.
- *
- * Only for the one thing a test cannot observe directly: a socket's close reaches the
- * body on its own turn of the event loop, so a freed connection slot is waited for
- * rather than assumed to be free on the next line.
- */
-async function eventually (attempt, ms = 2_000) {
-  const until = Date.now() + ms
-  for (;;) {
-    try {
-      return await attempt()
-    } catch (failure) {
-      if (Date.now() >= until) throw failure
-      await new Promise((resolve) => setTimeout(resolve, 10))
-    }
-  }
-}
-
-/**
- * Fails if `waited` has not settled inside `ms`.
- *
- * For the bounds whose regression is an *absence*: a body that never closes an idle
- * connection, or never refuses a flood, leaves a read waiting for ever, and a plain
- * `await` would hang the suite rather than fail it. A hung suite says nothing about
- * which bound was lost.
- */
-function promptly (waited, what, ms = 5_000) {
-  let timer
-  return Promise.race([
-    waited,
-    new Promise((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error(`${what} did not arrive in ${ms}ms`)), ms)
-    })
-  ]).finally(() => clearTimeout(timer))
-}
-
-/** A request of this generation, correlated and addressed to the body under test. */
-function request (op, requestId, overrides = {}) {
-  return { op, protocol: 1, requestId, agentId: AGENT, ...overrides }
-}
-
-/** A connected controller that has agreed the protocol generation. */
-async function handshaken (port) {
-  const peer = controller(port)
-  await peer.connected
-  const accepted = await peer.answer(request('handshake', 'h1'))
-  assert.equal(accepted.op, 'handshake')
-  return peer
-}
+const {
+  AGENT,
+  OTHER_AGENT,
+  USERNAME,
+  controller,
+  eventually,
+  fakeBot,
+  freePort,
+  handshaken,
+  promptly,
+  request,
+  startedBody
+} = require('./harness')
 
 test('a body connects offline, with respawn explicitly off', async () => {
   const { body, created } = await startedBody()
@@ -230,20 +61,25 @@ test('a body connects offline, with respawn explicitly off', async () => {
   }
 })
 
-test('one internal plugin is loaded and the login half is Loom own', async () => {
+test('only the reporting plugins are loaded and the rest is Loom own', async () => {
   const { body, created } = await startedBody()
   try {
     // Mineflayer loads all of its internal plugins by default, which would put a
     // physics interval, autonomous position updates, an automatic respawn and every
     // action plugin inside a process whose purpose is to make no choices.
     assert.equal(created.loadInternalPlugins, false)
-    // `health` is kept for `spawn` and `death`; `login` is a plugin of Loom's own,
-    // because Mineflayer's `game` writes `client_command` back at the server on a
-    // `win_game` packet - the automatic respawn by another route. `plugins.test.js`
-    // proves that against the real loader rather than against this option map.
-    assert.deepEqual(Object.keys(created.plugins).sort(), ['health', 'loomLifecycle'])
-    assert.equal(created.plugins.health, true)
-    assert.equal(created.plugins.loomLifecycle, announceLogin)
+    // Every plugin kept turns packets the server sends of its own accord into state a
+    // reader can ask about. What replaces `game` and `physics` is a plugin of Loom's
+    // own, because `game` writes `client_command` back at the server on a `win_game`
+    // packet - the automatic respawn by another route - and `physics` runs a movement
+    // interval. `plugins.test.js` proves that against the real loader rather than
+    // against this option map.
+    assert.deepEqual(Object.keys(created.plugins).sort(), [
+      'blocks', 'entities', 'health', 'inventory', 'loomWorldState',
+      'simple_inventory', 'time'
+    ])
+    for (const name of INTERNAL_REPORTING_PLUGINS) assert.equal(created.plugins[name], true)
+    assert.equal(created.plugins.loomWorldState, followWorldState)
     // The whole option set, so a plugin or a policy added by omission fails here.
     assert.deepEqual(Object.keys(created).sort(), [
       'auth', 'hideErrors', 'host', 'loadInternalPlugins', 'plugins', 'port',
@@ -619,6 +455,98 @@ test('a flood of malformed frames is bounded and does not end the body', async (
     const fresh = await handshaken(port)
     assert.equal((await fresh.answer(request('status', 's1'))).op, 'status')
     fresh.stop()
+  } finally {
+    peer.stop()
+    await body.stop()
+  }
+})
+
+test('asking before the body is ready never spends the abuse budget', async () => {
+  const { body, port } = await startedBody()
+  const peer = await handshaken(port)
+  const asking = (at) => request('sense', `s${at}`, { radius: 8, limit: 4 })
+  try {
+    // The body is still `connecting`, so every sense earns `notReady` - the ordinary answer
+    // a controller is told to ask again after, not a frame this process could not read. More
+    // of them than the abuse budget allows of anything, on a channel that stays open: at 1 Hz
+    // through a real login this used to cost a controller its channel, and `offered.forget`
+    // took every slot handle on it as well.
+    for (let asked = 1; asked <= MAX_REFUSALS_PER_CONNECTION * 2; asked += 1) {
+      const refused = await promptly(peer.answer(asking(asked)), `sense ${asked}`)
+      assert.equal(refused.error, 'notReady', `sense ${asked}`)
+      assert.equal(refused.requestId, `s${asked}`)
+    }
+    // And a genuine peer error still counts against its own budget of eight, whatever the
+    // asking cost: the eighth duplicate closes the channel behind its own refusal.
+    for (let bad = 1; bad <= MAX_REFUSALS_PER_CONNECTION; bad += 1) {
+      const refused = await promptly(peer.answer(request('handshake', 'h1')), `duplicate ${bad}`)
+      assert.equal(refused.error, 'duplicateRequestId', `duplicate ${bad}`)
+    }
+    await promptly(peer.closed, 'the close the abuse budget earns')
+  } finally {
+    peer.stop()
+    await body.stop()
+  }
+})
+
+test('a controller that only ever asks early is cut off at its own bound and no other', async () => {
+  // At the shipped number, with nothing injected. It is reachable only because a `notReady`
+  // gives its request id back: held, the 64th poll met `MAX_TRACKED_REQUESTS` first and was
+  // answered `tooManyRequests` - a peer error - so this bound governed nothing at all.
+  const { body, port } = await startedBody()
+  const peer = await handshaken(port)
+  const asking = (at) => request('sense', `s${at}`, { radius: 8, limit: 4 })
+  try {
+    // Every one of them is answered `notReady`, the last included: the bound closes the
+    // channel *behind* the refusal it writes, exactly as the abuse budget does. Not one is
+    // `tooManyRequests`, which is what the released ids buy: this many distinct ids beside
+    // the handshake's own is past `MAX_TRACKED_REQUESTS`, so retention is caught here.
+    assert.ok(MAX_NOT_READY_PER_CONNECTION + 1 > MAX_TRACKED_REQUESTS)
+    for (let asked = 1; asked <= MAX_NOT_READY_PER_CONNECTION; asked += 1) {
+      const refused = await promptly(peer.answer(asking(asked)), `sense ${asked}`)
+      assert.equal(refused.error, 'notReady', `sense ${asked}`)
+      assert.equal(refused.requestId, `s${asked}`)
+    }
+    await promptly(peer.closed, 'the close the notReady budget earns')
+    // So the request that would have exceeded the bound is never answered at all.
+    peer.send(asking(MAX_NOT_READY_PER_CONNECTION + 1))
+    const beyond = await Promise.race([
+      peer.next().then(() => 'answered'),
+      new Promise((resolve) => setTimeout(() => resolve('nothing'), 100))
+    ])
+    assert.equal(beyond, 'nothing')
+    // One channel closed is not the process ending, so a fresh controller is served.
+    const fresh = await handshaken(port)
+    assert.equal((await fresh.answer(request('status', 's1'))).op, 'status')
+    fresh.stop()
+  } finally {
+    peer.stop()
+    await body.stop()
+  }
+})
+
+test('a notReady gives its request id back and an answered request keeps its own', async () => {
+  const { body, port } = await startedBody()
+  const peer = await handshaken(port)
+  const asking = () => request('sense', 'poll', { radius: 8, limit: 4 })
+  try {
+    // The same id, over and over, while the body is still connecting. "Ask again" has to
+    // mean the same request may be sent again, so none of these is a duplicate.
+    for (let asked = 1; asked <= MAX_REFUSALS_PER_CONNECTION + 2; asked += 1) {
+      const refused = await promptly(peer.answer(asking()), `poll ${asked}`)
+      assert.equal(refused.error, 'notReady', `poll ${asked}`)
+      assert.equal(refused.requestId, 'poll')
+    }
+    // An *answered* request keeps its id, so duplicate detection is unchanged for the round
+    // trips that completed - and it is still per connection.
+    assert.equal((await promptly(peer.answer(request('status', 'q1')), 'the status')).op, 'status')
+    const again = await promptly(peer.answer(request('status', 'q1')), 'the repeat')
+    assert.equal(again.error, 'duplicateRequestId')
+    // Including the id a poll was answered under: released is released, so it is spent by
+    // whatever completes under it next and a duplicate of *that* is refused.
+    assert.equal((await promptly(peer.answer(request('status', 'poll')), 'the poll id')).op, 'status')
+    const spent = await promptly(peer.answer(request('status', 'poll')), 'the poll id again')
+    assert.equal(spent.error, 'duplicateRequestId')
   } finally {
     peer.stop()
     await body.stop()

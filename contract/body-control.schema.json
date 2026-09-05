@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://loom.dev/contract/body-control.schema.json",
   "title": "Loom body-control protocol",
-  "description": "The single source of truth for the control messages exchanged with a Loom player-body process (the Node/Mineflayer body in body/). A controller sends a BodyRequest; the process answers with exactly one BodyResponse or one BodyError, on the same line-delimited loopback socket. This is deliberately NOT the perception/decision contract in loom.schema.json: that one carries what an agent knows and decides, this one carries only whether a body process is alive, which lifecycle state it is in, and when to stop. Nothing here perceives the world or acts in it. Union types use internal tagging: BodyRequest.op and BodyResponse.op select the variant and the variant's fields are inlined alongside it. JSON Schema sees a parsed number rather than the literal that carried it, so validation keywords cannot express this wire's numeric work guard: both codecs refuse a numeric literal longer than 32 characters, or one whose decimal-point shift would make exact integrality or range checking unbounded. Those are contract rules stated in prose here and enforced before either codec materialises such a value.",
+  "description": "The single source of truth for the control messages exchanged with a Loom player-body process (the Node/Mineflayer body in body/). A controller sends a BodyRequest; the process answers with exactly one BodyResponse or one BodyError, on the same line-delimited loopback socket. This is deliberately NOT the perception/decision contract in loom.schema.json: that one carries what an agent knows and decides, this one carries whether a body process is alive, which lifecycle state it is in, when to stop, the raw state the game reports about the player, and one eat the controller names. Nothing here decides anything: the raw state is reported unmeasured and untranslated, the eat names one stack a mind already chose, and every judgement about what any of it means - what is near, what is dangerous, what is worth eating - is made above this wire. Union types use internal tagging: BodyRequest.op and BodyResponse.op select the variant and the variant's fields are inlined alongside it. JSON Schema sees a parsed number rather than the literal that carried it, so validation keywords cannot express this wire's numeric work guard: both codecs refuse a numeric literal longer than 32 characters, or one whose decimal-point shift would make exact integrality or range checking unbounded. Those are contract rules stated in prose here and enforced before either codec materialises such a value.",
 
   "$defs": {
     "ProtocolVersion": {
@@ -33,6 +33,169 @@
       "maximum": 9007199254740991
     },
 
+    "ResourceName": {
+      "description": "The name the game's own data gives a thing - an entity kind, a block, an item - reported exactly as the client library read it and never translated. Lowercase because a Minecraft resource location is lowercase by the game's own rule, so a name outside this set is not a name the registry could have held. Character-bounded for the reason ControlId is: a name is echoed into a frame and into logs, and a free-text error, a host name or a local path must not be able to arrive through a field that looks like a registry name. The shape is an optional namespace followed by a path of one or more non-empty segments, rather than a flat class of the same characters, and that structure is what makes the last sentence true rather than nearly true: a flat class admitted /tmp/secret, which is lowercase throughout and so passed every other guard either codec has. A resource location never begins or ends with a slash and never doubles one, so requiring non-empty segments refuses every absolute path while still admitting the nested paths a modded registry can hold. A relative lowercase token such as tmp/secret is still admitted, and honestly so: it is indistinguishable from a legal nested id, exactly as a dotted host name is indistinguishable from a legal ControlId. That extends to a traversal - ../../etc/passwd is admitted, because a dot is a legal resource-location character and .. is therefore a legal path segment, so refusing it would make this field stricter than the registry it mirrors. It is safe here and would not be on ControlId: an agent id names Loom's own ledger and log files, while nothing anywhere reads this field as a path - it is looked up in a registry, shown to an operator, and given to a mind as a word. Length-bounded at 40 because the longest name vanilla ships is 35 characters, and because the largest legal frame has to stay computable: a name is one byte per character here, so the worst case a frame-size bound is measured against is arithmetic rather than a guess.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^([a-z0-9_.-]+:)?[a-z0-9_.-]+(/[a-z0-9_.-]+)*$"
+    },
+
+    "WorldPosition": {
+      "description": "A position in the world the body is standing in, as three numbers in x, y, z order. Absolute rather than relative to the body, and unmeasured: no distance, bearing or height difference is computed here, because those are what the coordinator derives and its own perception contract already has a vocabulary for. Every position in one answer is read in the same instant, which is what lets a distance derived from two of them be one reading rather than two that can disagree while the world moves. Bounded by the world border's own limit, which also keeps each number's literal short enough for the frame's numeric work guard and for the largest-legal-frame arithmetic. Note that the two runtimes spell an integral real number differently by default - Node writes 20 where the JVM writes 20.0 - and neither is made to imitate the other, because a codec that reshaped a number it had read correctly would be editing evidence to make a test pass. Nothing is lost by that: each direction of this wire has exactly one encoder in production, since a request is written by the controller and an answer by the body, so the difference can only ever reach the shared fixtures, which are re-encoded on both sides. A fixture carrying a real number therefore keeps to a value both runtimes spell identically - a non-integral one such as 12.5 - in the same spirit as the perception contract's fixtures keeping away from values that need exponential notation.",
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "number",
+        "minimum": -30000000,
+        "maximum": 30000000
+      }
+    },
+
+    "SenseRadius": {
+      "description": "How far from the body a sense request looks, in blocks, as the caller states it. It is on the request and not a constant of the body process, so the radius stays one number owned by the coordinator whose perception policy it is: a body holding its own copy would be a second policy able to drift from the one the perception contract's bound is stated in. The maximum is the widest a caller may ask for rather than what any caller does ask for, and is deliberately above Loom's own perception radius so that raising that radius does not need this contract to move.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 48
+    },
+
+    "SenseLimit": {
+      "description": "How many entities the answer may carry, as the caller states it, and for the same reason the radius is on the request. The maximum is what the frame-size bound can afford rather than a policy: an answer that named more entities than this could not be written inside the largest legal frame once a full inventory is beside it, and a body that trimmed silently to fit would report an omission count that had already stopped being true.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 24
+    },
+
+    "SlotIndex": {
+      "description": "One slot of the player's own inventory window, numbered as the game numbers it: 0 is the crafting result, 1 to 4 the crafting grid, 5 to 8 the armour slots, 9 to 35 the main inventory, 36 to 44 the hotbar, and 45 the off hand. Reported and named by index rather than by role, because an index is what the client library and the server both address a slot by, and because a role is a meaning - which belongs above this wire with every other meaning.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 45
+    },
+
+    "StackCount": {
+      "description": "How many items stand in one slot. At least one, because an empty slot is left out of the answer rather than reported as a stack of nothing - a slot reported as holding zero would tell a mind it is carrying food it does not have. The maximum is one byte's worth rather than vanilla's own stack limit of 64: a server that over-stacks a slot is reported rather than refused, because refusing the frame would blind the body over a count it read correctly, and a byte is still small enough for the largest-legal-frame arithmetic.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 255
+    },
+
+    "SensedVitals": {
+      "description": "The three vitals the game keeps for a player, reported as the game's own numbers and never combined into one. Health is damage to the body; food is how full the agent is; saturation is the hidden reserve that is spent before food falls. A body can be beaten to death on a full stomach and can starve without a scratch, so a wire that reported one figure for 'condition' could not say what ended an agent. This is deliberately not the perception contract's SelfState.energy, which is one synthetic reserve the Villager body spends by living: these are vanilla's own, and reconciling the two is the coordinator's work at cutover rather than something this wire pretends to have done.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["health", "food", "saturation"],
+      "properties": {
+        "health": {
+          "description": "Hit points, as the server last reported them. Zero is a dead player, which the lifecycle state says too. The maximum is the game's own ceiling on a max-health attribute rather than vanilla's twenty, so a server that raises it is reported rather than refused.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1024
+        },
+        "food": {
+          "description": "The food level, 0 to 20, as vanilla counts it. An integer because vanilla's food level is one, and separate from saturation because they fall in that order.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "saturation": {
+          "description": "The hidden reserve, 0 to 20, as vanilla counts it. Never above the food level, because vanilla clamps it there when eating and spends it before food falls: a report above it has read the two at different instants. Draft 2020-12 cannot compare one property with another, so that relation is enforced by both codecs and asserted by the conformance suites, exactly as StatusReport's stateMs relation is.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 20
+        }
+      }
+    },
+
+    "SensedTime": {
+      "description": "The world clock, as the client library reports it and with nothing derived from it. The coordinator's own clock turns this into a phase and a countdown; a body that named the phase would be deciding what part of a day an agent is in, which is a judgement and belongs above this wire.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeOfDay", "day", "isDay"],
+      "properties": {
+        "timeOfDay": {
+          "description": "Ticks since the start of the current day, 0 to 23999.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 23999
+        },
+        "day": {
+          "description": "How many whole days the world has run.",
+          "$ref": "#/$defs/StatusCount"
+        },
+        "isDay": {
+          "description": "Whether it is daylight, as the client library answers it. Reported rather than left to be derived, because it is a reading and not a calculation: a dimension whose time is fixed has a time of day and no daylight, and an agent needs the difference.",
+          "type": "boolean"
+        }
+      }
+    },
+
+    "SensedGround": {
+      "description": "The two blocks a walking body's own footing is made of: the one it stands in and the one it stands on. Two blocks and no more - this is not a map, and a body that reported the blocks around it would be building a second world model on a wire whose frame bound could not hold one.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["standingIn", "standingOn"],
+      "properties": {
+        "standingIn": {
+          "description": "The block at the body's own feet. Air is reported as the block it is, since air is a block the registry names.",
+          "$ref": "#/$defs/ResourceName"
+        },
+        "standingOn": {
+          "description": "The block immediately below the body's feet.",
+          "$ref": "#/$defs/ResourceName"
+        }
+      }
+    },
+
+    "SensedEntity": {
+      "description": "One entity the client library was tracking within the request's radius. It carries what the game calls it, where it is, and whether a straight line from the body's eyes reaches it - and deliberately nothing else. There is no handle: a handle that outlived the request is exactly the reuse the perception contract's own entity references refuse, and the coordinator mints one per perception from this list as it already does for its other body. There is no kind, no hostility and no threat: what an entity means is the coordinator's judgement, and a body that answered it would be deciding.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "position", "visible"],
+      "properties": {
+        "what": {
+          "description": "The entity kind as the game's own data names it.",
+          "$ref": "#/$defs/ResourceName"
+        },
+        "position": { "$ref": "#/$defs/WorldPosition" },
+        "visible": {
+          "description": "Whether a ray cast from the body's eyes to the entity reached it without meeting a block. A line and not a field of view: the body's facing is never consulted, so everything inside the radius is equally known and false here means the body knows something is there and cannot see it.",
+          "type": "boolean"
+        }
+      }
+    },
+
+    "SensedStack": {
+      "description": "One occupied slot of the player's own inventory window. Empty slots are left out, which is what makes the count on a reported stack at least one, and every occupied slot is reported: there is no bound to omit against and so no omission count beside the list, because a body that trimmed its own inventory would be hiding the last food an agent has.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slot", "what", "count"],
+      "properties": {
+        "slot": { "$ref": "#/$defs/SlotIndex" },
+        "what": {
+          "description": "The item as the game's own data names it, which is the same vocabulary an entity kind is reported in. Never a display name: a renamed loaf is still bread, and a display name is whatever an anvil or a datapack last called it.",
+          "$ref": "#/$defs/ResourceName"
+        },
+        "count": { "$ref": "#/$defs/StackCount" }
+      }
+    },
+
+    "EatOutcome": {
+      "description": "What became of one eat request, as one value from a closed set. It is on the response rather than in ErrorCode because those are answers to different questions: an ErrorCode is why a frame was not usable, while these are what the body did about a request it understood perfectly. A refusal here is therefore an answer, and it is a value rather than prose so that a run can count how many meals were missed and why - the same reason the Villager body's own eat refusals are a tag on the outcome rather than a sentence. Every refusal that is a fact about the request is settled before anything is consumed, so a refused eat never costs an agent its food. 'slotEmpty' and 'slotChanged' are kept apart because they are different facts about the run: the slot the mind named holds nothing now, against it holds something that is not what the mind chose. 'notEdible' and 'reserveFull' are kept apart for the same reason and it is the sharper of the two pairs: an agent that had nothing edible to eat and an agent that ate itself to a standstill and could not use the rest are opposite readings of the same run, and vanilla itself refuses the second - a full food bar cannot take an ordinary food, whatever the agent is carrying. 'slotInaccessible' is the residual, and the one outcome that cannot promise the food is still there: the stack was there and was edible and the meal still did not happen, because the body could not bring it to hand or the game never confirmed it - and a use the game never confirmed may still have been carried out, which is exactly why it reads as a fault to go and look at rather than as a fact about the agent.",
+      "type": "string",
+      "enum": [
+        "eaten",
+        "senseForgotten",
+        "slotUnnamed",
+        "slotEmpty",
+        "slotChanged",
+        "notEdible",
+        "reserveFull",
+        "slotInaccessible"
+      ]
+    },
+
     "LifecycleState": {
       "description": "Where the body process is in its one life. Seven states and no gameplay: this says whether there is a player on the server and whether it is still usable, never what the player should do. 'connecting' is before the server has accepted the login; 'loggedIn' is after the login packet and before the first spawn; 'ready' is a spawned, live player; 'dead' is a player the server has killed, which the process reports and never respawns; 'disconnected' is a connection the server or the network ended; 'stopping' is a shutdown in progress; 'failed' is a client error the process could not continue from. 'loggedIn' and 'dead' are separate from 'ready' for a reason found in world: a dead identity reconnecting arrives on the death screen, so it reaches loggedIn and then dead without ever reaching ready.",
       "type": "string",
@@ -48,9 +211,9 @@
     },
 
     "ControlOperation": {
-      "description": "What a controller may ask for. Three operations and no more: this generation of the protocol exists to prove a body process can be reached, identified and stopped. There is deliberately no operation that perceives the world or moves the body - those belong to the perception/decision contract and to later work.",
+      "description": "What a controller may ask for. Five operations: reach the process, identify it, stop it, read the raw state the game itself reports, and eat one stack the controller names. The operation set is the one part of a generation that may grow without the generation moving, because an operation a peer does not have is refused with unknownOperation and no field of an operation both peers do have changes spelling - which is the misreading ProtocolVersion exists to prevent. A generation moves when an existing field's spelling or meaning changes; adding an operation only widens what is accepted, in the same sense the research manifest schemas may only ever be loosened once evidence is committed under them. The earlier generation of this file said there was deliberately no operation that perceives the world, and the objection behind that sentence was to an unbounded, uncontracted second perception path rather than to world state on this wire at all. 'sense' is bounded by the caller's own limits and described field by field below, so it answers the objection instead of ignoring it: it reports what the game reported, and every meaning Loom reads into that - a bearing, a distance, a threat, a handle a mind may name - is derived by the coordinator above this wire, which is where the perception/decision contract's own bounds and vocabulary already live.",
       "type": "string",
-      "enum": ["handshake", "status", "shutdown"]
+      "enum": ["handshake", "status", "shutdown", "sense", "eat"]
     },
 
     "ErrorCode": {
@@ -67,12 +230,13 @@
         "handshakeRequired",
         "wrongAgent",
         "shuttingDown",
-        "timeout"
+        "timeout",
+        "notReady"
       ]
     },
 
     "BodyRequest": {
-      "description": "One request from a controller to a body process. Internally tagged on the 'op' property. Every variant carries the protocol generation, the correlation id its one answer will echo, and the agent whose body is being addressed - so a frame is self-describing and a reply can never be matched to the wrong request. No variant carries a payload: everything this generation can ask for is asked by naming the operation.",
+      "description": "One request from a controller to a body process. Internally tagged on the 'op' property. Every variant carries the protocol generation, the correlation id its one answer will echo, and the agent whose body is being addressed - so a frame is self-describing and a reply can never be matched to the wrong request. Three variants carry no payload at all, and the two that do carry only the caller's own bounds and the one slot it names - never a target, a threshold or a rule, because a payload that carried any of those would be the controller asking the body to decide something.",
       "oneOf": [
         {
           "title": "Handshake",
@@ -112,6 +276,39 @@
             "agentId": { "$ref": "#/$defs/ControlId" },
             "op": { "const": "shutdown" }
           }
+        },
+        {
+          "title": "Sense",
+          "description": "Read the raw state the game reports about the player: its vitals, the world clock, its footing, the entities the client library is tracking near it, and every occupied slot of its inventory. The two bounds are the caller's own and are required rather than defaulted, because a body that supplied a default would own a perception policy it has no business owning - and a default is the kind of number that quietly becomes the real one. Answered only for a spawned, live player whose readings the game has actually reported: any other lifecycle state is refused with notReady, since a body that has not spawned has no position to read and one that has been removed would be reporting the world it last saw - and so is a spawned player the server has not yet told the time of day, or whose vitals do not yet make sense together, because a reading the body would have to invent to fill a required field is not a reading.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "radius", "limit"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "sense" },
+            "radius": { "$ref": "#/$defs/SenseRadius" },
+            "limit": { "$ref": "#/$defs/SenseLimit" }
+          }
+        },
+        {
+          "title": "Eat",
+          "description": "Eat the one stack standing in the slot a named sense reported. It names a slot of one earlier answer rather than a food, so two stacks of bread are two different meals and one of them may be the last food the agent has - and the body chooses nothing: it has no threshold, no timer, no target selection and no notion of which food is better. The senseId is the requestId of the sense whose answer the choice was made from, which is what makes the reference request-scoped: the body remembers only its most recent few answers, so a slot named from an older one is refused with senseForgotten rather than looked up in the inventory as it stands now. Answered only for a spawned, live player whose readings the game has reported, for the reason a sense is: the vitals ride every eat answer, refusal included, so a body that cannot state them cannot answer an eat either.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "senseId", "slot"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "eat" },
+            "senseId": {
+              "description": "The requestId of the sense answer the slot was chosen from. A ControlId because that is what it is - one echoed back - and not a new kind of handle.",
+              "$ref": "#/$defs/ControlId"
+            },
+            "slot": { "$ref": "#/$defs/SlotIndex" }
+          }
         }
       ]
     },
@@ -136,7 +333,7 @@
         },
         {
           "title": "StatusReport",
-          "description": "Where the body is in its life, and how long it has been there. Both durations are milliseconds measured by the process's own monotonic clock rather than a wall clock, so neither goes backwards when the host's time is adjusted. Deliberately no position, health, hunger or inventory: those are perception, and a control channel that reported them would be a second perception path with no bound and no contract behind it.",
+          "description": "Where the body is in its life, and how long it has been there. Both durations are milliseconds measured by the process's own monotonic clock rather than a wall clock, so neither goes backwards when the host's time is adjusted. Still deliberately no position, health, hunger or inventory, now that a sense answer carries all four: a status report is what a controller asks for on a schedule to learn whether the process is alive, and a liveness check that dragged the world along with it would make every such poll cost a full read and would give two frames the same answer to keep in step. The bounded answer to 'what does the game say about this player' is SenseReport below, and it is asked for by name.",
           "type": "object",
           "additionalProperties": false,
           "required": [
@@ -182,6 +379,94 @@
             "agentId": { "$ref": "#/$defs/ControlId" },
             "op": { "const": "shutdown" },
             "state": { "const": "stopping" }
+          }
+        },
+        {
+          "title": "SenseReport",
+          "description": "What the game says about this player, at one instant and with nothing derived from it. Every reading in one answer is taken together, so a distance the coordinator computes between two of them is one reading of a moving world rather than two that can disagree. The state is always 'ready', since no other state can be sensed. Nothing here is measured, sorted into kinds, or judged: the coordinator turns positions into distances, bearings and heights, decides what is a threat, mints the handles a mind may name, and applies its own further bounds. What the body does do is cut the entity list to the limit it was given, nearest first, and say how many it dropped - because the cut has to be made where the distances were measured, and an answer that reported the cut without the count would read afterwards as a quiet scene, which is the one reading a survival run must never be given.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "protocol",
+            "requestId",
+            "agentId",
+            "op",
+            "state",
+            "position",
+            "vitals",
+            "time",
+            "entities",
+            "entitiesOmitted",
+            "inventory"
+          ],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "sense" },
+            "state": { "const": "ready" },
+            "position": {
+              "description": "Where the body itself is standing. First among the readings because every other position in the answer is only meaningful beside it.",
+              "$ref": "#/$defs/WorldPosition"
+            },
+            "vitals": { "$ref": "#/$defs/SensedVitals" },
+            "time": { "$ref": "#/$defs/SensedTime" },
+            "ground": {
+              "description": "The body's own footing, when the body could read it. Absent means the client library had no block there to report, which happens when the chunk the body is standing in has not arrived yet - and absent must never be read as air, because an unread chunk reporting air is how a body comes to believe it is standing over a hole it never looked at. Present or absent is therefore a fact about what was read, not about what is there.",
+              "$ref": "#/$defs/SensedGround"
+            },
+            "entities": {
+              "description": "The entities the client library was tracking within the radius, nearest first, cut to the limit the request named. Nearest first because that is the order a cut has to be made in for the survivors to be the ones worth keeping, and because a caller applying a tighter bound of its own can then take a prefix. Neither codec checks the order, and that is deliberate rather than an omission: the body sorts by the distance from its eyes, which is not the position this list carries, so a check at either end would be a second and disagreeing measurement of the same scene. It is pinned where it is decided, in the body's own tests.",
+              "type": "array",
+              "maxItems": 24,
+              "items": { "$ref": "#/$defs/SensedEntity" }
+            },
+            "entitiesOmitted": {
+              "description": "How many entities were inside the radius and did not fit the limit. Zero when nothing was dropped. It rides inside the answer rather than being left for a caller to work out, because the caller cannot: the number the body cut against is the only place the dropped ones were ever counted, and a caller adding its own cut to this one counts each bound exactly once.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "inventory": {
+              "description": "Every occupied slot of the player's own inventory window, in slot order. Complete rather than bounded: the window has 46 slots and all of them may be reported, so there is no omission count here and no way for the body to have hidden a stack. A slot that is empty is left out, which is why a reported stack always holds at least one item. Slot order is strictly increasing, and both codecs enforce it, which no keyword here can say. That makes it two rules in one: the order a reader may rely on, and the statement that no slot is described twice - a repeated slot is a body that read its own window wrongly, and an eat naming it would resolve against whichever of the two descriptions happened to be found first.",
+              "type": "array",
+              "maxItems": 46,
+              "items": { "$ref": "#/$defs/SensedStack" }
+            }
+          }
+        },
+        {
+          "title": "EatReport",
+          "description": "What became of one eat request. The outcome carries the whole of the answer, and the vitals are always reported beside it - including on a refusal, because a controller that asked to eat is deciding what to do next from how full the agent is, and a refusal that said nothing about that would send it back for a second read. 'state' and 'vitals' are both the moment the request was admitted rather than the moment the frame was written, and this is the one operation where those differ: a meal is answered after two round trips to the server, so the body can die, disconnect or be handed a food level outside vanilla's own ceiling in between. The 'ready' this frame states is therefore not a claim about now but about the moment the numbers beside it came from, and a writer prefers a fresher vitals reading only while the body is still in that state and the reading can still be stated, carrying the admitted reading whole otherwise, never a mix of the two. 'what' and 'remaining' are present exactly when the outcome is 'eaten': they say which item was consumed and how many of it the body still held when it last looked, which is what a run counts consumption from, and a refusal has consumed nothing to describe. Exactly one item is consumed, by the client library's own use of the item rather than by arithmetic here.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "protocol",
+            "requestId",
+            "agentId",
+            "op",
+            "state",
+            "outcome",
+            "vitals"
+          ],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "eat" },
+            "state": { "const": "ready" },
+            "outcome": { "$ref": "#/$defs/EatOutcome" },
+            "vitals": { "$ref": "#/$defs/SensedVitals" },
+            "what": {
+              "description": "The item that was eaten, as the game's own data names it. Present exactly when the outcome is 'eaten'.",
+              "$ref": "#/$defs/ResourceName"
+            },
+            "remaining": {
+              "description": "How many of that item the body still holds, counted where the stack ended up after the body brought it to hand rather than in the slot the request named: bringing a stack to hand moves it, so the named slot is not where the meal came from by the time one is eaten, and a count read there would be a count of whatever the move left behind. Zero when the last one was eaten. It is the body's latest observation rather than a promised delta on the count the sense answer offered: the server states a consumed slot in a packet of its own, the body waits a bounded moment for it, and past that bound it reports the count as it stands rather than refusing a meal that has already happened. Exactly one item was consumed either way. Present exactly when the outcome is 'eaten'. Draft 2020-12 could express that relation as a conditional, and deliberately does not: the two codecs enforce it and the conformance suites assert it, as they do for every other relation this schema states in prose.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            }
           }
         }
       ]

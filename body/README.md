@@ -15,8 +15,17 @@ inert for the same kind of reason: nothing registers an identity in it yet.
 drives; the Paper runtime wiring, and the cutover that eventually retires the Villager,
 come in later slices.
 What lands here is the foundation both of those need: a process that can be started,
-asked how it is, and told to stop, and a contract two runtimes already agree on before
-either of them speaks it in anger.
+asked how it is, asked for one bounded reading of what its player can see and how it is
+doing, told to eat one named stack, and told to stop - and a contract two runtimes
+already agree on before either of them speaks it in anger.
+
+The wire is **five operations at protocol generation 1**, and the split between them is
+the split this whole package is built on.
+`handshake`, `status` and `shutdown` are the process's own lifecycle.
+`sense` is one bounded reading of a player's scene and vitals, and `eat` is one explicit
+meal.
+Neither of the last two decides anything: a body senses because it was asked to and eats
+because a mind named one slot, and it does nothing at all in between.
 
 ## Build and test
 
@@ -34,8 +43,9 @@ credential of any kind.
 Node 22 or newer, as `package.json` states.
 The tests run under the built-in `node:test` runner, over an explicit `test/*.test.js`
 glob rather than a bare directory: a directory positional such as `node --test test/`
-is `require()`d rather than scanned on Node 25, and the glob also keeps
-`test/fixtures/` - which holds a fault injector rather than a suite - out of the run.
+is `require()`d rather than scanned on Node 25, and the glob also keeps `test/fixtures/`
+and `test/harness.js` - a fault injector and a shared harness, neither of them a suite -
+out of the run.
 
 ## Running it against a disposable Paper server
 
@@ -99,14 +109,40 @@ connection and each `requestId` may be used once:
   sleep 1
   printf '{"op":"status","protocol":1,"requestId":"s1","agentId":"loom.demo.body"}\n'
   sleep 1
+  printf '{"op":"sense","protocol":1,"requestId":"n1","agentId":"loom.demo.body","radius":24,"limit":16}\n'
+  sleep 1
+  printf '{"op":"eat","protocol":1,"requestId":"e1","agentId":"loom.demo.body","senseId":"n1","slot":36}\n'
+  sleep 1
   printf '{"op":"shutdown","protocol":1,"requestId":"x1","agentId":"loom.demo.body"}\n'
   sleep 1
 } | nc 127.0.0.1 25585
 ```
 
-A `status` answer carries the lifecycle state and three counts; a `shutdown` is answered
-`stopping` **before** anything closes, and then the Minecraft connection, the control
-channel and the process itself go, in that order.
+A `status` answer carries the lifecycle state and three counts.
+A `sense` answer carries the body's position, its three vitals, the world's time, the two
+blocks it is standing in and on, the entities it can see nearest first with a count of
+those the bounds cut, and its whole inventory by slot; it is refused `notReady` unless the
+body is `ready`.
+An `eat` names a `senseId` - the `requestId` of the `sense` answer that offered the slot -
+so the `e1` frame above eats from the answer `n1` returned, on that same connection.
+It is answered with one of eight closed outcomes rather than with an error, because every
+one of them is a fact about the agent's own inventory rather than about the frame: `eaten`
+and the seven refusals `senseForgotten`, `slotUnnamed`, `slotEmpty`, `slotChanged`,
+`notEdible`, `reserveFull` and `slotInaccessible`.
+It is also the one answer written outside the frame that asked for it - bringing a stack to
+hand and using it are two round trips to the server - so **its `state` and its `vitals` are
+the state and the reading the request was admitted under**, not a re-read at write time.
+The frame states `ready` because the body was `ready` when the meal was taken on, which is
+where the numbers beside it came from; a body that has since died or disconnected still gets
+its completed meal reported rather than a refusal.
+The vitals prefer a fresher reading only while the body is still `ready` and the three can
+still be stated together, and carry the admitted reading whole otherwise - a server plugin
+raising the food level past vanilla's ceiling makes it unstatable, and a body that has died
+reads back statable numbers that are no longer this answer's body.
+The two are never mixed.
+That is one rule for both fields, and `src/eating.js`'s header owns it.
+A `shutdown` is answered `stopping` **before** anything closes, and then the Minecraft
+connection, the control channel and the process itself go, in that order.
 `SIGINT` and `SIGTERM` do the same thing without a frame.
 Keep a connection busier than `CONTROL_IDLE_MS` (30 s) or the body closes it with
 `timeout`, which is the protocol's own word for a controller that stopped saying
@@ -130,6 +166,15 @@ not be bound, which is the same.
   them. It is pure: no `require`, no I/O, no clock. The bounds are declared here
   rather than in the reader that enforces them, because they are facts about the
   contract and every reader of it needs one place to read them from.
+- `src/sensing.js` - one `sense` answer, read from the library and bounded against the
+  same exported constants the codec states. It refuses a whole reading rather than
+  trimming one field of it, and its own header owns why.
+- `src/eating.js` - the memory of recent `sense` answers a slot handle is resolved
+  against, and the eight closed outcomes one meal can have. Its header owns the order of
+  those outcomes and why the slot is read again at apply time.
+- `src/gamestate.js` - what this process reads for itself in place of two Mineflayer
+  plugins it may not load: the login report and the server's own position. It starts no
+  timer and writes nothing except the protocol's own teleport confirmation.
 - `test/body.test.js` - the process, driven the way a controller drives it: over a real
   loopback socket, against a fake Mineflayer client that emits exactly the events the
   real one emits. The client is fake and the socket is not, because the two halves fail
@@ -140,6 +185,13 @@ not be bound, which is the same.
   loader over a fake minecraft-protocol client. `body.test.js` proves which options
   this process asks for; only this file proves what those options actually load, which
   is the claim that matters.
+- `test/perception.test.js` - `sense` and `eat`, driven over a real socket against the
+  real Mineflayer loader: the bounds, the omission count, a handle scoped to one round
+  trip on one connection, every one of the eight outcomes, and that nothing is sensed or
+  eaten unless a frame asked for it.
+- `test/harness.js` - the one harness those suites share, from above over a real socket
+  and from below over a fake protocol client. It is deliberately not a suite of its own,
+  which is why `npm test` names an explicit `test/*.test.js` glob.
 - `test/entry.test.js` - the executable, run as a process, because that is the only
   place two of its properties exist: an exit status, and a signal.
 - `test/fixtures/faults.js` - the fault injector those process tests install with
@@ -158,35 +210,150 @@ not be bound, which is the same.
 ## Rules the process depends on
 
 **It holds no policy, and that is what it is for.**
-The whole Mineflayer subscription is five lifecycle events - `login`, `spawn`, `death`,
-`end`, `error` - and nothing else: no tick listener, no physics, no chat, so this process
-cannot choose a meal, a threat, a resource, a target, a route, or a fight, and cannot do
-repeated work of its own.
+The line every rule below is drawn on is **report against act**: this process reads the
+state the server sends of its own accord and answers the operations it is asked for, and
+it runs no loop, no timer and no gameplay decision of its own.
+So it cannot choose a meal, a threat, a resource, a target, a route, or a fight, and
+cannot do repeated work of its own.
 No action plugin is installed either, and none belongs here: pathfinder, auto-eat, PVP,
 collectblock and tool all decide things, and every one of those decisions is the mind's.
 A disconnected body is left disconnected rather than reconnected, because when and
 whether to come back is the controller's call and a reconnect loop here would be
 gameplay policy in the one place that must hold none.
 
-**One Mineflayer internal plugin is loaded, and the login half of the lifecycle is
+**`sense` and `eat` are answer-only, which is a stronger statement than "no auto-eat
+plugin".**
+There is no threshold, no timer, no target selection and no scan of any kind anywhere in
+`body/`: a starving body with bread in its inventory does nothing at all until a mind names
+one slot, and a body nobody asks reads nothing.
+Every field a `sense` reports is state the server sent of its own accord, read back off the
+library at the moment it was asked for - `bot.entities`, `bot.blockAt`, `bot.world.raycast`,
+`bot.time`, `bot.health`, `bot.food`, `bot.foodSaturation` and `bot.inventory` - so this
+process keeps no entity index, no inventory model, no hunger simulation and no food table
+of its own.
+Hunger is stated in vanilla's own terms for the same reason: `health`, `food` and
+`saturation` are three separate facts, not one reserve of Loom's, and what a food is worth
+is the server's answer rather than arithmetic here.
+An `eat` is `bot.equip` followed by `bot.consume` and nothing else, and a full food bar is
+refused by the library rather than by a number this process keeps.
+
+**A slot handle is scoped to one round trip on one connection, and both halves of that are
+load-bearing.**
+An `eat` names the `senseId` of the `sense` answer that offered the slot, so a handle means
+something only against the reading it came from, and `src/eating.js` keeps the last
+`MAX_REMEMBERED_SENSES` (4) answers rather than a lookup in anything unbounded - a
+superseded handle is `senseForgotten`, never a growing map.
+An entry is named by the *connection* as well as by the id, because a request id is the
+controller's own name for its round trip and two of the connections this process allows
+share no numbering: keyed on the id alone, the second controller's answer replaced the
+first's, and an eat from the first then ate a stack its own `sense` never offered and
+reported it as `eaten`.
+The bound stays on the whole memory rather than per connection, so no number of peers can
+make it grow, and a handle a connection never held is the `senseForgotten` a superseded one
+already earns - which is why nothing on the wire changed for it.
+The eight outcomes are closed and each is a distinct fact about the agent's own inventory:
+`eaten`, and the seven refusals `senseForgotten` (the answer is no longer remembered),
+`slotUnnamed` (that answer does not offer the slot - either it never did, or it did and the
+offer has since been spent on a meal), `slotEmpty`, `slotChanged` (something else stands
+there now), `notEdible`, `reserveFull` and `slotInaccessible`.
+The slot is read again at apply time for exactly that reason, and `src/eating.js`'s own
+header owns the order those checks are made in.
+**One answer's offer of one slot buys one meal**: a handle a meal was eaten against is spent,
+so an eat re-sent against it is `slotUnnamed` - the second of that outcome's two readings, and
+the reason it has two.
+The re-read cannot stand in for that, because it compares the item's *name* and a half-eaten
+stack still has the same name - and `bot.equip` moves nothing when the stack is already in the
+held slot, so a hotbar slot still reads the whole pre-meal stack after the meal.
+A spent handle is refused before any slot is read, so a re-sent eat is never `slotEmpty` or
+`slotChanged` however the equip left the named slot: that is the price of keeping the handle
+check first, and the check order is load-bearing rather than incidental.
+A mind that wants a second meal senses again, which is also the only way it learns what the
+first one left.
+`remaining` is the body's **latest observation** of what it still holds rather than a
+promised consumption delta, and it is waited for rather than read the instant `bot.consume`
+resolves: that promise settles on whichever of three packets arrives first and only one of
+them is the slot update, so the completion can arrive first and leave the library's window
+still holding the pre-meal count - which reported 3 for a stack of 3, and 1 rather than 0 for
+the last loaf.
+`SLOT_SETTLE_MS` (250 ms, five game ticks) is how long the slot's own restatement is waited
+for, and past it the count is read as it stands and the meal is still reported `eaten`.
+That imprecision is deliberate and the alternative is worse: **nothing after `bot.consume`
+resolves may be refused**, because the only refusal available for it is `notReady`, which on
+this wire means *ask again* - and a stack already in the hotbar is equipped by
+`setQuickBarSlot` alone, so the slot still reads the pre-meal item, `slotChanged` is not
+reached, and a controller that obeyed ate a second loaf for one decision.
+Creative mode reaches that deadline every time, since vanilla consumes nothing there and so
+restates no slot, and a creative body must still be told it ate.
+A reading the field will not carry is **bounded into it** rather than lost, for the same
+reason: a count above 255 is capped, since a server can over-stack the held slot with a
+varint the sense answer would have refused, and a count that is not a number at all reads as
+nothing left, which is the safe direction for an agent deciding whether to go looking for
+food. Losing it left no answer for a meal that had already happened, which is the refusal
+this rule forbids.
+So `eaten` is exactly "`bot.consume` resolved", with no path between them - which is what
+makes spending the slot handle on `eaten` a rule about the meal rather than about a label.
+Exactly one item is consumed whatever the count says, because `bot.consume` is what consumed
+it.
+
+**Only the Mineflayer plugins that *report* are loaded, and what they leave out is
 Loom's own.**
 Mineflayer's default is to load all of them, which would put a physics interval,
 autonomous position updates, an automatic respawn and a whole shelf of action plugins
-inside a process whose purpose is to make no choices - so `loadInternalPlugins` is off
-and `INTERNAL_LIFECYCLE_PLUGINS` is the whole of what is kept, which is `health`, for
-`spawn` and `death`.
-`login` is `announceLogin`, a plugin of Loom's own that emits the lifecycle event off the
-raw packet and reads nothing out of it.
-Mineflayer's own `game` plugin is **not loadable here whatever else it is useful for**:
-on a `win_game` game-state change it writes `client_command` back at the server, which is
+inside a process whose purpose is to make no choices - so `loadInternalPlugins` is off and
+`INTERNAL_REPORTING_PLUGINS` is the whole of what is kept.
+That is `health` for `spawn`, `death`, `bot.health`, `bot.food` and `bot.foodSaturation`;
+`entities` for `bot.entities` and this body's own `bot.entity`; `blocks` for `bot.blockAt`
+and `bot.world`, whose `raycast` is what a line of sight is measured with; `time` for
+`bot.time`; and `inventory` with `simple_inventory` for `bot.inventory` and the two calls
+one explicit meal is made of - `bot.equip`, which is defined in the second of them, and
+`bot.consume`, which is defined in the first.
+Every one of those turns packets the server sends anyway into state a reader can ask
+about, and none of them decides anything.
+Left out are `physics` (a movement interval), `kick` (an automatic respawn), `game` (the
+vanilla client's respawn on a `win_game` change), and every action plugin.
+The line is drawn per *plugin* rather than per method, though, so two of the ones kept
+bring actions with them that nothing here wants: `entities` defines `bot.attack`,
+`bot.mount` and `bot.useOn` beside the entity index, and `simple_inventory` defines
+`bot.toss` and `bot.tossStack` beside the `equip` a meal needs.
+Neither plugin can be left behind, because the index and `equip` are exactly what a
+`sense` and an `eat` are read and carried out through - so what keeps those five actions
+from being taken is that no operation on this wire calls one, which is the wire being five
+operations rather than a list of methods being withheld.
+`bot.quit` is *not* among them: it is `kick`'s, and `kick` is not loaded, which is why
+this process ends a connection through `bot.end` and a reason of its own.
+`test/plugins.test.js` proves all of it against the real loader, because an option map is
+not evidence about what a loader does with it - including that a whole run of the five
+operations calls none of those five actions.
+
+**Mineflayer's own `game` plugin is not loadable here whatever else it is useful for.**
+On a `win_game` game-state change it writes `client_command` back at the server, which is
 the vanilla client's *respawn* - exactly the automatic respawn `respawn: false` exists to
 prevent, arriving by another route and reachable by any server that sends the packet.
-What is given up with it is `bot.game`, the dimension codec, the client brand and the
-`ping`/`pong` latency reply, none of which this process reports and none of which keeps a
-connection alive: `keep_alive` is answered by minecraft-protocol's own client, below any
-plugin.
-`test/plugins.test.js` proves that against the real loader, because an option map is not
-evidence about what a loader does with it.
+`src/gamestate.js` is Loom's own replacement for it and for `physics`: the reporting half
+of both, with none of the deciding half.
+It owns the `login` lifecycle event, the four `bot.game` fields the loaded plugins
+actually read (`dimension`, `minY` and `height` for `blocks`, `gameMode` for `inventory`),
+and the clientbound `position` packet, which no loaded plugin handles - so without it
+`bot.entity.position` would never leave `(0,0,0)` and every perception would be reported
+at the world origin.
+That file's own header is the authority on the three sharp edges in it: why it registers
+no `game_state_change` handler at all rather than merely declining that branch, why facing
+has to be recorded even though nothing reads it directly (1.21.1's serverbound `use_item`
+carries the client's rotation, so an unrecorded facing would turn the body on every meal),
+and why the world shape is read for 1.19 and above only.
+What is given up with `game` is the client brand and the `ping`/`pong` latency reply,
+neither of which this process reports and neither of which keeps a connection alive:
+`keep_alive` is answered by minecraft-protocol's own client, below any plugin.
+
+**Two packets are written that nothing asked for, and both are protocol flow control
+rather than gameplay.**
+`gamestate.js` answers a position report with `teleport_confirm`, because an unconfirmed
+teleport leaves the server ignoring the client; `blocks` answers a terrain batch with
+`chunk_batch_received`, without which terrain stops arriving after the first batch.
+They are in the same category as the `keep_alive` reply above - the protocol's own
+handshakes, not choices - and they are the only unasked writes in the process.
+`inventory` also echoes a window `state_id`, but only when acknowledging a click this
+process made on purpose.
 
 **`respawn: false` is set explicitly, because Mineflayer defaults it to true.**
 Left alone, coming back to life would be a decision this process took by omission, which
@@ -272,6 +439,42 @@ and an excess connection is refused `tooManyRequests` and closed.
 A connection is closed after `MAX_REFUSALS_PER_CONNECTION` (8) refusals or
 `CONTROL_IDLE_MS` (30 s) of silence, and one connection is remembered for at most
 `MAX_TRACKED_REQUESTS` (64) request ids.
+That refusal budget counts every refusal except `notReady`, which has its own,
+`MAX_NOT_READY_PER_CONNECTION` (64), because it is not a fault at all but the answer a
+controller is told to ask again after.
+So it is mostly a **peer-error** budget - `malformedFrame`, `wrongAgent`,
+`duplicateRequestId` and the rest - but not only that: `tooManyRequests` is charged to it
+too, and that one an honest controller earns by exhausting a per-session bound rather than by
+sending anything wrong. Separating those is part of the follow-up recorded below, not
+something this change makes.
+Counted as abuse, a controller polling `sense` at 1 Hz through a real login lost its channel
+after eight seconds of doing exactly what it was told, and the close forgot every slot handle
+on it as well; eight overlapping meals did the same.
+Both budgets close the same way: the last allowed refusal is written and the connection goes
+behind it, so the 64th `notReady` is answered and there is no 65th request on that channel.
+A `notReady` also **gives its request id back**, because that round trip minted no handle and
+the controller was told to send the same request again - so an expected poll costs nothing
+against `MAX_TRACKED_REQUESTS`, and offering the id again is not a duplicate.
+Held, it spent that bound instead: 63 polls filled it, the 64th earned `tooManyRequests`,
+which *is* a peer error, and eight more of those closed the channel out of the abuse budget -
+putting the failure the separate budget exists to remove back on the same connection, 72
+frames in rather than 8.
+Every id an *answered* request spends is still kept, so duplicate detection is unchanged for
+the round trips that completed.
+
+**The whole family of session bounds is owed a later look, and it is recorded here rather
+than changed here.** `MAX_TRACKED_REQUESTS`, `MAX_REFUSALS_PER_CONNECTION`,
+`MAX_NOT_READY_PER_CONNECTION` and `CONTROL_IDLE_MS` were sized for a lifecycle-only wire
+and are not yet related to each other, and now that `sense` and `eat` are the traffic they
+meet, a long-lived controller runs into them: it spends one tracked id per answered round
+trip, so past the ceiling its next frames are refused `tooManyRequests`, that refusal is
+charged to the abuse budget, and eight of them close the channel - taking every slot handle
+on it with them - while the idle bound simultaneously requires it to keep sending. Whether
+that ends in a wider ceiling, an eviction rule, a refusal exempt from the abuse budget, or a
+stated reconnect protocol is a wire-policy decision with a handle-lifetime question inside
+it, so it belongs to the controller milestone that will first meet it rather than to a change
+about reading state. Nothing connects to this process in Loom's runtime yet, which is what
+makes leaving it safe.
 A line with no newline in it is bounded by `MAX_FRAME_BYTES` as a finished frame is,
 since a peer that never terminates a line is the one case a per-frame bound cannot see.
 That bound is **unconditional**, and a shutdown is when it matters most: a stopping
@@ -307,9 +510,14 @@ a controller sent that could not be read as a request at all.
 
 `../contract/body-control.schema.json` is the single source of truth, and it is a
 **separate document from `../contract/loom.schema.json`**: that one carries what an
-agent perceives and decides, this one carries only whether a body process is alive,
-which lifecycle state it is in, and when to stop. The contracts define separate message
-types, and neither codec imports the other contract's bindings.
+agent perceives and decides, this one carries this process's own five operations -
+whether a body is alive and which lifecycle state it is in, when to stop, one bounded
+reading of what its player can see and how it is doing, and one named meal. The contracts
+define separate message types, and neither codec imports the other contract's bindings.
+The overlap in subject is deliberate and is not a shared type: a `sense` answer is what
+one player client was told, and turning it into an agent's `Perception` - the radius, the
+observation bound, the semantic translation, the threat classification and the
+request-scoped refs - stays above this wire, in the coordinator.
 
 Three hand-written descriptions of one wire, none generated from the schema:
 
@@ -326,6 +534,41 @@ fixture, and both suites fail until both codecs follow it. Numeric spellings tha
 cannot round-trip to their original bytes belong in `numeric-spellings.json`, described
 below.
 
+The corpus has **three** directories, and the third one is the interesting one:
+
+| Directory | The schema | Both codecs |
+| --- | --- | --- |
+| `valid/` | accepts | accept, and re-encode to the same bytes |
+| `invalid/` | rejects | refuse, with the code the file name states |
+| `beyond-schema/` | **accepts** | refuse, with the code the file name states |
+
+`beyond-schema/` exists because the schema is a description of a *shape* and several of
+this wire's rules are relations between fields rather than shapes. Two of them Draft
+2020-12 cannot express at all - that a saturation is no larger than the food level it
+sits in front of, and that an inventory's slots arrive in strictly increasing order with
+none repeated. The rest it *could* express as conditionals and deliberately does not:
+that `what` and `remaining` are present exactly when an eat succeeded, and that an
+omission count is only reported against a list something was in fact cut from. Splitting
+them would mean a reader meeting two mechanisms for one kind of rule, so every relation
+is stated once per runtime instead and the schema is left permissive throughout.
+
+One of those two relations is owed a later look, and it is recorded here rather than
+changed here. Vanilla's saturation is bounded by the food level, so `saturation <= food`
+is the rule both codecs enforce and `sensing.js` refuses a whole reading against - but
+that ceiling is a *server* rule about a live player, and a client can be told a pair that
+briefly disagrees with it. Widening or dropping it is a change to the shared wire, so it
+belongs in a contract review of its own with fixtures on both sides, not in a change about
+reading state; until then a body refuses the reading rather than reporting a pair the
+contract calls impossible, which is the safe direction for evidence a survival run is
+measured from.
+
+Each such fixture is therefore pinned from **both** sides at once, and the two halves are
+in different suites. `test/conformance.test.js` proves the Node codec refuses the frame;
+`BodyControlConformanceTest` proves the JVM codec refuses it *and* that the schema really
+does admit it, since `body/` carries no schema validator. Both halves are needed: a
+category proved on one side only would let a case that in fact belongs in `invalid/` sit
+here unnoticed.
+
 Every fixture is compact JSON on one line with **no trailing newline**. Valid fixtures
 use the exact key order both encoders emit - `op` first on internally tagged frames.
 The valid round-trip checks and the corpus-format checks make reformatting any fixture
@@ -340,9 +583,26 @@ past. Each runtime states each bound once, for itself, and the conformance corpu
 proves the two statements agree.
 
 **A frame's size and its nesting are settled before anything reads it, and the order is
-the whole of that guarantee.** `MAX_FRAME_BYTES` is 8 KiB against a largest legal frame
-of 297 bytes - two orders of magnitude tighter than the cognition wire's 256 KiB, which
-is sized for a whole perception rather than for a lifecycle question - and it is
+the whole of that guarantee.** `MAX_FRAME_BYTES` is 8 KiB, still an order of magnitude
+tighter than the cognition wire's 256 KiB, which is sized for a whole perception rather
+than for one bounded answer about a body.
+The largest frame the contract admits is 7 842 bytes of it - a sense report with every
+string and list at its own bound and every number written as long as a formatter writes
+one - so the margin is a twentieth, and `test/protocol.test.js` measures both rather than
+trusting either.
+A real's contribution is the length of its decimal *text*, which is longest nowhere near
+the world border: the widest legal coordinate is the double just inside the magnitude at
+which `Number.prototype.toString` stops writing plain decimals, and it is six characters
+wider than the largest coordinate the border admits.
+The test derives that rather than naming it, and the JVM twin derives its own, because
+`Double.toString` reaches its longest text at a different magnitude and so measures a
+slightly narrower worst case (7 740 bytes); a list bound raised later has to be checked
+against the wider of the two.
+That figure is not a comfortable one on purpose: `MAX_SENSE_ENTITIES` and
+`MAX_SENSE_STACKS` are derived from what fits, the test pins that what is spare is still
+more than one whole entity description, and a list bound raised past that would have to
+move the byte bound in both runtimes and the schema at once.
+The bound is
 enforced at *every* public decode rather than only in the framing reader `src/body.js`
 puts in front of the decoders, since a controller can reach a decoder without it. A
 bound applied after the work it exists to bound is not a bound, so it runs ahead of the
@@ -365,7 +625,10 @@ stack exhaustion that recursed per level would be the thing it exists to refuse.
 `JSON.parse` is iterative and reads a hundred thousand levels, so **the Node side
 carries the number for parity rather than for safety**: both ends refusing the same
 frames is the point of three hand-written descriptions of one wire. Eight is far above
-anything this generation can hold, since no legal frame nests at all. There is
+anything this generation can hold: the deepest legal frame is a sense answer at **four** -
+the top object, its `entities` array, an entity object, and that entity's `position` array -
+and raising `MAX_SENSE_ENTITIES` or `MAX_SENSE_STACKS` widens those lists rather than nesting
+them, so the four spare levels are spent only by a shape this generation does not have. There is
 deliberately no "too deep" code - over the byte bound is `frameTooLarge`, and a frame
 refused before it is parsed is a malformed frame. Both suites pin the depth at the
 deepest line the byte bound admits rather than at a round number, because a round number
@@ -386,7 +649,7 @@ same bounds, so a frame that cannot be encoded cannot be constructed either.
 that `error` is a closed enum, never a message - the one place this protocol is
 deliberately stricter than the cognition wire's free-text refusal, since an exception
 string, a file path, a machine name or a token structurally cannot pass through a field
-that can only hold one of eleven words.
+that can only hold one of twelve words.
 `refusal()` coerces a code it does not recognise to `malformedFrame` rather than passing
 it through.
 The second is that **every id is validated, in a built frame as well as in a decoded

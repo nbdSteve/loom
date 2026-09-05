@@ -81,11 +81,31 @@ private val BodyControlJson: Json =
 /**
  * The longest frame this wire will read, in UTF-8 bytes.
  *
- * The same 8 KiB the Node codec's `MAX_FRAME_BYTES` states, against a largest legal frame
- * of 297 bytes, and stated here for itself rather than imported: `BodyControlBoundaryTest`
- * pins that this package depends on nothing else in Loom, and the other end of the wire is
- * a different runtime, so each binding states every shared number once. The shared
- * conformance corpus is what keeps the two from drifting.
+ * The same 8 KiB the Node codec's `MAX_FRAME_BYTES` states, and stated here for itself
+ * rather than imported: `BodyControlBoundaryTest` pins that this package depends on nothing
+ * else in Loom, and the other end of the wire is a different runtime, so each binding
+ * states every shared number once. The shared conformance corpus is what keeps the two from
+ * drifting.
+ *
+ * The headroom is real but no longer generous, and which frame is largest is now decided by
+ * the per-field bounds rather than by this number: the widest sense answer they admit - the
+ * caller's limit of entities, every slot of the inventory, the longest name and id each one
+ * may carry, and every real written as long as a formatter writes one - measures 7740 bytes
+ * here and 7842 bytes on the Node side. So a bound raised on `MAX_SENSE_ENTITIES`, on
+ * `MAX_SENSE_STACKS`, on `RESOURCE_NAME_MAX_CHARS` or on `CONTROL_ID_MAX_CHARS` has to be
+ * checked against this one, and against the wider of those two figures rather than this
+ * runtime's own. `BodyControlConformanceTest` builds that answer from those bounds and
+ * measures it here rather than trusting the arithmetic or the corpus, whose own largest
+ * fixture is only 2.6 KiB.
+ *
+ * The two runtimes differ because a real's contribution to a frame is the length of its
+ * decimal *text*, and the two formatters write their longest text at different magnitudes:
+ * `Double.toString` writes plain decimals down to 1e-3 and an exponent below it, while
+ * `Number.prototype.toString` writes plain decimals down to 1e-6, so a coordinate there is
+ * one character wider than anything this side can produce. Each suite therefore derives its
+ * own worst case rather than sharing a literal, and neither is the coordinate of largest
+ * magnitude - which is *shorter* than an exponential form, the opposite of what the JVM
+ * measurement used to assume.
  *
  * It is counted in **bytes and not in characters**, because that is what the wire carries
  * and what the Node side counts: a line of eight thousand astral characters is 32 KiB on
@@ -110,10 +130,12 @@ internal const val MAX_BODY_CONTROL_FRAME_BYTES = 8192
  * cover it and no caller of this file does either - which is why the depth is settled
  * ahead of the parse, by a walk that does not itself recurse (`nestsDeeperThan`).
  *
- * Eight is far above anything this generation can legally hold. No frame here nests at
- * all - every field is a string, a number or a bare enum, so a legal frame's depth is one
- * - and a nested value could only arrive under a key this generation does not know, which
- * is refused on its own with the more precise reason. The Node codec states the same
+ * Eight is far above anything this generation can legally hold. The deepest legal frame is
+ * a sense answer at **four**: the top object, its `entities` array, an entity object, and
+ * that entity's `position` array. Raising `MAX_SENSE_ENTITIES` or `MAX_SENSE_STACKS` widens
+ * those lists rather than nesting them, so the headroom left here is spent by a *shape* this
+ * generation does not have rather than by any list bound growing. The Node codec states the
+ * same
  * number for itself, where it is parity rather than safety: V8's own `JSON.parse` is
  * iterative and reads a hundred thousand levels without complaint, so only this runtime
  * is at risk, and both refuse the same frames anyway because a frame one end reads and

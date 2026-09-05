@@ -12,6 +12,8 @@ package dev.loom.witness
 
 import dev.loom.body.BodyEvent
 import dev.loom.body.WitnessedPlayer
+import dev.loom.bodycontrol.MAX_SLOT_INDEX
+import dev.loom.bodycontrol.SensedStack
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -106,5 +108,28 @@ class WitnessJournalTest {
             detail,
         )
         assertFalse(detail.contains("\n"), detail)
+    }
+
+    @Test
+    fun aWholeInventoryOfDisagreementIsStillOneBoundedLine() {
+        // A dispute is the one witness record whose length grows with how wrong the body was: a
+        // client that lost its inventory disagrees about forty-one slots at once, each naming an
+        // item. So it is bounded by the journal like every other record, and the count leads the
+        // detail precisely so a trimmed one still says how many faults it is about.
+        val everySlot =
+            (FIRST_CORROBORABLE_SLOT..MAX_SLOT_INDEX).map { slot ->
+                InventoryFault.NotHeld(slot, SensedStack(slot, "cooked_beef", 64))
+            }
+        val dispute = Corroboration.Disputed(vitals = emptyList(), inventory = everySlot)
+
+        journal.disputed(subjectOf(scout), dispute, TICK)
+
+        val record = log.of(BodyEvent.WITNESS_DISPUTED).single()
+        assertEquals(MAX_WITNESS_DETAIL_CHARS, record.detail.length)
+        assertTrue(record.detail.startsWith("${everySlot.size} disagreed: "), record.detail)
+        assertTrue(record.detail.endsWith("..."), "a cut must be visible: ${record.detail}")
+        assertEquals("disputedInventory", record.outcome, "which kind disagreed is the tag")
+        assertEquals("agent-scout", record.agentId)
+        assertEquals("loomscout1", record.witness?.username)
     }
 }

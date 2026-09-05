@@ -251,6 +251,10 @@ private fun bodilessAfter(
         // A body that looked around is a body: the record says nothing either way about
         // whether the agent still has one, so what was already known stands.
         BodyEvent.THREAT_SUPPRESSED,
+        // A body whose account of itself is wrong is still a body. What is in doubt is the
+        // readings, not the embodiment - and the readings are exactly what a display would
+        // freeze if this were read as bodilessness.
+        BodyEvent.WITNESS_DISPUTED,
         -> state.hasNoBody
     }
 
@@ -323,5 +327,9 @@ private fun activityAfter(
         // exactly what it was already doing. Saying otherwise would show a suppression as
         // a state change, which is the opposite of what it records.
         BodyEvent.THREAT_SUPPRESSED,
+        -> state.activity
+        // A cross-check is something Loom did about the evidence rather than something the
+        // agent did, so the activity is unchanged and the note carries the caveat.
+        BodyEvent.WITNESS_DISPUTED,
         -> state.activity
     }

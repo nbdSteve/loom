@@ -162,14 +162,26 @@ internal class WitnessUnderTest(
 
     val permadeath = DurablePermadeath(ledger)
 
+    private val registry = registryOf(*managed)
+    private val journal = WitnessJournal(log)
+
     val witness =
         PlayerWitness(
-            registryOf(*managed),
+            registry,
             permadeath,
-            WitnessJournal(log),
+            journal,
             currentTick = { tick },
             alert = alerts::add,
         )
+
+    /**
+     * The cross-check, over the same registry, journal and clock the witness reads.
+     *
+     * Two objects rather than one because they are two objects in the plugin as well: a
+     * cross-check may not reach the permadeath rule. Sharing the collaborators is what
+     * makes a dispute land in the same agent's chain as its joins and its death.
+     */
+    val claims = ClaimAudit(registry, journal, currentTick = { tick })
 
     /** The tombstones that landed. Empty for a ledger whose bookkeeping is the file itself. */
     val persisted: List<Tombstone> get() = (ledger as? FakeLedger)?.persisted ?: emptyList()

@@ -26,7 +26,55 @@ import java.nio.file.Paths
 import java.time.Duration
 import kotlin.io.path.name
 import kotlin.io.path.readText
+import kotlin.math.absoluteValue
+import kotlin.math.ulp
 import kotlin.streams.toList
+
+/** How far from the origin a coordinate may be, mirroring the schema's `maximum`. */
+private const val WORLD_BORDER = 30_000_000.0
+
+/**
+ * The magnitude at which `Double.toString` stops writing plain decimals.
+ *
+ * A formatter's own boundary rather than the contract's. Just inside it a coordinate is
+ * written as `0.` plus two leading zeros plus a full seventeen-digit mantissa; below it the
+ * same double is written with an exponent instead. The Node codec's own floor is three orders
+ * of magnitude lower, which is why the two runtimes reach their widest text at different
+ * values and why each derives its own rather than sharing a literal.
+ */
+private const val PLAIN_FORM_FLOOR = 1e-3
+
+/** A magnitude whose exponential form carries a whole mantissa and three exponent digits. */
+private const val DEEP_EXPONENT = 1e-300
+
+/** The largest real strictly below [bound], which is longer to write down than [bound] is. */
+private fun justInside(bound: Double): Double = bound - bound * 1.0.ulp / 2
+
+/** The smallest real strictly above [bound], for the bounds a formatter has of its own. */
+private fun justOutside(bound: Double): Double = bound + bound * 1.0.ulp / 2
+
+/**
+ * The legal coordinate whose decimal text is longest, which is *not* the largest one.
+ *
+ * A real's contribution to a frame is the length of its decimal text, and where a formatter
+ * writes most is a property of the formatter rather than of the world border - so the answer
+ * is taken over the formatter's own boundaries rather than named. Negative, because a minus
+ * sign is a character too and a coordinate may carry one.
+ *
+ * This is what the worst-case frame below has to be measured with. Measured with an ordinary
+ * position inside the world, which reads five characters shorter, it under-reported the widest
+ * legal answer by 375 bytes across the twenty-five positions in it - on the one measurement
+ * the list bounds are derived from.
+ */
+private val WIDEST_COORDINATE: Double =
+    listOf(
+        -justInside(WORLD_BORDER),
+        -justOutside(PLAIN_FORM_FLOOR),
+        -justOutside(DEEP_EXPONENT),
+    ).maxBy { it.toString().length }
+
+/** The same magnitude unsigned, since neither health nor saturation may be negative. */
+private val WIDEST_VITAL: Double = WIDEST_COORDINATE.absoluteValue
 
 /**
  * The JVM half of the body-control contract's conformance suite.
@@ -38,7 +86,7 @@ import kotlin.streams.toList
  * the same bytes, is the whole point - a generated binding would only prove the
  * generator ran.
  *
- * Four guarantees, each failing the build on drift:
+ * Five guarantees, each failing the build on drift:
  *
  * 1. Every fixture under `valid` validates against the schema definition its name
  *    names, and every fixture under `invalid` is rejected by it.
@@ -48,7 +96,10 @@ import kotlin.streams.toList
  * 3. Every invalid fixture is refused by these types too, not only by the schema -
  *    which is the guarantee that matters, since nothing on this wire is
  *    schema-validated at runtime.
- * 4. No fixture is skipped: a file this test cannot classify fails it.
+ * 4. Every fixture under `beyond-schema` is *accepted* by the schema and refused by
+ *    these types, which is what makes that category a category rather than a place
+ *    to file a case somebody could not get the schema to refuse.
+ * 5. No fixture is skipped: a file this test cannot classify fails it.
  *
  * Everything here goes through the package's own decode and encode functions rather
  * than through a `Json` of its own, because two refusals are made before a binding can
@@ -127,7 +178,7 @@ class BodyControlConformanceTest {
         // A fixture whose name no decoder claims would be silently skipped by every
         // sweep below, which is worse than the case not existing: the corpus would
         // look like it covered something it never tested.
-        for (path in fixtureFiles("valid") + fixtureFiles("invalid")) {
+        for (path in FIXTURE_KINDS.flatMap { fixtureFiles(it) }) {
             assertTrue(
                 defFor(path) != null,
                 "${path.name} is named so that no schema definition claims it; " +
@@ -193,6 +244,95 @@ class BodyControlConformanceTest {
                 reserialize(def, canonical)
             }
         }
+    }
+
+    /**
+     * A frame the schema cannot refuse is still refused at decode.
+     *
+     * The `beyond-schema` category, and both halves of what makes it one. Each of these
+     * frames satisfies every keyword the schema states and states a *relation* between two
+     * of its own fields that is false - a saturation above the food level, inventory slots
+     * that do not ascend, a refused meal naming food it did not eat. Draft 2020-12 cannot
+     * compare two properties at all for some of them, and for the rest the schema
+     * deliberately declines to, so that a reader meets one mechanism for every relation
+     * rather than two: "the two codecs enforce it and the conformance suites assert it, as
+     * they do for every other relation this schema states in prose".
+     *
+     * The schema half is asserted here rather than only the refusal, because that is what
+     * keeps the category honest: a case the schema in fact refuses belongs under `invalid`,
+     * where the sweeps above would prove more about it. Node's suite asserts the refusal
+     * for its own codec and cannot assert this half - `body/` carries no validator.
+     */
+    @Test
+    fun beyondSchemaFixturesAreAcceptedByTheSchemaAndRefusedAtDecode() {
+        for (path in fixtureFiles("beyond-schema")) {
+            val def = defFor(path)!!
+            val canonical = canonicalText(path)
+            assertSchemaAccepts(def, canonical, "${path.name} is filed as beyond the schema's reach")
+            assertThrows<RuntimeException>("beyond-schema fixture ${path.name} decoded into a $def") {
+                reserialize(def, canonical)
+            }
+        }
+    }
+
+    /**
+     * The largest frame the per-field bounds admit still fits inside the frame bound.
+     *
+     * A sense answer is by far the biggest thing this wire carries, and how big it can get
+     * is decided by five bounds stated in three files that nothing relates arithmetically:
+     * the entity limit, the slot count, the longest resource name, the longest id, and the
+     * widest number. Raise any of them and the largest *correct* answer a peer can write
+     * grows; past 8 KiB it is refused unread as an oversized frame, which needs a live
+     * socket and a crowded scene to reach and arrives as `frameTooLarge` rather than as
+     * anything naming the bound that grew.
+     *
+     * So the worst case is built here from the bounds themselves rather than measured off
+     * the corpus - a fixture is a case somebody chose to write, and the largest one is 2.6
+     * KiB, which would keep passing long after a real answer had stopped fitting.
+     *
+     * The headroom this leaves is a twentieth of the frame, which is why the assertion is
+     * that it fits rather than that it fits comfortably: a bound raised even a little needs
+     * this test's answer, not an estimate.
+     */
+    @Test
+    fun theLargestAnswerTheBoundsAdmitFitsTheFrameBound() {
+        val name = "minecraft:" + "a".repeat(RESOURCE_NAME_MAX_CHARS - "minecraft:".length)
+        val id = "a".repeat(CONTROL_ID_MAX_CHARS)
+        // The widest coordinate *written down*, which is what a real contributes to a frame -
+        // see [WIDEST_COORDINATE]. Not the largest magnitude, and not an ordinary position
+        // inside the world either: both are shorter than an exponential form here, which is
+        // the opposite of what this used to claim.
+        val here = List(3) { WIDEST_COORDINATE }
+        assertTrue(
+            WIDEST_COORDINATE.toString().length > (-justInside(WORLD_BORDER)).toString().length,
+            "the widest coordinate must not be the largest one",
+        )
+        val fullest =
+            SensedVitals(
+                health = WIDEST_VITAL,
+                food = MAX_FOOD,
+                saturation = WIDEST_VITAL,
+            )
+        val widest =
+            BodyResponse.SenseReport(
+                protocol = BODY_CONTROL_PROTOCOL_VERSION,
+                requestId = id,
+                agentId = id,
+                state = LifecycleState.READY,
+                position = here,
+                vitals = fullest,
+                time = SensedTime(timeOfDay = MAX_TIME_OF_DAY, day = MAX_CONTROL_COUNT, isDay = true),
+                ground = SensedGround(standingIn = name, standingOn = name),
+                entities = List(MAX_SENSE_ENTITIES) { SensedEntity(what = name, position = here, visible = true) },
+                entitiesOmitted = MAX_CONTROL_COUNT,
+                inventory = List(MAX_SENSE_STACKS) { SensedStack(slot = it, what = name, count = MAX_STACK_COUNT) },
+            )
+        val measured = encodeBodyResponse(widest).toByteArray(Charsets.UTF_8).size
+        assertTrue(
+            measured <= MAX_BODY_CONTROL_FRAME_BYTES,
+            "the largest sense answer the bounds admit is $measured bytes, over the " +
+                "$MAX_BODY_CONTROL_FRAME_BYTES-byte frame bound",
+        )
     }
 
     /**
@@ -923,6 +1063,15 @@ class BodyControlConformanceTest {
         )
 
     private companion object {
+        /**
+         * Every category of the shared corpus.
+         *
+         * A frame is filed by what the *schema* says about it as much as by what the codecs
+         * do: `valid` is accepted by both, `invalid` is refused by both, and `beyond-schema`
+         * is admitted by the schema and refused by both codecs.
+         */
+        val FIXTURE_KINDS = listOf("valid", "invalid", "beyond-schema")
+
         /** The schema's `maxLength` for an id, restated so the case above can reach the bound. */
         const val MAX_ID_CHARS = 64
 

@@ -8,8 +8,9 @@
  * from drifting, and BodyControlConformanceTest fails the build when they do.
  *
  * This is deliberately NOT the perception/decision contract in `dev.loom.contract`.
- * That one carries what an agent knows and decides; this one carries only whether a
- * body process is alive, which lifecycle state it is in, and when to stop. The two
+ * That one carries what an agent knows and decides; this one carries whether a body
+ * process is alive, which lifecycle state it is in, when to stop, the raw state the
+ * game reports about its player, and one meal a controller named. The two
  * are siblings with separate binding types, and BodyControlBoundaryTest pins that this
  * package depends on nothing else in Loom at all - not the other contract, and not any
  * server API. `BodyControlCodec.kt` therefore states this wire's Json configuration
@@ -32,9 +33,13 @@
  * the raw line and the parse tree at those two points, which is why nothing may decode
  * one of these types except through the functions there.
  *
- * One semantic relation cannot be expressed by JSON Schema 2020-12: `stateMs` can
- * never exceed `uptimeMs`, since a process starts in a state. Both codecs enforce it,
- * and the conformance suites assert that they do.
+ * Several relations between two fields of one frame are enforced here rather than by
+ * the schema - `stateMs` can never exceed `uptimeMs`, since a process starts in a state,
+ * and a saturation is never larger than the food level it sits in front of. Draft
+ * 2020-12 cannot compare two properties at all for some of them and deliberately
+ * declines to for the rest, so both codecs enforce every one of them and the
+ * `beyond-schema` fixtures pin each from both sides at once; BodyControlConformanceTest
+ * owns that category.
  *
  * Numeric values need a separate decoder rule because the schema defines an integer
  * by value rather than spelling. To the schema and to `JSON.parse`, `1.0` and `1e0`
@@ -68,7 +73,7 @@ const val BODY_CONTROL_PROTOCOL_VERSION: Int = 1
 private const val CONTROL_ID_MIN_CHARS = 1
 
 /** The longest a requestId or agentId may be, mirroring the schema's `maxLength`. */
-private const val CONTROL_ID_MAX_CHARS = 64
+internal const val CONTROL_ID_MAX_CHARS = 64
 
 /**
  * What an id may contain, mirroring the schema's `pattern`.
@@ -168,6 +173,151 @@ private fun requireCount(
     }
 }
 
+/** The shortest a block or item or entity name may be, mirroring the schema's `minLength`. */
+private const val RESOURCE_NAME_MIN_CHARS = 1
+
+/** The longest a block or item or entity name may be, mirroring the schema's `maxLength`. */
+internal const val RESOURCE_NAME_MAX_CHARS = 40
+
+/**
+ * What the game's own data may call a block, an item or an entity, mirroring the
+ * schema's `pattern`.
+ *
+ * A resource location: an optional namespace, then a path whose segments are separated
+ * by `/`. Narrow for the reason [CONTROL_ID_PATTERN] is - these names are written into
+ * records and shown to operators - and it deliberately admits `..` as a segment, because
+ * a resource location is not a path and nothing on either side of this wire reads one as
+ * a file name. The bound that matters for a name is that it is a name the registry could
+ * hold, and this is it.
+ */
+private val RESOURCE_NAME_PATTERN = Regex("^([a-z0-9_.-]+:)?[a-z0-9_.-]+(/[a-z0-9_.-]+)*$")
+
+/** How far from the origin a coordinate may be, mirroring the schema's `maximum`. */
+private const val MAX_WORLD_COORDINATE = 30_000_000
+
+/** How many numbers a position is, mirroring the schema's `minItems` and `maxItems`. */
+private const val WORLD_POSITION_AXES = 3
+
+/** The widest a caller may ask a sense to look, in blocks, mirroring the schema. */
+private const val MAX_SENSE_RADIUS = 48
+
+/** The most entities a sense answer may carry, mirroring the schema's `maxItems`. */
+internal const val MAX_SENSE_ENTITIES = 24
+
+/** The highest slot of a player's own inventory window, mirroring the schema. */
+internal const val MAX_SLOT_INDEX = 45
+
+/**
+ * The most stacks a sense answer may carry.
+ *
+ * One per slot of the window, so a full inventory is reported in full: there is no
+ * omission count beside the list, because a body that trimmed its own inventory would be
+ * hiding the last food an agent has.
+ */
+internal const val MAX_SENSE_STACKS = MAX_SLOT_INDEX + 1
+
+/** The fewest items a reported stack may hold: an empty slot is left out instead. */
+private const val MIN_STACK_COUNT = 1
+
+/** The most items one stack may hold, mirroring the schema's `maximum`. */
+internal const val MAX_STACK_COUNT = 255
+
+/** The game's own ceiling on a max-health attribute, mirroring the schema's `maximum`. */
+private const val MAX_HEALTH = 1024
+
+/** Vanilla's own food and saturation ceiling, mirroring the schema's `maximum`. */
+internal const val MAX_FOOD = 20
+
+/** The last tick of a Minecraft day, mirroring the schema's `maximum`. */
+internal const val MAX_TIME_OF_DAY = 23999
+
+/**
+ * Refuses a whole number outside what its field may hold.
+ *
+ * States the bound and not the value, for the reason [requireBoundedControlId] does.
+ */
+private fun requireWithin(
+    field: String,
+    value: Int,
+    range: IntRange,
+) {
+    require(value in range) { "$field must be ${range.first}..${range.last}" }
+}
+
+/**
+ * Refuses a real number outside what its field may hold.
+ *
+ * Separate from [requireWithin] rather than generic over `Comparable`, because the two
+ * are different rules: a whole number's bounds are the schema's `minimum` and `maximum`
+ * on an `integer`, while a real one's range check is also what refuses the infinity a
+ * runaway literal decodes to - every comparison against a NaN or an infinity fails, so a
+ * value that is not a number this wire can hold is refused by the same clause.
+ */
+private fun requireReal(
+    field: String,
+    value: Double,
+    highest: Int,
+) {
+    require(value >= 0 && value <= highest) { "$field must be 0..$highest" }
+}
+
+/**
+ * Refuses a name the game's own registry could not hold.
+ *
+ * Counted in code points for the reason [requireBoundedControlId] is: the schema's
+ * `maxLength` counts them, and `String.length` would measure a non-BMP name double.
+ */
+private fun requireResourceName(
+    field: String,
+    value: String,
+) {
+    val characters = value.codePointCount(0, value.length)
+    require(characters in RESOURCE_NAME_MIN_CHARS..RESOURCE_NAME_MAX_CHARS) {
+        "$field must be $RESOURCE_NAME_MIN_CHARS..$RESOURCE_NAME_MAX_CHARS characters"
+    }
+    require(RESOURCE_NAME_PATTERN.matches(value)) { "$field is not a name the game's own data would use" }
+}
+
+/**
+ * Refuses an answer whose state is not the one its operation can only be answered in.
+ *
+ * A sense and an eat both read a live player, and the schema states the state as a
+ * `const` for each. A frame reporting any other state is a process disagreeing with the
+ * contract about what it just did, so it is refused rather than read - a body that had not
+ * spawned has no vitals to report, and one the server has removed would be reporting the
+ * world it last saw. Such a body answers [ErrorCode.NOT_READY] instead.
+ *
+ * The state is the one the request was **admitted under**, which is the same turn for a
+ * sense and an earlier one for an eat: a meal is answered after two round trips to the
+ * server, so the body can die or disconnect between being given the meal and being asked
+ * what became of it. `ready` there is not a claim about the moment the frame was written but
+ * about the moment the numbers beside it came from, and the vitals in an eat answer follow
+ * the same rule - see [BodyResponse.EatReport].
+ */
+private fun requireReady(
+    state: LifecycleState,
+    what: String,
+) {
+    require(state == LifecycleState.READY) { "$what reports ${LifecycleState.READY}" }
+}
+
+/**
+ * Refuses a position that is not three coordinates inside the world's own limits.
+ *
+ * The axis count is checked here rather than by a fixed-arity type, because the wire
+ * carries an array and a frame naming four coordinates is a peer describing a world this
+ * one does not have - which is a refusal and not a value to interpret.
+ */
+private fun requireWorldPosition(
+    field: String,
+    value: List<Double>,
+) {
+    require(value.size == WORLD_POSITION_AXES) { "$field must be $WORLD_POSITION_AXES coordinates" }
+    require(value.all { it >= -MAX_WORLD_COORDINATE && it <= MAX_WORLD_COORDINATE }) {
+        "$field must be within $MAX_WORLD_COORDINATE of the origin"
+    }
+}
+
 /**
  * Where a body process is in its one life.
  *
@@ -244,6 +394,207 @@ enum class ErrorCode {
 
     @SerialName("timeout")
     TIMEOUT,
+
+    /**
+     * The body is not a spawned, live player, so the request has nothing to read.
+     *
+     * It is a refusal and not an [EatOutcome], because the two answer different
+     * questions: an outcome says what the body did about a request it could carry out,
+     * and this says the request could not be carried out at all. A body that has not
+     * spawned has no position to read, and one the server has removed would be
+     * reporting the world it last saw.
+     */
+    @SerialName("notReady")
+    NOT_READY,
+}
+
+/**
+ * What became of one eat request, as one value from a closed set.
+ *
+ * It is on the response rather than in [ErrorCode] because those are answers to
+ * different questions: an [ErrorCode] is why a frame was not usable, while these are
+ * what the body did about a request it understood perfectly. A refusal here is therefore
+ * an answer, and it is a value rather than prose so that a run can count how many meals
+ * were missed and why - the same reason the Villager body's own eat refusals are a tag on
+ * the outcome rather than a sentence. Every refusal that is a fact about the request is
+ * settled before anything is consumed, so a refused eat never costs an agent its food.
+ *
+ * [SLOT_UNNAMED] carries two readings, and a run counting them cannot tell which it has.
+ * It is a handle the mind invented rather than named back - and it is also a handle the body
+ * did issue and has already served a meal against, because one sense answer's offer of one
+ * slot buys one meal: a body spends the handle on the meal, so an eat re-sent against it is
+ * refused here rather than served a second time. Both are facts about the *handle* rather
+ * than about the slot, which is the one thing the first of the body's checks knows about,
+ * and that check stays first because an unresolvable handle names no slot to look in.
+ *
+ * [SLOT_EMPTY] and [SLOT_CHANGED] are kept apart because they are different facts about
+ * the run: the slot the mind named holds nothing now, against it holds something that is
+ * not what the mind chose. Reading them alike would leave a run unable to say whether an
+ * agent's food had been eaten or moved. Neither is what a re-sent eat earns, for the reason
+ * [SLOT_UNNAMED] gives: a spent handle is refused before any slot is read.
+ *
+ * [NOT_EDIBLE] and [RESERVE_FULL] are kept apart for the same reason, and it is the
+ * sharper of the two pairs: an agent that had nothing edible and an agent that ate itself
+ * to a standstill are opposite readings of one run, and vanilla itself refuses the second
+ * - a full food bar cannot take an ordinary food, whatever the agent is carrying.
+ *
+ * [SLOT_INACCESSIBLE] is the residual, the only one of the seven that is not a fact about
+ * the agent, and the only one that cannot promise the food is still there: the stack was
+ * there and was edible and the meal still did not happen, because the body could not
+ * bring it to hand or the game never confirmed it - and a use the game never confirmed
+ * may still have been carried out. One of those in a run is something to go and look at
+ * rather than something to count.
+ */
+@Serializable
+enum class EatOutcome {
+    @SerialName("eaten")
+    EATEN,
+
+    @SerialName("senseForgotten")
+    SENSE_FORGOTTEN,
+
+    @SerialName("slotUnnamed")
+    SLOT_UNNAMED,
+
+    @SerialName("slotEmpty")
+    SLOT_EMPTY,
+
+    @SerialName("slotChanged")
+    SLOT_CHANGED,
+
+    @SerialName("notEdible")
+    NOT_EDIBLE,
+
+    @SerialName("reserveFull")
+    RESERVE_FULL,
+
+    @SerialName("slotInaccessible")
+    SLOT_INACCESSIBLE,
+}
+
+/**
+ * The three vitals the game keeps for a player, never combined into one.
+ *
+ * Health is damage to the body; food is how full the agent is; saturation is the hidden
+ * reserve vanilla spends before food falls. A body can be beaten to death on a full
+ * stomach and can starve without a scratch, so a wire reporting one figure for
+ * "condition" could not say what ended an agent.
+ *
+ * Deliberately not the perception contract's `SelfState.energy`, which is the one
+ * synthetic reserve the Villager body spends by living: these are vanilla's own numbers,
+ * and reconciling the two is the coordinator's work at cutover rather than something this
+ * wire pretends to have done.
+ *
+ * Saturation is never above the food level, because vanilla clamps it there when eating
+ * and spends it before food falls: a report above it has read the two at different
+ * instants. The schema cannot compare one property with another, so that relation is
+ * stated here and in the Node codec, exactly as [BodyResponse.StatusReport]'s `stateMs`
+ * relation is.
+ */
+@Serializable
+data class SensedVitals(
+    val health: Double,
+    val food: Int,
+    val saturation: Double,
+) {
+    init {
+        requireReal("health", health, MAX_HEALTH)
+        requireWithin("food", food, 0..MAX_FOOD)
+        requireReal("saturation", saturation, MAX_FOOD)
+        require(saturation <= food) { "saturation must be at or below food" }
+    }
+}
+
+/**
+ * The world clock, as the client library reports it and with nothing derived from it.
+ *
+ * The coordinator's own clock turns this into a phase and a countdown; a body that named
+ * the phase would be deciding what part of a day an agent is in, which is a judgement and
+ * belongs above this wire.
+ *
+ * [isDay] is reported rather than left to be derived, because it is a reading and not a
+ * calculation: a dimension whose time is fixed has a time of day and no daylight, and an
+ * agent needs the difference.
+ */
+@Serializable
+data class SensedTime(
+    val timeOfDay: Int,
+    val day: Long,
+    val isDay: Boolean,
+) {
+    init {
+        requireWithin("timeOfDay", timeOfDay, 0..MAX_TIME_OF_DAY)
+        requireCount("day", day)
+    }
+}
+
+/**
+ * The two blocks a walking body's own footing is made of.
+ *
+ * Two blocks and no more - this is not a map, and a body that reported the blocks around
+ * it would be building a second world model on a wire whose frame bound could not hold
+ * one. Air is reported as the block it is, since air is a block the registry names.
+ */
+@Serializable
+data class SensedGround(
+    val standingIn: String,
+    val standingOn: String,
+) {
+    init {
+        requireResourceName("standingIn", standingIn)
+        requireResourceName("standingOn", standingOn)
+    }
+}
+
+/**
+ * One entity the client library was tracking within the request's radius.
+ *
+ * What the game calls it, where it is, and whether a straight line from the body's eyes
+ * reaches it - and deliberately nothing else. There is no handle, because a handle that
+ * outlived the request is exactly the reuse the perception contract's own entity
+ * references refuse; the coordinator mints one per perception from this list as it
+ * already does for its other body. There is no kind, no hostility and no threat either:
+ * what an entity means is the coordinator's judgement, and a body that answered it would
+ * be deciding.
+ *
+ * [visible] is a line and not a field of view: the body's facing is never consulted, so
+ * everything inside the radius is equally known and false here means the body knows
+ * something is there and cannot see it.
+ */
+@Serializable
+data class SensedEntity(
+    val what: String,
+    val position: List<Double>,
+    val visible: Boolean,
+) {
+    init {
+        requireResourceName("what", what)
+        requireWorldPosition("position", position)
+    }
+}
+
+/**
+ * One occupied slot of the player's own inventory window.
+ *
+ * Empty slots are left out, which is what makes the count on a reported stack at least
+ * one, and every occupied slot is reported: there is no bound to omit against and so no
+ * omission count beside the list.
+ *
+ * The item is named as the game's own data names it, which is the same vocabulary an
+ * entity kind is reported in, and never as a display name: a renamed loaf is still bread,
+ * and a display name is whatever an anvil or a datapack last called it.
+ */
+@Serializable
+data class SensedStack(
+    val slot: Int,
+    val what: String,
+    val count: Int,
+) {
+    init {
+        requireWithin("slot", slot, 0..MAX_SLOT_INDEX)
+        requireResourceName("what", what)
+        requireWithin("count", count, MIN_STACK_COUNT..MAX_STACK_COUNT)
+    }
 }
 
 /**
@@ -251,8 +602,10 @@ enum class ErrorCode {
  *
  * Every variant carries the protocol generation, the correlation id its one answer
  * will echo, and the agent whose body is addressed, so a frame is self-describing
- * and a reply can never be matched to the wrong request. No variant carries a
- * payload: everything this generation can ask for is asked by naming the operation.
+ * and a reply can never be matched to the wrong request. Three variants carry no
+ * payload at all, and the two that do carry only the caller's own bounds and the one
+ * slot it names - never a target, a threshold or a rule, because a body that was told
+ * what to want would be deciding rather than acting.
  */
 @Serializable
 @JsonClassDiscriminator("op")
@@ -310,6 +663,65 @@ sealed interface BodyRequest {
             requireEnvelope(protocol, requestId, agentId)
         }
     }
+
+    /**
+     * Read what the game says about this player, once, within the caller's own bounds.
+     *
+     * The two bounds are the caller's because the caller is the one that has to fit the
+     * answer inside a frame and inside a prompt: a body choosing its own radius would be
+     * choosing how much of the world an agent gets to know. They are the *caller's*
+     * bounds and not a policy either - nothing here says what to look for or what any of
+     * it means.
+     *
+     * One request, one answer: there is no subscription and no stream, so a body reports
+     * only when it is asked and never accumulates a view of the world between requests.
+     */
+    @Serializable
+    @SerialName("sense")
+    data class Sense(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        val radius: Int,
+        val limit: Int,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireWithin("radius", radius, 1..MAX_SENSE_RADIUS)
+            requireWithin("limit", limit, 1..MAX_SENSE_ENTITIES)
+        }
+    }
+
+    /**
+     * Eat the one stack a named sense answer reported in a named slot.
+     *
+     * [senseId] is the `requestId` of the [Sense] whose answer the caller is naming a slot
+     * from, which is what makes a slot reference request-scoped: the body remembers only
+     * its own most recent sense answers, so a slot named against a sense it has forgotten
+     * is refused as [EatOutcome.SENSE_FORGOTTEN] rather than read against whatever the
+     * inventory holds now. That is the same rule the perception contract's entity
+     * references follow, and for the same reason - a handle that outlived its request
+     * would let a decision act on a world that has moved on.
+     *
+     * The slot is the mind's own choice. There is no "eat something", no food preference
+     * and no threshold: a body that picked the stack would be deciding what an agent
+     * values, and a body with a threshold would be deciding when it is hungry.
+     */
+    @Serializable
+    @SerialName("eat")
+    data class Eat(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        val senseId: String,
+        val slot: Int,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireBoundedControlId("senseId", senseId)
+            requireWithin("slot", slot, 0..MAX_SLOT_INDEX)
+        }
+    }
 }
 
 /**
@@ -354,9 +766,12 @@ sealed interface BodyResponse {
     /**
      * Where the body is in its life, and how long it has been there.
      *
-     * Deliberately no position, health, hunger or inventory: those are perception,
-     * and a control channel that reported them would be a second perception path
-     * with no bound and no contract behind it.
+     * Still deliberately no position, health, hunger or inventory, now that a sense
+     * answer carries all four: a status is what a controller asks to know whether the
+     * process is there at all, so it must stay answerable by a body that has not
+     * spawned - and it is asked far more often than a perception is taken. The bounded
+     * answer to "what does the game say about this player" is [SenseReport], and it is
+     * asked for by name.
      *
      * The three numbers are bounded together as well as one at a time, because two of
      * the ways they can be nonsense are relations rather than ranges: a process starts
@@ -407,6 +822,125 @@ sealed interface BodyResponse {
             require(state == LifecycleState.STOPPING) {
                 "a shutdown reports ${LifecycleState.STOPPING}"
             }
+        }
+    }
+
+    /**
+     * What the game says about this player, bounded by what the request asked for.
+     *
+     * Every field is a reading and none is a judgement: the vitals are vanilla's own
+     * numbers, an entity is named and placed and never classified, and the ground is the
+     * two blocks the body is standing in and on. What any of it means - which entity is a
+     * threat, whether the agent should eat, where it should go - is decided above this
+     * wire, from this evidence.
+     *
+     * [entitiesOmitted] is what makes the entity list honest. A scene trimmed to the
+     * caller's limit and reported as a bare list would read afterwards as a quiet scene,
+     * which is the one reading a survival run must never be given, so the count of what
+     * was dropped rides inside the answer rather than beside it.
+     *
+     * The inventory carries no such count, and that asymmetry is deliberate: every
+     * occupied slot of the window is reported, so there is nothing to omit against. A
+     * body that trimmed its own inventory could hide the last food an agent has.
+     *
+     * [ground] is absent rather than null when the body could not read the blocks it is
+     * standing on - an unloaded chunk answers nothing, and a body that reported air there
+     * would be stating a fact it never read.
+     *
+     * Two relations are stated here because the schema cannot state them: an inventory's
+     * slots strictly ascend, so one slot cannot be reported twice and a reader can join
+     * two answers by slot; and entities cannot have been omitted from an empty list, since
+     * a limit is at least one and a cut that kept nothing kept less than it was allowed.
+     */
+    @Serializable
+    @SerialName("sense")
+    data class SenseReport(
+        // The frame is flat, so there is no seam to split this along: kotlinx cannot
+        // inline a nested holder's fields into one JSON object, and grouping these into
+        // one would change the wire rather than the code. The four envelope fields are
+        // the sealed interface's own, and the seven readings are what one sense answers.
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val position: List<Double>,
+        val vitals: SensedVitals,
+        val time: SensedTime,
+        val ground: SensedGround? = null,
+        val entities: List<SensedEntity>,
+        val entitiesOmitted: Long,
+        val inventory: List<SensedStack>,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "a sense")
+            requireWorldPosition("position", position)
+            require(entities.size <= MAX_SENSE_ENTITIES) {
+                "entities must be at most $MAX_SENSE_ENTITIES"
+            }
+            requireCount("entitiesOmitted", entitiesOmitted)
+            require(entitiesOmitted == 0L || entities.isNotEmpty()) {
+                "entitiesOmitted must be 0 when no entity is reported"
+            }
+            require(inventory.size <= MAX_SENSE_STACKS) {
+                "inventory must be at most $MAX_SENSE_STACKS stacks"
+            }
+            require(inventory.zipWithNext().all { (earlier, later) -> earlier.slot < later.slot }) {
+                "inventory slots must ascend, and no slot may be reported twice"
+            }
+        }
+    }
+
+    /**
+     * What became of one eat request, and the vitals of the body that took it on.
+     *
+     * The vitals are on every answer, refusals included, because they are what the
+     * request was about: an agent that was refused still needs to know how hungry it is,
+     * and a refusal that reported nothing would cost it a round trip to find out.
+     *
+     * **[state] and [vitals] are both the moment the request was admitted rather than the
+     * moment the frame was written**, and an eat is the one operation where those differ: it
+     * is answered after two round trips to the server, so the body can die, disconnect or be
+     * handed a food level outside vanilla's own ceiling in between. `ready` here is not a
+     * claim about now; it is the state the body was in when the meal was taken on, which is
+     * where the numbers beside it came from. A writer prefers a fresher vitals reading only
+     * while the body is still in that state and the reading can still be stated, and carries
+     * the admitted one otherwise, never a mix of the two - one rule for both fields, and
+     * `body/src/eating.js`'s header is where it is owned.
+     *
+     * [what] and [remaining] are present exactly when the outcome is
+     * [EatOutcome.EATEN] - what was eaten, and how much of it the body still holds
+     * wherever bringing the stack to hand left it, which is not the slot the request
+     * named. A refusal
+     * naming food would be claiming to have read a stack it refused to touch, and a meal
+     * naming none would leave a run unable to say what an agent ate. Draft 2020-12 could
+     * express that as a conditional and deliberately does not, so the relation is stated
+     * here and in the Node codec, as every other relation this contract states is.
+     */
+    @Serializable
+    @SerialName("eat")
+    data class EatReport(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val outcome: EatOutcome,
+        val vitals: SensedVitals,
+        val what: String? = null,
+        val remaining: Int? = null,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "an eat")
+            val eaten = outcome == EatOutcome.EATEN
+            require((what != null) == eaten) {
+                "what is present exactly when the outcome is ${EatOutcome.EATEN}"
+            }
+            require((remaining != null) == eaten) {
+                "remaining is present exactly when the outcome is ${EatOutcome.EATEN}"
+            }
+            what?.let { requireResourceName("what", it) }
+            remaining?.let { requireWithin("remaining", it, 0..MAX_STACK_COUNT) }
         }
     }
 }

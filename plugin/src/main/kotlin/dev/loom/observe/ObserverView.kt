@@ -99,6 +99,15 @@ class ObserverView(
                     "is in the world again after a terminal DEATH. Permadeath was not enforced.",
                     ObserverLevel.ALARM,
                 )
+            // A caveat on the readings an operator is looking at, so it has to reach them while
+            // they are looking rather than only the log afterwards - the same reason
+            // `worldHoldFailed` is said. CONCERN rather than ALARM: nothing has happened to the
+            // agent, and what is in doubt is whether the numbers beside it can be trusted.
+            BodyEvent.WITNESS_DISPUTED ->
+                Note(
+                    "reported vitals or inventory the server disagrees with; its readings are suspect",
+                    ObserverLevel.CONCERN,
+                )
             // Every tick for a walking agent: the gauge and the activity already say it.
             BodyEvent.MOVED -> null
             // Several a second while an agent regenerates; the standing line carries it.
@@ -147,16 +156,19 @@ class ObserverView(
             // is a secret, and neither is a line: the bound that refused it is the whole
             // meaning, and that is a countable tag rather than prose.
             BodyEvent.THREAT_SUPPRESSED,
-            // The four witness events carry the one kind of detail in Loom that was written
+            // The five witness events carry the one kind of detail in Loom that was written
             // by neither Loom nor a model: a server death message names the weapon that did
             // it, and a weapon can be renamed on an anvil to anything at all. It is bounded
             // on the way into the record, which is what makes it safe to *keep*; showing it
             // would put a stranger's chosen text on an operator's screen, and the meaning of
-            // every one of these events is a countable tag anyway.
+            // every one of these events is a countable tag anyway. A dispute's detail is the
+            // sharpest case: it quotes the item names a *client* claimed, so a renamed stack
+            // reaches the screen through the body rather than through the server.
             BodyEvent.WITNESS_JOINED,
             BodyEvent.WITNESS_QUIT,
             BodyEvent.WITNESS_DENIED,
             BodyEvent.WITNESS_REVIVED,
+            BodyEvent.WITNESS_DISPUTED,
             -> false
         }
 

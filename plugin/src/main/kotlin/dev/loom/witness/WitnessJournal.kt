@@ -173,6 +173,21 @@ class WitnessJournal(
         tick: Long,
     ) = write(subject, BodyEvent.WITNESS_REVIVED, why, tick, tag)
 
+    /**
+     * Records that a body's account of itself did not match the server's reading of it.
+     *
+     * Takes the [Corroboration.Disputed] rather than a tag and a sentence, so the countable tag
+     * and the prose beside it are derived from the same faults and cannot state different
+     * disagreements about one moment. Agreement is not writeable at all - there is deliberately
+     * no method for it - because a record per cross-check that found nothing would bury the ones
+     * that did in a log whose whole purpose is counting them.
+     */
+    fun disputed(
+        subject: WitnessSubject,
+        dispute: Corroboration.Disputed,
+        tick: Long,
+    ) = write(subject, BodyEvent.WITNESS_DISPUTED, detailOf(dispute), tick, tagOf(dispute))
+
     private fun write(
         subject: WitnessSubject,
         event: BodyEvent,

@@ -41,7 +41,8 @@ class BodyControlBoundaryTest {
         // Two sibling contracts that shared types would be one contract with two
         // schemas, and a change to either wire would silently reach the other. The
         // perception/decision contract carries what an agent knows and decides; this
-        // one carries only whether a body process is alive. Neither may reach the
+        // one carries a body process's own lifecycle, the raw state the game reports
+        // about its player, and one meal a controller named. Neither may reach the
         // other, and neither may reach a consumer.
         noClasses()
             .should()
@@ -52,6 +53,11 @@ class BodyControlBoundaryTest {
                 "dev.loom.body..",
                 "dev.loom.mind..",
                 "dev.loom.observe..",
+                // The witness now reads this contract's own `SensedVitals` and `SensedStack`
+                // to cross-check what a body claimed, which is the right direction: a
+                // consumer may know the wire, and the wire may not know its consumers. Named
+                // here so that stays one-way rather than becoming a cycle by accident.
+                "dev.loom.witness..",
             )
             .because(
                 "the body-control contract is plain data a separate process is driven " +

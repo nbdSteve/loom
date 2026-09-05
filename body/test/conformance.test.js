@@ -13,6 +13,25 @@
  * Every fixture is used, and a fixture this file cannot classify fails the suite
  * rather than being skipped: a case added to the corpus and silently ignored here
  * is worse than no case at all.
+ *
+ * The corpus has three categories, and which one a frame belongs in is a statement
+ * about the schema as well as about the codecs:
+ *
+ *   valid          the schema admits it and both codecs accept it
+ *   invalid        the schema refuses it and both codecs refuse it
+ *   beyond-schema  the schema admits it and both codecs refuse it
+ *
+ * That last category is the relations Draft 2020-12 cannot express - a saturation
+ * no larger than the food level, strictly increasing inventory slots - together
+ * with the ones it could express as conditionals and where the schema deliberately
+ * does not, so that a reader meets one mechanism rather than two. The schema says as
+ * much at `remaining`'s own description: "Draft 2020-12 could express that relation
+ * as a conditional, and deliberately does not: the two codecs enforce it and the
+ * conformance suites assert it, as they do for every other relation this schema
+ * states in prose." This is that assertion for the Node codec; the JVM suite adds
+ * the other half, that the schema really does admit each of those frames, since
+ * `body/` carries no schema validator and a category proved on one side only would
+ * let a case that belongs in `invalid` hide here.
  */
 
 const test = require('node:test')
@@ -27,14 +46,20 @@ const {
   encodeResponse,
   handshakeAccepted,
   statusReport,
+  senseReport,
+  eatReport,
   shutdownAccepted,
-  refusal
+  refusal,
+  EAT_OUTCOMES
 } = require('../src/protocol')
 
 const FIXTURES = path.join(__dirname, '..', '..', 'contract', 'fixtures', 'body-control')
 
 /** How many spellings `numeric-spellings.json` states; pinned by both suites. */
 const SHARED_NUMERIC_CASES = 46
+
+/** Every category of the corpus. A frame the schema admits is stored in one of these. */
+const KINDS = ['valid', 'invalid', 'beyond-schema']
 
 /** Every fixture in `kind`, as `{ name, text }`, sorted so a failure names a stable case. */
 function fixtures (kind) {
@@ -73,20 +98,21 @@ function rebuild (frame) {
   }
   if (frame.op === 'handshake') return handshakeAccepted(frame)
   if (frame.op === 'status') return statusReport(frame)
+  if (frame.op === 'sense') return senseReport(frame)
+  if (frame.op === 'eat') return eatReport(frame)
   return shutdownAccepted(frame)
 }
 
 test('there is a fixture corpus, and this file classifies all of it', () => {
-  const valid = fixtures('valid')
-  const invalid = fixtures('invalid')
-  assert.ok(valid.length > 0, 'no valid fixtures found - is the path right?')
-  assert.ok(invalid.length > 0, 'no invalid fixtures found - is the path right?')
-
-  for (const { name } of [...valid, ...invalid]) {
-    assert.ok(
-      directionOf(name) !== undefined,
-      `${name} is named so that no decoder claims it; prefix it request-, response- or error-`
-    )
+  for (const kind of KINDS) {
+    const found = fixtures(kind)
+    assert.ok(found.length > 0, `no ${kind} fixtures found - is the path right?`)
+    for (const { name } of found) {
+      assert.ok(
+        directionOf(name) !== undefined,
+        `${name} is named so that no decoder claims it; prefix it request-, response- or error-`
+      )
+    }
   }
 })
 
@@ -94,7 +120,7 @@ test('every fixture is stored canonically: one compact line, no trailing newline
   // The fixtures are the wire, so how they are stored is part of the contract: a
   // reformatted fixture is a different byte sequence, and the round-trip below is
   // the only thing that would notice.
-  for (const { name, text } of [...fixtures('valid'), ...fixtures('invalid')]) {
+  for (const { name, text } of KINDS.flatMap((kind) => fixtures(kind))) {
     assert.ok(!text.includes('\n'), `${name} spans more than one line`)
     assert.equal(text, JSON.stringify(JSON.parse(text)), `${name} is not compact, or its keys are reordered`)
   }
@@ -134,6 +160,13 @@ test('a refused fixture is refused for the reason its name gives', () => {
     'request-request-id-too-long.json': 'invalidField',
     'request-agent-id-with-path.json': 'invalidField',
     'request-extra-field.json': 'invalidField',
+    'request-sense-zero-radius.json': 'invalidField',
+    'request-sense-radius-too-large.json': 'invalidField',
+    'request-sense-missing-limit.json': 'invalidField',
+    'request-eat-missing-slot.json': 'invalidField',
+    'request-eat-slot-too-large.json': 'invalidField',
+    'request-eat-blank-sense-id.json': 'invalidField',
+    'request-status-with-sense-payload.json': 'invalidField',
     'response-unknown-state.json': 'invalidField',
     'response-shutdown-not-stopping.json': 'invalidField',
     'response-status-negative-uptime.json': 'invalidField',
@@ -142,6 +175,17 @@ test('a refused fixture is refused for the reason its name gives', () => {
     'response-status-zero-requests-handled.json': 'invalidField',
     'response-status-fractional-count.json': 'invalidField',
     'response-handshake-short-username.json': 'invalidField',
+    'response-sense-not-ready.json': 'invalidField',
+    'response-sense-null-ground.json': 'invalidField',
+    'response-sense-fractional-food.json': 'invalidField',
+    'response-sense-time-past-day.json': 'invalidField',
+    'response-sense-position-four-coordinates.json': 'invalidField',
+    'response-sense-coordinate-outside-world.json': 'invalidField',
+    'response-sense-slot-too-large.json': 'invalidField',
+    'response-sense-empty-stack.json': 'invalidField',
+    'response-sense-display-name.json': 'invalidField',
+    'response-sense-too-many-entities.json': 'invalidField',
+    'response-eat-unknown-outcome.json': 'invalidField',
     'error-unknown-code.json': 'invalidField',
     'error-free-text-code.json': 'invalidField',
     'error-missing-agent-id.json': 'invalidField',
@@ -153,6 +197,33 @@ test('a refused fixture is refused for the reason its name gives', () => {
   for (const { name, text } of fixtures('invalid')) {
     const decoded = directionOf(name) === 'request' ? decodeRequest(text) : decodeResponse(text)
     assert.equal(decoded.code, reasons[name], name)
+  }
+})
+
+test('a frame the schema cannot refuse is still refused by the codec', () => {
+  // The `beyond-schema` category, and the whole reason it is a category: each of
+  // these frames satisfies every keyword the schema states, and states a *relation*
+  // between two of its fields that is false. A codec that read fields one at a time
+  // would accept all six, and nothing else in either suite would notice.
+  //
+  // Keyed by name for the same reason the refusal map above is: the relation each
+  // one breaks is named here, so a fixture added to the directory and left out of
+  // this list fails rather than passing unread.
+  const relations = {
+    'response-eat-eaten-without-food.json': 'a meal was eaten and names no food',
+    'response-eat-refusal-names-food.json': 'a refused meal names food it did not eat',
+    'response-sense-descending-slots.json': 'inventory slots do not ascend',
+    'response-sense-omitted-with-no-entities.json': 'entities were omitted from an empty list',
+    'response-sense-repeated-slot.json': 'one slot is reported twice',
+    'response-sense-saturation-over-food.json': 'saturation is above the food level'
+  }
+  const present = fixtures('beyond-schema').map(({ name }) => name)
+  assert.deepEqual(Object.keys(relations).sort(), present, 'a beyond-schema fixture has no stated relation here')
+
+  for (const { name, text } of fixtures('beyond-schema')) {
+    const decoded = directionOf(name) === 'request' ? decodeRequest(text) : decodeResponse(text)
+    assert.equal(decoded.ok, false, `${name} was accepted, but ${relations[name]}`)
+    assert.equal(decoded.code, 'invalidField', name)
   }
 })
 
@@ -190,7 +261,7 @@ test('the corpus covers every operation and both directions of each', () => {
   // leave a whole operation unproven, so the coverage is asserted rather than
   // eyeballed.
   const valid = fixtures('valid').map(({ name }) => name)
-  for (const op of ['handshake', 'status', 'shutdown']) {
+  for (const op of ['handshake', 'status', 'sense', 'eat', 'shutdown']) {
     assert.ok(valid.includes(`request-${op}.json`), `no valid request fixture for ${op}`)
     assert.ok(
       valid.some((name) => name.startsWith(`response-${op}`)),
@@ -198,6 +269,19 @@ test('the corpus covers every operation and both directions of each', () => {
     )
   }
   assert.ok(valid.some((name) => name.startsWith('error-')), 'no valid refusal fixture')
+})
+
+test('the corpus states every outcome an eat can have', () => {
+  // `EAT_OUTCOMES` is a closed enum, and the refusals in it are the whole answer to
+  // "why did this agent not eat". An outcome with no fixture is one the JVM side has
+  // never had to decode, which is how a refusal reaches a run as an unreadable frame
+  // rather than as the reason it names.
+  const stated = fixtures('valid')
+    .filter(({ name }) => name.startsWith('response-eat'))
+    .map(({ text }) => JSON.parse(text).outcome)
+  for (const outcome of EAT_OUTCOMES) {
+    assert.ok(stated.includes(outcome), `no valid fixture reports the eat outcome ${outcome}`)
+  }
 })
 
 test('a refusal fixture carries a code and never free text', () => {

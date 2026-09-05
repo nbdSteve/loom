@@ -41,6 +41,7 @@ private val WIRE_NAMES =
         BodyEvent.WITNESS_QUIT to "witnessQuit",
         BodyEvent.WITNESS_DENIED to "witnessDenied",
         BodyEvent.WITNESS_REVIVED to "witnessRevived",
+        BodyEvent.WITNESS_DISPUTED to "witnessDisputed",
     )
 
 /**

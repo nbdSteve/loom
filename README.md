@@ -35,12 +35,16 @@ The shared contract is in place: `contract/loom.schema.json` is its single sourc
 of truth, with hand-written Rust and Kotlin bindings checked against it by
 conformance tests and CI on both runtimes.
 A second contract sits beside it, inert for now: `contract/body-control.schema.json`
-carries only whether a body process is alive, which lifecycle state it is in, and
-when to stop, with hand-written Node and Kotlin codecs held together by a shared
-conformance corpus - the wire agreed on before either runtime speaks it.
+carries the player body process's own five operations - whether a body is alive, which
+lifecycle state it is in, when to stop, one bounded reading of what its player can see
+and how it is doing, and one named meal.
+Its hand-written Node and Kotlin codecs are held together by a shared conformance
+corpus, so the wire is agreed on before either runtime speaks it.
 The process on the far end of that wire is runnable too: `body/` starts one
 persistent offline-mode Mineflayer player against a loopback Paper server and answers
-its bounded control channel, holding no gameplay policy of its own.
+its bounded control channel, holding no gameplay policy of its own - it senses because
+it was asked to and eats because a mind named one stack, and it decides nothing in
+between.
 It is also inert - the Paper plugin does not start it, does not connect to it, and the
 Villager body is still the only body Loom's runtime drives. See `body/README.md`.
 

@@ -10,17 +10,31 @@ const {
   MAX_ID_CHARS,
   MAX_COUNT,
   MIN_REQUESTS_HANDLED,
+  MAX_RESOURCE_NAME_CHARS,
+  MAX_WORLD_COORDINATE,
+  MAX_SENSE_RADIUS,
+  MAX_SENSE_ENTITIES,
+  MAX_SLOT_INDEX,
+  MAX_SENSE_STACKS,
+  MAX_STACK_COUNT,
+  MAX_HEALTH,
+  MAX_FOOD,
+  MAX_TIME_OF_DAY,
   LIFECYCLE_STATES,
   OPERATIONS,
   ERROR_CODES,
+  EAT_OUTCOMES,
   isControlId,
   isUsername,
+  isResourceName,
   decodeRequest,
   decodeResponse,
   encodeRequest,
   encodeResponse,
   handshakeAccepted,
   statusReport,
+  senseReport,
+  eatReport,
   shutdownAccepted,
   refusal
 } = require('../src/protocol')
@@ -52,9 +66,35 @@ const LEAK_BEARING = [
   'has space'
 ]
 
+/**
+ * The fields each operation requires beyond the envelope.
+ *
+ * A request is only well-formed for the operation it names, so the helper below
+ * has to know this to build one: `sense` and `eat` carry a payload the other
+ * three do not, and a test spoiling one field must start from a frame that was
+ * otherwise complete.
+ */
+const PAYLOAD = {
+  handshake: {},
+  status: {},
+  shutdown: {},
+  sense: { radius: 24, limit: 16 },
+  eat: { senseId: 'sense-1', slot: 0 }
+}
+
 /** A request with everything the contract requires, so a test can spoil one field. */
 function request (overrides = {}) {
-  return { op: 'status', protocol: PROTOCOL_VERSION, requestId: 'req-1', agentId: AGENT, ...overrides }
+  // `hasOwn` rather than `??`, because a test that spoils the operation with
+  // `null` or `42` must get that value on the wire and not the default.
+  const op = Object.hasOwn(overrides, 'op') ? overrides.op : 'status'
+  return {
+    op,
+    protocol: PROTOCOL_VERSION,
+    requestId: 'req-1',
+    agentId: AGENT,
+    ...(PAYLOAD[op] ?? {}),
+    ...overrides
+  }
 }
 
 function lineOf (frame) {
@@ -73,7 +113,7 @@ test('every operation this generation has decodes, and nothing else does', () =>
   for (const op of OPERATIONS) {
     assert.equal(decodeRequest(lineOf(request({ op }))).ok, true, op)
   }
-  for (const op of ['perceive', 'moveTo', 'eat', 'ping', '', 'HANDSHAKE', 42, null]) {
+  for (const op of ['perceive', 'moveTo', 'look', 'ping', '', 'HANDSHAKE', 42, null]) {
     const decoded = decodeRequest(lineOf(request({ op })))
     assert.deepEqual(decoded, { ok: false, code: 'unknownOperation', requestId: 'req-1' }, String(op))
   }
@@ -171,8 +211,33 @@ test('each response the process can write decodes back to itself', () => {
       stateMs: 1980,
       requestsHandled: 2
     }),
-    shutdownAccepted({ requestId: 'req-3', agentId: AGENT }),
-    refusal({ requestId: 'req-4', agentId: AGENT, code: 'unknownOperation' }),
+    senseReport({
+      requestId: 'req-3',
+      agentId: AGENT,
+      position: [12.5, 71.5, -40.5],
+      vitals: { health: 19.5, food: 17, saturation: 4.25 },
+      time: { timeOfDay: 6500, day: 12, isDay: true },
+      ground: { standingIn: 'minecraft:air', standingOn: 'minecraft:grass_block' },
+      entities: [{ what: 'minecraft:zombie', position: [14.5, 71.5, -40.5], visible: true }],
+      entitiesOmitted: 2,
+      inventory: [{ slot: 0, what: 'minecraft:bread', count: 3 }]
+    }),
+    eatReport({
+      requestId: 'req-4',
+      agentId: AGENT,
+      outcome: 'eaten',
+      vitals: { health: 19.5, food: 17, saturation: 4.25 },
+      what: 'minecraft:bread',
+      remaining: 2
+    }),
+    eatReport({
+      requestId: 'req-5',
+      agentId: AGENT,
+      outcome: 'slotEmpty',
+      vitals: { health: 19.5, food: 17, saturation: 4.25 }
+    }),
+    shutdownAccepted({ requestId: 'req-6', agentId: AGENT }),
+    refusal({ requestId: 'req-7', agentId: AGENT, code: 'unknownOperation' }),
     refusal({ agentId: AGENT, code: 'malformedFrame' })
   ]
   for (const frame of frames) {
@@ -264,6 +329,514 @@ test('a status report\'s three numbers must be measurable together', () => {
   assert.equal(decodeResponse(encodeResponse(statusReport(status({ uptimeMs: 7, stateMs: 7 })))).ok, true)
 })
 
+/**
+ * A reading of the two vitals and the third number behind one of them.
+ *
+ * Every value here is deliberately non-integral. The two runtimes do not spell an
+ * integral real the same way - this one writes `20` where Java writes `20.0` - so a
+ * frame that round-trips byte-for-byte on both sides can only carry a real whose
+ * text both agree on.
+ */
+function vitals (overrides = {}) {
+  return { health: 19.5, food: 17, saturation: 4.25, ...overrides }
+}
+
+function whenItIs (overrides = {}) {
+  return { timeOfDay: 6500, day: 12, isDay: true, ...overrides }
+}
+
+/** The smallest sense report the contract allows, for a test to spoil one field of. */
+function sensed (overrides = {}) {
+  return {
+    requestId: 'req-1',
+    agentId: AGENT,
+    position: [12.5, 71.5, -40.5],
+    vitals: vitals(),
+    time: whenItIs(),
+    entities: [],
+    entitiesOmitted: 0,
+    inventory: [],
+    ...overrides
+  }
+}
+
+/**
+ * The largest real strictly below `bound`, which is longer to write down than `bound` is.
+ *
+ * A real's contribution to a frame's size is the length of its decimal text, and that is
+ * longer one step inside a round bound than at it: `30000000` is nine characters and the
+ * double below it is nineteen. Taking the step as half an epsilon of the bound keeps it
+ * arithmetic rather than a copied literal - the same expression is right at every magnitude.
+ */
+function justInside (bound) {
+  return bound - bound * Number.EPSILON / 2
+}
+
+/** The smallest real strictly above `bound`, for the bounds a formatter has of its own. */
+function justOutside (bound) {
+  return bound + bound * Number.EPSILON / 2
+}
+
+/**
+ * The magnitude at which `Number.prototype.toString` stops writing plain decimals.
+ *
+ * A formatter's own boundary rather than the contract's, and the one that matters for a
+ * frame: just inside it a coordinate is written as `0.` plus five leading zeros plus a full
+ * seventeen-digit mantissa, which is the longest plain text this runtime can produce for a
+ * legal coordinate. Below it the same double is written with an exponent instead, and more
+ * briefly.
+ */
+const PLAIN_FORM_FLOOR = 1e-6
+
+/**
+ * A magnitude small enough that both runtimes write an exponent, and a three-digit one.
+ *
+ * The other end of the same question: an exponential form carries a whole mantissa, a sign
+ * and up to three exponent digits, which is the longest text a legal coordinate has on the
+ * JVM even though it is one character shorter than the plain form above is here.
+ */
+const DEEP_EXPONENT = 1e-300
+
+/** Whichever of `values` is longest to write down, as the value itself. */
+function widestWritten (values) {
+  return values.reduce((widest, value) => (
+    String(value).length > String(widest).length ? value : widest
+  ))
+}
+
+/**
+ * The legal coordinate whose decimal text is longest, which is *not* the largest one.
+ *
+ * Where a formatter writes most is a property of the formatter, so the answer is taken over
+ * its own boundaries rather than named: the world border, the plain-form floor, and a deep
+ * exponent. Negative, because a minus sign is a character too and a coordinate may carry one.
+ *
+ * This is what a worst-case frame has to be measured with. Measured with the coordinate of
+ * largest *magnitude*, which reads nine characters shorter, the guard below under-reported
+ * the widest legal answer by 225 bytes across the twenty-five positions in it - on the one
+ * measurement `MAX_SENSE_ENTITIES` and `MAX_SENSE_STACKS` are derived from.
+ */
+const WIDEST_COORDINATE = widestWritten([
+  -justInside(MAX_WORLD_COORDINATE),
+  -justOutside(PLAIN_FORM_FLOOR),
+  -justOutside(DEEP_EXPONENT)
+])
+
+/** The same magnitude unsigned, since neither health nor saturation may be negative. */
+const WIDEST_VITAL = Math.abs(WIDEST_COORDINATE)
+
+/** The smallest eat report the contract allows: a refusal, which carries no item. */
+function ate (overrides = {}) {
+  return { requestId: 'req-1', agentId: AGENT, outcome: 'slotEmpty', vitals: vitals(), ...overrides }
+}
+
+test('a sense report carries a place, two vitals, a clock and two bounded lists', () => {
+  const full = sensed({
+    ground: { standingIn: 'minecraft:air', standingOn: 'minecraft:grass_block' },
+    entities: [
+      { what: 'minecraft:zombie', position: [14.5, 71.5, -40.5], visible: true },
+      { what: 'minecraft:cow', position: [20.5, 70.5, -44.5], visible: false }
+    ],
+    entitiesOmitted: 3,
+    inventory: [
+      { slot: 0, what: 'minecraft:bread', count: 3 },
+      { slot: 8, what: 'minecraft:cooked_beef', count: 1 },
+      { slot: 45, what: 'minecraft:torch', count: 64 }
+    ]
+  })
+  const decoded = decodeResponse(encodeResponse(senseReport(full)))
+  assert.equal(decoded.ok, true, encodeResponse(senseReport(full)))
+  assert.deepEqual(decoded.response, senseReport(full))
+
+  // The smallest legal one: nothing in sight, nothing carried, and no ground read.
+  assert.equal(decodeResponse(encodeResponse(senseReport(sensed()))).ok, true)
+})
+
+test('unreadable ground is absent, and there is no stand-in value for it', () => {
+  // `minecraft:air` is a real answer a real reading gives, so it cannot double as
+  // "not known" - which is why the field is omitted rather than filled.
+  assert.equal(Object.hasOwn(senseReport(sensed()), 'ground'), false)
+  const line = encodeResponse(senseReport(sensed()))
+  assert.equal(line.includes('ground'), false, line)
+
+  // Half a ground reading is not a reading. Both blocks or neither.
+  for (const ground of [{ standingIn: 'minecraft:air' }, { standingOn: 'minecraft:stone' }, {}, null, 'air']) {
+    assert.throws(() => senseReport(sensed({ ground })), /invalidField$/, JSON.stringify(ground))
+  }
+})
+
+test('the two vitals and the saturation behind one of them stay three distinct facts', () => {
+  // The whole point of the sense report for a player body: health is damage, food is
+  // hunger, and saturation is the buffer in front of food. Nothing derives one from
+  // another, so each has its own bound and each is checked on its own.
+  assert.equal(decodeResponse(encodeResponse(senseReport(sensed({
+    vitals: { health: 0.5, food: 0, saturation: 0 }
+  })))).ok, true)
+  assert.equal(decodeResponse(encodeResponse(senseReport(sensed({
+    vitals: { health: MAX_HEALTH, food: MAX_FOOD, saturation: MAX_FOOD }
+  })))).ok, true)
+
+  for (const spoiled of [
+    { health: -0.5 },
+    { health: MAX_HEALTH + 0.5 },
+    { health: Number.NaN },
+    { health: '19.5' },
+    { health: undefined },
+    { food: -1 },
+    { food: MAX_FOOD + 1 },
+    { food: 17.5 },
+    { food: undefined },
+    { saturation: -0.5 },
+    { saturation: MAX_FOOD + 0.5 },
+    { saturation: undefined },
+    { extra: 1 }
+  ]) {
+    const frame = { ...senseReport(sensed()), vitals: { ...vitals(), ...spoiled } }
+    assert.deepEqual(decodeResponse(lineOf(frame)), { ok: false, code: 'invalidField' }, JSON.stringify(spoiled))
+    assert.throws(() => senseReport(sensed({ vitals: { ...vitals(), ...spoiled } })), /invalidField$/)
+  }
+})
+
+test('saturation may not exceed the food level it sits in front of', () => {
+  // Vanilla's own relation, and one no JSON Schema keyword can state: saturation is
+  // spent before food is, so a reading above it is a reading of something that is not
+  // this player. Equal is legal - a full meal leaves both at the same number.
+  assert.equal(decodeResponse(encodeResponse(senseReport(sensed({
+    vitals: { health: 19.5, food: 4, saturation: 4 }
+  })))).ok, true)
+  const above = { ...senseReport(sensed()), vitals: { health: 19.5, food: 4, saturation: 4.5 } }
+  assert.deepEqual(decodeResponse(lineOf(above)), { ok: false, code: 'invalidField' })
+  assert.throws(() => senseReport(sensed({ vitals: { health: 19.5, food: 4, saturation: 4.5 } })), /invalidField$/)
+})
+
+test('a clock reading is a time of day, a day count and whether it is light', () => {
+  for (const timeOfDay of [0, MAX_TIME_OF_DAY]) {
+    assert.equal(decodeResponse(encodeResponse(senseReport(sensed({
+      time: whenItIs({ timeOfDay })
+    })))).ok, true, String(timeOfDay))
+  }
+  for (const spoiled of [
+    { timeOfDay: -1 },
+    { timeOfDay: MAX_TIME_OF_DAY + 1 },
+    { timeOfDay: 6500.5 },
+    { timeOfDay: undefined },
+    { day: -1 },
+    { day: 12.5 },
+    { day: MAX_COUNT + 2 },
+    { day: undefined },
+    { isDay: 'true' },
+    { isDay: 1 },
+    { isDay: undefined },
+    { extra: 1 }
+  ]) {
+    const frame = { ...senseReport(sensed()), time: { ...whenItIs(), ...spoiled } }
+    assert.deepEqual(decodeResponse(lineOf(frame)), { ok: false, code: 'invalidField' }, JSON.stringify(spoiled))
+  }
+})
+
+test('a position is three real coordinates inside the world, and never four', () => {
+  for (const position of [[0, 0, 0], [MAX_WORLD_COORDINATE, 319.5, -MAX_WORLD_COORDINATE]]) {
+    assert.equal(decodeResponse(encodeResponse(senseReport(sensed({ position })))).ok, true, JSON.stringify(position))
+  }
+  for (const position of [
+    [12.5, 71.5],
+    [12.5, 71.5, -40.5, 0],
+    [],
+    [12.5, 71.5, MAX_WORLD_COORDINATE + 1],
+    [12.5, 71.5, Number.NaN],
+    [12.5, 71.5, Number.POSITIVE_INFINITY],
+    [12.5, 71.5, '-40.5'],
+    [12.5, 71.5, null],
+    { x: 1, y: 2, z: 3 },
+    undefined
+  ]) {
+    assert.throws(() => senseReport(sensed({ position })), /invalidField$/, JSON.stringify(position))
+  }
+})
+
+test('an observation list is bounded, and every entry is a name, a place and a sight line', () => {
+  const one = { what: 'minecraft:zombie', position: [14.5, 71.5, -40.5], visible: true }
+  const atBound = Array.from({ length: MAX_SENSE_ENTITIES }, () => one)
+  assert.equal(decodeResponse(encodeResponse(senseReport(sensed({ entities: atBound })))).ok, true)
+  assert.throws(() => senseReport(sensed({ entities: [...atBound, one] })), /invalidField$/)
+
+  for (const entity of [
+    { what: 'minecraft:zombie', position: [14.5, 71.5, -40.5] },
+    { what: 'minecraft:zombie', visible: true },
+    { position: [14.5, 71.5, -40.5], visible: true },
+    { what: 'Minecraft:Zombie', position: [14.5, 71.5, -40.5], visible: true },
+    { what: 'minecraft:zombie', position: [14.5, 71.5], visible: true },
+    { what: 'minecraft:zombie', position: [14.5, 71.5, -40.5], visible: 1 },
+    { what: 'minecraft:zombie', position: [14.5, 71.5, -40.5], visible: true, extra: 1 },
+    'minecraft:zombie',
+    null
+  ]) {
+    assert.throws(() => senseReport(sensed({ entities: [entity] })), /invalidField$/, JSON.stringify(entity))
+  }
+})
+
+test('an omission count is stated, and cannot claim a cut that never happened', () => {
+  // A caller may ask for as little as one observation, so anything omitted was
+  // omitted *after* the list filled: a count above zero beside an empty list is a
+  // report of a cut that could not have been made.
+  assert.equal(decodeResponse(encodeResponse(senseReport(sensed({ entitiesOmitted: 0 })))).ok, true)
+  assert.throws(() => senseReport(sensed({ entitiesOmitted: 1 })), /invalidField$/)
+  assert.equal(decodeResponse(encodeResponse(senseReport(sensed({
+    entities: [{ what: 'minecraft:cow', position: [1.5, 2.5, 3.5], visible: true }],
+    entitiesOmitted: MAX_COUNT
+  })))).ok, true)
+
+  for (const entitiesOmitted of [-1, 1.5, MAX_COUNT + 2, '3', null, undefined]) {
+    assert.throws(() => senseReport(sensed({ entitiesOmitted })), /invalidField$/, String(entitiesOmitted))
+  }
+})
+
+test('the whole inventory fits, and no slot is described twice or out of order', () => {
+  // Every slot a player has - 36 main, 4 armour, the off hand, and the crafting
+  // grid the container exposes - reaches the wire at once, so a full body is never
+  // silently truncated.
+  const everySlot = Array.from({ length: MAX_SENSE_STACKS }, (each, slot) => ({
+    slot,
+    what: 'minecraft:bread',
+    count: 1
+  }))
+  assert.equal(everySlot.length, MAX_SLOT_INDEX + 1)
+  assert.equal(decodeResponse(encodeResponse(senseReport(sensed({ inventory: everySlot })))).ok, true)
+
+  // Order is part of the contract, because it is what makes "no slot twice" a rule
+  // a reader can check in one pass rather than a set it has to build.
+  const outOfOrder = [everySlot[1], everySlot[0]]
+  assert.throws(() => senseReport(sensed({ inventory: outOfOrder })), /invalidField$/)
+  assert.throws(() => senseReport(sensed({ inventory: [everySlot[0], everySlot[0]] })), /invalidField$/)
+
+  for (const stack of [
+    { slot: -1, what: 'minecraft:bread', count: 1 },
+    { slot: MAX_SLOT_INDEX + 1, what: 'minecraft:bread', count: 1 },
+    { slot: 0.5, what: 'minecraft:bread', count: 1 },
+    { slot: 0, what: 'minecraft:bread', count: 0 },
+    { slot: 0, what: 'minecraft:bread', count: MAX_STACK_COUNT + 1 },
+    { slot: 0, what: 'minecraft:bread', count: 1.5 },
+    { slot: 0, what: '', count: 1 },
+    { slot: 0, count: 1 },
+    { what: 'minecraft:bread', count: 1 },
+    { slot: 0, what: 'minecraft:bread' },
+    { slot: 0, what: 'minecraft:bread', count: 1, extra: 1 }
+  ]) {
+    assert.throws(() => senseReport(sensed({ inventory: [stack] })), /invalidField$/, JSON.stringify(stack))
+  }
+})
+
+test('an empty slot is left out rather than reported as nothing', () => {
+  // The one shape the count bound rules out on its own: a slot holding no item is
+  // absent from the list, so there is no such thing as a stack of zero and a
+  // reader never has to decide what one would mean.
+  const line = lineOf({
+    ...senseReport(sensed()),
+    inventory: [{ slot: 3, what: 'minecraft:bread', count: 0 }]
+  })
+  assert.deepEqual(decodeResponse(line), { ok: false, code: 'invalidField' })
+})
+
+test('an item or block name is the engine\'s own vocabulary and nothing else', () => {
+  for (const name of ['minecraft:bread', 'minecraft:grass_block', 'a', 'mod.pack:some/thing-1', 'a'.repeat(MAX_RESOURCE_NAME_CHARS)]) {
+    assert.equal(isResourceName(name), true, name)
+  }
+  for (const name of [
+    '',
+    'a'.repeat(MAX_RESOURCE_NAME_CHARS + 1),
+    'Minecraft:Bread',
+    'has space',
+    'quote"d',
+    'new\nline',
+    'C:\\windows',
+    ...LEAK_BEARING,
+    7,
+    null,
+    undefined
+  ]) {
+    assert.equal(isResourceName(name), false, String(name))
+  }
+})
+
+test('an eat answer states one outcome from the closed set and nothing else', () => {
+  for (const outcome of EAT_OUTCOMES) {
+    const ok = outcome === 'eaten'
+    const frame = eatReport(ate({
+      outcome,
+      what: ok ? 'minecraft:bread' : undefined,
+      remaining: ok ? 2 : undefined
+    }))
+    const decoded = decodeResponse(encodeResponse(frame))
+    assert.equal(decoded.ok, true, outcome)
+    assert.deepEqual(decoded.response, frame)
+  }
+  // The refusals are a closed set, so a reason outside it cannot travel - which is
+  // what keeps a path, a host name or an exception string out of this field.
+  for (const outcome of ['ok', 'failed', 'EATEN', '', ...LEAK_BEARING, null, undefined, 3]) {
+    assert.throws(() => eatReport(ate({ outcome })), /invalidField$/, String(outcome))
+  }
+  assert.deepEqual(EAT_OUTCOMES.filter((each) => each !== 'eaten').length, 7)
+})
+
+test('an eat names what it consumed exactly when it consumed something', () => {
+  // The equivalence both ways, because either half alone lies: a refusal that named
+  // an item would read as a meal, and a meal that named none would leave the one
+  // record of what was eaten empty.
+  assert.throws(() => eatReport(ate({ outcome: 'eaten', remaining: 2 })), /invalidField$/)
+  assert.throws(() => eatReport(ate({ outcome: 'eaten', what: 'minecraft:bread' })), /invalidField$/)
+  assert.throws(() => eatReport(ate({ what: 'minecraft:bread', remaining: 2 })), /invalidField$/)
+  assert.throws(() => eatReport(ate({ remaining: 2 })), /invalidField$/)
+  assert.throws(() => eatReport(ate({ what: 'minecraft:bread' })), /invalidField$/)
+
+  const eaten = (overrides) => ate({ outcome: 'eaten', what: 'minecraft:bread', remaining: 2, ...overrides })
+  assert.equal(decodeResponse(encodeResponse(eatReport(eaten({ remaining: 0 })))).ok, true)
+  for (const remaining of [-1, MAX_STACK_COUNT + 1, 2.5, '2', null]) {
+    assert.throws(() => eatReport(eaten({ remaining })), /invalidField$/, String(remaining))
+  }
+  for (const what of ['', 'Minecraft:Bread', 'a'.repeat(MAX_RESOURCE_NAME_CHARS + 1), ...LEAK_BEARING, 7]) {
+    assert.throws(() => eatReport(eaten({ what })), /invalidField$/, String(what))
+  }
+})
+
+test('an eat answer carries the vitals it left behind, on a refusal too', () => {
+  // A mind told its slot was empty needs to know what its food level is *now*, not
+  // what it was when it decided - so the reading is on every outcome.
+  for (const outcome of EAT_OUTCOMES.filter((each) => each !== 'eaten')) {
+    assert.throws(() => eatReport(ate({ outcome, vitals: undefined })), /invalidField$/, outcome)
+  }
+  const decoded = decodeResponse(encodeResponse(eatReport(ate({ outcome: 'notEdible' }))))
+  assert.deepEqual(decoded.response.vitals, vitals())
+})
+
+test('a sense or an eat answer may only report a body that is ready to be read', () => {
+  // Every other lifecycle state is a body with nothing to report: a reading taken
+  // before the spawn or after the death would be an answer about a player that is
+  // not there. The process refuses such a request as `notReady` instead.
+  for (const state of LIFECYCLE_STATES.filter((each) => each !== 'ready')) {
+    for (const frame of [senseReport(sensed()), eatReport(ate())]) {
+      assert.deepEqual(decodeResponse(lineOf({ ...frame, state })), { ok: false, code: 'invalidField' }, state)
+    }
+  }
+  assert.equal(ERROR_CODES.includes('notReady'), true)
+})
+
+test('a sense request is asked with a bounded radius and a bounded limit', () => {
+  for (const payload of [{ radius: 1, limit: 1 }, { radius: MAX_SENSE_RADIUS, limit: MAX_SENSE_ENTITIES }]) {
+    const decoded = decodeRequest(lineOf(request({ op: 'sense', ...payload })))
+    assert.equal(decoded.ok, true, JSON.stringify(payload))
+    assert.deepEqual(decoded.request, { op: 'sense', protocol: PROTOCOL_VERSION, requestId: 'req-1', agentId: AGENT, ...payload })
+  }
+  for (const payload of [
+    { radius: 0 },
+    { radius: MAX_SENSE_RADIUS + 1 },
+    { radius: 24.5 },
+    { radius: '24' },
+    { radius: undefined },
+    { limit: 0 },
+    // A caller allowed to ask for more than an answer can carry would be promised a
+    // cut it could not be told about, so the two bounds are the one number.
+    { limit: MAX_SENSE_ENTITIES + 1 },
+    { limit: 16.5 },
+    { limit: undefined },
+    { extra: 1 }
+  ]) {
+    const decoded = decodeRequest(lineOf(request({ op: 'sense', ...payload })))
+    assert.deepEqual(decoded, { ok: false, code: 'invalidField', requestId: 'req-1' }, JSON.stringify(payload))
+  }
+})
+
+test('an eat request names one slot of one sense, and cannot be asked without either', () => {
+  const decoded = decodeRequest(lineOf(request({ op: 'eat', senseId: 'sense-1', slot: MAX_SLOT_INDEX })))
+  assert.deepEqual(decoded.request, {
+    op: 'eat',
+    protocol: PROTOCOL_VERSION,
+    requestId: 'req-1',
+    agentId: AGENT,
+    senseId: 'sense-1',
+    slot: MAX_SLOT_INDEX
+  })
+  for (const payload of [
+    { slot: -1 },
+    { slot: MAX_SLOT_INDEX + 1 },
+    { slot: 0.5 },
+    { slot: '0' },
+    { slot: undefined },
+    { senseId: '' },
+    { senseId: 'has space' },
+    { senseId: '/tmp/secret' },
+    { senseId: undefined },
+    { extra: 1 }
+  ]) {
+    const spoiled = decodeRequest(lineOf(request({ op: 'eat', ...payload })))
+    assert.deepEqual(spoiled, { ok: false, code: 'invalidField', requestId: 'req-1' }, JSON.stringify(payload))
+  }
+})
+
+test('a payload belongs to the operation that names it and to no other', () => {
+  // The bound that makes each operation's field list its own: a sense payload on an
+  // eat is a controller believing something this process will not do.
+  for (const [op, payload] of [
+    ['status', { radius: 24, limit: 16 }],
+    ['handshake', { senseId: 'sense-1', slot: 0 }],
+    ['shutdown', { radius: 24, limit: 16 }],
+    ['sense', { senseId: 'sense-1', slot: 0 }],
+    ['eat', { radius: 24, limit: 16 }]
+  ]) {
+    const line = lineOf({ ...request({ op }), ...payload })
+    assert.deepEqual(decodeRequest(line), { ok: false, code: 'invalidField', requestId: 'req-1' }, `${op} ${JSON.stringify(payload)}`)
+  }
+})
+
+test('a whole number nested inside a frame is read the same however it is spelled', () => {
+  // The check used to run at the top level only, which was enough while every whole
+  // number was a top-level field. It is not now, and a nested integer left unchecked is
+  // one frame the two runtimes read differently off the same bytes:
+  // `17.0000000000000001` parses to 17 here and is refused by the JVM's own integral
+  // reader - exactly the drift the shared corpus exists to catch.
+  //
+  // Both directions are driven for every nested field, because they fail apart. A path
+  // no scan reaches accepts the fraction; a path the scan files under the wrong name
+  // refuses the *legal* spelling too, since a rule that asks for one literal and finds
+  // none reads as a field that held no number at all.
+  const crowded = senseReport(sensed({
+    entities: [{ what: 'minecraft:zombie', position: [14.5, 71.5, -40.5], visible: true }],
+    entitiesOmitted: 2,
+    inventory: [{ slot: 3, what: 'minecraft:bread', count: 5 }]
+  }))
+  const meal = eatReport(ate({ outcome: 'eaten', what: 'minecraft:bread', remaining: 2 }))
+  const nested = [
+    [crowded, 'food', '17'],
+    [crowded, 'timeOfDay', '6500'],
+    [crowded, 'day', '12'],
+    [crowded, 'entitiesOmitted', '2'],
+    [crowded, 'slot', '3'],
+    [crowded, 'count', '5'],
+    [meal, 'remaining', '2']
+  ]
+  for (const [response, field, written] of nested) {
+    const line = encodeResponse(response)
+    const at = `"${field}":${written}`
+    assert.equal(line.includes(at), true, at)
+    // To the schema an integer is any number with a zero fractional part, so these are
+    // spellings of the same value and both runtimes read them.
+    for (const whole of [`${written}.0`, `${written}e0`]) {
+      assert.equal(decodeResponse(line.replace(at, `"${field}":${whole}`)).ok, true, `${field} ${whole}`)
+    }
+    // And this is a fraction that `JSON.parse` has already rounded away by the time
+    // any check on the parsed value could see it.
+    const fraction = `${written}.0000000000000001`
+    assert.equal(JSON.parse(fraction), Number(written), fraction)
+    assert.deepEqual(
+      decodeResponse(line.replace(at, `"${field}":${fraction}`)),
+      { ok: false, code: 'invalidField' },
+      `${field} ${fraction}`
+    )
+  }
+  // A real is deliberately *not* spelling-checked, because both runtimes round the same
+  // decimal text to the same double: the value's own range is the whole rule.
+  assert.equal(decodeResponse(encodeResponse(crowded).replace('"health":19.5', '"health":1.95e1')).ok, true)
+})
+
 test('a builder refuses a frame its own decoder would refuse', () => {
   const refused = [
     // An id that would carry a path, a credential location, a transport error or
@@ -344,8 +917,49 @@ test('encoders emit canonical bytes regardless of caller key order', () => {
       `{"op":"shutdown","protocol":1,"requestId":"req-3","agentId":"${AGENT}","state":"stopping"}`
     ],
     [
-      { error: 'timeout', agentId: AGENT, requestId: 'req-4', protocol: 1 },
-      `{"protocol":1,"requestId":"req-4","agentId":"${AGENT}","error":"timeout"}`
+      // The nested members are canonicalised too, and each object is rebuilt rather
+      // than copied: a caller's key order inside `vitals` or a stack would otherwise
+      // reach the wire, and the corpus is compared byte for byte.
+      {
+        inventory: [{ count: 3, what: 'minecraft:bread', slot: 0 }],
+        entitiesOmitted: 2,
+        entities: [{ visible: true, position: [14.5, 71.5, -40.5], what: 'minecraft:zombie' }],
+        ground: { standingOn: 'minecraft:grass_block', standingIn: 'minecraft:air' },
+        time: { isDay: true, day: 12, timeOfDay: 6500 },
+        vitals: { saturation: 4.25, food: 17, health: 19.5 },
+        position: [12.5, 71.5, -40.5],
+        state: 'ready',
+        agentId: AGENT,
+        requestId: 'req-4',
+        protocol: 1,
+        op: 'sense'
+      },
+      `{"op":"sense","protocol":1,"requestId":"req-4","agentId":"${AGENT}","state":"ready",` +
+        '"position":[12.5,71.5,-40.5],"vitals":{"health":19.5,"food":17,"saturation":4.25},' +
+        '"time":{"timeOfDay":6500,"day":12,"isDay":true},' +
+        '"ground":{"standingIn":"minecraft:air","standingOn":"minecraft:grass_block"},' +
+        '"entities":[{"what":"minecraft:zombie","position":[14.5,71.5,-40.5],"visible":true}],' +
+        '"entitiesOmitted":2,"inventory":[{"slot":0,"what":"minecraft:bread","count":3}]}'
+    ],
+    [
+      {
+        remaining: 2,
+        what: 'minecraft:bread',
+        vitals: { saturation: 4.25, food: 17, health: 19.5 },
+        outcome: 'eaten',
+        state: 'ready',
+        agentId: AGENT,
+        requestId: 'req-5',
+        protocol: 1,
+        op: 'eat'
+      },
+      `{"op":"eat","protocol":1,"requestId":"req-5","agentId":"${AGENT}","state":"ready",` +
+        '"outcome":"eaten","vitals":{"health":19.5,"food":17,"saturation":4.25},' +
+        '"what":"minecraft:bread","remaining":2}'
+    ],
+    [
+      { error: 'timeout', agentId: AGENT, requestId: 'req-6', protocol: 1 },
+      `{"protocol":1,"requestId":"req-6","agentId":"${AGENT}","error":"timeout"}`
     ],
     [
       { error: 'malformedFrame', agentId: AGENT, protocol: 1 },
@@ -450,6 +1064,63 @@ test('every frame the encoder can produce fits well inside the frame bound', () 
   // loosely: a frame bound that a legal frame could approach is a bound that would
   // start refusing legal traffic the first time a field grew.
   assert.ok(bytes * 20 < MAX_FRAME_BYTES, `only ${bytes} bytes of ${MAX_FRAME_BYTES}`)
+})
+
+test('the longest frame the contract admits is a sense report, and it still fits', () => {
+  // This is the frame the byte bound is *for*, and `MAX_SENSE_ENTITIES` and
+  // `MAX_SENSE_STACKS` are derived from what fits inside it - so the arithmetic in
+  // that comment is measured here rather than trusted. Every string is at its own
+  // length bound, every list at its own count bound, and every number spelled as
+  // long as the contract lets it be.
+  //
+  // "As long as the contract lets it be" is the whole of what a real contributes, and that
+  // is a longest *text* rather than a largest value - see `WIDEST_COORDINATE`, whose
+  // derivation is what this measurement rests on.
+  const name = `${'n'.repeat(MAX_RESOURCE_NAME_CHARS - 1)}0`
+  const place = [WIDEST_COORDINATE, WIDEST_COORDINATE, WIDEST_COORDINATE]
+  assert.ok(
+    String(WIDEST_COORDINATE).length > String(-justInside(MAX_WORLD_COORDINATE)).length,
+    'the widest coordinate must not be the largest one'
+  )
+  const widest = (entities) => senseReport({
+    requestId: 'r'.repeat(MAX_ID_CHARS),
+    agentId: 'a'.repeat(MAX_ID_CHARS),
+    position: place,
+    vitals: { health: WIDEST_VITAL, food: MAX_FOOD, saturation: WIDEST_VITAL },
+    time: { timeOfDay: MAX_TIME_OF_DAY, day: MAX_COUNT, isDay: false },
+    ground: { standingIn: name, standingOn: name },
+    entities: Array.from({ length: entities }, () => ({
+      what: name,
+      position: place,
+      visible: false
+    })),
+    entitiesOmitted: MAX_COUNT,
+    inventory: Array.from({ length: MAX_SENSE_STACKS }, (each, slot) => ({
+      slot,
+      what: name,
+      count: MAX_STACK_COUNT
+    }))
+  })
+  const sizeOf = (response) => Buffer.byteLength(`${encodeResponse(response)}\n`, 'utf8')
+  const bytes = sizeOf(widest(MAX_SENSE_ENTITIES))
+  assert.ok(bytes < MAX_FRAME_BYTES, `the longest legal frame is ${bytes} bytes of ${MAX_FRAME_BYTES}`)
+
+  // It is the longest, so it is also the one with the least room to spare, and the
+  // margin is stated rather than left to be discovered by a refusal in world. What is
+  // left has to be more than one whole entity description, measured rather than
+  // estimated: that is the largest thing the frame repeats, so a bound sitting inside
+  // one of them is a bound that a later `MAX_SENSE_ENTITIES` of one more would carry
+  // past the wire. The margin is a twentieth of the bound and no more, because the
+  // two list bounds are requirements - a player has the slots a player has - so it is
+  // the byte bound that would have to move, in both runtimes and the schema at once.
+  const perEntity = bytes - sizeOf(widest(MAX_SENSE_ENTITIES - 1))
+  assert.ok(
+    MAX_FRAME_BYTES - bytes > perEntity,
+    `${MAX_FRAME_BYTES - bytes} bytes spare of ${MAX_FRAME_BYTES}, against ${perEntity} for one more entity`
+  )
+  // And it goes back through the decoder, so what was measured is a frame the far
+  // end would actually accept rather than merely one this side would write.
+  assert.equal(decodeResponse(encodeResponse(widest(MAX_SENSE_ENTITIES))).ok, true)
 })
 
 test('a frame past the byte bound is refused by every decoder, unread', () => {
