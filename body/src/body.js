@@ -22,14 +22,17 @@
  *   A name such as `localhost` is refused rather than resolved: what it means is
  *   whatever the host's resolver last said, so a loopback promise checked against a
  *   name is not a promise at all.
- * - **Only the plugins that *report* are loaded, and what they leave out is Loom's
- *   own.** See `INTERNAL_REPORTING_PLUGINS` and `body/src/gamestate.js`: Mineflayer's
- *   default is to load all of them, which puts a physics interval, autonomous position
- *   updates, an automatic respawn and a shelf of action plugins inside a process whose
- *   purpose is to make no choices. What is loaded is what turns the server's own
- *   packets into readable state - the world, the entities, the clock, the vitals and
- *   the inventory - and `respawn: false` on top of that keeps the decision to come
- *   back to life out of the one loaded plugin able to make it.
+ * - **Only the plugins a wire operation reads or drives are loaded, and what they
+ *   leave out is Loom's own.** See `INTERNAL_REPORTING_PLUGINS` and
+ *   `body/src/gamestate.js`: Mineflayer's default is to load all of them, which puts an
+ *   automatic respawn and a shelf of action plugins inside a process whose purpose is to
+ *   make no choices. What this table loads is what turns the server's own packets into
+ *   readable state - the world, the entities, the clock, the vitals and the inventory -
+ *   and nothing else; `respawn: false` on top of that keeps the decision to come back to
+ *   life out of the one loaded plugin able to make it. The client-side simulation a walk
+ *   is impossible without is deliberately *not* here, because a resident one steps, falls
+ *   and writes the body's own position of nobody's asking: it is loaded by
+ *   `body/src/movement.js`, which scopes it to one accepted request.
  * - **The dependency tree's own debug logging is switched off before it is loaded.**
  *   See `silenceDependencyDebug`: `debug` decides whether a logger writes at the
  *   moment it is created, which is `require` time, so an inherited `DEBUG` has to be
@@ -62,11 +65,14 @@ const {
   LIFECYCLE_STATES,
   MAX_FRAME_BYTES,
   eatReport,
+  fleeReport,
+  haltReport,
   handshakeAccepted,
   isControlId,
   isUsername,
   decodeRequest,
   encodeResponse,
+  moveReport,
   refusal,
   senseReport,
   shutdownAccepted,
@@ -74,7 +80,9 @@ const {
 } = require('./protocol')
 
 const { followWorldState } = require('./gamestate')
-const { eatFromSlot, senseMemory } = require('./eating')
+const { eatFromSlot } = require('./eating')
+const { installMovement } = require('./movement')
+const { senseMemory } = require('./senses')
 const { senseReading, vitalsOf } = require('./sensing')
 
 /** Every frame this generation ends with, and the byte a reader splits on. */
@@ -188,8 +196,8 @@ const QUIT_REASON = 'disconnect.quitting'
  * is true, so naming these with the flag off loads exactly these.
  *
  * The line the list is drawn on is **report against act**. Every plugin here turns
- * packets the server sends of its own accord into state a reader can ask about, and
- * none of them decides anything:
+ * packets the server sends of its own accord into state a reader can ask about, or
+ * carries out an operation the wire names, and none of them decides anything:
  *
  *  - `health` is where `spawn` and `death` are, and where `bot.health`, `bot.food` and
  *    `bot.foodSaturation` come from. `respawn: false` is what keeps it from making the
@@ -202,36 +210,58 @@ const QUIT_REASON = 'disconnect.quitting'
  *    explicit meal is made of, `bot.equip` and `bot.consume`.
  *  - `simple_inventory` is what `inventory`'s own `equip` is defined in.
  *
- * Everything left out is a choice this process must not make. `physics` runs a movement
- * interval and sends autonomous position updates; `kick` performs an automatic respawn;
- * `game` writes the vanilla client's respawn on a `win_game` game-state change; and the
- * rest are action plugins (dig, place, craft, chat, villager trading, creative mode)
- * that exist to do things in the world.
+ * Everything left out is a choice this process must not make. `kick` performs an
+ * automatic respawn; `game` writes the vanilla client's respawn on a `win_game`
+ * game-state change; and the rest are action plugins (dig, place, craft, chat, villager
+ * trading, creative mode) that exist to do things in the world.
  *
- * The line is drawn per *plugin* and not per method, and two of the plugins above bring
- * actions with them that nothing here wants: `entities` defines `bot.attack`, `bot.mount`
- * and `bot.useOn` beside the entity index, and `simple_inventory` defines `bot.toss` and
- * `bot.tossStack` beside the `equip` a meal needs. They cannot be left behind - the index
- * and `equip` are exactly what a `sense` and an `eat` are read and carried out through -
- * so what keeps them from being taken is that no operation on this wire calls one. That is
- * the *wire* being five operations rather than a list of methods being withheld, which is
- * why it is pinned as behaviour in `test/plugins.test.js` rather than stated here alone.
- * Note that `bot.quit` is *not* among them: it is `kick`'s, and `kick` is not loaded, which
- * is why `quitBot` cannot rely on it.
+ * **`physics` is left out of this table on purpose, and it may not come back into it.** It
+ * is the one of the library's own plugins that is not a reader at all: it steps, falls,
+ * collides and writes the client's own position roughly once a second, of nobody's asking,
+ * which is the autonomy this process exists without. It is nonetheless the only way a body
+ * can walk, because a player's movement in Minecraft is *client*-simulated and there is no
+ * "server, please walk me there" packet - so it is loaded by `body/src/movement.js`, which
+ * holds its simulation, its position reporting and the control packets a walk sets shut
+ * unless one accepted `moveTo` or `flee` owns the path. That file's header is the authority
+ * on the whole of that scope, including the one part of the plugin's lifetime the library
+ * will not let anything stop, and why the scope needs a second seam beside the packet one.
+ * Its *reading* half is unscoped and has to be: the clientbound `position` handler is what
+ * moves `bot.entity.position` off the origin and what records the facing a meal is sent
+ * with, so every perception and every meal depends on it whether or not anything is
+ * walking. See `body/src/gamestate.js` for why that handler is the plugin's alone.
+ *
+ * The line is drawn per *plugin* and not per method, and three plugins bring actions with
+ * them that nothing here wants: `entities` defines `bot.attack`, `bot.mount` and
+ * `bot.useOn` beside the entity index, `simple_inventory` defines `bot.toss` and
+ * `bot.tossStack` beside the `equip` a meal needs, and `physics` defines `bot.elytraFly`
+ * beside the simulation a walk needs. They cannot be left behind - the index, `equip` and
+ * the simulation are exactly what a `sense`, an `eat` and a `moveTo` are read and carried
+ * out through - so what keeps them from being taken is that no operation on this wire
+ * calls one. That is the *wire* being eight operations rather than a list of methods being
+ * withheld, which is why it is pinned as behaviour in `test/plugins.test.js` rather than
+ * stated here alone. Note that `bot.quit` is *not* among them: it is `kick`'s, and `kick`
+ * is not loaded, which is why `quitBot` cannot rely on it.
  *
  * `end`, `error` and `connect` are wired to the raw client by the loader itself and need
- * no plugin at all. `login`, `bot.game` and the clientbound `position` packet are
- * `body/src/gamestate.js`, which is the reporting half of `game` and `physics` with none
- * of the deciding half - and which that file, not this one, states the reasons for.
+ * no plugin at all. `login` and `bot.game` are `body/src/gamestate.js`, which is the
+ * reporting half of `game` with none of the deciding half - and which that file, not this
+ * one, states the reasons for.
  *
- * Two loaded plugins write a packet unasked, and both are protocol flow control rather
- * than gameplay. `blocks` answers a chunk batch with `chunk_batch_received`, which is
- * how the server is told what rate to send terrain at; without it a body is sent one
- * batch and no more. `inventory` answers a window's `state_id` when it acknowledges a
- * click, which is only reached by a click this process makes on purpose. Neither is a
- * choice about the world, in the same category as the `keep_alive` minecraft-protocol's
- * own client answers below any plugin
- * (`minecraft-protocol/src/client/keepalive.js`).
+ * Two loaded plugins write a packet unasked, and neither is a choice about the world.
+ * `blocks` answers a chunk batch with `chunk_batch_received`, which is how the server is
+ * told what rate to send terrain at; without it a body is sent one batch and no more. And
+ * `inventory` answers a window's `state_id` when it acknowledges a click, which is only
+ * reached by a click this process makes on purpose. Both are in the same category as the
+ * `keep_alive` minecraft-protocol's own client answers below any plugin
+ * (`minecraft-protocol/src/client/keepalive.js`). The third such packet is `physics`'s
+ * `teleport_confirm`, which is the same kind of thing for the same reason - an unconfirmed
+ * teleport leaves the server ignoring the client - and is the one packet of that plugin's
+ * that is *allowed out* with no request in flight. It writes others unasked and always has:
+ * a position report about once a second, and a control packet whenever the pathfinder sets a
+ * control state, which it can still do after the request that owned the path was answered.
+ * Every one of those is dropped at the client seam by `movement.js`, whose header owns the
+ * set and the reasoning, so `teleport_confirm` is a deliberate hole in that drop set rather
+ * than evidence there is none.
  */
 const INTERNAL_REPORTING_PLUGINS = Object.freeze([
   'blocks',
@@ -364,7 +394,7 @@ function checkedConfiguration ({ agentId, username, minecraft, control }) {
  * The Mineflayer options this process runs a body with, and the only ones it runs
  * it with.
  *
- * Five of them are decisions rather than settings. `auth: 'offline'` is why no
+ * Six of them are decisions rather than settings. `auth: 'offline'` is why no
  * credential is embedded anywhere in this package: the only server this process
  * will connect to is a loopback one in offline mode. `loadInternalPlugins: false`
  * with `plugins` naming `INTERNAL_REPORTING_PLUGINS` and `followWorldState` is the
@@ -373,6 +403,13 @@ function checkedConfiguration ({ agentId, username, minecraft, control }) {
  * printing a raw transport error, which is unbounded text that has carried a local
  * path before now; this process reports the bounded `failed` state instead, which is
  * the whole of what a controller needs.
+ *
+ * `physicsEnabled: false` is the sixth, and it is the *starting* state of a setting
+ * `body/src/movement.js` owns from then on: the simulation is a request's, so a body with
+ * none in flight simulates nothing. It is stated here rather than there because the plugin
+ * reads it once, at injection, from the options the loader was given - so a value written
+ * afterwards is a value the injection overwrites. `movement.js`'s header is the authority
+ * on what the setting is half of.
  *
  * `plugins` is one map of both kinds, which is how Mineflayer's loader takes them: a
  * `true` names an internal plugin to keep, and a function is a plugin of the
@@ -389,6 +426,7 @@ function botOptionsFor ({ username, minecraft }) {
     respawn: false,
     hideErrors: true,
     loadInternalPlugins: false,
+    physicsEnabled: false,
     plugins
   }
   // Only when asked for: Mineflayer negotiates the version itself otherwise, and an
@@ -448,13 +486,35 @@ function createBody (options) {
   // instead, which is the truthful answer: a body with its mouth full is not ready to be
   // given something else to eat.
   let eating = false
-  // The slots recent sense answers offered, which is the whole of what makes a slot handle
-  // request-scoped. One memory for the whole body, so no number of peers can make it grow,
-  // but every entry in it names the connection the answer went out on as well as the
-  // request id: two of the connections this process allows may each sense under one id, and
-  // a handle that meant different slots on two sockets would be a handle that named
-  // nothing. `eating.js` carries why.
+  // What recent sense answers offered - the slots an eat may name, and the entities a flee
+  // may - which is the whole of what makes either handle request-scoped. One memory for the
+  // whole body, so no number of peers can make it grow, but every entry in it names the
+  // connection the answer went out on as well as the request id: two of the connections this
+  // process allows may each sense under one id, and a handle that meant different things on
+  // two sockets would be a handle that named nothing. `senses.js` carries why.
   const offered = senseMemory()
+  // The request-scoped wrapper around the pathfinder, built with the client and holding at
+  // most one accepted movement. Undefined until then, so a movement request that arrives
+  // before the body is `ready` is refused by the state check rather than by its absence.
+  let movement
+  // The token of the movement in flight, naming the control connection that asked for it, and
+  // undefined when none is. The wrapper owns *whether* a movement is running, which is what
+  // refuses a takeover; this is only who to stop it for, so a connection closing takes down its
+  // own route and never a peer's. Written where the request is accepted rather than inside the
+  // wrapper, because a connection is a fact about this file's control channel and not about
+  // walking.
+  //
+  // A **token per run** rather than the session alone, because the clear is asynchronous and
+  // the set is not. A controller replacing a movement sends `halt` and its next request in one
+  // write, so both frames arrive in one `data` event: the halt settles movement one
+  // synchronously, the replacement is accepted and takes this over in the same run of the
+  // loop, and only afterwards does movement one's own `finally` get to run. Keyed on the
+  // session, that `finally` cleared the *replacement's* ownership - after which the socket
+  // closing stopped nothing, and the body walked a route no controller was waiting for while
+  // holding the wrapper's one movement slot against every later request. Keyed on the token it
+  // finds an owner that is not its own and leaves it alone. The same token is what
+  // `movement.js` keys the path and the simulation gate on, so all three are one identity.
+  let movementOwner
   const sockets = new Set()
   const server = net.createServer({ allowHalfOpen: false }, (socket) => accept(socket))
   server.on('error', failControlServer)
@@ -549,6 +609,16 @@ function createBody (options) {
     silenceDependencyDebug(environment)
     const launch = createBot ?? require('mineflayer').createBot
     bot = launch(botOptionsFor(configuration))
+    // The two plugins a walk needs are loaded here rather than through `botOptionsFor`'s
+    // plugin table, which is the list of the client library's plugins that merely *report* -
+    // the one place the report-against-act rule is stated. One of them is third-party and the
+    // other is the client-side simulation, which is not a reporter and must not be resident;
+    // `movement.js` owns both and scopes the simulation to one accepted request.
+    // `installMovement` only registers them and builds the wrapper; nothing is configured
+    // until a request arrives, for the reason `movement.js` gives about `bot.pathfinder` not
+    // existing yet.
+    movement = installMovement(bot)
+    bot.on('entityDead', offered.sawEntityDead)
     follow(bot)
   }
 
@@ -588,10 +658,19 @@ function createBody (options) {
    * listener may answer `stopping` by stopping again - the entry point does exactly
    * that, to exit - and a re-entrant call has to be handed this same promise.
    * Announced first, it would see no promise yet and close everything a second time.
+   *
+   * A movement in flight is stopped first of all, before the client is touched. Its own
+   * deadline is a `setTimeout` that is deliberately not unref'd, so a route left running
+   * would hold this process open for whatever is left of [MAX_MOVE_DEADLINE_MS] after
+   * everything else had closed - and the controller would get no answer to a request it is
+   * still holding an id for. Stopped here, the request is answered `cancelled` on a socket
+   * the control channel has not closed yet, because Minecraft goes first and the sockets
+   * are flushed after it.
    */
   function stop () {
     if (stopped !== undefined) return stopped
     closing = true
+    movement?.halt()
     let settle
     stopped = new Promise((resolve) => { settle = resolve })
     transition('stopping')
@@ -685,8 +764,15 @@ function createBody (options) {
       sockets.delete(socket)
       // Nothing can name one of this connection's sense answers again, so keeping them
       // would spend the body's bounded memory on handles no controller can still eat
-      // against.
+      // or flee against.
       offered.forget(session)
+      // A movement this connection asked for is stopped with it, because the answer to it
+      // would have gone out here and now cannot. Left running, a body would keep walking a
+      // route no controller is waiting for, hold the wrapper's one movement slot against the
+      // next connection, and be refused `notReady` for a request nothing is still driving.
+      // Owning at most one movement is what makes this sound: there is no other connection's
+      // route to stop by mistake.
+      if (movementOwner?.session === session) movement?.halt()
     })
     if (sockets.size >= MAX_CONTROL_CONNECTIONS) {
       refuse(socket, session, { code: 'tooManyRequests', close: true })
@@ -795,7 +881,7 @@ function createBody (options) {
   }
 
   /**
-   * The five operations of this generation.
+   * The eight operations of this generation.
    *
    * A handshake is answered first, and refused while stopping: a process that has
    * begun leaving has nothing true to say about the generation it is agreeing to.
@@ -808,12 +894,15 @@ function createBody (options) {
    * was - a controller that retried a shutdown it had not yet seen answered, or
    * whose acknowledgement was lost with its connection, would be told its request
    * was rejected by a process that was in fact doing exactly what it asked. Every
-   * other operation genuinely cannot be answered while stopping, so all three are
-   * refused there: a status would report a process that is going away, and a sense or
-   * an eat would read or use a player that is being taken out of the world.
+   * other operation genuinely cannot be answered while stopping, so all of them are
+   * refused there: a status would report a process that is going away, and a sense, an
+   * eat or a movement would read, use or walk a player that is being taken out of the
+   * world. A halt is refused with them rather than let through as a courtesy, because
+   * `stop` has already halted whatever was running - so the honest answer to a halt
+   * arriving after it is that this process is going away, not `stopped: false`.
    *
    * A status is the residual rather than a branch of its own, which is total because
-   * `decodeRequest` admits exactly `OPERATIONS` and the four above are the rest of
+   * `decodeRequest` admits exactly `OPERATIONS` and the seven above are the rest of
    * them.
    */
   function answer (socket, session, request, requestId) {
@@ -841,6 +930,8 @@ function createBody (options) {
     }
     if (op === 'sense') return sense(socket, session, request, requestId)
     if (op === 'eat') return eat(socket, session, request, requestId)
+    if (op === 'moveTo' || op === 'flee') return move(socket, session, request, requestId)
+    if (op === 'halt') return halt(socket, requestId)
     const { stateMs, uptimeMs } = snapshot()
     return write(socket, statusReport({
       requestId,
@@ -876,10 +967,18 @@ function createBody (options) {
       return refuse(socket, session, { code: 'notReady', requestId })
     }
     // Remembered against the connection this answer goes out on as well as the request id,
-    // because that pair is the round trip a slot handle is scoped to: the duplicate-id
-    // guard is `session.seen`, which is per connection, so an id alone names an answer
-    // another peer may have given.
-    offered.remember(session, requestId, answer.inventory)
+    // because that pair is the round trip a handle is scoped to: the duplicate-id guard is
+    // `session.seen`, which is per connection, so an id alone names an answer another peer
+    // may have given.
+    //
+    // Both kinds of handle are remembered in one call, which `senses.js` states as an
+    // invariant rather than tidiness: this one answer offers slots an eat may name and
+    // entities a flee may, and a memory that took one and not the other would resolve a
+    // flight and refuse a meal off the same frame.
+    offered.remember(session, requestId, {
+      inventory: answer.inventory,
+      entityOffers: answer.entityOffers
+    })
     return write(socket, answer.frame)
   }
 
@@ -906,9 +1005,18 @@ function createBody (options) {
   function senseAnswer (request, requestId) {
     if (state !== 'ready') return undefined
     try {
-      const reading = senseReading(bot, { radius: request.radius, limit: request.limit })
-      if (reading === undefined) return undefined
-      return { inventory: reading.inventory, frame: senseReport({ requestId, agentId, ...reading }) }
+      const read = senseReading(bot, { radius: request.radius, limit: request.limit })
+      if (read === undefined) return undefined
+      const { reading, entityOffers } = read
+      // Only the reading is spread into the frame. `entityOffers` holds the client library's
+      // private id and exact object identity, neither of which may reach the wire, so it comes
+      // back beside the frame and travels no further than `offered`; `sensing.js` carries why
+      // the two are named rather than spread into one object.
+      return {
+        inventory: reading.inventory,
+        entityOffers,
+        frame: senseReport({ requestId, agentId, ...reading })
+      }
     } catch {
       return undefined
     }
@@ -993,8 +1101,9 @@ function createBody (options) {
       const report = await eatFromSlot(bot, {
         // Resolved against this connection's own answers, so a sense id another peer used
         // is `senseForgotten` here rather than a snapshot of an inventory this controller
-        // was never shown.
-        offered: offered.recall(session, request.senseId),
+        // was never shown. Only the slots of that answer: its entity handles are a flee's
+        // and are untouched by a meal.
+        offered: offered.recall(session, request.senseId)?.slots,
         slot: request.slot
       })
       if (report?.outcome === 'eaten') offered.spend(session, request.senseId, request.slot)
@@ -1008,6 +1117,135 @@ function createBody (options) {
       eating = false
     }
     return refuse(socket, session, { code: 'notReady', requestId })
+  }
+
+  /**
+   * Takes one movement - a walk or a flight - and answers it later.
+   *
+   * **A takeover is refused rather than served, and the wrapper is what refuses it.** One
+   * accepted request owns the body's one path for as long as it runs, so a second `moveTo`
+   * or `flee` arriving over it is answered `notReady` on whichever connection sent it and
+   * changes nothing about the route already walking. That is the same shape as the one-meal
+   * rule above and refused for a sharper reason: two goals on one navigator is not a
+   * confused answer but a body walking somewhere neither request asked for. A controller
+   * that means to replace a movement sends `halt` and then its next request, so the
+   * replacement is two decisions on the wire rather than one silent one.
+   *
+   * The wrapper's `undefined` covers that refusal, a body whose own position the client
+   * library cannot state, and a call into the pathfinder that threw - and `notReady` is the
+   * truthful answer to all three: ask again. The last of those is why the wrapper guards every
+   * call it makes into that library: this runs inside a socket `data` listener, where an
+   * exception is not a refused request but the end of the process, and one movement request
+   * must not cost an agent its life. Nothing of the failure reaches the controller or a log,
+   * because a refusal carries a code from the wire's own closed set and nothing else.
+   *
+   * A flight's threat is resolved out of this connection's own sense answers, the way a
+   * meal's slot is, so a sense id another peer used is `senseForgotten` rather than an
+   * ordinal into a scene this controller was never shown. Only the exact `entityOffers` of
+   * that answer: its slot offers are a meal's.
+   */
+  function move (socket, session, request, requestId) {
+    if (state !== 'ready' || movement === undefined) {
+      return refuse(socket, session, { code: 'notReady', requestId })
+    }
+    // This run's own identity, minted before the wrapper is asked so that the path, the
+    // simulation gate and this file's record of the asking connection are all keyed on one
+    // token. See `movementOwner` for the replacement that made a session alone the wrong key.
+    const owner = { session }
+    const walking = request.op === 'moveTo'
+      ? movement.moveTo({
+        destination: request.destination,
+        tolerance: request.tolerance,
+        timeoutMs: request.timeoutMs,
+        sprint: request.sprint,
+        owner
+      })
+      : movement.flee({
+        offered: offered.recall(session, request.senseId)?.entityOffers,
+        entity: request.entity,
+        distance: request.distance,
+        timeoutMs: request.timeoutMs,
+        sprint: request.sprint,
+        owner
+      })
+    if (walking === undefined) {
+      return refuse(socket, session, { code: 'notReady', requestId })
+    }
+    movementOwner = owner
+    // Nothing awaits this here, for the reason `eat` gives: the answer goes on the socket
+    // rather than to a caller, so its own residual failure is caught rather than left to
+    // become an unhandled rejection.
+    settleMovement(socket, session, request, requestId, walking, owner).catch(() => {})
+    return true
+  }
+
+  /**
+   * Waits out one movement and answers what became of it.
+   *
+   * `walking` is awaited whether the wrapper answered with a report or with a promise of
+   * one: a request refused by a bound before anything moved - a destination past the reach,
+   * a threat handle that resolves to nothing - is settled inside the frame that asked for
+   * it, and every other movement is settled when it stops. Both are one answer on one
+   * socket, which is what keeps a controller from having to tell the two apart.
+   *
+   * Which encoder is used is the request's own operation and never the report's shape,
+   * because the two reports are different frames rather than one frame with optional
+   * fields: `fleeReport` requires the separation pair and `moveReport` has no place for it.
+   * The wrapper is what keeps that relation - it measures separation only for a movement
+   * given a threat, and only `flee` gives it one - so a `moveTo` cannot produce a report the
+   * flee encoder would accept, or the reverse.
+   *
+   * **`notReady` is honest here in a way it is not after a meal.** A movement that cannot be
+   * reported has still moved the body, but nothing about it was spent: a destination is
+   * absolute, so re-asking walks whatever is left of the way, and an entity handle is not
+   * consumed by a flight, so re-asking runs from the same creature again. The only way this
+   * is reached is a body whose own position the library can no longer state - it has left the
+   * world - which is exactly the case "ask again" describes.
+   *
+   * Nothing is logged when this throws, for the reason `settleMeal` gives: the only thing
+   * there would be to log is unbounded text from below this process.
+   *
+   * The ownership is given back only if it is still this run's, because this `finally` runs a
+   * microtask after the request ended and a replacement may already have taken the path over by
+   * then. `movementOwner` carries the whole of why.
+   */
+  async function settleMovement (socket, session, request, requestId, walking, owner) {
+    try {
+      const report = await walking
+      if (report !== undefined) {
+        const frame = request.op === 'moveTo'
+          ? moveReport({ requestId, agentId, ...report })
+          : fleeReport({ requestId, agentId, ...report })
+        return write(socket, frame)
+      }
+    } catch {
+      // Answered as `notReady` below, like any other movement this body cannot state.
+    } finally {
+      if (movementOwner === owner) movementOwner = undefined
+    }
+    return refuse(socket, session, { code: 'notReady', requestId })
+  }
+
+  /**
+   * Stops whatever movement is running, and says whether there was one.
+   *
+   * **A halt is about the body's one path rather than about a handle, so it carries none and
+   * is not scoped to the connection that started the movement.** Answering a peer's halt
+   * `stopped: false` would be a lie about the body - something was moving - and there is no
+   * second field to say "not yours" in. That is no wider a wire than it already is: any peer
+   * that has handshaken can `shutdown` the whole process, so one that can stop a route can
+   * already do strictly more than that. A socket *closing* is the opposite case and is scoped,
+   * because a close is not a request and may not act on a peer's behalf.
+   *
+   * The movement it stops gets its own answer, on its own socket, with outcome `cancelled` -
+   * so a cancellation is two frames stating two different facts rather than one frame the
+   * mover never hears about. Ordering between them is the event loop's and is not a property
+   * a controller may rely on: this answer is written synchronously and the mover's resolves a
+   * microtask later, but both go out.
+   */
+  function halt (socket, requestId) {
+    const stopped = movement?.halt() ?? false
+    return write(socket, haltReport({ requestId, agentId, stopped }))
   }
 
   /**

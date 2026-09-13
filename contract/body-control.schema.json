@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://loom.dev/contract/body-control.schema.json",
   "title": "Loom body-control protocol",
-  "description": "The single source of truth for the control messages exchanged with a Loom player-body process (the Node/Mineflayer body in body/). A controller sends a BodyRequest; the process answers with exactly one BodyResponse or one BodyError, on the same line-delimited loopback socket. This is deliberately NOT the perception/decision contract in loom.schema.json: that one carries what an agent knows and decides, this one carries whether a body process is alive, which lifecycle state it is in, when to stop, the raw state the game reports about the player, and one eat the controller names. Nothing here decides anything: the raw state is reported unmeasured and untranslated, the eat names one stack a mind already chose, and every judgement about what any of it means - what is near, what is dangerous, what is worth eating - is made above this wire. Union types use internal tagging: BodyRequest.op and BodyResponse.op select the variant and the variant's fields are inlined alongside it. JSON Schema sees a parsed number rather than the literal that carried it, so validation keywords cannot express this wire's numeric work guard: both codecs refuse a numeric literal longer than 32 characters, or one whose decimal-point shift would make exact integrality or range checking unbounded. Those are contract rules stated in prose here and enforced before either codec materialises such a value.",
+  "description": "The single source of truth for the control messages exchanged with a Loom player-body process (the Node/Mineflayer body in body/). A controller sends a BodyRequest; the process answers with exactly one BodyResponse or one BodyError, on the same line-delimited loopback socket. This is deliberately NOT the perception/decision contract in loom.schema.json: that one carries what an agent knows and decides, this one carries whether a body process is alive, which lifecycle state it is in, when to stop, the raw state the game reports about the player, one eat the controller names, and one walk or one flight the controller asks for. Nothing here decides anything: the raw state is reported unmeasured and untranslated, the eat names one stack a mind already chose, a walk goes to a place and a flight runs from a creature a mind already chose, and every judgement about what any of it means - what is near, what is dangerous, what is worth eating, whether to run - is made above this wire. A movement is the one operation whose answer is not immediate, so the rules that keep it from becoming a policy loop are on the wire itself: one request owns the route, a second is refused rather than taking it over, and every bound the request runs under is either stated in the request or held by the process, never inferred from the world. Union types use internal tagging: BodyRequest.op and BodyResponse.op select the variant and the variant's fields are inlined alongside it. JSON Schema sees a parsed number rather than the literal that carried it, so validation keywords cannot express this wire's numeric work guard: both codecs refuse a numeric literal longer than 32 characters, or one whose decimal-point shift would make exact integrality or range checking unbounded. Those are contract rules stated in prose here and enforced before either codec materialises such a value.",
 
   "$defs": {
     "ProtocolVersion": {
-      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted, so a controller and a body process that disagree find out on the first frame rather than by misreading a field. A readable requestId may still be retained solely to correlate that refusal. There is exactly one generation today; a frame naming any other is refused with unsupportedProtocol rather than interpreted. The const is a number rather than a spelling, so 1, 1.0 and 1e0 all name this generation: to this schema and to JSON.parse an integer is any number whose fractional part is zero. Subject to the wire's numeric work guard above, both bindings therefore read every integral spelling and refuse every fractional one, which is a rule neither serialization library states on its own.",
-      "const": 1
+      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted, so a controller and a body process that disagree find out on the first frame rather than by misreading a field. A readable requestId may still be retained solely to correlate that refusal. Generation 2 is current; a frame naming any other, generation 1 included, is refused with unsupportedProtocol rather than interpreted. It moved from 1 when MoveOutcome gained 'searchOverBudget', and ControlOperation's description is the authority on why a response value set may not grow inside a generation where the operation set may. The const is a number rather than a spelling, so 2, 2.0 and 2e0 all name this generation: to this schema and to JSON.parse an integer is any number whose fractional part is zero. Subject to the wire's numeric work guard above, both bindings therefore read every integral spelling and refuse every fractional one, which is a rule neither serialization library states on its own.",
+      "const": 2
     },
 
     "ControlId": {
@@ -79,6 +79,48 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 255
+    },
+
+    "RetreatDistance": {
+      "description": "How far from a named threat a flee request asks the body to get, in blocks, as the caller states it. On the request and not a constant of the body for the same reason a sense radius is: how far away is far enough is a judgement about danger, and a body holding its own copy of it would be a second policy able to drift from the coordinator's. The maximum is the same 32 the destination of a moveTo is bounded to below, because a retreat is a walk with the goal inverted and nothing about running away may buy a body a wider reach than walking does.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    },
+
+    "MoveTolerance": {
+      "description": "How near the named destination counts as having arrived, in blocks, as the caller states it. Zero asks for the destination block itself. It is the caller's because it is the shape of the goal rather than a bound on the body's effort: a controller walking a body to a doorway and one walking it onto one exact block are asking for different things, and a body that supplied its own number would be choosing between them. The maximum is half the destination bound, so a tolerance can never be so wide that every reachable block satisfies it and the request answers 'arrived' without the body having moved.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16
+    },
+
+    "MoveDeadline": {
+      "description": "How long the body may spend on one movement request before the request is ended as timedOut, in milliseconds, as the caller states it. Required rather than defaulted, for the reason a sense radius is: a default is the kind of number that quietly becomes the real one. The maximum is below the body process's own control-connection idle window, and that relation is the load-bearing part rather than the number: a movement is answered on the connection that asked for it, and nothing flows on that connection while the body walks, so a deadline at or above the idle window would let the socket's own timer close the channel before the answer could be written - the controller would then see a dropped connection where the contract promises exactly one answer per request. Each runtime states its own copy of both numbers and pins the ordering, because nothing on this wire is schema-validated at runtime.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20000
+    },
+
+    "EntityIndex": {
+      "description": "One entity of a named sense answer's own list, by its position in it, counting from zero. An index rather than a handle because a sense answer deliberately carries no handle, and rather than a position or a kind because a position is not an identity and a kind is not one either - two zombies at one distance are two threats, and a flight names one of them. The maximum is one below SenseLimit's own maximum, so every index this schema admits could name an entity of some legal answer; an index past the end of the answer actually named is refused with threatUnnamed rather than by shape, which is the same division of labour a slot index and slotUnnamed already have.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 23
+    },
+
+    "TravelDistance": {
+      "description": "A distance in blocks the body itself measured, as a real number and never negative. Distances are otherwise absent from this wire on purpose - WorldPosition says so, and a sense answer reports positions and leaves every measurement to the coordinator - and the two fields carried in these units are the exceptions the rule allows rather than a softening of it. Each is a number only the body was ever in a position to take: how far it walked is summed as it walked and is the very number a travelled-distance bound was applied to, so a controller re-deriving it from two positions would be computing a second figure able to disagree with the bound that was actually enforced; and how far it ended up from a threat had to be measured while the threat was still there to measure against, which a controller reading the answer afterwards cannot do. The generation-2 maximum is one shared ceiling derived as ceil(sqrt(3 * (2 * 30000000)^2) + 128): the full diagonal between two accepted WorldPosition values plus the final bounded accumulated movement sample. It therefore carries every truthful travelled, separation and separation-change value those positions can produce, including a terminal sample taken just after the 128-block travel allowance was reached.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 103923177
+    },
+
+    "SeparationChange": {
+      "description": "How much further from a named threat the body ended up than it began, in blocks, as a signed real number. Signed because the sign is the whole of what a run needs to read from it: a flight that covered ground is not the same as a flight that gained any, and a threat that closed faster than the body ran gives a negative figure that a magnitude alone would report as success. It is the only signed number on this wire, and it is one because the two readings it is the difference of were both taken by the body - see TravelDistance. Bounded symmetrically at TravelDistance's derived generation-2 maximum so every pair of accepted positions has a truthful representation under the same one distance domain.",
+      "type": "number",
+      "minimum": -103923177,
+      "maximum": 103923177
     },
 
     "SensedVitals": {
@@ -196,6 +238,24 @@
       ]
     },
 
+    "MoveOutcome": {
+      "description": "What became of one movement request, as one value from a closed set, and shared by a walk and a flight because both are one route to one goal and a run counting either wants the same words. It is on the response and not in ErrorCode for the reason an EatOutcome is: an ErrorCode says a frame was not usable, and these say what the body did about a request it understood. Every value is either an arrival, a bound that ended the request, or a fact about a named threat, and the three groups are kept apart in the order below rather than collapsed, because a run that could not tell them apart could not say whether its bodies were blocked, throttled or chasing threats that were never there. 'noRoute' is the ground's own answer - the library searched every node it was allowed to and found nothing - while 'stalled' is a route that was found and then abandoned, which is a different thing to go and look at. 'searchOverBudget' is neither, and it is the one outcome on this list that is a fact about the body process rather than about the world: the body's own search budget stopped a search that had not finished, so nothing at all is known about the ground. It is separate from 'noRoute' because collapsing the two is a lie in the direction that matters - a controller told the ground refused a route, when the truth is that the body would not spend any longer looking, and for a flee that reads as nowhere to run. A controller that meets it may ask again, closer or with the same target, and may reasonably treat a repeat as the body being too busy to search rather than as the world being closed. 'overTravelled' and 'timedOut' are the two bounds a request can walk into after a route was found, and they are separate because distance and duration fail for unrelated reasons: a body pacing a short loop runs out of blocks, and a body waiting on a slow search runs out of time. 'cancelled' is the answer to a halt or to the connection going away, and it is an outcome rather than a refusal because the request was carried out up to the moment it was stopped and its measurements are worth reporting. 'outOfRange' is refused before anything is searched for, so its travelled field is exactly zero; both codecs enforce that relation and the beyond-schema corpus pins the nonzero form because this schema deliberately keeps all field relations in one runtime mechanism. The last three are reachable only by a flee, because only a flee names a threat: 'senseForgotten' and 'threatUnnamed' are the handle refusals a slot handle already has by those names, and 'threatGone' is an entity the body could not find - whether it never resolved or vanished while the body ran from it, which are the same fact about a flight that has nothing left to measure separation against.",
+      "type": "string",
+      "enum": [
+        "arrived",
+        "outOfRange",
+        "noRoute",
+        "searchOverBudget",
+        "stalled",
+        "overTravelled",
+        "timedOut",
+        "cancelled",
+        "senseForgotten",
+        "threatUnnamed",
+        "threatGone"
+      ]
+    },
+
     "LifecycleState": {
       "description": "Where the body process is in its one life. Seven states and no gameplay: this says whether there is a player on the server and whether it is still usable, never what the player should do. 'connecting' is before the server has accepted the login; 'loggedIn' is after the login packet and before the first spawn; 'ready' is a spawned, live player; 'dead' is a player the server has killed, which the process reports and never respawns; 'disconnected' is a connection the server or the network ended; 'stopping' is a shutdown in progress; 'failed' is a client error the process could not continue from. 'loggedIn' and 'dead' are separate from 'ready' for a reason found in world: a dead identity reconnecting arrives on the death screen, so it reaches loggedIn and then dead without ever reaching ready.",
       "type": "string",
@@ -211,9 +271,9 @@
     },
 
     "ControlOperation": {
-      "description": "What a controller may ask for. Five operations: reach the process, identify it, stop it, read the raw state the game itself reports, and eat one stack the controller names. The operation set is the one part of a generation that may grow without the generation moving, because an operation a peer does not have is refused with unknownOperation and no field of an operation both peers do have changes spelling - which is the misreading ProtocolVersion exists to prevent. A generation moves when an existing field's spelling or meaning changes; adding an operation only widens what is accepted, in the same sense the research manifest schemas may only ever be loosened once evidence is committed under them. The earlier generation of this file said there was deliberately no operation that perceives the world, and the objection behind that sentence was to an unbounded, uncontracted second perception path rather than to world state on this wire at all. 'sense' is bounded by the caller's own limits and described field by field below, so it answers the objection instead of ignoring it: it reports what the game reported, and every meaning Loom reads into that - a bearing, a distance, a threat, a handle a mind may name - is derived by the coordinator above this wire, which is where the perception/decision contract's own bounds and vocabulary already live.",
+      "description": "What a controller may ask for. Eight operations: reach the process, identify it, stop it, read the raw state the game itself reports, eat one stack the controller names, walk to one place the controller names, run from one creature the controller names, and stop whichever of those two is running. The three movement operations were added after the first five, which is what the paragraph below is about. The operation set is the one part of a generation that may grow without the generation moving, because an operation a peer does not have is refused with unknownOperation and no field of an operation both peers do have changes spelling - which is the misreading ProtocolVersion exists to prevent. A generation moves when an existing field's spelling or meaning changes; adding an operation only widens what is accepted, in the same sense the research manifest schemas may only ever be loosened once evidence is committed under them. The asymmetry that makes the operation set the *only* growable part is worth stating, because it is what decided the move to generation 2: an operation is something a controller asks for, so a controller never meets one it does not have, while a response value set is the body's to choose from - so widening MoveOutcome hands a controller that agreed this generation a frame it cannot read, for a request it made in good faith and without having asked for anything new. Refusing that frame is fail-closed rather than a misreading, but a broken round trip a peer cannot anticipate is exactly what agreeing a generation is for, so a closed set the body answers from may only grow with the generation. That is why 'searchOverBudget' moved this file to 2 while moveTo, flee and halt did not move it at all. The earlier generation of this file said there was deliberately no operation that perceives the world, and the objection behind that sentence was to an unbounded, uncontracted second perception path rather than to world state on this wire at all. 'sense' is bounded by the caller's own limits and described field by field below, so it answers the objection instead of ignoring it: it reports what the game reported, and every meaning Loom reads into that - a bearing, a distance, a threat, a handle a mind may name - is derived by the coordinator above this wire, which is where the perception/decision contract's own bounds and vocabulary already live.",
       "type": "string",
-      "enum": ["handshake", "status", "shutdown", "sense", "eat"]
+      "enum": ["handshake", "status", "shutdown", "sense", "eat", "moveTo", "flee", "halt"]
     },
 
     "ErrorCode": {
@@ -236,7 +296,7 @@
     },
 
     "BodyRequest": {
-      "description": "One request from a controller to a body process. Internally tagged on the 'op' property. Every variant carries the protocol generation, the correlation id its one answer will echo, and the agent whose body is being addressed - so a frame is self-describing and a reply can never be matched to the wrong request. Three variants carry no payload at all, and the two that do carry only the caller's own bounds and the one slot it names - never a target, a threshold or a rule, because a payload that carried any of those would be the controller asking the body to decide something.",
+      "description": "One request from a controller to a body process. Internally tagged on the 'op' property. Every variant carries the protocol generation, the correlation id its one answer will echo, and the agent whose body is being addressed - so a frame is self-describing and a reply can never be matched to the wrong request. Four variants carry no payload at all. The four that do carry the caller's own bounds and the one thing it names - a slot, a place or a creature - and never a threshold or a rule, because a payload carrying one of those would be the controller asking the body to decide something. A named place is the opposite of that and the earlier generation of this paragraph, which said a payload may carry no target, read it the wrong way round: a destination a controller states is the controller having decided, and a body given one searches for a route to it and reports what it found. What would make the body a decider is a target it chose itself - the nearest food, somewhere safe, a place to wait - and no operation here admits one.",
       "oneOf": [
         {
           "title": "Handshake",
@@ -308,6 +368,66 @@
               "$ref": "#/$defs/ControlId"
             },
             "slot": { "$ref": "#/$defs/SlotIndex" }
+          }
+        },
+        {
+          "title": "MoveTo",
+          "description": "Walk to one place the controller names, and answer once when the walk has ended. The destination is absolute world coordinates rather than an offset, because an offset would have to be applied to a position the body read for itself and a controller would then be naming somewhere it had never seen. Bounded twice over: a destination further from the body than 32 blocks when the request arrives is refused with outOfRange before any search is run, and the body carries its own ceilings on search time, per-tick search time, retries and distance walked - those are the body's because they are costs to the process rather than judgements about the world, and a controller able to raise them could stall the process from outside. Only one movement runs at a time: a moveTo or a flee arriving while either is still running is refused with notReady rather than taking the route over, so a controller can never silently displace a request it has not seen the answer to. Answered only for a spawned, live player, for the reason a sense is - a body that has not spawned has no position to walk from. The answer comes when the route ends and not when it is accepted, so a controller holds one request open for the whole walk; the deadline it states is what bounds that wait.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "destination", "tolerance", "timeoutMs", "sprint"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "moveTo" },
+            "destination": {
+              "description": "Where the body is being sent, in absolute world coordinates. Refused with outOfRange, without searching, if it is more than 32 blocks from where the body stands when the request arrives.",
+              "$ref": "#/$defs/WorldPosition"
+            },
+            "tolerance": { "$ref": "#/$defs/MoveTolerance" },
+            "timeoutMs": { "$ref": "#/$defs/MoveDeadline" },
+            "sprint": {
+              "description": "Whether the body may sprint on this route. False is not a performance setting: sprinting spends food, so a body allowed to sprint whenever it could would be quietly deciding to be hungrier, which is a survival decision and the controller's. True is the controller saying it accepts that cost for this one request.",
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "title": "Flee",
+          "description": "Run from one creature a named sense reported, and answer once when the flight has ended. It names an entity of one earlier answer by that answer's own ordering rather than by kind or by position, for the reason an eat names a slot rather than a food: two zombies at one distance are two threats and a flight is from one of them, a kind is not an identity, and a position is a place the threat has already left. That makes the reference request-scoped exactly as a slot reference is - the body remembers only its most recent few sense answers, so a threat named from an older one is refused with senseForgotten, and an index past the end of the answer that was named is refused with threatUnnamed. The goal is a fixed snapshot of where the threat stood when the flight began, and deliberately not a goal that follows it: one request gets one answer here, and a goal that moved would be the body re-deciding where to go for as long as the request lasted. Every bound a moveTo is under applies unchanged - the same reach, the same body-side ceilings, the same one-movement-at-a-time refusal - because running away may not buy a body anything walking does not have.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "senseId", "entity", "distance", "timeoutMs", "sprint"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "flee" },
+            "senseId": {
+              "description": "The requestId of the sense answer the threat was chosen from. A ControlId for the reason an eat's is - one echoed back, and not a new kind of handle.",
+              "$ref": "#/$defs/ControlId"
+            },
+            "entity": { "$ref": "#/$defs/EntityIndex" },
+            "distance": { "$ref": "#/$defs/RetreatDistance" },
+            "timeoutMs": { "$ref": "#/$defs/MoveDeadline" },
+            "sprint": {
+              "description": "Whether the body may sprint away. Spelled and meant exactly as a moveTo's is, and not defaulted to true for a flight: whether outrunning this threat is worth the food is the judgement the coordinator is there to make, and a body that assumed it would be deciding on the controller's behalf in the one situation where the cost matters most.",
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "title": "Halt",
+          "description": "Stop whichever movement is running. It carries no payload because there is at most one movement to stop and the connection already says whose body it is. The movement it stops is answered on its own request with the outcome 'cancelled', so a controller holding a moveTo open sees that request end rather than having to infer it; this request is answered separately and says only whether anything was in fact stopped. A halt with nothing running is not a refusal - see HaltReport.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "halt" }
           }
         }
       ]
@@ -466,6 +586,116 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 255
+            }
+          }
+        },
+        {
+          "title": "MoveReport",
+          "description": "What became of one moveTo. The outcome carries the whole of the answer and the four readings beside it are always present, refusals included: a request refused before anything was searched for has walked nowhere, which is a measurement of zero rather than an absence, and a controller that asked a body to walk needs to know where the body is whatever the answer was. 'state' is the moment the request was admitted rather than the moment the frame was written, for the reason an EatReport's is and more sharply: a walk is answered when the route ends, so seconds pass in between and the body can die or disconnect inside them. The 'ready' this frame states is therefore about the moment the walk began. Three of the eleven MoveOutcome values are unreachable here, because a walk names no threat: 'senseForgotten', 'threatUnnamed' and 'threatGone' can only answer a flee. Draft 2020-12 could express that with an enum narrowed for this variant, and deliberately does not, for the reason every other relation in this file is left to the codecs: one MoveOutcome shared by both reports is what makes a run able to count arrivals and bounds across walks and flights without translating between two enums, and both codecs refuse a walk that names a threat refusal.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "protocol",
+            "requestId",
+            "agentId",
+            "op",
+            "state",
+            "outcome",
+            "from",
+            "position",
+            "travelled",
+            "elapsedMs"
+          ],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "moveTo" },
+            "state": { "const": "ready" },
+            "outcome": { "$ref": "#/$defs/MoveOutcome" },
+            "from": {
+              "description": "Where the body stood when the request was admitted. Reported rather than left for a controller to remember, because the controller may not have sensed at that instant and a displacement measured against a position from some earlier moment is a displacement of the wrong walk.",
+              "$ref": "#/$defs/WorldPosition"
+            },
+            "position": {
+              "description": "Where the body stood when the request ended. This and 'from' are the whole of the displacement, and no straight-line figure is derived from them here: two positions the coordinator can subtract are exactly what a sense answer already gives it, and a body computing the difference as well would be a second measurement able to disagree with the one the coordinator takes.",
+              "$ref": "#/$defs/WorldPosition"
+            },
+            "travelled": {
+              "description": "How far the body actually walked, summed as it walked. Not the straight line between the two positions and not derivable from them: a body that went round a wall covered more ground than the line says, and a body that walked a loop covered a great deal while the line says nothing at all. It is on the wire because it is the very number the body's own distance ceiling was applied to, so a controller re-deriving it would be checking a bound against a figure that is not the one enforced - which is the same reason a sense answer carries its own omission count.",
+              "$ref": "#/$defs/TravelDistance"
+            },
+            "elapsedMs": {
+              "$ref": "#/$defs/StatusCount",
+              "description": "How long the request took, from admission to this answer, by the process's own monotonic clock. It is what the deadline was measured against, so a 'timedOut' outcome states the bound it hit rather than leaving a reader to infer it, and an 'arrived' states what the walk cost."
+            }
+          }
+        },
+        {
+          "title": "FleeReport",
+          "description": "What became of one flee. Every field a MoveReport carries means the same thing here and is spelled the same way, because a flight is a walk with an inverted goal and a run counting displacement should not have to read two vocabularies. Two fields are added, and both are measurements only the body could take: how far from the threat it ended up, and how much of that it gained. They are present exactly when the outcome is not one of the three threat refusals - 'senseForgotten', 'threatUnnamed' and 'threatGone' - because each of those three is the body saying it had no threat to measure against: the first two never resolved one, and the third had one that was gone by the time the flight ended. Draft 2020-12 could express that relation as a conditional and deliberately does not, exactly as EatReport's own conditional presence is left to the codecs and the conformance suites. Note that a flight ending because the threat vanished is not a failure and is not reported as one: the body did what it was asked and there is simply nothing left to state a separation about.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "protocol",
+            "requestId",
+            "agentId",
+            "op",
+            "state",
+            "outcome",
+            "from",
+            "position",
+            "travelled",
+            "elapsedMs"
+          ],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "flee" },
+            "state": { "const": "ready" },
+            "outcome": { "$ref": "#/$defs/MoveOutcome" },
+            "from": {
+              "description": "Where the body stood when the request was admitted. Spelled and meant exactly as a MoveReport's is.",
+              "$ref": "#/$defs/WorldPosition"
+            },
+            "position": {
+              "description": "Where the body stood when the request ended. Spelled and meant exactly as a MoveReport's is.",
+              "$ref": "#/$defs/WorldPosition"
+            },
+            "travelled": {
+              "description": "How far the body actually walked. Spelled and meant exactly as a MoveReport's is, and it is the field that must not be read as progress: ground covered is not ground gained, which is what 'separationGained' is for.",
+              "$ref": "#/$defs/TravelDistance"
+            },
+            "elapsedMs": {
+              "$ref": "#/$defs/StatusCount",
+              "description": "How long the request took. Spelled and meant exactly as a MoveReport's is."
+            },
+            "separation": {
+              "description": "How far the body ended up from the threat, measured against where the threat actually was at that moment rather than against the snapshot the goal was built from. The live reading is the honest one: a threat that chased the body is nearer than the snapshot says, and that is the fact a coordinator has to act on. Present exactly when the outcome is not a threat refusal.",
+              "$ref": "#/$defs/TravelDistance"
+            },
+            "separationGained": {
+              "description": "How much further from the threat the body ended up than it began - this answer's own separation less the same measurement taken when the request was admitted. Signed, and the sign is the point: a negative figure is a threat that closed faster than the body ran, which is a flight that failed while covering plenty of ground, and it is the one thing a magnitude alone could not say. Present exactly when the outcome is not a threat refusal, for the same reason 'separation' is.",
+              "$ref": "#/$defs/SeparationChange"
+            }
+          }
+        },
+        {
+          "title": "HaltReport",
+          "description": "What one halt did. 'stopped' false means nothing was moving, and it is not a refusal: a controller that halts twice, or halts after a route has already ended, is asking what state the body is in rather than for an action, and a refusal would make it guess whether its own bookkeeping or the body's is right. The movement that was stopped is answered on its own request with the outcome 'cancelled', so this frame deliberately carries no position and no measurement - those belong to the request that did the walking, and stating them twice would give a run two accounts of one journey.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "state", "stopped"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "halt" },
+            "state": { "const": "ready" },
+            "stopped": {
+              "description": "Whether a movement was in fact running and has been stopped.",
+              "type": "boolean"
             }
           }
         }

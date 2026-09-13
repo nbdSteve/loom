@@ -48,9 +48,14 @@ const {
   statusReport,
   senseReport,
   eatReport,
+  moveReport,
+  fleeReport,
+  haltReport,
   shutdownAccepted,
   refusal,
-  EAT_OUTCOMES
+  EAT_OUTCOMES,
+  MOVE_OUTCOMES,
+  THREAT_REFUSALS
 } = require('../src/protocol')
 
 const FIXTURES = path.join(__dirname, '..', '..', 'contract', 'fixtures', 'body-control')
@@ -100,6 +105,9 @@ function rebuild (frame) {
   if (frame.op === 'status') return statusReport(frame)
   if (frame.op === 'sense') return senseReport(frame)
   if (frame.op === 'eat') return eatReport(frame)
+  if (frame.op === 'moveTo') return moveReport(frame)
+  if (frame.op === 'flee') return fleeReport(frame)
+  if (frame.op === 'halt') return haltReport(frame)
   return shutdownAccepted(frame)
 }
 
@@ -186,6 +194,20 @@ test('a refused fixture is refused for the reason its name gives', () => {
     'response-sense-display-name.json': 'invalidField',
     'response-sense-too-many-entities.json': 'invalidField',
     'response-eat-unknown-outcome.json': 'invalidField',
+    'request-moveTo-zero-timeout.json': 'invalidField',
+    'request-moveTo-timeout-too-large.json': 'invalidField',
+    'request-moveTo-tolerance-too-large.json': 'invalidField',
+    'request-moveTo-missing-sprint.json': 'invalidField',
+    'request-flee-zero-distance.json': 'invalidField',
+    'request-flee-distance-too-large.json': 'invalidField',
+    'request-flee-entity-too-large.json': 'invalidField',
+    'request-flee-blank-sense-id.json': 'invalidField',
+    'request-halt-with-move-payload.json': 'invalidField',
+    'response-moveTo-unknown-outcome.json': 'invalidField',
+    'response-moveTo-negative-travelled.json': 'invalidField',
+    'response-moveTo-missing-elapsed.json': 'invalidField',
+    'response-flee-negative-separation.json': 'invalidField',
+    'response-halt-missing-stopped.json': 'invalidField',
     'error-unknown-code.json': 'invalidField',
     'error-free-text-code.json': 'invalidField',
     'error-missing-agent-id.json': 'invalidField',
@@ -215,7 +237,11 @@ test('a frame the schema cannot refuse is still refused by the codec', () => {
     'response-sense-descending-slots.json': 'inventory slots do not ascend',
     'response-sense-omitted-with-no-entities.json': 'entities were omitted from an empty list',
     'response-sense-repeated-slot.json': 'one slot is reported twice',
-    'response-sense-saturation-over-food.json': 'saturation is above the food level'
+    'response-sense-saturation-over-food.json': 'saturation is above the food level',
+    'response-moveTo-names-threat-refusal.json': 'a walk answers a refusal only a flight can reach',
+    'response-flee-refusal-names-separation.json': 'a flight that never found its threat measures separation',
+    'response-flee-arrival-without-separation.json': 'a flight that ran measures no separation',
+    'response-moveTo-out-of-range-nonzero-travel.json': 'a pre-search refusal claims movement'
   }
   const present = fixtures('beyond-schema').map(({ name }) => name)
   assert.deepEqual(Object.keys(relations).sort(), present, 'a beyond-schema fixture has no stated relation here')
@@ -261,7 +287,7 @@ test('the corpus covers every operation and both directions of each', () => {
   // leave a whole operation unproven, so the coverage is asserted rather than
   // eyeballed.
   const valid = fixtures('valid').map(({ name }) => name)
-  for (const op of ['handshake', 'status', 'sense', 'eat', 'shutdown']) {
+  for (const op of ['handshake', 'status', 'sense', 'eat', 'moveTo', 'flee', 'halt', 'shutdown']) {
     assert.ok(valid.includes(`request-${op}.json`), `no valid request fixture for ${op}`)
     assert.ok(
       valid.some((name) => name.startsWith(`response-${op}`)),
@@ -281,6 +307,30 @@ test('the corpus states every outcome an eat can have', () => {
     .map(({ text }) => JSON.parse(text).outcome)
   for (const outcome of EAT_OUTCOMES) {
     assert.ok(stated.includes(outcome), `no valid fixture reports the eat outcome ${outcome}`)
+  }
+})
+
+test('the corpus states every outcome a movement can have, on the request that can reach it', () => {
+  // The same reason the eat sweep above exists, with one difference that is the whole
+  // point of doing it in two halves: `MOVE_OUTCOMES` is one enum shared by two requests
+  // and neither request can reach all of it. A walk names no threat, so the three threat
+  // refusals are unreachable there; a flight always names one, so `outOfRange` is about
+  // the retreat it computed rather than a destination a controller gave it. Swept over
+  // both directories at once, a corpus stating every outcome only under `flee` would
+  // pass while leaving every `moveTo` shape the JVM must decode unproven.
+  const outcomesOf = (prefix) => fixtures('valid')
+    .filter(({ name }) => name.startsWith(prefix))
+    .map(({ text }) => JSON.parse(text).outcome)
+
+  const walked = outcomesOf('response-moveTo')
+  const fled = outcomesOf('response-flee')
+  for (const outcome of MOVE_OUTCOMES) {
+    if (THREAT_REFUSALS.has(outcome)) {
+      assert.ok(fled.includes(outcome), `no valid flee fixture reports ${outcome}`)
+      assert.ok(!walked.includes(outcome), `a walk fixture reports ${outcome}, which names a threat`)
+    } else {
+      assert.ok(walked.includes(outcome), `no valid moveTo fixture reports the move outcome ${outcome}`)
+    }
   }
 })
 

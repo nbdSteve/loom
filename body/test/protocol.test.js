@@ -20,6 +20,8 @@ const {
   MAX_HEALTH,
   MAX_FOOD,
   MAX_TIME_OF_DAY,
+  MAX_RETREAT_DISTANCE,
+  MAX_TRAVEL_DISTANCE,
   LIFECYCLE_STATES,
   OPERATIONS,
   ERROR_CODES,
@@ -35,6 +37,8 @@ const {
   statusReport,
   senseReport,
   eatReport,
+  moveReport,
+  fleeReport,
   shutdownAccepted,
   refusal
 } = require('../src/protocol')
@@ -70,16 +74,19 @@ const LEAK_BEARING = [
  * The fields each operation requires beyond the envelope.
  *
  * A request is only well-formed for the operation it names, so the helper below
- * has to know this to build one: `sense` and `eat` carry a payload the other
- * three do not, and a test spoiling one field must start from a frame that was
- * otherwise complete.
+ * has to know this to build one: `sense`, `eat`, `moveTo` and `flee` carry a
+ * payload the other four do not, and a test spoiling one field must start from a
+ * frame that was otherwise complete.
  */
 const PAYLOAD = {
   handshake: {},
   status: {},
   shutdown: {},
   sense: { radius: 24, limit: 16 },
-  eat: { senseId: 'sense-1', slot: 0 }
+  eat: { senseId: 'sense-1', slot: 0 },
+  moveTo: { destination: [12, 71, -40], tolerance: 1, timeoutMs: 8000, sprint: false },
+  flee: { senseId: 'sense-1', entity: 0, distance: 12, timeoutMs: 8000, sprint: true },
+  halt: {}
 }
 
 /** A request with everything the contract requires, so a test can spoil one field. */
@@ -113,7 +120,10 @@ test('every operation this generation has decodes, and nothing else does', () =>
   for (const op of OPERATIONS) {
     assert.equal(decodeRequest(lineOf(request({ op }))).ok, true, op)
   }
-  for (const op of ['perceive', 'moveTo', 'look', 'ping', '', 'HANDSHAKE', 42, null]) {
+  // `move` and `stop` are the near-misses worth stating: this generation spells the
+  // two movement operations `moveTo` and `halt`, and an operation set that grows is
+  // exactly where a controller guessing the shorter name would otherwise be admitted.
+  for (const op of ['perceive', 'move', 'stop', 'look', 'ping', '', 'HANDSHAKE', 42, null]) {
     const decoded = decodeRequest(lineOf(request({ op })))
     assert.deepEqual(decoded, { ok: false, code: 'unknownOperation', requestId: 'req-1' }, String(op))
   }
@@ -124,10 +134,13 @@ test('an unsupported protocol is refused before any generation-specific field is
   // must be reported, because a later generation may spell the rest differently
   // and a field interpreted under the wrong generation is worse than a refusal.
   // requestId is bounded only so that refusal can still be correlated.
-  const decoded = decodeRequest(lineOf({ op: 'perceive', protocol: 2, requestId: 'req-1', agentId: '' }))
+  const other = PROTOCOL_VERSION + 1
+  const decoded = decodeRequest(lineOf({ op: 'perceive', protocol: other, requestId: 'req-1', agentId: '' }))
   assert.deepEqual(decoded, { ok: false, code: 'unsupportedProtocol', requestId: 'req-1' })
 
-  for (const protocol of [0, 2, -1, 1.5, '1', null, undefined]) {
+  // The generation this file superseded is refused like any other, which is the whole of what
+  // moving one buys: a peer written against it finds out on its first frame.
+  for (const protocol of [0, other, PROTOCOL_VERSION - 1, -1, 1.5, '1', null, undefined]) {
     assert.equal(decodeRequest(lineOf(request({ protocol }))).code, 'unsupportedProtocol', String(protocol))
   }
 })
@@ -245,6 +258,71 @@ test('each response the process can write decodes back to itself', () => {
     assert.equal(decoded.ok, true, encodeResponse(frame))
     assert.deepEqual(decoded.response, frame)
   }
+})
+
+test('outOfRange reports exactly zero travel at both codec boundaries', () => {
+  const journey = {
+    requestId: 'req-move',
+    agentId: AGENT,
+    outcome: 'outOfRange',
+    from: [12.5, 71.5, -40.5],
+    position: [12.5, 71.5, -40.5],
+    travelled: 0,
+    elapsedMs: 2
+  }
+  assert.equal(decodeResponse(encodeResponse(moveReport(journey))).ok, true)
+
+  const falseWalk = { ...moveReport(journey), travelled: 0.25 }
+  assert.deepEqual(decodeResponse(lineOf(falseWalk)), { ok: false, code: 'invalidField' })
+  assert.throws(() => moveReport({ ...journey, travelled: 0.25 }), /invalidField$/)
+
+  const flight = { ...journey, separation: 4.5, separationGained: 1.25 }
+  assert.equal(decodeResponse(encodeResponse(fleeReport(flight))).ok, true)
+  const falseFlight = { ...fleeReport(flight), travelled: 0.25 }
+  assert.deepEqual(decodeResponse(lineOf(falseFlight)), { ok: false, code: 'invalidField' })
+  assert.throws(() => fleeReport({ ...flight, travelled: 0.25 }), /invalidField$/)
+})
+
+test('the generation two movement domain covers every accepted position pair and final sample', () => {
+  const worldDiagonal = Math.hypot(...Array(3).fill(MAX_WORLD_COORDINATE * 2))
+  const expected = Math.ceil(worldDiagonal + (MAX_RETREAT_DISTANCE * 4))
+  assert.equal(MAX_TRAVEL_DISTANCE, expected)
+  assert.equal(MAX_TRAVEL_DISTANCE, 103923177)
+
+  const journey = {
+    requestId: 'req-extreme',
+    agentId: AGENT,
+    outcome: 'overTravelled',
+    from: [-MAX_WORLD_COORDINATE, -MAX_WORLD_COORDINATE, -MAX_WORLD_COORDINATE],
+    position: [MAX_WORLD_COORDINATE, MAX_WORLD_COORDINATE, MAX_WORLD_COORDINATE],
+    travelled: MAX_TRAVEL_DISTANCE,
+    elapsedMs: 1
+  }
+  const walk = moveReport(journey)
+  assert.equal(decodeResponse(encodeResponse(walk)).ok, true)
+  const flight = fleeReport({
+    ...journey,
+    outcome: 'arrived',
+    separation: MAX_TRAVEL_DISTANCE,
+    separationGained: -MAX_TRAVEL_DISTANCE
+  })
+  const encoded = encodeResponse(flight)
+  assert.equal(decodeResponse(encoded).ok, true)
+  assert.ok(Buffer.byteLength(encoded) < MAX_FRAME_BYTES)
+
+  assert.throws(
+    () => moveReport({ ...journey, travelled: MAX_TRAVEL_DISTANCE + 1 }),
+    /invalidField$/
+  )
+  assert.throws(
+    () => fleeReport({
+      ...journey,
+      outcome: 'arrived',
+      separation: MAX_TRAVEL_DISTANCE + 1,
+      separationGained: 0
+    }),
+    /invalidField$/
+  )
 })
 
 test('every lifecycle state is reportable, and nothing outside the set is', () => {
@@ -880,7 +958,7 @@ test('there is no encoder that writes a frame unchecked', () => {
   // The bypass this closes: a bare stringify wrote whatever it was handed, so a
   // caller that skipped a builder put a frame on the wire that this module's own
   // decoder refused.
-  assert.throws(() => encodeResponse({ protocol: 1, agentId: '/tmp/secret', error: 'timeout' }), /invalidField$/)
+  assert.throws(() => encodeResponse({ protocol: PROTOCOL_VERSION, agentId: '/tmp/secret', error: 'timeout' }), /invalidField$/)
   assert.throws(() => encodeRequest(request({ agentId: '/tmp/secret' })), /invalidField$/)
   assert.throws(() => encodeRequest(request({ op: 'perceive' })), /unknownOperation$/)
 
@@ -899,22 +977,22 @@ test('there is no encoder that writes a frame unchecked', () => {
 
 test('encoders emit canonical bytes regardless of caller key order', () => {
   assert.equal(
-    encodeRequest({ agentId: AGENT, requestId: 'req-1', protocol: 1, op: 'status' }),
-    `{"op":"status","protocol":1,"requestId":"req-1","agentId":"${AGENT}"}`
+    encodeRequest({ agentId: AGENT, requestId: 'req-1', protocol: PROTOCOL_VERSION, op: 'status' }),
+    `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"${AGENT}"}`
   )
 
   const responses = [
     [
-      { username: 'loom_alpha', state: 'loggedIn', agentId: AGENT, requestId: 'req-1', protocol: 1, op: 'handshake' },
-      `{"op":"handshake","protocol":1,"requestId":"req-1","agentId":"${AGENT}","state":"loggedIn","username":"loom_alpha"}`
+      { username: 'loom_alpha', state: 'loggedIn', agentId: AGENT, requestId: 'req-1', protocol: PROTOCOL_VERSION, op: 'handshake' },
+      `{"op":"handshake","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"${AGENT}","state":"loggedIn","username":"loom_alpha"}`
     ],
     [
-      { requestsHandled: 2, stateMs: 5, uptimeMs: 10, state: 'ready', agentId: AGENT, requestId: 'req-2', protocol: 1, op: 'status' },
-      `{"op":"status","protocol":1,"requestId":"req-2","agentId":"${AGENT}","state":"ready","uptimeMs":10,"stateMs":5,"requestsHandled":2}`
+      { requestsHandled: 2, stateMs: 5, uptimeMs: 10, state: 'ready', agentId: AGENT, requestId: 'req-2', protocol: PROTOCOL_VERSION, op: 'status' },
+      `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-2","agentId":"${AGENT}","state":"ready","uptimeMs":10,"stateMs":5,"requestsHandled":2}`
     ],
     [
-      { state: 'stopping', agentId: AGENT, requestId: 'req-3', protocol: 1, op: 'shutdown' },
-      `{"op":"shutdown","protocol":1,"requestId":"req-3","agentId":"${AGENT}","state":"stopping"}`
+      { state: 'stopping', agentId: AGENT, requestId: 'req-3', protocol: PROTOCOL_VERSION, op: 'shutdown' },
+      `{"op":"shutdown","protocol":${PROTOCOL_VERSION},"requestId":"req-3","agentId":"${AGENT}","state":"stopping"}`
     ],
     [
       // The nested members are canonicalised too, and each object is rebuilt rather
@@ -931,10 +1009,10 @@ test('encoders emit canonical bytes regardless of caller key order', () => {
         state: 'ready',
         agentId: AGENT,
         requestId: 'req-4',
-        protocol: 1,
+        protocol: PROTOCOL_VERSION,
         op: 'sense'
       },
-      `{"op":"sense","protocol":1,"requestId":"req-4","agentId":"${AGENT}","state":"ready",` +
+      `{"op":"sense","protocol":${PROTOCOL_VERSION},"requestId":"req-4","agentId":"${AGENT}","state":"ready",` +
         '"position":[12.5,71.5,-40.5],"vitals":{"health":19.5,"food":17,"saturation":4.25},' +
         '"time":{"timeOfDay":6500,"day":12,"isDay":true},' +
         '"ground":{"standingIn":"minecraft:air","standingOn":"minecraft:grass_block"},' +
@@ -950,20 +1028,20 @@ test('encoders emit canonical bytes regardless of caller key order', () => {
         state: 'ready',
         agentId: AGENT,
         requestId: 'req-5',
-        protocol: 1,
+        protocol: PROTOCOL_VERSION,
         op: 'eat'
       },
-      `{"op":"eat","protocol":1,"requestId":"req-5","agentId":"${AGENT}","state":"ready",` +
+      `{"op":"eat","protocol":${PROTOCOL_VERSION},"requestId":"req-5","agentId":"${AGENT}","state":"ready",` +
         '"outcome":"eaten","vitals":{"health":19.5,"food":17,"saturation":4.25},' +
         '"what":"minecraft:bread","remaining":2}'
     ],
     [
-      { error: 'timeout', agentId: AGENT, requestId: 'req-6', protocol: 1 },
-      `{"protocol":1,"requestId":"req-6","agentId":"${AGENT}","error":"timeout"}`
+      { error: 'timeout', agentId: AGENT, requestId: 'req-6', protocol: PROTOCOL_VERSION },
+      `{"protocol":${PROTOCOL_VERSION},"requestId":"req-6","agentId":"${AGENT}","error":"timeout"}`
     ],
     [
-      { error: 'malformedFrame', agentId: AGENT, protocol: 1 },
-      `{"protocol":1,"agentId":"${AGENT}","error":"malformedFrame"}`
+      { error: 'malformedFrame', agentId: AGENT, protocol: PROTOCOL_VERSION },
+      `{"protocol":${PROTOCOL_VERSION},"agentId":"${AGENT}","error":"malformedFrame"}`
     ]
   ]
   for (const [frame, canonical] of responses) {
@@ -978,26 +1056,26 @@ test('a member named twice is refused on the bytes, before anything is parsed', 
   // JSON.parse takes the second one, so one frame meant `handshake` to one reader
   // and `status` to the other.
   const duplicated = [
-    '{"op":"handshake","op":"status","protocol":1,"requestId":"req-1","agentId":"agent-alpha"}',
-    '{"op":"status","protocol":1,"protocol":1,"requestId":"req-1","agentId":"agent-alpha"}',
-    '{"op":"status","protocol":1,"requestId":"req-1","requestId":"req-2","agentId":"agent-alpha"}',
-    '{"op":"status","protocol":1,"requestId":"req-1","agentId":"agent-alpha","agentId":"agent-beta"}',
+    `{"op":"handshake","op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"agent-alpha"}`,
+    `{"op":"status","protocol":${PROTOCOL_VERSION},"protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"agent-alpha"}`,
+    `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-1","requestId":"req-2","agentId":"agent-alpha"}`,
+    `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"agent-alpha","agentId":"agent-beta"}`,
     // Spelled with an escape, which is the same name to a parser: comparing the
     // raw text rather than the resolved name would miss this one.
-    '{"\\u006fp":"handshake","op":"status","protocol":1,"requestId":"req-1","agentId":"agent-alpha"}'
+    `{"\\u006fp":"handshake","op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"agent-alpha"}`
   ]
   for (const line of duplicated) {
     assert.deepEqual(decodeRequest(line), { ok: false, code: 'malformedFrame' }, line)
   }
 
   const responses = [
-    '{"op":"handshake","protocol":1,"requestId":"req-1","agentId":"agent-alpha","state":"ready","username":"abc","username":"loom_alpha"}',
-    '{"op":"handshake","protocol":1,"requestId":"req-1","agentId":"agent-alpha","state":"dead","state":"ready","username":"loom_alpha"}',
-    '{"op":"status","protocol":1,"requestId":"req-1","agentId":"agent-alpha","state":"ready","uptimeMs":10,"uptimeMs":20,"stateMs":5,"requestsHandled":1}',
-    '{"op":"status","protocol":1,"requestId":"req-1","agentId":"agent-alpha","state":"ready","uptimeMs":10,"stateMs":5,"stateMs":6,"requestsHandled":1}',
-    '{"op":"status","protocol":1,"requestId":"req-1","agentId":"agent-alpha","state":"ready","uptimeMs":10,"stateMs":5,"requestsHandled":1,"requestsHandled":2}',
-    '{"op":"shutdown","protocol":1,"requestId":"req-1","requestId":"req-1","agentId":"agent-alpha","state":"stopping"}',
-    '{"protocol":1,"agentId":"agent-alpha","error":"timeout","error":"malformedFrame"}'
+    `{"op":"handshake","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"agent-alpha","state":"ready","username":"abc","username":"loom_alpha"}`,
+    `{"op":"handshake","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"agent-alpha","state":"dead","state":"ready","username":"loom_alpha"}`,
+    `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"agent-alpha","state":"ready","uptimeMs":10,"uptimeMs":20,"stateMs":5,"requestsHandled":1}`,
+    `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"agent-alpha","state":"ready","uptimeMs":10,"stateMs":5,"stateMs":6,"requestsHandled":1}`,
+    `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"agent-alpha","state":"ready","uptimeMs":10,"stateMs":5,"requestsHandled":1,"requestsHandled":2}`,
+    `{"op":"shutdown","protocol":${PROTOCOL_VERSION},"requestId":"req-1","requestId":"req-1","agentId":"agent-alpha","state":"stopping"}`,
+    `{"protocol":${PROTOCOL_VERSION},"agentId":"agent-alpha","error":"timeout","error":"malformedFrame"}`
   ]
   for (const line of responses) {
     assert.deepEqual(decodeResponse(line), { ok: false, code: 'malformedFrame' }, line)
@@ -1007,10 +1085,10 @@ test('a member named twice is refused on the bytes, before anything is parsed', 
   // string value is not structure, and a name repeated at a *different* depth is
   // not a duplicate - neither shape can occur in this generation's frames, which
   // is exactly why the scanner has to be right about them rather than lucky.
-  assert.equal(decodeRequest('{"op":"status","protocol":1,"requestId":"req-1","agentId":"agent-alpha"}').ok, true)
-  const nested = '{"op":"status","protocol":1,"requestId":"req-1","agentId":"agent-alpha","x":{"op":"status"}}'
+  assert.equal(decodeRequest(`{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"agent-alpha"}`).ok, true)
+  const nested = `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"agent-alpha","x":{"op":"status"}}`
   assert.deepEqual(decodeRequest(nested), { ok: false, code: 'invalidField', requestId: 'req-1' })
-  const quoted = '{"op":"status","protocol":1,"requestId":"req-1","agentId":"agent-alpha","x":"{\\"op\\": 1}"}'
+  const quoted = `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-1","agentId":"agent-alpha","x":"{\\"op\\": 1}"}`
   assert.deepEqual(decodeRequest(quoted), { ok: false, code: 'invalidField', requestId: 'req-1' })
 })
 
@@ -1220,12 +1298,20 @@ test('a whole number is read the same however the frame spells it', () => {
   // rather than through `lineOf`, since `JSON.stringify` cannot produce them -
   // which is also why no valid fixture can carry one, and why this has to be a
   // codec test on both sides.
-  for (const literal of ['1', '1.0', '1.00', '1e0', '1E0', '0.1e1']) {
+  const whole = [
+    `${PROTOCOL_VERSION}`,
+    `${PROTOCOL_VERSION}.0`,
+    `${PROTOCOL_VERSION}.00`,
+    `${PROTOCOL_VERSION}e0`,
+    `${PROTOCOL_VERSION}E0`,
+    `0.${PROTOCOL_VERSION}e1`
+  ]
+  for (const literal of whole) {
     const line = `{"op":"handshake","protocol":${literal},"requestId":"req-1","agentId":"${AGENT}"}`
     assert.equal(decodeRequest(line).ok, true, `protocol ${literal}`)
   }
 
-  const counts = `{"op":"status","protocol":1,"requestId":"req-2","agentId":"${AGENT}",` +
+  const counts = `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-2","agentId":"${AGENT}",` +
     '"state":"ready","uptimeMs":1e3,"stateMs":1.0,"requestsHandled":2.0e0}'
   const report = decodeResponse(counts)
   assert.equal(report.ok, true, report.code)
@@ -1237,12 +1323,18 @@ test('a whole number is read the same however the frame spells it', () => {
 test('a fraction is refused however the frame spells it', () => {
   // Accepting the spellings above must not become accepting the values below: a
   // `requestsHandled` that had been rounded is a tally no run could trust.
-  for (const literal of ['1.5', '1.5e0', '0.5', '15e-1']) {
+  const fractions = [
+    `${PROTOCOL_VERSION}.5`,
+    `${PROTOCOL_VERSION}.5e0`,
+    '0.5',
+    `${PROTOCOL_VERSION * 10 + 5}e-1`
+  ]
+  for (const literal of fractions) {
     const line = `{"op":"handshake","protocol":${literal},"requestId":"req-1","agentId":"${AGENT}"}`
     assert.equal(decodeRequest(line).code, 'unsupportedProtocol', `protocol ${literal}`)
   }
 
-  const fractional = `{"op":"status","protocol":1,"requestId":"req-2","agentId":"${AGENT}",` +
+  const fractional = `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-2","agentId":"${AGENT}",` +
     '"state":"ready","uptimeMs":10.5,"stateMs":5,"requestsHandled":1}'
   assert.equal(decodeResponse(fractional).code, 'invalidField')
 
@@ -1250,10 +1342,18 @@ test('a fraction is refused however the frame spells it', () => {
   // all: `JSON.parse` answers a long literal with the nearest double, so the
   // fraction is gone before any check of the number could run. Every one of these
   // rounds to something a value-only check accepts - the first two to `MAX_COUNT`
-  // itself, the last two to exactly `1`, so even a comparison against the protocol
-  // version could not see them.
-  for (const literal of [`${MAX_COUNT}.4`, `${MAX_COUNT}.5`, '1.0000000000000000001', '0.9999999999999999999']) {
-    const line = `{"op":"status","protocol":1,"requestId":"req-2","agentId":"${AGENT}",` +
+  // itself, the last two to exactly the current generation, so even a comparison
+  // against the protocol version could not see them. The last two are spelled from
+  // `PROTOCOL_VERSION` for that reason rather than written down: spelled against a
+  // *superseded* generation they round to a number the plain comparison refuses
+  // anyway, and the case would pass whether the literal scan worked or not. The
+  // shared `numeric-spellings.json` corpus states the same two.
+  const roundsToTheGeneration = [
+    `${PROTOCOL_VERSION}.0000000000000000001`,
+    `${PROTOCOL_VERSION - 1}.9999999999999999999`
+  ]
+  for (const literal of [`${MAX_COUNT}.4`, `${MAX_COUNT}.5`, ...roundsToTheGeneration]) {
+    const line = `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-2","agentId":"${AGENT}",` +
       `"state":"ready","uptimeMs":${literal},"stateMs":5,"requestsHandled":1}`
     assert.equal(decodeResponse(line).code, 'invalidField', `uptimeMs ${literal}`)
     const asProtocol = `{"op":"handshake","protocol":${literal},"requestId":"req-1","agentId":"${AGENT}"}`
@@ -1269,7 +1369,7 @@ test('a count outside the bound is refused however few characters it takes to wr
   // any value is built, which is what keeps the refusal cheap.
   const over = [`${MAX_COUNT + 2}`, '9007199254740993', '1e16', '1e400', '1e2000000000', '-1', '-1e0', `-${MAX_COUNT}`]
   for (const literal of over) {
-    const line = `{"op":"status","protocol":1,"requestId":"req-2","agentId":"${AGENT}",` +
+    const line = `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-2","agentId":"${AGENT}",` +
       `"state":"ready","uptimeMs":${literal},"stateMs":5,"requestsHandled":1}`
     assert.equal(decodeResponse(line).code, 'invalidField', `uptimeMs ${literal}`)
   }
@@ -1278,13 +1378,13 @@ test('a count outside the bound is refused however few characters it takes to wr
   // before it is measured: the bound exists so that no arithmetic here is ever
   // handed an unbounded string.
   const long = `1.${'0'.repeat(64)}`
-  const padded = `{"op":"status","protocol":1,"requestId":"req-2","agentId":"${AGENT}",` +
+  const padded = `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-2","agentId":"${AGENT}",` +
     `"state":"ready","uptimeMs":${long},"stateMs":5,"requestsHandled":1}`
   assert.equal(decodeResponse(padded).code, 'invalidField', 'a padded whole number is still too long to read')
 
   // And the largest legal count is still legal, spelled long-hand and short.
   for (const literal of [`${MAX_COUNT}`, '9007199254740991.0', '0', '-0', '20e-1', '9007199254740991e0']) {
-    const line = `{"op":"status","protocol":1,"requestId":"req-2","agentId":"${AGENT}",` +
+    const line = `{"op":"status","protocol":${PROTOCOL_VERSION},"requestId":"req-2","agentId":"${AGENT}",` +
       `"state":"ready","uptimeMs":${MAX_COUNT},"stateMs":${literal},"requestsHandled":1}`
     assert.equal(decodeResponse(line).ok, true, `stateMs ${literal}`)
   }

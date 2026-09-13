@@ -1,1 +1,1 @@
-{"op":"sense","protocol":1,"requestId":"req-11","agentId":"agent-alpha","state":"ready","position":[0.5,64.5,0.5],"vitals":{"health":19.5,"food":20,"saturation":19.5},"time":{"timeOfDay":18500,"day":12,"isDay":false},"entities":[],"entitiesOmitted":0,"inventory":[]}
+{"op":"sense","protocol":2,"requestId":"req-11","agentId":"agent-alpha","state":"ready","position":[0.5,64.5,0.5],"vitals":{"health":19.5,"food":20,"saturation":19.5},"time":{"timeOfDay":18500,"day":12,"isDay":false},"entities":[],"entitiesOmitted":0,"inventory":[]}

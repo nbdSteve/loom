@@ -1,48 +1,46 @@
 'use strict'
 
-const conversions = require('mineflayer/lib/conversions')
-
 /**
- * The three things the client library needs from the server's own reports, as one
- * plugin of Loom's own: the login event, the world the player is in, and where the
- * server says the player is standing and facing.
+ * The two things the client library needs from the server's own reports and no loaded
+ * plugin provides: the login event, and the world the player is in.
  *
- * Mineflayer keeps all three in plugins this process must not load, and each of those
- * plugins writes packets back at the server that a policy-free body may not send:
+ * Mineflayer keeps both in `game`, which this process must not load, because on a
+ * `win_game` game-state change that plugin writes `client_command` at the server -
+ * the vanilla client's *respawn*, the automatic respawn `respawn: false` exists to
+ * prevent, arriving by another route and reachable by any server that sends the
+ * packet. This file therefore registers no handler on `game_state_change` at all,
+ * which is a stronger statement than not taking that branch: `bot.game.gameMode` is
+ * read once from the login report and never revised, so an operator who changes the
+ * body's game mode mid-run leaves it stale. What that field gates is one refusal
+ * inside `bot.consume`, and the eat path reads `bot.food` for itself rather than
+ * relying on it.
  *
- * - `game` is where `login`, `bot.game` and the dimension codec are. It cannot be
- *   loaded, because on a `win_game` game-state change it writes `client_command` at
- *   the server, which is the vanilla client's *respawn* - the automatic respawn
- *   `respawn: false` exists to prevent, arriving by another route and reachable by
- *   any server that sends the packet. This file therefore registers no handler on
- *   `game_state_change` at all, which is a stronger statement than not taking that
- *   branch: `bot.game.gameMode` is read once from the login report and never
- *   revised, so an operator who changes the body's game mode mid-run leaves it
- *   stale. What that field gates is one refusal inside `bot.consume`, and the eat
- *   path reads `bot.food` for itself rather than relying on it.
- * - `physics` owns the *clientbound* `position` packet, and with it the
- *   `teleport_confirm` reply the protocol requires. It cannot be loaded, because it
- *   also runs a movement interval and writes autonomous position updates. Without
- *   the handler below `bot.entity.position` never leaves `(0,0,0)`, so every
- *   perception this process reports would be taken at the world origin.
- *
- * So what is here is exactly what those two plugins report and none of what they
- * decide. `bot.game` carries the four fields the loaded plugins actually read -
- * `dimension`, `minY` and `height` for `blocks`, `gameMode` for `inventory` - and
+ * So what is here is exactly what that plugin reports and none of what it decides.
+ * `bot.game` carries the four fields the loaded plugins actually read - `dimension`,
+ * `minY` and `height` for `blocks`, `gameMode` for `inventory` and `physics` - and
  * nothing else, because a field nothing reads is a field that can be silently wrong.
- * The position handler records the server's own answer and writes one reply the
- * protocol demands, in the same category as the `keep_alive` minecraft-protocol's own
- * client answers below any plugin. Neither half sends a packet of its own accord.
+ * Nothing here sends a packet of its own accord.
  *
- * **Facing is recorded because an eat would otherwise turn the body.** 1.21.1's
- * serverbound `use_item` carries the client's rotation and the server applies it, and
- * `inventory`'s `activateItem` fills those two fields from `bot.entity.yaw` and
- * `bot.entity.pitch`. Both default to zero, so a process that never recorded the
- * server's own answer would snap the body to facing due south and level on every
- * meal - a movement of the body's own choosing, in the one place this process is
- * meant only to consume an item. The conversion is Mineflayer's own
- * (`mineflayer/lib/conversions`) rather than trigonometry restated here, so the value
- * that plugin converts back is exactly the value the server sent.
+ * **The clientbound `position` packet is `physics`'s and is deliberately not read
+ * here.** It used to be: `physics` could not be loaded while nothing asked the body to
+ * walk, so this file recorded the server's own answer and wrote the
+ * `teleport_confirm` the protocol demands. A body that can be asked to walk needs the
+ * plugin, because a player's movement in Minecraft is client-simulated and there is no
+ * "server, please walk me there" packet - so `body/src/movement.js` loads it, under a scope
+ * that keeps its stepping and its position reporting to one accepted request, and this file
+ * keeps only the two reports above. Registering a second handler would be a fault
+ * rather than a duplication: `physics` writes the same `teleport_confirm` under the
+ * same `supportFeature('teleportUsesOwnPacket')` guard, so one teleport would be
+ * confirmed twice. That handler is the *unscoped* half of the plugin and has to be, since
+ * it is what moves `bot.entity.position` off the origin for every perception.
+ *
+ * **Facing is recorded by that same handler, and it has to be.** 1.21.1's serverbound
+ * `use_item` carries the client's rotation and the server applies it, and `inventory`'s
+ * `activateItem` fills those two fields from `bot.entity.yaw` and `bot.entity.pitch`.
+ * Both default to zero, so a body whose facing nothing recorded would snap to due south
+ * and level on every meal - a movement of the body's own choosing, in the one place
+ * this process is meant only to consume an item. `physics` records both from the
+ * server's own report, so the meal keeps the facing the server last stated.
  *
  * **The world shape is read for 1.19 and above.** That is every version with
  * `dimensionDataInCodec`, which is where a dimension's `minY` and `height` come from,
@@ -64,7 +62,7 @@ const DEFAULT_MIN_Y = 0
 const DEFAULT_WORLD_HEIGHT = 256
 
 /**
- * Loom's replacement for the two Mineflayer plugins above, and the whole of it.
+ * Loom's replacement for the Mineflayer plugin above, and the whole of it.
  *
  * The login event is emitted from here rather than from a plugin of its own so that
  * the ordering is a property of this function instead of of an object's key order:
@@ -93,10 +91,6 @@ function followWorldState (bot) {
   // from the same packet, against the shape this sets.
   bot._client.on('respawn', (packet) => {
     readWorld(bot, packet.worldState ?? packet)
-  })
-
-  bot._client.on('position', (packet) => {
-    recordPosition(bot, packet)
   })
 }
 
@@ -156,69 +150,6 @@ function dimensionNameOf (bot, spawn) {
 /** A resource name with the vanilla namespace dropped, the way the codec is keyed. */
 function withoutNamespace (name) {
   return typeof name === 'string' ? name.replace('minecraft:', '') : undefined
-}
-
-/**
- * Records where the server says the player is and which way it is facing, and
- * confirms the teleport.
- *
- * Each field is absolute unless its flag is set, in which case it is a delta on the
- * value already held - so a reader that took every field as absolute would place the
- * body at the origin plus a step on the first relative update. 1.20.5 and above send
- * the flags as an object of booleans and older versions as a bitmask, and both are
- * read here for the same reason the branches above are.
- *
- * Facing arrives in degrees, measured the way the protocol measures them, and is kept
- * in the radians `bot.entity` is documented to carry - so a relative update is summed
- * in the protocol's own units, before the conversion, rather than mixing the two.
- *
- * Velocity and hitbox height are not recorded. They are read by no plugin this process
- * loads, and a field kept up to date for no reader is a field that can be quietly
- * wrong.
- *
- * The confirmation is the protocol's own reply rather than a movement of this body's
- * choosing: an unconfirmed teleport leaves the server ignoring the client, and this
- * process never writes a position packet at all. The absent `bot.entity` is guarded
- * rather than assumed, because a throw inside a packet handler is an uncaught
- * exception that would take the whole process down outside its bounded output path.
- */
-function recordPosition (bot, packet) {
-  if (bot.entity === undefined) return
-  const at = bot.entity.position
-  const relative = relativeFieldsOf(packet.flags)
-  at.set(
-    relative.x ? at.x + packet.x : packet.x,
-    relative.y ? at.y + packet.y : packet.y,
-    relative.z ? at.z + packet.z : packet.z
-  )
-  const heldYaw = relative.yaw ? conversions.toNotchianYaw(bot.entity.yaw) : 0
-  const heldPitch = relative.pitch ? conversions.toNotchianPitch(bot.entity.pitch) : 0
-  bot.entity.yaw = conversions.fromNotchianYaw(heldYaw + packet.yaw)
-  bot.entity.pitch = conversions.fromNotchianPitch(heldPitch + packet.pitch)
-  if (bot.supportFeature('teleportUsesOwnPacket')) {
-    bot._client.write('teleport_confirm', { teleportId: packet.teleportId })
-  }
-}
-
-/** Which fields of a position update are deltas, from either spelling of the flags. */
-function relativeFieldsOf (flags) {
-  if (typeof flags === 'object' && flags !== null) {
-    return {
-      x: Boolean(flags.x),
-      y: Boolean(flags.y),
-      z: Boolean(flags.z),
-      yaw: Boolean(flags.yaw),
-      pitch: Boolean(flags.pitch)
-    }
-  }
-  const bits = typeof flags === 'number' ? flags : 0
-  return {
-    x: Boolean(bits & 0x01),
-    y: Boolean(bits & 0x02),
-    z: Boolean(bits & 0x04),
-    yaw: Boolean(bits & 0x08),
-    pitch: Boolean(bits & 0x10)
-  }
 }
 
 module.exports = {

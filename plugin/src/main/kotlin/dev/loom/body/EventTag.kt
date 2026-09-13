@@ -282,10 +282,11 @@ object EventTag {
     /**
      * A player body's account of its own vitals did not match the server's reading.
      *
-     * The three `DISPUTED_` tags say which kind of evidence a body got wrong, and they are
-     * three rather than one because the causes differ and a run has to count them apart: a
-     * wrong vital is a client reporting a state it was never sent, while a wrong inventory
-     * is a client's item model having fallen behind the server's. Only the server is
+     * The six `DISPUTED_` tags say which kind of evidence a body got wrong, and they are six
+     * rather than one because the causes differ and a run has to count them apart: a wrong
+     * vital is a client reporting a state it was never sent, a wrong inventory is a client's
+     * item model having fallen behind the server's, and a wrong position is a physics
+     * simulation that has diverged from the one the server ran. Only the server is
      * authoritative, so every one of them is the body's disagreement and never the
      * server's.
      */
@@ -294,8 +295,25 @@ object EventTag {
     /** A player body's account of what it is carrying did not match the server's. */
     const val DISPUTED_INVENTORY: String = "disputedInventory"
 
-    /** One cross-check found both kinds of disagreement at once. */
+    /** One vitals cross-check found both of its kinds of disagreement at once. */
     const val DISPUTED_BOTH: String = "disputedBoth"
+
+    /**
+     * A player body's account of where a movement request left it did not match the server's.
+     *
+     * The three movement tags are the same shape of statement as the three above, and are
+     * kept apart from them for the reason [DISPUTED_BOTH] exists at all: a position the
+     * server disagrees with is a client whose simulation diverged or a body that was moved,
+     * while a journey fault is a report contradicting its own arithmetic and needs no server
+     * to find. A run reading them alike could not tell those two apart.
+     */
+    const val DISPUTED_POSITION: String = "disputedPosition"
+
+    /** A movement report that contradicts its own arithmetic, whatever the server reads. */
+    const val DISPUTED_JOURNEY: String = "disputedJourney"
+
+    /** One movement cross-check found both of its kinds of disagreement at once. */
+    const val DISPUTED_MOVEMENT: String = "disputedMovement"
 }
 
 /** Names which event prompted cognition. */

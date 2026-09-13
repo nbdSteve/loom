@@ -7,8 +7,8 @@
  * threshold, no timer, no target selection and no auto-eat plugin: a meal happens
  * because a controller sent an eat request naming one slot of one sense answer, and a
  * body with no such request never eats at all. That is the whole point of the operation
- * being explicit, and it is why this module has no state beyond the bounded memory of
- * which slots a recent sense answer offered.
+ * being explicit, and it is why this module holds no state at all: what a slot handle means
+ * is `senses.js`'s bounded memory, which serves the flee path's handles by the same rules.
  *
  * **A slot handle names a position, not a stack, so the position is read again here.**
  * The contents of a slot change while a decision is in flight - the stack can be eaten,
@@ -61,17 +61,6 @@
 const { MAX_STACK_COUNT } = require('./protocol')
 
 /**
- * How many recent sense answers a body remembers the slots of.
- *
- * A slot handle is scoped to the round trip it belongs to, and this is the bound on how
- * far that scope stretches: a controller may have a sense answer or two in flight while
- * it decides, and anything older than that has been superseded by a scene the body has
- * since reported. Small on purpose - a handle that outlived a run of sense answers would
- * be a name for a slot whose contents the body has already contradicted twice.
- */
-const MAX_REMEMBERED_SENSES = 4
-
-/**
  * The message `bot.consume` throws when vanilla will not take another ordinary food.
  *
  * Matched by text because the client library offers nothing else to match on. That is
@@ -107,88 +96,6 @@ const FULL_FOOD_MESSAGE = 'Food is full'
  * `bot.consume` is what consumed it.
  */
 const SLOT_SETTLE_MS = 250
-
-/**
- * The bounded memory of which slots recent sense answers offered.
- *
- * **An entry is named by the connection as well as by the sense id, because a round trip
- * belongs to both.** Keyed on the id alone the scoping was not in fact structural: the
- * duplicate-id guard it rested on is per control connection, so two of the connections
- * this process allows may each sense under `s1`, and the second answer silently replaced
- * the first. An eat from the first connection then resolved against the second's snapshot
- * and ate a stack the sense it named never offered - reported as `eaten` rather than as
- * the `slotChanged` the slot in fact was. Two connections presenting one id now name two
- * entries, and an id a connection never held is `senseForgotten` to it, which is the
- * outcome a superseded handle already earns: nothing about the wire changes for it.
- *
- * Only what a slot handle needs is kept - per occupied slot, the item that stood in it -
- * because that is the whole of what resolving one costs. The bound is on the whole memory
- * rather than per connection, so no number of peers can make it grow, and the oldest
- * entry goes when it is reached: an eat naming a superseded answer is `senseForgotten`
- * rather than a lookup in something unbounded.
- *
- * A list, oldest first, rather than a keyed map: an entry is named by two things at once,
- * and `MAX_REMEMBERED_SENSES` is what makes walking it to find one free. The order is the
- * list's own rather than a `Map`'s insertion order, so the eviction depends on nothing
- * about whether a key can be written twice.
- */
-function senseMemory () {
-  let remembered = []
-  return {
-    remember (connection, senseId, inventory) {
-      remembered.push({
-        connection,
-        senseId,
-        slots: new Map(inventory.map((stack) => [stack.slot, stack.what]))
-      })
-      if (remembered.length > MAX_REMEMBERED_SENSES) remembered.shift()
-    },
-    recall (connection, senseId) {
-      const held = remembered.find((entry) => entry.connection === connection && entry.senseId === senseId)
-      return held === undefined ? undefined : held.slots
-    },
-    /**
-     * Drops one slot's offer, once a meal has been eaten against it.
-     *
-     * A handle names one position of one snapshot, and a meal is what makes that snapshot
-     * wrong about it: the count moved, perhaps to nothing. The re-read at apply time cannot
-     * see that, because it compares the item's *name* and a half-eaten stack still has the
-     * same name - so an eat re-sent against a spent handle ate a second time from a snapshot
-     * that had already been contradicted, which is the failure connection-scoping exists to
-     * prevent arriving through the count instead of through the identity. Spent, the handle
-     * is `slotUnnamed`, which is what that answer's offer of the slot now is.
-     *
-     * **That gives `slotUnnamed` a second reading, deliberately.** It has always meant "a
-     * handle the mind invented rather than named back"; it now also means "a handle this body
-     * issued and has already served a meal against". Both are facts about the *handle*, which
-     * is the one thing the first check knows about - and it stays the first check, because an
-     * unresolvable handle names no slot to look in. Spending after the slot re-read instead
-     * would buy a slot-true label (`slotEmpty`, say, once `equip` had moved the stack out)
-     * at the cost of the check order this module's own header states is load-bearing.
-     *
-     * A hotbar stack is the case that needs it: `bot.equip` moves nothing when the stack is
-     * already in the held slot, so the named slot still reads the whole pre-meal stack even
-     * after the meal, and nothing else in the check order refuses the repeat.
-     *
-     * Only the slot, never the whole answer: the other slots of that sense are still the
-     * body's own account of positions no meal has touched.
-     */
-    spend (connection, senseId, slot) {
-      const held = remembered.find((entry) => entry.connection === connection && entry.senseId === senseId)
-      if (held !== undefined) held.slots.delete(slot)
-    },
-    /**
-     * Drops what `connection` was offered, once that connection has gone.
-     *
-     * Nothing can resolve one of those handles again, since a handle names the connection
-     * it was minted on, so keeping them would spend the bound on answers no controller
-     * can still eat against.
-     */
-    forget (connection) {
-      remembered = remembered.filter((entry) => entry.connection !== connection)
-    }
-  }
-}
 
 /** Whether `cause` is the client library declining an ordinary food on a full bar. */
 function reserveWasFull (cause) {
@@ -337,7 +244,7 @@ async function countLeft (bot, brought, what) {
  * A `slotUnnamed` therefore has two readings, and the first check cannot tell them apart:
  * a handle the mind invented, and a handle this body issued and has already served a meal
  * against. Both are answers about the *handle* rather than about the slot, which is why
- * they share an outcome - see `senseMemory.spend`.
+ * they share an outcome - see `senses.js`'s `spend`.
  */
 async function eatFromSlot (bot, { offered, slot }) {
   if (offered === undefined) return { outcome: 'senseForgotten' }
@@ -367,8 +274,6 @@ async function eatFromSlot (bot, { offered, slot }) {
 
 module.exports = {
   FULL_FOOD_MESSAGE,
-  MAX_REMEMBERED_SENSES,
   SLOT_SETTLE_MS,
-  eatFromSlot,
-  senseMemory
+  eatFromSlot
 }

@@ -24,10 +24,14 @@
  * carries no `op` at all, for the reason the cognition wire's refusal frame is not a
  * contract type: a frame the process could not decode has no operation to name.
  *
- * Every bound the schema states is re-checked here at decode, because nothing on
- * this wire is schema-validated at runtime - `minLength`, `maxLength`, `pattern`,
- * `minimum` and `maximum` are all rules a socket walks straight past. Two schema
- * rules need checks before a binding reaches an `init`: a duplicate member name is
+ * Every bound the schema states is re-checked at decode, because nothing on this wire is
+ * schema-validated at runtime - `minLength`, `maxLength`, `pattern`, `minimum` and
+ * `maximum` are all rules a socket walks straight past. Those scalar bounds and their
+ * checks live in `BodyControlFields.kt`, which is this file's other half: the schema too
+ * states its scalars once and then names them from the frames, so this file holds the
+ * enums, the payload objects and the three frame unions and nothing about what one field
+ * may hold. Two schema rules need checks before a binding reaches an `init`: a duplicate
+ * member name is
  * lost when JSON is parsed, while an explicit null survives that parse but is erased
  * by kotlinx-serialization when `explicitNulls = false`. `BodyControlCodec.kt` checks
  * the raw line and the parse tree at those two points, which is why nothing may decode
@@ -59,264 +63,6 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.UseSerializers
 import kotlinx.serialization.json.JsonClassDiscriminator
-
-/**
- * The one protocol generation, mirroring the schema's `const`.
- *
- * A frame naming any other generation is refused rather than interpreted: a later
- * generation may spell the same field differently, and a value read under the wrong
- * generation is worse than a refusal.
- */
-const val BODY_CONTROL_PROTOCOL_VERSION: Int = 1
-
-/** The shortest a requestId or agentId may be, mirroring the schema's `minLength`. */
-private const val CONTROL_ID_MIN_CHARS = 1
-
-/** The longest a requestId or agentId may be, mirroring the schema's `maxLength`. */
-internal const val CONTROL_ID_MAX_CHARS = 64
-
-/**
- * What an id may contain, mirroring the schema's `pattern`.
- *
- * Deliberately narrow rather than merely bounded: an id is echoed into a frame and
- * into logs, so a newline would break the framing, and a path separator or whitespace
- * is how a local path or a free-text transport error would arrive in something that
- * gets written down.
- */
-private val CONTROL_ID_PATTERN = Regex("^[A-Za-z0-9._:-]+$")
-
-/** Minecraft's own account-name rule, which is what makes a login possible at all. */
-private val USERNAME_PATTERN = Regex("^[A-Za-z0-9_]{3,16}$")
-
-/**
- * Refuses a frame written in a generation this runtime does not speak.
- *
- * The check is stated once, applied before variant dispatch, and repeated from every
- * variant's `init` rather than being left to the schema, for the same reason the
- * length bounds below are: the frame arrives off a socket, where no schema runs.
- */
-internal fun requireProtocolGeneration(protocol: Int?) {
-    require(protocol == BODY_CONTROL_PROTOCOL_VERSION) {
-        "protocol must be $BODY_CONTROL_PROTOCOL_VERSION"
-    }
-}
-
-/**
- * Refuses an id that is blank, over-long, or carries something an id may not.
- *
- * Length is counted in code points, as the schema's `maxLength` counts it and as the
- * Node side's `[...value].length` counts it. `String.length` is UTF-16 code units,
- * so a non-BMP id would measure double here and this runtime would refuse a handle
- * the other accepts - the two disagreeing about the one bound each states once,
- * which is exactly what stating it once per runtime is meant to rule out.
- *
- * Neither refusal states what arrived, only what was expected. The measured length is
- * as much a fact about the peer's frame as the id itself, and a refusal off this wire
- * may carry nothing from it - see the note in `BodyControlCodec.kt`. The `field` name is
- * this contract's own vocabulary, passed as a literal by the call site below and stated
- * in the schema, so it is not peer data and is safe to name.
- */
-private fun requireBoundedControlId(
-    field: String,
-    value: String,
-) {
-    val characters = value.codePointCount(0, value.length)
-    require(characters in CONTROL_ID_MIN_CHARS..CONTROL_ID_MAX_CHARS) {
-        "$field must be $CONTROL_ID_MIN_CHARS..$CONTROL_ID_MAX_CHARS characters"
-    }
-    require(CONTROL_ID_PATTERN.matches(value)) { "$field carries a character an id may not" }
-}
-
-/** Refuses the envelope every frame in both directions shares. */
-private fun requireEnvelope(
-    protocol: Int,
-    requestId: String,
-    agentId: String,
-) {
-    requireProtocolGeneration(protocol)
-    requireBoundedControlId("requestId", requestId)
-    requireBoundedControlId("agentId", agentId)
-}
-
-/**
- * The largest a duration or a tally on this wire may be, mirroring the schema's
- * `maximum`.
- *
- * It is JavaScript's largest exactly-representable integer rather than `Long.MAX_VALUE`,
- * because the other end of this wire is a Node process: a `Long` this side would encode
- * happily is a number the Node codec cannot read back, so bounding at what the JVM can
- * hold would make a frame legal to the contract and to one runtime and unreadable to
- * the other. The narrower runtime's bound is the only one both sides can hold, and each
- * binding states the same number for itself.
- */
-const val MAX_CONTROL_COUNT: Long = 9_007_199_254_740_991L
-
-/**
- * The fewest requests a status report may claim, mirroring the schema's `minimum`.
- *
- * Answering the status request is itself handling one, so a report of zero has
- * miscounted its own answer.
- */
-private const val MIN_REQUESTS_HANDLED = 1L
-
-/**
- * Refuses a duration or a tally that could not have been measured, or read back.
- *
- * States the bound and not the value, for the reason [requireBoundedControlId] does.
- */
-private fun requireCount(
-    field: String,
-    value: Long,
-) {
-    require(value in 0..MAX_CONTROL_COUNT) {
-        "$field must be 0..$MAX_CONTROL_COUNT"
-    }
-}
-
-/** The shortest a block or item or entity name may be, mirroring the schema's `minLength`. */
-private const val RESOURCE_NAME_MIN_CHARS = 1
-
-/** The longest a block or item or entity name may be, mirroring the schema's `maxLength`. */
-internal const val RESOURCE_NAME_MAX_CHARS = 40
-
-/**
- * What the game's own data may call a block, an item or an entity, mirroring the
- * schema's `pattern`.
- *
- * A resource location: an optional namespace, then a path whose segments are separated
- * by `/`. Narrow for the reason [CONTROL_ID_PATTERN] is - these names are written into
- * records and shown to operators - and it deliberately admits `..` as a segment, because
- * a resource location is not a path and nothing on either side of this wire reads one as
- * a file name. The bound that matters for a name is that it is a name the registry could
- * hold, and this is it.
- */
-private val RESOURCE_NAME_PATTERN = Regex("^([a-z0-9_.-]+:)?[a-z0-9_.-]+(/[a-z0-9_.-]+)*$")
-
-/** How far from the origin a coordinate may be, mirroring the schema's `maximum`. */
-private const val MAX_WORLD_COORDINATE = 30_000_000
-
-/** How many numbers a position is, mirroring the schema's `minItems` and `maxItems`. */
-private const val WORLD_POSITION_AXES = 3
-
-/** The widest a caller may ask a sense to look, in blocks, mirroring the schema. */
-private const val MAX_SENSE_RADIUS = 48
-
-/** The most entities a sense answer may carry, mirroring the schema's `maxItems`. */
-internal const val MAX_SENSE_ENTITIES = 24
-
-/** The highest slot of a player's own inventory window, mirroring the schema. */
-internal const val MAX_SLOT_INDEX = 45
-
-/**
- * The most stacks a sense answer may carry.
- *
- * One per slot of the window, so a full inventory is reported in full: there is no
- * omission count beside the list, because a body that trimmed its own inventory would be
- * hiding the last food an agent has.
- */
-internal const val MAX_SENSE_STACKS = MAX_SLOT_INDEX + 1
-
-/** The fewest items a reported stack may hold: an empty slot is left out instead. */
-private const val MIN_STACK_COUNT = 1
-
-/** The most items one stack may hold, mirroring the schema's `maximum`. */
-internal const val MAX_STACK_COUNT = 255
-
-/** The game's own ceiling on a max-health attribute, mirroring the schema's `maximum`. */
-private const val MAX_HEALTH = 1024
-
-/** Vanilla's own food and saturation ceiling, mirroring the schema's `maximum`. */
-internal const val MAX_FOOD = 20
-
-/** The last tick of a Minecraft day, mirroring the schema's `maximum`. */
-internal const val MAX_TIME_OF_DAY = 23999
-
-/**
- * Refuses a whole number outside what its field may hold.
- *
- * States the bound and not the value, for the reason [requireBoundedControlId] does.
- */
-private fun requireWithin(
-    field: String,
-    value: Int,
-    range: IntRange,
-) {
-    require(value in range) { "$field must be ${range.first}..${range.last}" }
-}
-
-/**
- * Refuses a real number outside what its field may hold.
- *
- * Separate from [requireWithin] rather than generic over `Comparable`, because the two
- * are different rules: a whole number's bounds are the schema's `minimum` and `maximum`
- * on an `integer`, while a real one's range check is also what refuses the infinity a
- * runaway literal decodes to - every comparison against a NaN or an infinity fails, so a
- * value that is not a number this wire can hold is refused by the same clause.
- */
-private fun requireReal(
-    field: String,
-    value: Double,
-    highest: Int,
-) {
-    require(value >= 0 && value <= highest) { "$field must be 0..$highest" }
-}
-
-/**
- * Refuses a name the game's own registry could not hold.
- *
- * Counted in code points for the reason [requireBoundedControlId] is: the schema's
- * `maxLength` counts them, and `String.length` would measure a non-BMP name double.
- */
-private fun requireResourceName(
-    field: String,
-    value: String,
-) {
-    val characters = value.codePointCount(0, value.length)
-    require(characters in RESOURCE_NAME_MIN_CHARS..RESOURCE_NAME_MAX_CHARS) {
-        "$field must be $RESOURCE_NAME_MIN_CHARS..$RESOURCE_NAME_MAX_CHARS characters"
-    }
-    require(RESOURCE_NAME_PATTERN.matches(value)) { "$field is not a name the game's own data would use" }
-}
-
-/**
- * Refuses an answer whose state is not the one its operation can only be answered in.
- *
- * A sense and an eat both read a live player, and the schema states the state as a
- * `const` for each. A frame reporting any other state is a process disagreeing with the
- * contract about what it just did, so it is refused rather than read - a body that had not
- * spawned has no vitals to report, and one the server has removed would be reporting the
- * world it last saw. Such a body answers [ErrorCode.NOT_READY] instead.
- *
- * The state is the one the request was **admitted under**, which is the same turn for a
- * sense and an earlier one for an eat: a meal is answered after two round trips to the
- * server, so the body can die or disconnect between being given the meal and being asked
- * what became of it. `ready` there is not a claim about the moment the frame was written but
- * about the moment the numbers beside it came from, and the vitals in an eat answer follow
- * the same rule - see [BodyResponse.EatReport].
- */
-private fun requireReady(
-    state: LifecycleState,
-    what: String,
-) {
-    require(state == LifecycleState.READY) { "$what reports ${LifecycleState.READY}" }
-}
-
-/**
- * Refuses a position that is not three coordinates inside the world's own limits.
- *
- * The axis count is checked here rather than by a fixed-arity type, because the wire
- * carries an array and a frame naming four coordinates is a peer describing a world this
- * one does not have - which is a refusal and not a value to interpret.
- */
-private fun requireWorldPosition(
-    field: String,
-    value: List<Double>,
-) {
-    require(value.size == WORLD_POSITION_AXES) { "$field must be $WORLD_POSITION_AXES coordinates" }
-    require(value.all { it >= -MAX_WORLD_COORDINATE && it <= MAX_WORLD_COORDINATE }) {
-        "$field must be within $MAX_WORLD_COORDINATE of the origin"
-    }
-}
 
 /**
  * Where a body process is in its one life.
@@ -471,6 +217,91 @@ enum class EatOutcome {
     @SerialName("slotInaccessible")
     SLOT_INACCESSIBLE,
 }
+
+/**
+ * Every way a movement can end, as one closed set shared by a walk and a flight.
+ *
+ * One arrival, six bounds and one cancellation, then three facts about a named threat that
+ * only a flight can reach. One set rather than two is what lets a run count arrivals and
+ * bounds across both operations without translating between two vocabularies, and the schema
+ * deliberately does not narrow it per variant either: a second enum listing eight of these
+ * would be a second thing to keep in step with this one.
+ *
+ * [NO_ROUTE] and [STALLED] are kept apart because they are opposite facts about the world:
+ * the ground offered no way there at all, against a way that was found and then abandoned.
+ * [SEARCH_OVER_BUDGET] is neither, and it is the one value here that is a fact about the body
+ * process rather than about the world: the body's own search budget stopped a search that had
+ * not finished, so nothing at all is known about the ground. Folding it into [NO_ROUTE] told a
+ * controller the world was closed when the truth was that the body would not look any longer,
+ * and for a flight that reads as nowhere to run.
+ * [OVER_TRAVELLED] and [TIMED_OUT] are likewise the distance bound and the duration bound,
+ * which are reached for unrelated reasons - a body walking in circles spends distance
+ * without spending much time, and a body stuck against a wall spends time without spending
+ * distance - so folding them together would leave a run unable to say which bound its
+ * agents keep hitting. [OUT_OF_RANGE] is the one bound refused before any searching, since
+ * a destination past the body's reach is a request this body may not be given rather than
+ * ground it failed to cross.
+ *
+ * [CANCELLED] is an outcome rather than a refusal, because a halted movement did happen: the
+ * body went somewhere before it was stopped, and that displacement is worth the same report
+ * an arrival gets.
+ *
+ * The last three are the flight's own, and they are what makes the two answers different
+ * shapes: a movement that never resolved a threat has no separation to report, so those
+ * three carry none. They mirror the eat path's handle refusals exactly -
+ * [SENSE_FORGOTTEN] is the window having closed, [THREAT_UNNAMED] is an index that answer
+ * never offered, and [THREAT_GONE] is an entity the world no longer holds.
+ */
+@Serializable
+enum class MoveOutcome {
+    @SerialName("arrived")
+    ARRIVED,
+
+    @SerialName("outOfRange")
+    OUT_OF_RANGE,
+
+    @SerialName("noRoute")
+    NO_ROUTE,
+
+    @SerialName("searchOverBudget")
+    SEARCH_OVER_BUDGET,
+
+    @SerialName("stalled")
+    STALLED,
+
+    @SerialName("overTravelled")
+    OVER_TRAVELLED,
+
+    @SerialName("timedOut")
+    TIMED_OUT,
+
+    @SerialName("cancelled")
+    CANCELLED,
+
+    @SerialName("senseForgotten")
+    SENSE_FORGOTTEN,
+
+    @SerialName("threatUnnamed")
+    THREAT_UNNAMED,
+
+    @SerialName("threatGone")
+    THREAT_GONE,
+}
+
+/**
+ * The three outcomes that say the body had no threat to measure against.
+ *
+ * They are the whole of what makes the two movement reports different shapes, and both
+ * relations that read them are stated in a codec rather than in the schema because neither
+ * is expressible there: a walk names no threat, so it may not answer one of these; and a
+ * flight that ends on one carries no separation, because there was nothing to measure from.
+ */
+internal val THREAT_REFUSALS: Set<MoveOutcome> =
+    setOf(
+        MoveOutcome.SENSE_FORGOTTEN,
+        MoveOutcome.THREAT_UNNAMED,
+        MoveOutcome.THREAT_GONE,
+    )
 
 /**
  * The three vitals the game keeps for a player, never combined into one.
@@ -722,6 +553,106 @@ sealed interface BodyRequest {
             requireWithin("slot", slot, 0..MAX_SLOT_INDEX)
         }
     }
+
+    /**
+     * Walk to one block the caller names, under the caller's own bounds.
+     *
+     * The destination is the controller having decided where the agent goes, which is the
+     * whole point: what would make the body a decider is a target it chose itself, or a
+     * standing instruction to keep going somewhere. There is neither. One request walks one
+     * route once and is answered when that route ends.
+     *
+     * [tolerance] is the shape of the goal rather than a bound on effort - zero says the body
+     * must stand on the named block itself, which is a perfectly reachable request - while
+     * [timeoutMs] is a bound and so may not be zero: a caller allowing no time has not asked
+     * the body to go anywhere.
+     *
+     * [sprint] is the caller accepting the hunger sprinting costs. It is on the request and
+     * not a setting of the body's, because spending food to arrive sooner is a trade only
+     * something that knows what the agent is doing can make.
+     */
+    @Serializable
+    @SerialName("moveTo")
+    data class MoveTo(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        val destination: List<Double>,
+        val tolerance: Int,
+        val timeoutMs: Int,
+        val sprint: Boolean,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireWorldPosition("destination", destination)
+            requireWithin("tolerance", tolerance, 0..MAX_MOVE_TOLERANCE)
+            requireWithin("timeoutMs", timeoutMs, 1..MAX_MOVE_DEADLINE_MS)
+        }
+    }
+
+    /**
+     * Walk away from one entity a named sense answer reported, under the caller's own bounds.
+     *
+     * [senseId] and [entity] together are a request-scoped handle on one creature, exactly as
+     * [Eat]'s `senseId` and `slot` are one on a stack: [entity] is the index into that
+     * answer's own `entities` list, so a threat named against a sense the body has forgotten
+     * is [MoveOutcome.SENSE_FORGOTTEN] rather than resolved against whatever is nearby now.
+     * A flight names one creature and never a species, for the reason the perception
+     * contract's `Intent.Flee` does - a body that picked the thing to run from would be
+     * choosing what an agent fears.
+     *
+     * The handles differ in what they name, though, and that difference is why the outcomes
+     * differ too: a slot is a position whose contents change, while an entity is an identity
+     * that can leave the world - so this path has a [MoveOutcome.THREAT_GONE] where the eat
+     * path has a `slotChanged`.
+     *
+     * [distance] is how far away the caller wants the body to get, not where to go: the
+     * ground decides that. A body that chose the distance would be deciding how frightened
+     * to be.
+     */
+    @Serializable
+    @SerialName("flee")
+    data class Flee(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        val senseId: String,
+        val entity: Int,
+        val distance: Int,
+        val timeoutMs: Int,
+        val sprint: Boolean,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireBoundedControlId("senseId", senseId)
+            requireWithin("entity", entity, 0..MAX_ENTITY_INDEX)
+            requireWithin("distance", distance, 1..MAX_RETREAT_DISTANCE)
+            requireWithin("timeoutMs", timeoutMs, 1..MAX_MOVE_DEADLINE_MS)
+        }
+    }
+
+    /**
+     * Stop whatever movement is running, and leave the body standing still.
+     *
+     * It names no movement, because a body runs at most one at a time: a request naming which
+     * to stop would imply there could be a choice. It carries no payload for the same reason
+     * [Status] does not - there is nothing to bound about stopping.
+     *
+     * It is always accepted, even with nothing running, so a controller recovering from a
+     * lost answer can make the body's state certain in one round trip rather than having to
+     * work out first whether it needs to.
+     */
+    @Serializable
+    @SerialName("halt")
+    data class Halt(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+        }
+    }
 }
 
 /**
@@ -943,6 +874,150 @@ sealed interface BodyResponse {
             remaining?.let { requireWithin("remaining", it, 0..MAX_STACK_COUNT) }
         }
     }
+
+    /**
+     * What became of one walk, and the journey it was.
+     *
+     * **[state] is the moment the request was admitted**, as an [EatReport]'s is and for a
+     * sharper reason: a walk is answered when its route ends, which is seconds later, so the
+     * body may have died or disconnected in between. `ready` here is the state the walk was
+     * taken on in, which is where its numbers came from.
+     *
+     * Two positions and never one displacement, because a caller can subtract and a body that
+     * subtracted would be a second measurement able to disagree with the readings it was
+     * derived from. [travelled] is the one number nothing above this wire could derive: it is
+     * the distance actually walked along the route rather than the straight line between the
+     * ends, so a body that went round a wall reports the detour, and it is the number the
+     * distance bound was applied to.
+     *
+     * [outcome] is the shared [MoveOutcome] set, of which a walk may never answer one of the
+     * three [THREAT_REFUSALS]: a walk names no threat, so an answer claiming one would be
+     * reporting on a handle the request never carried. The schema admits it, so the relation
+     * is stated here and in the Node codec, as every other relation of this contract is.
+     */
+    @Serializable
+    @SerialName("moveTo")
+    data class MoveReport(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val outcome: MoveOutcome,
+        val from: List<Double>,
+        val position: List<Double>,
+        @Serializable(with = CanonicalDistance::class)
+        val travelled: Double,
+        val elapsedMs: Long,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "a walk")
+            require(outcome !in THREAT_REFUSALS) { "a walk names no threat, so it cannot answer $outcome" }
+            requireJourney(outcome, from, position, travelled, elapsedMs)
+        }
+    }
+
+    /**
+     * What became of one flight, the journey it was, and what it bought.
+     *
+     * The walk's own fields and then the two only a flight can measure, which is why they are
+     * an extension rather than a second shape: the shared prefix is what lets a run count
+     * arrivals, bounds and distances across walks and flights without translating between two
+     * vocabularies.
+     *
+     * [separation] and [separationGained] are present exactly when the outcome is not one of
+     * the three [THREAT_REFUSALS], because those three are the outcomes where the body never
+     * had a threat to measure from. A refusal reporting a separation would be claiming to have
+     * measured against a creature it never resolved, and a completed flight reporting none
+     * would leave a run unable to say whether running away worked.
+     *
+     * [separationGained] is the one signed number on this wire, and that is the point of it: a
+     * flight the threat won reads as the loss it was rather than as a distance covered. It is
+     * stated beside [separation] rather than left to be derived, because deriving it needs the
+     * separation the flight *started* at, which no other field carries.
+     */
+    @Serializable
+    @SerialName("flee")
+    data class FleeReport(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val outcome: MoveOutcome,
+        val from: List<Double>,
+        val position: List<Double>,
+        @Serializable(with = CanonicalDistance::class)
+        val travelled: Double,
+        val elapsedMs: Long,
+        val separation: Double? = null,
+        val separationGained: Double? = null,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "a flight")
+            requireJourney(outcome, from, position, travelled, elapsedMs)
+            val measured = outcome !in THREAT_REFUSALS
+            require((separation != null) == measured) {
+                "separation is present exactly when a threat was resolved"
+            }
+            require((separationGained != null) == measured) {
+                "separationGained is present exactly when a threat was resolved"
+            }
+            separation?.let { requireReal("separation", it, MAX_TRAVEL_DISTANCE) }
+            separationGained?.let { requireSignedReal("separationGained", it, MAX_TRAVEL_DISTANCE) }
+        }
+    }
+
+    /**
+     * Whether a halt found a movement to stop.
+     *
+     * [stopped] is a reading and not a verdict: the request is accepted either way, and false
+     * says the body was already standing still. That is worth reporting because a controller
+     * halting after a lost answer learns from it whether the answer it lost was the movement's
+     * own.
+     *
+     * It carries no position, deliberately. The movement it stopped is answered in its own
+     * [MoveReport] or [FleeReport] with [MoveOutcome.CANCELLED], and that answer states the
+     * journey; stating it here as well would give a run two accounts of one journey, taken a
+     * moment apart and able to disagree.
+     */
+    @Serializable
+    @SerialName("halt")
+    data class HaltReport(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val stopped: Boolean,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "a halt")
+        }
+    }
+}
+
+/**
+ * Refuses a journey whose two ends, distance or duration are not ones this wire can hold.
+ *
+ * Shared by the two movement answers rather than written twice, because the journey is the
+ * same measurement whichever goal it was made toward, and a bound stated twice is a bound one
+ * of them can drift from.
+ */
+private fun requireJourney(
+    outcome: MoveOutcome,
+    from: List<Double>,
+    position: List<Double>,
+    travelled: Double,
+    elapsedMs: Long,
+) {
+    requireWorldPosition("from", from)
+    requireWorldPosition("position", position)
+    requireReal("travelled", travelled, MAX_TRAVEL_DISTANCE)
+    require(outcome != MoveOutcome.OUT_OF_RANGE || travelled == 0.0) {
+        "outOfRange is decided before movement, so travelled must be zero"
+    }
+    requireCount("elapsedMs", elapsedMs)
 }
 
 /**

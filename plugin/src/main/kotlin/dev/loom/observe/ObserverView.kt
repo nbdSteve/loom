@@ -99,15 +99,7 @@ class ObserverView(
                     "is in the world again after a terminal DEATH. Permadeath was not enforced.",
                     ObserverLevel.ALARM,
                 )
-            // A caveat on the readings an operator is looking at, so it has to reach them while
-            // they are looking rather than only the log afterwards - the same reason
-            // `worldHoldFailed` is said. CONCERN rather than ALARM: nothing has happened to the
-            // agent, and what is in doubt is whether the numbers beside it can be trusted.
-            BodyEvent.WITNESS_DISPUTED ->
-                Note(
-                    "reported vitals or inventory the server disagrees with; its readings are suspect",
-                    ObserverLevel.CONCERN,
-                )
+            BodyEvent.WITNESS_DISPUTED -> disputedNote(record.outcome)
             // Every tick for a walking agent: the gauge and the activity already say it.
             BodyEvent.MOVED -> null
             // Several a second while an agent regenerates; the standing line carries it.
@@ -330,6 +322,49 @@ class ObserverView(
                 EventTag.LOGIN_IDENTITY_MISMATCH ->
                     Note("was refused a login: its name was claimed from another account", ObserverLevel.CONCERN)
                 else -> Note("was refused a login", ObserverLevel.CONCERN)
+            }
+
+        /**
+         * What to say about a cross-check the server disagreed with.
+         *
+         * One event name over two entirely different cross-checks, so the tag is the whole of
+         * what tells them apart - the same rule `retreatNote` and `deniedNote` obey. A vitals
+         * or inventory dispute is a caveat on the *numbers* beside the agent; a movement
+         * dispute is a caveat on *where the agent is*, which is a different thing to doubt and
+         * arrives from a different cross-check. Read as one sentence, a movement dispute
+         * reached an operator labelled as a vitals disagreement, which is a wrong statement
+         * about a run rather than a vague one.
+         *
+         * Six tags and no shorthand, because the `else` may not borrow either wording: a tag
+         * added later is a cross-check nobody has written a sentence for, and the honest line
+         * for it says only that the server disagreed. CONCERN throughout: nothing has happened
+         * to the agent, and what is in doubt is whether what the body said about it can be
+         * trusted. Said while an operator is looking rather than only in the log afterwards,
+         * for the same reason `worldHoldFailed` is.
+         */
+        fun disputedNote(outcome: String?): Note =
+            when (outcome) {
+                EventTag.DISPUTED_VITALS, EventTag.DISPUTED_INVENTORY, EventTag.DISPUTED_BOTH ->
+                    Note(
+                        "reported vitals or inventory the server disagrees with; its readings are suspect",
+                        ObserverLevel.CONCERN,
+                    )
+                EventTag.DISPUTED_POSITION ->
+                    Note(
+                        "reported a position the server disagrees with; where it is is suspect",
+                        ObserverLevel.CONCERN,
+                    )
+                EventTag.DISPUTED_JOURNEY ->
+                    Note(
+                        "reported a movement that contradicts its own arithmetic",
+                        ObserverLevel.CONCERN,
+                    )
+                EventTag.DISPUTED_MOVEMENT ->
+                    Note(
+                        "reported a movement the server disagrees with and which contradicts itself",
+                        ObserverLevel.CONCERN,
+                    )
+                else -> Note("reported something the server disagrees with", ObserverLevel.CONCERN)
             }
 
         /**

@@ -17,10 +17,25 @@
  * file replaces is two Mineflayer plugins, and a replacement is only as good as the
  * library it has to satisfy. Every case below drives it through the real loader and
  * the real registry rather than through a fake of its own.
+ *
+ * **The policy is that nothing runs of its own accord, and `physics` is where that is won
+ * or lost.** A body that can be asked to walk needs that plugin, because a player's
+ * movement in Minecraft is client-simulated - and left resident it steps, falls and writes
+ * the client's own position roughly once a second with nothing asking it to. So it is not
+ * in this process's reporting table at all: `src/movement.js` loads it and scopes both
+ * halves of it to one accepted request. What the cases below prove is the *absence* that
+ * follows - a placed body, on the ground, with no request in flight, writes nothing but the
+ * `teleport_confirm` the protocol demands, sets no control, and is never stepped - while
+ * the one thing the plugin must still do unscoped goes on working: the clientbound
+ * `position` handler is what moves `bot.entity.position` off the origin and records the
+ * facing a meal is sent with. `movement.test.js` is where the other side of the scope is
+ * proven, by counting simulated ticks and position packets across every way a request can
+ * end. The deciding half of the library - digging, placing, crafting, chatting, sleeping -
+ * is still absent, and that is what `nothing decides for the body` states.
  */
 
 const assert = require('node:assert/strict')
-const { test } = require('node:test')
+const { afterEach, test } = require('node:test')
 
 const conversions = require('mineflayer/lib/conversions')
 
@@ -29,6 +44,7 @@ const {
   QUICK_BAR_START,
   WATCHED_MS,
   clockReported,
+  disconnected,
   embodied,
   ground,
   handshaken,
@@ -45,6 +61,10 @@ const {
   stocked
 } = require('./harness')
 
+// Every case here builds a real bot, and a real bot that is not given up keeps a timer
+// this process never started. See `harness.js`'s `disconnected`.
+afterEach(disconnected)
+
 /**
  * How far a facing may drift and still be the server's own answer.
  *
@@ -60,11 +80,19 @@ const FACING_TOLERANCE_DEGREES = 1e-6
  * The actions the two reporting plugins define beside the state they are loaded for.
  *
  * `entities` brings `attack`, `mount` and `useOn` with the entity index; `simple_inventory`
- * brings `toss` and `tossStack` with the `equip` a meal is carried out through. Neither
- * plugin can be left behind, so this is the exact surface a five-operation wire has to
- * leave unreached.
+ * brings `toss` and `tossStack` with the `equip` a meal is carried out through; `physics`
+ * brings `elytraFly` with the step simulation a walk is made of. None of the three plugins
+ * can be left behind, so this is the exact surface an eight-operation wire has to leave
+ * unreached.
+ *
+ * `setControlState`, `look` and `lookAt` are deliberately not here. They are the plugin's
+ * moving half and a movement request does reach them, through the pathfinder rather than
+ * from this process directly - which is the difference between an action a request owns
+ * and an action nothing owns at all.
  */
-const UNREACHED_ACTIONS = Object.freeze(['attack', 'mount', 'toss', 'tossStack', 'useOn'])
+const UNREACHED_ACTIONS = Object.freeze([
+  'attack', 'elytraFly', 'mount', 'toss', 'tossStack', 'useOn'
+])
 
 /** Where a body stands for the case below: inside the one chunk column that is loaded. */
 const FEET = Object.freeze({ x: 8.5, y: 64, z: 8.5 })
@@ -129,20 +157,19 @@ test('a death is reported and never answered with a respawn', async () => {
   assert.deepEqual(client.writes, [])
 })
 
-test('nothing runs of its own accord and nothing unasked is written', async () => {
+test('nothing decides for the body', async () => {
   const { bot, client } = await loadedBot()
+  // Logged in, because `bot.entity` and the three vitals are the server's own report and
+  // a bot that has not seen a login has none of them to check the presence of.
   spawned(client)
-  // Spawned and left alone. Mineflayer's `physics` runs a 50 ms interval that writes a
-  // position every tick, which is this process sending autonomous movement, and `kick`
-  // respawns. Neither is loaded, and the replacement in `gamestate.js` starts no timer.
-  await settled(WATCHED_MS)
-  assert.deepEqual(client.writes, [])
+  await settled()
   // The deciding half of the library is absent. `dig`, `placeBlock` and `craft` change
-  // the world; `setControlState`, `lookAt` and `look` move the body; `physics` and
-  // `pathfinder` are the loops that would do either without being asked.
+  // the world; `chat` speaks; `openContainer` and `sleep` take over the body for a
+  // while; `creative` writes an inventory of its own choosing. None of them is reachable
+  // from a wire of eight operations, and none of them is loaded either - which is the
+  // stronger of the two statements, since it holds for an operation added later as well.
   for (const absent of [
-    'dig', 'placeBlock', 'craft', 'setControlState', 'lookAt', 'look', 'chat',
-    'openContainer', 'sleep', 'physics', 'pathfinder', 'elytraFly', 'creative'
+    'dig', 'placeBlock', 'craft', 'chat', 'openContainer', 'sleep', 'creative'
   ]) {
     assert.equal(typeof bot[absent], 'undefined', absent)
   }
@@ -160,6 +187,57 @@ test('nothing runs of its own accord and nothing unasked is written', async () =
   // `world.raycast` is what a line of sight is measured with, and it is synchronous
   // because `bot.world` is the synchronous face of prismarine-world.
   assert.equal(typeof bot.world.raycast, 'function')
+  // The moving half is present and is `physics`'s, which is what `mineflayer-pathfinder`
+  // simulates a step with. What keeps it from being autonomy is the case below.
+  for (const moving of ['setControlState', 'clearControlStates', 'look', 'lookAt']) {
+    assert.equal(typeof bot[moving], 'function', moving)
+  }
+})
+
+test('a body the server has not placed writes nothing at all', async () => {
+  const { client } = await loadedBot()
+  spawned(client)
+  // Spawned and left alone. `physics` runs a 50 ms interval from the login it just saw,
+  // and until the server sends a position of its own that interval simulates nothing and
+  // reports nothing - so a body nobody has placed and nobody has asked to walk is silent
+  // on the wire, which is the honest form of "nothing runs of its own accord". `kick`
+  // would respawn here and is not loaded; `gamestate.js` starts no timer of its own.
+  await settled(WATCHED_MS)
+  assert.deepEqual(client.writes, [])
+})
+
+test('a placed body with no request is not simulated, says nothing and sets no control', async () => {
+  const { bot, client } = await loadedBot()
+  spawned(client)
+  let ticks = 0
+  bot.on('physicsTick', () => { ticks += 1 })
+  client.emit('position', positionPacket({ ...FEET, yaw: 0, pitch: 0, teleportId: 1 }))
+  ground(bot, { level: GROUND_LEVEL })
+  await settled(WATCHED_MS)
+  // The whole of the no-autonomous-action property, over several seconds' worth of the
+  // plugin's own 50 ms interval. The protocol's own reply to the teleport is the only thing
+  // written: every packet that would say where the body's *simulation* left it is scoped to
+  // a request, and there is none.
+  assert.deepEqual(
+    client.writes.map((write) => write.name),
+    ['teleport_confirm']
+  )
+  // Not stepped either, which is the other half of the scope: `physicsTick` is emitted only
+  // while the simulation is enabled, and enabling it is a request's to do.
+  assert.equal(ticks, 0, `the body was simulated ${ticks} times unasked`)
+  // And the body did not move: a control is set from an accepted request and from nowhere
+  // else, so with no request in flight every one of them is still off.
+  for (const control of [
+    'forward', 'back', 'left', 'right', 'jump', 'sprint', 'sneak'
+  ]) {
+    assert.equal(bot.getControlState(control), false, control)
+  }
+  // The reading half of the plugin is unscoped and has to be: this is the position every
+  // perception is taken at, and it is exactly where the server said it was.
+  assert.deepEqual(
+    { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z },
+    { x: FEET.x, y: FEET.y, z: FEET.z }
+  )
 })
 
 test('the actions the reporting plugins bring with them are reached by no operation', async () => {
@@ -231,9 +309,22 @@ test('the server own position is recorded and the teleport confirmed', async () 
   // Without this handler the position never leaves (0,0,0), so every perception this
   // process reported would be taken at the world origin.
   assert.notEqual(bot.entity.position.x, 0)
-  // The confirmation is the protocol's own reply. An unconfirmed teleport leaves the
-  // server ignoring the client, and it is the only thing this handler ever writes.
-  assert.deepEqual(client.writes, [{ name: 'teleport_confirm', parameters: { teleportId: 4 } }])
+  // The confirmation is the protocol's own reply, and an unconfirmed teleport leaves the
+  // server ignoring the client. It is written exactly once, which is the fault
+  // `gamestate.js` would introduce by reading this packet as well: two handlers under one
+  // `teleportUsesOwnPacket` guard confirm one teleport twice.
+  assert.deepEqual(
+    client.writes.filter((write) => write.name === 'teleport_confirm'),
+    [{ name: 'teleport_confirm', parameters: { teleportId: 4 } }]
+  )
+  // And it is the only thing written. The plugin would follow it with a `position_look`
+  // saying where it now is, which is a report of the body's own simulation and so is a
+  // request's to make: with none in flight it is dropped at the client seam, which is the
+  // state this process was in before it could walk at all.
+  assert.deepEqual(
+    client.writes.map((write) => write.name),
+    ['teleport_confirm']
+  )
 })
 
 test('a relative position update is a step and not a place', async () => {
@@ -256,7 +347,13 @@ test('a relative position update is a step and not a place', async () => {
   // radians; the absolute pitch replaces the one held.
   assert.ok(Math.abs(conversions.toNotchianYaw(bot.entity.yaw) - 100) < FACING_TOLERANCE_DEGREES)
   assert.ok(Math.abs(conversions.toNotchianPitch(bot.entity.pitch) - 5) < FACING_TOLERANCE_DEGREES)
-  assert.deepEqual(client.writes.map((write) => write.name), ['teleport_confirm', 'teleport_confirm'])
+  // One confirmation per teleport and nothing else, which is what the case above records:
+  // the confirmation is the protocol's own reply and is never doubled, and the client's
+  // account of where its simulation left it is a request's to write.
+  assert.deepEqual(
+    client.writes.map((write) => write.name),
+    ['teleport_confirm', 'teleport_confirm']
+  )
 })
 
 test('an older server bitmask spelling of the relative flags reads the same', async () => {
@@ -294,8 +391,12 @@ test('facing follows the server so a meal does not turn the body', async () => {
   // meal, in the one place it is meant only to consume an item.
   bot.activateItem()
   await settled()
-  assert.equal(client.writes.length, 1)
-  const [{ name, parameters }] = client.writes
+  // Filtered rather than counted, because what this case is about is the one use and the
+  // rotation on it rather than the rest of the traffic - the same shape of assertion it
+  // needed while the position report was unscoped.
+  const used = client.writes.filter((write) => write.name === 'use_item')
+  assert.equal(used.length, 1)
+  const [{ name, parameters }] = used
   assert.equal(name, 'use_item')
   assert.ok(Math.abs(parameters.rotation.x - 137) < FACING_TOLERANCE_DEGREES, `yaw ${parameters.rotation.x}`)
   assert.ok(Math.abs(parameters.rotation.y - 12) < FACING_TOLERANCE_DEGREES, `pitch ${parameters.rotation.y}`)

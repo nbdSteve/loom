@@ -68,4 +68,34 @@ class ClaimAudit(
         }
         return found
     }
+
+    /**
+     * Cross-checks what a player body reported about one movement request against the server.
+     *
+     * The other thing a body reports about itself, and every rule [sawClaim] follows applies
+     * here unchanged: resolved by uuid alone, a stranger is [MovementCorroboration.NotManaged]
+     * and is recorded nowhere, only a [MovementCorroboration.Disputed] is journalled, and the
+     * comparison is [corroborateMovement]'s rather than this method's.
+     *
+     * [standing] is asked for even where the body's own arithmetic is what fails, because the
+     * answer has to say whether the position was compared at all: reading a journey fault found
+     * beside a silent server as a whole cross-check is the same mistake as reading an
+     * uncheckable slot as an agreed one. Main thread.
+     */
+    fun sawMovement(
+        uuid: UUID,
+        username: String,
+        claim: MovementClaim,
+        standing: ServerStanding,
+    ): MovementCorroboration {
+        val identity = registry.byUuid(uuid) ?: return MovementCorroboration.NotManaged
+        require(claim.agentId == identity.agentId.value) {
+            "a movement claim must name the agent registered to the witnessed player"
+        }
+        val found = corroborateMovement(claim, standing)
+        if (found is MovementCorroboration.Disputed) {
+            journal.disputedMovement(subjectOf(identity.agentId, uuid, username), found, currentTick())
+        }
+        return found
+    }
 }

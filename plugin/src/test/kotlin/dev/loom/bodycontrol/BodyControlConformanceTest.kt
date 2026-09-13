@@ -347,19 +347,28 @@ class BodyControlConformanceTest {
         val canonical = fixtureText("valid", "request-handshake.json")
         assertEquals(BODY_CONTROL_PROTOCOL_VERSION, decodeBodyRequest(canonical).protocol)
 
-        val nextGeneration = canonical.replace("\"protocol\":1", "\"protocol\":2")
+        val current = "\"protocol\":$BODY_CONTROL_PROTOCOL_VERSION"
+        val next = "\"protocol\":${BODY_CONTROL_PROTOCOL_VERSION + 1}"
+        val nextGeneration = canonical.replace(current, next)
         assertFalse(canonical == nextGeneration, "the fixture no longer states the generation to edit")
-        assertThrows<IllegalArgumentException>("a frame from generation 2 decoded") {
+        assertThrows<IllegalArgumentException>("a frame from the next generation decoded") {
             decodeBodyRequest(nextGeneration)
+        }
+        // And the generation this file superseded, which is the whole of what moving one buys: a
+        // peer written against it finds out on its first frame rather than by misreading a field.
+        val previous = canonical.replace(current, "\"protocol\":${BODY_CONTROL_PROTOCOL_VERSION - 1}")
+        assertThrows<IllegalArgumentException>("a frame from a superseded generation decoded") {
+            decodeBodyRequest(previous)
         }
     }
 
     @Test
     fun anotherGenerationIsRefusedBeforeAnyGenerationSpecificInterpretation() {
+        val other = BODY_CONTROL_PROTOCOL_VERSION + 1
         val frames =
             listOf(
-                """{"op":"future","protocol":2,"requestId":"r","agentId":"a"}""",
-                """{"op":"future","protocol":2,"requestId":"r","agentId":"a","payload":null}""",
+                """{"op":"future","protocol":$other,"requestId":"r","agentId":"a"}""",
+                """{"op":"future","protocol":$other,"requestId":"r","agentId":"a","payload":null}""",
             )
         val decoders: Map<String, (String) -> Any> =
             mapOf(
@@ -370,10 +379,10 @@ class BodyControlConformanceTest {
         for ((name, decode) in decoders) {
             for (frame in frames) {
                 val refusal =
-                    assertThrows<IllegalArgumentException>("$name interpreted a generation 2 frame") {
+                    assertThrows<IllegalArgumentException>("$name interpreted another generation") {
                         decode(frame)
                     }
-                assertEquals("protocol must be 1", refusal.message)
+                assertEquals("protocol must be $BODY_CONTROL_PROTOCOL_VERSION", refusal.message)
             }
         }
     }
@@ -452,7 +461,7 @@ class BodyControlConformanceTest {
         val canonical = fixtureText("valid", "response-status.json")
         val leaks =
             mapOf(
-                "an unparseable line" to """{"protocol":1,"agentId":"$marker",""",
+                "an unparseable line" to """{"protocol":$BODY_CONTROL_PROTOCOL_VERSION,"agentId":"$marker",""",
                 "an unknown key" to canonical.replace("{", """{"$marker":1,"""),
                 "an unmatched enum value" to canonical.replace("\"state\":\"ready\"", "\"state\":\"$marker\""),
                 "an unknown discriminator" to canonical.replace("\"op\":\"status\"", "\"op\":\"$marker\""),
@@ -783,18 +792,19 @@ class BodyControlConformanceTest {
      * not the other, which is the one thing three hand-written bindings of one wire exist
      * to prevent. Every spelling below is accepted by the schema, so this case is the JVM
      * half of an agreement the fixtures cannot state: a valid fixture must re-encode to
-     * its own bytes, and `{"protocol":1.0}` re-encodes to `{"protocol":1}`.
+     * its own bytes, and a zero-fraction spelling of the generation re-encodes to the plain one.
      */
     @Test
     fun `a whole number is read the same however it is spelled`() {
+        val generation = BODY_CONTROL_PROTOCOL_VERSION
         val spellings =
             mapOf(
-                "1" to "the plain spelling both runtimes always read",
-                "1.0" to "a zero fraction is an integer to the schema",
-                "1.00" to "and stays one however many zeroes follow",
-                "1e0" to "an exponent form kotlinx already happened to read",
-                "1E0" to "whose exponent marker may be either case",
-                "0.1e1" to "a fraction the exponent makes whole again",
+                "$generation" to "the plain spelling both runtimes always read",
+                "$generation.0" to "a zero fraction is an integer to the schema",
+                "$generation.00" to "and stays one however many zeroes follow",
+                "${generation}e0" to "an exponent form kotlinx already happened to read",
+                "${generation}E0" to "whose exponent marker may be either case",
+                "0.${generation}e1" to "a fraction the exponent makes whole again",
             )
         for ((literal, why) in spellings) {
             val line = handshakeFrameWithProtocol(literal)
@@ -821,7 +831,9 @@ class BodyControlConformanceTest {
      */
     @Test
     fun `a fraction is refused however it is spelled`() {
-        val fractional = listOf("1.5", "1.5e0", "0.5", "1.0000001", "15e-1")
+        val generation = BODY_CONTROL_PROTOCOL_VERSION
+        val fractional =
+            listOf("$generation.5", "$generation.5e0", "0.5", "$generation.0000001", "${generation * 10 + 5}e-1")
         for (literal in fractional) {
             val line = handshakeFrameWithProtocol(literal)
             assertSchemaRefuses("BodyRequest", line, "protocol $literal is not a whole number")
@@ -924,10 +936,11 @@ class BodyControlConformanceTest {
         }
 
         assertThrows<IllegalArgumentException>("a whole number that is not this generation is still refused") {
-            decodeBodyRequest(handshakeFrameWithProtocol("2.0"))
+            decodeBodyRequest(handshakeFrameWithProtocol("${BODY_CONTROL_PROTOCOL_VERSION + 1}.0"))
         }
 
-        for (quoted in listOf("\"1\"", "\"1.0\"")) {
+        val generation = BODY_CONTROL_PROTOCOL_VERSION
+        for (quoted in listOf("\"$generation\"", "\"$generation.0\"")) {
             assertThrows<IllegalArgumentException>("$quoted is a string, and a string is not a number") {
                 decodeBodyRequest(handshakeFrameWithProtocol(quoted))
             }
@@ -951,8 +964,8 @@ class BodyControlConformanceTest {
      * list of frames both suites sweep, over the same bytes, against the same stated
      * verdict and value. It is not a fixture, and deliberately not under `valid` or
      * `invalid`, for the reason the header of the accepting test above gives: a valid
-     * fixture must re-encode to its own bytes, and `{"protocol":1.0}` re-encodes to
-     * `{"protocol":1}`.
+     * fixture must re-encode to its own bytes, and a zero-fraction spelling of the
+     * generation re-encodes to the plain one.
      *
      * The schema's verdict is measured here with the real validator rather than trusted
      * from the corpus, so a case whose `accepted` is wrong fails this test instead of
@@ -1035,7 +1048,8 @@ class BodyControlConformanceTest {
         stateMs: String,
         requestsHandled: String,
     ): String =
-        """{"op":"status","protocol":1,"requestId":"req-2","agentId":"agent-alpha","state":"ready",""" +
+        """{"op":"status","protocol":$BODY_CONTROL_PROTOCOL_VERSION,"requestId":"req-2",""" +
+            """"agentId":"agent-alpha","state":"ready",""" +
             """"uptimeMs":$uptimeMs,"stateMs":$stateMs,"requestsHandled":$requestsHandled}"""
 
     /** A [BodyResponse.StatusReport] that is otherwise canonical, for the count cases above. */

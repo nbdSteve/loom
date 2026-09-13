@@ -26,9 +26,10 @@
  */
 
 const assert = require('node:assert/strict')
-const { test } = require('node:test')
+const { afterEach, test } = require('node:test')
 
-const { MAX_REMEMBERED_SENSES, SLOT_SETTLE_MS } = require('../src/eating')
+const { SLOT_SETTLE_MS } = require('../src/eating')
+const { MAX_REMEMBERED_SENSES } = require('../src/senses')
 const { MAX_REFUSALS_PER_CONNECTION } = require('../src/body')
 const {
   MAX_FOOD,
@@ -48,6 +49,7 @@ const {
   QUICK_BAR_START,
   WATCHED_MS,
   clockReported,
+  disconnected,
   embodied,
   emptied,
   ground,
@@ -63,6 +65,10 @@ const {
   stack,
   stocked
 } = require('./harness')
+
+// Every case here builds a real bot, and a real bot that is not given up keeps a timer
+// this process never started. See `harness.js`'s `disconnected`.
+afterEach(disconnected)
 
 /** Where a body stands for these cases: inside the one chunk column that is loaded. */
 const FEET = Object.freeze({ x: 8.5, y: 64, z: 8.5 })
@@ -140,9 +146,15 @@ async function standing (scene) {
   return inTheWorld(await realBot(), scene)
 }
 
-/** What this body can read, at the bounds these cases use. */
+/**
+ * What this body can read, at the bounds these cases use.
+ *
+ * The reading alone: `senseReading` answers it beside the entity handles a sense mints, and
+ * these cases are about what goes on the wire. The handles are covered where they mean
+ * something, which is a flee.
+ */
 function read (bot, { radius = RADIUS, limit = LIMIT } = {}) {
-  return senseReading(bot, { radius, limit })
+  return senseReading(bot, { radius, limit })?.reading
 }
 
 /** What a sense answer offering these slots would have remembered about them. */

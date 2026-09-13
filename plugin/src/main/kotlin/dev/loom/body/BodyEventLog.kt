@@ -371,16 +371,19 @@ enum class BodyEvent {
      * A player body's account of itself did not match the server's own reading of it.
      *
      * Evidence about the *evidence*, which is why it is its own event rather than a field on
-     * whatever the body claimed. A Mineflayer body reads its vitals and its inventory from a
-     * client, and a client reports what it was told; the server knows what is true. So a run
-     * measuring how much an agent ate, or how close to starving it came, is reading numbers
-     * only the witness can vouch for, and a run that produced one of these is reading some
-     * that nothing vouches for at all.
+     * whatever the body claimed. A Mineflayer body reads its vitals, its inventory and where it
+     * is from a client, and a client reports what it was told; the server knows what is true. So
+     * a run measuring how much an agent ate, how close to starving it came, or how far a walk
+     * actually took it, is reading numbers only the witness can vouch for, and a run that
+     * produced one of these is reading some that nothing vouches for at all.
      *
-     * Which kind of evidence disagreed is [BodyEventRecord.outcome], as one of `EventTag`'s
-     * `DISPUTED_` tags. Agreement is deliberately silent: the log would otherwise carry a
-     * record per cross-check for as long as everything worked, and the number a run wants is
-     * how often the two disagreed.
+     * Two different cross-checks reach this one event, and the tag is the whole of what tells
+     * them apart: three of `EventTag`'s `DISPUTED_` tags doubt the readings beside an agent and
+     * three doubt where a movement request left it. Which one it was is
+     * [BodyEventRecord.outcome], and anything counting them reads that rather than this prose -
+     * `ObserverView.disputedNote` is the display's side of the same rule. Agreement is
+     * deliberately silent: the log would otherwise carry a record per cross-check for as long as
+     * everything worked, and the number a run wants is how often the two disagreed.
      */
     @SerialName("witnessDisputed")
     WITNESS_DISPUTED,

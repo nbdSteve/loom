@@ -25,6 +25,7 @@ const { spawn } = require('node:child_process')
 const { test } = require('node:test')
 
 const { DEBUG_VARIABLES } = require('../src/body')
+const { PROTOCOL_VERSION } = require('../src/protocol')
 
 const ENTRY = path.join(__dirname, '..', 'bin', 'loom-body.js')
 const FAULTS = path.join(__dirname, 'fixtures', 'faults.js')
@@ -437,17 +438,17 @@ test('a correlated shutdown stops the process, promptly and with nothing left be
     await started.waitFor(/: connecting$/m)
     const session = await controlSession(port)
     const accepted = await session.ask({
-      op: 'handshake', protocol: 1, requestId: 'h1', agentId: AGENT
+      op: 'handshake', protocol: PROTOCOL_VERSION, requestId: 'h1', agentId: AGENT
     })
     assert.equal(accepted.op, 'handshake', JSON.stringify(accepted))
     const acknowledged = await session.ask({
-      op: 'shutdown', protocol: 1, requestId: 'd1', agentId: AGENT
+      op: 'shutdown', protocol: PROTOCOL_VERSION, requestId: 'd1', agentId: AGENT
     })
     assert.equal(acknowledged.op, 'shutdown', JSON.stringify(acknowledged))
     // Asked twice, because a controller that did not see the first acknowledgement
     // retries: the second is acknowledged too, and teardown does not begin again.
     const again = await session.ask({
-      op: 'shutdown', protocol: 1, requestId: 'd2', agentId: AGENT
+      op: 'shutdown', protocol: PROTOCOL_VERSION, requestId: 'd2', agentId: AGENT
     })
     assert.equal(again.op, 'shutdown', JSON.stringify(again))
     session.close()

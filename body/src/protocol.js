@@ -37,8 +37,14 @@
  *   for why the order is the whole of the guarantee.
  */
 
-/** The one protocol generation. A frame naming any other is refused, not interpreted. */
-const PROTOCOL_VERSION = 1
+/**
+ * The current protocol generation. A frame naming any other is refused, not interpreted.
+ *
+ * It moved from 1 to 2 when [MOVE_OUTCOMES] gained `searchOverBudget`, and the schema's
+ * `ControlOperation` description is the authority on why that moves a generation where adding
+ * three whole *operations* did not.
+ */
+const PROTOCOL_VERSION = 2
 
 /**
  * Longest frame this protocol will carry, in bytes.
@@ -286,6 +292,68 @@ const MAX_FOOD = 20
 /** The last tick of a day. */
 const MAX_TIME_OF_DAY = 23999
 
+/**
+ * Widest a caller may say counts as having arrived, in blocks.
+ *
+ * Half [MAX_RETREAT_DISTANCE], so a tolerance can never be so wide that every block a
+ * body could reach satisfies it and a request answers `arrived` without the body having
+ * moved at all.
+ */
+const MAX_MOVE_TOLERANCE = 16
+
+/**
+ * Longest a caller may let one movement run, in milliseconds.
+ *
+ * Below the body process's own control-connection idle window, and the *relation* is
+ * what matters rather than either number: a movement is answered on the connection that
+ * asked for it and nothing flows on that connection while the body walks, so a deadline
+ * at or past the idle window would let the socket's own timer close the channel before
+ * the answer could be written. The controller would then see a dropped connection where
+ * this contract promises exactly one answer per request. This module may not import
+ * `body.js`, which owns the idle window, so each states its own number and a test pins
+ * the ordering.
+ */
+const MAX_MOVE_DEADLINE_MS = 20000
+
+/**
+ * Furthest from a named threat a flee may ask the body to get, in blocks.
+ *
+ * The same number the body's own movement reach is, because a retreat is a walk with the
+ * goal inverted and nothing about running away may buy a body a wider reach than walking
+ * does. The reach itself is not here: it is measured against the body's live position,
+ * which a codec never sees, so it lives where it is enforced and a test pins the two
+ * numbers equal.
+ */
+const MAX_RETREAT_DISTANCE = 32
+
+/**
+ * Highest entity index a flee may name.
+ *
+ * One below [MAX_SENSE_ENTITIES], so every index this codec admits could name an entity
+ * of some legal sense answer. An index past the end of the answer that was in fact named
+ * is a `threatUnnamed` outcome rather than a malformed field, which is the same division
+ * of labour a slot index and `slotUnnamed` already have.
+ */
+const MAX_ENTITY_INDEX = 23
+
+/**
+ * Widest distance a movement answer may report, in blocks.
+ *
+ * Derived from the full diagonal between two accepted [WorldPosition] values, plus the
+ * final bounded accumulated movement sample. A request may have accumulated the whole
+ * 128-block travel allowance immediately before its last physics sample moves between
+ * two accepted positions, and the report must still carry that truthful measurement.
+ * One ceiling is used for `travelled`, `separation` and [SeparationChange] so the two
+ * codecs and every movement report share one generation-2 distance domain.
+ */
+const MAX_FINAL_BOUNDED_TRAVEL = MAX_RETREAT_DISTANCE * 4
+const WORLD_POSITION_DIAMETER = Math.hypot(
+  ...Array(WORLD_POSITION_AXES).fill(MAX_WORLD_COORDINATE * 2)
+)
+const MAX_TRAVEL_DISTANCE = Math.ceil(
+  WORLD_POSITION_DIAMETER + MAX_FINAL_BOUNDED_TRAVEL
+)
+
 /** The one outcome that consumed something, and so the one that reports what. */
 const OUTCOME_EATEN = 'eaten'
 
@@ -321,6 +389,22 @@ const SENSE_FIELDS = [
 /** What an eat answer carries beyond the envelope, in declaration order. */
 const EAT_FIELDS = ['outcome', 'vitals', 'what', 'remaining']
 
+/** What a walk answer carries beyond the envelope, in declaration order. */
+const MOVE_FIELDS = ['outcome', 'from', 'position', 'travelled', 'elapsedMs']
+
+/**
+ * What a flight answer carries beyond the envelope, in declaration order.
+ *
+ * A walk's fields and then the two a flight alone can measure, which is why they are
+ * spelled as an extension rather than as a second list: the shared prefix is what lets a
+ * run count arrivals and bounds across walks and flights without translating between two
+ * shapes.
+ */
+const FLEE_FIELDS = [...MOVE_FIELDS, 'separation', 'separationGained']
+
+/** What a halt answer carries beyond the envelope, in declaration order. */
+const HALT_FIELDS = ['stopped']
+
 /** The envelope every request shares, before its own payload. */
 const REQUEST_ENVELOPE = ['protocol', 'requestId', 'agentId', 'op']
 
@@ -349,14 +433,24 @@ const LIFECYCLE_STATES = Object.freeze([
 /**
  * Every operation a controller may ask for.
  *
- * This list grows and never changes, which is what lets the generation stay at 1: a
- * controller of this generation that meets an operation it does not know is a
- * controller that will never send one, and a body of this generation meeting an
- * operation it does not know refuses it as `unknownOperation` - which is the answer a
- * newer controller needs anyway. Renaming or removing one, or changing what an existing
- * one carries, is what would move the generation.
+ * This list grows and never changes, which is why adding three operations did not move
+ * the generation: a controller that does not know an operation will never send it, and a
+ * body that does not know one refuses it as `unknownOperation` - which is the answer a
+ * newer controller needs anyway. Generation 2 was instead introduced when the body-side
+ * [MOVE_OUTCOMES] set grew, because a controller can receive an outcome it did not ask
+ * for by name. Renaming or removing an operation, or changing what an existing one
+ * carries, would move the generation too.
  */
-const OPERATIONS = Object.freeze(['handshake', 'status', 'shutdown', 'sense', 'eat'])
+const OPERATIONS = Object.freeze([
+  'handshake',
+  'status',
+  'shutdown',
+  'sense',
+  'eat',
+  'moveTo',
+  'flee',
+  'halt'
+])
 
 /** Every refusal, as a closed set. */
 const ERROR_CODES = Object.freeze([
@@ -395,6 +489,49 @@ const EAT_OUTCOMES = Object.freeze([
   'reserveFull',
   'slotInaccessible'
 ])
+
+/**
+ * Every way a movement can end, as a closed set shared by a walk and a flight.
+ *
+ * One arrival, six bounds and one cancellation, then three facts about a named threat
+ * that only a flight can reach. `noRoute` is the ground's own answer and `stalled` is a
+ * route that was found and then abandoned, which are opposite facts about the world;
+ * `overTravelled` and `timedOut` are the distance bound and the duration bound, which
+ * fail for unrelated reasons and so are never one outcome. `cancelled` is an outcome
+ * rather than a refusal, because a halted movement did happen and its displacement is
+ * worth reporting.
+ *
+ * `searchOverBudget` is the sixth bound and is kept apart from `noRoute` for the sharpest
+ * reason on this list: one is a fact about the world and the other is a fact about *this
+ * process*. The ground refusing a route and Loom refusing to look any longer are opposite
+ * things for a mind to do something about, and they were one outcome until a body reported
+ * ground it could have walked to as ground that refused it.
+ */
+const MOVE_OUTCOMES = Object.freeze([
+  'arrived',
+  'outOfRange',
+  'noRoute',
+  'searchOverBudget',
+  'stalled',
+  'overTravelled',
+  'timedOut',
+  'cancelled',
+  'senseForgotten',
+  'threatUnnamed',
+  'threatGone'
+])
+
+/**
+ * The three outcomes that say the body had no threat to measure against.
+ *
+ * They are the whole of what makes the two movement reports different shapes, and both
+ * relations are checked here because neither is expressible in the schema. A walk names
+ * no threat, so none of them may answer one; a flight that ends on one carries no
+ * separation, because there was nothing to measure from.
+ */
+const THREAT_REFUSALS = Object.freeze(
+  new Set(['senseForgotten', 'threatUnnamed', 'threatGone'])
+)
 
 /** JSON's four whitespace characters, which may sit between a name and its colon. */
 const JSON_WHITESPACE = Object.freeze(new Set([' ', '\t', '\n', '\r']))
@@ -812,6 +949,94 @@ function isEatReport (raw, literals) {
 }
 
 /**
+ * Whether `raw` carries the journey every movement answer states, whichever it is.
+ *
+ * The two positions are stated rather than one displacement, because a caller can
+ * subtract them and a body that subtracted for it would be a second measurement able to
+ * disagree with the sense answers on either side. `travelled` is the exception and the
+ * reason there is one: it is the length of the route walked rather than a straight line,
+ * so nothing above this wire could derive it, and it is the number the distance bound was
+ * in fact applied to.
+ */
+function isJourney (raw, literals) {
+  return isWorldPosition(raw.from) &&
+    isWorldPosition(raw.position) &&
+    isReal(raw.travelled, 0, MAX_TRAVEL_DISTANCE) &&
+    isCount(raw.elapsedMs) &&
+    spellsWholeNumber(literals, 'elapsedMs')
+}
+
+/**
+ * Whether `raw` is a whole walk answer.
+ *
+ * The relation is that a walk never answers with a threat refusal, and it is here rather
+ * than in the schema on purpose: narrowing the enum for this variant would give the wire
+ * two movement outcome sets to keep in step, where one shared set is what lets a run
+ * count arrivals and bounds across walks and flights alike. A walk names no threat, so a
+ * walk claiming to have lost one has confused itself with a flight.
+ */
+function isMoveReport (raw, literals) {
+  if (!MOVE_OUTCOMES.includes(raw.outcome)) return false
+  if (THREAT_REFUSALS.has(raw.outcome)) return false
+  if (!isJourney(raw, literals)) return false
+  return raw.outcome !== 'outOfRange' || raw.travelled === 0
+}
+
+/**
+ * Whether `raw` is a whole flight answer.
+ *
+ * `separation` and `separationGained` are present exactly when the outcome is not a
+ * threat refusal, which is one relation rather than two optional fields. Each of the
+ * three refusals is the body saying it had no threat to measure against, so a separation
+ * beside one would be a distance from nothing; and a flight that did run without saying
+ * what it gained is the one answer a mind cannot learn from, since distance covered is
+ * not distance gained.
+ *
+ * `separationGained` is signed, and that is the point of it: a negative value says the
+ * threat closed faster than the body ran, which is a flight that failed while every other
+ * field says it went somewhere.
+ */
+function isFleeReport (raw, literals) {
+  if (!MOVE_OUTCOMES.includes(raw.outcome)) return false
+  if (!isJourney(raw, literals)) return false
+  if (raw.outcome === 'outOfRange' && raw.travelled !== 0) return false
+  const measured = !THREAT_REFUSALS.has(raw.outcome)
+  if (measured !== (raw.separation !== undefined)) return false
+  if (measured !== (raw.separationGained !== undefined)) return false
+  if (!measured) return true
+  return isReal(raw.separation, 0, MAX_TRAVEL_DISTANCE) &&
+    isReal(raw.separationGained, -MAX_TRAVEL_DISTANCE, MAX_TRAVEL_DISTANCE)
+}
+
+/**
+ * Whether `raw` is a whole halt answer.
+ *
+ * It carries one boolean and deliberately no position and no measurement: those belong to
+ * the request that did the walking, and stating them twice would give a run two accounts
+ * of one journey.
+ */
+function isHaltReport (raw) {
+  return typeof raw.stopped === 'boolean'
+}
+
+/**
+ * Every answer a `ready` body gives, as its shape check beside the fields it may carry.
+ *
+ * The pair is what keeps the two from drifting: the fields a decode allows and the fields
+ * the check reads are the same entry, so an answer widened on one side without the other
+ * either refuses a legal frame or admits an unknown key, rather than doing so on one
+ * operation while the rest stay right. The five here are exactly the operations whose
+ * answer only a live, spawned body can give.
+ */
+const REPORT_SHAPES = Object.freeze({
+  sense: { holds: isSenseReport, fields: SENSE_FIELDS },
+  eat: { holds: isEatReport, fields: EAT_FIELDS },
+  moveTo: { holds: isMoveReport, fields: MOVE_FIELDS },
+  flee: { holds: isFleeReport, fields: FLEE_FIELDS },
+  halt: { holds: isHaltReport, fields: HALT_FIELDS }
+})
+
+/**
  * The payload `raw` carries beyond the envelope, or undefined when it is not coherent.
  *
  * The keys of what comes back are what the unknown-key check then allows, so a payload
@@ -821,6 +1046,11 @@ function isEatReport (raw, literals) {
  * A radius or a limit of zero is refused rather than answered with nothing: a caller
  * asking to see no blocks or no entities has not asked a question, and a sense that
  * reported an empty world would look exactly like one taken somewhere empty.
+ *
+ * A movement's `timeoutMs` of zero is refused for the same shape of reason: a caller
+ * allowing no time has not asked the body to go anywhere. A `tolerance` of zero is not,
+ * because it is the shape of the goal rather than a bound on effort - it says the body
+ * must stand on the named block itself, which is a perfectly reachable request.
  */
 function requestPayload (raw, literals) {
   if (raw.op === 'sense') {
@@ -836,7 +1066,44 @@ function requestPayload (raw, literals) {
       spellsWholeNumber(literals, 'slot')
     return bounded ? { senseId: raw.senseId, slot: raw.slot } : undefined
   }
+  if (raw.op === 'moveTo') {
+    const bounded = isWorldPosition(raw.destination) &&
+      isBoundedInteger(raw.tolerance, 0, MAX_MOVE_TOLERANCE) &&
+      spellsWholeNumber(literals, 'tolerance') &&
+      isMoveDeadline(raw, literals) &&
+      typeof raw.sprint === 'boolean'
+    if (!bounded) return undefined
+    return {
+      destination: raw.destination,
+      tolerance: raw.tolerance,
+      timeoutMs: raw.timeoutMs,
+      sprint: raw.sprint
+    }
+  }
+  if (raw.op === 'flee') {
+    const bounded = isControlId(raw.senseId) &&
+      isBoundedInteger(raw.entity, 0, MAX_ENTITY_INDEX) &&
+      spellsWholeNumber(literals, 'entity') &&
+      isBoundedInteger(raw.distance, 1, MAX_RETREAT_DISTANCE) &&
+      spellsWholeNumber(literals, 'distance') &&
+      isMoveDeadline(raw, literals) &&
+      typeof raw.sprint === 'boolean'
+    if (!bounded) return undefined
+    return {
+      senseId: raw.senseId,
+      entity: raw.entity,
+      distance: raw.distance,
+      timeoutMs: raw.timeoutMs,
+      sprint: raw.sprint
+    }
+  }
   return {}
+}
+
+/** Whether `raw` carries a movement deadline a body may be asked to run under. */
+function isMoveDeadline (raw, literals) {
+  return isBoundedInteger(raw.timeoutMs, 1, MAX_MOVE_DEADLINE_MS) &&
+    spellsWholeNumber(literals, 'timeoutMs')
 }
 
 /**
@@ -1021,25 +1288,18 @@ function decodeResponse (line) {
       ? { ok: true, response: raw }
       : { ok: false, code: 'invalidField' }
   }
-  // A sense and an eat are answers only a live, spawned body can give, so the state is
-  // fixed at `ready` for both: any other state is a `notReady` refusal instead, and an
-  // answer claiming to have read a world from a body that is not in one is a lie about
-  // where its numbers came from. The state an answer names is the state the request was
-  // *admitted under*, which is the same turn for a sense and an earlier one for an eat -
-  // see `eatReport`.
-  if (raw.op === 'sense') {
-    if (raw.state !== READY || !isSenseReport(raw, literals)) {
+  // Every answer below is one only a live, spawned body can give, so the state is fixed
+  // at `ready` for all five: any other state is a `notReady` refusal instead, and an
+  // answer claiming to have read a world - or walked one - from a body that is not in one
+  // is a lie about where its numbers came from. The state an answer names is the state the
+  // request was *admitted under*, which is the same turn for a sense and an earlier one
+  // for everything else, most sharply for a movement: see `eatReport` and `moveReport`.
+  const reported = REPORT_SHAPES[raw.op]
+  if (reported !== undefined) {
+    if (raw.state !== READY || !reported.holds(raw, literals)) {
       return { ok: false, code: 'invalidField' }
     }
-    return noUnknownKeys(raw, [...envelope, ...SENSE_FIELDS])
-      ? { ok: true, response: raw }
-      : { ok: false, code: 'invalidField' }
-  }
-  if (raw.op === 'eat') {
-    if (raw.state !== READY || !isEatReport(raw, literals)) {
-      return { ok: false, code: 'invalidField' }
-    }
-    return noUnknownKeys(raw, [...envelope, ...EAT_FIELDS])
+    return noUnknownKeys(raw, [...envelope, ...reported.fields])
       ? { ok: true, response: raw }
       : { ok: false, code: 'invalidField' }
   }
@@ -1252,6 +1512,18 @@ function canonicalResponse (frame) {
     if (frame.what !== undefined) canonical.what = frame.what
     if (frame.remaining !== undefined) canonical.remaining = frame.remaining
   }
+  if (frame.op === 'moveTo' || frame.op === 'flee') {
+    canonical.outcome = frame.outcome
+    canonical.from = [...frame.from]
+    canonical.position = [...frame.position]
+    canonical.travelled = frame.travelled
+    canonical.elapsedMs = frame.elapsedMs
+  }
+  if (frame.op === 'flee' && frame.separation !== undefined) {
+    canonical.separation = frame.separation
+    canonical.separationGained = frame.separationGained
+  }
+  if (frame.op === 'halt') canonical.stopped = frame.stopped
   return canonical
 }
 
@@ -1393,6 +1665,91 @@ function eatReport ({ requestId, agentId, outcome, vitals, what, remaining }) {
   return checkedResponse(frame)
 }
 
+/**
+ * The answer to a walk: how it ended, and the journey it made getting there.
+ *
+ * **`state` is the moment the request was admitted**, as an eat's is and for a sharper
+ * reason: a walk is answered when its route ends, which is seconds later, so the body may
+ * have died or disconnected in between. `ready` here says the body was live and spawned
+ * when it took the walk on, which is where `from` and every number beside it came from.
+ *
+ * The journey is stated as two positions and a route length rather than as a displacement,
+ * because a controller can subtract two positions and cannot reconstruct the walked
+ * length from them - and `travelled` is the number the distance bound was applied to.
+ */
+function moveReport ({ requestId, agentId, outcome, from, position, travelled, elapsedMs }) {
+  return checkedResponse({
+    op: 'moveTo',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    outcome,
+    from,
+    position,
+    travelled,
+    elapsedMs
+  })
+}
+
+/**
+ * The answer to a flight: a walk's journey, and what it gained on the named threat.
+ *
+ * `separation` and `separationGained` are passed together or not at all, which is the
+ * shape of the one relation this frame carries: they are absent exactly when the outcome
+ * says the body had no threat to measure against. The gain is signed on purpose, so a
+ * flight the threat won is reported as the loss it was rather than as the distance the
+ * body happened to cover.
+ */
+function fleeReport ({
+  requestId,
+  agentId,
+  outcome,
+  from,
+  position,
+  travelled,
+  elapsedMs,
+  separation,
+  separationGained
+}) {
+  const frame = {
+    op: 'flee',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    outcome,
+    from,
+    position,
+    travelled,
+    elapsedMs
+  }
+  if (separation !== undefined) {
+    frame.separation = separation
+    frame.separationGained = separationGained
+  }
+  return checkedResponse(frame)
+}
+
+/**
+ * The answer to a halt: whether anything was in fact moving.
+ *
+ * `false` is not a refusal, which is why this is a report rather than an error frame: a
+ * controller that halts twice, or halts after a route has already ended, is asking what
+ * state the body is in. The movement that was stopped is answered on its own request,
+ * with outcome `cancelled`.
+ */
+function haltReport ({ requestId, agentId, stopped }) {
+  return checkedResponse({
+    op: 'halt',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    stopped
+  })
+}
+
 /** The answer to a shutdown, written before anything is closed. */
 function shutdownAccepted ({ requestId, agentId }) {
   return checkedResponse({
@@ -1448,6 +1805,11 @@ module.exports = {
   MAX_HEALTH,
   MAX_FOOD,
   MAX_TIME_OF_DAY,
+  MAX_MOVE_TOLERANCE,
+  MAX_MOVE_DEADLINE_MS,
+  MAX_RETREAT_DISTANCE,
+  MAX_ENTITY_INDEX,
+  MAX_TRAVEL_DISTANCE,
   ID_PATTERN,
   USERNAME_PATTERN,
   RESOURCE_NAME_PATTERN,
@@ -1455,6 +1817,8 @@ module.exports = {
   OPERATIONS,
   ERROR_CODES,
   EAT_OUTCOMES,
+  MOVE_OUTCOMES,
+  THREAT_REFUSALS,
   isControlId,
   isUsername,
   isResourceName,
@@ -1466,6 +1830,9 @@ module.exports = {
   statusReport,
   senseReport,
   eatReport,
+  moveReport,
+  fleeReport,
+  haltReport,
   shutdownAccepted,
   refusal
 }

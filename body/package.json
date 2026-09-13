@@ -19,7 +19,8 @@
     "check": "npm run lint && npm test"
   },
   "dependencies": {
-    "mineflayer": "4.38.0"
+    "mineflayer": "4.38.0",
+    "mineflayer-pathfinder": "2.4.5"
   },
   "devDependencies": {
     "standard": "17.1.2"

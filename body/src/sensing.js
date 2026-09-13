@@ -55,6 +55,9 @@ function realWithin (value, least, most) {
  * A world coordinate is bounded because the wire bounds it, and a position outside that
  * bound is not a position this body can state - not a position it may round into range,
  * which would put a place the agent is not on the record.
+ *
+ * Exported because a movement report states four positions of its own, and reading them any
+ * other way would give one wire one field with two bounds on it.
  */
 function positionOf (point) {
   if (point === null || point === undefined) return undefined
@@ -191,17 +194,34 @@ function describable (bot, eyes) {
  * Ties keep the order the library's own entity table offered, so the same scene answers
  * the same way twice. The order is not checked by either codec on purpose: it is pinned
  * where it is decided, which is here.
+ *
+ * **`entityOffers` comes back beside the list and never inside it.** A controller names a
+ * creature by its *place* in the reported list, so what makes that handle mean something
+ * later is the client library's id and exact object for the thing at each place. The id can
+ * be reused after a creature leaves, while the object identity cannot; retaining both is what
+ * prevents a later creature at the same id from being accepted as the one the controller saw.
+ * Both are private library details and may not reach the wire. Kept in the same order and cut
+ * by the same slice, the offers are the handles the coordinator resolves through; see
+ * `senses.js` for how long one lasts.
  */
 function nearest (bot, eyes, { radius, limit }) {
   const within = describable(bot, eyes)
     .filter((candidate) => candidate.away <= radius)
     .sort((earlier, later) => earlier.away - later.away)
-  const entities = within.slice(0, limit).map((candidate) => ({
+  const reported = within.slice(0, limit)
+  const entities = reported.map((candidate) => ({
     what: candidate.entity.name,
     position: candidate.position,
     visible: inSight(bot, eyes, candidate.aim)
   }))
-  return { entities, entitiesOmitted: within.length - entities.length }
+  return {
+    entities,
+    entitiesOmitted: within.length - entities.length,
+    entityOffers: reported.map((candidate) => ({
+      id: candidate.entity.id,
+      entity: candidate.entity
+    }))
+  }
 }
 
 /**
@@ -238,13 +258,20 @@ function inventoryOf (bot) {
 }
 
 /**
- * Everything one sense answer carries, or undefined when the body cannot state all of
- * it.
+ * Everything one sense answer carries and the handles it mints, or undefined when the body
+ * cannot state all of it.
  *
  * `ground` is the one field allowed to be missing on its own, because the contract makes
  * it optional and says what its absence means. Everything else is required, so a reading
  * the body does not have makes the whole answer a refusal rather than a frame with a
  * guess in it.
+ *
+ * **The reading and the handles come back as two named things, deliberately.** `reading`
+ * is exactly what the wire carries and `entityOffers` is exactly what may not, so the seam is
+ * in the shape rather than in a caller's discipline: spread into one object, the private ids
+ * and entity objects would have travelled toward the wire the day someone passed the whole
+ * answer to an encoder. The contract's frames are built field by field from named properties.
+ * One reading, two consumers, and no way to hand the wrong one to the wrong one by accident.
  */
 function senseReading (bot, { radius, limit }) {
   const standing = bot.entity === null || bot.entity === undefined
@@ -258,16 +285,17 @@ function senseReading (bot, { radius, limit }) {
   if (time === undefined || inventory === undefined) return undefined
   if (!realWithin(bot.entity.eyeHeight, 0, MAX_WORLD_COORDINATE)) return undefined
   const eyes = standing.offset(0, bot.entity.eyeHeight, 0)
-  const { entities, entitiesOmitted } = nearest(bot, eyes, { radius, limit })
+  const { entities, entitiesOmitted, entityOffers } = nearest(bot, eyes, { radius, limit })
   const reading = { position, vitals, time, entities, entitiesOmitted, inventory }
   const ground = footingOf(bot, standing)
   if (ground !== undefined) reading.ground = ground
-  return reading
+  return { reading, entityOffers }
 }
 
 module.exports = {
   clockOf,
   inventoryOf,
+  positionOf,
   senseReading,
   vitalsOf
 }

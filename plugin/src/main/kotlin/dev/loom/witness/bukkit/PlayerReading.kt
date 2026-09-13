@@ -1,5 +1,5 @@
 /*
- * Reading a managed player's vitals and inventory off the server itself.
+ * Reading a managed player's vitals, inventory and position off the server itself.
  *
  * The whole engine half of the cross-check, and deliberately nothing more: it translates
  * and it does not compare, because comparing needs no server and belongs where a desk
@@ -19,9 +19,11 @@
  */
 package dev.loom.witness.bukkit
 
+import dev.loom.witness.ObservedPosition
 import dev.loom.witness.ObservedStack
 import dev.loom.witness.ObservedVitals
 import dev.loom.witness.ServerReading
+import dev.loom.witness.ServerStanding
 import dev.loom.witness.isCorroborableSlot
 import dev.loom.witness.windowSlotOfBukkitSlot
 import org.bukkit.entity.Player
@@ -44,6 +46,28 @@ internal fun serverReadingOf(player: Player): ServerReading =
             ),
         inventory = heldStacksOf(player),
     )
+
+/**
+ * The server's own standing of a managed player, for a movement cross-check to read.
+ *
+ * Takes a nullable [Player] because that is what `Bukkit.getPlayer(uuid)` answers, and an absent
+ * player is one of the three standings rather than a case every caller has to remember: a body
+ * that quit mid-route leaves no position to compare, and the reading is what says so.
+ *
+ * A dead player is reported as dead rather than as its position, though the engine will happily
+ * give one. That position is where the player fell, with a client on the death screen, so
+ * comparing a movement report against it would dispute a journey that ended in a death - which
+ * is a fact about the run rather than a body that lied.
+ *
+ * The location is read once. Bukkit answers a fresh snapshot per call, so three reads of one
+ * player would be three positions and the record would name a place the player never was.
+ */
+internal fun playerStandingOf(player: Player?): ServerStanding =
+    when {
+        player == null -> ServerStanding.PlayerAbsent
+        player.isDead -> ServerStanding.PlayerDead
+        else -> player.location.let { ServerStanding.Standing(ObservedPosition(x = it.x, y = it.y, z = it.z)) }
+    }
 
 /**
  * Every occupied slot of [player]'s inventory the server can address, in window numbering.

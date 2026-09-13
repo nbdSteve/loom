@@ -188,6 +188,21 @@ class WitnessJournal(
         tick: Long,
     ) = write(subject, BodyEvent.WITNESS_DISPUTED, detailOf(dispute), tick, tagOf(dispute))
 
+    /**
+     * Records that a body's account of a movement request did not match the server's.
+     *
+     * The same [BodyEvent.WITNESS_DISPUTED] as [disputed], because it is the same kind of
+     * statement about the same kind of evidence and the tag is what says which: a second event
+     * would make anything counting a run's disagreements read two names for one thing, and
+     * `ObserverView.noteFor` is total over [BodyEvent] so a new one would also need a line the
+     * display has no more to say on.
+     */
+    fun disputedMovement(
+        subject: WitnessSubject,
+        dispute: MovementCorroboration.Disputed,
+        tick: Long,
+    ) = write(subject, BodyEvent.WITNESS_DISPUTED, detailOf(dispute), tick, tagOf(dispute))
+
     private fun write(
         subject: WitnessSubject,
         event: BodyEvent,

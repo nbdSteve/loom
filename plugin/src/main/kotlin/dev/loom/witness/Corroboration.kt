@@ -349,5 +349,11 @@ private fun inventoryWords(fault: InventoryFault): String =
                 "server holds ${fault.held.count} ${fault.held.what}"
     }
 
-/** Fixed to two places under [Locale.ROOT], so a record reads the same on every machine. */
-private fun twoPlaces(value: Double): String = String.format(Locale.ROOT, "%.2f", value)
+/**
+ * Fixed to two places under [Locale.ROOT], so a record reads the same on every machine.
+ *
+ * Shared with `MovementCorroboration.kt` rather than restated there, because the two files
+ * write the same kind of record for the same reader: a second copy would be a second place a
+ * default locale could creep back into a number an operator compares across two records.
+ */
+internal fun twoPlaces(value: Double): String = String.format(Locale.ROOT, "%.2f", value)

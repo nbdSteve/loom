@@ -189,6 +189,47 @@ class ObserverViewTest {
     }
 
     @Test
+    @DisplayName("a disputed cross-check says which kind of evidence the server disagreed with")
+    fun everyDisputeSaysWhichCrossCheckFoundIt() {
+        // One event name over two entirely different cross-checks. A vitals dispute doubts the
+        // numbers beside the agent; a movement dispute doubts where the agent is. Read as one
+        // sentence, every movement dispute reached an operator labelled as a vitals
+        // disagreement - a wrong statement about the run rather than a vague one.
+        val vitals = spoken(record(BodyEvent.WITNESS_DISPUTED).copy(outcome = EventTag.DISPUTED_VITALS))
+        assertEquals(
+            "reported vitals or inventory the server disagrees with; its readings are suspect",
+            vitals.text,
+        )
+        assertEquals(ObserverLevel.CONCERN, vitals.level)
+
+        val both = spoken(record(BodyEvent.WITNESS_DISPUTED).copy(outcome = EventTag.DISPUTED_BOTH))
+        assertEquals(vitals.text, both.text, "both kinds of reading are still readings")
+
+        val movementTags =
+            listOf(EventTag.DISPUTED_POSITION, EventTag.DISPUTED_JOURNEY, EventTag.DISPUTED_MOVEMENT)
+        for (tag in movementTags) {
+            val note = spoken(record(BodyEvent.WITNESS_DISPUTED).copy(outcome = tag))
+
+            assertFalse(note.text.contains("vitals"), "$tag must not read as a vitals dispute: ${note.text}")
+            assertFalse(note.text.contains("inventory"), "$tag must not read as an inventory dispute")
+            assertTrue(note.text.contains("movement") || note.text.contains("position"), note.text)
+            assertEquals(ObserverLevel.CONCERN, note.level)
+        }
+        // Three sentences for three faults, because which of them it was is what an operator
+        // would go and look at: a position the server disagrees with is a simulation that has
+        // diverged, and a journey fault is a report contradicting its own arithmetic.
+        assertEquals(
+            movementTags.size,
+            movementTags.map { spoken(record(BodyEvent.WITNESS_DISPUTED).copy(outcome = it)).text }.distinct().size,
+        )
+
+        // A tag nobody has written a sentence for may borrow neither wording, because it is a
+        // cross-check this view has never heard of.
+        val later = spoken(record(BodyEvent.WITNESS_DISPUTED).copy(outcome = "disputedSomethingElse"))
+        assertEquals("reported something the server disagrees with", later.text)
+    }
+
+    @Test
     @DisplayName("a managed player arriving and leaving is said plainly, and a quit is not a death")
     fun aPlayerBodyComingAndGoingIsNotAnAlarm() {
         val joined = spoken(record(BodyEvent.WITNESS_JOINED))

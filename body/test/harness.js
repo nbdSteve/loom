@@ -23,6 +23,9 @@
  * makes has to be observable, which a socket does not offer. Mineflayer takes such a
  * client itself, through `options.client`, so nothing about the loader or the plugins
  * is stubbed.
+ *
+ * **A suite that builds a real bot must register `afterEach(disconnected)`.** Every one
+ * of them does, and the reason it is not optional is in that function's own comment.
  */
 
 const assert = require('node:assert/strict')
@@ -34,6 +37,8 @@ const mineflayer = require('mineflayer')
 const { Vec3 } = require('vec3')
 
 const { botOptionsFor, createBody } = require('../src/body')
+const { PROTOCOL_VERSION } = require('../src/protocol')
+const { installMovement } = require('../src/movement')
 
 const AGENT = 'loom.test.body'
 const OTHER_AGENT = 'loom.test.other'
@@ -75,12 +80,19 @@ const QUICK_BAR_START = 36
  * Mineflayer does, and `endDelayMs` is what a real socket close costs. A fake that
  * ended instantly made every shutdown order look correct, because a synchronous
  * client always finishes before a socket that has to be closed over the network.
+ *
+ * `loadPlugin` records rather than injects, and `loaded` is what a test reads it back
+ * from. A third-party plugin is loaded through that method and not through the option
+ * table, so the two halves of the plugin policy are observable in two different places -
+ * `created.plugins` for the library's own, `bot.loaded` for anything above them.
  */
 function fakeBot () {
   const bot = new EventEmitter()
   bot.subscribed = []
+  bot.loaded = []
   bot.ends = 0
   bot.endDelayMs = 0
+  bot.loadPlugin = (plugin) => { bot.loaded.push(plugin) }
   const on = bot.on.bind(bot)
   bot.on = (event, listener) => {
     bot.subscribed.push(event)
@@ -223,9 +235,15 @@ function promptly (waited, what, ms = 5_000) {
   ]).finally(() => clearTimeout(timer))
 }
 
-/** A request of this generation, correlated and addressed to the body under test. */
+/**
+ * A request of the current generation, correlated and addressed to the body under test.
+ *
+ * The generation is read from the codec rather than written here, so a suite never has to be
+ * edited when it moves - and a case whose subject is a *refused* generation states its own
+ * number, which is the only place one belongs.
+ */
 function request (op, requestId, overrides = {}) {
-  return { op, protocol: 1, requestId, agentId: AGENT, ...overrides }
+  return { op, protocol: PROTOCOL_VERSION, requestId, agentId: AGENT, ...overrides }
 }
 
 /** A connected controller that has agreed the protocol generation. */
@@ -256,12 +274,46 @@ function fakeClient () {
   return client
 }
 
+/** Every bot [realBot] has built and whose client has not ended yet. */
+const openBots = new Set()
+
 /**
- * A real bot, loaded with this process's own options, with its plugins injected.
+ * Ends every bot a suite has opened, and is what an `afterEach(disconnected)` calls.
+ *
+ * A suite that builds a real bot must give it up, and the reason is a timer rather than
+ * tidiness. Mineflayer's `physics` plugin starts a 50 ms interval on the bot's own
+ * `login` event and clears it only from `end`, so a case that logs a bot in and walks
+ * away leaves that interval behind and the test process never exits. That arrives as the
+ * whole *file* timing out rather than as a failing case, and a timed-out file prints no
+ * assertion diagnostics at all - so one leaked bot hides every real failure beside it.
+ *
+ * Tracked here rather than at each call site so that a case which throws still gives its
+ * bot up, and `end` rather than `quit` for the reason `body.js`'s own `quitBot` gives:
+ * the plugin that defines `quit` is not loaded, and what the plugins clean up on is the
+ * client's `end`.
+ */
+function disconnected () {
+  for (const bot of openBots) bot.end()
+  openBots.clear()
+}
+
+/**
+ * A real bot, loaded with this process's own options and its own movement seam, with every
+ * plugin injected.
  *
  * Mineflayer injects on its own `inject_allowed`, one turn of the event loop after
  * `createBot` returns, so a test that asserted immediately would be asserting about
  * a bot with no plugins - which passes every one of these tests for the wrong reason.
+ *
+ * The movement seam is installed here because the process installs it the moment the client
+ * exists, and it is where two of the three plugins a body runs come from: a bot without it is
+ * missing the client-side simulation *and* the gate that scopes it, so a claim about what an
+ * unasked body writes would be a claim about a bot this process never builds.
+ * [installMovement] is idempotent, so a suite that installs it again for the wrapper's own
+ * sake - `movement.test.js` does - gets this one back rather than a second owner of one path.
+ *
+ * The bot is registered for teardown here; see [disconnected] for why that is not
+ * optional.
  */
 async function realBot () {
   const client = fakeClient()
@@ -270,6 +322,9 @@ async function realBot () {
     client,
     version: VERSION
   })
+  installMovement(bot)
+  openBots.add(bot)
+  bot.once('end', () => openBots.delete(bot))
   const events = []
   for (const name of ['login', 'spawn', 'death', 'respawn', 'health', 'game']) {
     bot.on(name, (...given) => events.push({ name, given }))
@@ -470,6 +525,7 @@ module.exports = {
   WATCHED_MS,
   clockReported,
   controller,
+  disconnected,
   embodied,
   emptied,
   eventually,

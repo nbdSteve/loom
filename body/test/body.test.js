@@ -16,6 +16,9 @@ const assert = require('node:assert/strict')
 const net = require('node:net')
 const { test } = require('node:test')
 
+const physics = require('mineflayer/lib/plugins/physics')
+const { pathfinder } = require('mineflayer-pathfinder')
+
 const {
   DEBUG_VARIABLES,
   MAX_CONTROL_CONNECTIONS,
@@ -26,7 +29,7 @@ const {
   createBody
 } = require('../src/body')
 const { followWorldState } = require('../src/gamestate')
-const { MAX_FRAME_BYTES } = require('../src/protocol')
+const { MAX_FRAME_BYTES, PROTOCOL_VERSION } = require('../src/protocol')
 const {
   AGENT,
   OTHER_AGENT,
@@ -62,29 +65,41 @@ test('a body connects offline, with respawn explicitly off', async () => {
 })
 
 test('only the reporting plugins are loaded and the rest is Loom own', async () => {
-  const { body, created } = await startedBody()
+  const { body, bot, created } = await startedBody()
   try {
-    // Mineflayer loads all of its internal plugins by default, which would put a
-    // physics interval, autonomous position updates, an automatic respawn and every
-    // action plugin inside a process whose purpose is to make no choices.
+    // Mineflayer loads all of its internal plugins by default, which would put an
+    // automatic respawn and every action plugin inside a process whose purpose is to
+    // make no choices.
     assert.equal(created.loadInternalPlugins, false)
-    // Every plugin kept turns packets the server sends of its own accord into state a
-    // reader can ask about. What replaces `game` and `physics` is a plugin of Loom's
-    // own, because `game` writes `client_command` back at the server on a `win_game`
-    // packet - the automatic respawn by another route - and `physics` runs a movement
-    // interval. `plugins.test.js` proves that against the real loader rather than
-    // against this option map.
+    // Every plugin in this table turns packets the server sends of its own accord into
+    // state a reader can ask about, and nothing in it acts. `physics` is deliberately
+    // absent: it steps, falls and writes the body's own position of nobody's asking, so a
+    // resident one would be autonomy, and `movement.js` loads it under a request scope
+    // instead. What replaces `game` is a plugin of Loom's own, because that one writes
+    // `client_command` back at the server on a `win_game` packet - the automatic respawn
+    // by another route. `plugins.test.js` proves all of it against the real loader rather
+    // than against this option map.
     assert.deepEqual(Object.keys(created.plugins).sort(), [
       'blocks', 'entities', 'health', 'inventory', 'loomWorldState',
       'simple_inventory', 'time'
     ])
     for (const name of INTERNAL_REPORTING_PLUGINS) assert.equal(created.plugins[name], true)
+    assert.equal(created.plugins.physics, undefined)
     assert.equal(created.plugins.loomWorldState, followWorldState)
+    // The simulation starts off, because it is a request's rather than the process's. The
+    // plugin reads this once at injection, so it is the starting state and not a hint.
+    assert.equal(created.physicsEnabled, false)
     // The whole option set, so a plugin or a policy added by omission fails here.
     assert.deepEqual(Object.keys(created).sort(), [
-      'auth', 'hideErrors', 'host', 'loadInternalPlugins', 'plugins', 'port',
-      'respawn', 'username'
+      'auth', 'hideErrors', 'host', 'loadInternalPlugins', 'physicsEnabled', 'plugins',
+      'port', 'respawn', 'username'
     ])
+    // The two plugins a walk needs arrive through `loadPlugin` rather than through the
+    // table above - which is the seam that keeps that table the statement about the
+    // library's *reporting* plugins it is written as - and in the order they are needed
+    // in, since the pathfinder drives what the simulation defines. Exactly two, so a
+    // third plugin cannot be added silently.
+    assert.deepEqual(bot.loaded, [physics, pathfinder])
   } finally {
     await body.stop()
   }
@@ -127,7 +142,10 @@ test('a blank version is unset rather than a version of its own', async () => {
 test('a body follows the lifecycle events and no others', async () => {
   const { body, bot } = await startedBody()
   try {
-    assert.deepEqual([...bot.subscribed].sort(), ['death', 'end', 'error', 'login', 'spawn'])
+    assert.deepEqual(
+      [...bot.subscribed].sort(),
+      ['death', 'end', 'entityDead', 'error', 'login', 'spawn']
+    )
   } finally {
     await body.stop()
   }
@@ -222,7 +240,7 @@ test('a handshake reports the body it is a handshake with', async () => {
     const accepted = await peer.answer(request('handshake', 'h1'))
     assert.equal(accepted.op, 'handshake')
     assert.equal(accepted.requestId, 'h1')
-    assert.equal(accepted.protocol, 1)
+    assert.equal(accepted.protocol, PROTOCOL_VERSION)
     assert.equal(accepted.agentId, AGENT)
     assert.equal(accepted.username, USERNAME)
     // Nothing has been asked of the client yet, so the state is the one it started in.
@@ -368,7 +386,7 @@ test('every refusal the control channel can reach carries its own code', async (
     // reaches on purpose rather than by accident here.
     const cases = [
       ['not json at all', 'malformedFrame'],
-      [request('status', 'r2', { protocol: 2 }), 'unsupportedProtocol'],
+      [request('status', 'r2', { protocol: PROTOCOL_VERSION + 1 }), 'unsupportedProtocol'],
       [request('jump', 'r3'), 'unknownOperation'],
       [request('status', 'r4', { agentId: 'someone.else' }), 'wrongAgent'],
       [request('status', ''), 'invalidField'],
@@ -382,7 +400,7 @@ test('every refusal the control channel can reach carries its own code', async (
       assert.equal(refused.error, code, JSON.stringify(frame))
       // A refusal says who refused and never claims to be an answer.
       assert.equal(refused.agentId, AGENT)
-      assert.equal(refused.protocol, 1)
+      assert.equal(refused.protocol, PROTOCOL_VERSION)
       assert.equal('op' in refused, false, code)
     }
   } finally {

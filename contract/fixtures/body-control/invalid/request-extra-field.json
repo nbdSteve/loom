@@ -1,1 +1,1 @@
-{"op":"handshake","protocol":1,"requestId":"req-1","agentId":"agent-alpha","nonce":7}
+{"op":"handshake","protocol":2,"requestId":"req-1","agentId":"agent-alpha","nonce":7}
