@@ -107,46 +107,40 @@ where
     Ok(ticks)
 }
 
-/// A full energy reserve, the top of the [`SelfState::energy`] scale.
-///
-/// Both ends of the scale are named rather than left as bare literals wherever
-/// energy is decoded or asserted, exactly as the JVM binding names them: the scale
-/// belongs to the contract, and whoever fills the field and whoever reads it must
-/// agree on which end is which.
-pub const ENERGY_FULL: f64 = 1.0;
+/// Vanilla's ceiling for both food and saturation.
+pub const MAX_FOOD_LEVEL: i64 = 20;
 
-/// An exhausted energy reserve, the bottom of the [`SelfState::energy`] scale.
-pub const ENERGY_EXHAUSTED: f64 = 0.0;
+/// Floating-point form of vanilla's saturation ceiling.
+pub const MAX_SATURATION_LEVEL: f64 = 20.0;
 
-/// Refuses an energy reading outside the inclusive fraction the scale allows.
-///
-/// The bound is a type rule on both sides of the contract for the same reason the
-/// nightfall countdown's is: the schema's `minimum: 0` / `maximum: 1` is a rule a
-/// socket walks straight past, and the JVM binding refuses it in its own `init`, so
-/// this side has to as well or "the contract refuses it" is only true of one
-/// runtime. Both ends of the range are ordinary and must decode: `0.0` is exhaustion
-/// and `1.0` is a full reserve, and each is a state an agent is genuinely in.
-///
-/// What is worth refusing is a reading that is not a fraction at all. Above one it
-/// would tell a mind it had more life than a life holds, and below zero it would
-/// describe an agent that is already permadead as merely very hungry - and a `NaN`
-/// compares false against every bound, so it is refused by the same test rather than
-/// needing one of its own.
-///
-/// Only decoding is narrowed. Serialization is left as the derive wrote it, so every
-/// valid fixture still round-trips byte-for-byte.
-fn fraction_of_a_reserve<'de, D>(deserializer: D) -> Result<f64, D::Error>
+/// Refuses a food level outside vanilla's inclusive range.
+fn bounded_food_level<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let energy = f64::deserialize(deserializer)?;
-    if !(ENERGY_EXHAUSTED..=ENERGY_FULL).contains(&energy) {
+    let food = i64::deserialize(deserializer)?;
+    if !(0..=MAX_FOOD_LEVEL).contains(&food) {
         return Err(de::Error::invalid_value(
-            de::Unexpected::Float(energy),
-            &"an energy reserve as a fraction from 0.0 to 1.0",
+            de::Unexpected::Signed(food),
+            &"a vanilla food level from 0 to 20",
         ));
     }
-    Ok(energy)
+    Ok(food)
+}
+
+/// Refuses saturation outside vanilla's inclusive range.
+fn bounded_saturation<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let saturation = f64::deserialize(deserializer)?;
+    if !(0.0..=MAX_SATURATION_LEVEL).contains(&saturation) {
+        return Err(de::Error::invalid_value(
+            de::Unexpected::Float(saturation),
+            &"vanilla saturation from 0.0 to 20.0",
+        ));
+    }
+    Ok(saturation)
 }
 
 /// The fewest items an occupied inventory slot can hold, mirroring the schema's `minimum`.
@@ -185,11 +179,8 @@ where
 
 /// The most occupied slots an inventory summary can state, mirroring the schema's `maxItems`.
 ///
-/// Eight, the native container an `AbstractVillager` carries. Unlike `Perception::surroundings`,
-/// whose length is the body's own policy and carries no schema bound, this one is a contract
-/// rule: a ninth slot is not a body having chosen to say more, it is a body that read something
-/// which is not its own inventory.
-const MAX_INVENTORY_STACKS: usize = 8;
+/// Forty-six, the complete player inventory window.
+const MAX_INVENTORY_STACKS: usize = 46;
 
 /// Refuses an inventory summary longer than a body's own container.
 ///
@@ -209,7 +200,7 @@ where
     if stacks.len() > MAX_INVENTORY_STACKS {
         return Err(de::Error::invalid_length(
             stacks.len(),
-            &"at most 8 occupied inventory slots",
+            &"at most 46 occupied inventory slots",
         ));
     }
     Ok(stacks)
@@ -311,19 +302,16 @@ pub struct InventoryStack {
 pub struct SelfState {
     /// Current health of the agent's body.
     pub health: f64,
-    /// How much of the agent's energy reserve is left, as a fraction: `1.0` is a
-    /// full reserve and `0.0` is exhaustion, which is fatal. A fraction rather
-    /// than a count of ticks, so the mind never has to know how long a reserve
-    /// lasts.
-    ///
-    /// Enforced at decode by [`fraction_of_a_reserve`] rather than trusted, because
-    /// the schema's range is not checked by anything on the wire.
-    #[serde(deserialize_with = "fraction_of_a_reserve")]
-    pub energy: f64,
+    /// The player's vanilla food level.
+    #[serde(deserialize_with = "bounded_food_level")]
+    pub food: i64,
+    /// Vanilla saturation, kept separate because it is spent before food falls.
+    #[serde(deserialize_with = "bounded_saturation")]
+    pub saturation: f64,
     /// World position `[x, y, z]`. Continuous coordinates.
     pub position: [f64; 3],
     /// The body's own inventory, one entry per occupied slot and nothing for an
-    /// empty one, bounded by the eight slots a body has.
+    /// empty one, bounded by the player's forty-six-slot window.
     ///
     /// Enforced at decode by [`bounded_inventory_summary`] rather than trusted, because
     /// the schema's `maxItems` is not checked by anything on the wire.
@@ -494,14 +482,11 @@ pub enum Intent {
     /// A ref rather than an item name on purpose: two slots can hold the same item,
     /// and the body must consume the one the mind meant. The body resolves it
     /// against that one request only, re-reads the slot it names, and refuses what
-    /// it finds there if it is no longer food. On acceptance exactly one item is
-    /// consumed and its vanilla nutrition is credited to [`SelfState::energy`],
-    /// which is the only way a reserve goes back up.
-    ///
-    /// Eating is instantaneous in this first version: the body swallows the item
-    /// within the tick the intent is applied, with no using time and nothing to
-    /// interrupt. Named `slot_ref` in Rust and `ref` on the wire because `ref` is a
-    /// keyword here.
+    /// it finds there if it is no longer food. On acceptance Mineflayer asks
+    /// vanilla to consume exactly one item; the next perception reports the
+    /// resulting [`SelfState::food`] and [`SelfState::saturation`] separately.
+    /// Named `slot_ref` in Rust and `ref` on the wire because `ref` is a keyword
+    /// here.
     #[serde(rename = "eat")]
     Eat {
         #[serde(rename = "ref", deserialize_with = "bounded_ref")]
@@ -509,9 +494,8 @@ pub enum Intent {
     },
     /// Stop, and hold this position on purpose.
     ///
-    /// It restores nothing. Eating is the only thing that refills
-    /// [`SelfState::energy`], so a resting agent is spending its reserve waiting
-    /// rather than buying any of it back.
+    /// It restores nothing. Hunger continues under vanilla's own food and
+    /// saturation rules while a resting agent waits.
     ///
     /// Its own variant rather than a synonym for [`Intent::Idle`] because
     /// deliberately waiting somewhere - sealed in for the night, say - is a choice a

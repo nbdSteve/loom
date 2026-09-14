@@ -84,7 +84,10 @@ class Metabolism(private val lifespan: Long = DEFAULT_ENERGY_LIFESPAN_TICKS) {
     fun reserveOf(agentId: AgentId): Long = remaining[agentId] ?: lifespan
 
     /**
-     * The reserve of [agentId] as the contract's `SelfState.energy` fraction.
+     * The reserve of [agentId] as the unused Villager adapter's internal fraction.
+     *
+     * The active contract no longer carries this value directly; the legacy adapter
+     * projects it onto the player-shaped food field until that adapter is removed.
      *
      * A fraction is what crosses to the mind, so a mind never has to know how long a
      * reserve lasts to know how much of one is left. A full reserve is exactly

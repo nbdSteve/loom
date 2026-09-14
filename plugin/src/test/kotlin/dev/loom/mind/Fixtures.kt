@@ -93,7 +93,8 @@ fun perception(
         selfState =
             SelfState(
                 health = 20.0,
-                energy = energy,
+                food = (energy * 20).toInt(),
+                saturation = 0.0,
                 position = listOf(1.0, 64.0, 2.0),
                 inventorySummary = emptyList(),
                 world = WorldState(dayPhase = DayPhase.DAY, isDay = true, ticksUntilNightfall = 6_000),

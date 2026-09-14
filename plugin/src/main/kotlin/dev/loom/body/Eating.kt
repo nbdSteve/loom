@@ -25,12 +25,11 @@ package dev.loom.body
 /**
  * How many slots a body's own inventory has.
  *
- * Eight, which is the native container an `AbstractVillager` already carries. Loom adds
- * no parallel inventory: a second store would have to be kept in step with the one the
- * engine drops, renders and lets a hopper reach, and the two would disagree the first
- * time anything but Loom touched an item.
+ * Forty-six, the complete player inventory window carried by the perception contract.
+ * The obsolete Villager adapter still has eight native slots and naturally offers only
+ * those eight; the common ref window must be wide enough not to truncate a player.
  */
-const val BODY_INVENTORY_SLOTS: Int = 8
+const val BODY_INVENTORY_SLOTS: Int = 46
 
 /** The character a slot handle starts with, so it never reads to a model as a number. */
 private const val SLOT_HANDLE_PREFIX = "i"

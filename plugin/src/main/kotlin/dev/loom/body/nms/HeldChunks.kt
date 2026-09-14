@@ -18,6 +18,7 @@ package dev.loom.body.nms
 
 import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
+import dev.loom.body.BodyEventJournal
 import dev.loom.body.BodyLocation
 import dev.loom.body.ChunkHoldFailure
 import dev.loom.body.ChunkHoldOutcome

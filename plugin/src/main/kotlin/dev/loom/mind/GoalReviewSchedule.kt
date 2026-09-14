@@ -23,11 +23,9 @@
 package dev.loom.mind
 
 import dev.loom.body.AgentId
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.minutes
 
 /**
- * How long an agent goes between scheduled goal reviews, by default.
+ * How many authoritative server ticks an agent goes between scheduled goal reviews.
  *
  * The one knob worth turning here, and deliberately conservative: a goal review is
  * routine-tier, but it is still an inference per agent per cadence, so at a
@@ -37,10 +35,11 @@ import kotlin.time.Duration.Companion.minutes
  * cadence.
  *
  * Raising the frequency raises the whole population's cost linearly, so this is
- * the number to change - and the number the forthcoming cognition config will
- * carry - rather than anything downstream of it.
+ * the number to change rather than anything downstream of it. Two minutes at
+ * vanilla's twenty ticks per second is 2,400 ticks. Using the simulation clock
+ * makes a pause or a tick sprint irrelevant to the cadence.
  */
-val DEFAULT_GOAL_REVIEW_CADENCE: Duration = 2.minutes
+const val DEFAULT_GOAL_REVIEW_CADENCE_TICKS: Long = 2L * 60L * 20L
 
 /**
  * How many sweeps a cadence is divided into.
@@ -59,21 +58,24 @@ private const val DEFAULT_SLICES_PER_CADENCE = 24
  * driven from the server main thread, like everything else that reads which bodies
  * are alive.
  *
- * @param cadence how long an agent goes between reviews. See
- *   [DEFAULT_GOAL_REVIEW_CADENCE].
+ * @param cadenceTicks how many authoritative server ticks an agent goes between reviews. See
+ *   [DEFAULT_GOAL_REVIEW_CADENCE_TICKS].
  * @param slicesPerCadence how many sweeps the cadence is divided into, which sets
  *   how finely the population is spread.
  */
 class GoalReviewSchedule(
-    val cadence: Duration = DEFAULT_GOAL_REVIEW_CADENCE,
+    val cadenceTicks: Long = DEFAULT_GOAL_REVIEW_CADENCE_TICKS,
     private val slicesPerCadence: Int = DEFAULT_SLICES_PER_CADENCE,
 ) {
     init {
-        require(cadence.isPositive()) { "cadence must be positive, was $cadence" }
+        require(cadenceTicks > 0) { "cadenceTicks must be positive, was $cadenceTicks" }
         require(slicesPerCadence >= 1) { "slicesPerCadence must be at least 1, was $slicesPerCadence" }
+        require(cadenceTicks >= slicesPerCadence) {
+            "cadenceTicks must leave at least one tick per slice, was $cadenceTicks/$slicesPerCadence"
+        }
     }
 
-    private val lastReview = mutableMapOf<AgentId, Duration>()
+    private val lastReview = mutableMapOf<AgentId, Long>()
 
     /**
      * Longest-waiting first, so a population that outgrows one slice's share
@@ -86,7 +88,7 @@ class GoalReviewSchedule(
      * does not depend on set iteration order.
      */
     private val longestWaitingFirst: Comparator<AgentId> =
-        compareBy<AgentId, Duration?>(nullsFirst()) { lastReview[it] }.thenBy { it.value }
+        compareBy<AgentId, Long?>(nullsFirst()) { lastReview[it] }.thenBy { it.value }
 
     /**
      * How long a caller should wait between calls to [claim].
@@ -96,7 +98,7 @@ class GoalReviewSchedule(
      * silently stretch the cadence; one sweeping faster would hand out the whole
      * population sooner than a cadence's worth of slices.
      */
-    val slice: Duration get() = cadence / slicesPerCadence
+    val sliceTicks: Long get() = (cadenceTicks + slicesPerCadence - 1) / slicesPerCadence
 
     /**
      * How many agents the schedule is tracking.
@@ -123,7 +125,7 @@ class GoalReviewSchedule(
      */
     fun claim(
         living: Set<AgentId>,
-        now: Duration,
+        now: Long,
     ): List<AgentId> {
         lastReview.keys.retainAll(living)
         val claimed =
@@ -138,10 +140,10 @@ class GoalReviewSchedule(
     /** Whether [agent] has waited a whole cadence, or has never reviewed at all. */
     private fun isDue(
         agent: AgentId,
-        now: Duration,
+        now: Long,
     ): Boolean {
         val last = lastReview[agent] ?: return true
-        return now - last >= cadence
+        return now - last >= cadenceTicks
     }
 
     /**

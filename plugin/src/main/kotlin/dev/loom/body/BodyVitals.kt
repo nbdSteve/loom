@@ -6,20 +6,13 @@
  * bodies, while "which vitals there are, what scale each is read on, and how often either
  * reaches the log" lives here.
  *
- * The two are deliberately not one number. The energy reserve is what living spends and only
- * eating refills - resting holds a position and buys nothing back - and it is what an
- * unattended agent starves on. Health is physical damage to the body, and a body can be beaten
- * to death on a full reserve. Aliasing either to the other would make a run unable to say what
+ * The two are deliberately not one number. The first is the body flavor's primary survival
+ * reserve - vanilla food for the player adapter, the legacy synthetic reserve for the unused
+ * Villager adapter. Health is physical damage to the body, and a body can be beaten to death
+ * while that reserve is full. Aliasing either to the other would make a run unable to say what
  * ended an agent.
  */
-package dev.loom.body.nms
-
-import dev.loom.body.AgentId
-import dev.loom.body.AgentVitals
-import dev.loom.body.BodyEvent
-import dev.loom.body.EnergyWatch
-import dev.loom.body.Metabolism
-import dev.loom.body.describe
+package dev.loom.body
 
 /**
  * The scale the energy reserve is recorded and shown on: a percentage.
@@ -48,15 +41,13 @@ internal fun reserveVitals(energyFraction: Double): AgentVitals =
 /**
  * Keeps both of an agent's vitals out of the log's way, and records the changes worth it.
  *
- * One [EnergyWatch] per vital, because the two move for unrelated reasons: the reserve
- * drains on a half-hour ramp while health drops in one hit and can end a body in seconds.
- * A shared step function would let a body's health fall a whole heart on a reserve that
- * had not moved enough to record anything, and the wound would reach the log only when the
- * reserve next stepped - an in-world run measured that delay at up to eighteen seconds.
+ * One [EnergyWatch] per vital, because the two move for unrelated reasons. A shared step
+ * function would let a body's health fall a whole heart while its primary reserve had not
+ * moved enough to record anything, delaying the wound until that reserve next stepped.
  *
  * The readings themselves are taken by the caller, which is the half that needs a body and
- * a [Metabolism]; what lives here is the judgement about which of them deserves a durable
- * record, and which event it is recorded under.
+ * flavor-specific source; what lives here is the judgement about which of them deserves
+ * a durable record, and which compatibility event it is recorded under.
  *
  * @param journal where a reading worth recording is written.
  */
@@ -100,6 +91,9 @@ internal class VitalsWatch(
         health: AgentVitals,
     ) {
         reserveWatch.sample(agentId, reserve)?.let {
+            // `energyChanged` and the `vitals` field are an established evidence
+            // contract. The player adapter projects vanilla food onto that existing
+            // scale rather than splitting historical observers in this cutover.
             journal.record(agentId, BodyEvent.ENERGY_CHANGED, describe(it, "energy"), vitals = it, health = health)
         }
         healthWatch.sample(agentId, health)?.let {

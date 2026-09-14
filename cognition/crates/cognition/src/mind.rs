@@ -135,7 +135,8 @@ mod tests {
             captured_tick: 1024,
             self_state: SelfState {
                 health: 20.0,
-                energy: 1.0,
+                food: 20,
+                saturation: 5.0,
                 position: [0.0, 64.0, 0.0],
                 inventory_summary: vec![],
                 world: WorldState {

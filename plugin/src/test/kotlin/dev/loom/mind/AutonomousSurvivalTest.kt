@@ -24,13 +24,11 @@ import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
-import dev.loom.body.BodyLocation
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
 import dev.loom.body.IntentOutcome
 import dev.loom.body.Metabolism
 import dev.loom.body.Mortality
-import dev.loom.contract.ENERGY_EXHAUSTED
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
@@ -40,18 +38,12 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.fail
 import java.util.concurrent.CompletableFuture
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
 
 /** A whole life in 400 ticks, so several of them fit in a test. */
 private const val LIFESPAN_TICKS = 400L
 
-/** One server tick, at the twenty a second a server runs at. */
-private val TICK = 50.milliseconds
-
 /** A goal review every hundred ticks, swept in slices of twenty. */
-private val SURVIVAL_CADENCE = 5.seconds
+private const val SURVIVAL_CADENCE = 100L
 private const val SURVIVAL_SLICES = 5
 
 /**
@@ -63,9 +55,7 @@ private const val SURVIVAL_SLICES = 5
  * this side must not depend on it - what this test asserts is that a mind *can* keep an
  * agent alive with nothing but the reserve it is told about.
  */
-private const val RESTS_AT = 0.35
-
-private val HOME = BodyLocation("world", 0.0, 64.0, 0.0)
+private const val RESTS_AT = 7
 
 /**
  * A body port with the real survival drive behind it and a set of ids for bodies.
@@ -90,46 +80,48 @@ private class SurvivingBodies(
     var tick = 0L
         private set
 
-    override fun spawn(
-        agentId: AgentId,
-        at: BodyLocation,
-    ): BodySpawnResult =
-        if (mortality.isDead(agentId)) {
-            BodySpawnResult.Rejected(agentId, "this agent has died, and Loom agents do not return")
-        } else {
-            bodies.add(agentId)
-            BodySpawnResult.Spawned(agentId, at)
-        }
+    override fun spawn(agentId: AgentId): CompletableFuture<BodySpawnResult> =
+        CompletableFuture.completedFuture(
+            if (mortality.isDead(agentId)) {
+                BodySpawnResult.Rejected(agentId, "this agent has died, and Loom agents do not return")
+            } else {
+                bodies.add(agentId)
+                BodySpawnResult.Spawned(agentId)
+            },
+        )
 
-    override fun despawn(agentId: AgentId): Boolean = bodies.remove(agentId)
+    override fun despawn(agentId: AgentId): CompletableFuture<Boolean> =
+        CompletableFuture.completedFuture(bodies.remove(agentId))
 
     override fun apply(
         agentId: AgentId,
         intent: Intent,
         requestId: String?,
-    ): IntentOutcome {
-        if (agentId !in bodies) return IntentOutcome.NoSuchBody
+    ): CompletableFuture<IntentOutcome> {
+        if (agentId !in bodies) return CompletableFuture.completedFuture(IntentOutcome.NoSuchBody)
         // The shape the adapter has: every intent is applied on its own terms, and none
         // of them touches the reserve. A rest stops the body and buys no time.
         applied.add(tick to intent)
-        return IntentOutcome.Accepted("applied $intent")
+        return CompletableFuture.completedFuture(IntentOutcome.Accepted("applied $intent"))
     }
 
     override fun perceive(
         agentId: AgentId,
         trigger: Trigger,
-    ): Perception? {
-        if (agentId !in bodies) return null
+    ): CompletableFuture<Perception?> {
+        if (agentId !in bodies) return CompletableFuture.completedFuture(null)
         perceivedAt.add(tick)
-        return perception(
-            requestId = "req-$tick",
-            agentId = agentId.value,
-            trigger = trigger,
-            energy = metabolism.energyOf(agentId),
+        return CompletableFuture.completedFuture(
+            perception(
+                requestId = "req-$tick",
+                agentId = agentId.value,
+                trigger = trigger,
+                energy = metabolism.energyOf(agentId),
+            ),
         )
     }
 
-    override fun senseThreat(agentId: AgentId): Perception? = null
+    override fun senseThreat(agentId: AgentId): CompletableFuture<Perception?> = CompletableFuture.completedFuture(null)
 
     override fun tick(tick: Long) {
         this.tick = tick
@@ -158,7 +150,7 @@ class AutonomousSurvivalTest {
     /** Every perception the mind was given, so a test can read what the agent knew. */
     private val asked = mutableListOf<Perception>()
 
-    private var now: Duration = Duration.ZERO
+    private var now = 0L
 
     /**
      * Runs the world for [ticks] ticks with [mind] answering, and nobody intervening.
@@ -182,13 +174,15 @@ class AutonomousSurvivalTest {
                 mind,
                 main,
                 DecisionJournal(BodyEventLog { events.add(it) }, currentTick = { bodies.tick }),
-                onUnavailable = { _, failure -> fail("the mind here always answers: $failure") },
+                CognitionCallbacks(
+                    onUnavailable = { _, failure -> fail("the mind here always answers: $failure") },
+                ),
             )
         val driver = AutonomousDriver(bodies, cognition, schedule) { now }
-        val sweepEvery = (schedule.slice / TICK).toLong()
+        val sweepEvery = schedule.sliceTicks
         for (tick in 1..ticks) {
             bodies.tick(tick)
-            now = TICK * tick.toDouble()
+            now = tick
             if (tick % sweepEvery == 0L) driver.sweep()
             main.drain()
         }
@@ -198,7 +192,7 @@ class AutonomousSurvivalTest {
     private fun aMindThatRests(): CognitionBridge =
         CognitionBridge { perception ->
             asked.add(perception)
-            val intent = if (perception.selfState.energy <= RESTS_AT) Intent.Rest else Intent.Idle
+            val intent = if (perception.selfState.food <= RESTS_AT) Intent.Rest else Intent.Idle
             CompletableFuture.completedFuture(decisionFor(perception, intent))
         }
 
@@ -227,7 +221,7 @@ class AutonomousSurvivalTest {
         mind: CognitionBridge,
     ): SurvivingBodies {
         val world = SurvivingBodies(events)
-        world.spawn(agent, HOME)
+        world.spawn(agent).join()
         live(LIFESPAN_TICKS * 2, mind, world, events)
         return world
     }
@@ -259,7 +253,7 @@ class AutonomousSurvivalTest {
     @Test
     @DisplayName("an agent whose mind never rests it starves, once, and is never driven again")
     fun anAgentThatIsNeverRestedStarves() {
-        bodies.spawn(agent, HOME)
+        bodies.spawn(agent).join()
 
         // Twice as long as a reserve lasts, so a run that failed to end the agent would
         // have every chance to show it.
@@ -275,10 +269,10 @@ class AutonomousSurvivalTest {
         assertEquals(BodyEvent.DIED, events.last().event)
         assertTrue(bodies.perceivedAt.all { it < LIFESPAN_TICKS }, "a dead agent must not perceive")
         assertTrue(bodies.applied.all { (tick, _) -> tick < LIFESPAN_TICKS }, "a dead agent must not act")
-        assertTrue(asked.none { it.selfState.energy == ENERGY_EXHAUSTED }, "a spent agent must not reach the mind")
+        assertTrue(asked.none { it.selfState.food == 0 }, "a spent agent must not reach the mind")
         // And it stays gone: exhaustion is a permadeath, so the id is refused a body.
         assertTrue(
-            bodies.spawn(agent, HOME) is BodySpawnResult.Rejected,
+            bodies.spawn(agent).join() is BodySpawnResult.Rejected,
             "an agent that starved must never be embodied again",
         )
     }
@@ -286,7 +280,7 @@ class AutonomousSurvivalTest {
     @Test
     @DisplayName("what the mind decides on is the reserve the body had at that tick")
     fun theReserveCrossesToTheMindThroughTheOrdinaryPerception() {
-        bodies.spawn(agent, HOME)
+        bodies.spawn(agent).join()
 
         // Half a reserve: long enough for several reviews, short enough that no rest has
         // happened yet, so what is left is exactly what has not been spent.
@@ -294,8 +288,10 @@ class AutonomousSurvivalTest {
 
         assertEquals(0, rests(), "this half of a life is before the reserve gets low")
         assertEquals(
-            bodies.perceivedAt.map { (LIFESPAN_TICKS - it).toDouble() / LIFESPAN_TICKS },
-            asked.map { it.selfState.energy },
+            bodies.perceivedAt.map {
+                (((LIFESPAN_TICKS - it).toDouble() / LIFESPAN_TICKS) * 20).toInt()
+            },
+            asked.map { it.selfState.food },
             "each review saw the reserve as it stood on the tick it was taken",
         )
     }

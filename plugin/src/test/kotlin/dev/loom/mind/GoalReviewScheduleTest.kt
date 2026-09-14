@@ -15,26 +15,23 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
 
 /** A cadence and a slice count whose arithmetic is easy to state in a test. */
-private val CADENCE = 1.minutes
+private const val CADENCE = 120L
 private const val SLICES = 6
 
 class GoalReviewScheduleTest {
     private val schedule = GoalReviewSchedule(CADENCE, SLICES)
 
     /** A fake clock, moved by the test rather than by the passage of real time. */
-    private var now: Duration = Duration.ZERO
+    private var now = 0L
 
     private fun agents(count: Int): Set<AgentId> = (1..count).map { AgentId("agent-$it") }.toSet()
 
     /** Claims for every slice of one cadence, as the driver's timer would. */
     private fun sweepACadence(living: Set<AgentId>): List<List<AgentId>> =
         (1..SLICES).map {
-            now += schedule.slice
+            now += schedule.sliceTicks
             schedule.claim(living, now)
         }
 
@@ -54,11 +51,11 @@ class GoalReviewScheduleTest {
 
         // Every slice of the cadence but the last: due exactly once, not once a sweep.
         repeat(SLICES - 1) {
-            now += schedule.slice
+            now += schedule.sliceTicks
             assertEquals(emptyList<AgentId>(), schedule.claim(living, now))
         }
 
-        now += schedule.slice
+        now += schedule.sliceTicks
         assertEquals(living.toList(), schedule.claim(living, now))
     }
 
@@ -109,16 +106,16 @@ class GoalReviewScheduleTest {
         // over - the only case where the order actually decides who waits.
         val schedule = GoalReviewSchedule(CADENCE, slicesPerCadence = 2)
         val early = AgentId("agent-1")
-        schedule.claim(setOf(early), 30.seconds)
+        schedule.claim(setOf(early), 60L)
 
         val living = agents(5)
-        val served = schedule.claim(living, 60.seconds)
+        val served = schedule.claim(living, 120L)
         val squeezedOut = living - served.toSet() - setOf(early)
 
         assertEquals(3, served.size, "the slice's share, not the whole due set")
         // A cadence after its own review, `early` is due - but the agent that never
         // got a slot has been waiting since it was embodied, so it goes first.
-        assertEquals(squeezedOut.toList() + early, schedule.claim(living, 90.seconds))
+        assertEquals(squeezedOut.toList() + early, schedule.claim(living, 180L))
     }
 
     @Test
@@ -128,7 +125,7 @@ class GoalReviewScheduleTest {
         sweepACadence(living)
         assertEquals(3, schedule.tracked)
 
-        now += schedule.slice
+        now += schedule.sliceTicks
         schedule.claim(emptySet(), now)
 
         assertEquals(0, schedule.tracked, "a server runs for a long time; departed agents must not accumulate")
@@ -137,14 +134,15 @@ class GoalReviewScheduleTest {
     @Test
     @DisplayName("the sweep period is the cadence divided into slices")
     fun theSliceIsDerivedFromTheCadence() {
-        assertEquals(10.seconds, schedule.slice)
+        assertEquals(20L, schedule.sliceTicks)
     }
 
     @Test
     @DisplayName("a cadence or slice count that would break the stagger is refused")
     fun nonsenseIsRefused() {
-        assertThrows(IllegalArgumentException::class.java) { GoalReviewSchedule(Duration.ZERO, SLICES) }
+        assertThrows(IllegalArgumentException::class.java) { GoalReviewSchedule(0L, SLICES) }
         assertThrows(IllegalArgumentException::class.java) { GoalReviewSchedule(CADENCE, 0) }
+        assertThrows(IllegalArgumentException::class.java) { GoalReviewSchedule(5L, SLICES) }
     }
 
     @Test
@@ -152,7 +150,7 @@ class GoalReviewScheduleTest {
     fun theDefaultCadenceIsConservative() {
         // Pins the posture, not the number: whatever the default becomes, twenty
         // agents must not cost more than a call every few seconds.
-        val perAgent = DEFAULT_GOAL_REVIEW_CADENCE / 20
-        assertTrue(perAgent >= 5.seconds, "a 20-agent population would think every $perAgent")
+        val perAgent = DEFAULT_GOAL_REVIEW_CADENCE_TICKS / 20
+        assertTrue(perAgent >= 100L, "a 20-agent population would think every $perAgent ticks")
     }
 }

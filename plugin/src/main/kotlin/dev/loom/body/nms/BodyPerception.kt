@@ -31,6 +31,7 @@ import dev.loom.body.huntsVillagers
 import dev.loom.contract.Bearing
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.InventoryStack
+import dev.loom.contract.MAX_FOOD_LEVEL
 import dev.loom.contract.Observation
 import dev.loom.contract.Perception
 import dev.loom.contract.SelfState
@@ -41,6 +42,7 @@ import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.level.Level
 import net.minecraft.world.phys.AABB
 import java.util.UUID
+import kotlin.math.roundToInt
 
 /**
  * How far a body sees, and how much of what it sees is reported.
@@ -125,7 +127,10 @@ internal fun LoomBodyEntity.captureScene(
     val selfState =
         SelfState(
             health = bodyVitals(body).energy,
-            energy = energy,
+            // Retained only for the obsolete adapter: its synthetic reserve has no
+            // player saturation, and the hard-cut runtime never reaches this path.
+            food = (energy * MAX_FOOD_LEVEL).roundToInt().coerceIn(0, MAX_FOOD_LEVEL),
+            saturation = 0.0,
             position = listOf(body.x, body.y, body.z),
             // The body reveals a summary, never its live inventory handle.
             inventorySummary = carried.stacks,

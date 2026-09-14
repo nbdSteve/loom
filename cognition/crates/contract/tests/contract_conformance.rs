@@ -18,7 +18,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use loom_contract::{Decision, Perception, ENERGY_EXHAUSTED, ENERGY_FULL};
+use loom_contract::{Decision, Perception, MAX_FOOD_LEVEL};
 
 /// Absolute path to the repository's `contract/` directory, resolved from this
 /// crate's manifest dir so the test is independent of the working directory.
@@ -177,62 +177,55 @@ fn a_nightfall_countdown_below_one_is_refused_at_decode() {
 }
 
 #[test]
-fn an_energy_reading_outside_its_range_is_refused_at_decode() {
+fn vanilla_hunger_readings_outside_their_ranges_are_refused_at_decode() {
     // Same reason as the countdown above: the schema's `minimum`/`maximum` is a rule
     // a socket walks straight past, and the JVM binding refuses it in its own `init`,
     // so this side has to as well or the contract only refuses it on one runtime.
     let above = fs::read_to_string(
         contract_dir()
             .join("fixtures/invalid")
-            .join("perception-energy-out-of-range.json"),
+            .join("perception-food-out-of-range.json"),
     )
     .unwrap();
     let above = above.trim_end_matches('\n').to_owned();
 
     assert!(
         serde_json::from_str::<Perception>(&above).is_err(),
-        "an energy of 1.5 decoded into a Perception"
+        "a food level above vanilla's ceiling decoded into a Perception"
     );
 
-    // Below zero is the more dangerous end rather than a symmetrical curiosity: it
-    // describes an agent that is already permadead as merely very hungry.
-    let below = above.replace("\"energy\":1.5", "\"energy\":-0.1");
+    let below = above.replace("\"food\":21", "\"food\":-1");
     assert_ne!(
         above, below,
-        "the fixture no longer states an energy to edit"
+        "the fixture no longer states a food level to edit"
     );
     assert!(
         serde_json::from_str::<Perception>(&below).is_err(),
-        "a negative energy decoded into a Perception"
+        "a negative food level decoded into a Perception"
     );
 
-    // And a NaN, which compares false against every bound and so is refused by the
-    // range check itself rather than by a rule of its own. JSON has no NaN literal,
-    // so this is the nearest thing a wire can carry.
     assert!(
-        serde_json::from_str::<Perception>(&above.replace("\"energy\":1.5", "\"energy\":null"))
-            .is_err(),
-        "a null energy decoded into a Perception"
+        serde_json::from_str::<Perception>(&above.replace(
+            "\"food\":21,\"saturation\":5.0",
+            "\"food\":20,\"saturation\":21.0"
+        ))
+        .is_err(),
+        "saturation above vanilla's ceiling decoded into a Perception"
     );
 
-    // Both ends of the range are ordinary states an agent is genuinely in, and each
-    // must decode: exhaustion is the tick a permadeath is recorded on, and a full
-    // reserve is what every agent spawns with.
-    for boundary in [ENERGY_EXHAUSTED, ENERGY_FULL] {
-        let at_boundary = above.replace("\"energy\":1.5", &format!("\"energy\":{boundary}"));
+    for boundary in [0, MAX_FOOD_LEVEL] {
+        let at_boundary = above.replace("\"food\":21", &format!("\"food\":{boundary}"));
         let accepted: Perception = serde_json::from_str(&at_boundary)
-            .unwrap_or_else(|e| panic!("an energy of {boundary} should decode: {e}"));
-        assert!((accepted.self_state.energy - boundary).abs() < f64::EPSILON);
+            .unwrap_or_else(|e| panic!("a food level of {boundary} should decode: {e}"));
+        assert_eq!(accepted.self_state.food, boundary);
     }
 }
 
 #[test]
 fn an_inventory_summary_longer_than_the_body_is_refused_at_decode() {
     // The last of the schema's bounds on this field, and the one that was left to the schema
-    // alone: `maxItems: 8` is a rule a socket walks straight past, so a ninth slot decoded
-    // happily here. A summary longer than a body's own container is a body that read
-    // something which is not its inventory, and every handle past the eighth names a slot no
-    // eat could ever resolve.
+    // alone: `maxItems: 46` is a rule a socket walks straight past, so a 47th slot decoded
+    // happily here. A summary longer than the player's whole window cannot be its inventory.
     let over = fs::read_to_string(
         contract_dir()
             .join("fixtures/invalid")
@@ -243,22 +236,22 @@ fn an_inventory_summary_longer_than_the_body_is_refused_at_decode() {
 
     assert!(
         serde_json::from_str::<Perception>(&over).is_err(),
-        "a nine-slot inventory summary decoded into a Perception"
+        "a 47-slot inventory summary decoded into a Perception"
     );
 
     // The bound is exactly the container: a body carrying something in every slot is an
     // ordinary provisioned agent, and its whole inventory must still reach the mind.
     let full = over.replace(
-        ",{\"ref\":\"i9\",\"what\":\"item.minecraft.bread\",\"count\":1}",
+        ",{\"ref\":\"i47\",\"what\":\"item.minecraft.bread\",\"count\":1}",
         "",
     );
     assert_ne!(
         over, full,
-        "the fixture no longer states a ninth slot to drop"
+        "the fixture no longer states a 47th slot to drop"
     );
     let accepted: Perception = serde_json::from_str(&full)
-        .unwrap_or_else(|e| panic!("a full eight-slot inventory should decode: {e}"));
-    assert_eq!(accepted.self_state.inventory_summary.len(), 8);
+        .unwrap_or_else(|e| panic!("a full 46-slot inventory should decode: {e}"));
+    assert_eq!(accepted.self_state.inventory_summary.len(), 46);
 }
 
 #[test]

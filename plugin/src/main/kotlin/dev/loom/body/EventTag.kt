@@ -98,6 +98,21 @@ object EventTag {
     /** A spawn was refused because the world itself would not take the body. */
     const val WORLD_REFUSED: String = "worldRefused"
 
+    /** A supervised player process could not reach the ready boundary. */
+    const val BODY_START_FAILED: String = "bodyStartFailed"
+
+    /** The player process was alive but did not become ready before its startup bound. */
+    const val BODY_START_TIMED_OUT: String = "bodyStartTimedOut"
+
+    /** A body-control round trip failed while the supervised process was still present. */
+    const val CONTROL_UNAVAILABLE: String = "controlUnavailable"
+
+    /**
+     * The player process was healthy, but could not admit another operation in its
+     * current state - most commonly because one movement already owns the path.
+     */
+    const val CONTROL_NOT_READY: String = "controlNotReady"
+
     /**
      * A threat was seen again too soon after the last one Loom reported.
      *
@@ -225,6 +240,9 @@ object EventTag {
     /** The slot the handle named holds nothing now. */
     const val EAT_SLOT_EMPTY: String = "eatSlotEmpty"
 
+    /** The named slot now holds a different stack from the sense answer the mind saw. */
+    const val EAT_SLOT_CHANGED: String = "eatSlotChanged"
+
     /** The slot holds something the engine does not call food. */
     const val EAT_NOT_FOOD: String = "eatNotFood"
 
@@ -233,6 +251,9 @@ object EventTag {
 
     /** The reserve was spent, which is terminal: nothing eats its way out of a permadeath. */
     const val EAT_RESERVE_SPENT: String = "eatReserveSpent"
+
+    /** The game could not equip or consume a stack that was present and edible. */
+    const val EAT_SLOT_INACCESSIBLE: String = "eatSlotInaccessible"
 
     /**
      * A login was refused because the agent has died, and Loom agents do not return.
@@ -349,7 +370,13 @@ fun tagOf(intent: Intent): String =
  * The eat half comes from [EAT_REFUSALS], so a refusal added there is covered the day it is
  * added rather than the day somebody remembers to repeat it here.
  */
-val INTENT_REFUSAL_TAGS: Set<String> = setOf(EventTag.REJECTED) + EAT_REFUSALS.map { tagOf(it) }
+val INTENT_REFUSAL_TAGS: Set<String> =
+    setOf(
+        EventTag.REJECTED,
+        EventTag.CONTROL_UNAVAILABLE,
+        EventTag.EAT_SLOT_CHANGED,
+        EventTag.EAT_SLOT_INACCESSIBLE,
+    ) + EAT_REFUSALS.map { tagOf(it) }
 
 /** Names how the body answered an intent, so refusals are countable. */
 fun tagOf(outcome: IntentOutcome): String =

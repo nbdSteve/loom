@@ -23,7 +23,7 @@ Eight operations at protocol generation 2: `handshake`, `status` and `shutdown` 
 The schema's own `ControlOperation` description is the authority: an *operation* is something a controller asks for, so a controller never meets one it does not have, and one a peer lacks is refused with `unknownOperation`; a value the *body* answers from is the body's to choose, so widening it hands a controller that agreed this generation a frame it cannot read, for a request it made in good faith and without having asked for anything new.
 Refusing that frame is fail-closed rather than a misreading, but a broken round trip a peer cannot anticipate is exactly what agreeing a generation is for - so the operation set is the only part of a generation that may grow.
 Moving a generation costs a sweep of every fixture in the corpus and of both runtimes' own spelling cases, and the suites now read the generation from their codec rather than writing it down, so the next move is one constant in each runtime plus the fixture bytes.
-It is still inert in Loom's runtime - the Paper plugin neither starts the process nor connects to it, and the Villager body is the only body Loom drives - so the five world-touching operations are a wire a controller *can* speak rather than a cutover.
+It is the active product body. `LoomPlugin.kt` wires `ProcessBodySupervisor`, `SocketBodyControlConnector`, `PlayerBodyPort` and `BukkitPlayerServerState`; the Villager adapter remains compiled but unused, with no compatibility switch.
 The process on the far end is landed and runnable: `body/src/body.js` plus the `body/bin/loom-body.js` executable.
 `body/README.md` owns the rules for both the contract and the process: read it before changing either, since the process's policy-free invariant, the derivation of its list bounds from `MAX_FRAME_BYTES`, its loopback-literal rule, its shutdown order and the whole of its movement policy all live there rather than here.
 Movement is why the process loads two plugins outside its reporting table - `mineflayer-pathfinder` and Mineflayer's own `physics`, both through `bot.loadPlugin` from `src/movement.js`, a separate seam that leaves `loadInternalPlugins` off and the reporting list unchanged - and `src/movement.js`'s own header is the authority on the rules that follow from it, including why every one of the library's policy fields is set explicitly, why the policy is rebuilt per request, and why one accepted request owns the path and a second is refused rather than served.
@@ -67,11 +67,11 @@ That corpus has a **third** directory the perception/decision one does not, and 
 `beyond-schema/` holds frames the schema *accepts* and both codecs refuse, because several of this wire's rules are relations between fields rather than shapes - a saturation no larger than the food level it sits in front of, inventory slots in strictly increasing order, an omission count reported only against a list something was in fact cut from.
 Each such case is pinned from both sides at once and the two halves sit in different suites (`test/conformance.test.js` for the refusal, `BodyControlConformanceTest` for the refusal *and* that the schema really does admit it), so a case that in fact belongs in `invalid/` cannot sit there unnoticed.
 
-**The player path states hunger in vanilla's own terms, and the Villager path's reserve is untouched.**
+**The active player path states hunger in vanilla's own terms.**
 `sense` reports `bot.health`, `bot.food` and `bot.foodSaturation` as three separate facts, so a player body carries no `Metabolism` reserve and no food table of Loom's, and `eat` is `bot.equip` plus `bot.consume` with a full bar refused by the library rather than by arithmetic here.
-The two body flavors therefore state hunger differently on purpose until a cutover exists, and nothing in `dev.loom.body` changed for it.
+`SelfState` now carries `health`, `food` and `saturation`; the unused Villager adapter projects its legacy reserve into those player-shaped fields only to stay source-compatible until it is removed.
 Both operations are answer-only: there is no threshold, no target selection and no auto-eat plugin anywhere in `body/`, and no timer in the process starts anything - each either bounds a request a controller asked for or, in the one case the client library owns, does nothing at all until one is in flight - so a starving body with bread in its inventory does nothing at all until a mind names one slot.
-An `eat` names the `sense` answer that offered the slot as well as the slot, so a handle is scoped to one round trip the way `RequestWindow.kt` scopes the Villager path's refs, and for the same reason.
+An `eat` names the `sense` answer that offered the slot as well as the slot, so a handle is scoped to one round trip on one control connection. `PlayerBodyPort` retains that exact connection through cognition so the meal and movement answer the sense that minted their refs.
 The body keeps a bounded memory of recent answers rather than a lookup in something unbounded, so a superseded one is `senseForgotten` rather than a growing map; the agent half of the isolation is structural instead, since one process drives exactly one body.
 A round trip is a connection as well as a request id, so an entry in that memory names both, and getting this wrong is not a scoping nicety but a wrong meal.
 The duplicate-id guard is per control connection - a request id is the controller's own name for its round trip and two controllers share no numbering - so two of the connections the process allows may each sense under one id; keyed on the id alone the second answer replaced the first, and an eat from the first connection then ate a stack its own sense never offered and reported it as `eaten` rather than as the `slotChanged` the slot in fact was.
@@ -85,6 +85,14 @@ The bounded sense memory marks offers dead on `entityDead`, and each active flig
 `plugin/src/main/kotlin/dev/loom/body/BodyPort.kt` is the inbound port the rest of Loom uses to give an agent a physical presence.
 Its surface is exactly four capability areas - lifecycle, actuation, perception, and the server-tick hook - and it should stay that size.
 Only Loom domain and contract types appear in its signatures; no engine type and no world handle crosses it, which is what makes the body flavor replaceable.
+
+The product adapter is `dev.loom.body.player.PlayerBodyPort`. Process and socket waits run on its bounded I/O pool, while every lifecycle, ref, witness and journal mutation returns through the server-main-thread executor. Its startup order is registration -> child launch -> control handshake/status -> server presence -> `spawned`; every failed partial startup stops the child before answering. Its shutdown order releases held sense sessions first, stops the child, then records `despawned` only after cleanup succeeds. A failed cleanup is `FAILED`, never a successful despawn.
+
+**`notReady` is not evidence that the process is gone.**
+The body process refuses a second movement while one accepted request owns the path. `PlayerBodyPort` must record that as `CONTROL_NOT_READY` while the child remains alive and ready; treating it as a disconnect kills a healthy process under ordinary concurrent cognition. Only an actual process/socket loss can produce `DISCONNECTED`, and only `PlayerServerState.isDead` can produce `DEAD`.
+
+**Threat refs and threat identity have different lifetimes.**
+The body-control `sense` entity ordinal remains request-local because `flee` must name the exact answer it came from. Threat debounce needs identity across senses, so `BukkitPlayerServerState.subjectsOf` correlates each client observation to the nearest same-kind server entity within its bounded tolerance, consuming each server candidate once. The server UUID is used only for debounce; an uncorroborated observation stays request-local rather than being guessed onto a creature.
 
 `dev.loom.body` is engine-free by rule, and the movement policy (`Navigation`), perception bound (`PerceptionBound`), mortality rule (`Mortality`), and world-loading footprint (`WorldFootprint`) live there so they are unit-testable without a server.
 
@@ -133,7 +141,7 @@ A probe's refusal is the one `OverBudget` nothing records: it arrives as a sight
 The budget does not accrue, and only a granted request spends a token, so a tick full of out-of-range targets leaves the budget for the requests that could have used it.
 Note before tuning that number that an `OverBudget` refusal stops the prior route like any other, so with more agents deciding in one tick than the budget serves, the excess lose the route they were already walking even when the target they named is unchanged and reachable.
 A *walk* refused that way is simply lost, and nothing retries it before its next goal review; a *flight* is not, because there the same refusal is `RetreatAttempt.PendingBudget` and the retreat is held rather than ended - see the routing-seam paragraph below.
-Nothing retries, so those agents stand still until their next goal review, up to a whole `DEFAULT_GOAL_REVIEW_CADENCE` later - which makes the bucket a behaviour knob under contention and not merely a throughput one.
+Nothing retries, so those agents stand still until their next goal review, up to a whole `DEFAULT_GOAL_REVIEW_CADENCE_TICKS` later - which makes the bucket a behaviour knob under contention and not merely a throughput one.
 The engine's own refusal is under the same stop and is the least defensible case of it, because there the bound is not real: a body momentarily off the ground - mid-jump over a one-block rise, or stepping down a slope - fails `canUpdatePath`, so `createPath` answers a perfectly reachable target with no route, and the agent loses a legitimate route *and* the token it spent, again with nothing retrying before its next goal review.
 Distance is a straight line, and all three axes count, because the bound it is measured against is a walk and a walk is never shorter than the straight line; a per-axis maximum reads the corner of a cube as being one side away and promises a detour that is not there.
 
@@ -237,7 +245,7 @@ A target past the reach and an engine that offered no route are answers about a 
 Both end the retreat and both leave an already-stopped body, but a run that could not tell them apart could not say whether its agents were cornered or merely over budget.
 **A tick whose search budget was already spent is not an answer at all, and ending a flight there is the same death arriving through Loom's own bookkeeping.**
 Nothing was searched for, the target the mind named is unchanged, and it is reachable on the very next tick - so `PathRequest.OverBudget` is `RetreatAttempt.PendingBudget`, which is retained exactly as `Grounding` is: the prior route is stopped, the agent is told its flight was accepted, and the next attempt comes at `RETREAT_RETRY_CADENCE_TICKS` rather than from another decision.
-Ended instead, the agent would stand still with a hostile on it until its next goal review, up to a whole `DEFAULT_GOAL_REVIEW_CADENCE` later, and the record would say `retreatFailed` about ground that had never been asked.
+Ended instead, the agent would stand still with a hostile on it until its next goal review, up to a whole `DEFAULT_GOAL_REVIEW_CADENCE_TICKS` later, and the record would say `retreatFailed` about ground that had never been asked.
 It is a distinct tag (`RETREAT_PENDING_BUDGET`) rather than folded into either neighbour, because "waiting for a token", "waiting for the ground" and "the ground offered nothing" are three different facts about a run.
 Reading the verdict is what `NavigationPolicy.routing` exists for: `route` delegates to it and keeps the stop rule in one place, because re-implementing request-then-walk in the adapter to get at the verdict would give that rule a second copy to drift.
 **Supersession is keyed on an intent that was accepted *and* actually drives the body**, not on acceptance alone and not fired before applying one.
@@ -308,7 +316,7 @@ The append-only event log is meanwhile the durable record of who has died.
 **The first survival drive is an energy reserve, and running it out is a death.**
 `Metabolism` (engine-free) holds the reserve, spends it from the tick the port is given, and reports it - nothing more: ending the agent that ran out is the port's job through `die`, and whether an agent has ended stays `Mortality`'s to say, so death keeps one source of truth.
 The reserve is counted in **ticks**, never in wall-clock time and never as the fraction the mind sees: the same tick sequence has to end the same agent at the same tick however fast it is replayed, a paused server must starve nobody, and a fraction decremented every tick would accumulate float error across a boundary that is a permadeath.
-`SelfState.energy` is that reserve as a 0.0-1.0 fraction, derived on demand, and it rides the ordinary perception - so an agent reacts to its own hunger through the goal review it already does, with no new `Trigger` and nothing to ask for it.
+The unused adapter projects that 0.0-1.0 reserve onto `SelfState.food`'s 0..20 scale with zero saturation so its tests and implementation remain source-compatible with the player-shaped contract until removal.
 The one knob is `DEFAULT_ENERGY_LIFESPAN_TICKS` (36 000 ticks, half an hour at twenty a second), a `Metabolism` constructor default rather than a config file: long enough that a body spawned to be looked at is not dying while it is looked at, short enough that a whole life fits in one sitting.
 **Food is the only source of recovery, and `Intent.Rest` deliberately buys nothing.**
 `Metabolism.feed` is the one way a reserve goes back up: it adds whole ticks, never past the capacity, and refuses a spent reserve.
@@ -378,7 +386,7 @@ Note that Bukkit also returns false for a ticket already held, which is why only
 ## The player witness
 
 `dev.loom.witness` is the server-authoritative witness for Loom's *player* bodies - the Mineflayer flavor of `body/` - and it is a second, independent permadeath enforcement point rather than a helper for the Villager one.
-It is inert as shipped: `LoomPlugin.managedPlayers` is an empty `WitnessRegistry`, nothing in Loom registers a player, and the runtime cutover that will is later work.
+It is active before any body can launch: `LoomPlugin.witnessPlayers` replays the ledger and installs the listener, then `PlayerBodyPort.spawn` registers the deterministic username/UUID before starting the child.
 `dev.loom.witness` is engine-free by rule and `dev.loom.witness.bukkit` is its one adapter, both pinned by `WitnessBoundaryTest`.
 
 **Paper is the witness because Node cannot be one.**
@@ -476,7 +484,7 @@ The one fact that lives nowhere else is that `dev.loom.witness` now depends on `
 `InventorySlots.kt` owns the arithmetic between Bukkit's `PlayerInventory` numbering and the protocol's 46-slot window, and it is its own file because a mistake in it reports every armour piece in the wrong slot, which reads as a body that lied rather than as arithmetic.
 Bukkit cannot address the five crafting-window slots at all, so a claim about one is counted and stated as outside the comparison: "the witness did not look" must never read as "the witness agreed".
 A disagreement is one `witnessDisputed` record under one of six countable tags, and agreement is recorded nowhere and has no method - a record per cross-check that found nothing would bury the ones that did.
-It is inert as shipped for the same reason the rest of the witness is: nothing in Loom submits a claim yet.
+`BukkitPlayerServerState` submits every accepted sense and movement report. A dispute remains evidence only; it never changes admission, lifecycle or mortality.
 
 **A movement report is cross-checked the same way, by the same object, and the three tags it can be filed under are the other three.**
 `ClaimAudit.sawMovement` compares a `MovementClaim` - what one paired `moveTo` or `flee` request and report said - against `PlayerReading`'s `ServerStanding` through `corroborateMovement`, obeying every rule `sawClaim` does: resolved by uuid alone, a stranger is `NotManaged` and is recorded nowhere, and only a dispute is journalled.
@@ -486,16 +494,11 @@ Two of its three faults need no server at all, since a route shorter than the st
 And separation is deliberately **not** cross-checked: a flight's separation is measured against a creature named by a `senseId` and an ordinal, which resolves inside the body process alone, so the server was never told which entity a flight ran from and cannot be asked whether the ground gained was real.
 `DISPUTED_MOVEMENT`, `DISPUTED_POSITION` and `DISPUTED_JOURNEY` are the three tags, and `tagOf` picks between them by which kinds of fault the dispute holds rather than by prose.
 
-**Proving the witness in world needs something outside Loom to register an identity**, because the registry is inert on purpose.
-Write a throwaway `depend: [Loom]` plugin that calls `loom.managedPlayers.register(...)`; `tasks.shadowJar` does no relocation, so Loom's shaded Kotlin stdlib is resolvable from that plugin's classloader, and `AgentId` being a `value class` is why such a harness is easier in Kotlin than in Java.
-Offline-mode uuids are name-derived and stable (`UUID.nameUUIDFromBytes("OfflinePlayer:$name".toByteArray())`), so a harness and a Mineflayer client agree on the uuid with no lookup.
-Drive the deaths with the vanilla console `kill <username>`, and read `player-deaths.jsonl` beside `body-events.jsonl` - a run that proves nothing else must still show one tombstone per death and none for a quit.
+The product itself now supplies the in-world proof. `/loombody create` registers and launches the identity, a child-process kill proves quit/disconnect continuity, vanilla `kill <username>` proves exactly one server-witnessed death, and a direct launch of that account after restart proves ledger-first `loginDeadIdentity` denial. `DEMO.md` is the complete sequence.
 
-## The one adapter, and the NMS seam
+## The unused Villager adapter and NMS seam
 
-`dev.loom.body.nms` is the only package in the plugin allowed to touch `net.minecraft` or CraftBukkit, and `LoomPlugin` is the only place that names a concrete adapter.
-`BodyBoundaryTest` fails the build if either stops being true, so the seam is enforced rather than documented.
-A Minecraft version bump should touch this package and nothing else.
+`dev.loom.body.nms` remains the only package in the plugin allowed to touch `net.minecraft` or CraftBukkit, but `LoomPlugin` no longer names or constructs it. Keep it source-compatible and keep its boundary tests green until the dedicated removal change; do not add a runtime switch back to it.
 
 Read the header of `dev/loom/body/nms/LoomBodyEntity.kt` before changing the body's mechanism.
 It records why a literally-new registered entity type is not viable here, why the body extends a vanilla class instead, and why the base type is Villager.
@@ -524,7 +527,7 @@ The plugin ships with the stable `plugin.yml` descriptor, not `paper-plugin.yml`
 `cognition/crates/cognition` is the mind: it accepts a `Perception` and returns a routed, provenance-stamped `Decision`.
 Five pieces, each its own module - `router` (tier to model), `model` (the backend seam), `openai` (the one real backend), `mind` (compose and stamp), `server`/`wire` (newline-delimited JSON over TCP).
 `ScriptedBackend` is still the default, so a fresh checkout runs with no credentials and both suites stay hermetic, but it is the fallback rather than the state of the art: `LOOM_COGNITION_BACKEND=openai` selects real inference, and `cognition/README.md` is the operator documentation for every setting it reads.
-It does answer a goal review whose `energy` is at or below `RESTING_ENERGY` (0.35) by naming the first stack the body reported and eating it, resting only when the body reported nothing to eat - and since a rest buys nothing, that is what lets a *provisioned* agent survive on the shipped stand-in while an unprovisioned one starves.
+It answers a goal review whose vanilla `food` is at or below `LOW_FOOD_LEVEL` (7) by naming the first stack the body reported and eating it, resting only when the body reported nothing to eat. That is deliberately a goal-review rule rather than an auto-eat reflex in Node.
 That is deliberately a goal-review rule and not a reflex: a damaged agent still flees, because escaping the threat now outranks feeding itself.
 A `damaged` trigger flees the nearest thing in sight carrying a `ref` rather than the trigger's `source`, since a flight names one creature and not a species, and it idles when nothing in sight can be named at all - a handle the body never issued would be refused, so an agent would have spent a pivotal decision on an action that could never be carried out.
 A `threatSighted` trigger looks nothing up, because the handle for that one creature travels with the trigger: reading the surroundings there would answer a sighting of the thing behind the agent by fleeing the thing in front of it.
@@ -572,8 +575,8 @@ Importance is classified above the body port by `importanceOf` (`Importance.kt`)
 
 **Agents drive themselves, on a schedule that is policy rather than plumbing.**
 `AutonomousDriver` sweeps on its own Bukkit timer - never off the per-tick body timer - and asks `GoalReviewSchedule` whose turn it is; both are engine-free, so the cadence and the stagger are pinned by unit tests with a fake clock.
-The one knob is `DEFAULT_GOAL_REVIEW_CADENCE`, and the sweep period is *derived* from it (`GoalReviewSchedule.slice`): sweep at any other rate and the per-slice share silently stops meaning one review per agent per cadence.
-The cadence is a floor, so observed spacing is the cadence plus up to one slice - in world, 2500 ticks for a 2400-tick cadence, which is the design rather than drift.
+The one knob is `DEFAULT_GOAL_REVIEW_CADENCE_TICKS`, and the sweep period is *derived* as `GoalReviewSchedule.sliceTicks`: sweep at any other rate and the per-slice share silently stops meaning one review per agent per cadence.
+Both the schedule reading and Bukkit timer are authoritative server ticks. A pause advances nothing and `/tick sprint` advances the same deterministic sequence; wall time must never re-enter this path.
 A never-reviewed agent is due at once, which is what keeps a single-agent demo watchable at a conservative cadence.
 The driver is cancelled explicitly in `onDisable`, before the bridge it feeds closes.
 
@@ -603,12 +606,9 @@ The package is engine-free by rule (`ObserveBoundaryTest`) and its one adapter i
 So the proof that watching cannot disturb a run is a statement about types, not about timing, and adding any of those three handles to reach "just one more field" is what would break it.
 The sink is one-way and cannot be read from, which is what makes "operator-only diagnostics never become agent-facing perception" structural: nothing shown to an operator has anywhere to travel back to.
 
-**Energy and health are two vitals, and the display must never alias one to the other.**
-Energy is the `Metabolism` reserve: spent by living, tick by tick, refilled only by eating, and lethal at zero.
-Health is physical damage to the body.
-The gauge and the `energy` field both follow the *reserve*, because that is what an unattended agent dies of and what a survival curve is drawn from; health joins the standing line only once a body is hurt, since a body can also be beaten to death on a full reserve.
-The colour is the one thing that reads *both*, at the same threshold, for the same reason.
-Both ride the record as separate fields (`BodyEventRecord.vitals` for the reserve, `.health` for health), and the reserve is sourced from `Metabolism.energyOf` - the same reading the contract's `SelfState.energy` carries - never read off the entity.
+**The observer/evidence vocabulary is a compatibility contract.**
+The player perception carries vanilla `food` and `saturation`, but the established event log and observer retain `BodyEventRecord.vitals`, `energyChanged` and the `energy` line label in this cutover. `PlayerBodyPort` projects food onto that 0..20 slot; health remains separate, and saturation remains in the perception/decision record. Do not rename or fork those observer fields while changing the body adapter.
+The colour is the one thing that reads both primary survival vital and health, at the same threshold.
 Inside either field a reading is `level` of `capacity` (`AgentVitals.energy` carries a `@SerialName`), because `AgentVitals` is the shape *both* vitals are reported in: a health reading read back out of `health.energy` would be the same aliasing one field further down.
 Before the reserve existed the display used health *as* energy; that shortcut is what the wire test in `BodyEventLogTest` now pins against, with the two readings deliberately on different scales so feeding one from the other fails.
 `resting` and `idle` are likewise separate activities now that `Intent.Rest` and `Intent.Idle` are separate intents, and telling a deliberate wait from an unconsidered one is most of what a survival run is about - neither restores anything, so what separates them is intent alone.
@@ -659,38 +659,21 @@ Eight things there are easy to undo by being helpful:
 
 ## Verifying a body change
 
-Gates do not cover in-world behavior; a body change is not done until it has been seen working on a real server.
-Build the jar (`./gradlew shadowJar`), drop it into a Paper 1.21.1 server's `plugins/`, and drive it with `/loombody spawn|move|perceive|think|despawn|list`.
-`DEMO.md` is the written-down version of that run, including the server settings worth setting and what each case is supposed to look like; `/loomwatch <agentId>` is the fastest way to see a whole round trip, since it shows the perception, the model, the reasoning, and the outcome as they are recorded.
-`think` is the round trip and needs `loom-cognition` running; the reply only confirms the perception was sent, and the decision appears in the server log a moment later with its model and prompt version.
-Verify from a **client's** point of view rather than from the plugin's own log: a body that moves server-side only, or that a vanilla client cannot render, looks identical in the log to one that works.
-A client is not optional even for a headless run: `spawn` places the body where the *sender* stands, so it refuses the console, and a scripted client on an offline-mode server (a mineflayer bot will do) both issues the commands and reports what a player would actually see.
-Watching autonomy move a body needs a mind that decides a move: `ScriptedBackend` only ever answers a goal review with `idle` or, once the reserve is low, `rest`, so a self-driving agent perceives, decides and applies on cadence while standing perfectly still - point the plugin at a stand-in mind that replies `moveTo` if motion is what is being checked.
-Watching a *flight* no longer needs that treatment: the plugin raises a `threatSighted` trigger of its own accord, every `THREAT_SCAN_CADENCE`, for any hostile in view of a body, and `ScriptedBackend` answers that trigger with `flee` naming the ref it carries - so a zombie summoned a few blocks from a body drives sighting, decision and retreat on the shipped default.
-**Raise the difficulty first**, because `difficulty peaceful` - which `DEMO.md`'s settings table asks for elsewhere - removes a hostile as soon as it arrives, summoned ones included, and the run then reads as a scan that never saw anything.
-A sighting keys on the entity's own description id (`VILLAGER_HUNTERS`) and not on what the mob is doing, so `zombie-aggressive-towards-villager: false` still gives sightings and flights and never a hit - while `damaged` remains a trigger nothing in the plugin raises, so that path alone still needs a stand-in mind that replies `flee` off the perception it was just given.
-Read the `threatSuppressed` records beside the sightings that fired: each carries the bound that refused it, and a run whose agent stood still has to be able to say which of them never asked its mind.
-Navigation itself is proven with `/loombody move` against three shapes and nothing less: a wall the body must go *round*, a one-block rise it must step *up*, and a target past a chunk boundary.
-A straight-line target on flat ground proves nothing - the old cheap gait passed that case - and `y` now matters, though not as a refusal: a target the engine cannot stand at is *moved* to one it can, so the height is answered in the record rather than in the verdict.
-**Size the wall to the walk budget or the run proves the wrong thing.** The way round the wall has to fit in `BODY_FOLLOW_RANGE_BLOCKS` (16) blocks of walking, so a five-block wall two blocks off is a fair test and a nine-block wall is not - the second one comes back accepted, walks the body into the wall, and looks exactly like a navigation bug.
-Read the whole `moved` detail rather than the position alone: `node 3 of 9`, `at the end of its route` and `stuck` are the difference between a body walking and a body sliding.
-Read both halves of the accepted-route line too. `reaching what it searched for` against `getting as close as it can` is the difference between a route and a best effort, and `ending N blocks from it` is how far the route's own end is from the block that was named.
-`getting as close as it can` on a case that should be reachable means the budget ran out, not that the ground did; a complete route that ends several blocks away means the engine moved the target, so check the `y`.
-Watching the survival drive instead needs patience or a shorter reserve: with the shipped 36 000-tick default an agent reaches for food roughly every twenty minutes, and a starvation takes half an hour of an agent that has none.
-**Vanilla `/tick sprint` drains a reserve and advances no autonomy, and reading it as a fast-forward wastes a run.**
-The reserve is a tick count, so sprinting spends it exactly - 23 000 ticks in under two seconds, which is what makes an in-world meal happen at a reserve a proof can state - but `GoalReviewSchedule` reads a wall clock rather than the game tick, so 23 000 sprinted ticks produced no review at all and the agent simply stood there getting hungrier.
-Drive the review with `/loombody think <agentId>` after the sprint; that also puts the meal at a known reserve instead of wherever the cadence happened to land, which is what lets the gain be checked against `nutrition * capacity / 20` rather than merely observed to be positive.
-**Provisioning the food is vanilla's job and there is no `/loombody` subcommand for it**, so `/item replace entity @e[type=villager,limit=1,sort=nearest] villager.0 with minecraft:bread 3` is the step a run is otherwise missing - in the *first* slot, because the stand-in names the first stack the body reported and cannot tell bread from a pickaxe.
-The one part of the eat path no unit test can reach is that exactly one item leaves the stack, since consuming it is the engine's own rule, so read the villager's inventory count rather than the accepted line alone; `DEMO.md` carries the refusal tags worth provoking beside it.
-Read the rest from the record, or watch it with `/loomwatch`, rather than from the world: `perceived` carries the reserve on every review, an accepted meal states the ticks the agent actually gained, and the end is one `died` with detail "spent its energy reserve", while `/loomwatch` shows the reserve gauge falling and tells `eating`, `resting`, `idle`, and `standing by` apart - four states that look identical to a bare client.
-Dimension travel needs a lit portal and a body walked into it (`/loombody move`), then a `travelled` record and a rendering body on the far side; the driving client must be opped, since `/loombody` is gated on `loom.body` (`default: op`).
-Two geometry mistakes each cost a whole run and produce no record and no error: a portal whose interior starts *above* the height a walking body stands at leaves the body at the frame with its feet under the lowest portal block, and a `move` target *at* the portal plane rather than past it stops the body just short of touching it.
-Losing that gate is silent - the command keeps working for the op who tests it - so `PluginDescriptorTest` pins the shipped descriptor, and `plugin.yml` records why at the key itself.
-Check the *count* of `travelled` records, not just their presence - one round trip is two, and a bouncing body is the failure this most easily hides.
-Walk one trip with no client connected too, since a body travelling unobserved is the case that would otherwise read as a death.
-Two things about the test server will otherwise waste a run: `difficulty peaceful` makes `Villager.thunderHit` skip the whole conversion path, so lightning proves nothing about the conversion seam; and `execute in <dimension> ... @e` resolves against the *command's* position, so it happily reports an entity from the dimension you were checking for orphans in. Scope such checks with `positioned ... distance=..`, or read the client's entity list.
-The append-only `plugins/Loom/body-events.jsonl` is the research record - newline-delimited JSON, one record per line, written off the main thread - and metrics should be derived from it rather than added as separate counters.
-The write queue is bounded so a stalled disk never blocks the tick; records that never reach the file are counted and surfaced as a server-log warning, so before trusting a run's metrics check the server log for "body event log" warnings.
+Gates do not cover the process/server boundary; a player-body change is not done until the disposable Paper 1.21.1 path in `DEMO.md` passes.
+
+Use `/loombody create|inspect|think|stop`. The acceptance run must prove:
+
+- registration precedes launch and `create` completes only after control and server readiness;
+- one perception/decision/action chain preserves its request id and request-scoped refs;
+- a real Mineflayer flight moves the server player, while overlapping movement returns `CONTROL_NOT_READY` without disconnecting or killing the process;
+- repeated senses of one server-correlated creature spend the existing threat debounce;
+- a low-food player consumes exactly the offered stack and reports vanilla food/saturation;
+- killing the child produces `DISCONNECTED`, no tombstone, and a restart with the exact same identity;
+- graceful stop closes held sessions, keepalives, workers, listener and child before recording `despawned`;
+- only a server `kill` produces one durable `died`, and both `/loombody create` and an independent reconnect remain denied after restart;
+- scheduled reviews follow `server.currentTick`: freeze advances none and `/tick sprint` advances the deterministic cadence.
+
+The append-only `plugins/Loom/body-events.jsonl` is the research record and `plugins/Loom/player-deaths.jsonl` is the synchronous authorisation ledger. Before trusting a run, check the Paper log for `body event log` warnings and confirm no `loom-body.js`, cognition, Paper or control-listener process remains.
 `research/README.md` is the authority on a run that is kept as an experiment, and its sharpest edge is that a committed experiment's evidence must never be edited or reformatted.
 A manifest's shape is a third versioned contract, unrelated to the other two: `research/schema/` holds one frozen schema per generation of the shared core, and `research/schema/README.md` is the whole policy for which changes raise `schemaVersion` and which do not - read it before editing a schema or writing a manifest, and take a new manifest's version from `currentSchemaVersion()` rather than copying the previous run's tag.
 The load-bearing rule is that a published generation may only ever be **loosened**, since evidence is committed under it and can never be rewritten to match; the generations are self-contained (no cross-generation `$ref`) so an edit to one cannot redefine another, and no object closes itself with `additionalProperties: false` or `unevaluatedProperties: false`, which is what keeps experiment-specific measurement sections schema-neutral rather than something every generation has to enumerate.

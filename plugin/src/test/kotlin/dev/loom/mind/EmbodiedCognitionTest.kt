@@ -12,9 +12,7 @@ import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
-import dev.loom.body.BodyLocation
 import dev.loom.body.BodyPort
-import dev.loom.body.BodySpawnResult
 import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.describe
@@ -57,18 +55,15 @@ private class RecordingBody(
 ) : BodyPort {
     val applied = mutableListOf<Intent>()
 
-    override fun spawn(
-        agentId: AgentId,
-        at: BodyLocation,
-    ): BodySpawnResult = fail("cognition must not spawn bodies")
+    override fun spawn(agentId: AgentId) = fail("cognition must not spawn bodies")
 
-    override fun despawn(agentId: AgentId): Boolean = fail("cognition must not despawn bodies")
+    override fun despawn(agentId: AgentId) = fail("cognition must not despawn bodies")
 
     override fun apply(
         agentId: AgentId,
         intent: Intent,
         requestId: String?,
-    ): IntentOutcome {
+    ): CompletableFuture<IntentOutcome> {
         assertEquals(
             mainThread(),
             Thread.currentThread(),
@@ -76,22 +71,24 @@ private class RecordingBody(
         )
         // A body that is gone records nothing, exactly as the adapter does: recording
         // the loss belongs to the decision that was lost.
-        if (!present) return IntentOutcome.NoSuchBody
+        if (!present) return CompletableFuture.completedFuture(IntentOutcome.NoSuchBody)
         applied.add(intent)
         val outcome = IntentOutcome.Accepted("applied $intent")
         record(agentId, BodyEvent.INTENT_APPLIED, "${describe(intent)} -> ${describe(outcome)}", requestId)
-        return outcome
+        return CompletableFuture.completedFuture(outcome)
     }
 
     override fun perceive(
         agentId: AgentId,
         trigger: Trigger,
-    ): Perception? =
-        perceptions(trigger)?.also {
-            record(agentId, BodyEvent.PERCEIVED, "${it.surroundings.size} observation(s)", it.requestId)
-        }
+    ): CompletableFuture<Perception?> =
+        CompletableFuture.completedFuture(
+            perceptions(trigger)?.also {
+                record(agentId, BodyEvent.PERCEIVED, "${it.surroundings.size} observation(s)", it.requestId)
+            },
+        )
 
-    override fun senseThreat(agentId: AgentId): Perception? =
+    override fun senseThreat(agentId: AgentId): CompletableFuture<Perception?> =
         fail("this fake answers a trigger it is handed; a threat scan is the driver's business")
 
     override fun tick(tick: Long) = fail("cognition must never drive the tick")
@@ -154,13 +151,15 @@ class EmbodiedCognitionTest {
                 mind = { p -> CompletableFuture.completedFuture(decisionFor(p, Intent.Say("hello"))) },
                 mainThread = main,
                 journal = silentJournal(),
-                onApplied = { applied.add(it) },
-                onUnavailable = { _, failure -> fail("unexpected failure: $failure") },
+                callbacks =
+                    CognitionCallbacks(
+                        onApplied = { applied.add(it) },
+                        onUnavailable = { _, failure -> fail("unexpected failure: $failure") },
+                    ),
             )
 
         val sent = cognition.consider(agent, Trigger.GoalReview)
 
-        assertEquals(captured.requestId, sent?.requestId)
         // Even with a mind that answered instantly and inline, the body is untouched
         // until the main thread runs: applying a decision from inside whatever
         // triggered it is how re-entrant world mutation gets in.
@@ -169,6 +168,7 @@ class EmbodiedCognitionTest {
 
         main.drain()
 
+        assertEquals(captured.requestId, sent.toCompletableFuture().join()?.requestId)
         assertEquals(listOf<Intent>(Intent.Say("hello")), body.applied)
         assertEquals(IntentOutcome.Accepted("applied ${Intent.Say("hello")}"), applied.single().outcome)
         // The provenance the mind stamped survives to the applied record, which is
@@ -193,7 +193,7 @@ class EmbodiedCognitionTest {
             // Drained from this thread, which is therefore "the main thread" as far
             // as the body is concerned; RecordingBody fails if apply arrives on the
             // bridge worker instead.
-            main.drainUntil(1)
+            main.drainUntil(2)
         }
         assertEquals(listOf<Intent>(Intent.MoveTo(listOf(1L, 2L, 3L))), body.applied)
     }
@@ -209,7 +209,9 @@ class EmbodiedCognitionTest {
                 journal = silentJournal(),
             )
 
-        assertNull(cognition.consider(agent, Trigger.GoalReview))
+        val considered = cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+        assertNull(considered.toCompletableFuture().join())
         assertEquals(0, main.pending, "nothing to decide means nothing scheduled")
     }
 
@@ -232,8 +234,10 @@ class EmbodiedCognitionTest {
                 bridge,
                 main,
                 silentJournal(),
-                onApplied = { fail("no decision was produced, so nothing may be applied") },
-                onUnavailable = { _, failure -> failures.add(failure) },
+                CognitionCallbacks(
+                    onApplied = { fail("no decision was produced, so nothing may be applied") },
+                    onUnavailable = { _, failure -> failures.add(failure) },
+                ),
             ).submit(agent, captured)
             main.drainUntil(1)
         }
@@ -255,8 +259,11 @@ class EmbodiedCognitionTest {
             mind = { CompletableFuture.completedFuture(null) },
             mainThread = main,
             journal = silentJournal(),
-            onApplied = { fail("there was no decision to apply") },
-            onUnavailable = { _, failure -> failures.add(failure) },
+            callbacks =
+                CognitionCallbacks(
+                    onApplied = { fail("there was no decision to apply") },
+                    onUnavailable = { _, failure -> failures.add(failure) },
+                ),
         ).submit(agent, perception(agentId = agent.value))
 
         main.drain()
@@ -286,6 +293,7 @@ class EmbodiedCognitionTest {
             )
 
         cognition.consider(agent, Trigger.Damaged(amount = 3L, source = "zombie"))
+        main.drain()
 
         assertEquals(DecisionImportance.PIVOTAL, seen.single().importance)
     }
@@ -304,7 +312,7 @@ class EmbodiedCognitionTest {
         bridge.use {
             val cognition = EmbodiedCognition(body, bridge, main, silentJournal())
             repeat(5) { i -> cognition.submit(agent, perception(requestId = "req-$i", agentId = agent.value)) }
-            main.drainUntil(5)
+            main.drainUntil(10)
         }
         assertEquals(5, body.applied.size)
     }
@@ -362,7 +370,10 @@ class EmbodiedCognitionTest {
             mind = { p -> CompletableFuture.completedFuture(decisionFor(p)) },
             mainThread = main,
             journal = journalInto(records),
-            onApplied = { applied.add(it) },
+            callbacks =
+                CognitionCallbacks(
+                    onApplied = { applied.add(it) },
+                ),
         ).submit(agent, perception(agentId = agent.value))
 
         main.drain()
@@ -403,7 +414,10 @@ class EmbodiedCognitionTest {
                 mind = { CompletableFuture.failedFuture(timedOut) },
                 mainThread = main,
                 journal = journalInto(records),
-                onApplied = { fail("nothing was decided, so nothing may be applied") },
+                callbacks =
+                    CognitionCallbacks(
+                        onApplied = { fail("nothing was decided, so nothing may be applied") },
+                    ),
             )
 
         cognition.consider(agent, Trigger.Damaged(amount = 3L, source = "zombie"))

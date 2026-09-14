@@ -1,5 +1,5 @@
 /*
- * The one adapter behind the body port: server-side NMS entity bodies.
+ * The unused legacy adapter behind the body port: server-side NMS entity bodies.
  *
  * This class is the translation layer. Above it, only Loom domain and contract
  * types exist; below it, `net.minecraft` and CraftBukkit. It is deliberately the
@@ -16,6 +16,7 @@ import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
 import dev.loom.body.BodyDeparture
 import dev.loom.body.BodyEvent
+import dev.loom.body.BodyEventJournal
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyLocation
 import dev.loom.body.BodyPort
@@ -30,9 +31,12 @@ import dev.loom.body.RetreatAttempt
 import dev.loom.body.RetreatEnd
 import dev.loom.body.ThreatClock
 import dev.loom.body.ThreatWatch
+import dev.loom.body.VitalsWatch
+import dev.loom.body.completedBodyOperation
 import dev.loom.body.describe
 import dev.loom.body.navigableFootprint
 import dev.loom.body.reserveFor
+import dev.loom.body.reserveVitals
 import dev.loom.body.tagOf
 import dev.loom.body.takesTheBodyOver
 import dev.loom.contract.Intent
@@ -135,85 +139,94 @@ class NmsEntityBodyPort(
      * removing the bodies is.
      */
     internal val heldChunks = HeldChunks(server, owner, footprint, journal, onHoldFailure)
+    private val spawner = Spawner()
 
-    override fun spawn(
-        agentId: AgentId,
-        at: BodyLocation,
-    ): BodySpawnResult {
-        val world = server.getWorld(at.world) as CraftWorld?
-        return when {
-            // Death is checked first and refused outright: Loom is permadeath, so a
-            // dead agent id is never embodied again, whatever else the request says.
-            mortality.isDead(agentId) ->
-                journal.reject(
+    override fun spawn(agentId: AgentId) =
+        completedBodyOperation(
+            server.worlds.firstOrNull()?.spawnLocation?.let { location ->
+                spawner.spawn(
                     agentId,
-                    "this agent has died, and Loom agents do not return",
-                    EventTag.HAS_DIED,
+                    BodyLocation(location.world.name, location.x, location.y, location.z),
                 )
-            // The one refusal that leaves the agent embodied, and tagged as such: the
-            // spawn is refused *because* the body it asks for is already standing there.
-            bodies.containsKey(agentId) ->
-                journal.reject(agentId, "a body already exists for this agent", EventTag.ALREADY_EMBODIED)
-            world == null -> journal.reject(agentId, "unknown world '${at.world}'", EventTag.UNKNOWN_WORLD)
-            else -> place(agentId, at, world)
-        }
-    }
-
-    /**
-     * Puts a body for [agentId] into [world] at [at].
-     *
-     * The chunk hold is taken before the body is registered as live and so reapable:
-     * a body enters [bodies] only once Loom already holds the world around it, so
-     * there is never a live-but-unheld body a chunk unload could turn into a false
-     * permadeath. A hold that cannot be fully acquired refuses the spawn rather than
-     * leaving a body unheld; the chunks taken are reconciled away by the next follow,
-     * which sees no body. The body is likewise only registered once the world has
-     * accepted it, so a refused spawn leaves no half-live body behind.
-     */
-    private fun place(
-        agentId: AgentId,
-        at: BodyLocation,
-        world: CraftWorld,
-    ): BodySpawnResult {
-        val body = newLoomBody(world.handle, agentId, at)
-        // SpawnReason.CUSTOM is how a plugin spawns its own entity: CraftBukkit's
-        // add-entity path applies natural-spawn gating to any other reason, which
-        // would silently discard the body on a world with spawning restricted. The
-        // hold is attempted first, so addFreshEntity never runs for a body Loom could
-        // not keep loaded.
-        val hold = heldChunks.holdAround(at)
-        // Each refusal carries the tag that says what it leaves the agent as. Both of
-        // these leave it with no body at all, unlike the already-embodied refusal above.
-        val rejection =
-            when {
-                !hold.isComplete ->
-                    "could not hold the world around the spawn: ${hold.describeFailures()}" to EventTag.WORLD_UNHELD
-                !world.handle.addFreshEntity(body, CreatureSpawnEvent.SpawnReason.CUSTOM) ->
-                    "the world refused the spawn" to EventTag.WORLD_REFUSED
-                else -> null
-            }
-        if (rejection != null) {
-            val (reason, outcome) = rejection
-            return journal.reject(agentId, reason, outcome)
-        }
-        bodies[agentId] = body
-        // The spawn is this agent's first energy reading, so it carries one: a survival
-        // curve has to start somewhere, and the watch is told about it so the agent's
-        // first tick does not restate what this record has just said. The reading is the
-        // energy reserve - what living spends and what an unattended agent starves on -
-        // with the body's health carried beside it, since a body can be beaten to death
-        // on a full reserve and an operator wants both.
-        val reserve = reserveVitals(metabolism.energyOf(agentId))
-        val health = bodyVitals(body)
-        vitalsWatch.noted(agentId, reserve, health)
-        journal.record(
-            agentId,
-            BodyEvent.SPAWNED,
-            "at ${at.world} ${position(at.x, at.y, at.z)}",
-            vitals = reserve,
-            health = health,
+            } ?: journal.reject(
+                agentId,
+                "the server has no world in which to place a body",
+                EventTag.UNKNOWN_WORLD,
+            ),
         )
-        return BodySpawnResult.Spawned(agentId, at)
+
+    private inner class Spawner {
+        fun spawn(
+            agentId: AgentId,
+            at: BodyLocation,
+        ): BodySpawnResult {
+            val world = server.getWorld(at.world) as CraftWorld?
+            return when {
+                // Death is checked first and refused outright: Loom is permadeath, so a
+                // dead agent id is never embodied again, whatever else the request says.
+                mortality.isDead(agentId) ->
+                    journal.reject(
+                        agentId,
+                        "this agent has died, and Loom agents do not return",
+                        EventTag.HAS_DIED,
+                    )
+                // The one refusal that leaves the agent embodied, and tagged as such: the
+                // spawn is refused *because* the body it asks for is already standing there.
+                bodies.containsKey(agentId) ->
+                    journal.reject(
+                        agentId,
+                        "a body already exists for this agent",
+                        EventTag.ALREADY_EMBODIED,
+                    )
+                world == null ->
+                    journal.reject(
+                        agentId,
+                        "unknown world '${at.world}'",
+                        EventTag.UNKNOWN_WORLD,
+                    )
+                else -> place(agentId, at, world)
+            }
+        }
+
+        /**
+         * Puts a body for [agentId] into [world] at [at].
+         *
+         * The chunk hold is taken before the body is registered as live and so reapable:
+         * a body enters [bodies] only once Loom already holds the world around it.
+         */
+        private fun place(
+            agentId: AgentId,
+            at: BodyLocation,
+            world: CraftWorld,
+        ): BodySpawnResult {
+            val body = newLoomBody(world.handle, agentId, at)
+            val hold = heldChunks.holdAround(at)
+            val rejection =
+                when {
+                    !hold.isComplete ->
+                        "could not hold the world around the spawn: ${hold.describeFailures()}" to
+                            EventTag.WORLD_UNHELD
+                    !world.handle.addFreshEntity(body, CreatureSpawnEvent.SpawnReason.CUSTOM) ->
+                        "the world refused the spawn" to EventTag.WORLD_REFUSED
+                    else -> null
+                }
+            if (rejection != null) {
+                val (reason, outcome) = rejection
+                return journal.reject(agentId, reason, outcome)
+            }
+            bodies[agentId] = body
+            val reserve = reserveVitals(metabolism.energyOf(agentId))
+            val health = bodyVitals(body)
+            vitalsWatch.noted(agentId, reserve, health)
+            journal.record(
+                agentId,
+                BodyEvent.SPAWNED,
+                "at ${at.world} ${position(at.x, at.y, at.z)}",
+                vitals = reserve,
+                health = health,
+            )
+            return BodySpawnResult.Spawned(agentId, at)
+        }
     }
 
     /**
@@ -222,129 +235,139 @@ class NmsEntityBodyPort(
      * Despawning is not death: it is how Loom itself puts a body away, as on plugin
      * unload, so the agent id stays embodiable. Only [die] is terminal.
      */
-    override fun despawn(agentId: AgentId): Boolean {
-        val body = bodies.remove(agentId) ?: return false
-        val reserve = reserveVitals(metabolism.energyOf(agentId))
-        val health = bodyVitals(body)
-        body.discard()
-        vitalsWatch.forget(agentId)
-        // What the watch remembered was about threats near a body that is now gone. Kept,
-        // it would debounce the first sighting the agent's *next* body makes. Only the
-        // scene goes: tonight's spend is a fact about the night, not about the body, so a
-        // body put away and spawned again does not come back with a fresh allowance.
-        threatWatch.forget(agentId)
-        // And a flight belongs to the body that was running: there is nothing left to
-        // continue, and a successor body must not inherit somebody else's chase.
-        retreats.forget(agentId)
-        journal.record(agentId, BodyEvent.DESPAWNED, "removed from world", vitals = reserve, health = health)
-        return true
-    }
+    override fun despawn(agentId: AgentId) =
+        completedBodyOperation(
+            run {
+                val body = bodies.remove(agentId) ?: return@run false
+                val reserve = reserveVitals(metabolism.energyOf(agentId))
+                val health = bodyVitals(body)
+                body.discard()
+                vitalsWatch.forget(agentId)
+                threatWatch.forget(agentId)
+                retreats.forget(agentId)
+                journal.record(
+                    agentId,
+                    BodyEvent.DESPAWNED,
+                    "removed from world",
+                    vitals = reserve,
+                    health = health,
+                )
+                true
+            },
+        )
 
     override fun apply(
         agentId: AgentId,
         intent: Intent,
         requestId: String?,
-    ): IntentOutcome {
-        // Nothing is journaled for a body that is gone: the loss belongs to whoever
-        // asked, and for a decision that is BodyEvent.DECISION_DISCARDED, which carries
-        // the provenance of the decision that was lost. Recording it here too would
-        // double-record every such decision.
-        val body = bodies[agentId] ?: return IntentOutcome.NoSuchBody
-        // What a flight attempt came to, handed out by the entity because only the ref seam
-        // above can resolve the threat it names, and needed here because an accepted flight
-        // is a state rather than one hop. Null for every other intent.
-        var flight: RetreatAttempt? = null
-        // The ref seam is passed as a function rather than the store itself: what a
-        // handle means is scoped to the agent and the request that minted it, and
-        // the body has no business knowing either. An intent no perception asked
-        // for carries no request, so it resolves against none and is refused as
-        // stale - the honest answer, since no request of this agent's ever named
-        // the threat it is asking to run from.
-        val outcome =
-            body.applyIntent(
-                intent,
-                movement,
-                currentTick(),
-                refs.seamFor(agentId, requestId.orEmpty(), metabolism.reserveFor(agentId), currentTick()),
-                { attempt -> flight = attempt },
+    ) = completedBodyOperation(
+        run {
+            // Nothing is journaled for a body that is gone: the loss belongs to whoever
+            // asked, and for a decision that is BodyEvent.DECISION_DISCARDED, which carries
+            // the provenance of the decision that was lost. Recording it here too would
+            // double-record every such decision.
+            val body = bodies[agentId] ?: return@run IntentOutcome.NoSuchBody
+            // What a flight attempt came to, handed out by the entity because only the ref seam
+            // above can resolve the threat it names, and needed here because an accepted flight
+            // is a state rather than one hop. Null for every other intent.
+            var flight: RetreatAttempt? = null
+            // The ref seam is passed as a function rather than the store itself: what a
+            // handle means is scoped to the agent and the request that minted it, and
+            // the body has no business knowing either. An intent no perception asked
+            // for carries no request, so it resolves against none and is refused as
+            // stale - the honest answer, since no request of this agent's ever named
+            // the threat it is asking to run from.
+            val outcome =
+                body.applyIntent(
+                    intent,
+                    movement,
+                    currentTick(),
+                    refs.seamFor(agentId, requestId.orEmpty(), metabolism.reserveFor(agentId), currentTick()),
+                    { attempt -> flight = attempt },
+                )
+            // The request has had its answer, so its handles have nothing left to name. Closing
+            // the window here rather than leaving it to run out keeps it as narrow as the round
+            // trip actually was, and it is done for a refusal as well as an acceptance: either
+            // way this perception's one decision has arrived.
+            requestId?.let { refs.settle(agentId, it) }
+            journal.recordAction(
+                agentId,
+                "${describe(intent)} -> ${describe(outcome)}",
+                requestId,
+                tagOf(intent),
+                tagOf(outcome),
             )
-        // The request has had its answer, so its handles have nothing left to name. Closing
-        // the window here rather than leaving it to run out keeps it as narrow as the round
-        // trip actually was, and it is done for a refusal as well as an acceptance: either
-        // way this perception's one decision has arrived.
-        requestId?.let { refs.settle(agentId, it) }
-        journal.recordAction(
-            agentId,
-            "${describe(intent)} -> ${describe(outcome)}",
-            requestId,
-            tagOf(intent),
-            tagOf(outcome),
-        )
-        // A flight is the one intent that outlives the tick that applied it, so an accepted
-        // one becomes a state this port keeps and drives from its own tick. Recorded after
-        // the action it belongs to, so a reader meets the decision before its consequence.
-        flight?.let { attempt ->
-            retreats.attempted(agentId, attempt, currentTick())
-            journal.recordRetreat(agentId, describe(attempt, continued = false), tagOf(attempt, continued = false))
-        }
-        // Something else driving the body has taken the flight over, so the flight is over: an
-        // agent has one body and cannot walk somewhere and run away at once.
-        //
-        // Both halves are required and neither implies the other. An intent the body *refused*
-        // took nothing over, so an unsupported `say` cannot end a flight the mind never meant
-        // to end, and a refused move leaves the retreat to re-route at its own cadence. And an
-        // accepted intent that displaces nothing - eating, which touches neither the navigator
-        // nor the position - is not a supersession either; `takesTheBodyOver` is the rule for
-        // which is which, stated in the domain where it is total over the intents.
-        if (takesTheBodyOver(intent) && outcome is IntentOutcome.Accepted && retreats.superseded(agentId)) {
-            journal.recordRetreat(agentId, describe(RetreatEnd.SUPERSEDED), tagOf(RetreatEnd.SUPERSEDED))
-        }
-        return outcome
-    }
-
-    override fun senseThreat(agentId: AgentId): Perception? {
-        val body = bodies[agentId] ?: return null
-        val energy = metabolism.energyOf(agentId)
-        val tick = currentTick()
-        // One read of the world, and everything downstream comes from it: the candidates,
-        // the trigger's own fields, the refs in the observations, and the perception the
-        // mind is sent. See BodyScene for why the scene is captured before the trigger.
-        val scene = body.captureScene(agentId, energy, tick, refs)
-        val outcome =
-            threatWatch.consider(agentId, threatsIn(scene)) { candidate ->
-                // Asked last and only for a candidate the free tests passed: this is a
-                // real search, out of the same per-tick budget a walk pays into.
-                body.canReach(candidate, movement, tick)
+            // A flight is the one intent that outlives the tick that applied it, so an accepted
+            // one becomes a state this port keeps and drives from its own tick. Recorded after
+            // the action it belongs to, so a reader meets the decision before its consequence.
+            flight?.let { attempt ->
+                retreats.attempted(agentId, attempt, currentTick())
+                journal.recordRetreat(agentId, describe(attempt, continued = false), tagOf(attempt, continued = false))
             }
-        // Every refusal is recorded, once, with the bound that refused it - a suppressed
-        // sighting is a fact about the run, not an absence of one. Nothing here reaches a
-        // mind, which is the point of the whole method.
-        for (suppression in outcome.suppressed) {
-            journal.recordSuppressedThreat(agentId, suppression)
-        }
-        return outcome.sighted?.let {
-            recorded(journal, vitalsWatch, agentId, reserveVitals(energy), scene.perceptionOf(it))
-        }
-    }
+            // Something else driving the body has taken the flight over, so the flight is over: an
+            // agent has one body and cannot walk somewhere and run away at once.
+            //
+            // Both halves are required and neither implies the other. An intent the body *refused*
+            // took nothing over, so an unsupported `say` cannot end a flight the mind never meant
+            // to end, and a refused move leaves the retreat to re-route at its own cadence. And an
+            // accepted intent that displaces nothing - eating, which touches neither the navigator
+            // nor the position - is not a supersession either; `takesTheBodyOver` is the rule for
+            // which is which, stated in the domain where it is total over the intents.
+            if (takesTheBodyOver(intent) && outcome is IntentOutcome.Accepted && retreats.superseded(agentId)) {
+                journal.recordRetreat(agentId, describe(RetreatEnd.SUPERSEDED), tagOf(RetreatEnd.SUPERSEDED))
+            }
+            outcome
+        },
+    )
+
+    override fun senseThreat(agentId: AgentId) =
+        completedBodyOperation(
+            run {
+                val body = bodies[agentId] ?: return@run null
+                val energy = metabolism.energyOf(agentId)
+                val tick = currentTick()
+                // One read of the world, and everything downstream comes from it: the candidates,
+                // the trigger's own fields, the refs in the observations, and the perception the
+                // mind is sent. See BodyScene for why the scene is captured before the trigger.
+                val scene = body.captureScene(agentId, energy, tick, refs)
+                val outcome =
+                    threatWatch.consider(agentId, threatsIn(scene)) { candidate ->
+                        // Asked last and only for a candidate the free tests passed: this is a
+                        // real search, out of the same per-tick budget a walk pays into.
+                        body.canReach(candidate, movement, tick)
+                    }
+                // Every refusal is recorded, once, with the bound that refused it - a suppressed
+                // sighting is a fact about the run, not an absence of one. Nothing here reaches a
+                // mind, which is the point of the whole method.
+                for (suppression in outcome.suppressed) {
+                    journal.recordSuppressedThreat(agentId, suppression)
+                }
+                outcome.sighted?.let {
+                    recorded(journal, vitalsWatch, agentId, reserveVitals(energy), scene.perceptionOf(it))
+                }
+            },
+        )
 
     override fun perceive(
         agentId: AgentId,
         trigger: Trigger,
-    ): Perception? {
-        val body = bodies[agentId] ?: return null
-        // One reading, used twice: a decision's cost and the reserve the agent had when it
-        // was made belong to the same moment, so the record must state the number the mind
-        // was handed rather than a second sample of it. The body's health rides on the change
-        // and death records instead of being restated here.
-        val energy = metabolism.energyOf(agentId)
-        return recorded(
-            journal,
-            vitalsWatch,
-            agentId,
-            reserveVitals(energy),
-            body.capturePerception(agentId, energy, trigger, currentTick(), refs),
-        )
-    }
+    ) = completedBodyOperation(
+        run {
+            val body = bodies[agentId] ?: return@run null
+            // One reading, used twice: a decision's cost and the reserve the agent had when it
+            // was made belong to the same moment, so the record must state the number the mind
+            // was handed rather than a second sample of it. The body's health rides on the change
+            // and death records instead of being restated here.
+            val energy = metabolism.energyOf(agentId)
+            recorded(
+                journal,
+                vitalsWatch,
+                agentId,
+                reserveVitals(energy),
+                body.capturePerception(agentId, energy, trigger, currentTick(), refs),
+            )
+        },
+    )
 
     override fun tick(tick: Long) {
         // Actuation only. Cognition is event-driven and is never called from here.
@@ -445,7 +468,7 @@ class NmsEntityBodyPort(
             // resolve or keep loaded rather than leaving a body somewhere it cannot keep
             // alive.
             BodyDeparture.DIMENSION_TRAVEL -> {
-                spawn(agentId, recordTransit(agentId, body, journal))
+                spawner.spawn(agentId, recordTransit(agentId, body, journal))
                 // The body arrives standing in the destination portal, so without the
                 // traveller's cooldown it would travel straight back, once per tick, forever.
                 bodies[agentId]?.let { carryPortalCooldown(body, it) }
@@ -512,6 +535,8 @@ class NmsEntityBodyPort(
     }
 
     override fun liveBodies(): Set<AgentId> = bodies.keys.toSet()
+
+    override fun close() = despawnAll()
 }
 
 /**
@@ -529,7 +554,7 @@ class NmsEntityBodyPort(
  */
 fun NmsEntityBodyPort.despawnAll() {
     for (agentId in liveBodies()) {
-        despawn(agentId)
+        despawn(agentId).toCompletableFuture().join()
     }
     heldChunks.releaseAll()
 }

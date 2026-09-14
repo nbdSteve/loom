@@ -42,10 +42,16 @@ data class BodyLocation(
 
 /** Outcome of a [BodyPort.spawn] request. */
 sealed interface BodySpawnResult {
-    /** The body is in the world and will tick. */
+    /** The body is ready to be perceived and acted through. */
     data class Spawned(
         val agentId: AgentId,
-        val at: BodyLocation,
+        /**
+         * Where an in-server body was placed, when that body flavor owns placement.
+         *
+         * A persistent player owns its position in the server's player data instead,
+         * so the Mineflayer flavor deliberately leaves this absent.
+         */
+        val at: BodyLocation? = null,
     ) : BodySpawnResult
 
     /**
@@ -57,6 +63,42 @@ sealed interface BodySpawnResult {
         val reason: String,
     ) : BodySpawnResult
 }
+
+/** A body lifecycle state as the coordinator exposes it to operators. */
+enum class BodyLifecycle {
+    /** A process has been launched but the player is not ready yet. */
+    STARTING,
+
+    /** The body can be perceived and acted through. */
+    READY,
+
+    /** The player or its process went away without server evidence of death. */
+    DISCONNECTED,
+
+    /** An orderly stop has begun and has not finished yet. */
+    STOPPING,
+
+    /** Startup or control failed before the body became usable. */
+    FAILED,
+
+    /** The server witness has recorded terminal death. */
+    DEAD,
+}
+
+/**
+ * The operator-facing state of one body identity.
+ *
+ * [identity] is the stable server-visible identity when the flavor has one (the
+ * Mineflayer username), and a flavor description otherwise. [endpoint] is present
+ * only for a separately controlled process.
+ */
+data class BodyInspection(
+    val agentId: AgentId,
+    val identity: String,
+    val state: BodyLifecycle,
+    val endpoint: String? = null,
+    val detail: String,
+)
 
 /** Outcome of applying a contract `Intent` to a body. */
 sealed interface IntentOutcome {

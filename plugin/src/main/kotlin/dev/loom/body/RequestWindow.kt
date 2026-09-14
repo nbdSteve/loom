@@ -52,7 +52,7 @@ const val REQUEST_REFS_LIFETIME_TICKS: Long = 800
  *
  * A threat scan, which reads the world for every living agent every `THREAT_SCAN_CADENCE` -
  * one second, so twenty ticks. Every other source is slower: a goal review comes once per
- * `DEFAULT_GOAL_REVIEW_CADENCE`, and `/loombody think` is an operator typing.
+ * `DEFAULT_GOAL_REVIEW_CADENCE_TICKS`, and `/loombody think` is an operator typing.
  *
  * The tempting bound is `THREAT_DEBOUNCE_TICKS`, and it is the wrong one: a debounce is a
  * floor on *repeats of an unchanged threat*, and `ThreatWatch.mayLookAgain` deliberately

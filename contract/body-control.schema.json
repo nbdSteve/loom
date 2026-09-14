@@ -124,7 +124,7 @@
     },
 
     "SensedVitals": {
-      "description": "The three vitals the game keeps for a player, reported as the game's own numbers and never combined into one. Health is damage to the body; food is how full the agent is; saturation is the hidden reserve that is spent before food falls. A body can be beaten to death on a full stomach and can starve without a scratch, so a wire that reported one figure for 'condition' could not say what ended an agent. This is deliberately not the perception contract's SelfState.energy, which is one synthetic reserve the Villager body spends by living: these are vanilla's own, and reconciling the two is the coordinator's work at cutover rather than something this wire pretends to have done.",
+      "description": "The three vitals the game keeps for a player, reported as the game's own numbers and never combined into one. Health is damage to the body; food is how full the agent is; saturation is the hidden reserve that is spent before food falls. A body can be beaten to death on a full stomach and can starve without a scratch, so a wire that reported one figure for 'condition' could not say what ended an agent. The player adapter passes these same food and saturation readings into the perception contract without synthesizing the unused Villager adapter's legacy energy reserve.",
       "type": "object",
       "additionalProperties": false,
       "required": ["health", "food", "saturation"],

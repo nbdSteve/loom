@@ -11,9 +11,9 @@
  * cross-checked can never reach the permadeath rule. A method on the witness would have
  * had both sets of collaborators in scope and only a convention to keep them apart.
  *
- * It is inert as shipped, like the registry it reads: nothing in Loom's runtime speaks
- * the body-control protocol yet, so nothing hands it a claim. Its journal record and its
- * comparison are proven at a desk.
+ * The player adapter submits every bounded sense and movement report here. The audit
+ * remains evidence-only: a disagreement is recorded, never promoted into a login
+ * refusal or a death decision.
  */
 package dev.loom.witness
 

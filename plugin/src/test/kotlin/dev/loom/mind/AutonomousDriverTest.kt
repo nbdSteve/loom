@@ -11,9 +11,7 @@
 package dev.loom.mind
 
 import dev.loom.body.AgentId
-import dev.loom.body.BodyLocation
 import dev.loom.body.BodyPort
-import dev.loom.body.BodySpawnResult
 import dev.loom.body.IntentOutcome
 import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
@@ -26,10 +24,8 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.fail
 import java.util.concurrent.CompletableFuture
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.minutes
 
-private val CADENCE = 1.minutes
+private const val CADENCE = 1_200L
 private const val SLICES = 4
 
 /**
@@ -45,37 +41,36 @@ private class FakeBodies(
     val perceived = mutableListOf<AgentId>()
     val applied = mutableListOf<AgentId>()
 
-    override fun spawn(
-        agentId: AgentId,
-        at: BodyLocation,
-    ): BodySpawnResult = fail("the driver must not spawn bodies")
+    override fun spawn(agentId: AgentId) = fail("the driver must not spawn bodies")
 
-    override fun despawn(agentId: AgentId): Boolean = fail("the driver must not despawn bodies")
+    override fun despawn(agentId: AgentId) = fail("the driver must not despawn bodies")
 
     override fun apply(
         agentId: AgentId,
         intent: Intent,
         requestId: String?,
-    ): IntentOutcome {
+    ): CompletableFuture<IntentOutcome> {
         applied.add(agentId)
-        return IntentOutcome.Accepted("applied $intent")
+        return CompletableFuture.completedFuture(IntentOutcome.Accepted("applied $intent"))
     }
 
     override fun perceive(
         agentId: AgentId,
         trigger: Trigger,
-    ): Perception? {
+    ): CompletableFuture<Perception?> {
         perceived.add(agentId)
-        return if (agentId in embodied) {
-            perception(requestId = "req-${agentId.value}", agentId = agentId.value, trigger = trigger)
-        } else {
-            null
-        }
+        return CompletableFuture.completedFuture(
+            if (agentId in embodied) {
+                perception(requestId = "req-${agentId.value}", agentId = agentId.value, trigger = trigger)
+            } else {
+                null
+            },
+        )
     }
 
     override fun tick(tick: Long) = fail("the autonomous driver must never touch the per-tick path")
 
-    override fun senseThreat(agentId: AgentId): Perception? =
+    override fun senseThreat(agentId: AgentId): CompletableFuture<Perception?> =
         fail("a goal review must never look for threats: that is the vigilance loop's own sweep")
 
     override fun liveBodies(): Set<AgentId> = living
@@ -83,7 +78,7 @@ private class FakeBodies(
 
 class AutonomousDriverTest {
     private val main = FakeMainThread()
-    private var now: Duration = Duration.ZERO
+    private var now = 0L
     private val asked = mutableListOf<Perception>()
 
     private fun agents(count: Int): Set<AgentId> = (1..count).map { AgentId("agent-$it") }.toSet()
@@ -94,7 +89,15 @@ class AutonomousDriverTest {
         mind: CognitionBridge = CognitionBridge(::answer),
     ): AutonomousDriver {
         val cognition =
-            EmbodiedCognition(bodies, mind, main, silentJournal(), onUnavailable = { _, e -> fail("unexpected: $e") })
+            EmbodiedCognition(
+                bodies,
+                mind,
+                main,
+                silentJournal(),
+                CognitionCallbacks(
+                    onUnavailable = { _, failure -> fail("unexpected: $failure") },
+                ),
+            )
         return AutonomousDriver(bodies, cognition, GoalReviewSchedule(CADENCE, SLICES)) { now }
     }
 
@@ -112,14 +115,15 @@ class AutonomousDriverTest {
 
         driverFor(bodies).sweep()
 
+        assertEquals(1, main.pending, "body I/O completion must return through the main thread")
+        main.drain()
+
         // The perception the agent sent itself: a goal review, at the routine tier
         // that a scheduled review is priced at.
         assertEquals(listOf(agent), bodies.perceived)
         assertEquals(Trigger.GoalReview, asked.single().trigger)
         assertEquals(DecisionImportance.ROUTINE, asked.single().importance)
         // And the decision reaches the body, on the main thread, as an action.
-        assertTrue(bodies.applied.isEmpty(), "nothing may touch the body before the main thread runs")
-        main.drain()
         assertEquals(listOf(agent), bodies.applied)
     }
 
@@ -133,7 +137,8 @@ class AutonomousDriverTest {
 
         driverFor(bodies) { fail("a bodyless agent must never reach the mind") }.sweep()
 
-        assertEquals(0, main.pending, "nothing was decided, so nothing may be scheduled")
+        main.drain()
+        assertEquals(0, main.pending, "nothing was decided, so nothing else may be scheduled")
     }
 
     @Test
@@ -163,6 +168,7 @@ class AutonomousDriverTest {
         val driver = driverFor(bodies)
 
         driver.sweep()
+        main.drain()
 
         assertEquals(5, asked.size, "20 agents over $SLICES slices is 5 a sweep, not 20")
     }
@@ -178,6 +184,8 @@ class AutonomousDriverTest {
 
         assertEquals(listOf(agent), bodies.perceived)
         assertTrue(bodies.applied.isEmpty())
-        assertEquals(0, main.pending, "an unanswered request schedules nothing")
+        assertEquals(1, main.pending, "the completed body read still returns through the main thread")
+        main.drain()
+        assertEquals(0, main.pending, "an unanswered mind schedules no action")
     }
 }

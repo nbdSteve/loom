@@ -20,16 +20,14 @@ description: Gives Loom agents physical bodies in the world, behind a swappable 
 # own reasoning - which is not something every sender on a server should be handed.
 commands:
   loombody:
-    description: Drives the body port and the mind - spawn, move, perceive, think, despawn, list.
+    description: Manages Loom's persistent player identity and its mind.
     permission: loom.body
     permission-message: /loombody drives Loom's agents and requires the loom.body permission.
     usage: |
-      /loombody spawn <agentId>
-      /loombody move <agentId> <x> <y> <z>
-      /loombody perceive <agentId>
+      /loombody create <agentId>
+      /loombody inspect <agentId>
       /loombody think <agentId>
-      /loombody despawn <agentId>
-      /loombody list
+      /loombody stop <agentId>
   loomwatch:
     description: Watches one living agent - energy, trigger, model, intent, and outcome.
     permission: loom.observe

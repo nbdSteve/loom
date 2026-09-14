@@ -12,6 +12,7 @@ package dev.loom.body.nms
 import dev.loom.body.AgentId
 import dev.loom.body.BodyDeparture
 import dev.loom.body.BodyEvent
+import dev.loom.body.BodyEventJournal
 import dev.loom.body.BodyLocation
 import net.minecraft.world.entity.Entity
 

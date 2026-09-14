@@ -1,51 +1,29 @@
 /*
- * The console/in-game driver that exercises the body port and the mind end to end.
+ * The operator surface for one managed player identity.
  *
- * It is written against `BodyPort` and `EmbodiedCognition` alone - no adapter
- * type, no NMS, no transport - which is what makes it evidence that both ports are
- * real seams rather than decorative ones: the same commands would drive any future
- * body flavor or mind deployment unchanged.
- *
- * `move` still supplies a hardcoded contract `Intent.MoveTo`, which is how a body
- * is driven with the mind deliberately out of the loop. `think` is the round trip:
- * it perceives, sends that perception to the real cognition service, and the
- * decision that comes back is applied to the body on a later tick.
+ * Commands start asynchronous work and return immediately. Completion is reported
+ * through the plugin logger, because starting a process, waiting for player readiness,
+ * cognition, movement and orderly shutdown may each outlive the command invocation.
  */
 package dev.loom.plugin
 
-import dev.loom.body.BodyLocation
+import dev.loom.body.BodyInspection
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
-import dev.loom.contract.Intent
-import dev.loom.contract.LoomJson
 import dev.loom.contract.Trigger
 import dev.loom.mind.EmbodiedCognition
-import kotlinx.serialization.encodeToString
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
-import org.bukkit.entity.Player
-
-/** Argument count for `move <agentId> <x> <y> <z>`. */
-private const val MOVE_ARG_COUNT = 5
 
 private const val ARG_AGENT = 1
-private const val ARG_X = 2
-private const val ARG_Y = 3
-private const val ARG_Z = 4
-
-/** Number of coordinate components in a `move` target. */
-private const val COORDINATE_COUNT = 3
+private const val MAX_FAILURE_NAME_CHARS = 48
 
 /**
- * Drives the body port and the mind from a command.
+ * Creates, inspects, thinks for and stops the player identity behind [bodies].
  *
- * @param bodies the port. Typed as [BodyPort]: this class must never know which
- *   flavor is behind it.
- * @param mind the perception -> decision -> action round trip. Typed as
- *   [EmbodiedCognition] for the same reason: which mind is behind it, and how it
- *   is reached, is not this class's business.
- * @param report where human-readable results go in addition to the sender.
+ * Typed only as [BodyPort], so the command remains an operator surface over the
+ * lifecycle seam rather than another route into the Mineflayer implementation.
  */
 class BodyCommand(
     private val bodies: BodyPort,
@@ -58,8 +36,7 @@ class BodyCommand(
         label: String,
         args: Array<out String>,
     ): Boolean {
-        val senderLocation = (sender as? Player)?.location?.let { BodyLocation(it.world.name, it.x, it.y, it.z) }
-        val result = reply(args, senderLocation)
+        val result = reply(args)
         result?.let {
             sender.sendMessage(it)
             report(it)
@@ -67,99 +44,92 @@ class BodyCommand(
         return result != null
     }
 
-    /**
-     * The human-readable reply to [args], or `null` for an unknown subcommand.
-     *
-     * [senderLocation] is where the sender stands, if the sender has a place in
-     * the world at all; `spawn` places the body there. Everything below here is
-     * engine-free, so command handling is testable without a server.
-     */
-    internal fun reply(
-        args: Array<out String>,
-        senderLocation: BodyLocation?,
-    ): String? =
+    /** The immediate reply to [args], or `null` for an unknown subcommand. */
+    internal fun reply(args: Array<out String>): String? =
         when (args.firstOrNull()) {
-            "spawn" -> spawn(senderLocation, args)
-            "move" -> move(args)
-            "perceive" -> perceive(args)
+            "create" -> create(args)
+            "inspect" -> inspect(args)
             "think" -> think(args)
-            "despawn" -> despawn(args)
-            "list" -> "live bodies: ${bodies.liveBodies().joinToString(", ").ifEmpty { "none" }}"
+            "stop" -> stop(args)
             else -> null
         }
 
-    private fun spawn(
-        at: BodyLocation?,
-        args: Array<out String>,
-    ): String {
-        val agentId = args.getOrNull(ARG_AGENT)
-        return when {
-            agentId == null -> "usage: spawn <agentId>"
-            at == null -> "spawn must be run by a player, whose location the body is placed at"
-            else ->
-                withAgent(agentId) { agent ->
-                    when (val result = bodies.spawn(agent, at)) {
-                        is BodySpawnResult.Spawned -> "spawned body for ${result.agentId}"
-                        is BodySpawnResult.Rejected -> "spawn rejected for ${result.agentId}: ${result.reason}"
-                    }
-                }
-        }
-    }
-
-    private fun move(args: Array<out String>): String {
-        val target =
-            if (args.size < MOVE_ARG_COUNT) {
-                emptyList()
-            } else {
-                listOfNotNull(
-                    args[ARG_X].toLongOrNull(),
-                    args[ARG_Y].toLongOrNull(),
-                    args[ARG_Z].toLongOrNull(),
+    private fun create(args: Array<out String>): String {
+        val raw = args.getOrNull(ARG_AGENT) ?: return "usage: create <agentId>"
+        return withAgent(raw) { agent ->
+            bodies.spawn(agent).whenComplete { result, failure ->
+                report(
+                    when {
+                        failure != null -> "body startup failed for $agent: ${boundedFailure(failure)}"
+                        result is BodySpawnResult.Spawned -> "body ready for ${result.agentId}"
+                        result is BodySpawnResult.Rejected ->
+                            "body startup rejected for ${result.agentId}: ${result.reason}"
+                        else -> "body startup failed for $agent"
+                    },
                 )
             }
-        return when {
-            args.size < MOVE_ARG_COUNT -> "usage: move <agentId> <x> <y> <z>"
-            target.size < COORDINATE_COUNT -> "x, y and z must be whole numbers"
-            // A hardcoded contract Intent stands in for the mind for now.
-            else -> withAgent(args[ARG_AGENT]) { "move outcome: ${bodies.apply(it, Intent.MoveTo(target))}" }
+            "starting player body for $agent"
         }
     }
 
-    private fun perceive(args: Array<out String>): String {
-        val agentId = args.getOrNull(ARG_AGENT) ?: return "usage: perceive <agentId>"
-        return withAgent(agentId) { agent ->
-            // Printed as contract JSON: the exact bytes the mind will receive.
-            bodies.perceive(agent, Trigger.GoalReview)
-                ?.let { LoomJson.encodeToString(it) }
-                ?: "no body for $agentId"
+    private fun inspect(args: Array<out String>): String {
+        val raw = args.getOrNull(ARG_AGENT) ?: return "usage: inspect <agentId>"
+        return withAgent(raw) { agent ->
+            bodies.inspect(agent)?.describe() ?: "no managed body for $agent"
         }
     }
 
-    /**
-     * The one full round trip: perceive, send to the mind, act on what comes back.
-     *
-     * The reply says only that the perception is on its way, because that is all
-     * that has happened by the time this returns - the whole point of the bridge
-     * is that this call does not wait for the mind. The decision itself arrives in
-     * [report] a moment later, from the main thread.
-     */
     private fun think(args: Array<out String>): String {
-        val agentId = args.getOrNull(ARG_AGENT) ?: return "usage: think <agentId>"
-        return withAgent(agentId) { agent ->
-            mind.consider(agent, Trigger.GoalReview)
-                ?.let { "sent ${it.importance} perception ${it.requestId} for $agentId to the mind" }
-                ?: "no body for $agentId"
+        val raw = args.getOrNull(ARG_AGENT) ?: return "usage: think <agentId>"
+        return withAgent(raw) { agent ->
+            mind.consider(agent, Trigger.GoalReview).whenComplete { perception, failure ->
+                report(
+                    when {
+                        failure != null -> "could not perceive for $agent: ${boundedFailure(failure)}"
+                        perception == null -> "no ready body for $agent"
+                        else ->
+                            "sent ${perception.importance} perception ${perception.requestId} " +
+                                "for $agent to the mind"
+                    },
+                )
+            }
+            "requested a goal review for $agent"
         }
     }
 
-    private fun despawn(args: Array<out String>): String {
-        val agentId = args.getOrNull(ARG_AGENT) ?: return "usage: despawn <agentId>"
-        return withAgent(agentId) { agent ->
-            if (bodies.despawn(agent)) {
-                "despawned body for $agentId"
-            } else {
-                "no body for $agentId"
+    private fun stop(args: Array<out String>): String {
+        val raw = args.getOrNull(ARG_AGENT) ?: return "usage: stop <agentId>"
+        return withAgent(raw) { agent ->
+            bodies.despawn(agent).whenComplete { stopped, failure ->
+                report(
+                    when {
+                        failure != null -> "body stop failed for $agent: ${boundedFailure(failure)}"
+                        stopped == true -> "stopped body for $agent"
+                        else -> "no body for $agent"
+                    },
+                )
             }
+            "stopping player body for $agent"
         }
     }
+
+    private fun BodyInspection.describe(): String =
+        buildString {
+            append(agentId)
+            append(": ")
+            append(identity)
+            append(" is ")
+            append(state.name.lowercase())
+            endpoint?.let {
+                append(" at ")
+                append(it)
+            }
+            append(" (")
+            append(detail)
+            append(')')
+        }
+
+    /** Never quote an unbounded process or transport message into an operator line. */
+    private fun boundedFailure(failure: Throwable): String =
+        failure::class.simpleName?.take(MAX_FAILURE_NAME_CHARS) ?: "unavailable"
 }

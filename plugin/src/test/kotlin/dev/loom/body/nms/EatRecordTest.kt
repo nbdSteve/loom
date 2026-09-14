@@ -17,6 +17,7 @@ package dev.loom.body.nms
 
 import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
+import dev.loom.body.BodyEventJournal
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.EAT_REFUSALS
 import dev.loom.body.EventTag

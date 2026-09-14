@@ -7,16 +7,7 @@
  * and the one place that knows a record carries the tick and the agent id - lives
  * here.
  */
-package dev.loom.body.nms
-
-import dev.loom.body.AgentId
-import dev.loom.body.AgentVitals
-import dev.loom.body.BodyEvent
-import dev.loom.body.BodyEventLog
-import dev.loom.body.BodyEventRecord
-import dev.loom.body.BodySpawnResult
-import dev.loom.body.ThreatSuppression
-import dev.loom.body.WORLD_AGENT_ID
+package dev.loom.body
 
 /**
  * Records body events against [eventLog], stamped with the current server tick.
@@ -24,18 +15,20 @@ import dev.loom.body.WORLD_AGENT_ID
  * @param eventLog append-only sink every body event is written to.
  * @param currentTick supplies the server tick for stamping records.
  */
-internal class BodyEventJournal(
+class BodyEventJournal(
     private val eventLog: BodyEventLog,
     private val currentTick: () -> Long,
 ) {
     /**
      * Stamps [event] for [agentId] with the current tick and appends it.
      *
-     * [vitals] is the energy reserve, and [health] the body's hit points, passed wherever
-     * the readings were being taken anyway - a spawn, a death, a change worth recording -
-     * which is what makes a survival curve derivable from the log itself. They stay absent
-     * elsewhere rather than being carried forward, so no record states a reading that was
-     * not actually taken.
+     * [vitals] is the adapter's primary survival reading and [health] the body's hit
+     * points, passed wherever the readings were being taken anyway - a spawn, a death, a
+     * change worth recording - which is what makes a survival curve derivable from the
+     * log itself. For the player adapter the compatibility field carries vanilla food;
+     * the unused Villager adapter carries its synthetic reserve. They stay absent
+     * elsewhere rather than being carried forward, so no record states a reading that
+     * was not actually taken.
      *
      * The events that answer a perception carry a request id, and they have their own
      * methods - [recordPerception] and [recordAction] - because each also carries a fact
@@ -65,9 +58,9 @@ internal class BodyEventJournal(
      *
      * Its own method rather than another optional argument because the trigger is the
      * one fact only a perception has, and it is the field a run's inference cost is
-     * apportioned by. The reserve reading rides along: the perception took the reserve it
-     * handed the mind anyway. The body's health is left to the change and death records,
-     * which carry it wherever it moved.
+     * apportioned by. The primary survival reading rides along because the perception
+     * took it anyway. The body's health is left to the change and death records, which
+     * carry it wherever it moved.
      */
     fun recordPerception(
         agentId: AgentId,

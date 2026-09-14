@@ -171,23 +171,14 @@ const WORLD_LIMIT_BLOCKS: f64 = 29_999_984.0;
 /// How far the stand-in steps toward something it has sighted, in blocks.
 const SIGHTED_STEP_BLOCKS: i64 = 2;
 
-/// The fraction of reserve at or below which the stand-in rests on a goal review.
+/// The vanilla food level at or below which the stand-in seeks a meal.
 ///
 /// Well clear of exhaustion, because a goal review is the *only* moment this
 /// backend can act on the need: the margin has to cover a whole review cadence
 /// plus the stagger, or an agent would notice its reserve for the first time after
 /// it had already run out. It is a rule of thumb and nothing more - a real backend
 /// weighs resting against whatever else the agent is doing.
-const RESTING_ENERGY: f64 = 0.35;
-
-/// Turns a reserve fraction into the percentage a reader of the reasoning sees.
-///
-/// The reasoning is the one field carried verbatim to an operator's screen, so a
-/// reserve stated in it is read by eye rather than counted. A reserve is derived
-/// from a tick count and most of its values do not divide: an in-world run printed
-/// `the energy reserve is down to 0.3198888888888889`, which is thirteen digits of
-/// noise about a number the display beside it renders as `32/100`.
-const PERCENT: f64 = 100.0;
+const LOW_FOOD_LEVEL: i64 = 7;
 
 /// Converts a continuous world coordinate to the block coordinate an
 /// [`Intent::MoveTo`] target carries.
@@ -292,8 +283,8 @@ impl ScriptedBackend {
                     reasoning: format!("{block} sighted nearby; close the distance to reach it"),
                 }
             }
-            // The one survival rule the stand-in has. An agent whose reserve runs
-            // out dies for good, so a low reserve outranks every other goal.
+            // The one survival rule the stand-in has. Vanilla hunger is reported
+            // directly, so a low food level outranks every other routine goal.
             //
             // Eating is the only thing that refills a reserve, so the stand-in
             // reaches for the inventory first and rests only when it is empty. A
@@ -307,22 +298,23 @@ impl ScriptedBackend {
             // names what it was told about first and lets the body refuse what is
             // not food, which is a refusal the body records. A demo therefore
             // provisions the food in the body's first occupied slot.
-            Trigger::GoalReview if perception.self_state.energy <= RESTING_ENERGY => {
-                let share = perception.self_state.energy * PERCENT;
+            Trigger::GoalReview if perception.self_state.food <= LOW_FOOD_LEVEL => {
+                let food = perception.self_state.food;
+                let saturation = perception.self_state.saturation;
                 match perception.self_state.inventory_summary.first() {
                     Some(stack) => Draft {
                         intent: Intent::Eat {
                             slot_ref: stack.slot_ref.clone(),
                         },
                         reasoning: format!(
-                            "the energy reserve is down to {share:.0}% of capacity; eating the {what} is the only thing that refills it",
+                            "food is {food} of 20 with saturation {saturation:.1}; eating the {what} may restore it",
                             what = stack.what
                         ),
                     },
                     None => Draft {
                         intent: Intent::Rest,
                         reasoning: format!(
-                            "the energy reserve is down to {share:.0}% of capacity and there is nothing to eat; holding position rather than spending it"
+                            "food is {food} of 20 with saturation {saturation:.1} and there is nothing to eat; holding position"
                         ),
                     },
                 }
@@ -367,7 +359,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        block_coord, BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, RESTING_ENERGY,
+        block_coord, BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, LOW_FOOD_LEVEL,
         WORLD_LIMIT_BLOCKS,
     };
     use crate::config::{ConfigError, Env};
@@ -381,8 +373,7 @@ mod tests {
         Router::new(ModelCatalog::uniform("scripted-stand-in"))
     }
 
-    /// A perception from an agent with a full reserve, so a test that is not about
-    /// energy is never accidentally about it.
+    /// A well-fed perception, so a test that is not about hunger never becomes one.
     fn perception(trigger: Trigger, importance: DecisionImportance) -> Perception {
         Perception {
             request_id: "req-1".to_owned(),
@@ -392,7 +383,8 @@ mod tests {
             captured_tick: 1,
             self_state: SelfState {
                 health: 20.0,
-                energy: 1.0,
+                food: 20,
+                saturation: 5.0,
                 position: [10.5, 64.0, -8.25],
                 inventory_summary: vec![],
                 world: WorldState {
@@ -435,11 +427,12 @@ mod tests {
         seen
     }
 
-    /// The same perception, from an agent whose reserve is down to `energy`.
-    fn drained(seen: Perception, energy: f64) -> Perception {
+    /// The same perception, from an agent whose food level is [food].
+    fn hungry(seen: Perception, food: i64) -> Perception {
         Perception {
             self_state: SelfState {
-                energy,
+                food,
+                saturation: 0.0,
                 ..seen.self_state
             },
             ..seen
@@ -524,58 +517,51 @@ mod tests {
     }
 
     #[test]
-    fn a_goal_review_on_a_full_reserve_does_not_rest() {
+    fn a_goal_review_on_a_full_food_bar_does_not_rest() {
         let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
         assert_eq!(draft.intent, Intent::Idle);
     }
 
     #[test]
-    fn a_goal_review_on_a_low_reserve_rests_instead() {
+    fn a_goal_review_on_low_food_rests_instead() {
         // The survival rule, at the threshold and below it. An agent that only
         // rested strictly below the threshold would skip the review that lands
         // exactly on it, and reviews are the only chance it gets.
-        for energy in [RESTING_ENERGY, RESTING_ENERGY / 2.0, 0.0] {
-            let seen = drained(
+        for food in [LOW_FOOD_LEVEL, LOW_FOOD_LEVEL / 2, 0] {
+            let seen = hungry(
                 perception(Trigger::GoalReview, DecisionImportance::Routine),
-                energy,
+                food,
             );
             let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
             assert_eq!(
                 draft.intent,
                 Intent::Rest,
-                "an agent at {energy} of its reserve must rest, not idle"
+                "an agent at food level {food} must rest, not idle"
             );
         }
     }
 
     #[test]
-    fn the_resting_reasoning_states_the_reserve_as_a_reader_reads_it() {
-        // The reasoning is the one field an operator is shown verbatim, and a
-        // reserve derived from a tick count rarely divides: this exact reading
-        // printed as `0.3198888888888889` on a boss bar in world, next to a
-        // display of its own that said `32/100`.
-        let seen = drained(
+    fn the_resting_reasoning_states_vanilla_hunger() {
+        let seen = hungry(
             perception(Trigger::GoalReview, DecisionImportance::Routine),
-            0.319_888_888_888_888_9,
+            6,
         );
 
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
 
         assert_eq!(
             draft.reasoning,
-            "the energy reserve is down to 32% of capacity and there is nothing to eat; holding position rather than spending it"
+            "food is 6 of 20 with saturation 0.0 and there is nothing to eat; holding position"
         );
     }
 
     #[test]
-    fn a_low_reserve_eats_what_it_is_carrying_rather_than_resting() {
-        // Eating is the only thing that refills a reserve, so a stand-in that
-        // rested while holding food would starve an agent that had the answer in
-        // its own inventory.
-        let mut seen = drained(
+    fn low_food_eats_what_it_is_carrying_rather_than_resting() {
+        let mut seen = hungry(
             perception(Trigger::GoalReview, DecisionImportance::Routine),
-            RESTING_ENERGY,
+            LOW_FOOD_LEVEL,
         );
         seen.self_state.inventory_summary = vec![
             InventoryStack {
@@ -600,7 +586,7 @@ mod tests {
         );
         assert_eq!(
             draft.reasoning,
-            "the energy reserve is down to 35% of capacity; eating the bread is the only thing that refills it"
+            "food is 7 of 20 with saturation 0.0; eating the bread may restore it"
         );
     }
 
@@ -661,10 +647,10 @@ mod tests {
     }
 
     #[test]
-    fn a_low_reserve_does_not_override_a_threat() {
-        // Resting is a goal-review rule, not a reflex: an exhausted agent being
+    fn low_food_does_not_override_a_threat() {
+        // Resting is a goal-review rule, not a reflex: a starving agent being
         // eaten still runs. Losing this would have a body sit down under attack.
-        let seen = drained(
+        let seen = hungry(
             in_view(
                 perception(
                     Trigger::Damaged {
@@ -676,7 +662,7 @@ mod tests {
                 "zombie",
                 "e1",
             ),
-            0.0,
+            0,
         );
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
         assert_eq!(

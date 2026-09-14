@@ -23,6 +23,9 @@ import dev.loom.body.IntentOutcome
 import dev.loom.contract.Decision
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionException
+import java.util.concurrent.CompletionStage
 
 /**
  * The end of one decision's life: what the mind decided, and what the body did
@@ -38,6 +41,13 @@ data class AppliedDecision(
     val outcome: IntentOutcome,
 )
 
+/** Optional operator callbacks kept separate from the required round-trip ports. */
+data class CognitionCallbacks(
+    val onApplied: (AppliedDecision) -> Unit = {},
+    val onUnavailable: (Perception, Throwable) -> Unit = { _, _ -> },
+    val onBodyUnavailable: (AgentId, Throwable) -> Unit = { _, _ -> },
+)
+
 /**
  * Drives one agent's perception through the mind and back onto its body.
  *
@@ -48,27 +58,27 @@ data class AppliedDecision(
  * @param journal where every decision is durably recorded. Not optional and not a
  *   callback: a decision that reached a body without reaching the record would
  *   leave a run unable to say why an agent acted.
- * @param onApplied called on the main thread once a decision has been applied.
- * @param onUnavailable called when the mind did not answer, so a lost decision
- *   is visible rather than silent. Called on the main thread, like [onApplied],
+ * @param callbacks operator reporting for applied, unanswered and unavailable
+ *   body work. Every callback runs on the main thread.
+ *   A lost decision is visible rather than silent. Called on the main thread,
  *   so a handler may safely touch world state.
+ *   Process exits and control timeouts arrive as body-unavailable callbacks,
+ *   never as inferred deaths.
  */
 class EmbodiedCognition(
     private val bodies: BodyPort,
     private val mind: CognitionBridge,
     private val mainThread: MainThread,
     private val journal: DecisionJournal,
-    private val onApplied: (AppliedDecision) -> Unit = {},
-    private val onUnavailable: (Perception, Throwable) -> Unit = { _, _ -> },
+    private val callbacks: CognitionCallbacks = CognitionCallbacks(),
 ) {
     /**
      * Captures [agentId]'s perception of [trigger] and sets cognition going.
      *
-     * Must be called on the main thread, and returns on it: this schedules the
-     * round trip and does not wait for any part of it. Returns the perception
-     * that was sent, or `null` if the agent has no body to perceive with -
-     * cognition for a bodyless agent is not attempted, since there would be
-     * nothing to apply the decision to.
+     * Must be called on the main thread. This schedules the round trip and does
+     * not wait for body I/O or cognition. The returned stage completes with the
+     * perception that was sent, or `null` if the agent has no body to perceive
+     * with.
      *
      * The perception is classified here rather than by the body: a body port
      * reports what happened, and how much that matters - which decides what the
@@ -77,10 +87,24 @@ class EmbodiedCognition(
     fun consider(
         agentId: AgentId,
         trigger: Trigger,
-    ): Perception? {
-        val perception = bodies.perceive(agentId, trigger)?.classified() ?: return null
-        submit(agentId, perception)
-        return perception
+    ): CompletionStage<Perception?> {
+        val considered = CompletableFuture<Perception?>()
+        bodies.perceive(agentId, trigger).whenComplete { perception, failure ->
+            mainThread.execute {
+                if (failure != null) {
+                    val cause = underlying(failure)
+                    callbacks.onBodyUnavailable(agentId, cause)
+                    considered.completeExceptionally(cause)
+                    return@execute
+                }
+                val classified = perception?.classified()
+                if (classified != null) {
+                    submit(agentId, classified)
+                }
+                considered.complete(classified)
+            }
+        }
+        return considered
     }
 
     /**
@@ -101,7 +125,29 @@ class EmbodiedCognition(
                 if (decision == null) {
                     lost(agentId, perception, failure ?: missingBoth(perception))
                 } else {
-                    onApplied(actOn(agentId, decision))
+                    actOn(agentId, decision)
+                }
+            }
+        }
+    }
+
+    /**
+     * Submits a perception that is still crossing an asynchronous body boundary.
+     *
+     * Used by vigilance, which must send the exact perception whose trigger names
+     * its request-scoped threat handle. The completion is marshalled onto the main
+     * thread before classification or cognition.
+     */
+    fun submitWhenPerceived(
+        agentId: AgentId,
+        perception: CompletionStage<Perception?>,
+    ) {
+        perception.whenComplete { captured, failure ->
+            mainThread.execute {
+                if (failure != null) {
+                    callbacks.onBodyUnavailable(agentId, underlying(failure))
+                } else if (captured != null) {
+                    submit(agentId, captured.classified())
                 }
             }
         }
@@ -113,7 +159,7 @@ class EmbodiedCognition(
      * The record comes first and is not optional, for the same reason a decision's is
      * not: a run that logged only the cycles that succeeded would read as though every
      * perception got an answer, and a stalled mind would be indistinguishable from a
-     * quiet agent. [onUnavailable] stays a callback because *reporting* is an operator
+     * quiet agent. [CognitionCallbacks.onUnavailable] stays a callback because *reporting* is an operator
      * convenience, while recording is the research record.
      *
      * Runs on the main thread, like every other journal write from this class, so the
@@ -126,7 +172,7 @@ class EmbodiedCognition(
     ) {
         val classified = failureOf(failure)
         journal.unavailable(agentId, perception, classified.tag, failure.message ?: classified.toString())
-        onUnavailable(perception, failure)
+        callbacks.onUnavailable(perception, failure)
     }
 
     /**
@@ -141,17 +187,26 @@ class EmbodiedCognition(
     private fun actOn(
         agentId: AgentId,
         decision: Decision,
-    ): AppliedDecision {
+    ) {
         journal.decided(agentId, decision)
-        val outcome = bodies.apply(agentId, decision.intent, decision.requestId)
-        // Cognition is asynchronous, so an agent can die or cross a portal between
-        // perceiving and acting - which is the expected path for the events Loom exists
-        // to study, not an error. The body records nothing for a decision it never
-        // received, so the loss is recorded here or nowhere.
-        if (outcome == IntentOutcome.NoSuchBody) {
-            journal.discarded(agentId, decision)
+        bodies.apply(agentId, decision.intent, decision.requestId).whenComplete { outcome, failure ->
+            mainThread.execute {
+                val applied =
+                    if (failure != null) {
+                        callbacks.onBodyUnavailable(agentId, underlying(failure))
+                        IntentOutcome.NoSuchBody
+                    } else {
+                        outcome ?: IntentOutcome.NoSuchBody
+                    }
+                // Cognition is asynchronous, so an agent can die or disconnect between
+                // perceiving and acting. The body records nothing for a decision it never
+                // received, so the loss is recorded here or nowhere.
+                if (applied == IntentOutcome.NoSuchBody) {
+                    journal.discarded(agentId, decision)
+                }
+                callbacks.onApplied(AppliedDecision(decision, applied))
+            }
         }
-        return AppliedDecision(decision, outcome)
     }
 
     /**
@@ -167,4 +222,12 @@ class EmbodiedCognition(
             CognitionFailure.Failed("the mind completed without a decision"),
             "cognition for agent ${perception.agentId} completed with neither a decision nor a failure",
         )
+
+    /** Unwraps the wrapper completion stages use without exposing transport internals. */
+    private fun underlying(failure: Throwable): Throwable =
+        if (failure is CompletionException && failure.cause != null) {
+            requireNotNull(failure.cause)
+        } else {
+            failure
+        }
 }

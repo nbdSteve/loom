@@ -1,0 +1,1 @@
+{"requestId":"req-x","agentId":"agent-x","trigger":{"event":"goalReview"},"importance":"ROUTINE","capturedTick":1,"selfState":{"health":20.0,"food":21,"saturation":5.0,"position":[0.0,0.0,0.0],"inventorySummary":[],"world":{"dayPhase":"day","isDay":true,"ticksUntilNightfall":6000}},"surroundings":[],"surroundingsOmitted":0}

@@ -21,6 +21,7 @@ package dev.loom.body.nms
 
 import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
+import dev.loom.body.BodyEventJournal
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.EventTag
 import dev.loom.body.FileBodyEventLog
@@ -29,6 +30,7 @@ import dev.loom.body.THREAT_DEBOUNCE_TICKS
 import dev.loom.body.ThreatCandidate
 import dev.loom.body.ThreatClock
 import dev.loom.body.ThreatWatch
+import dev.loom.body.reserveVitals
 import dev.loom.body.tagOf
 import dev.loom.contract.Bearing
 import dev.loom.contract.LoomJson

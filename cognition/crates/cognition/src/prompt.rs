@@ -85,12 +85,10 @@ Your body accepts exactly six actions:
 - say: speak a line of text out loud.
 - moveTo: walk toward a block position given as whole x, y, z coordinates.
 - eat: eat one item from one stack you are carrying, named by the ref that stack \
-carries. It is the only thing that refills your energy reserve. It happens at \
-once, and it can be refused: the stack may no longer be food, or your reserve may \
-already be full or already spent.
+carries. It asks vanilla to consume exactly that item, and it can be refused: the \
+stack may no longer be food, or your food bar may already be full.
 - rest: stop where you are and hold that position on purpose. It restores \
-nothing: it passes the time deliberately, and your reserve keeps draining while \
-you do it.
+nothing: it passes the time deliberately, and hunger continues by vanilla's rules.
 - idle: do nothing this time.
 - flee: run away from one living thing, named by the ref it carries. Your body \
 keeps running from it on its own after this, without being asked again, until it \
@@ -100,11 +98,11 @@ be nowhere worth running to.
 Facts about your world that should shape every choice:
 - You have one body and one life. If it dies you are gone permanently: there is \
 no respawn and no new body. Nothing is worth risking your life for casually.
-- You have an energy reserve that drains steadily as you live. It is reported as \
-a fraction, where 1.0 is full and 0.0 is empty. If it ever reaches empty you die, \
-permanently and like any other death. Eating is the only way to refill it, and \
-you can only eat something you are already carrying. Resting does not refill it, \
-so do not let it run low with no plan to eat.
+- Hunger is vanilla's own food level from 0 to 20 plus saturation, the hidden \
+reserve spent before food falls. Health, food and saturation are separate facts. \
+Eating is the way to raise them and you can only eat something you are already \
+carrying. A food level of zero is danger, not proof of death: only the server's \
+witness can establish that your one life ended.
 - You perceive only what you are told. Each thing in your surroundings list \
 carries how far away it is, which compass direction it lies in, how far above or \
 below you it is, and whether you can actually see it right now - a thing you \
@@ -230,13 +228,14 @@ about {distance} blocks away to the {bearing}, {sight}, and {reach}",
     }
 }
 
-/// Health, energy reserve, and position.
+/// Health, vanilla hunger, and position.
 fn self_line(state: &SelfState) -> String {
     let [x, y, z] = state.position;
     format!(
-        "Your body: health {health}, energy reserve {energy}, standing at x {x} y {y} z {z}",
+        "Your body: health {health}, food {food} of 20, saturation {saturation}, standing at x {x} y {y} z {z}",
         health = number(state.health),
-        energy = number(state.energy),
+        food = state.food,
+        saturation = number(state.saturation),
         x = number(x),
         y = number(y),
         z = number(z)
@@ -526,7 +525,8 @@ mod tests {
             captured_tick: 4_242,
             self_state: SelfState {
                 health: 12.5,
-                energy: 1.0,
+                food: 20,
+                saturation: 5.0,
                 position: [10.5, 64.0, -8.25],
                 inventory_summary: vec![stack("i1", "bread", 3)],
                 world: WorldState {
@@ -620,16 +620,14 @@ mod tests {
     }
 
     #[test]
-    fn the_situation_carries_the_energy_reserve_so_the_model_can_see_it_run_low() {
-        // The reserve is a survival drive the mind acts on through the ordinary
-        // goal review, so a real backend has to be shown it the way the scripted
-        // stand-in already reads it.
+    fn the_situation_carries_food_and_saturation_separately() {
         let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
-        seen.self_state.energy = 0.1;
+        seen.self_state.food = 2;
+        seen.self_state.saturation = 0.5;
         let prompt = render(&router().route(seen.importance), &seen);
         assert!(
-            prompt.situation.contains("energy reserve 0.1"),
-            "the situation must report the reserve, got {situation}",
+            prompt.situation.contains("food 2 of 20, saturation 0.5"),
+            "the situation must report both vanilla hunger readings, got {situation}",
             situation = prompt.situation
         );
     }

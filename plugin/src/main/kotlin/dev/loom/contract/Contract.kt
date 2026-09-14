@@ -69,24 +69,26 @@ private fun requireBoundedRef(handle: String?) {
 }
 
 /**
- * A full energy reserve, the top of the [SelfState.energy] scale.
+ * A full legacy Villager energy reserve.
  *
- * The two ends of the scale are named here rather than left as bare literals
- * wherever energy is computed or asserted: the scale belongs to the contract, and
- * whoever fills the field and whoever reads it must agree on which end is which.
+ * Retained for the unused Villager adapter and its tests. The active player
+ * perception reports [SelfState.food] and [SelfState.saturation] instead.
  */
 const val ENERGY_FULL: Double = 1.0
 
-/** An exhausted energy reserve, the bottom of the [SelfState.energy] scale. */
+/** An exhausted legacy Villager energy reserve. */
 const val ENERGY_EXHAUSTED: Double = 0.0
+
+/** Vanilla's food and saturation ceiling. */
+const val MAX_FOOD_LEVEL: Int = 20
 
 /**
  * The most occupied slots a [SelfState.inventorySummary] may state, mirroring the
  * schema's `maxItems`.
  *
- * Eight, the native container an `AbstractVillager` carries. Unlike
+ * Forty-six, the complete player inventory window. Unlike
  * [Perception.surroundings], whose length is the body's own policy and carries no
- * schema bound, this one is a contract rule: a summary of nine slots is not a body
+ * schema bound, this one is a contract rule: a summary of forty-seven slots is not a body
  * having chosen to say more, it is a body that read something which is not its own
  * inventory.
  *
@@ -94,7 +96,7 @@ const val ENERGY_EXHAUSTED: Double = 0.0
  * is schema-validated at runtime - `maxItems` alone is a rule a socket walks straight
  * past, exactly as `minimum` and `maxLength` are.
  */
-const val MAX_INVENTORY_STACKS: Int = 8
+const val MAX_INVENTORY_STACKS: Int = 46
 
 /**
  * Importance tier that drives model routing on the mind side and is stamped onto
@@ -221,14 +223,10 @@ data class InventoryStack(
 data class SelfState(
     /** Current health of the agent's body. */
     val health: Double,
-    /**
-     * How much of the agent's energy reserve is left, as a fraction: `1.0` is a
-     * full reserve and `0.0` is exhaustion, which is fatal.
-     *
-     * A fraction rather than a count of ticks, so the mind never has to know how
-     * long a reserve lasts.
-     */
-    val energy: Double,
+    /** The player's vanilla food level, separate from health and saturation. */
+    val food: Int,
+    /** Vanilla saturation, the reserve spent before [food] falls. */
+    val saturation: Double,
     /** World position `[x, y, z]`. Continuous coordinates. */
     val position: List<Double>,
     /**
@@ -243,8 +241,11 @@ data class SelfState(
         require(position.size == COORDINATE_DIMENSIONS) {
             "position must have exactly $COORDINATE_DIMENSIONS components [x, y, z], got ${position.size}"
         }
-        require(energy in ENERGY_EXHAUSTED..ENERGY_FULL) {
-            "energy must be a fraction in $ENERGY_EXHAUSTED..$ENERGY_FULL, got $energy"
+        require(food in 0..MAX_FOOD_LEVEL) {
+            "food must be in 0..$MAX_FOOD_LEVEL, got $food"
+        }
+        require(saturation in 0.0..MAX_FOOD_LEVEL.toDouble()) {
+            "saturation must be in 0..$MAX_FOOD_LEVEL, got $saturation"
         }
         require(inventorySummary.size <= MAX_INVENTORY_STACKS) {
             "inventorySummary must state at most $MAX_INVENTORY_STACKS occupied slots, " +
@@ -472,12 +473,9 @@ sealed interface Intent {
      * the body must consume the one the mind meant. The body resolves [ref] against
      * that one request only, re-reads the slot it names, and refuses what it finds
      * there if it is no longer food - so a stack that changed in between is refused
-     * rather than substituted. On acceptance exactly one item is consumed and its
-     * vanilla nutrition is credited to [SelfState.energy], which is the only way a
-     * reserve goes back up.
-     *
-     * Eating is instantaneous in this first version: the body swallows the item within
-     * the tick the intent is applied, with no using time and nothing to interrupt.
+     * rather than substituted. On acceptance Mineflayer asks vanilla to consume exactly
+     * one item; the next perception reports the resulting [SelfState.food] and
+     * [SelfState.saturation] separately.
      */
     @Serializable
     @SerialName("eat")
@@ -490,9 +488,8 @@ sealed interface Intent {
     /**
      * Stop, and hold this position on purpose.
      *
-     * It restores nothing. Eating is the only thing that refills [SelfState.energy],
-     * so a resting agent is spending its reserve waiting rather than buying any of it
-     * back.
+     * It restores nothing. Hunger continues under vanilla's own food and saturation
+     * rules while a resting agent waits.
      *
      * Its own intent rather than a synonym for [Idle] because deliberately waiting
      * somewhere - sealed in for the night, say - is a choice a run must be able to

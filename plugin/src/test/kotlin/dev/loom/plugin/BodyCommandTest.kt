@@ -1,23 +1,21 @@
 package dev.loom.plugin
 
 import dev.loom.body.AgentId
-import dev.loom.body.BodyLocation
+import dev.loom.body.BodyInspection
+import dev.loom.body.BodyLifecycle
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
 import dev.loom.body.IntentOutcome
 import dev.loom.body.WORLD_AGENT_ID
-import dev.loom.contract.DayPhase
+import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
-import dev.loom.contract.ENERGY_FULL
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
-import dev.loom.contract.SelfState
 import dev.loom.contract.Trigger
-import dev.loom.contract.WorldState
-import dev.loom.mind.CognitionBridge
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.MainThread
+import dev.loom.mind.perception
 import dev.loom.mind.silentJournal
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -26,203 +24,177 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.fail
 import java.util.concurrent.CompletableFuture
-import dev.loom.contract.Decision as ContractDecision
 
 class BodyCommandTest {
-    /** A port no command handling this test exercises may ever reach. */
-    private val untouchable =
-        object : BodyPort {
-            override fun spawn(
-                agentId: AgentId,
-                at: BodyLocation,
-            ): BodySpawnResult = fail("a refused agent id must never reach the port")
+    private val scheduled = ArrayDeque<() -> Unit>()
+    private val main = MainThread { task -> scheduled.add(task) }
 
-            override fun despawn(agentId: AgentId): Boolean = fail("a refused agent id must never reach the port")
-
-            override fun apply(
-                agentId: AgentId,
-                intent: Intent,
-                requestId: String?,
-            ): IntentOutcome = fail("a refused agent id must never reach the port")
-
-            override fun perceive(
-                agentId: AgentId,
-                trigger: Trigger,
-            ): Perception? = fail("a refused agent id must never reach the port")
-
-            override fun senseThreat(agentId: AgentId): Perception? =
-                fail("a refused agent id must never reach the port")
-
-            override fun tick(tick: Long) = fail("a refused agent id must never reach the port")
-
-            override fun liveBodies(): Set<AgentId> = fail("a refused agent id must never reach the port")
-        }
-
-    /** A mind that must not be consulted: used where cognition would be a bug. */
-    private val unreachableMind =
-        EmbodiedCognition(
-            untouchable,
-            mind = { fail("cognition must not be reached") },
-            mainThread = { fail("nothing should be scheduled") },
-            journal = silentJournal(),
-        )
-
-    @Test
-    @DisplayName("the reserved world id gets the domain's own refusal as a reply, on every subcommand")
-    fun reservedWorldIdIsRefusedAsAReply() {
-        val command = BodyCommand(untouchable, unreachableMind) { }
-        val refusal = assertThrows<IllegalArgumentException> { AgentId(WORLD_AGENT_ID) }.message
-        val here = BodyLocation("world", 0.0, 0.0, 0.0)
-        val subcommands =
-            listOf(
-                arrayOf("spawn", WORLD_AGENT_ID),
-                arrayOf("move", WORLD_AGENT_ID, "1", "2", "3"),
-                arrayOf("perceive", WORLD_AGENT_ID),
-                arrayOf("think", WORLD_AGENT_ID),
-                arrayOf("despawn", WORLD_AGENT_ID),
-            )
-        for (args in subcommands) {
-            assertEquals(refusal, command.reply(args, here), "subcommand ${args.first()}")
-        }
+    private fun drain() {
+        while (scheduled.isNotEmpty()) scheduled.removeFirst().invoke()
     }
 
     @Test
-    @DisplayName("think drives the whole round trip and the decided intent reaches the body")
-    fun thinkDrivesARoundTrip() {
+    @DisplayName("the reserved world id is refused before every identity command reaches the port")
+    fun reservedWorldIdIsRefusedAsAReply() {
         val body = SpyBody()
-        val scheduled = mutableListOf<() -> Unit>()
-        val mind =
+        val command = commandFor(body)
+        val refusal = assertThrows<IllegalArgumentException> { AgentId(WORLD_AGENT_ID) }.message
+
+        for (subcommand in listOf("create", "inspect", "think", "stop")) {
+            assertEquals(refusal, command.reply(arrayOf(subcommand, WORLD_AGENT_ID)), subcommand)
+        }
+        assertTrue(body.calls.isEmpty())
+    }
+
+    @Test
+    @DisplayName("create starts the identity asynchronously and reports the ready boundary")
+    fun createManagesThePlayerIdentity() {
+        val body = SpyBody()
+        val reported = mutableListOf<String>()
+        val command = commandFor(body, reported::add)
+
+        assertEquals("starting player body for agent-alpha", command.reply(arrayOf("create", "agent-alpha")))
+        assertEquals(listOf("spawn:agent-alpha"), body.calls)
+        assertEquals(listOf("body ready for agent-alpha"), reported)
+    }
+
+    @Test
+    @DisplayName("inspect reports the stable username uuid endpoint and lifecycle")
+    fun inspectReportsIdentity() {
+        val body = SpyBody()
+        body.inspection =
+            BodyInspection(
+                agentId = AgentId("agent-alpha"),
+                identity = "loom_1234567890 (00000000-0000-0000-0000-000000000001)",
+                state = BodyLifecycle.READY,
+                endpoint = "127.0.0.1:25585",
+                detail = "ready",
+            )
+
+        val reply = commandFor(body).reply(arrayOf("inspect", "agent-alpha"))
+
+        assertEquals(
+            "agent-alpha: loom_1234567890 (00000000-0000-0000-0000-000000000001) " +
+                "is ready at 127.0.0.1:25585 (ready)",
+            reply,
+        )
+    }
+
+    @Test
+    @DisplayName("think starts one goal review without waiting and applies its decision later")
+    fun thinkDrivesTheRoundTrip() {
+        val body = SpyBody()
+        val reported = mutableListOf<String>()
+        val command = commandFor(body, reported::add)
+
+        assertEquals(
+            "requested a goal review for agent-alpha",
+            command.reply(arrayOf("think", "agent-alpha")),
+        )
+        assertTrue(body.applied.isEmpty(), "the command must not wait for cognition")
+
+        drain()
+
+        assertEquals(listOf<Intent>(Intent.Idle), body.applied)
+        assertTrue(reported.single().contains("sent ROUTINE perception req-1"), reported.toString())
+    }
+
+    @Test
+    @DisplayName("stop requests orderly process shutdown and reports completion")
+    fun stopOwnsCleanup() {
+        val body = SpyBody()
+        val reported = mutableListOf<String>()
+        val command = commandFor(body, reported::add)
+
+        assertEquals("stopping player body for agent-alpha", command.reply(arrayOf("stop", "agent-alpha")))
+        assertEquals(listOf("despawn:agent-alpha"), body.calls)
+        assertEquals(listOf("stopped body for agent-alpha"), reported)
+    }
+
+    @Test
+    @DisplayName("the four identity operations state their own usage")
+    fun missingIdentityStatesUsage() {
+        val command = commandFor(SpyBody())
+        assertEquals("usage: create <agentId>", command.reply(arrayOf("create")))
+        assertEquals("usage: inspect <agentId>", command.reply(arrayOf("inspect")))
+        assertEquals("usage: think <agentId>", command.reply(arrayOf("think")))
+        assertEquals("usage: stop <agentId>", command.reply(arrayOf("stop")))
+        assertEquals(null, command.reply(arrayOf("move")))
+    }
+
+    private fun commandFor(
+        body: SpyBody,
+        report: (String) -> Unit = {},
+    ): BodyCommand {
+        val cognition =
             EmbodiedCognition(
-                body,
-                mind = FakeMind(Intent.Say("hello")),
-                mainThread = MainThread { scheduled.add(it) },
+                bodies = body,
+                mind = { seen ->
+                    CompletableFuture.completedFuture(
+                        Decision(
+                            requestId = seen.requestId,
+                            agentId = seen.agentId,
+                            intent = Intent.Idle,
+                            reasoning = "test",
+                            provenance =
+                                Provenance(
+                                    tier = seen.importance,
+                                    model = "test",
+                                    promptVersion = "test-v1",
+                                ),
+                        ),
+                    )
+                },
+                mainThread = main,
                 journal = silentJournal(),
             )
-        val reported = mutableListOf<String>()
-        val command = BodyCommand(body, mind) { reported.add(it) }
-
-        val reply = command.reply(arrayOf("think", "agent-alpha"), null)
-
-        // The reply describes only what has happened by the time the command returns:
-        // a perception is on its way. Nothing has been applied yet, because the whole
-        // point is that the command did not wait for the mind.
-        assertTrue(reply!!.contains("sent"), reply)
-        assertTrue(reply.contains("agent-alpha"), reply)
-        assertTrue(body.applied.isEmpty(), "think must not wait for the decision")
-
-        scheduled.forEach { it() }
-
-        assertEquals(listOf<Intent>(Intent.Say("hello")), body.applied)
+        return BodyCommand(body, cognition, report)
     }
 
-    @Test
-    @DisplayName("think says so when the agent has no body, and does not consult the mind")
-    fun thinkNeedsABody() {
-        val body = SpyBody(perceives = false)
-        val mind = EmbodiedCognition(body, { fail("no body, no cognition") }, { }, silentJournal())
-        val command = BodyCommand(body, mind) { }
-
-        assertEquals("no body for agent-alpha", command.reply(arrayOf("think", "agent-alpha"), null))
-    }
-
-    @Test
-    @DisplayName("think without an agent id explains itself")
-    fun thinkStatesItsUsage() {
-        assertEquals(
-            "usage: think <agentId>",
-            BodyCommand(untouchable, unreachableMind) { }.reply(arrayOf("think"), null),
-        )
-    }
-
-    @Test
-    @DisplayName("the reply names the tier the perception was classified at")
-    fun thinkReportsTheTier() {
-        val body = SpyBody()
-        val command = BodyCommand(body, EmbodiedCognition(body, FakeMind(Intent.Idle), { }, silentJournal())) { }
-
-        val reply = command.reply(arrayOf("think", "agent-alpha"), null)
-
-        // Visible in the console so the operator can see what a round trip cost
-        // before the decision itself comes back. `think` uses a goal review, which
-        // is the routine tier.
-        assertTrue(reply!!.contains(DecisionImportance.ROUTINE.name), reply)
-    }
-
-    /** A mind that answers instantly with [intent], echoing the perception's ids. */
-    private class FakeMind(
-        private val intent: Intent,
-    ) : CognitionBridge {
-        override fun submit(perception: Perception): CompletableFuture<ContractDecision> =
-            CompletableFuture.completedFuture(
-                ContractDecision(
-                    requestId = perception.requestId,
-                    agentId = perception.agentId,
-                    intent = intent,
-                    reasoning = "test",
-                    provenance =
-                        Provenance(
-                            tier = perception.importance,
-                            model = "test-model",
-                            promptVersion = "test-v1",
-                        ),
-                ),
-            )
-    }
-
-    /** A body that perceives on demand and records what it was told to do. */
-    private class SpyBody(
-        private val perceives: Boolean = true,
-    ) : BodyPort {
+    private class SpyBody : BodyPort {
+        val calls = mutableListOf<String>()
         val applied = mutableListOf<Intent>()
+        var inspection: BodyInspection? = null
 
-        override fun spawn(
-            agentId: AgentId,
-            at: BodyLocation,
-        ): BodySpawnResult = fail("not part of this test")
+        override fun spawn(agentId: AgentId): CompletableFuture<BodySpawnResult> {
+            calls += "spawn:$agentId"
+            return CompletableFuture.completedFuture(BodySpawnResult.Spawned(agentId))
+        }
 
-        override fun despawn(agentId: AgentId): Boolean = fail("not part of this test")
+        override fun despawn(agentId: AgentId): CompletableFuture<Boolean> {
+            calls += "despawn:$agentId"
+            return CompletableFuture.completedFuture(true)
+        }
 
         override fun apply(
             agentId: AgentId,
             intent: Intent,
             requestId: String?,
-        ): IntentOutcome {
-            applied.add(intent)
-            return IntentOutcome.Accepted("applied $intent")
+        ): CompletableFuture<IntentOutcome> {
+            applied += intent
+            return CompletableFuture.completedFuture(IntentOutcome.Accepted("applied"))
         }
 
         override fun perceive(
             agentId: AgentId,
             trigger: Trigger,
-        ): Perception? =
-            if (!perceives) {
-                null
-            } else {
-                Perception(
+        ): CompletableFuture<Perception?> =
+            CompletableFuture.completedFuture(
+                perception(
                     requestId = "req-1",
                     agentId = agentId.value,
-                    // The trigger it was handed, as a real body reports it.
                     trigger = trigger,
                     importance = DecisionImportance.ROUTINE,
-                    capturedTick = 1L,
-                    selfState =
-                        SelfState(
-                            health = 20.0,
-                            energy = ENERGY_FULL,
-                            position = listOf(0.0, 64.0, 0.0),
-                            inventorySummary = emptyList(),
-                            world = WorldState(dayPhase = DayPhase.DAY, isDay = true, ticksUntilNightfall = 6_000),
-                        ),
-                    surroundings = emptyList(),
-                    surroundingsOmitted = 0,
-                )
-            }
+                ),
+            )
 
-        override fun senseThreat(agentId: AgentId): Perception? =
-            fail("the driver command perceives what it was asked for; it never scans for threats")
+        override fun senseThreat(agentId: AgentId): CompletableFuture<Perception?> =
+            fail("the command never performs a threat sweep")
 
-        override fun tick(tick: Long) = fail("the driver command does not tick")
+        override fun tick(tick: Long) = fail("the command never drives the tick")
 
         override fun liveBodies(): Set<AgentId> = emptySet()
+
+        override fun inspect(agentId: AgentId): BodyInspection? = inspection
     }
 }

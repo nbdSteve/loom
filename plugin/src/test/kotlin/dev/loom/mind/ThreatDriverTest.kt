@@ -12,9 +12,7 @@
 package dev.loom.mind
 
 import dev.loom.body.AgentId
-import dev.loom.body.BodyLocation
 import dev.loom.body.BodyPort
-import dev.loom.body.BodySpawnResult
 import dev.loom.body.IntentOutcome
 import dev.loom.contract.Bearing
 import dev.loom.contract.DecisionImportance
@@ -55,23 +53,20 @@ private class ScannedBodies(
 ) : BodyPort {
     val scans = mutableListOf<AgentId>()
 
-    override fun spawn(
-        agentId: AgentId,
-        at: BodyLocation,
-    ): BodySpawnResult = fail("vigilance never spawns a body")
+    override fun spawn(agentId: AgentId) = fail("vigilance never spawns a body")
 
-    override fun despawn(agentId: AgentId): Boolean = fail("vigilance never puts a body away")
+    override fun despawn(agentId: AgentId) = fail("vigilance never puts a body away")
 
     override fun apply(
         agentId: AgentId,
         intent: Intent,
         requestId: String?,
-    ): IntentOutcome = IntentOutcome.Accepted("applied $intent")
+    ): CompletableFuture<IntentOutcome> = CompletableFuture.completedFuture(IntentOutcome.Accepted("applied $intent"))
 
     override fun perceive(
         agentId: AgentId,
         trigger: Trigger,
-    ): Perception =
+    ): CompletableFuture<Perception?> =
         fail(
             "a sighting must be submitted as the port captured it: re-perceiving would mint a " +
                 "second request, and the trigger's ref only means anything in its own",
@@ -79,14 +74,18 @@ private class ScannedBodies(
 
     override fun tick(tick: Long) = fail("vigilance must never touch the per-tick path")
 
-    override fun senseThreat(agentId: AgentId): Perception? {
+    override fun senseThreat(agentId: AgentId): CompletableFuture<Perception?> {
         scans += agentId
-        val seen = inView[agentId] ?: return null
-        return perception(
-            requestId = "req-${agentId.value}",
-            agentId = agentId.value,
-            trigger = sightingOf(seen),
-        ).copy(surroundings = listOf(seen))
+        val seen = inView[agentId]
+        return CompletableFuture.completedFuture(
+            seen?.let {
+                perception(
+                    requestId = "req-${agentId.value}",
+                    agentId = agentId.value,
+                    trigger = sightingOf(it),
+                ).copy(surroundings = listOf(it))
+            },
+        )
     }
 
     override fun liveBodies(): Set<AgentId> = living

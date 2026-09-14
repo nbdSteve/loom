@@ -311,10 +311,9 @@ internal val THREAT_REFUSALS: Set<MoveOutcome> =
  * stomach and can starve without a scratch, so a wire reporting one figure for
  * "condition" could not say what ended an agent.
  *
- * Deliberately not the perception contract's `SelfState.energy`, which is the one
- * synthetic reserve the Villager body spends by living: these are vanilla's own numbers,
- * and reconciling the two is the coordinator's work at cutover rather than something this
- * wire pretends to have done.
+ * These are the active perception contract's own survival readings too: the player
+ * adapter passes food and saturation through separately and does not synthesize the
+ * Villager adapter's legacy energy reserve.
  *
  * Saturation is never above the food level, because vanilla clamps it there when eating
  * and spends it before food falls: a report above it has read the two at different

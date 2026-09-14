@@ -17,8 +17,11 @@ package dev.loom.body.nms
 import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
 import dev.loom.body.BodyEvent
+import dev.loom.body.BodyEventJournal
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
+import dev.loom.body.VitalsWatch
+import dev.loom.body.reserveVitals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test

@@ -11,7 +11,6 @@
 package dev.loom.body
 
 import dev.loom.contract.DayPhase
-import dev.loom.contract.ENERGY_FULL
 import dev.loom.contract.InventoryStack
 import dev.loom.contract.SelfState
 import dev.loom.contract.WorldState
@@ -157,7 +156,7 @@ class InventoryRefsTest {
         // A request offering more slots than the body has has read something that is not
         // this body's inventory, so the bound is enforced here rather than trusted.
         val refs = InventoryRefs()
-        val issued = refs.issue(ada, "req-1", (0..20).toList())
+        val issued = refs.issue(ada, "req-1", (0..60).toList())
 
         assertEquals(BODY_INVENTORY_SLOTS, issued.size)
         assertEquals((0 until BODY_INVENTORY_SLOTS).toList(), issued.map { it.slot })
@@ -175,7 +174,8 @@ class InventoryRefsTest {
         val state =
             SelfState(
                 health = 20.0,
-                energy = ENERGY_FULL,
+                food = 20,
+                saturation = 5.0,
                 position = listOf(0.0, 64.0, 0.0),
                 inventorySummary =
                     issued.map { InventoryStack(ref = it.handle, what = "item.minecraft.bread", count = 1) },

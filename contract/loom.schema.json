@@ -82,17 +82,23 @@
       "description": "The bounded self-state the body chose to reveal. Owned primitives only, so the mind cannot reach back into world state through it.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["health", "energy", "position", "inventorySummary", "world"],
+      "required": ["health", "food", "saturation", "position", "inventorySummary", "world"],
       "properties": {
         "health": {
           "description": "Current health of the agent's body.",
           "type": "number"
         },
-        "energy": {
-          "description": "How much of the agent's energy reserve is left, as a fraction: 1.0 is a full reserve and 0.0 is exhaustion, which is fatal. It is a fraction rather than a count of ticks so the mind never has to know how long a reserve lasts.",
+        "food": {
+          "description": "The player's vanilla food level, kept separate from health and saturation. Zero is starvation pressure, not evidence of death; only the server witness establishes death.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "saturation": {
+          "description": "The player's vanilla saturation reserve, spent before food falls. It is reported separately because a full food bar with no saturation and one with a full reserve are different survival states.",
           "type": "number",
           "minimum": 0,
-          "maximum": 1
+          "maximum": 20
         },
         "position": {
           "description": "World position [x, y, z]. Continuous coordinates.",
@@ -102,10 +108,10 @@
           "maxItems": 3
         },
         "inventorySummary": {
-          "description": "The body's own inventory, one entry per occupied slot and nothing for an empty one, bounded by the eight slots a body has. Each entry carries the handle by which an eat may name that exact stack, so what the mind may act on is exactly what it was told it is carrying.",
+          "description": "The player's complete inventory window, one entry per occupied slot and nothing for an empty one, bounded by its 46 addressable slots. Each entry carries the handle by which an eat may name that exact stack, so what the mind may act on is exactly what it was told it is carrying.",
           "type": "array",
           "items": { "$ref": "#/$defs/InventoryStack" },
-          "maxItems": 8
+          "maxItems": 46
         },
         "world": { "$ref": "#/$defs/WorldState" }
       }
@@ -306,7 +312,7 @@
         },
         {
           "title": "Eat",
-          "description": "Eat one item from one stack of the body's own inventory, named by the ref that stack carried in the perception being answered. A ref rather than an item name on purpose: two slots can hold the same item, and the body must consume the one the mind meant. The body resolves the ref against that one request only, re-reads the slot it names, and refuses what it finds there if it is no longer food - so a stack that changed between the perception and the decision is refused rather than substituted. On acceptance exactly one item is consumed and its vanilla nutrition is credited to SelfState.energy, which is the only way a reserve goes back up. Eating is instantaneous in this first version: the body swallows the item within the tick the intent is applied, with no using time and nothing to interrupt.",
+          "description": "Eat one item from one stack of the body's own inventory, named by the ref that stack carried in the perception being answered. A ref rather than an item name on purpose: two slots can hold the same item, and the body must consume the one the mind meant. The body resolves the ref against that one request only, re-reads the slot it names, and refuses what it finds there if it is no longer food - so a stack that changed between the perception and the decision is refused rather than substituted. On acceptance Mineflayer asks vanilla to consume exactly one item; the next perception reports the resulting food and saturation separately.",
           "type": "object",
           "additionalProperties": false,
           "required": ["action", "ref"],
@@ -317,7 +323,7 @@
         },
         {
           "title": "Rest",
-          "description": "Stop, and hold this position on purpose. It restores nothing: eating is the only thing that refills SelfState.energy, so a resting agent is spending its reserve waiting rather than buying any of it back. It is its own intent rather than a synonym for idle because deliberately waiting somewhere - sealed in for the night, say - is a choice a run must be able to count separately from having decided nothing. Empty variant.",
+          "description": "Stop, and hold this position on purpose. It restores nothing: hunger continues under vanilla's own food and saturation rules while a resting agent waits. It is its own intent rather than a synonym for idle because deliberately waiting somewhere - sealed in for the night, say - is a choice a run must be able to count separately from having decided nothing. Empty variant.",
           "type": "object",
           "additionalProperties": false,
           "required": ["action"],

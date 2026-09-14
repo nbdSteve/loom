@@ -1,1 +1,1 @@
-{"requestId":"req-energy-1","agentId":"agent-epsilon","intent":{"action":"eat","ref":""},"reasoning":"a blank ref names no stack the body can resolve","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}
+{"requestId":"req-food-1","agentId":"agent-epsilon","intent":{"action":"eat","ref":""},"reasoning":"a blank ref names no stack the body can resolve","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}

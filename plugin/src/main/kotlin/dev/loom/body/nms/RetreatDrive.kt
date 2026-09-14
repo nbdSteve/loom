@@ -20,6 +20,7 @@ package dev.loom.body.nms
 
 import dev.loom.body.ActiveRetreats
 import dev.loom.body.AgentId
+import dev.loom.body.BodyEventJournal
 import dev.loom.body.NavigationPolicy
 import dev.loom.body.RetreatStep
 import dev.loom.body.describe

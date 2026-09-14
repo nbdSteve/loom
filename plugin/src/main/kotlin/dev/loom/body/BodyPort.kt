@@ -5,9 +5,9 @@
  * Everything crossing this port is a Loom domain or contract type. No
  * `net.minecraft` type, no Bukkit `Entity`/`CraftEntity`, no world handle
  * appears in any signature here - that is what makes the body flavor
- * replaceable. Today exactly one adapter implements it (`dev.loom.body.nms`, a
- * custom NMS class on a vanilla entity type); a different flavor would be a new
- * implementation of this interface and nothing else.
+ * replaceable. The product adapter is `dev.loom.body.player`, which coordinates
+ * one persistent Mineflayer player process. The older `dev.loom.body.nms`
+ * Villager adapter remains in the tree but is not wired into the product.
  *
  * The boundary is enforced, not merely documented: BodyBoundaryTest fails the
  * build if any package outside the adapter reaches for `net.minecraft` or the
@@ -18,6 +18,8 @@ package dev.loom.body
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionStage
 
 /**
  * Spawns, drives, observes, and despawns agent bodies.
@@ -27,24 +29,22 @@ import dev.loom.contract.Trigger
  * and the server-tick hook ([tick]). Anything an agent needs beyond these belongs in
  * the domain above the port, not in the port.
  *
- * Implementations are **not** thread-safe and every method must be called on the
- * server main thread. Cognition never calls this port directly: it hands back a
- * [dev.loom.contract.Decision] which the domain marshals onto the main thread
- * before calling [apply].
+ * Calls begin on the server main thread. Lifecycle, actuation and perception are
+ * asynchronous because a player body crosses a loopback socket and movement may
+ * legitimately take seconds; none of those waits may park a server tick. The
+ * coordinator marshals every completion that mutates Loom state back onto the
+ * main thread.
  */
-interface BodyPort {
+interface BodyPort : AutoCloseable {
     /**
-     * Gives [agentId] a body at [at], and reports how that went.
+     * Gives [agentId] its configured body identity, and reports when it is ready.
      *
      * Returns a [BodySpawnResult.Rejected] rather than throwing when the world
      * cannot host the body: a body that fails to spawn must degrade that one
      * agent, never the server. A dead agent id is refused outright - Loom is
      * permadeath, and [Mortality] holds that rule for every body flavor.
      */
-    fun spawn(
-        agentId: AgentId,
-        at: BodyLocation,
-    ): BodySpawnResult
+    fun spawn(agentId: AgentId): CompletionStage<BodySpawnResult>
 
     /**
      * Removes the body for [agentId] from the world.
@@ -53,7 +53,7 @@ interface BodyPort {
      * stays embodiable. Returns `false` if no such body was present. Idempotent:
      * despawning an already-despawned body is not an error.
      */
-    fun despawn(agentId: AgentId): Boolean
+    fun despawn(agentId: AgentId): CompletionStage<Boolean>
 
     /**
      * Applies a contract [Intent] to the body for [agentId].
@@ -73,7 +73,7 @@ interface BodyPort {
         agentId: AgentId,
         intent: Intent,
         requestId: String? = null,
-    ): IntentOutcome
+    ): CompletionStage<IntentOutcome>
 
     /**
      * Captures a bounded [Perception] of the body for [agentId], attributed to
@@ -86,7 +86,7 @@ interface BodyPort {
     fun perceive(
         agentId: AgentId,
         trigger: Trigger,
-    ): Perception?
+    ): CompletionStage<Perception?>
 
     /**
      * Advances every live body by one server tick.
@@ -95,12 +95,11 @@ interface BodyPort {
      * only - it must never invoke cognition, which is event-driven by
      * construction (the contract's `Trigger` has no per-tick variant).
      *
-     * It is also where time is charged against an agent's survival drive. The energy
-     * reserve ([Metabolism]) is spent per tick and never per wall-clock second, so the
-     * same tick sequence always ends the same agent at the same tick and a paused
-     * server starves nobody. An agent whose reserve runs out ends here, for good, and
-     * stops appearing in [liveBodies] - so no later perception, decision or action can
-     * reach it.
+     * The active player adapter uses this hook to expire request-scoped handles and
+     * reconcile process liveness with the server witness. It never infers death from a
+     * process or socket outcome: only the server-authoritative mortality seam may make
+     * the lifecycle terminal. The unused Villager adapter also advances its in-process
+     * mechanics here.
      */
     fun tick(tick: Long)
 
@@ -129,8 +128,38 @@ interface BodyPort {
      *
      * Returns `null` for an agent with no body, exactly as [perceive] does.
      */
-    fun senseThreat(agentId: AgentId): Perception?
+    fun senseThreat(agentId: AgentId): CompletionStage<Perception?>
 
     /** Identifiers of every body currently present in the world. */
     fun liveBodies(): Set<AgentId>
+
+    /**
+     * Operator-facing state for [agentId], or `null` when the port has never owned it.
+     *
+     * The default covers an in-process body flavor. A supervised process overrides
+     * it with its player identity, endpoint and exact lifecycle state.
+     */
+    fun inspect(agentId: AgentId): BodyInspection? =
+        if (agentId in liveBodies()) {
+            BodyInspection(
+                agentId = agentId,
+                identity = "in-server body",
+                state = BodyLifecycle.READY,
+                detail = "ready",
+            )
+        } else {
+            null
+        }
+
+    /**
+     * Stops every body and releases every resource owned by the adapter.
+     *
+     * Plugin disable is already a synchronous terminal boundary, so implementations
+     * complete their bounded shutdown before returning. The default keeps light-weight
+     * test doubles source-compatible.
+     */
+    override fun close() = Unit
 }
+
+/** A completed body-port operation, for an in-process adapter. */
+internal fun <T> completedBodyOperation(value: T): CompletionStage<T> = CompletableFuture.completedFuture(value)

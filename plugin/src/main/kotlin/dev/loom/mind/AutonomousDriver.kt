@@ -22,7 +22,6 @@ package dev.loom.mind
 import dev.loom.body.AgentId
 import dev.loom.body.BodyPort
 import dev.loom.contract.Trigger
-import kotlin.time.Duration
 
 /**
  * Reviews the situation of every living agent, on its own, on a cadence.
@@ -31,21 +30,20 @@ import kotlin.time.Duration
  *   and only on the main thread.
  * @param mind the round trip a due agent is handed to.
  * @param schedule which of the living agents are due right now. Its
- *   [GoalReviewSchedule.slice] is how often [sweep] must be called.
- * @param now a monotonic clock reading. Monotonic rather than wall-clock because a
- *   cadence is an elapsed-time rule, and a clock that can step backwards would
- *   silently suspend every agent's thinking.
+ *   [GoalReviewSchedule.sliceTicks] is how often [sweep] must be called.
+ * @param currentTick the authoritative server tick. A paused server advances no
+ *   reviews, and a server sprinting ticks advances exactly the same review sequence.
  */
 class AutonomousDriver(
     private val bodies: BodyPort,
     private val mind: EmbodiedCognition,
     private val schedule: GoalReviewSchedule = GoalReviewSchedule(),
-    private val now: () -> Duration,
+    private val currentTick: () -> Long,
 ) {
     /**
      * Sets one slice's worth of agents thinking, and returns.
      *
-     * Must be called on the main thread, every [GoalReviewSchedule.slice]. Agents
+     * Must be called on the main thread, every [GoalReviewSchedule.sliceTicks]. Agents
      * with no body are never reached: only the living are asked, and one whose body
      * went away between being listed and being perceived is skipped by
      * [EmbodiedCognition.consider] itself.
@@ -63,5 +61,5 @@ class AutonomousDriver(
      * what a decision is applied to. A dead agent never appears: Loom is
      * permadeath, so it has no body and will never have another one.
      */
-    private fun due(): List<AgentId> = schedule.claim(bodies.liveBodies(), now())
+    private fun due(): List<AgentId> = schedule.claim(bodies.liveBodies(), currentTick())
 }

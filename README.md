@@ -1,91 +1,137 @@
 # Loom
 
-An embodied artificial-society prototype in Minecraft.
-
-Loom gives software agents physical bodies in a shared Minecraft world and minds
-driven by large language models, then studies how they survive, cooperate, and
-build a small society together.
+Loom is an embodied artificial-society prototype in Minecraft. A Loom agent has
+a persistent player body in a Paper world, an event-driven mind, a bounded view
+of its surroundings, and one permanent life.
 
 ## Repository layout
 
-This is a monorepo with two runtimes, shared contracts, and the research record:
+- `plugin/` — the Kotlin Paper plugin. It supervises the player process,
+  reconciles it with the server witness, schedules cognition from server ticks,
+  applies decisions, and writes the evidence record.
+- `body/` — the Node/Mineflayer player process. It owns Minecraft protocol
+  mechanics and answers a loopback body-control connection without choosing
+  goals or running gameplay policy.
+- `cognition/` — the Rust mind service. It accepts one bounded perception,
+  routes it to the configured model tier, and returns one provenance-stamped
+  decision.
+- `contract/` — the two versioned JSON contracts and their shared fixture
+  corpora.
+- `research/` — append-only experiment manifests and evidence.
 
-- `plugin/` - the Kotlin Paper plugin: the physical world and the agent bodies.
-- `cognition/` - the Rust cognition service: the agent minds.
-- `contract/` - the shared schemas: the perception/decision contract exchanged
-  between plugin and cognition, and the body-control contract the player body
-  process is driven over.
-- `body/` - the Node half of the body-control contract, and the Mineflayer player
-  body process it drives. Runnable, and inert: nothing in Loom's runtime speaks to
-  it yet. See `body/README.md`.
-- `research/` - one directory per experiment, plus the versioned schema a manifest
-  is validated against; see `research/README.md`, which makes everything there
-  append-only, and `research/schema/README.md` for when a manifest's
-  `schemaVersion` changes.
+The contracts are intentionally separate:
 
-The body exposes only a bounded perception to the mind, and the mind never
-reaches directly into world state. Cognition is event-driven, never per-tick, and
-routes decisions to appropriately-sized models rather than always using a
-frontier model. Every decision is logged, research-grade and append-only, with
-its full perception, reasoning, action, and result.
+- `contract/loom.schema.json` is the perception/decision contract between the
+  Paper coordinator and the Rust mind.
+- `contract/body-control.schema.json` is the lifecycle, sensing, eating, and
+  movement contract between the Paper coordinator and one Mineflayer process.
 
-## What runs today
+Both runtimes use hand-written bindings held to the schemas and fixture bytes by
+conformance tests.
 
-The shared contract is in place: `contract/loom.schema.json` is its single source
-of truth, with hand-written Rust and Kotlin bindings checked against it by
-conformance tests and CI on both runtimes.
-A second contract sits beside it, inert for now: `contract/body-control.schema.json`
-carries the player body process's own five operations - whether a body is alive, which
-lifecycle state it is in, when to stop, one bounded reading of what its player can see
-and how it is doing, and one named meal.
-Its hand-written Node and Kotlin codecs are held together by a shared conformance
-corpus, so the wire is agreed on before either runtime speaks it.
-The process on the far end of that wire is runnable too: `body/` starts one
-persistent offline-mode Mineflayer player against a loopback Paper server and answers
-its bounded control channel, holding no gameplay policy of its own - it senses because
-it was asked to and eats because a mind named one stack, and it decides nothing in
-between.
-It is also inert - the Paper plugin does not start it, does not connect to it, and the
-Villager body is still the only body Loom's runtime drives. See `body/README.md`.
+## Runtime today
 
-Bodies are in place on top of it. An agent can be given a body in a live world,
-handed a movement intent expressed as a contract `Intent`, observed through a
-bounded contract `Perception`, and removed again - driven in-game through
-`/loombody`. The body flavor sits behind a single inbound port
-(`dev.loom.body.BodyPort`) with one adapter behind it today, and the boundary is
-enforced by architecture tests rather than convention, so a different flavor is a
-new implementation of that port and one changed line of wiring.
+The product runtime is hard-cut to the persistent Mineflayer player body.
+`LoomPlugin` does not select or instantiate the older Villager adapter. That
+implementation remains in the repository, unused, for a later removal change;
+there is no compatibility switch.
 
-Two world rules are already in force. Death is terminal: Loom is permadeath, so
-an agent whose body dies in-world is gone for good and is never embodied again.
-And living agents hold the world loaded around themselves, so a world with no
-human players keeps ticking and a body's removal always means a real death.
+`/loombody create <agentId>` deterministically derives one offline player
+username and UUID, registers that exact identity with the server witness, starts
+one Node process, completes the body-control handshake, waits for the process to
+report `ready`, and waits for the server to confirm the player is present. Only
+then is the body visible as ready to cognition. The current product deployment
+owns one configured identity and refuses a second agent id; multi-agent
+orchestration is not part of this cutover.
 
-The minds are connected now, and they are real models.
-A body's perception travels to the Rust cognition service over newline-delimited JSON, the mind routes it by importance to one of two configured models, and the decision that comes back is applied to that body.
-Agents drive themselves: each reviews its goals on its own on a cadence, with nobody asking it to, and `/loombody think` still triggers a round trip on demand.
-Every decision carries the model that made it and the prompt version that shaped it, stamped from the route rather than claimed by the backend.
-The scripted stand-in is still here and is still the default, so a fresh checkout runs with no credentials and the test suites stay hermetic; real inference is one setting away.
+The Mineflayer process is a mechanics boundary, not a second mind:
 
-And the agents now have something to survive.
-Each one carries an energy reserve that is spent by living, tick by tick, and reported to its mind as part of the ordinary perception; the only way to refill it is to eat one of the stacks it is carrying, and a rest holds a position and buys nothing back.
-An agent that runs the reserve out dies of it, permanently, and exactly once.
-The reserve is spent from server ticks rather than from wall-clock time, so a run replays identically and a paused server starves nobody.
-Nothing has to be commanded for any of it: an agent meets its own hunger on the goal review it already does, and the stand-in mind reaches for the first stack a low agent reported carrying, resting it only when there is nothing to eat - so a single agent left entirely alone feeds itself while it has food, and starves once it has none.
+- `sense` reports a bounded scene, health, vanilla food and saturation, and the
+  occupied player inventory slots.
+- `eat` consumes the exact request-scoped slot the mind named.
+- `moveTo` and `flee` run the bounded movement policy already implemented in
+  `body/src/movement.js`.
+- `halt` cancels the one movement operation in flight.
+- no timer in Node chooses a meal, destination, threat, or goal.
 
-Running from something is a decision an agent can now make.
-Every living thing a perception reports carries a short handle, so a mind names one particular creature to run from rather than a place to walk to - and the body runs from that creature, rather than from whichever of two identical mobs it might otherwise have guessed at.
-One such decision is a state the body then keeps: it carries the flight on across ticks, putting further ground between itself and that creature for as long as the threat is still there, and no further model call is needed for any of it.
+The coordinator preserves request identity across perception, decision, and
+actuation. Creature and inventory refs remain scoped to the sense answer that
+minted them. Threat debounce uses a server-corroborated entity UUID when one can
+be matched, while the body-control wire keeps its request-local indexes.
 
-And something hunting an agent now reaches that agent's mind at once, instead of waiting for its next scheduled review.
-Every living agent looks around once a second, and a creature that hunts its kind in view earns a perception of its own carrying the handle to name that creature back by, so an agent can decide to run while running is still possible.
-What that costs is bounded and every bound is recorded: a sighting is not repeated while nothing about it has changed, and each agent's night has a ceiling on the sightings worth a frontier model - so a run can always say which bound left an agent unasked, rather than letting that silence read as a choice the agent made.
+## Lifecycle and permadeath
 
-A run is watchable while it happens.
-`/loomwatch <agentId>` attaches one operator to one living agent and shows, as a boss bar and a few chat lines, its energy reserve and which way that reserve is going, its body's health once that body has been hurt, the bounded trigger that caused cognition, the model and prompt version that answered it, the reasoning behind the intent, and what the body did about it.
-The two vitals are never aliased to one another: the reserve is what living spends and only eating refills - a rest holds a position and buys nothing back - health is damage to the body, and a body can be beaten to death on a full reserve, so a run can always say which of the two ended an agent.
-Resting, moving, fleeing, a body that refused an intent, a mind that never answered, dimension travel, and permanent death are each a distinct word, so a survival run is legible without reading a JSON file.
-The display is a reader of the append-only record and nothing else: it holds no body port, no cognition bridge, and no world handle, so attaching it adds no perception, no decision, no tick work, and no record, and the mind's operator-only vocabulary never travels back into what an agent is told.
-See `DEMO.md` for the exact local procedure, from starting the cognition service through watching one autonomous survival cycle end to end.
+The JVM supervisor owns startup, readiness, timeout, shutdown, and partial
+failure ordering. Startup failures clean up the partial child before the
+operation completes. Shutdown asks the control protocol first, then escalates
+through bounded process termination. Plugin disable stops new cognition and
+schedules first, closes cognition, closes every held body-control session and
+child process, and closes the event log last.
 
-See `cognition/README.md` for backend selection, the credential, and both model tiers, and `AGENTS.md` for build, test, and gate commands and for the sharp edges around the engine seam.
+A process exit, socket failure, or control refusal is never death. It makes the
+body `disconnected` or `failed`, and the same player identity may be restarted.
+Only server witness evidence writes a durable death tombstone and makes the
+agent terminal. The tombstone survives a Paper restart and denies both
+`/loombody create` and an independently launched process using the dead account.
+
+## Cognition and scheduling
+
+Cognition is event-driven. Scheduled goal reviews use Paper's authoritative
+server tick, not elapsed wall time:
+
+- the default cadence is 2,400 server ticks;
+- the population is staggered over 24 slices;
+- pausing the server advances no review;
+- `/tick sprint` advances the same deterministic review sequence;
+- `BodyPort.tick` never invokes cognition.
+
+Threat scans remain separate events. A hunting creature in view can earn an
+immediate pivotal perception, and unchanged sightings are suppressed by the
+existing cadence, debounce, and nightly budget rather than producing duplicate
+model calls.
+
+The default cognition backend is the deterministic scripted stand-in, so a
+checkout and all tests require no credential. Set
+`LOOM_COGNITION_BACKEND=openai` to use configured models; see
+`cognition/README.md`.
+
+## Commands
+
+The body command manages the persistent player identity:
+
+```text
+/loombody create <agentId>
+/loombody inspect <agentId>
+/loombody think <agentId>
+/loombody stop <agentId>
+```
+
+`/loomwatch <agentId>` remains a read-only view over the append-only event
+record. Its established `vitals`/`energyChanged` evidence names and `energy`
+display label are intentionally preserved in this cutover. For the player
+adapter that compatibility slot carries vanilla food on a 0–20 scale; health
+remains separate, and saturation is present in the perception/decision record.
+
+## Build and test
+
+Requirements are Java 21, Node 22 or newer, and a current stable Rust toolchain.
+
+```sh
+cd body
+npm ci
+npm run check
+
+cd ../cognition
+cargo fmt --all --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+
+cd ../plugin
+JAVA_HOME=/path/to/jdk-21 ./gradlew check shadowJar
+```
+
+See `DEMO.md` for the disposable Paper 1.21.1 acceptance path covering
+readiness, perception, cognition, movement, eating, disconnect, restart,
+permadeath, denied reconnect, tick-deterministic reviews, and complete cleanup.
+`AGENTS.md` carries the architectural invariants and sharp edges worth preserving
+when changing any of those seams.

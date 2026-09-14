@@ -86,7 +86,6 @@ class ThreatDriver(
      * rule refused, and a mind that was not woken has not decided anything.
      */
     private fun watch(agent: AgentId) {
-        val sighting = bodies.senseThreat(agent) ?: return
-        mind.submit(agent, sighting.classified())
+        mind.submitWhenPerceived(agent, bodies.senseThreat(agent))
     }
 }

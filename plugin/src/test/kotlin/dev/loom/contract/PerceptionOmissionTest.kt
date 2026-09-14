@@ -49,7 +49,8 @@ class PerceptionOmissionTest {
         selfState =
             SelfState(
                 health = 20.0,
-                energy = 0.5,
+                food = 10,
+                saturation = 0.0,
                 position = listOf(0.0, 64.0, 0.0),
                 inventorySummary = emptyList(),
                 world = WorldState(dayPhase = DayPhase.DUSK, isDay = false, ticksUntilNightfall = 900),

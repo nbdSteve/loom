@@ -4,22 +4,29 @@ This package is two things: the **body process**, one persistent Mineflayer play
 driven over a loopback control channel, and the Node half of Loom's **body-control**
 contract, which is the versioned newline-delimited JSON protocol it is driven over.
 
-**It is inert, and nothing in Loom speaks to it.**
-No Paper wiring exists yet: the plugin does not start this process and does not connect to
-its control channel.
-What the plugin does now hold is a server-authoritative witness for the *player identity* a
-body like this logs in as - `dev.loom.witness`, whose rules `AGENTS.md` owns - and that is
-inert for the same kind of reason: nothing registers an identity in it yet.
-**This package does not replace the Villager body.**
-`/loombody` is unchanged and the Villager body is still the only body Loom's runtime
-drives; the Paper runtime wiring, and the cutover that eventually retires the Villager,
-come in later slices.
-What lands here is the foundation both of those need: a process that can be started,
-asked how it is, asked for one bounded reading of what its player can see and how it is
-doing, told to eat one named stack, told to walk to one named place or run from one
-creature it was shown, told to stop whichever of those it is doing, and told to stop
-altogether - and a contract two runtimes already agree on before either of them speaks it
-in anger.
+**This is Loom's active product body.**
+The Paper plugin registers one deterministic player identity with its server witness,
+starts `bin/loom-body.js`, connects to its loopback control channel and waits for both
+control readiness and the server-observed player before exposing the body to cognition.
+`/loombody create|inspect|think|stop` manages that identity. The older Villager adapter
+remains in the source tree but is not wired, and there is no compatibility switch.
+
+The current deployment owns one configured agent identity and one process. A second agent
+id is refused rather than sharing the process or its endpoint; multi-agent orchestration
+is separate work. Every future embodied identity must likewise own a distinct process and
+loopback address.
+
+The JVM supervisor owns lifecycle ordering. It registers the witness identity before
+launch, completes startup only after handshake, process `ready` and server presence, and
+cleans up a partial child before returning a startup failure. Shutdown asks this process
+over the protocol first, then escalates through bounded ordinary and forced termination.
+A process exit or socket failure is a disconnect and may be restarted under the same
+identity. Only the Paper witness can establish death and make that identity terminal.
+
+One operational refusal deserves special mention at this boundary: `notReady` while the
+child is still alive means another movement operation owns the path. The coordinator
+records a refused intent and leaves the process ready; it must not turn expected
+movement concurrency into a disconnect or terminate a healthy child.
 
 The wire is **eight operations at protocol generation 2**, and the split between them is
 the split this whole package is built on.
@@ -63,7 +70,12 @@ is `require()`d rather than scanned on Node 25, and the glob also keeps `test/fi
 and `test/harness.js` - a fault injector and a shared harness, neither of them a suite -
 out of the run.
 
-## Running it against a disposable Paper server
+## Running it directly against a disposable Paper server
+
+Ordinary product runs should let the Paper plugin supervise this process; `DEMO.md` is
+the end-to-end procedure. Direct launch remains useful for body-only diagnosis and for
+proving that the durable witness denies a dead identity even when no current plugin
+registration exists.
 
 The process is configured by environment only, and every value is explicit rather than
 discovered.

@@ -59,6 +59,46 @@ val VILLAGER_HUNTERS: Set<String> =
 /** Whether [what] - an entity description id - hunts a Loom body unprovoked. */
 fun huntsVillagers(what: String): Boolean = what in VILLAGER_HUNTERS
 
+/** Hostile species that can choose an ordinary player as a target without provocation. */
+val PLAYER_HUNTERS: Set<String> =
+    setOf(
+        "entity.minecraft.blaze",
+        "entity.minecraft.bogged",
+        "entity.minecraft.breeze",
+        "entity.minecraft.cave_spider",
+        "entity.minecraft.creeper",
+        "entity.minecraft.drowned",
+        "entity.minecraft.elder_guardian",
+        "entity.minecraft.endermite",
+        "entity.minecraft.evoker",
+        "entity.minecraft.ghast",
+        "entity.minecraft.guardian",
+        "entity.minecraft.hoglin",
+        "entity.minecraft.husk",
+        "entity.minecraft.magma_cube",
+        "entity.minecraft.phantom",
+        "entity.minecraft.pillager",
+        "entity.minecraft.ravager",
+        "entity.minecraft.shulker",
+        "entity.minecraft.silverfish",
+        "entity.minecraft.skeleton",
+        "entity.minecraft.slime",
+        "entity.minecraft.spider",
+        "entity.minecraft.stray",
+        "entity.minecraft.vex",
+        "entity.minecraft.vindicator",
+        "entity.minecraft.warden",
+        "entity.minecraft.witch",
+        "entity.minecraft.wither",
+        "entity.minecraft.wither_skeleton",
+        "entity.minecraft.zoglin",
+        "entity.minecraft.zombie",
+        "entity.minecraft.zombie_villager",
+    )
+
+/** Whether [what] hunts an ordinary player without first being attacked. */
+fun huntsPlayers(what: String): Boolean = what in PLAYER_HUNTERS
+
 /**
  * How long one threat's sighting holds off the next, in ticks.
  *
@@ -230,6 +270,7 @@ class ThreatWatch(
     private val debounceTicks: Long = THREAT_DEBOUNCE_TICKS,
     private val pivotalDistanceBlocks: Double = PIVOTAL_THREAT_DISTANCE_BLOCKS,
     private val maxPivotalCallsPerNight: Int = MAX_PIVOTAL_THREAT_CALLS_PER_NIGHT,
+    private val hunts: (String) -> Boolean = ::huntsVillagers,
 ) {
     init {
         require(debounceTicks > 0) { "debounceTicks must be positive, got $debounceTicks" }
@@ -287,7 +328,7 @@ class ThreatWatch(
         candidates: List<ThreatCandidate>,
         reachable: (ThreatCandidate) -> Boolean,
     ): ThreatOutcome {
-        val hunters = candidates.filter { huntsVillagers(it.what) }
+        val hunters = candidates.filter { hunts(it.what) }
         val memories = remembered.getOrPut(agent) { mutableMapOf() }
         memories.keys.retainAll(hunters.map { it.subject }.toSet())
 
