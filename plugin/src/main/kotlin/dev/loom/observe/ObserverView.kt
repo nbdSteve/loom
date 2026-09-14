@@ -83,6 +83,8 @@ class ObserverView(
             BodyEvent.INTENT_APPLIED -> appliedNote(record.outcome)
             BodyEvent.DECISION_DISCARDED -> Note("its decision arrived too late to act on", ObserverLevel.CONCERN)
             BodyEvent.COGNITION_UNAVAILABLE -> unansweredNote(record.outcome)
+            BodyEvent.BODY_DISCONNECTED ->
+                Note("its body process disconnected; the agent is not dead", ObserverLevel.CONCERN)
             BodyEvent.DESPAWNED -> Note("its body was put away", ObserverLevel.CALM)
             BodyEvent.DIED -> Note("DIED. Permadeath: this agent will not return.", ObserverLevel.ALARM)
             BodyEvent.RETREATING -> retreatNote(record.outcome)
@@ -131,6 +133,7 @@ class ObserverView(
             BodyEvent.COGNITION_UNAVAILABLE,
             BodyEvent.ENERGY_CHANGED,
             BodyEvent.HEALTH_CHANGED,
+            BodyEvent.BODY_DISCONNECTED,
             BodyEvent.DESPAWNED,
             BodyEvent.DIED,
             BodyEvent.RETREATING,

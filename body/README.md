@@ -1,20 +1,23 @@
 # The Loom body process, and the Node side of the body-control protocol
 
 This package is two things: the **body process**, one persistent Mineflayer player
-driven over a loopback control channel, and the Node half of Loom's **body-control**
-contract, which is the versioned newline-delimited JSON protocol it is driven over.
+driven over one loopback control channel, and the Node half of Loom's
+**body-control** contract, which is the versioned newline-delimited JSON protocol
+it is driven over.
 
 **This is Loom's active product body.**
-The Paper plugin registers one deterministic player identity with its server witness,
-starts `bin/loom-body.js`, connects to its loopback control channel and waits for both
-control readiness and the server-observed player before exposing the body to cognition.
-`/loombody create|inspect|think|stop` manages that identity. There is no alternate
-body implementation or compatibility switch.
+The Paper plugin registers each configured deterministic player identity with its
+server witness, starts one `bin/loom-body.js` process per identity, connects to
+that process's loopback control channel and waits for both control readiness and
+the server-observed player before exposing the body to cognition.
+`/loombody create|inspect|think|stop` manages members of that bounded fleet.
+There is no alternate body implementation or compatibility switch.
 
-The current deployment owns one configured agent identity and one process. A second agent
-id is refused rather than sharing the process or its endpoint; multi-agent orchestration
-is separate work. Every future embodied identity must likewise own a distinct process and
-loopback address.
+The process in this package still owns exactly one agent identity, one Minecraft
+player and one control endpoint. The fleet is a JVM coordinator over isolated
+copies of this existing runtime; an agent id is never multiplexed through
+another agent's process, socket, working directory, sense memory or movement
+state.
 
 The JVM supervisor owns lifecycle ordering. It registers the witness identity before
 launch, completes startup only after handshake, process `ready` and server presence, and

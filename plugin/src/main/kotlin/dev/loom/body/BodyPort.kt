@@ -5,7 +5,7 @@
  * Everything crossing this port is a Loom domain or contract type. No
  * `net.minecraft` type, no Bukkit `Entity`/`CraftEntity`, no world handle
  * appears in any signature here. The product adapter is `dev.loom.body.player`,
- * which coordinates one persistent Mineflayer player process.
+ * which coordinates a bounded configured fleet of one-process-one-player bodies.
  *
  * The boundary is enforced by BodyBoundaryTest.
  */
@@ -145,6 +145,15 @@ interface BodyPort : AutoCloseable {
         } else {
             null
         }
+
+    /**
+     * Operator-facing state for every configured body.
+     *
+     * The aggregate contains only bounded deployment metadata and lifecycle
+     * state. It never includes cognition prompts, transport errors, or
+     * credentials. The default keeps lightweight test doubles source-compatible.
+     */
+    fun inspections(): List<BodyInspection> = liveBodies().sortedBy { it.value }.mapNotNull(::inspect)
 
     /**
      * Stops every body and releases every resource owned by the adapter.

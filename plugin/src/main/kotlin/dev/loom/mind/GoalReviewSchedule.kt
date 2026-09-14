@@ -30,7 +30,7 @@ import dev.loom.body.AgentId
  * The one knob worth turning here, and deliberately conservative: a goal review is
  * routine-tier, but it is still an inference per agent per cadence, so at a
  * twenty-agent population this is a call every six seconds and nothing more. It
- * stays watchable in a single-agent demo because an agent that has never reviewed
+ * stays watchable in a small disposable demo because an agent that has never reviewed
  * is due at once - a body acts seconds after it is spawned, then settles onto this
  * cadence.
  *

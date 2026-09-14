@@ -220,6 +220,7 @@ private fun bodilessAfter(
 ): Boolean =
     when (record.event) {
         BodyEvent.SPAWNED -> false
+        BodyEvent.BODY_DISCONNECTED -> true
         BodyEvent.DESPAWNED -> true
         BodyEvent.DIED -> true
         BodyEvent.SPAWN_REJECTED -> record.outcome != EventTag.ALREADY_EMBODIED
@@ -275,6 +276,7 @@ private fun activityAfter(
 ): AgentActivity =
     when (record.event) {
         BodyEvent.SPAWNED -> AgentActivity.EMBODIED
+        BodyEvent.BODY_DISCONNECTED -> AgentActivity.BODILESS
         BodyEvent.SPAWN_REJECTED -> refusedActivity(state, record.outcome)
         BodyEvent.PERCEIVED -> AgentActivity.THINKING
         BodyEvent.INTENT_APPLIED -> activityOf(record.intent, record.outcome)

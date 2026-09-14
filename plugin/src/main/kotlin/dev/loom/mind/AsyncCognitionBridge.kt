@@ -77,6 +77,13 @@ sealed interface CognitionFailure {
         override val tag: String get() = "saturated"
     }
 
+    /** This agent already owns every model-call slot budgeted to it. */
+    data class AgentBudgetExhausted(
+        val limit: Int,
+    ) : CognitionFailure {
+        override val tag: String get() = "agentBudgetExhausted"
+    }
+
     /** The mind was reached but failed, refused, or answered unusably. */
     data class Failed(
         val reason: String,
@@ -261,6 +268,8 @@ class AsyncCognitionBridge(
             when (failure) {
                 is CognitionFailure.TimedOut -> "did not answer within ${failure.after}"
                 CognitionFailure.Saturated -> "was refused: every worker and queue slot is busy"
+                is CognitionFailure.AgentBudgetExhausted ->
+                    "was refused: this agent already has ${failure.limit} request(s) outstanding"
                 is CognitionFailure.Failed -> "failed: ${failure.reason}"
             }
 

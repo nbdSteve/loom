@@ -43,6 +43,8 @@ internal const val ATTEMPTS_PER_ASK = 2
  * value the socket treats as infinite.
  */
 internal const val MIN_SOCKET_TIMEOUT_MILLIS = 1L
+private const val DEFAULT_PER_AGENT_PENDING = 4
+private const val MAX_PER_AGENT_PENDING = 64
 
 /**
  * How the body reaches the mind.
@@ -75,6 +77,7 @@ data class CognitionSettings(
     val connectTimeout: Duration = 500.milliseconds,
     val workers: Int = 4,
     val queueDepth: Int = 64,
+    val perAgentPending: Int = DEFAULT_PER_AGENT_PENDING,
 ) {
     init {
         require(host.isNotBlank()) { "host must not be blank" }
@@ -96,6 +99,9 @@ data class CognitionSettings(
         require(readTimeout.inWholeMilliseconds >= MIN_SOCKET_TIMEOUT_MILLIS) {
             "timeout ($timeout) is too short: its read timeout ($readTimeout) narrows to a socket timeout of " +
                 "zero, which means an unbounded read - the opposite of bounding the wait"
+        }
+        require(perAgentPending in 1..MAX_PER_AGENT_PENDING) {
+            "perAgentPending must be in 1..$MAX_PER_AGENT_PENDING, was $perAgentPending"
         }
     }
 
@@ -125,7 +131,24 @@ data class CognitionSettings(
      */
     val readTimeout: Duration get() = (timeout - (connectTimeout * ATTEMPTS_PER_ASK)) / ATTEMPTS_PER_ASK
 
-    private companion object {
-        const val MAX_PORT = 65_535
+    companion object {
+        private const val MAX_PORT = 65_535
+
+        private fun configuredPerAgentPending(environment: Map<String, String>): Int {
+            val raw = environment["LOOM_COGNITION_PENDING_PER_AGENT"]
+            val parsed = raw?.toIntOrNull()
+            require(raw == null || parsed != null) {
+                "LOOM_COGNITION_PENDING_PER_AGENT must be an integer"
+            }
+            val value = parsed ?: DEFAULT_PER_AGENT_PENDING
+            require(value in 1..MAX_PER_AGENT_PENDING) {
+                "LOOM_COGNITION_PENDING_PER_AGENT must be in 1..$MAX_PER_AGENT_PENDING"
+            }
+            return value
+        }
+
+        /** Reads the one per-agent resource budget owned by the JVM bridge. */
+        fun fromEnvironment(environment: Map<String, String> = System.getenv()): CognitionSettings =
+            CognitionSettings(perAgentPending = configuredPerAgentPending(environment))
     }
 }

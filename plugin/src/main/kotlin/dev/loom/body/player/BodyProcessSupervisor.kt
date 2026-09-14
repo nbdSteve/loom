@@ -31,6 +31,16 @@ interface SupervisedBodyProcess {
 interface BodyProcessSupervisor : AutoCloseable {
     fun start(identity: PlayerIdentity): CompletionStage<SupervisedBodyProcess>
 
+    /**
+     * Performs one bounded status round trip.
+     *
+     * A failed check is not death and does not stop the process. The lifecycle
+     * coordinator owns the consecutive-failure budget and decides whether this
+     * one agent should be disconnected.
+     */
+    fun health(process: SupervisedBodyProcess): CompletionStage<Boolean> =
+        CompletableFuture.completedFuture(process.isAlive())
+
     fun stop(process: SupervisedBodyProcess): CompletionStage<Unit>
 
     override fun close()
@@ -50,7 +60,8 @@ enum class BodySupervisorFailureKind {
 /** A bounded supervisor failure whose message contains no process or network detail. */
 class BodySupervisorFailure(
     val kind: BodySupervisorFailureKind,
-) : RuntimeException("body process ${kind.name.lowercase()}")
+    val attempts: Int = 1,
+) : RuntimeException("body process ${kind.name.lowercase()} after $attempts attempt(s)")
 
 /**
  * Production supervisor.
@@ -87,7 +98,9 @@ class ProcessBodySupervisor(
                     if (closing) {
                         throw BodySupervisorFailure(BodySupervisorFailureKind.CONTROL_UNAVAILABLE)
                     }
-                    launchAndReady(identity)
+                    retryStartup(settings, { closing }) {
+                        launchAndReady(identity)
+                    }
                 }.onSuccess { process -> answer.complete(process) }
                     .onFailure { failure -> answer.completeExceptionally(failure) }
             } finally {
@@ -120,7 +133,7 @@ class ProcessBodySupervisor(
         }
 
     private fun launchAndReady(identity: PlayerIdentity): SupervisedBodyProcess {
-        val process = launchProcess(identity, bodyEntrypoint())
+        val process = launchProcess(identity, bodyEntrypoint(settings))
         val handle = ProcessBodyHandle(identity, settings.controlEndpoint, process)
         processes[identity.agentId] = handle
         process.onExit().thenAccept {
@@ -139,20 +152,14 @@ class ProcessBodySupervisor(
         }
     }
 
-    private fun bodyEntrypoint() =
-        settings.bodyDirectory.resolve("bin/loom-body.js").also { entrypoint ->
-            if (!Files.isRegularFile(entrypoint)) {
-                throw BodySupervisorFailure(BodySupervisorFailureKind.BODY_ARTIFACT_MISSING)
-            }
-        }
-
     private fun launchProcess(
         identity: PlayerIdentity,
         entrypoint: java.nio.file.Path,
     ): Process =
         runCatching {
+            Files.createDirectories(settings.processDirectory)
             ProcessBuilder(settings.nodeExecutable, entrypoint.toString())
-                .directory(settings.bodyDirectory.toFile())
+                .directory(settings.processDirectory.toFile())
                 .redirectOutput(ProcessBuilder.Redirect.INHERIT)
                 .redirectError(ProcessBuilder.Redirect.INHERIT)
                 .apply {
@@ -171,6 +178,38 @@ class ProcessBodySupervisor(
         }.getOrElse {
             throw BodySupervisorFailure(BodySupervisorFailureKind.PROCESS_LAUNCH_FAILED)
         }
+
+    override fun health(process: SupervisedBodyProcess): CompletionStage<Boolean> {
+        val handle =
+            process as? ProcessBodyHandle
+                ?: return failed(IllegalArgumentException("unknown body process"))
+        val answer = CompletableFuture<Boolean>()
+        executor.execute {
+            runCatching {
+                if (closing || !handle.isAlive()) {
+                    false
+                } else {
+                    connector.connect(handle.endpoint, handle.identity).use { connection ->
+                        val status =
+                            connection.request(
+                                BodyRequest.Status(
+                                    protocol = BODY_CONTROL_PROTOCOL_VERSION,
+                                    requestId = requestIds.next("health"),
+                                    agentId = handle.identity.agentId.value,
+                                ),
+                                settings.requestTimeout,
+                            ) as? BodyResponse.StatusReport
+                                ?: throw BodyControlFailure.ProtocolViolation()
+                        status.state == LifecycleState.READY
+                    }
+                }
+            }.onSuccess(answer::complete)
+                .onFailure { failure ->
+                    answer.completeExceptionally(failure.asSupervisorFailure())
+                }
+        }
+        return answer
+    }
 
     private fun awaitReady(handle: ProcessBodyHandle) {
         val deadline = System.nanoTime() + settings.startupTimeout.toNanos()
@@ -266,9 +305,9 @@ class ProcessBodySupervisor(
         // failure path. Closing the live snapshot first makes its readiness probe
         // return promptly; waiting for every start then closes the launch-before-map
         // race before the final sweep.
-        stopAll(processes.values)
+        stopAll(processes.values.toTypedArray().asList())
         val deadline = System.nanoTime() + settings.shutdownTimeout.toNanos()
-        starts.values.toList().forEach { start ->
+        starts.values.toTypedArray().forEach { start ->
             val remaining = deadline - System.nanoTime()
             if (remaining > 0) {
                 runCatching {
@@ -276,7 +315,7 @@ class ProcessBodySupervisor(
                 }
             }
         }
-        stopAll(processes.values)
+        stopAll(processes.values.toTypedArray().asList())
         processes.clear()
     }
 
@@ -372,3 +411,64 @@ private fun probeReadiness(
 private fun Throwable.asSupervisorFailure(): BodySupervisorFailure =
     this as? BodySupervisorFailure
         ?: BodySupervisorFailure(BodySupervisorFailureKind.CONTROL_UNAVAILABLE)
+
+private fun bodyEntrypoint(settings: PlayerBodySettings) =
+    settings.bodyDirectory.resolve("bin/loom-body.js").also { entrypoint ->
+        if (!Files.isRegularFile(entrypoint)) {
+            throw BodySupervisorFailure(BodySupervisorFailureKind.BODY_ARTIFACT_MISSING)
+        }
+    }
+
+private val BodySupervisorFailureKind.retryable: Boolean
+    get() =
+        when (this) {
+            BodySupervisorFailureKind.PROCESS_LAUNCH_FAILED,
+            BodySupervisorFailureKind.PROCESS_EXITED,
+            BodySupervisorFailureKind.CONTROL_UNAVAILABLE,
+            BodySupervisorFailureKind.STARTUP_TIMED_OUT,
+            -> true
+            BodySupervisorFailureKind.ALREADY_RUNNING,
+            BodySupervisorFailureKind.BODY_ARTIFACT_MISSING,
+            BodySupervisorFailureKind.PLAYER_NOT_READY,
+            -> false
+        }
+
+private fun <T> retryStartup(
+    settings: PlayerBodySettings,
+    closing: () -> Boolean,
+    launch: () -> T,
+): T {
+    var lastFailure = BodySupervisorFailure(BodySupervisorFailureKind.CONTROL_UNAVAILABLE)
+    var attempt = 1
+    var retry = true
+    while (attempt <= settings.startupAttempts && retry) {
+        try {
+            return launch()
+        } catch (failure: BodySupervisorFailure) {
+            lastFailure = BodySupervisorFailure(failure.kind, attempt)
+            retry =
+                failure.kind.retryable &&
+                attempt < settings.startupAttempts &&
+                !closing()
+            if (retry && !pauseBeforeRetry(settings.startupRetryDelay)) {
+                lastFailure =
+                    BodySupervisorFailure(
+                        BodySupervisorFailureKind.CONTROL_UNAVAILABLE,
+                        attempt,
+                    )
+                retry = false
+            }
+        }
+        attempt += 1
+    }
+    throw lastFailure
+}
+
+private fun pauseBeforeRetry(delay: Duration): Boolean =
+    try {
+        Thread.sleep(delay.toMillis().coerceAtLeast(1))
+        true
+    } catch (_: InterruptedException) {
+        Thread.currentThread().interrupt()
+        false
+    }

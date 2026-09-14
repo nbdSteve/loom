@@ -21,6 +21,7 @@ import java.util.concurrent.ScheduledExecutorService
 
 /** Process and control-plane dependencies owned by the player adapter. */
 data class PlayerBodyInfrastructure(
+    val identity: PlayerIdentity,
     val settings: PlayerBodySettings,
     val supervisor: BodyProcessSupervisor,
     val connector: BodyControlConnector,
@@ -44,6 +45,9 @@ internal data class PlayerRuntime(
     var detail: String,
     var process: SupervisedBodyProcess? = null,
     var sensesInFlight: Int = 0,
+    var healthCheckInFlight: Boolean = false,
+    var consecutiveHealthFailures: Int = 0,
+    var nextHealthCheckTick: Long = 0,
 )
 
 internal class PlayerBodyContext(
@@ -77,7 +81,7 @@ internal sealed interface StartReservation {
 }
 
 /**
- * Main-thread registry for the one configured player identity.
+ * Main-thread registry for one configured player identity.
  *
  * It owns only identity and visible lifecycle state. Process work, perception
  * sessions and action I/O remain in their dedicated coordinators.
@@ -85,32 +89,47 @@ internal sealed interface StartReservation {
 internal class PlayerRuntimeRegistry(
     private val context: PlayerBodyContext,
 ) {
-    private val runtimes = mutableMapOf<AgentId, PlayerRuntime>()
-    private var configuredAgent: AgentId? = null
+    private val runtime =
+        PlayerRuntime(
+            identity = context.infrastructure.identity,
+            lifecycle = BodyLifecycle.DISCONNECTED,
+            detail = "configured; not started",
+        )
 
     fun reserve(agentId: AgentId): StartReservation =
         rejectionFor(agentId)?.let(StartReservation::Rejected)
-            ?: reserveIdentity(agentId)
+            ?: StartReservation.Reserved(
+                runtime.apply {
+                    lifecycle = BodyLifecycle.STARTING
+                    detail = "starting player process"
+                    process = null
+                    healthCheckInFlight = false
+                    consecutiveHealthFailures = 0
+                    nextHealthCheckTick = 0
+                },
+            )
 
-    fun runtime(agentId: AgentId): PlayerRuntime? = runtimes[agentId]
+    fun runtime(agentId: AgentId): PlayerRuntime? = runtime.takeIf { it.identity.agentId == agentId }
 
-    fun isCurrent(runtime: PlayerRuntime): Boolean = runtimes[runtime.identity.agentId] === runtime
+    fun isCurrent(runtime: PlayerRuntime): Boolean = this.runtime === runtime
 
     fun ready(agentId: AgentId): PlayerRuntime? =
-        runtimes[agentId]?.takeIf {
+        runtime(agentId)?.takeIf {
             it.lifecycle == BodyLifecycle.READY &&
                 it.process?.isAlive() == true
         }
 
-    fun all(): List<PlayerRuntime> = runtimes.values.toList()
+    fun all(): List<PlayerRuntime> = listOf(runtime)
 
     fun liveBodies(): Set<AgentId> =
-        runtimes.values
-            .filter { it.lifecycle == BodyLifecycle.READY && it.process?.isAlive() == true }
-            .mapTo(mutableSetOf()) { it.identity.agentId }
+        if (runtime.lifecycle == BodyLifecycle.READY && runtime.process?.isAlive() == true) {
+            setOf(runtime.identity.agentId)
+        } else {
+            emptySet()
+        }
 
     fun inspect(agentId: AgentId): BodyInspection? =
-        runtimes[agentId]?.let { runtime ->
+        runtime(agentId)?.let { runtime ->
             BodyInspection(
                 agentId = agentId,
                 identity = "${runtime.identity.username} (${runtime.identity.uuid})",
@@ -128,6 +147,12 @@ internal class PlayerRuntimeRegistry(
     private fun rejectionFor(agentId: AgentId): BodySpawnResult? {
         val journal = context.journal
         return when {
+            agentId != runtime.identity.agentId ->
+                journal.reject(
+                    agentId,
+                    "this player runtime is allocated to another configured agent",
+                    EventTag.BODY_START_FAILED,
+                )
             context.closing ->
                 journal.reject(
                     agentId,
@@ -140,13 +165,7 @@ internal class PlayerRuntimeRegistry(
                     "this agent has died, and Loom agents do not return",
                     EventTag.HAS_DIED,
                 )
-            configuredAgent != null && configuredAgent != agentId ->
-                journal.reject(
-                    agentId,
-                    "this runtime already owns its one configured player identity",
-                    EventTag.BODY_START_FAILED,
-                )
-            runtimes[agentId]?.lifecycle in
+            runtime.lifecycle in
                 setOf(BodyLifecycle.STARTING, BodyLifecycle.READY, BodyLifecycle.STOPPING) ->
                 journal.reject(
                     agentId,
@@ -155,29 +174,5 @@ internal class PlayerRuntimeRegistry(
                 )
             else -> null
         }
-    }
-
-    private fun reserveIdentity(agentId: AgentId): StartReservation {
-        val identity =
-            try {
-                playerIdentityOf(agentId).also(context.authority.registerIdentity)
-            } catch (_: IllegalArgumentException) {
-                return StartReservation.Rejected(
-                    context.journal.reject(
-                        agentId,
-                        "the player identity could not be registered",
-                        EventTag.BODY_START_FAILED,
-                    ),
-                )
-            }
-        configuredAgent = agentId
-        val runtime =
-            PlayerRuntime(
-                identity = identity,
-                lifecycle = BodyLifecycle.STARTING,
-                detail = "starting player process",
-            )
-        runtimes[agentId] = runtime
-        return StartReservation.Reserved(runtime)
     }
 }

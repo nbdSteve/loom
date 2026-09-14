@@ -24,6 +24,24 @@ class CognitionSettingsTest {
     }
 
     @Test
+    @DisplayName("the per-agent outstanding budget is configured and bounded")
+    fun perAgentBudgetIsBounded() {
+        assertEquals(
+            7,
+            CognitionSettings.fromEnvironment(
+                mapOf("LOOM_COGNITION_PENDING_PER_AGENT" to "7"),
+            ).perAgentPending,
+        )
+        for (bad in listOf("0", "65", "many")) {
+            assertThrows<IllegalArgumentException>(bad) {
+                CognitionSettings.fromEnvironment(
+                    mapOf("LOOM_COGNITION_PENDING_PER_AGENT" to bad),
+                )
+            }
+        }
+    }
+
+    @Test
     @DisplayName("the read timeout expires before the bridge deadline")
     fun theReadGivesUpFirst() {
         // Load-bearing ordering, not a nicety: the bridge's watchdog frees the caller

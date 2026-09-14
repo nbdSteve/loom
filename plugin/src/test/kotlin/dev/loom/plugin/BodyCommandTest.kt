@@ -66,6 +66,23 @@ class BodyCommandTest {
     }
 
     @Test
+    @DisplayName("inspect without an id reports bounded aggregate lifecycle counts")
+    fun inspectReportsAggregateFleetState() {
+        val body = SpyBody()
+        body.fleet =
+            listOf(
+                inspection("alpha", BodyLifecycle.READY),
+                inspection("bravo", BodyLifecycle.DISCONNECTED),
+                inspection("charlie", BodyLifecycle.READY),
+            )
+
+        assertEquals(
+            "3 configured player bodies: disconnected=1, ready=2",
+            commandFor(body).reply(arrayOf("inspect")),
+        )
+    }
+
+    @Test
     @DisplayName("think starts one goal review without waiting and applies its decision later")
     fun thinkDrivesTheRoundTrip() {
         val body = SpyBody()
@@ -101,7 +118,7 @@ class BodyCommandTest {
     fun missingIdentityStatesUsage() {
         val command = commandFor(SpyBody())
         assertEquals("usage: create <agentId>", command.reply(arrayOf("create")))
-        assertEquals("usage: inspect <agentId>", command.reply(arrayOf("inspect")))
+        assertEquals("no configured player bodies", command.reply(arrayOf("inspect")))
         assertEquals("usage: think <agentId>", command.reply(arrayOf("think")))
         assertEquals("usage: stop <agentId>", command.reply(arrayOf("stop")))
         assertEquals(null, command.reply(arrayOf("move")))
@@ -140,6 +157,7 @@ class BodyCommandTest {
         val calls = mutableListOf<String>()
         val applied = mutableListOf<Intent>()
         var inspection: BodyInspection? = null
+        var fleet: List<BodyInspection> = emptyList()
 
         override fun spawn(agentId: AgentId): CompletableFuture<BodySpawnResult> {
             calls += "spawn:$agentId"
@@ -181,5 +199,18 @@ class BodyCommandTest {
         override fun liveBodies(): Set<AgentId> = emptySet()
 
         override fun inspect(agentId: AgentId): BodyInspection? = inspection
+
+        override fun inspections(): List<BodyInspection> = fleet
     }
+
+    private fun inspection(
+        agentId: String,
+        state: BodyLifecycle,
+    ): BodyInspection =
+        BodyInspection(
+            agentId = AgentId(agentId),
+            identity = "loom_$agentId",
+            state = state,
+            detail = state.name.lowercase(),
+        )
 }

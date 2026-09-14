@@ -31,17 +31,24 @@ conformance tests.
 
 ## Runtime today
 
-The product runtime is the persistent Mineflayer player body. `LoomPlugin`
-constructs that adapter directly; there is no alternate body implementation or
-runtime selector.
+The product runtime is a bounded configured fleet of persistent Mineflayer
+player bodies. `LoomPlugin` constructs `PlayerBodyPort` directly; it remains the
+sole body implementation and acts as a fleet façade over isolated copies of the
+existing one-player runtime.
 
-`/loombody create <agentId>` deterministically derives one offline player
-username and UUID, registers that exact identity with the server witness, starts
-one Node process, completes the body-control handshake, waits for the process to
-report `ready`, and waits for the server to confirm the player is present. Only
-then is the body visible as ready to cognition. The current product deployment
-owns one configured identity and refuses a second agent id; multi-agent
-orchestration is not part of this cutover.
+`LOOM_BODY_AGENTS` is a comma-separated list of agent ids (maximum 16, default
+`e2e`). On plugin enable Loom canonicalizes that set, derives one stable offline
+username and UUID per id, pre-registers every identity with the server witness,
+allocates consecutive loopback control ports and distinct process directories,
+and starts the configured processes through a bounded concurrency gate. The same
+set receives the same allocations after restart regardless of list order.
+
+Each member owns its process supervisor, control connector, request-id
+namespace, cognition/ref windows, threat and vitals watches, movement, inventory
+sessions, I/O workers, keepalive scheduler, health budget, and shutdown state.
+Only the server witness, append-only evidence sink, and globally bounded
+cognition worker pool are shared. A crash, exhausted health budget, or terminal
+death changes one member and cannot stop or reclassify another.
 
 The Mineflayer process is a mechanics boundary, not a second mind:
 
@@ -60,12 +67,15 @@ be matched, while the body-control wire keeps its request-local indexes.
 
 ## Lifecycle and permadeath
 
-The JVM supervisor owns startup, readiness, timeout, shutdown, and partial
-failure ordering. Startup failures clean up the partial child before the
-operation completes. Shutdown asks the control protocol first, then escalates
-through bounded process termination. Plugin disable stops new cognition and
-schedules first, closes cognition, closes every held body-control session and
-child process, and closes the event log last.
+Each JVM supervisor owns startup, readiness, retry, health, shutdown, and
+partial-failure ordering for one player. Every failed startup attempt cleans up
+its partial child before a bounded retry. Periodic status checks have a
+consecutive-failure limit; exhausting it writes `bodyDisconnected` for that
+agent and stops only its child. Shutdown asks the control protocol first, then
+escalates through bounded process termination. Plugin disable stops new
+cognition and schedules first, closes cognition, closes every held body-control
+session and child process in deterministic agent order, and closes the event log
+last.
 
 A process exit, socket failure, or control refusal is never death. It makes the
 body `disconnected` or `failed`, and the same player identity may be restarted.
@@ -89,6 +99,10 @@ immediate pivotal perception, and unchanged sightings are suppressed by the
 existing cadence, debounce, and nightly budget rather than producing duplicate
 model calls.
 
+The cognition bridge also limits outstanding requests per agent before they
+enter its globally bounded worker/queue pool. One agent can exhaust its own
+budget without consuming another agent's admission slots.
+
 The default cognition backend is the deterministic scripted stand-in, so a
 checkout and all tests require no credential. Set
 `LOOM_COGNITION_BACKEND=openai` to use configured models; see
@@ -96,14 +110,38 @@ checkout and all tests require no credential. Set
 
 ## Commands
 
-The body command manages the persistent player identity:
+The body command manages configured identities:
 
 ```text
 /loombody create <agentId>
+/loombody inspect
 /loombody inspect <agentId>
 /loombody think <agentId>
 /loombody stop <agentId>
 ```
+
+Configured bodies start automatically. `create` restarts a configured member
+after a non-terminal disconnect and refuses ids outside the fleet. Bare
+`inspect` reports aggregate lifecycle counts without exposing cognition prompts,
+transport details, or credentials.
+
+The main fleet settings are:
+
+```text
+LOOM_BODY_AGENTS=e2e
+LOOM_BODY_CONTROL_PORT=<Paper port + 20>
+LOOM_BODY_PROCESS_ROOT=plugins/Loom/bodies
+LOOM_BODY_STARTUP_CONCURRENCY=4
+LOOM_BODY_STARTUP_ATTEMPTS=2
+LOOM_BODY_STARTUP_RETRY_MS=250
+LOOM_BODY_HEALTH_INTERVAL_TICKS=100
+LOOM_BODY_HEALTH_FAILURES=3
+LOOM_BODY_IO_WORKERS_PER_AGENT=4
+LOOM_COGNITION_PENDING_PER_AGENT=4
+```
+
+Every numeric setting is bounded at startup; invalid or colliding allocations
+are refused before any body is launched.
 
 `/loomwatch <agentId>` remains a read-only view over the append-only event
 record. Its established `vitals`/`energyChanged` evidence names and `energy`

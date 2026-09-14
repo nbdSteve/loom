@@ -5,6 +5,7 @@ package dev.loom.body.player
 
 import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
+import dev.loom.body.EventTag
 import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import dev.loom.body.PERCEPTION_RADIUS_BLOCKS
 import dev.loom.body.blocksApart
@@ -105,7 +106,11 @@ internal class PlayerPerception(
                 when {
                     failure != null -> {
                         if (runtime.process?.isAlive() == false) {
-                            transitions.markDisconnected(runtime, "player process exited during perception")
+                            transitions.markDisconnected(
+                                runtime,
+                                "player process exited during perception",
+                                EventTag.BODY_PROCESS_EXITED,
+                            )
                         }
                         answer.completeExceptionally(
                             unwrapCompletion(failure) ?: BodyControlFailure.Unavailable(),

@@ -23,7 +23,7 @@ Eight operations at protocol generation 2: `handshake`, `status` and `shutdown` 
 The schema's own `ControlOperation` description is the authority: an *operation* is something a controller asks for, so a controller never meets one it does not have, and one a peer lacks is refused with `unknownOperation`; a value the *body* answers from is the body's to choose, so widening it hands a controller that agreed this generation a frame it cannot read, for a request it made in good faith and without having asked for anything new.
 Refusing that frame is fail-closed rather than a misreading, but a broken round trip a peer cannot anticipate is exactly what agreeing a generation is for - so the operation set is the only part of a generation that may grow.
 Moving a generation costs a sweep of every fixture in the corpus and of both runtimes' own spelling cases, and the suites now read the generation from their codec rather than writing it down, so the next move is one constant in each runtime plus the fixture bytes.
-It is the active product body. `LoomPlugin.kt` wires `ProcessBodySupervisor`, `SocketBodyControlConnector`, `PlayerBodyPort` and `BukkitPlayerServerState` directly; there is no alternate body implementation or runtime selector.
+It is the active product body. `LoomPlugin.kt` reads `PlayerBodyFleetSettings`, builds one `ProcessBodySupervisor`/`SocketBodyControlConnector` pair per configured identity, and wires them through the sole `PlayerBodyPort` and one `BukkitPlayerServerState`; there is no alternate body implementation or runtime selector.
 The process on the far end is landed and runnable: `body/src/body.js` plus the `body/bin/loom-body.js` executable.
 `body/README.md` owns the rules for both the contract and the process: read it before changing either, since the process's policy-free invariant, the derivation of its list bounds from `MAX_FRAME_BYTES`, its loopback-literal rule, its shutdown order and the whole of its movement policy all live there rather than here.
 Movement is why the process loads two plugins outside its reporting table - `mineflayer-pathfinder` and Mineflayer's own `physics`, both through `bot.loadPlugin` from `src/movement.js`, a separate seam that leaves `loadInternalPlugins` off and the reporting list unchanged - and `src/movement.js`'s own header is the authority on the rules that follow from it, including why every one of the library's policy fields is set explicitly, why the policy is rebuilt per request, and why one accepted request owns the path and a second is refused rather than served.
@@ -83,9 +83,11 @@ The bounded sense memory marks offers dead on `entityDead`, and each active flig
 
 `plugin/src/main/kotlin/dev/loom/body/BodyPort.kt` is the inbound port used by cognition and commands. Its surface remains lifecycle, actuation, perception, and the server-tick hook. Only Loom domain and contract types cross it.
 
-`dev.loom.body.player.PlayerBodyPort` is the sole production implementation. `LoomPlugin.kt` constructs it directly from `ProcessBodySupervisor`, `SocketBodyControlConnector`, and `BukkitPlayerServerState`; there is no runtime selector or alternate body implementation. `BodyBoundaryTest` makes that structural: every concrete `BodyPort` must be `PlayerBodyPort`, the retired package must not exist, and production code may not depend on NMS or CraftBukkit internals.
+`dev.loom.body.player.PlayerBodyPort` is the sole production implementation. It is a bounded fleet façade over isolated copies of the existing one-player coordinator, not a second body flavor. `LoomPlugin.kt` constructs it directly from one infrastructure bundle per `PlayerBodyFleetSettings` deployment and one shared server authority; there is no runtime selector or alternate body implementation. `BodyBoundaryTest` makes that structural: every concrete `BodyPort` must be `PlayerBodyPort`, the retired package must not exist, and production code may not depend on NMS or CraftBukkit internals.
 
-Process and socket waits run on the bounded player-body I/O pool, while lifecycle, ref, witness, and journal mutation returns through the server-main-thread executor. Startup is registration -> child launch -> control handshake/status -> server presence -> `spawned`; every failed partial startup stops the child before answering. Shutdown releases held sense sessions, stops the child, and records `despawned` only after cleanup succeeds. A failed cleanup is `FAILED`, never a successful despawn.
+`LOOM_BODY_AGENTS` is canonicalized by agent id and bounded to 16. The canonical order owns consecutive control ports and per-username process directories, so the same configured set receives the same collision-checked username, offline UUID, endpoint and directory after restart regardless of list order. Every identity is registered with the witness before the startup gate launches any child. Each deployment owns its context, refs, sense sessions, threat/vitals watches, request-id namespace, supervisor, connector, I/O pool, keepalive scheduler, health budget and shutdown state; only the witness, event sink and globally bounded cognition pool are shared.
+
+Process and socket waits run on each agent's bounded player-body I/O pool, while lifecycle, ref, witness, and journal mutation returns through the server-main-thread executor. Fleet startup admits no more than `LOOM_BODY_STARTUP_CONCURRENCY`; each member's startup is registration -> child launch -> control handshake/status -> server presence -> `spawned`, and every failed attempt stops its partial child before the bounded retry. Consecutive health failures write `bodyDisconnected` for that exact agent and stop only its child. Shutdown releases held sense sessions, stops children in deterministic agent order, and records `despawned` only after cleanup succeeds. A failed cleanup is `FAILED`, never a successful despawn.
 
 **`notReady` is not evidence that the process is gone.** The body process refuses a second movement while one accepted request owns the path. `PlayerBodyPort` records that as `CONTROL_NOT_READY` while the child remains alive and ready. Only process/socket loss produces `DISCONNECTED`, and only `PlayerServerState.isDead` produces `DEAD`.
 
@@ -100,7 +102,7 @@ The engine-free body domain retains only policy shared by the player path: bound
 ## The player witness
 
 `dev.loom.witness` is the server-authoritative witness for Loom's Mineflayer player bodies and the independent enforcement point for permadeath.
-It is active before any body can launch: `LoomPlugin.witnessPlayers` replays the ledger and installs the listener, then `PlayerBodyPort.spawn` registers the deterministic username/UUID before starting the child.
+It is active before any body can launch: `LoomPlugin.witnessPlayers` replays the ledger and installs the listener, then `PlayerBodyPort` registers every configured deterministic username/UUID before its bounded fleet startup can launch a child.
 `dev.loom.witness` is engine-free by rule and `dev.loom.witness.bukkit` is its one adapter, both pinned by `WitnessBoundaryTest`.
 
 **Paper is the witness because Node cannot be one.**
@@ -208,7 +210,7 @@ Two of its three faults need no server at all, since a route shorter than the st
 And separation is deliberately **not** cross-checked: a flight's separation is measured against a creature named by a `senseId` and an ordinal, which resolves inside the body process alone, so the server was never told which entity a flight ran from and cannot be asked whether the ground gained was real.
 `DISPUTED_MOVEMENT`, `DISPUTED_POSITION` and `DISPUTED_JOURNEY` are the three tags, and `tagOf` picks between them by which kinds of fault the dispute holds rather than by prose.
 
-The product itself now supplies the in-world proof. `/loombody create` registers and launches the identity, a child-process kill proves quit/disconnect continuity, vanilla `kill <username>` proves exactly one server-witnessed death, and a direct launch of that account after restart proves ledger-first `loginDeadIdentity` denial. `DEMO.md` is the complete sequence.
+The product itself now supplies the in-world proof. Configured identities launch automatically through the bounded startup gate; `/loombody create` restarts only a configured non-terminal identity. The three-agent sequence in `DEMO.md` proves independent perceive/decide/move/eat chains, one child-process disconnect and restart, one vanilla `kill <username>` producing exactly one server-witnessed death, unaffected peers throughout, deterministic allocation after restart, and ledger-first `loginDeadIdentity` denial.
 
 ## The mind, and the bridge to it
 
@@ -257,6 +259,8 @@ Three subtleties are load-bearing:
 - **The deadline is armed before the work is queued**, so queue time counts against it. A per-attempt timer would let a request behind a stalled worker wait indefinitely.
 - **Delivery to the mind is at-most-once, and the write is the seam.** `TcpCognitionTransport` retries only a failure at or before the write, where nothing can have been decided; anything from the read onward is reported. Re-sending past the write would risk a second billed inference for one perception, and a lost decision is cheaper than a duplicated one. Widening the retry to cover the read is the easy mistake, so a test pins that a perception reaches the mind exactly once.
 
+`PerAgentCognitionBridge` sits in front of that globally bounded bridge and caps outstanding requests by `perception.agentId`. Its budget is admission fairness, not another worker pool: exhausting one agent's `LOOM_COGNITION_PENDING_PER_AGENT` slots yields `agentBudgetExhausted` for that agent while another can still use the shared workers and queue. The slot is released on every future ending.
+
 Importance is classified above the body port by `importanceOf` (`Importance.kt`), not by the body and not by the mind: the body reports what happened, and what that costs is this side's call.
 `EmbodiedCognition` is the only place the two ports meet - perceive on the main thread, decide off it, apply back on it through the `MainThread` port.
 `BodyPort.tick` still never invokes cognition; the contract has no per-tick `Trigger`, and `BodyBoundaryTest` forbids `dev.loom.body..` from depending on `dev.loom.mind..` at all, so the tick path cannot reach a mind even by accident.
@@ -265,7 +269,7 @@ Importance is classified above the body port by `importanceOf` (`Importance.kt`)
 `AutonomousDriver` sweeps on its own Bukkit timer - never off the per-tick body timer - and asks `GoalReviewSchedule` whose turn it is; both are engine-free, so the cadence and the stagger are pinned by unit tests with a fake clock.
 The one knob is `DEFAULT_GOAL_REVIEW_CADENCE_TICKS`, and the sweep period is *derived* as `GoalReviewSchedule.sliceTicks`: sweep at any other rate and the per-slice share silently stops meaning one review per agent per cadence.
 Both the schedule reading and Bukkit timer are authoritative server ticks. A pause advances nothing and `/tick sprint` advances the same deterministic sequence; wall time must never re-enter this path.
-A never-reviewed agent is due at once, which is what keeps a single-agent demo watchable at a conservative cadence.
+A never-reviewed agent is due at once, which keeps every freshly started configured agent observable at a conservative cadence.
 The driver is cancelled explicitly in `onDisable`, before the bridge it feeds closes.
 
 **A decision enters the research record from the applied path, and only from there.**
@@ -336,14 +340,15 @@ Gates do not cover the process/server boundary; a player-body change is not done
 
 Use `/loombody create|inspect|think|stop`. The acceptance run must prove:
 
-- registration precedes launch and `create` completes only after control and server readiness;
-- one perception/decision/action chain preserves its request id and request-scoped refs;
+- every configured identity is registered before bounded concurrent launch, and readiness still crosses both control and server presence;
+- three concurrent perception/decision/action chains preserve distinct request ids and request-scoped refs;
 - a real Mineflayer flight moves the server player, while overlapping movement returns `CONTROL_NOT_READY` without disconnecting or killing the process;
 - repeated senses of one server-correlated creature spend the existing threat debounce;
 - a low-food player consumes exactly the offered stack and reports vanilla food/saturation;
-- killing the child produces `DISCONNECTED`, no tombstone, and a restart with the exact same identity;
-- graceful stop closes held sessions, keepalives, workers, listener and child before recording `despawned`;
-- only a server `kill` produces one durable `died`, and both `/loombody create` and an independent reconnect remain denied after restart;
+- killing one child produces that agent's `bodyDisconnected`/`DISCONNECTED`, no tombstone, and a restart with the exact same allocation while peers remain ready;
+- graceful fleet shutdown closes every held session, keepalive, worker pool, listener and child before its per-agent `despawned`;
+- only a server `kill` produces one durable `died`, peers remain ready, and both `/loombody create` and an independent reconnect remain denied for the dead identity after restart;
+- evidence reconstructs exactly by `agentId` across lifecycle, perception, decision, action, refusal, disconnect and death, while aggregate reporting exposes no prompt or credential;
 - scheduled reviews follow `server.currentTick`: freeze advances none and `/tick sprint` advances the deterministic cadence.
 
 The append-only `plugins/Loom/body-events.jsonl` is the research record and `plugins/Loom/player-deaths.jsonl` is the synchronous authorisation ledger. Before trusting a run, check the Paper log for `body event log` warnings and confirm no `loom-body.js`, cognition, Paper or control-listener process remains.

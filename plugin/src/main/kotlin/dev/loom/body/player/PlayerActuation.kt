@@ -79,6 +79,7 @@ internal class PlayerActuation(
                     transitions.markDisconnected(
                         pending.runtime,
                         "player body became unavailable during actuation",
+                        EventTag.BODY_PROCESS_EXITED,
                     )
                     pending.answer.complete(IntentOutcome.NoSuchBody)
                 } else {

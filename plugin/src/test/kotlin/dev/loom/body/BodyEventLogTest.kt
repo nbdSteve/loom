@@ -31,6 +31,7 @@ private val WIRE_NAMES =
         BodyEvent.COGNITION_UNAVAILABLE to "cognitionUnavailable",
         BodyEvent.ENERGY_CHANGED to "energyChanged",
         BodyEvent.HEALTH_CHANGED to "healthChanged",
+        BodyEvent.BODY_DISCONNECTED to "bodyDisconnected",
         BodyEvent.DESPAWNED to "despawned",
         BodyEvent.DIED to "died",
         BodyEvent.WITNESS_JOINED to "witnessJoined",

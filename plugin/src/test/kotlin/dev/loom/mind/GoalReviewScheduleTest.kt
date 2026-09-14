@@ -3,7 +3,7 @@
  *
  * These are the two properties that decide what autonomy costs. A cadence that
  * quietly drifted short, or a stagger that let a population arrive as one burst,
- * would both look perfectly fine on a single-agent demo server and only show up as
+ * would both look perfectly fine on a small demo server and only show up as
  * a bill - or a stalled tick - at twenty agents. So they are asserted here, where
  * time is a variable a test can move.
  */

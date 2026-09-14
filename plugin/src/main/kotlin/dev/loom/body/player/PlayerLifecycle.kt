@@ -29,6 +29,8 @@ internal class PlayerLifecycleTransitions(
     fun markDead(runtime: PlayerRuntime) {
         runtime.lifecycle = BodyLifecycle.DEAD
         runtime.detail = "terminal death witnessed by the server"
+        runtime.healthCheckInFlight = false
+        runtime.consecutiveHealthFailures = 0
         forget(runtime.identity.agentId)
         runtime.process?.let(context.infrastructure.supervisor::stop)
     }
@@ -36,11 +38,17 @@ internal class PlayerLifecycleTransitions(
     fun markDisconnected(
         runtime: PlayerRuntime,
         detail: String,
+        outcome: String,
     ) {
-        if (runtime.lifecycle == BodyLifecycle.DEAD) return
+        if (runtime.lifecycle !in setOf(BodyLifecycle.STARTING, BodyLifecycle.READY)) return
         runtime.lifecycle = BodyLifecycle.DISCONNECTED
         runtime.detail = detail
+        runtime.healthCheckInFlight = false
         forget(runtime.identity.agentId)
+        context.journal.recordDisconnect(runtime.identity.agentId, detail, outcome)
+        if (runtime.process?.isAlive() != true) {
+            runtime.process = null
+        }
     }
 
     fun forget(agentId: AgentId) {
@@ -62,6 +70,7 @@ internal class PlayerLifecycle(
     private val registry: PlayerRuntimeRegistry,
     private val sessions: PlayerSenseSessions,
     private val transitions: PlayerLifecycleTransitions,
+    private val health: PlayerHealthMonitor,
 ) {
     fun spawn(agentId: AgentId): CompletionStage<BodySpawnResult> =
         when (val reservation = registry.reserve(agentId)) {
@@ -130,7 +139,11 @@ internal class PlayerLifecycle(
             }
             WitnessState.READY -> completeReady(context, runtime, answer)
             WitnessState.EXITED -> {
-                transitions.markDisconnected(runtime, "player process exited during startup")
+                transitions.markDisconnected(
+                    runtime,
+                    "player process exited during startup",
+                    EventTag.BODY_PROCESS_EXITED,
+                )
                 answer.complete(
                     context.journal.reject(
                         agentId,
@@ -150,15 +163,9 @@ internal class PlayerLifecycle(
                     answer,
                 )
             WitnessState.WAITING ->
-                context.infrastructure.scheduler.schedule(
-                    {
-                        context.authority.main.execute {
-                            awaitWitness(runtime, process, deadline, answer)
-                        }
-                    },
-                    WITNESS_RETRY_MILLIS,
-                    TimeUnit.MILLISECONDS,
-                )
+                scheduleWitnessCheck(context) {
+                    awaitWitness(runtime, process, deadline, answer)
+                }
         }
     }
 
@@ -212,6 +219,9 @@ internal class PlayerLifecycle(
         context.infrastructure.supervisor.stop(process).whenComplete { _, stopFailure ->
             context.authority.main.execute {
                 val cleanupFailed = unwrapCompletion(stopFailure) != null
+                if (!cleanupFailed && runtime.process === process) {
+                    runtime.process = null
+                }
                 val recordedReason =
                     if (cleanupFailed) {
                         "${failure.reason}; player process cleanup failed"
@@ -248,6 +258,7 @@ internal class PlayerLifecycle(
                             transitions.markDisconnected(
                                 runtime,
                                 "player process exited with status ${exitCode ?: "unknown"}",
+                                EventTag.BODY_PROCESS_EXITED,
                             )
                     }
                 }
@@ -290,6 +301,8 @@ internal class PlayerLifecycle(
                     if (registry.isCurrent(runtime) && !wasDead) {
                         runtime.lifecycle = BodyLifecycle.DISCONNECTED
                         runtime.detail = "stopped"
+                        runtime.process = null
+                        runtime.healthCheckInFlight = false
                         context.journal.record(agentId, BodyEvent.DESPAWNED, "player process stopped")
                     }
                     answer.complete(true)
@@ -307,7 +320,12 @@ internal class PlayerLifecycle(
                 context.authority.serverState.isDead(runtime.identity.agentId) ->
                     transitions.markDead(runtime)
                 runtime.lifecycle == BodyLifecycle.READY && runtime.process?.isAlive() != true ->
-                    transitions.markDisconnected(runtime, "player process is no longer running")
+                    transitions.markDisconnected(
+                        runtime,
+                        "player process is no longer running",
+                        EventTag.BODY_PROCESS_EXITED,
+                    )
+                runtime.lifecycle == BodyLifecycle.READY -> health.check(runtime, tick)
             }
         }
     }
@@ -315,6 +333,7 @@ internal class PlayerLifecycle(
     fun close() {
         if (context.closing) return
         val runtimes = registry.beginClosing()
+        val embodied = runtimes.filter { it.process != null }
         runtimes.forEach { runtime ->
             transitions.forget(runtime.identity.agentId)
             if (runtime.lifecycle != BodyLifecycle.DEAD) {
@@ -327,8 +346,19 @@ internal class PlayerLifecycle(
             if (runtime.lifecycle != BodyLifecycle.DEAD) {
                 runtime.lifecycle = BodyLifecycle.DISCONNECTED
                 runtime.detail = "stopped"
+                runtime.process = null
+                runtime.healthCheckInFlight = false
             }
         }
+        embodied
+            .filter { it.lifecycle != BodyLifecycle.DEAD }
+            .forEach { runtime ->
+                context.journal.record(
+                    runtime.identity.agentId,
+                    BodyEvent.DESPAWNED,
+                    "player process stopped for plugin shutdown",
+                )
+            }
         context.infrastructure.scheduler.shutdownNow()
         context.infrastructure.io.shutdown()
         context.infrastructure.io.awaitTermination(
@@ -336,6 +366,17 @@ internal class PlayerLifecycle(
             TimeUnit.MILLISECONDS,
         )
     }
+}
+
+private fun scheduleWitnessCheck(
+    context: PlayerBodyContext,
+    check: () -> Unit,
+) {
+    context.infrastructure.scheduler.schedule(
+        { context.authority.main.execute(check) },
+        WITNESS_RETRY_MILLIS,
+        TimeUnit.MILLISECONDS,
+    )
 }
 
 private enum class WitnessState {
@@ -371,6 +412,11 @@ private fun completeReady(
 ) {
     runtime.lifecycle = BodyLifecycle.READY
     runtime.detail = "ready as ${runtime.identity.username}"
+    runtime.consecutiveHealthFailures = 0
+    runtime.healthCheckInFlight = false
+    runtime.nextHealthCheckTick =
+        context.authority.currentTick() +
+        context.infrastructure.settings.healthCheckIntervalTicks
     context.journal.record(
         runtime.identity.agentId,
         BodyEvent.SPAWNED,

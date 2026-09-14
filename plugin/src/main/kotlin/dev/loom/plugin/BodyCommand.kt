@@ -1,5 +1,5 @@
 /*
- * The operator surface for one managed player identity.
+ * The operator surface for a bounded configured player fleet.
  *
  * Commands start asynchronous work and return immediately. Completion is reported
  * through the plugin logger, because starting a process, waiting for player readiness,
@@ -73,10 +73,23 @@ class BodyCommand(
     }
 
     private fun inspect(args: Array<out String>): String {
-        val raw = args.getOrNull(ARG_AGENT) ?: return "usage: inspect <agentId>"
+        val raw = args.getOrNull(ARG_AGENT) ?: return aggregateInspection()
         return withAgent(raw) { agent ->
             bodies.inspect(agent)?.describe() ?: "no managed body for $agent"
         }
+    }
+
+    private fun aggregateInspection(): String {
+        val inspections = bodies.inspections()
+        if (inspections.isEmpty()) return "no configured player bodies"
+        val counts =
+            inspections
+                .groupingBy { it.state.name.lowercase() }
+                .eachCount()
+                .toSortedMap()
+                .entries
+                .joinToString(", ") { (state, count) -> "$state=$count" }
+        return "${inspections.size} configured player bodies: $counts"
     }
 
     private fun think(args: Array<out String>): String {

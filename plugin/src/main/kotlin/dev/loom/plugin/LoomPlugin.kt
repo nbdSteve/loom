@@ -5,12 +5,14 @@ package dev.loom.plugin
 
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyPort
+import dev.loom.body.BodySpawnResult
 import dev.loom.body.FileBodyEventLog
 import dev.loom.body.player.BodyControlRequestIds
 import dev.loom.body.player.PlayerBodyAuthority
+import dev.loom.body.player.PlayerBodyDeployment
+import dev.loom.body.player.PlayerBodyFleetSettings
 import dev.loom.body.player.PlayerBodyInfrastructure
 import dev.loom.body.player.PlayerBodyPort
-import dev.loom.body.player.PlayerBodySettings
 import dev.loom.body.player.ProcessBodySupervisor
 import dev.loom.body.player.SocketBodyControlConnector
 import dev.loom.mind.AppliedDecision
@@ -21,6 +23,7 @@ import dev.loom.mind.CognitionSettings
 import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.GoalReviewSchedule
+import dev.loom.mind.PerAgentCognitionBridge
 import dev.loom.mind.THREAT_SCAN_CADENCE
 import dev.loom.mind.ThreatDriver
 import dev.loom.mind.tcp.TcpCognitionTransport
@@ -41,6 +44,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.logging.Logger
 import kotlin.time.Duration
 
 private const val EVENT_LOG_FILE = "body-events.jsonl"
@@ -49,7 +53,6 @@ private const val BODY_COMMAND = "loombody"
 private const val WATCH_COMMAND = "loomwatch"
 private const val OBSERVER_REFRESH_TICKS = 5L
 private const val MILLIS_PER_TICK = 50L
-private const val BODY_IO_WORKERS = 4
 
 private data class WitnessRuntime(
     val permadeath: DurablePermadeath,
@@ -131,6 +134,7 @@ class LoomPlugin : JavaPlugin() {
             )
         driveAgents(port, mind)
         watchForThreats(port, mind)
+        port.reportConfiguredStartup(logger)
 
         logger.info("Loom observation ready: /loomwatch <agentId> follows one agent, read-only")
     }
@@ -181,60 +185,47 @@ class LoomPlugin : JavaPlugin() {
         eventLog: BodyEventLog,
         witness: WitnessRuntime,
     ): PlayerBodyPort {
-        val settings = PlayerBodySettings.fromEnvironment(server.port)
-        val requestIds = BodyControlRequestIds()
-        val io =
-            Executors.newFixedThreadPool(
-                BODY_IO_WORKERS,
-                namedDaemonThreads("loom-body-io"),
+        val fleet =
+            PlayerBodyFleetSettings.fromEnvironment(
+                serverPort = server.port,
+                dataDirectory = dataFolder.toPath().toAbsolutePath().normalize(),
             )
-        val scheduler =
-            Executors.newSingleThreadScheduledExecutor(
-                namedDaemonThreads("loom-body-keepalive"),
-            )
-        val connector =
-            SocketBodyControlConnector(
-                connectTimeout = settings.connectTimeout,
-                requestTimeout = settings.requestTimeout,
-                requestIds = requestIds,
-            )
-        val supervisor = ProcessBodySupervisor(settings, connector, requestIds, io)
         val bukkitMain = BukkitMainThread(this)
+        val authority =
+            PlayerBodyAuthority(
+                main = Executor { command -> bukkitMain.execute { command.run() } },
+                registerIdentity = { identity ->
+                    managedPlayers.register(
+                        ManagedIdentity(
+                            identity.agentId,
+                            identity.username,
+                            identity.uuid,
+                        ),
+                    )
+                },
+                serverState =
+                    BukkitPlayerServerState(
+                        server = server,
+                        permadeath = witness.permadeath,
+                        claimAudit = witness.claimAudit,
+                    ),
+                eventLog = eventLog,
+                currentTick = { server.currentTick.toLong() },
+            )
+        val infrastructures =
+            fleet.deployments.map { deployment ->
+                infrastructureFor(deployment, fleet.ioWorkersPerAgent)
+            }
         val port =
             PlayerBodyPort(
-                infrastructure =
-                    PlayerBodyInfrastructure(
-                        settings,
-                        supervisor,
-                        connector,
-                        requestIds,
-                        io,
-                        scheduler,
-                    ),
-                authority =
-                    PlayerBodyAuthority(
-                        main = Executor { command -> bukkitMain.execute { command.run() } },
-                        registerIdentity = { identity ->
-                            managedPlayers.register(
-                                ManagedIdentity(
-                                    identity.agentId,
-                                    identity.username,
-                                    identity.uuid,
-                                ),
-                            )
-                        },
-                        serverState =
-                            BukkitPlayerServerState(
-                                server = server,
-                                permadeath = witness.permadeath,
-                                claimAudit = witness.claimAudit,
-                            ),
-                        eventLog = eventLog,
-                        currentTick = { server.currentTick.toLong() },
-                    ),
+                infrastructures = infrastructures,
+                authority = authority,
+                startupConcurrency = fleet.startupConcurrency,
             )
         logger.info(
-            "Loom body port ready: persistent Mineflayer player at ${settings.controlEndpoint}",
+            "Loom body fleet ready: ${fleet.deployments.size} configured player(s), " +
+                "startup concurrency ${fleet.startupConcurrency}, " +
+                "${fleet.ioWorkersPerAgent} I/O worker(s) per agent",
         )
         return port
     }
@@ -250,7 +241,7 @@ class LoomPlugin : JavaPlugin() {
         bodies: BodyPort,
         eventLog: BodyEventLog,
     ): EmbodiedCognition {
-        val settings = CognitionSettings()
+        val settings = CognitionSettings.fromEnvironment()
         val wire =
             TcpCognitionTransport(
                 settings.host,
@@ -259,21 +250,36 @@ class LoomPlugin : JavaPlugin() {
                 settings.readTimeout,
             )
         transport = wire
+        val reportFailure: (dev.loom.contract.Perception, dev.loom.mind.CognitionFailure) -> Unit =
+            { perception, failure ->
+                logger.warning(
+                    "cognition unavailable for ${perception.agentId}: ${failure::class.simpleName}",
+                )
+            }
         val async =
             AsyncCognitionBridge(
                 wire,
                 settings.timeout,
                 settings.workers,
                 settings.queueDepth,
-            ) { perception, failure ->
-                logger.warning("cognition unavailable for ${perception.agentId}: ${failure::class.simpleName}")
-            }
+                reportFailure,
+            )
         bridge = async
+        val fair =
+            PerAgentCognitionBridge(
+                delegate = async,
+                maxOutstandingPerAgent = settings.perAgentPending,
+                onFailure = reportFailure,
+            )
 
-        logger.info("Loom cognition bridge ready: mind at ${settings.host}:${settings.port}")
+        logger.info(
+            "Loom cognition bridge ready: mind at ${settings.host}:${settings.port}, " +
+                "${settings.workers} worker(s), queue ${settings.queueDepth}, " +
+                "${settings.perAgentPending} outstanding request(s) per agent",
+        )
         return EmbodiedCognition(
             bodies = bodies,
-            mind = async,
+            mind = fair,
             mainThread = BukkitMainThread(this),
             journal = DecisionJournal(eventLog, currentTick = { server.currentTick.toLong() }),
             callbacks =
@@ -384,6 +390,57 @@ class LoomPlugin : JavaPlugin() {
                 "(${decision.provenance.model}/${decision.provenance.promptVersion} " +
                 "at ${decision.provenance.tier}) -> ${applied.outcome}",
         )
+    }
+}
+
+private fun infrastructureFor(
+    deployment: PlayerBodyDeployment,
+    ioWorkers: Int,
+): PlayerBodyInfrastructure {
+    val identity = deployment.identity
+    val settings = deployment.settings
+    val requestIds = BodyControlRequestIds(scope = identity.username)
+    val io =
+        Executors.newFixedThreadPool(
+            ioWorkers,
+            namedDaemonThreads("loom-body-${identity.username}-io"),
+        )
+    val scheduler =
+        Executors.newSingleThreadScheduledExecutor(
+            namedDaemonThreads("loom-body-${identity.username}-keepalive"),
+        )
+    val connector =
+        SocketBodyControlConnector(
+            connectTimeout = settings.connectTimeout,
+            requestTimeout = settings.requestTimeout,
+            requestIds = requestIds,
+        )
+    return PlayerBodyInfrastructure(
+        identity = identity,
+        settings = settings,
+        supervisor = ProcessBodySupervisor(settings, connector, requestIds, io),
+        connector = connector,
+        requestIds = requestIds,
+        io = io,
+        scheduler = scheduler,
+    )
+}
+
+private fun PlayerBodyPort.reportConfiguredStartup(logger: Logger) {
+    configuredStartup.whenComplete { startup, failure ->
+        if (failure != null || startup == null) {
+            logger.severe("configured player fleet startup failed before results were available")
+            return@whenComplete
+        }
+        logger.info(
+            "Loom body fleet startup settled: ${startup.ready} ready, " +
+                "${startup.rejected} rejected",
+        )
+        startup.results
+            .filterValues { it is BodySpawnResult.Rejected }
+            .forEach { (agentId, _) ->
+                logger.warning("configured player body did not start for $agentId")
+            }
     }
 }
 

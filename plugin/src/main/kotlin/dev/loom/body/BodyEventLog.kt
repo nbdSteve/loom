@@ -242,6 +242,17 @@ enum class BodyEvent {
     @SerialName("healthChanged")
     HEALTH_CHANGED,
 
+    /**
+     * Loom lost the process or bounded control health of one configured body.
+     *
+     * This is explicitly continuity rather than death. The server witness is
+     * still the only authority that can write [DIED], while this record makes a
+     * process crash or exhausted health budget reconstructable for the exact
+     * affected agent.
+     */
+    @SerialName("bodyDisconnected")
+    BODY_DISCONNECTED,
+
     @SerialName("despawned")
     DESPAWNED,
 

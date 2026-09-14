@@ -20,12 +20,12 @@ description: Gives Loom agents persistent player bodies in the world.
 # own reasoning - which is not something every sender on a server should be handed.
 commands:
   loombody:
-    description: Manages Loom's persistent player identity and its mind.
+    description: Manages Loom's configured player identities and their minds.
     permission: loom.body
     permission-message: /loombody drives Loom's agents and requires the loom.body permission.
     usage: |
       /loombody create <agentId>
-      /loombody inspect <agentId>
+      /loombody inspect [agentId]
       /loombody think <agentId>
       /loombody stop <agentId>
   loomwatch:

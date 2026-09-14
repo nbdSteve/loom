@@ -30,6 +30,14 @@ import dev.loom.bodycontrol.SensedTime
 import dev.loom.bodycontrol.SensedVitals
 import dev.loom.contract.Intent
 import dev.loom.contract.Trigger
+import dev.loom.mind.CognitionBridge
+import dev.loom.mind.CognitionCallbacks
+import dev.loom.mind.DecisionJournal
+import dev.loom.mind.EmbodiedCognition
+import dev.loom.mind.MainThread
+import dev.loom.mind.decisionFor
+import dev.loom.witness.WitnessJournal
+import dev.loom.witness.subjectOf
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -44,6 +52,7 @@ import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -81,6 +90,8 @@ private class FakeBodySupervisor(
     val stopped = CopyOnWriteArrayList<FakeBodyProcess>()
     val processes = CopyOnWriteArrayList<FakeBodyProcess>()
     var stopFailure: Throwable? = null
+    var healthy = true
+    var healthChecks = 0
     var closed = false
 
     override fun start(identity: PlayerIdentity): CompletionStage<SupervisedBodyProcess> {
@@ -97,6 +108,11 @@ private class FakeBodySupervisor(
         stopped += fake
         fake.stop()
         return CompletableFuture.completedFuture(Unit)
+    }
+
+    override fun health(process: SupervisedBodyProcess): CompletionStage<Boolean> {
+        healthChecks += 1
+        return CompletableFuture.completedFuture(healthy && process.isAlive())
     }
 
     override fun close() {
@@ -208,31 +224,111 @@ private data class PortHarness(
     val scheduler: ScheduledExecutorService,
 )
 
+private data class FleetPortHarness(
+    val port: PlayerBodyPort,
+    val supervisors: Map<AgentId, FakeBodySupervisor>,
+    val connectors: Map<AgentId, FakeControlConnector>,
+    val server: FakePlayerServerState,
+    val registered: CopyOnWriteArrayList<PlayerIdentity>,
+    val records: CopyOnWriteArrayList<BodyEventRecord>,
+    val io: List<ExecutorService>,
+    val schedulers: List<ScheduledExecutorService>,
+)
+
+private data class HarnessOptions(
+    val registered: CopyOnWriteArrayList<PlayerIdentity> = CopyOnWriteArrayList(),
+    val server: FakePlayerServerState = FakePlayerServerState(),
+    val beforeStart: (PlayerIdentity) -> Unit = {},
+    val intercept: (BodyRequest) -> BodyResponse? = { null },
+    val healthCheckIntervalTicks: Long = 100,
+    val healthFailureLimit: Int = 3,
+)
+
+private class StartupGate {
+    private val pending =
+        linkedMapOf<AgentId, Pair<FakeBodyProcess, CompletableFuture<SupervisedBodyProcess>>>()
+    val started = mutableListOf<AgentId>()
+    var active = 0
+        private set
+    var maximumActive = 0
+        private set
+
+    @Synchronized
+    fun start(
+        identity: PlayerIdentity,
+        endpoint: BodyControlEndpoint,
+    ): CompletionStage<SupervisedBodyProcess> {
+        val process = FakeBodyProcess(identity, endpoint)
+        val future = CompletableFuture<SupervisedBodyProcess>()
+        pending[identity.agentId] = process to future
+        started += identity.agentId
+        active += 1
+        maximumActive = maxOf(maximumActive, active)
+        return future
+    }
+
+    @Synchronized
+    fun release(agentId: AgentId) {
+        val (process, future) = requireNotNull(pending.remove(agentId))
+        active -= 1
+        future.complete(process)
+    }
+}
+
+private class GatedBodySupervisor(
+    private val endpoint: BodyControlEndpoint,
+    private val gate: StartupGate,
+) : BodyProcessSupervisor {
+    private val processes = CopyOnWriteArrayList<FakeBodyProcess>()
+
+    override fun start(identity: PlayerIdentity): CompletionStage<SupervisedBodyProcess> =
+        gate.start(identity, endpoint).whenComplete { process, _ ->
+            (process as? FakeBodyProcess)?.let(processes::add)
+        }
+
+    override fun stop(process: SupervisedBodyProcess): CompletionStage<Unit> {
+        (process as FakeBodyProcess).stop()
+        return CompletableFuture.completedFuture(Unit)
+    }
+
+    override fun close() {
+        processes.forEach { it.stop() }
+    }
+}
+
 class PlayerBodyPortTest {
     @TempDir
     lateinit var temporary: Path
 
     private val harnesses = mutableListOf<PortHarness>()
+    private val fleetHarnesses = mutableListOf<FleetPortHarness>()
+    private val extraPorts = mutableListOf<PlayerBodyPort>()
     private val tick = AtomicLong(100)
 
     @AfterEach
     fun cleanUp() {
         harnesses.forEach { runCatching(it.port::close) }
+        fleetHarnesses.forEach { runCatching(it.port::close) }
+        extraPorts.forEach { runCatching(it::close) }
     }
 
     @Test
     fun `spawn registers identity before launch and completes only after server readiness`() {
+        val agent = AgentId("agent-ready")
         val registered = CopyOnWriteArrayList<PlayerIdentity>()
         val server = FakePlayerServerState().apply { connected = false }
         val harness =
             harness(
-                registered = registered,
-                server = server,
-                beforeStart = { identity ->
-                    assertEquals(listOf(identity), registered)
-                },
+                agent = agent,
+                options =
+                    HarnessOptions(
+                        registered = registered,
+                        server = server,
+                        beforeStart = { identity ->
+                            assertEquals(listOf(identity), registered)
+                        },
+                    ),
             )
-        val agent = AgentId("agent-ready")
 
         val starting = harness.port.spawn(agent).toCompletableFuture()
 
@@ -249,8 +345,8 @@ class PlayerBodyPortTest {
 
     @Test
     fun `perception movement and eating retain one request identity end to end`() {
-        val harness = harness()
         val agent = AgentId("agent-round-trip")
+        val harness = harness(agent)
         harness.port.spawn(agent).await()
 
         val movementPerception =
@@ -289,8 +385,8 @@ class PlayerBodyPortTest {
 
     @Test
     fun `a process crash is a diagnosable disconnect and the same identity can restart`() {
-        val harness = harness()
         val agent = AgentId("agent-restart")
+        val harness = harness(agent)
         harness.port.spawn(agent).await()
         val first = harness.supervisor.processes.single()
 
@@ -307,21 +403,231 @@ class PlayerBodyPortTest {
             harness.supervisor.starts.last(),
             "a restart must preserve the exact player identity",
         )
+        val disconnected = harness.records.single { it.event == BodyEvent.BODY_DISCONNECTED }
+        assertEquals(agent.value, disconnected.agentId)
+        assertEquals(EventTag.BODY_PROCESS_EXITED, disconnected.outcome)
+    }
+
+    @Test
+    fun `bounded health failures disconnect only after the configured consecutive limit`() {
+        val agent = AgentId("agent-health")
+        val harness =
+            harness(
+                agent = agent,
+                options =
+                    HarnessOptions(
+                        healthCheckIntervalTicks = 1,
+                        healthFailureLimit = 2,
+                    ),
+            )
+        harness.port.spawn(agent).await()
+        harness.supervisor.healthy = false
+
+        harness.port.tick(tick.incrementAndGet())
+
+        assertEquals(BodyLifecycle.READY, harness.port.inspect(agent)?.state)
+        assertEquals(1, harness.supervisor.healthChecks)
+
+        harness.port.tick(tick.incrementAndGet())
+
+        assertEquals(BodyLifecycle.DISCONNECTED, harness.port.inspect(agent)?.state)
+        assertEquals(2, harness.supervisor.healthChecks)
+        assertEquals(1, harness.supervisor.stopped.size)
+        val disconnected = harness.records.single { it.event == BodyEvent.BODY_DISCONNECTED }
+        assertEquals(EventTag.BODY_HEALTH_FAILED, disconnected.outcome)
+    }
+
+    @Test
+    fun `configured fleet startup never exceeds its concurrency bound`() {
+        val agents = listOf("charlie", "alpha", "bravo").map(::AgentId)
+        val gate = StartupGate()
+        val server = FakePlayerServerState()
+        val registered = CopyOnWriteArrayList<PlayerIdentity>()
+        val records = CopyOnWriteArrayList<BodyEventRecord>()
+        val resources = mutableListOf<Pair<ExecutorService, ScheduledExecutorService>>()
+        val infrastructures =
+            agents.sortedBy { it.value }.mapIndexed { index, agent ->
+                val identity = playerIdentityOf(agent)
+                val endpoint = BodyControlEndpoint("127.0.0.1", 26_000 + index)
+                val io = Executors.newFixedThreadPool(2)
+                val scheduler = Executors.newSingleThreadScheduledExecutor()
+                resources += io to scheduler
+                PlayerBodyInfrastructure(
+                    identity = identity,
+                    settings =
+                        playerSettings(
+                            identity,
+                            endpoint,
+                            ioRoot = temporary.resolve("gated"),
+                        ),
+                    supervisor = GatedBodySupervisor(endpoint, gate),
+                    connector = FakeControlConnector(),
+                    requestIds = BodyControlRequestIds(scope = identity.username),
+                    io = io,
+                    scheduler = scheduler,
+                )
+            }
+        val port =
+            PlayerBodyPort(
+                infrastructures = infrastructures,
+                authority =
+                    PlayerBodyAuthority(
+                        main = { task -> task.run() },
+                        registerIdentity = registered::add,
+                        serverState = server,
+                        eventLog = BodyEventLog(records::add),
+                        currentTick = tick::get,
+                    ),
+                startupConcurrency = 2,
+            ).also(extraPorts::add)
+
+        val startup = port.configuredStartup
+
+        assertEquals(listOf(AgentId("alpha"), AgentId("bravo")), gate.started)
+        assertEquals(2, gate.maximumActive)
+        assertFalse(startup.toCompletableFuture().isDone)
+
+        gate.release(AgentId("alpha"))
+        awaitPortCondition { gate.started.size == 3 }
+        gate.release(AgentId("bravo"))
+        gate.release(AgentId("charlie"))
+
+        assertEquals(3, startup.await().ready)
+        assertEquals(2, gate.maximumActive)
+        assertEquals(3, registered.size)
+        resources.forEach { (io, scheduler) ->
+            assertFalse(io.isShutdown)
+            assertFalse(scheduler.isShutdown)
+        }
+    }
+
+    @Test
+    @Suppress("LongMethod")
+    fun `three-agent disposable proof isolates decisions refs crashes death and evidence`() {
+        val agents = listOf("proof-alpha", "proof-beta", "proof-gamma").map(::AgentId)
+        val harness = fleetHarness(agents)
+        val startup = harness.port.configuredStartup.await()
+        assertEquals(3, startup.ready)
+        assertEquals(3, harness.port.liveBodies().size)
+
+        val applied = CountDownLatch(3)
+        val cognition =
+            EmbodiedCognition(
+                bodies = harness.port,
+                mind =
+                    CognitionBridge { perception ->
+                        val intent =
+                            when (perception.agentId) {
+                                "proof-alpha" -> Intent.MoveTo(listOf(4L, 64L, 2L))
+                                "proof-beta" ->
+                                    Intent.Eat(
+                                        perception.selfState.inventorySummary.single().ref,
+                                    )
+                                else -> Intent.Idle
+                            }
+                        CompletableFuture.completedFuture(decisionFor(perception, intent))
+                    },
+                mainThread = MainThread { task -> task() },
+                journal = DecisionJournal(BodyEventLog(harness.records::add), tick::get),
+                callbacks = CognitionCallbacks(onApplied = { applied.countDown() }),
+            )
+
+        val alphaPerception =
+            requireNotNull(cognition.consider(agents[0], Trigger.GoalReview).await())
+        val alphaStack = alphaPerception.selfState.inventorySummary.single()
+        val crossAgentSpend =
+            harness.port
+                .apply(
+                    agents[1],
+                    Intent.Eat(alphaStack.ref),
+                    alphaPerception.requestId,
+                ).await()
+        assertTrue(crossAgentSpend is IntentOutcome.Rejected)
+
+        cognition.consider(agents[1], Trigger.GoalReview).await()
+        cognition.consider(agents[2], Trigger.GoalReview).await()
+        assertTrue(applied.await(PORT_TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS))
+
+        val perceivedIds =
+            harness.records
+                .filter { it.event == BodyEvent.PERCEIVED }
+                .mapNotNull(BodyEventRecord::requestId)
+        assertEquals(perceivedIds.size, perceivedIds.distinct().size)
+        assertAgentChain(
+            harness.records,
+            agents[0],
+            setOf(BodyEvent.PERCEIVED, BodyEvent.DECIDED, BodyEvent.INTENT_APPLIED, BodyEvent.MOVED),
+        )
+        assertAgentChain(
+            harness.records,
+            agents[1],
+            setOf(
+                BodyEvent.PERCEIVED,
+                BodyEvent.DECIDED,
+                BodyEvent.INTENT_APPLIED,
+                BodyEvent.ENERGY_CHANGED,
+            ),
+        )
+        assertAgentChain(
+            harness.records,
+            agents[2],
+            setOf(BodyEvent.PERCEIVED, BodyEvent.DECIDED, BodyEvent.INTENT_APPLIED),
+        )
+
+        harness.supervisors.getValue(agents[0]).processes.single().stop(code = 17)
+        assertEquals(BodyLifecycle.DISCONNECTED, harness.port.inspect(agents[0])?.state)
+        assertEquals(BodyLifecycle.READY, harness.port.inspect(agents[1])?.state)
+        assertEquals(BodyLifecycle.READY, harness.port.inspect(agents[2])?.state)
+
+        val betaIdentity = playerIdentityOf(agents[1])
+        WitnessJournal(BodyEventLog(harness.records::add)).died(
+            subjectOf(agents[1], betaIdentity.uuid, betaIdentity.username),
+            "proof-beta was killed by the disposable harness",
+            tick.incrementAndGet(),
+        )
+        synchronized(harness.server.dead) {
+            harness.server.dead += agents[1]
+        }
+        harness.port.tick(tick.incrementAndGet())
+
+        assertEquals(BodyLifecycle.DEAD, harness.port.inspect(agents[1])?.state)
+        assertEquals(BodyLifecycle.READY, harness.port.inspect(agents[2])?.state)
+        assertTrue(harness.port.despawn(agents[2]).await())
+        assertEquals(BodyLifecycle.DISCONNECTED, harness.port.inspect(agents[2])?.state)
+
+        val death = harness.records.single { it.event == BodyEvent.DIED }
+        assertEquals(agents[1].value, death.agentId)
+        assertEquals(betaIdentity.username, death.witness?.username)
+        assertEquals(betaIdentity.uuid.toString(), death.witness?.uuid)
+        assertEquals(
+            setOf(agents[0].value, agents[1].value, agents[2].value),
+            harness.records.map(BodyEventRecord::agentId).toSet(),
+        )
+        harness.connectors.forEach { (agent, connector) ->
+            assertTrue(
+                connector.requests.all { it.agentId == agent.value },
+                "$agent received another agent's control request",
+            )
+        }
     }
 
     @Test
     fun `a busy movement refusal leaves the healthy player process ready`() {
         var refuseMovement = true
+        val agent = AgentId("agent-busy")
         val harness =
             harness(
-                intercept = { request ->
-                    if (refuseMovement && request is BodyRequest.MoveTo) {
-                        throw BodyControlFailure.Refused(ErrorCode.NOT_READY)
-                    }
-                    null
-                },
+                agent = agent,
+                options =
+                    HarnessOptions(
+                        intercept = { request ->
+                            if (refuseMovement && request is BodyRequest.MoveTo) {
+                                throw BodyControlFailure.Refused(ErrorCode.NOT_READY)
+                            }
+                            null
+                        },
+                    ),
             )
-        val agent = AgentId("agent-busy")
         harness.port.spawn(agent).await()
         val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
 
@@ -354,8 +660,8 @@ class PlayerBodyPortTest {
 
     @Test
     fun `repeated senses of one server subject spend the existing threat debounce`() {
-        val harness = harness()
         val agent = AgentId("agent-threat")
+        val harness = harness(agent)
         harness.port.spawn(agent).await()
 
         val first = harness.port.senseThreat(agent).await()
@@ -373,8 +679,8 @@ class PlayerBodyPortTest {
 
     @Test
     fun `server death is terminal and no process outcome can manufacture or undo it`() {
-        val harness = harness()
         val agent = AgentId("agent-terminal")
+        val harness = harness(agent)
         harness.port.spawn(agent).await()
         synchronized(harness.server.dead) {
             harness.server.dead += agent
@@ -394,9 +700,10 @@ class PlayerBodyPortTest {
     }
 
     @Test
-    fun `the hard cut owns one configured identity and refuses a second agent`() {
-        val harness = harness()
-        harness.port.spawn(AgentId("agent-one")).await()
+    fun `an unconfigured identity is refused without touching a configured process`() {
+        val configured = AgentId("agent-one")
+        val harness = harness(configured)
+        harness.port.spawn(configured).await()
 
         val second = harness.port.spawn(AgentId("agent-two")).await()
 
@@ -410,8 +717,8 @@ class PlayerBodyPortTest {
 
     @Test
     fun `a failed process cleanup is surfaced and is never recorded as a despawn`() {
-        val harness = harness()
         val agent = AgentId("agent-stop-failure")
+        val harness = harness(agent)
         harness.port.spawn(agent).await()
         val failure = BodySupervisorFailure(BodySupervisorFailureKind.CONTROL_UNAVAILABLE)
         harness.supervisor.stopFailure = failure
@@ -430,8 +737,8 @@ class PlayerBodyPortTest {
 
     @Test
     fun `plugin shutdown closes held sense sessions workers scheduler and child process`() {
-        val harness = harness()
         val agent = AgentId("agent-cleanup")
+        val harness = harness(agent)
         harness.port.spawn(agent).await()
         harness.port.perceive(agent, Trigger.GoalReview).await()
         assertTrue(harness.connector.connections.any { !it.isClosed() })
@@ -443,40 +750,107 @@ class PlayerBodyPortTest {
         assertTrue(harness.supervisor.processes.none(FakeBodyProcess::isAlive))
         assertTrue(harness.io.isShutdown)
         assertTrue(harness.scheduler.isShutdown)
+        val despawned = harness.records.single { it.event == BodyEvent.DESPAWNED }
+        assertEquals(agent.value, despawned.agentId)
     }
 
     private fun harness(
-        registered: CopyOnWriteArrayList<PlayerIdentity> = CopyOnWriteArrayList(),
-        server: FakePlayerServerState = FakePlayerServerState(),
-        beforeStart: (PlayerIdentity) -> Unit = {},
-        intercept: (BodyRequest) -> BodyResponse? = { null },
+        agent: AgentId,
+        options: HarnessOptions = HarnessOptions(),
     ): PortHarness {
         val endpoint = BodyControlEndpoint("127.0.0.1", 25_585)
-        val supervisor = FakeBodySupervisor(endpoint, beforeStart)
-        val connector = FakeControlConnector(intercept)
+        val supervisor = FakeBodySupervisor(endpoint, options.beforeStart)
+        val connector = FakeControlConnector(options.intercept)
         val records = CopyOnWriteArrayList<BodyEventRecord>()
         val io = Executors.newFixedThreadPool(2)
         val scheduler = Executors.newSingleThreadScheduledExecutor()
+        val identity = playerIdentityOf(agent)
         val port =
             PlayerBodyPort(
-                infrastructure =
-                    PlayerBodyInfrastructure(
-                        settings =
-                            PlayerBodySettings(
-                                bodyDirectory = temporary.toAbsolutePath(),
-                                controlEndpoint = endpoint,
-                                connectTimeout = Duration.ofMillis(100),
-                                requestTimeout = Duration.ofMillis(100),
-                                movementTimeout = Duration.ofMillis(200),
-                                startupTimeout = Duration.ofSeconds(1),
-                                shutdownTimeout = Duration.ofMillis(200),
-                            ),
-                        supervisor = supervisor,
-                        connector = connector,
-                        requestIds = BodyControlRequestIds(),
-                        io = io,
-                        scheduler = scheduler,
+                infrastructures =
+                    listOf(
+                        PlayerBodyInfrastructure(
+                            identity = identity,
+                            settings =
+                                PlayerBodySettings(
+                                    bodyDirectory = temporary.toAbsolutePath(),
+                                    processDirectory = temporary.resolve(identity.username).toAbsolutePath(),
+                                    controlEndpoint = endpoint,
+                                    connectTimeout = Duration.ofMillis(100),
+                                    requestTimeout = Duration.ofMillis(100),
+                                    movementTimeout = Duration.ofMillis(200),
+                                    startupTimeout = Duration.ofSeconds(1),
+                                    shutdownTimeout = Duration.ofMillis(200),
+                                    healthCheckIntervalTicks = options.healthCheckIntervalTicks,
+                                    healthFailureLimit = options.healthFailureLimit,
+                                ),
+                            supervisor = supervisor,
+                            connector = connector,
+                            requestIds = BodyControlRequestIds(scope = identity.username),
+                            io = io,
+                            scheduler = scheduler,
+                        ),
                     ),
+                authority =
+                    PlayerBodyAuthority(
+                        main = { task -> task.run() },
+                        registerIdentity = options.registered::add,
+                        serverState = options.server,
+                        eventLog = BodyEventLog(records::add),
+                        currentTick = tick::get,
+                    ),
+                startupConcurrency = 1,
+            )
+        return PortHarness(
+            port = port,
+            supervisor = supervisor,
+            connector = connector,
+            server = options.server,
+            registered = options.registered,
+            records = records,
+            io = io,
+            scheduler = scheduler,
+        ).also(harnesses::add)
+    }
+
+    private fun fleetHarness(agents: List<AgentId>): FleetPortHarness {
+        val server = FakePlayerServerState()
+        val registered = CopyOnWriteArrayList<PlayerIdentity>()
+        val records = CopyOnWriteArrayList<BodyEventRecord>()
+        val supervisors = linkedMapOf<AgentId, FakeBodySupervisor>()
+        val connectors = linkedMapOf<AgentId, FakeControlConnector>()
+        val io = mutableListOf<ExecutorService>()
+        val schedulers = mutableListOf<ScheduledExecutorService>()
+        val infrastructures =
+            agents.sortedBy { it.value }.mapIndexed { index, agent ->
+                val identity = playerIdentityOf(agent)
+                val endpoint = BodyControlEndpoint("127.0.0.1", 27_000 + index)
+                val supervisor = FakeBodySupervisor(endpoint)
+                val connector = FakeControlConnector()
+                val worker = Executors.newFixedThreadPool(2)
+                val scheduler = Executors.newSingleThreadScheduledExecutor()
+                supervisors[agent] = supervisor
+                connectors[agent] = connector
+                io += worker
+                schedulers += scheduler
+                PlayerBodyInfrastructure(
+                    identity = identity,
+                    settings =
+                        playerSettings(
+                            identity,
+                            endpoint,
+                            ioRoot = temporary.resolve("fleet"),
+                        ),
+                    supervisor = supervisor,
+                    connector = connector,
+                    requestIds = BodyControlRequestIds(scope = identity.username),
+                    io = worker,
+                    scheduler = scheduler,
+                )
+            }
+        val port =
+            PlayerBodyPort(
+                infrastructures = infrastructures,
                 authority =
                     PlayerBodyAuthority(
                         main = { task -> task.run() },
@@ -485,17 +859,52 @@ class PlayerBodyPortTest {
                         eventLog = BodyEventLog(records::add),
                         currentTick = tick::get,
                     ),
+                startupConcurrency = 2,
             )
-        return PortHarness(
-            port = port,
-            supervisor = supervisor,
-            connector = connector,
-            server = server,
-            registered = registered,
-            records = records,
-            io = io,
-            scheduler = scheduler,
-        ).also(harnesses::add)
+        return FleetPortHarness(
+            port,
+            supervisors,
+            connectors,
+            server,
+            registered,
+            records,
+            io,
+            schedulers,
+        ).also(fleetHarnesses::add)
+    }
+
+    private fun playerSettings(
+        identity: PlayerIdentity,
+        endpoint: BodyControlEndpoint,
+        ioRoot: Path,
+    ): PlayerBodySettings =
+        PlayerBodySettings(
+            bodyDirectory = temporary.toAbsolutePath(),
+            processDirectory = ioRoot.resolve(identity.username).toAbsolutePath(),
+            controlEndpoint = endpoint,
+            connectTimeout = Duration.ofMillis(100),
+            requestTimeout = Duration.ofMillis(100),
+            movementTimeout = Duration.ofMillis(200),
+            startupTimeout = Duration.ofSeconds(1),
+            shutdownTimeout = Duration.ofMillis(200),
+        )
+}
+
+private fun assertAgentChain(
+    records: List<BodyEventRecord>,
+    agentId: AgentId,
+    expected: Set<BodyEvent>,
+) {
+    val chain = records.filter { it.agentId == agentId.value }
+    assertTrue(chain.all { it.agentId == agentId.value })
+    assertTrue(chain.map(BodyEventRecord::event).containsAll(expected), "$agentId chain was $chain")
+}
+
+private fun awaitPortCondition(condition: () -> Boolean) {
+    val deadline = System.nanoTime() + PORT_TEST_TIMEOUT.toNanos()
+    while (!condition()) {
+        check(System.nanoTime() < deadline) { "condition did not become true before the test deadline" }
+        Thread.sleep(5)
     }
 }
 

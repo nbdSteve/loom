@@ -86,6 +86,52 @@ private class SupervisorConnector(
         }
 }
 
+private class RetryConnector(
+    private val attempts: Path,
+    private val stopMarker: Path,
+) : BodyControlConnector {
+    override fun connect(
+        endpoint: BodyControlEndpoint,
+        identity: PlayerIdentity,
+    ): BodyControlConnection =
+        object : BodyControlConnection {
+            override val identity: PlayerIdentity = identity
+
+            override fun request(
+                request: BodyRequest,
+                timeout: Duration,
+            ): BodyResponse =
+                when (request) {
+                    is BodyRequest.Status -> {
+                        if (Files.readString(attempts).trim() == "1") {
+                            throw BodyControlFailure.Unavailable()
+                        }
+                        BodyResponse.StatusReport(
+                            protocol = request.protocol,
+                            requestId = request.requestId,
+                            agentId = request.agentId,
+                            state = LifecycleState.READY,
+                            uptimeMs = 10,
+                            stateMs = 5,
+                            requestsHandled = 1,
+                        )
+                    }
+                    is BodyRequest.Shutdown -> {
+                        Files.writeString(stopMarker, "stop")
+                        BodyResponse.ShutdownAccepted(
+                            protocol = request.protocol,
+                            requestId = request.requestId,
+                            agentId = request.agentId,
+                            state = LifecycleState.STOPPING,
+                        )
+                    }
+                    else -> error("unexpected lifecycle request $request")
+                }
+
+            override fun close() = Unit
+        }
+}
+
 class BodyProcessSupervisorTest {
     @TempDir
     lateinit var temporary: Path
@@ -103,7 +149,7 @@ class BodyProcessSupervisorTest {
     }
 
     @Test
-    fun `startup supplies the exact configured identity and orderly stop leaves no child`() {
+    fun `startup supplies exact identity and process directory and orderly stop leaves no child`() {
         val fixture = fixture(LifecycleState.READY)
         val identity = supervisorIdentity()
 
@@ -113,7 +159,8 @@ class BodyProcessSupervisorTest {
         awaitCondition { Files.exists(fixture.environment) }
         assertEquals(
             "${identity.agentId.value}|${identity.username}|127.0.0.1|25565|1.21.1|" +
-                "127.0.0.1|${fixture.settings.controlEndpoint.port}",
+                "127.0.0.1|${fixture.settings.controlEndpoint.port}|" +
+                fixture.settings.processDirectory.toRealPath(),
             Files.readString(fixture.environment),
         )
         assertTrue(fixture.connector.requests.first() is BodyRequest.Status)
@@ -137,6 +184,64 @@ class BodyProcessSupervisorTest {
             BodySupervisorFailureKind.ALREADY_RUNNING,
             (failure as BodySupervisorFailure).kind,
         )
+    }
+
+    @Test
+    fun `startup retries one cleaned failed child and then stops at the configured bound`() {
+        val bodyDirectory = temporary.resolve("retry-body").toAbsolutePath()
+        val bin = bodyDirectory.resolve("bin")
+        Files.createDirectories(bin)
+        val attempts = bodyDirectory.resolve("attempts")
+        val stop = bodyDirectory.resolve("stop")
+        val pid = bodyDirectory.resolve("pid")
+        Files.writeString(
+            bin.resolve("loom-body.js"),
+            """
+            count=0
+            if [ -f '$attempts' ]; then count=${'$'}(cat '$attempts'); fi
+            count=${'$'}((count + 1))
+            printf '%s' "${'$'}count" > '$attempts'
+            if [ "${'$'}count" -eq 1 ]; then exit 1; fi
+            rm -f '$stop'
+            printf '%s' "${'$'}${'$'}" > '$pid'
+            while [ ! -f '$stop' ]; do sleep 0.02; done
+            """.trimIndent(),
+        )
+        val executor = Executors.newFixedThreadPool(2)
+        executors += executor
+        val settings =
+            settings(bodyDirectory, Duration.ofSeconds(1)).copy(
+                startupAttempts = 2,
+                startupRetryDelay = Duration.ofMillis(10),
+            )
+        val supervisor =
+            ProcessBodySupervisor(
+                settings,
+                RetryConnector(attempts, stop),
+                BodyControlRequestIds(scope = "retry"),
+                executor,
+            )
+        supervisors += supervisor
+
+        val process = supervisor.start(supervisorIdentity()).await()
+
+        assertEquals("2", Files.readString(attempts))
+        assertTrue(process.isAlive())
+        supervisor.stop(process).await()
+        assertFalse(process.isAlive())
+    }
+
+    @Test
+    fun `health is one bounded status check and never stops the child itself`() {
+        val fixture = fixture(LifecycleState.READY)
+        val process = fixture.supervisor.start(supervisorIdentity()).await()
+
+        assertTrue(fixture.supervisor.health(process).await())
+        fixture.connector.status = LifecycleState.CONNECTING
+        assertFalse(fixture.supervisor.health(process).await())
+
+        assertTrue(process.isAlive())
+        fixture.supervisor.stop(process).await()
     }
 
     @Test
@@ -213,14 +318,15 @@ class BodyProcessSupervisorTest {
         Files.writeString(
             entrypoint,
             """
-            printf '%s|%s|%s|%s|%s|%s|%s' \
+            printf '%s|%s|%s|%s|%s|%s|%s|%s' \
               "${'$'}LOOM_BODY_AGENT_ID" \
               "${'$'}LOOM_BODY_USERNAME" \
               "${'$'}LOOM_BODY_MC_HOST" \
               "${'$'}LOOM_BODY_MC_PORT" \
               "${'$'}LOOM_BODY_MC_VERSION" \
               "${'$'}LOOM_BODY_CONTROL_HOST" \
-              "${'$'}LOOM_BODY_CONTROL_PORT" > '$environment'
+              "${'$'}LOOM_BODY_CONTROL_PORT" \
+              "${'$'}PWD" > '$environment'
             printf '%s' "${'$'}${'$'}" > '$pid'
             while [ ! -f '$stop' ]; do sleep 0.02; done
             """.trimIndent(),
@@ -246,6 +352,7 @@ class BodyProcessSupervisorTest {
     ): PlayerBodySettings =
         PlayerBodySettings(
             bodyDirectory = bodyDirectory,
+            processDirectory = bodyDirectory.resolve("runtime"),
             nodeExecutable = "/bin/sh",
             controlEndpoint = BodyControlEndpoint("127.0.0.1", unusedPort()),
             connectTimeout = Duration.ofMillis(50),
@@ -253,6 +360,7 @@ class BodyProcessSupervisorTest {
             movementTimeout = Duration.ofMillis(100),
             startupTimeout = startupTimeout,
             shutdownTimeout = Duration.ofMillis(300),
+            startupAttempts = 1,
         )
 
     private data class SupervisorFixture(

@@ -99,6 +99,15 @@ class BodyEventJournal(
         )
     }
 
+    /** Records one non-terminal process/control disconnect for one exact agent. */
+    fun recordDisconnect(
+        agentId: AgentId,
+        detail: String,
+        outcome: String,
+    ) {
+        classified(agentId, BodyEvent.BODY_DISCONNECTED, detail, outcome)
+    }
+
     /**
      * Records a refused spawn and returns the refusal to hand back to the caller.
      *

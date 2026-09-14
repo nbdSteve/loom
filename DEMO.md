@@ -1,22 +1,30 @@
-# Disposable Paper acceptance run
+# Disposable three-agent Paper proof
 
-This is the smallest real-server path for the Mineflayer player cutover. It
-covers process startup and readiness, bounded perception, cognition, movement,
-eating, process disconnect and restart, terminal server-witnessed death, denied
-reconnect, tick-deterministic goal reviews, and complete cleanup.
+This is the smallest real-server proof for Loom's configured Mineflayer fleet.
+It is disposable, deterministic apart from ordinary Minecraft timing, and is
+not a long-duration or publishable experiment.
 
-Use a disposable Paper 1.21.1 server bound to loopback in offline mode. Do not
-point the body at a shared or internet-reachable server: offline mode lets
+It proves three concurrent agents through:
+
+- deterministic identity, endpoint, and process-directory allocation;
+- bounded concurrent startup and readiness;
+- independent perception, cognition, movement, eating, refs, and evidence;
+- one process disconnect and restart without collateral damage;
+- one server-witnessed terminal death without collateral damage;
+- aggregate inspection and complete bounded shutdown.
+
+Use a Paper 1.21.1 server bound to loopback in offline mode. Never point this
+configuration at a shared or internet-reachable server: offline mode lets
 anything that can reach the port claim a username.
 
-## 1. Build all three runtimes
+## 1. Build the runtimes
 
 Requirements:
 
-- Java 21
-- Node 22 or newer
-- Rust and Cargo
-- a Paper 1.21.1 server jar
+- Java 21;
+- Node 22 or newer;
+- Rust and Cargo;
+- a Paper 1.21.1 server jar.
 
 From the repository root:
 
@@ -29,17 +37,28 @@ cd ../cognition
 cargo build --bin loom-cognition
 
 cd ../plugin
-JAVA_HOME=/path/to/jdk-21 ./gradlew shadowJar
+JAVA_HOME=/path/to/jdk-21 ./gradlew check shadowJar
 ```
 
-Copy `plugin/build/libs/loom-0.1.0.jar` into the disposable server's `plugins/`
+Copy `plugin/build/libs/loom-plugin-0.1.0.jar` into the disposable server's `plugins/`
 directory as `Loom.jar`.
+
+The hermetic counterpart to this real-server proof is:
+
+```sh
+cd plugin
+JAVA_HOME=/path/to/jdk-21 \
+  ./gradlew test \
+  --tests 'dev.loom.body.player.PlayerBodyPortTest.three-agent disposable proof isolates decisions refs crashes death and evidence'
+```
+
+That test drives the same coordinator seams with a deterministic shared-world
+harness. It is useful when the only missing external dependency is the Paper
+1.21.1 server jar.
 
 ## 2. Configure the disposable server
 
-The acceptance world should be flat and quiet so movement evidence is about
-Loom rather than terrain generation or ambient mobs. The relevant
-`server.properties` settings are:
+Use a flat, quiet world:
 
 ```properties
 online-mode=false
@@ -47,295 +66,274 @@ server-ip=127.0.0.1
 server-port=25565
 level-type=minecraft:flat
 generate-structures=false
-spawn-monsters=false
+spawn-monsters=true
 enable-status=true
 ```
 
-Accept the Paper EULA. Start the server once if it needs to generate its files,
-then stop it and install the plugin jar.
+Accept the Paper EULA. Start once if Paper needs to generate its files, then
+stop it and install the plugin jar.
 
-The commands below assume the operator is the console or an op. `/loombody` and
-`/loomwatch` both default to op-only permissions.
+The proof uses these configured ids:
+
+```text
+proof-alpha
+proof-beta
+proof-gamma
+```
+
+The allocator sorts ids before assigning resources. With control base `25585`,
+their endpoints are therefore:
+
+```text
+proof-alpha -> 127.0.0.1:25585
+proof-beta  -> 127.0.0.1:25586
+proof-gamma -> 127.0.0.1:25587
+```
+
+Each process runs from
+`plugins/Loom/bodies/<deterministic-offline-username>/`.
 
 ## 3. Start the mind and Paper
 
-In one terminal:
+Start the credential-free scripted mind:
 
 ```sh
 cd cognition
 LOOM_COGNITION_BACKEND=scripted cargo run --bin loom-cognition
 ```
 
-The deterministic scripted backend is enough for this acceptance path. It
-chooses a meal when food is low and flees from a hostile sighting, while still
-using the real socket, contract, routing, provenance, and decision journal.
-
-In the disposable Paper directory, start Paper with the body package's absolute
-path:
+Start Paper from the disposable server directory:
 
 ```sh
 LOOM_BODY_DIR=/absolute/path/to/loom/body \
+LOOM_BODY_AGENTS=proof-gamma,proof-alpha,proof-beta \
+LOOM_BODY_CONTROL_PORT=25585 \
+LOOM_BODY_STARTUP_CONCURRENCY=2 \
+LOOM_BODY_STARTUP_ATTEMPTS=2 \
+LOOM_BODY_HEALTH_INTERVAL_TICKS=100 \
+LOOM_BODY_HEALTH_FAILURES=3 \
+LOOM_COGNITION_PENDING_PER_AGENT=2 \
 LOOM_BODY_MC_VERSION=1.21.1 \
 JAVA_HOME=/path/to/jdk-21 \
   /path/to/jdk-21/bin/java -jar paper-1.21.1.jar nogui
 ```
 
-`LOOM_BODY_NODE` may name a specific Node executable. The plugin otherwise uses
-`node`, connects to Paper's configured port, and derives the loopback control
-port as the Minecraft port plus 20. All body hosts must be loopback literals.
+`LOOM_BODY_NODE` may name a specific Node executable. All body and control
+hosts must remain loopback literals.
 
-Watch the durable record in another terminal:
+The plugin pre-registers all three identities, then starts at most two bodies at
+once. The log eventually reports `3 ready, 0 rejected`.
+
+Watch the evidence in another terminal:
 
 ```sh
 tail -f plugins/Loom/body-events.jsonl
 ```
 
-The durable death ledger is
+The synchronous death ledger is
 `plugins/Loom/player-deaths.jsonl`.
 
-## 4. Prove startup and readiness
+## 4. Prove allocation and readiness
 
 At the Paper console:
 
 ```text
-loombody create e2e
-loombody inspect e2e
+loombody inspect
+loombody inspect proof-alpha
+loombody inspect proof-beta
+loombody inspect proof-gamma
 ```
 
-The immediate create reply says startup began. The asynchronous completion line
-must later say the body is ready. `inspect` then names:
+Bare `inspect` must report three configured bodies and aggregate lifecycle
+counts. Each per-agent line must name a different:
 
-- the deterministic `loom_...` Minecraft username;
-- lifecycle `ready`;
-- the loopback body-control endpoint.
+- deterministic `loom_...` username and stable offline UUID;
+- loopback control endpoint;
+- lifecycle state.
 
-Record that username as `<body-player>` for the remaining commands.
+Record the usernames as `<alpha>`, `<beta>`, and `<gamma>`.
 
-Readiness has crossed all required boundaries at this point: the identity was
-registered with the witness before launch, the child is alive, body-control
-handshake and status succeeded, the process reported `ready`, and Paper sees the
-exact registered player.
+The record must contain one `witnessJoined` and one `spawned` for each exact
+agent id. Request ids emitted later must be distinct across the three control
+processes.
 
-The event record should contain `witnessJoined`, then `spawned`. A scheduled
-`goalReview` perception follows on the next 100-tick schedule slice and produces
-the ordinary `perceived` → `decided` → `intentApplied` chain.
+## 5. Separate the shared-world scenes
 
-`loombody create another-agent` must be rejected without starting another
-process. This cutover intentionally owns one configured player identity;
-multi-agent orchestration is separate work.
-
-## 5. Prove bounded perception and manual cognition
-
-Run:
+Move the players apart on the same world so one proof action does not
+accidentally affect another:
 
 ```text
-loombody think e2e
-```
-
-The command returns immediately. The log then records one perception with the
-player's health, vanilla food, saturation, position, occupied inventory, time,
-and bounded nearby scene; one decision with model and prompt provenance; and one
-applied outcome with the same request id.
-
-The observer remains read-only:
-
-```text
-loomwatch e2e
-```
-
-The established observer/evidence vocabulary is intentionally unchanged. Its
-`energy` label and the event record's `vitals`/`energyChanged` names carry the
-player's food level on a 0–20 scale in this adapter. Health remains separate,
-and saturation remains explicit in the perception and decision input.
-
-## 6. Prove eating
-
-Give the player bread in an ordinary player slot and lower its food using
-vanilla mechanics:
-
-```text
-item replace entity <body-player> hotbar.0 with minecraft:bread 3
-effect give <body-player> minecraft:hunger 20 20 true
-```
-
-Wait until the food level is at or below 7, then stop the effect and request a
-review:
-
-```text
-effect clear <body-player> minecraft:hunger
-loombody think e2e
-```
-
-The scripted mind must choose `eat` using the request-scoped inventory ref.
-Evidence must show:
-
-- the sense answer offered the exact slot;
-- the decision names that ref;
-- `intentApplied` is accepted as `ate bread`;
-- one bread leaves the stack;
-- a later perception reports the new food and saturation.
-
-No automatic-eat policy runs in Node. If the mind does not issue the request,
-the body does not eat.
-
-## 7. Prove movement and threat debounce
-
-Keep the difficulty above peaceful, disable ambient spawning, and summon one
-stationary hostile on open ground:
-
-```text
-difficulty normal
+execute as <alpha> at @s run tp @s 0 ~ 0
+execute as <beta> at @s run tp @s 32 ~ 0
+execute as <gamma> at @s run tp @s 64 ~ 0
 gamerule doMobSpawning false
-execute at <body-player> run summon minecraft:zombie ~4 ~ ~ {NoAI:1b,PersistenceRequired:1b}
+difficulty normal
 ```
 
-Within one 20-tick threat scan, the record must show a pivotal
-`threatSighted` perception and a `flee` decision. The player must move away on
-the real server, and the applied path must end with:
-
-- one accepted `intentApplied`;
-- one `moved` record with non-zero travelled distance;
-- one terminal `retreating` outcome such as `retreatSafe`.
-
-While that same zombie remains in view, later scans should record
-`threatDebounced` rather than buying more decisions. This proves that
-request-local Mineflayer observations were correlated to one stable
-server-witnessed creature for the existing threat budget.
-
-The coordinator can legitimately receive body-control `notReady` while the
-first movement still owns the path. That is an operational refusal, not a
-process failure: the player process must remain alive and `inspect` must remain
-`ready`.
-
-Remove the test zombie when finished:
+Run one manual review for each:
 
 ```text
-kill @e[type=minecraft:zombie]
+loombody think proof-alpha
+loombody think proof-beta
+loombody think proof-gamma
 ```
 
-## 8. Prove server-tick review cadence
+Each command returns immediately. The record must reconstruct three independent
+`perceived` → `decided` → `intentApplied` chains by `agentId` and `requestId`.
+No chain may contain another agent's request, ref, decision, or action.
 
-Goal reviews use `server.currentTick`, not wall time. Find two scheduled
-`perceived` records whose trigger is `goalReview`:
+## 6. Prove movement for alpha
+
+Summon one stationary hostile near alpha:
+
+```text
+execute at <alpha> run summon minecraft:zombie ~4 ~ ~ {NoAI:1b,PersistenceRequired:1b,Invulnerable:1b}
+```
+
+Within one threat scan, alpha must produce:
+
+- a `perceived` record with trigger `threatSighted`;
+- a `decided` record choosing `flee`;
+- an accepted `intentApplied`;
+- a non-zero `moved`;
+- a terminal `retreating` outcome.
+
+Beta and gamma must remain `ready`, and neither may receive alpha's creature
+ref or movement evidence.
+
+Remove the zombie:
+
+```text
+kill @e[type=minecraft:zombie,distance=..16]
+```
+
+## 7. Prove eating for beta
+
+Give beta bread and lower only beta's food:
+
+```text
+item replace entity <beta> hotbar.0 with minecraft:bread 3
+effect give <beta> minecraft:hunger 60 40 true
+```
+
+Wait until beta's food is at or below 7, then:
+
+```text
+effect clear <beta> minecraft:hunger
+loombody think proof-beta
+```
+
+The scripted mind must choose `eat` using the inventory ref in beta's own
+perception. Evidence must show the exact offered slot, accepted meal, reduced
+stack, and later food/saturation reading. Alpha and gamma inventory refs remain
+unspendable by beta because a ref is scoped to one agent, one sense answer, and
+one control connection.
+
+## 8. Prove gamma disconnect containment
+
+Find the process listening on gamma's allocated control port and terminate it:
 
 ```sh
-jq -r 'select(.event == "perceived" and .trigger == "goalReview") | .tick' \
-  plugins/Loom/body-events.jsonl
+gamma_pid="$(lsof -tiTCP:25587 -sTCP:LISTEN)"
+test -n "$gamma_pid"
+kill "$gamma_pid"
 ```
 
-After a scheduled review, freeze Paper for several wall-clock seconds:
+The record must contain `bodyDisconnected` and `witnessQuit` for
+`proof-gamma`, with no `died` record or death-ledger line. Inspect must show:
 
 ```text
-tick freeze
+proof-alpha -> ready
+proof-beta  -> ready
+proof-gamma -> disconnected
 ```
 
-No review may appear while ticks are frozen. Resume and sprint one cadence:
+Restart only gamma:
 
 ```text
-tick unfreeze
-tick sprint 2400
+loombody create proof-gamma
+loombody inspect proof-gamma
 ```
 
-The next scheduled review is due from the authoritative tick sequence. Repeating
-the same tick sequence produces the same cadence regardless of how quickly the
-host executed it. This is the opposite of the retired wall-time scheduler:
-tick sprint is now a valid deterministic fast-forward.
+Its username, UUID, endpoint, process directory, cognition/ref state, and
+evidence attribution remain its own. Alpha and beta are neither stopped nor
+restarted.
 
-## 9. Prove disconnect and restart continuity
+## 9. Prove beta terminal death containment
 
-Find the supervised child process from a shell:
+Kill beta through the server:
+
+```text
+kill <beta>
+```
+
+Paper's witness must write exactly one `died` record carrying beta's presented
+username and UUID, then one synchronous tombstone. Beta becomes `dead` and only
+beta's child stops:
+
+```text
+loombody inspect proof-alpha
+loombody inspect proof-beta
+loombody inspect proof-gamma
+loombody create proof-beta
+```
+
+Alpha and gamma remain `ready`. Beta's create is rejected with `hasDied`.
+Killing a process never produced this state; only the server witness did.
+
+Restart Paper with the same `LOOM_BODY_AGENTS` set. The allocator must reproduce
+the same three identities, endpoints, and process directories. The replayed
+ledger refuses beta while alpha and gamma start independently.
+
+## 10. Reconstruct per-agent evidence
+
+The following produces one ordered chain per agent without reading free-form
+detail:
 
 ```sh
-pgrep -af loom-body.js
+jq -s '
+  sort_by(.tick)
+  | group_by(.agentId)
+  | map({
+      agentId: .[0].agentId,
+      events: map({
+        tick,
+        event,
+        requestId,
+        trigger,
+        intent,
+        outcome,
+        witness
+      })
+    })
+' plugins/Loom/body-events.jsonl
 ```
 
-Terminate that child, not Paper:
+Confirm:
 
-```sh
-kill <body-process-pid>
-```
+- every lifecycle, perception, decision, action, refusal, disconnect, and death
+  is filed under exactly one configured `agentId`;
+- alpha's movement records join alpha's perception only;
+- beta's meal and death records join beta only;
+- gamma's disconnect/restart records join gamma only;
+- aggregate Paper logs report counts and agent ids, never prompts,
+  provider credentials, or unbounded transport messages.
 
-The witness records a quit as continuity. `loombody inspect e2e` must become
-`disconnected`, no `died` record or tombstone may be written, and the same
-identity must restart:
+## 11. Prove bounded cleanup
 
-```text
-loombody create e2e
-loombody inspect e2e
-```
-
-The username and UUID are unchanged. A process or socket failure is never
-allowed to manufacture death.
-
-Prove graceful stop as well:
-
-```text
-loombody stop e2e
-loombody inspect e2e
-```
-
-The asynchronous completion must report success, the child must exit, its
-control listener must close, and the event log must contain `despawned`.
-
-Start it once more for the terminal case:
-
-```text
-loombody create e2e
-```
-
-## 10. Prove terminal death and denied reconnect
-
-Kill the player through the server:
-
-```text
-kill <body-player>
-```
-
-The server witness must write exactly one `died` record and one durable
-tombstone. The coordinator becomes `dead` and stops the child. A new create is
-rejected:
-
-```text
-loombody inspect e2e
-loombody create e2e
-```
-
-Stop and restart Paper, then run `loombody create e2e` again. It must still be
-rejected from the replayed ledger.
-
-Finally, prove that the durable witness does not depend on an in-memory
-registration. From `body/`, manually launch the dead account using the username
-shown by `inspect` and a spare control port:
-
-```sh
-LOOM_BODY_AGENT_ID=e2e \
-LOOM_BODY_USERNAME=<body-player> \
-LOOM_BODY_MC_HOST=127.0.0.1 \
-LOOM_BODY_MC_PORT=25565 \
-LOOM_BODY_MC_VERSION=1.21.1 \
-LOOM_BODY_CONTROL_HOST=127.0.0.1 \
-LOOM_BODY_CONTROL_PORT=25586 \
-  npm start
-```
-
-Paper must deny the login with the permadeath notice. The event record must
-contain `witnessDenied` with outcome `loginDeadIdentity`. The body process then
-exits because it never became a ready player.
-
-## 11. Prove complete cleanup
-
-Stop Paper and the cognition service. Confirm that no supervised Node child,
-body-control listener, cognition listener, or Paper process remains:
+Stop Paper and cognition. Confirm no process or listener from the proof remains:
 
 ```sh
 pgrep -af 'loom-body.js|loom-cognition|paper-1.21.1'
-lsof -nP -iTCP:8642 -iTCP:25565 -iTCP:25585 -iTCP:25586
+lsof -nP \
+  -iTCP:8642 \
+  -iTCP:25565 \
+  -iTCP:25585 \
+  -iTCP:25586 \
+  -iTCP:25587
 ```
 
-Those commands should find nothing from this run. A successful shutdown leaves
-no held sense connection, scheduled keepalive, worker pool, control listener,
-or child process behind.
-
-Before keeping evidence, also check the Paper log for `body event log` warnings.
-The JSONL record is append-only and its request ids are the join across
-perception, decision, intent, movement, witness, and observer evidence.
+Those commands should find nothing from this run. Before keeping any evidence,
+also check the Paper log for `body event log` warnings. The JSONL file is
+append-only evidence; the death ledger is authorisation state and is not an
+experiment artifact.

@@ -93,6 +93,12 @@ object EventTag {
     /** The player process was alive but did not become ready before its startup bound. */
     const val BODY_START_TIMED_OUT: String = "bodyStartTimedOut"
 
+    /** The supervised child exited or disappeared without server evidence of death. */
+    const val BODY_PROCESS_EXITED: String = "bodyProcessExited"
+
+    /** Consecutive bounded status checks exhausted this agent's health budget. */
+    const val BODY_HEALTH_FAILED: String = "bodyHealthFailed"
+
     /** A body-control round trip failed while the supervised process was still present. */
     const val CONTROL_UNAVAILABLE: String = "controlUnavailable"
 

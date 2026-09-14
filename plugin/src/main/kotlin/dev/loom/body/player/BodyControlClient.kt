@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 private const val REQUEST_PURPOSE_CHARS = 12
+private const val REQUEST_SCOPE_CHARS = 16
 private const val REQUEST_ID_RADIX = 36
 
 /** One authenticated connection to one body process. */
@@ -59,7 +60,15 @@ fun interface BodyControlConnector {
 /** Stable request ids bounded to the control contract's 64-character envelope. */
 class BodyControlRequestIds(
     private val sequence: AtomicLong = AtomicLong(),
+    scope: String? = null,
 ) {
+    private val safeScope =
+        scope
+            ?.lowercase()
+            ?.filter { it.isLetterOrDigit() }
+            ?.take(REQUEST_SCOPE_CHARS)
+            ?.takeIf(String::isNotEmpty)
+
     fun next(purpose: String): String {
         val safePurpose =
             purpose
@@ -67,7 +76,8 @@ class BodyControlRequestIds(
                 .filter { it.isLetterOrDigit() }
                 .take(REQUEST_PURPOSE_CHARS)
                 .ifEmpty { "request" }
-        return "$safePurpose-${sequence.incrementAndGet().toString(REQUEST_ID_RADIX)}"
+        val prefix = safeScope?.let { "$it-" } ?: ""
+        return "$prefix$safePurpose-${sequence.incrementAndGet().toString(REQUEST_ID_RADIX)}"
     }
 }
 
