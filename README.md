@@ -31,10 +31,9 @@ conformance tests.
 
 ## Runtime today
 
-The product runtime is hard-cut to the persistent Mineflayer player body.
-`LoomPlugin` does not select or instantiate the older Villager adapter. That
-implementation remains in the repository, unused, for a later removal change;
-there is no compatibility switch.
+The product runtime is the persistent Mineflayer player body. `LoomPlugin`
+constructs that adapter directly; there is no alternate body implementation or
+runtime selector.
 
 `/loombody create <agentId>` deterministically derives one offline player
 username and UUID, registers that exact identity with the server witness, starts

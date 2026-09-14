@@ -36,7 +36,6 @@ private val DELIBERATELY_SILENT =
             "did not happen",
         BodyEvent.ENERGY_CHANGED to "several a second while an agent regenerates",
         BodyEvent.HEALTH_CHANGED to "one a half-heart for a body under attack",
-        BodyEvent.WORLD_LOADED to "world-level bookkeeping, not about this agent",
     )
 
 class ObserverViewTest {
@@ -94,17 +93,6 @@ class ObserverViewTest {
 
         assertEquals("its mind did not answer (timed out)", note.text)
         assertEquals(ObserverLevel.CONCERN, note.level)
-    }
-
-    @Test
-    @DisplayName("a world-hold failure is said in full, but names no chunk")
-    fun theHoldFailureCaveatIsSpokenWithoutItsChunkList() {
-        val note = spoken(record(BodyEvent.WORLD_HOLD_FAILED, detail = "chunks $MARKER"))
-
-        // An operator has to hear this while watching, not afterwards in the log: without
-        // it a chunk unload shown as a death would simply be believed.
-        assertEquals("Loom could not hold the world: a death shown here may be a chunk unload.", note.text)
-        assertEquals(ObserverLevel.ALARM, note.level)
     }
 
     @Test
@@ -275,9 +263,9 @@ class ObserverViewTest {
     }
 
     @Test
-    @DisplayName("health joins the line only once a body is hurt, so a full reserve stays short")
+    @DisplayName("health joins the line only once a body is hurt, so a full food bar stays short")
     fun healthAppearsOnlyBelowCapacity() {
-        // The reserve owns the gauge, but a body can be beaten to death on a full reserve,
+        // Food owns the gauge, but a body can be beaten to death on a full food bar,
         // so health earns a place on the line - only once there is something to say.
         val whole = walking.copy(health = energy(20.0))
         val hurt = walking.copy(health = energy(12.0))
@@ -317,30 +305,28 @@ class ObserverViewTest {
     }
 
     @Test
-    @DisplayName("the loudest of what is happening, the reserve, and the body's health sets the level")
+    @DisplayName("the loudest of what is happening, food, and the body's health sets the level")
     fun theLevelIsTheLoudestOfTheThree() {
         val full = walking.copy(vitals = energy(20.0))
 
         assertEquals(ObserverLevel.CALM, view.render(full).level)
-        // Half of the reserve gone is worth attention, whatever the agent is doing.
+        // Half of the food bar gone is worth attention, whatever the agent is doing.
         assertEquals(ObserverLevel.CONCERN, view.render(walking.copy(vitals = energy(10.0))).level)
         // A quarter left is an alarm however calm the activity looks.
         assertEquals(ObserverLevel.ALARM, view.render(walking.copy(vitals = energy(5.0))).level)
         // And so is fleeing, on a full bar.
         assertEquals(ObserverLevel.ALARM, view.render(full.copy(activity = AgentActivity.FLEEING)).level)
-        // A body beaten down on a full reserve is the other way an agent ends, so the
-        // health reading raises the level exactly as the reserve's own would.
+        // A body beaten down on a full food bar is the other way an agent ends, so the
+        // health reading raises the level exactly as the food reading would.
         assertEquals(ObserverLevel.CONCERN, view.render(full.copy(health = energy(9.0))).level)
         assertEquals(ObserverLevel.ALARM, view.render(full.copy(health = energy(4.0))).level)
     }
 
     @Test
-    @DisplayName("a reserve that is merely being lived through is not an alarm, whatever its trend")
+    @DisplayName("a nearly full food reading is not an alarm, whatever its trend")
     fun livingIsNotAnEmergency() {
-        // An in-world run turned yellow four seconds after the spawn and stayed yellow for
-        // the rest of the agent's life: a reserve is spent by living, so a trend-driven
-        // colour says only that time is passing and spends the one channel an operator
-        // reads at a glance. What is worth a colour is how much reserve is left.
+        // A trend names a change, while the colour names present survival risk. A nearly
+        // full food bar remains calm even when its latest reading declined.
         val nearlyFull = walking.copy(vitals = energy(19.9), activity = AgentActivity.IDLE)
 
         assertTrue(view.render(nearlyFull).text.contains("declining"), view.render(nearlyFull).text)
@@ -418,7 +404,7 @@ class ObserverViewTest {
     @DisplayName("a spawn refused because the body is already there is not reported as bad news")
     fun theAlreadyEmbodiedRefusalIsSaidCalmly() {
         val again = record(BodyEvent.SPAWN_REJECTED).copy(outcome = EventTag.ALREADY_EMBODIED)
-        val bodiless = record(BodyEvent.SPAWN_REJECTED).copy(outcome = EventTag.UNKNOWN_WORLD)
+        val bodiless = record(BodyEvent.SPAWN_REJECTED).copy(outcome = EventTag.BODY_START_FAILED)
 
         assertEquals("already has a body, so a second one was refused", spoken(again).text)
         assertEquals(ObserverLevel.CALM, spoken(again).level)
@@ -436,18 +422,5 @@ class ObserverViewTest {
         // as an ordinary refusal it read as a request to try again.
         assertEquals("had already DIED. Permadeath: this agent will not return.", spoken(gone).text)
         assertEquals(ObserverLevel.ALARM, spoken(gone).level)
-    }
-
-    @Test
-    @DisplayName("a conversion that took the body says so, rather than that something tried")
-    fun aConversionThatSucceededIsNotUnderstated() {
-        val refused = record(BodyEvent.CONVERTED).copy(outcome = EventTag.CONVERSION_REFUSED)
-        val taken = record(BodyEvent.CONVERTED).copy(outcome = EventTag.BODY_TAKEN)
-
-        assertEquals("something tried to turn it into another creature", spoken(refused).text)
-        assertEquals(ObserverLevel.CONCERN, spoken(refused).level)
-        // The agent is alive with nothing to act through, and nothing re-embodies it.
-        assertEquals("a conversion took its body. It is alive with nothing to act through.", spoken(taken).text)
-        assertEquals(ObserverLevel.ALARM, spoken(taken).level)
     }
 }

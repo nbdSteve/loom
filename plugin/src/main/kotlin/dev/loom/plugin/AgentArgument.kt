@@ -12,7 +12,7 @@ import dev.loom.body.AgentId
 /**
  * Runs [body] with [raw] as an [AgentId], or explains why it is not one.
  *
- * [AgentId] refuses ids by design (blank, the reserved world id), and a typed argument
+ * [AgentId] refuses blank ids by design, and a typed argument
  * must get the same friendly reply as every other invalid input rather than escaping the
  * command as an exception. The refusal message comes from the domain rule itself, so it is
  * never restated here.

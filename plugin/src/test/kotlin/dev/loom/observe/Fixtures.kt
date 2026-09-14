@@ -79,15 +79,6 @@ fun record(
 /**
  * A vital reading, against a capacity of twenty.
  *
- * Either vital, since the view reads both as a share of their own capacity and never as
- * a scale it knows: in world the reserve arrives on a hundred and health on twenty.
+ * Either player vital, since food and health both use vanilla's twenty-point scale.
  */
 fun energy(left: Double): AgentVitals = AgentVitals(energy = left, capacity = 20.0)
-
-/**
- * An energy-reserve reading on the percentage scale the port really records it on.
- *
- * For the tests whose whole point is a reserve, where a reading out of twenty would not
- * look like the number an operator sees.
- */
-fun reserve(left: Double): AgentVitals = AgentVitals(energy = left, capacity = 100.0)

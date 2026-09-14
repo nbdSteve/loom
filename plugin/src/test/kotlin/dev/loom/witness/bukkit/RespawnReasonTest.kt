@@ -61,7 +61,7 @@ class RespawnReasonTest {
 
         val action = respawnStatement(under.witness, RespawnReason.END_PORTAL, scout.uuid, scout.username)
 
-        // A dimension return is continuity, exactly as the Villager body already treats it. Every
+        // A dimension return is continuity for the same player identity. Every
         // one of these being absent is the point: the agent is alive, and any one of them alone
         // would have ended it, because the tombstone is synced before anything can reconsider.
         assertEquals(WitnessAction.LeaveAlone, action, "an agent leaving the End must not be removed")

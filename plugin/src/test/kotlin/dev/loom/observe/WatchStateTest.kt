@@ -60,7 +60,7 @@ class WatchStateTest {
     }
 
     @Test
-    @DisplayName("the two vitals are read separately, so a wound does not spend the reserve")
+    @DisplayName("the two vitals are read separately, so a wound does not change food")
     fun theVitalsAreReadSeparately() {
         val hurt =
             after(
@@ -69,72 +69,72 @@ class WatchStateTest {
             )
 
         assertEquals(energy(12.0), hurt.health)
-        assertEquals(energy(20.0), hurt.vitals, "being hurt does not spend the reserve")
-        // The trend is the reserve's, not the body's: a wound that read as a decline would
+        assertEquals(energy(20.0), hurt.vitals, "being hurt does not change food")
+        // The trend is food's, not health's: a wound that read as a decline would
         // put a survival curve's word on a number that had not moved.
         assertEquals(EnergyTrend.STEADY, hurt.trend)
     }
 
     @Test
-    @DisplayName("a reserve restated on the same tick is not a second reading")
+    @DisplayName("food restated on the same tick is not a second reading")
     fun aRestatedReserveKeepsTheTrendWord() {
         val declining =
             after(
-                record(BodyEvent.SPAWNED).copy(vitals = reserve(99.0), health = energy(20.0)),
-                record(BodyEvent.ENERGY_CHANGED, tick = 10L).copy(vitals = reserve(98.0), health = energy(20.0)),
+                record(BodyEvent.SPAWNED).copy(vitals = energy(19.0), health = energy(20.0)),
+                record(BodyEvent.ENERGY_CHANGED, tick = 10L).copy(vitals = energy(18.0), health = energy(20.0)),
             )
 
         // Both vitals stepping on one tick: `energyChanged` and `healthChanged` each state
-        // both readings, so the reserve arrives twice with the same number. Read as a second
+        // both readings, so food arrives twice with the same number. Read as a second
         // reading it answered "steady" and dropped the word off an agent still draining.
         val wounded =
             advanced(
                 declining,
-                record(BodyEvent.HEALTH_CHANGED, tick = 10L).copy(vitals = reserve(98.0), health = energy(12.0)),
+                record(BodyEvent.HEALTH_CHANGED, tick = 10L).copy(vitals = energy(18.0), health = energy(12.0)),
             )
 
         assertEquals(EnergyTrend.DECLINING, wounded.trend)
         assertEquals(
-            "$WATCHED | energy 98/100 declining | health 12/20 | standing by",
+            "$WATCHED | energy 18/20 declining | health 12/20 | standing by",
             ObserverView().render(wounded).text,
         )
     }
 
     @Test
-    @DisplayName("a perception restating the reserve on the same tick does not either")
+    @DisplayName("a perception restating food on the same tick does not either")
     fun aPerceptionRestatingTheReserveKeepsTheTrendWord() {
         val declining =
             after(
-                record(BodyEvent.SPAWNED).copy(vitals = reserve(99.0)),
-                record(BodyEvent.ENERGY_CHANGED, tick = 10L).copy(vitals = reserve(98.0)),
+                record(BodyEvent.SPAWNED).copy(vitals = energy(19.0)),
+                record(BodyEvent.ENERGY_CHANGED, tick = 10L).copy(vitals = energy(18.0)),
             )
 
-        // A goal review on the same tick carries the reserve it handed the mind, which is
+        // A goal review on the same tick carries the food reading it handed the mind, which is
         // the number the change record has just stated.
         val thinking =
             advanced(
                 declining,
-                record(BodyEvent.PERCEIVED, tick = 10L).copy(trigger = EventTag.GOAL_REVIEW, vitals = reserve(98.0)),
+                record(BodyEvent.PERCEIVED, tick = 10L).copy(trigger = EventTag.GOAL_REVIEW, vitals = energy(18.0)),
             )
 
         assertEquals(
-            "$WATCHED | energy 98/100 declining | thinking | goal review",
+            "$WATCHED | energy 18/20 declining | thinking | goal review",
             ObserverView().render(thinking).text,
         )
     }
 
     @Test
-    @DisplayName("a reserve that has genuinely not moved reads as steady rather than as a trend")
+    @DisplayName("food that has genuinely not moved reads as steady rather than as a trend")
     fun anUnmovedReserveIsSteady() {
-        val spawned = after(record(BodyEvent.SPAWNED).copy(vitals = reserve(100.0)))
+        val spawned = after(record(BodyEvent.SPAWNED).copy(vitals = energy(20.0)))
 
-        val restated = advanced(spawned, record(BodyEvent.PERCEIVED, tick = 10L).copy(vitals = reserve(100.0)))
+        val restated = advanced(spawned, record(BodyEvent.PERCEIVED, tick = 10L).copy(vitals = energy(20.0)))
 
         // The reading is not news and neither is a trend: an agent that has been looked at
         // twice and has not moved is not declining, and inventing the word would spend the
         // one signal whose absence means something.
         assertEquals(EnergyTrend.STEADY, restated.trend)
-        assertEquals("$WATCHED | energy 100/100 | thinking", ObserverView().render(restated).text)
+        assertEquals("$WATCHED | energy 20/20 | thinking", ObserverView().render(restated).text)
     }
 
     @Test
@@ -146,46 +146,20 @@ class WatchStateTest {
         // agent stops having a body.
         val putAway =
             after(
-                record(BodyEvent.SPAWNED).copy(vitals = reserve(100.0)),
-                record(BodyEvent.PERCEIVED, tick = 10L).copy(vitals = reserve(99.5)),
-                record(BodyEvent.DESPAWNED, tick = 20L).copy(vitals = reserve(99.4)),
+                record(BodyEvent.SPAWNED).copy(vitals = energy(20.0)),
+                record(BodyEvent.PERCEIVED, tick = 10L).copy(vitals = energy(19.5)),
+                record(BodyEvent.DESPAWNED, tick = 20L).copy(vitals = energy(19.4)),
             )
 
-        // Nothing spends a put-away reserve - `Metabolism.spendUpTo` is handed the live
-        // bodies only - so no further reading can arrive and "declining" would have stood on
+        // A disconnected player produces no further reading, so "declining" would stand on
         // the line for the rest of the session about a number that had stopped moving.
         assertEquals(AgentActivity.BODILESS, putAway.activity)
         assertEquals(EnergyTrend.DECLINING, putAway.trend, "the trend the records state is unchanged")
         assertEquals(
-            "$WATCHED | energy 99.4/100 | no body",
+            "$WATCHED | energy 19.4/20 | no body",
             ObserverView().render(putAway).text,
             "the last reading stays; only the word about what is happening to it goes",
         )
-    }
-
-    @Test
-    @DisplayName("the other ways of losing a body freeze the trend word the same way")
-    fun everyBodilessStateReportsNoTrend() {
-        val declining =
-            after(
-                record(BodyEvent.SPAWNED).copy(vitals = reserve(100.0)),
-                record(BodyEvent.PERCEIVED, tick = 10L).copy(vitals = reserve(99.5)),
-            )
-
-        val refused =
-            advanced(declining, record(BodyEvent.SPAWN_REJECTED, tick = 20L).copy(outcome = EventTag.UNKNOWN_WORLD))
-        val taken =
-            advanced(declining, record(BodyEvent.CONVERTED, tick = 20L).copy(outcome = EventTag.BODY_TAKEN))
-
-        // A refused spawn and a conversion that took the body reach the same state a despawn
-        // does, and a reserve nobody is spending is not declining in any of them.
-        for (state in listOf(refused, taken)) {
-            assertEquals(AgentActivity.BODILESS, state.activity)
-            assertEquals("$WATCHED | energy 99.5/100 | no body", ObserverView().render(state).text)
-        }
-        // The same records before the body went keep the word, so none of this can be passed
-        // by dropping the trend from every line.
-        assertEquals("$WATCHED | energy 99.5/100 declining | thinking", ObserverView().render(declining).text)
     }
 
     @Test
@@ -193,10 +167,10 @@ class WatchStateTest {
     fun aFailedCycleDoesNotUnfreezeAPutAwayReserve() {
         val putAway =
             after(
-                record(BodyEvent.SPAWNED).copy(vitals = reserve(100.0)),
+                record(BodyEvent.SPAWNED).copy(vitals = energy(20.0)),
                 record(BodyEvent.PERCEIVED, tick = 10L)
-                    .copy(requestId = "req-1", trigger = EventTag.GOAL_REVIEW, vitals = reserve(99.5)),
-                record(BodyEvent.DESPAWNED, tick = 20L).copy(vitals = reserve(99.4)),
+                    .copy(requestId = "req-1", trigger = EventTag.GOAL_REVIEW, vitals = energy(19.5)),
+                record(BodyEvent.DESPAWNED, tick = 20L).copy(vitals = energy(19.4)),
             )
 
         // The wait for a silent mind is about half a minute, so an operator who despawns
@@ -210,38 +184,9 @@ class WatchStateTest {
             )
 
         assertEquals(
-            "$WATCHED | energy 99.4/100 | mind did not answer | goal review",
+            "$WATCHED | energy 19.4/20 | mind did not answer | goal review",
             ObserverView().render(failed).text,
         )
-    }
-
-    @Test
-    @DisplayName("the other ways of losing a body stay frozen when a later record moves the activity")
-    fun everyBodilessOriginStaysFrozen() {
-        val declining =
-            after(
-                record(BodyEvent.SPAWNED).copy(vitals = reserve(100.0)),
-                record(BodyEvent.PERCEIVED, tick = 10L).copy(trigger = EventTag.GOAL_REVIEW, vitals = reserve(99.5)),
-            )
-        val losses =
-            listOf(
-                record(BodyEvent.SPAWN_REJECTED, tick = 20L).copy(outcome = EventTag.UNKNOWN_WORLD),
-                record(BodyEvent.CONVERTED, tick = 20L).copy(outcome = EventTag.BODY_TAKEN),
-            )
-
-        for (loss in losses) {
-            val failed =
-                advanced(
-                    advanced(declining, loss),
-                    record(BodyEvent.COGNITION_UNAVAILABLE, tick = 25L).copy(outcome = "timedOut"),
-                )
-
-            assertEquals(
-                "$WATCHED | energy 99.5/100 | mind did not answer | goal review",
-                ObserverView().render(failed).text,
-                "${loss.event} ${loss.outcome}",
-            )
-        }
     }
 
     @Test
@@ -290,7 +235,7 @@ class WatchStateTest {
             after(record(BodyEvent.INTENT_APPLIED).copy(intent = intent, outcome = EventTag.ACCEPTED)).activity
 
         // Resting is a deliberate wait and idling is having decided nothing; neither refills
-        // the reserve, so intent is the whole of what separates them. An operator watching a
+        // food, so intent is the whole of what separates them. An operator watching a
         // survival run needs to know which of the two a motionless agent is doing.
         assertEquals(AgentActivity.RESTING, applied(EventTag.REST))
         assertEquals(AgentActivity.IDLE, applied(EventTag.IDLE))
@@ -316,7 +261,6 @@ class WatchStateTest {
         assertEquals(AgentActivity.EMBODIED, after(record(BodyEvent.SPAWNED)).activity)
         assertEquals(AgentActivity.THINKING, after(record(BodyEvent.PERCEIVED)).activity)
         assertEquals(AgentActivity.UNANSWERED, after(record(BodyEvent.COGNITION_UNAVAILABLE)).activity)
-        assertEquals(AgentActivity.TRAVELLING, after(record(BodyEvent.TRAVELLED)).activity)
         assertEquals(AgentActivity.BODILESS, after(record(BodyEvent.DESPAWNED)).activity)
         assertEquals(AgentActivity.BODILESS, after(record(BodyEvent.SPAWN_REJECTED)).activity)
         assertEquals(AgentActivity.DEAD, after(record(BodyEvent.DIED)).activity)
@@ -355,7 +299,7 @@ class WatchStateTest {
     @Test
     @DisplayName("the refusals that really do leave an agent bodiless still read that way")
     fun theGenuinelyBodilessRefusalsAreUnchanged() {
-        val bodiless = listOf(EventTag.UNKNOWN_WORLD, EventTag.WORLD_UNHELD, EventTag.WORLD_REFUSED)
+        val bodiless = listOf(EventTag.BODY_START_FAILED, EventTag.BODY_START_TIMED_OUT)
 
         for (outcome in bodiless) {
             val refused = after(record(BodyEvent.SPAWN_REJECTED).copy(outcome = outcome))
@@ -366,27 +310,9 @@ class WatchStateTest {
     }
 
     @Test
-    @DisplayName("a conversion that took the body reads as bodiless; a refused one changes nothing")
-    fun theTwoConversionsAreToldApart() {
-        val walking =
-            after(
-                record(BodyEvent.INTENT_APPLIED).copy(intent = EventTag.MOVE_TO, outcome = EventTag.ACCEPTED),
-            )
-
-        val refused = advanced(walking, record(BodyEvent.CONVERTED).copy(outcome = EventTag.CONVERSION_REFUSED))
-        val taken = advanced(walking, record(BodyEvent.CONVERTED).copy(outcome = EventTag.BODY_TAKEN))
-
-        // Loom cancels the transform, so the ordinary case is a body that never changed.
-        assertEquals(AgentActivity.MOVING, refused.activity)
-        // A conversion that got past the refusal leaves the agent alive with nothing to
-        // act through, and nothing re-embodies it, so `moving` would be a fiction.
-        assertEquals(AgentActivity.BODILESS, taken.activity)
-    }
-
-    @Test
     @DisplayName("a managed player connecting and disconnecting is a body arriving and going")
     fun aPlayerBodyIsABodyLikeAnyOther() {
-        val connected = after(record(BodyEvent.WITNESS_JOINED).copy(vitals = reserve(100.0)))
+        val connected = after(record(BodyEvent.WITNESS_JOINED).copy(vitals = energy(20.0)))
 
         assertEquals(AgentActivity.EMBODIED, connected.activity)
         assertFalse(connected.hasNoBody, "a player in the world is a body in the world")
@@ -394,11 +320,11 @@ class WatchStateTest {
         val gone = advanced(connected, record(BodyEvent.WITNESS_QUIT, tick = 20L))
 
         // A disconnect is continuity: the process can reconnect and the agent is not dead.
-        // What it does mean is that nothing is spending the reserve until it does.
+        // What it does mean is that no further food reading arrives until it reconnects.
         assertEquals(AgentActivity.BODILESS, gone.activity)
         assertTrue(gone.hasNoBody)
         assertFalse(gone.isFinal, "a quit is not an ending")
-        assertTrue(gone.isReserveFrozen)
+        assertTrue(gone.isVitalsFrozen)
     }
 
     @Test
@@ -415,8 +341,8 @@ class WatchStateTest {
 
         // The one refusal that is a fact about the agent rather than about a connection, so it is
         // also the one that overrides what the display already knew: a watch that had seen the
-        // player join must not go on showing an embodied agent with a running reserve.
-        val connected = after(record(BodyEvent.WITNESS_JOINED).copy(vitals = reserve(80.0)))
+        // player join must not go on showing an embodied agent with a running food trend.
+        val connected = after(record(BodyEvent.WITNESS_JOINED).copy(vitals = energy(16.0)))
         val died =
             advanced(
                 connected,
@@ -425,7 +351,7 @@ class WatchStateTest {
 
         assertEquals(AgentActivity.DEAD, died.activity)
         assertTrue(died.hasNoBody)
-        assertTrue(died.isReserveFrozen, "nothing is spending a dead agent's reserve")
+        assertTrue(died.isVitalsFrozen, "a dead player produces no further food reading")
     }
 
     @Test
@@ -434,7 +360,7 @@ class WatchStateTest {
         val notFinal = listOf(EventTag.LOGIN_LEDGER_UNSAFE, EventTag.LOGIN_IDENTITY_MISMATCH)
 
         for (outcome in notFinal) {
-            val connected = after(record(BodyEvent.WITNESS_JOINED).copy(vitals = reserve(80.0)))
+            val connected = after(record(BodyEvent.WITNESS_JOINED).copy(vitals = energy(16.0)))
             val refused = advanced(connected, record(BodyEvent.WITNESS_DENIED, tick = 20L).copy(outcome = outcome))
 
             // A sealed ledger and a claimed username are both conditions an operator can fix,
@@ -444,18 +370,18 @@ class WatchStateTest {
             // And neither says anything about the agent's own body. The refusal reaches whichever
             // agent's identity was named, so a second body process - or something that took a live
             // agent's username - is refused while that agent is standing in the world. Read as
-            // bodilessness it labelled a connected agent `no body` and froze its reserve trend,
+            // bodilessness it labelled a connected agent `no body` and froze its food trend,
             // with no per-tick record from a player body ever able to correct it.
             assertEquals(AgentActivity.EMBODIED, refused.activity, outcome)
             assertFalse(refused.hasNoBody, "$outcome is about a connection attempt, not about a body")
-            assertFalse(refused.isReserveFrozen, "$outcome must leave the reserve trend running: $outcome")
+            assertFalse(refused.isVitalsFrozen, "$outcome must leave the food trend running: $outcome")
         }
     }
 
     @Test
     @DisplayName("a player in the world after a terminal death is shown as dead, with the breach as an alarm")
     fun aRevivalIsShownHonestlyRatherThanTidily() {
-        val dead = after(record(BodyEvent.DIED).copy(vitals = reserve(40.0)))
+        val dead = after(record(BodyEvent.DIED).copy(vitals = energy(8.0)))
 
         val breached = advanced(dead, record(BodyEvent.WITNESS_REVIVED, tick = 20L))
 
@@ -465,7 +391,7 @@ class WatchStateTest {
         assertEquals(AgentActivity.DEAD, breached.activity)
         assertTrue(breached.isFinal)
         assertTrue(breached.hasNoBody, "a dead agent has no body, whatever the world is holding")
-        assertTrue(breached.isReserveFrozen, "nothing is spending a dead agent's reserve")
+        assertTrue(breached.isVitalsFrozen, "a dead player produces no further food reading")
         assertTrue(
             ObserverView().render(breached).text.contains("DEAD"),
             ObserverView().render(breached).text,
@@ -486,7 +412,7 @@ class WatchStateTest {
         assertEquals(AgentActivity.DEAD, breached.activity)
         assertTrue(breached.isFinal)
         assertTrue(breached.hasNoBody)
-        assertTrue(breached.isReserveFrozen)
+        assertTrue(breached.isVitalsFrozen)
     }
 
     @Test
@@ -674,24 +600,14 @@ class WatchStateTest {
 
         assertTrue(dead.isFinal)
 
-        // Records can still arrive for a dead agent: a world hold changing, a decision
-        // landing too late. None of them may bring it back to life on the display.
+        // Records can still arrive for a dead agent, including a decision landing too
+        // late. None of them may bring it back to life on the display.
         val afterwards =
-            listOf(BodyEvent.SPAWNED, BodyEvent.MOVED, BodyEvent.PERCEIVED, BodyEvent.WORLD_LOADED)
+            listOf(BodyEvent.SPAWNED, BodyEvent.MOVED, BodyEvent.PERCEIVED)
                 .fold(dead) { state, event -> advanced(state, record(event)) }
 
         assertEquals(AgentActivity.DEAD, afterwards.activity)
         assertTrue(afterwards.isFinal)
-    }
-
-    @Test
-    @DisplayName("world-level records say nothing about what this agent is doing")
-    fun worldRecordsDoNotMoveTheAgent() {
-        val standing = after(record(BodyEvent.SPAWNED))
-
-        val held = advanced(standing, record(BodyEvent.WORLD_HOLD_FAILED, detail = "chunks 0,0"))
-
-        assertEquals(AgentActivity.EMBODIED, held.activity)
     }
 
     @Test

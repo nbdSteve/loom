@@ -1,11 +1,7 @@
 /*
  * Stamping and appending of body events to the append-only log.
  *
- * Split out of the adapter for the same reason as BodyEventDetail and
- * BodyPerception: the port implementation stays about spawning, driving, and
- * observing bodies, while the "stamp with the current tick and append" concern -
- * and the one place that knows a record carries the tick and the agent id - lives
- * here.
+ * The player adapter supplies the facts; this class stamps and appends them.
  */
 package dev.loom.body
 
@@ -22,13 +18,8 @@ class BodyEventJournal(
     /**
      * Stamps [event] for [agentId] with the current tick and appends it.
      *
-     * [vitals] is the adapter's primary survival reading and [health] the body's hit
-     * points, passed wherever the readings were being taken anyway - a spawn, a death, a
-     * change worth recording - which is what makes a survival curve derivable from the
-     * log itself. For the player adapter the compatibility field carries vanilla food;
-     * the unused Villager adapter carries its synthetic reserve. They stay absent
-     * elsewhere rather than being carried forward, so no record states a reading that
-     * was not actually taken.
+     * [vitals] carries the player's vanilla food reading and [health] its hit points.
+     * They stay absent where no reading was taken.
      *
      * The events that answer a perception carry a request id, and they have their own
      * methods - [recordPerception] and [recordAction] - because each also carries a fact
@@ -130,22 +121,6 @@ class BodyEventJournal(
     }
 
     /**
-     * Records what a conversion attempt did, and whether it took the body with it.
-     *
-     * Its own method because [outcome] is not optional here either: a conversion Loom
-     * refused and one that got past the refusal are opposite facts about whether the agent
-     * still has a body, under one event name. Which happened has to be countable, and has
-     * to be readable by a display that deliberately never reads a record's prose.
-     */
-    fun recordConversion(
-        agentId: AgentId,
-        detail: String,
-        outcome: String,
-    ) {
-        classified(agentId, BodyEvent.CONVERTED, detail, outcome)
-    }
-
-    /**
      * Records a threat the body saw and Loom did not wake its mind for.
      *
      * Takes the whole [ThreatSuppression] rather than its parts because the reason is the
@@ -169,9 +144,8 @@ class BodyEventJournal(
      * Records one transition in an agent's flight from a threat.
      *
      * [outcome] is required for the same reason a refused spawn's is: the transitions are
-     * opposite facts about the run - an agent that got away, one whose threat died, one
-     * waiting for the ground, and one left standing in range - and only the tag tells them
-     * apart, since they all share this event name.
+     * opposite facts about the run - an agent that got away, one whose threat vanished,
+     * and one left standing in range - and only the tag tells them apart.
      */
     fun recordRetreat(
         agentId: AgentId,
@@ -197,18 +171,5 @@ class BodyEventJournal(
                 outcome = outcome,
             ),
         )
-    }
-
-    /**
-     * Records an [event] that belongs to the world rather than to one agent.
-     *
-     * Filed under [WORLD_AGENT_ID] so the record keeps the same shape as every other
-     * one without attributing a world-level fact to some arbitrary agent.
-     */
-    fun recordForWorld(
-        event: BodyEvent,
-        detail: String,
-    ) {
-        eventLog.append(BodyEventRecord(currentTick(), WORLD_AGENT_ID, event, detail))
     }
 }

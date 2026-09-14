@@ -16,11 +16,8 @@
  * wholesale: the display genuinely reads `AgentId`, `AgentVitals`, `BodyEvent`,
  * `BodyEventRecord`, `EnergyTrend`, `EventTag`, `trendOf` and `amountOf` from it, since a
  * record is the only thing it is given. But three of that package's types are not data - a
- * `BodyPort` spawns, moves and despawns bodies, a `Metabolism` refills the very reserve the
- * criteria say observation must not alter, and a `Mortality` records a death - so they are
- * forbidden by name. Naming them is the difference between "no display has needed one yet"
- * and "no display may have one": importing `Metabolism` into `Observatory` and calling
- * `restore` from `saw` used to leave the whole suite green.
+ * `BodyPort` spawns, moves and despawns bodies, and a `Mortality` records a death, so
+ * both are forbidden by name.
  */
 package dev.loom.observe
 
@@ -31,7 +28,6 @@ import com.tngtech.archunit.core.importer.ClassFileImporter
 import com.tngtech.archunit.core.importer.ImportOption
 import com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses
 import dev.loom.body.BodyPort
-import dev.loom.body.Metabolism
 import dev.loom.body.Mortality
 import org.junit.jupiter.api.Test
 
@@ -70,22 +66,21 @@ class ObserveBoundaryTest {
         // The point of the whole package. Attaching an observer must add no perception, no
         // decision, no tick work, and no record - so the display is given records and holds
         // nothing it could act through. One condition rather than two rules, because the
-        // packages and the three named types are one intention: the display is handed data
+        // packages and the two named types are one intention: the display is handed data
         // and is handed nothing that does anything.
         noClasses()
             .that()
             .resideInAPackage("$OBSERVE..")
             .should()
             .dependOnClassesThat(
-                resideInAnyPackage("dev.loom.body.nms..", "dev.loom.mind..", "$WIRING..")
-                    .or(belongToAnyOf(BodyPort::class.java, Metabolism::class.java, Mortality::class.java)),
+                resideInAnyPackage("dev.loom.mind..", "$WIRING..")
+                    .or(belongToAnyOf(BodyPort::class.java, Mortality::class.java)),
             )
             .because(
                 "observation is read-only by construction: the display holds no body " +
                     "port, no cognition bridge, and no world handle to disturb a run with - " +
-                    "BodyPort, Metabolism and Mortality are named because they are the " +
-                    "three types in the otherwise data-only dev.loom.body that act, by " +
-                    "moving a body, refilling a reserve, or ending an agent",
+                    "BodyPort and Mortality are named because they are the two domain " +
+                    "types that can move a body or end an agent",
             )
             .check(plugin)
     }

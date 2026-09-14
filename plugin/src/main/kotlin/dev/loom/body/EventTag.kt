@@ -10,9 +10,7 @@
  * Every tag that names a contract variant is deliberately the contract's own
  * discriminator value, so one question asked of a run's log and of its perceptions
  * means the same thing. `EventTagTest` pins that against the contract serializers
- * rather than trusting these strings. The rest - what a body answered an intent with,
- * why a spawn was refused, what a conversion did to a body - never leave this runtime,
- * and are pinned outright instead.
+ * rather than trusting these strings. Runtime-only outcomes are pinned outright.
  *
  * Each mapping is total with no default branch: a new trigger, intent, or outcome
  * will not compile until it has been named, because an unnamed variant would land in
@@ -61,7 +59,7 @@ object EventTag {
     /** The mind chose to run from something. */
     const val FLEE: String = "flee"
 
-    /** The mind chose to eat one stack the body is carrying. It is the only refill. */
+    /** The mind chose to eat one stack the body is carrying. */
     const val EAT: String = "eat"
 
     /** The body carried the intent out. The only outcome that means the agent acted. */
@@ -88,15 +86,6 @@ object EventTag {
      * spawn command, and no later record corrected it.
      */
     const val ALREADY_EMBODIED: String = "alreadyEmbodied"
-
-    /** A spawn was refused because the world it named could not be resolved. */
-    const val UNKNOWN_WORLD: String = "unknownWorld"
-
-    /** A spawn was refused because Loom could not hold the world around the body. */
-    const val WORLD_UNHELD: String = "worldUnheld"
-
-    /** A spawn was refused because the world itself would not take the body. */
-    const val WORLD_REFUSED: String = "worldRefused"
 
     /** A supervised player process could not reach the ready boundary. */
     const val BODY_START_FAILED: String = "bodyStartFailed"
@@ -139,44 +128,6 @@ object EventTag {
      * agent died of a hostile it was never asked about has to be able to say which.
      */
     const val THREAT_OVER_NIGHTLY_CAP: String = "threatOverNightlyCap"
-
-    /** A conversion was refused: the body is unchanged, and the agent still has it. */
-    const val CONVERSION_REFUSED: String = "conversionRefused"
-
-    /**
-     * A conversion took the body: the agent lives on, with no body in the world.
-     *
-     * The opposite fact to [CONVERSION_REFUSED] under the same event name, and the
-     * reason a conversion states which of the two it was. Nothing re-embodies an agent
-     * here, so a display that carried its previous activity forward would keep saying
-     * `standing by` about an agent that has nothing to stand with.
-     */
-    const val BODY_TAKEN: String = "bodyTaken"
-
-    /** A flight was accepted and the body is walking the first hop of it. */
-    const val RETREAT_STARTED: String = "retreatStarted"
-
-    /** A route ended with the threat still there, and another hop was routed. */
-    const val RETREAT_CONTINUED: String = "retreatContinued"
-
-    /**
-     * The flight is held, waiting for the body to be back on the ground.
-     *
-     * Not a refusal: a ground navigator will not search mid-air, and a body being hit is
-     * mid-air. Counted apart from the failures because it resolves itself.
-     */
-    const val RETREAT_PENDING_GROUND: String = "retreatPendingGround"
-
-    /**
-     * A flight is held because the tick's path-search budget was already spent.
-     *
-     * Kept apart from [RETREAT_FAILED] because they are opposite facts about a run. This one
-     * says Loom's own per-tick search budget ran out under contention and the flight will ask
-     * again at its cadence; the other says the ground itself offered nothing and the agent
-     * has been left standing in range of something hunting it. A run that could not tell them
-     * apart could not say whether its agents were cornered or merely over budget.
-     */
-    const val RETREAT_PENDING_BUDGET: String = "retreatPendingBudget"
 
     /** The agent got beyond what it can perceive of the threat. It ran away. */
     const val RETREAT_SAFE: String = "retreatSafe"
@@ -227,9 +178,9 @@ object EventTag {
     /**
      * A meal was named by a handle no request of the agent's still remembers.
      *
-     * The six eat tags below are the countable half of an eat refusal, kept apart for
-     * the reason the retreat tags are: they are answers about different things - the
-     * handle, the slot, and the reserve - and one number covering all of them would
+     * The eat tags below are the countable half of an eat refusal, kept apart because
+     * they are answers about different things - the handle, the slot, and the player -
+     * and one number covering all of them would
      * make an agent with nothing edible indistinguishable from one that was full.
      */
     const val EAT_SLOT_FORGOTTEN: String = "eatSlotForgotten"
@@ -246,11 +197,8 @@ object EventTag {
     /** The slot holds something the engine does not call food. */
     const val EAT_NOT_FOOD: String = "eatNotFood"
 
-    /** The reserve was already full, so eating would have thrown the food away. */
+    /** The food bar was already full, so vanilla would not consume the food. */
     const val EAT_RESERVE_FULL: String = "eatReserveFull"
-
-    /** The reserve was spent, which is terminal: nothing eats its way out of a permadeath. */
-    const val EAT_RESERVE_SPENT: String = "eatReserveSpent"
 
     /** The game could not equip or consume a stack that was present and edible. */
     const val EAT_SLOT_INACCESSIBLE: String = "eatSlotInaccessible"
@@ -361,22 +309,25 @@ fun tagOf(intent: Intent): String =
 /**
  * Every tag an [IntentOutcome.Rejected] can be filed under.
  *
- * Derived rather than listed, because a refusal now carries its own tag: reading a record back
- * means asking "did the body refuse this?" of a value that is [EventTag.REJECTED] only when the
- * refusal had nothing more specific to say. Anything that answered that question by testing
- * for [EventTag.REJECTED] alone read a refused meal as a decision that reached no body at all -
- * which is what the operator display did, in exactly the run the eat path enables.
- *
- * The eat half comes from [EAT_REFUSALS], so a refusal added there is covered the day it is
- * added rather than the day somebody remembers to repeat it here.
+ * Listed from the player action translator so the observer recognises every specific
+ * refusal as a body refusal rather than as a missing body.
  */
 val INTENT_REFUSAL_TAGS: Set<String> =
     setOf(
         EventTag.REJECTED,
         EventTag.CONTROL_UNAVAILABLE,
+        EventTag.CONTROL_NOT_READY,
+        EventTag.EAT_SLOT_FORGOTTEN,
+        EventTag.EAT_SLOT_UNNAMED,
+        EventTag.EAT_SLOT_EMPTY,
         EventTag.EAT_SLOT_CHANGED,
+        EventTag.EAT_NOT_FOOD,
+        EventTag.EAT_RESERVE_FULL,
         EventTag.EAT_SLOT_INACCESSIBLE,
-    ) + EAT_REFUSALS.map { tagOf(it) }
+        EventTag.RETREAT_THREAT_FORGOTTEN,
+        EventTag.RETREAT_THREAT_UNNAMED,
+        EventTag.RETREAT_THREAT_GONE,
+    )
 
 /** Names how the body answered an intent, so refusals are countable. */
 fun tagOf(outcome: IntentOutcome): String =

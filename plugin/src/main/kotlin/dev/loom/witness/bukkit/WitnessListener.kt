@@ -31,9 +31,9 @@
  * `RespawnReason.PLUGIN` fires it for anything that respawns a player itself. Read as a death,
  * an agent walking home from the End was recorded dead, tombstoned synchronously and kicked for
  * good - a false permadeath, and an irreversible one. So [respawnCauseOf] translates the reason and
- * nothing more: a dimension return is continuity for a living agent, exactly as `BodyTransit.kt`
- * already treats it for the Villager body, and what that continuity *means* is the witness's answer
- * rather than this file's. What remains true of the event is that it cannot be cancelled, which is
+ * nothing more: a dimension return is continuity for a living agent, and what that continuity
+ * *means* is the witness's answer rather than this file's. What remains true of the event is that
+ * it cannot be cancelled, which is
  * why the handler is a failsafe rather than a gate.
  *
  * Note that the reason alone is not the whole rule, which is why the decision is not here. A

@@ -33,10 +33,6 @@ private val WIRE_NAMES =
         BodyEvent.HEALTH_CHANGED to "healthChanged",
         BodyEvent.DESPAWNED to "despawned",
         BodyEvent.DIED to "died",
-        BodyEvent.TRAVELLED to "travelled",
-        BodyEvent.CONVERTED to "converted",
-        BodyEvent.WORLD_LOADED to "worldLoaded",
-        BodyEvent.WORLD_HOLD_FAILED to "worldHoldFailed",
         BodyEvent.WITNESS_JOINED to "witnessJoined",
         BodyEvent.WITNESS_QUIT to "witnessQuit",
         BodyEvent.WITNESS_DENIED to "witnessDenied",
@@ -128,18 +124,18 @@ class BodyEventLogTest {
                 trigger = EventTag.GOAL_REVIEW,
                 intent = EventTag.MOVE_TO,
                 outcome = EventTag.ACCEPTED,
-                // Deliberately different readings on different scales: the reserve is a
-                // percentage and health is hearts, so a change that fed one of them from
+                // Deliberately different readings: food and health are separate facts,
+                // so a change that fed one of them from
                 // the other - the aliasing this record exists to keep apart - fails here
                 // rather than shipping a gauge that reports the wrong death.
-                vitals = AgentVitals(energy = 84.0, capacity = 100.0),
+                vitals = AgentVitals(energy = 16.8, capacity = 20.0),
                 health = AgentVitals(energy = 16.0, capacity = 20.0),
             )
 
         val line = record.toJsonLine()
 
         // Every metric a run states - what triggered a decision, what the mind chose,
-        // what the body did with it, how much of the reserve was left, and whether the
+        // what the body did with it, how much food was left, and whether the
         // body was hurt - has to be countable without reading the detail text beside it.
         //
         // Each reading is `level`, not `energy`: which vital a reading is of is the field
@@ -148,7 +144,7 @@ class BodyEventLogTest {
         assertEquals(
             """{"tick":9,"agentId":"agent-ada","event":"intentApplied","detail":"walk to 10,64,-3 -> accepted",""" +
                 """"requestId":"req-2","trigger":"goalReview","intent":"moveTo","outcome":"accepted",""" +
-                """"vitals":{"level":84.0,"capacity":100.0},"health":{"level":16.0,"capacity":20.0}}""",
+                """"vitals":{"level":16.8,"capacity":20.0},"health":{"level":16.0,"capacity":20.0}}""",
             line,
         )
         assertEquals(record, LoomJson.decodeFromString<BodyEventRecord>(line))

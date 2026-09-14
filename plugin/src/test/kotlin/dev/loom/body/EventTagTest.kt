@@ -107,32 +107,27 @@ class EventTagTest {
     }
 
     @Test
-    @DisplayName("the refusal and conversion tags are stable and distinct, since a display reads them")
+    @DisplayName("player lifecycle and control tags are stable and distinct")
     fun theClassificationTagsAreStable() {
-        // These have no contract wire form either, and two of them are read by the
-        // operator display rather than only counted: `alreadyEmbodied` is the one refusal
-        // that leaves the agent with its body, and `bodyTaken` the one conversion that
-        // takes it. A value shared with another tag would merge two opposite facts.
+        // These have no contract wire form and are read back from durable evidence.
         val classifications =
             listOf(
                 EventTag.HAS_DIED,
                 EventTag.ALREADY_EMBODIED,
-                EventTag.UNKNOWN_WORLD,
-                EventTag.WORLD_UNHELD,
-                EventTag.WORLD_REFUSED,
-                EventTag.CONVERSION_REFUSED,
-                EventTag.BODY_TAKEN,
+                EventTag.BODY_START_FAILED,
+                EventTag.BODY_START_TIMED_OUT,
+                EventTag.CONTROL_UNAVAILABLE,
+                EventTag.CONTROL_NOT_READY,
             )
 
         assertEquals(
             listOf(
                 "hasDied",
                 "alreadyEmbodied",
-                "unknownWorld",
-                "worldUnheld",
-                "worldRefused",
-                "conversionRefused",
-                "bodyTaken",
+                "bodyStartFailed",
+                "bodyStartTimedOut",
+                "controlUnavailable",
+                "controlNotReady",
             ),
             classifications,
         )

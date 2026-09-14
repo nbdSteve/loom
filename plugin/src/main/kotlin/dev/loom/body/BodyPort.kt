@@ -4,14 +4,10 @@
  *
  * Everything crossing this port is a Loom domain or contract type. No
  * `net.minecraft` type, no Bukkit `Entity`/`CraftEntity`, no world handle
- * appears in any signature here - that is what makes the body flavor
- * replaceable. The product adapter is `dev.loom.body.player`, which coordinates
- * one persistent Mineflayer player process. The older `dev.loom.body.nms`
- * Villager adapter remains in the tree but is not wired into the product.
+ * appears in any signature here. The product adapter is `dev.loom.body.player`,
+ * which coordinates one persistent Mineflayer player process.
  *
- * The boundary is enforced, not merely documented: BodyBoundaryTest fails the
- * build if any package outside the adapter reaches for `net.minecraft` or the
- * concrete entity class.
+ * The boundary is enforced by BodyBoundaryTest.
  */
 package dev.loom.body
 
@@ -42,7 +38,7 @@ interface BodyPort : AutoCloseable {
      * Returns a [BodySpawnResult.Rejected] rather than throwing when the world
      * cannot host the body: a body that fails to spawn must degrade that one
      * agent, never the server. A dead agent id is refused outright - Loom is
-     * permadeath, and [Mortality] holds that rule for every body flavor.
+     * permadeath, and [Mortality] holds that rule independently of the process.
      */
     fun spawn(agentId: AgentId): CompletionStage<BodySpawnResult>
 
@@ -98,8 +94,7 @@ interface BodyPort : AutoCloseable {
      * The active player adapter uses this hook to expire request-scoped handles and
      * reconcile process liveness with the server witness. It never infers death from a
      * process or socket outcome: only the server-authoritative mortality seam may make
-     * the lifecycle terminal. The unused Villager adapter also advances its in-process
-     * mechanics here.
+     * the lifecycle terminal.
      */
     fun tick(tick: Long)
 
@@ -136,14 +131,14 @@ interface BodyPort : AutoCloseable {
     /**
      * Operator-facing state for [agentId], or `null` when the port has never owned it.
      *
-     * The default covers an in-process body flavor. A supervised process overrides
-     * it with its player identity, endpoint and exact lifecycle state.
+     * The default keeps lightweight test doubles small. The player adapter overrides it
+     * with its identity, endpoint, and exact lifecycle state.
      */
     fun inspect(agentId: AgentId): BodyInspection? =
         if (agentId in liveBodies()) {
             BodyInspection(
                 agentId = agentId,
-                identity = "in-server body",
+                identity = "body",
                 state = BodyLifecycle.READY,
                 detail = "ready",
             )
@@ -161,5 +156,5 @@ interface BodyPort : AutoCloseable {
     override fun close() = Unit
 }
 
-/** A completed body-port operation, for an in-process adapter. */
+/** A completed body-port operation, mainly for lightweight test doubles. */
 internal fun <T> completedBodyOperation(value: T): CompletionStage<T> = CompletableFuture.completedFuture(value)

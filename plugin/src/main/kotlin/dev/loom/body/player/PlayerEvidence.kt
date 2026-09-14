@@ -120,7 +120,7 @@ internal fun eatOutcome(report: BodyResponse.EatReport): IntentOutcome =
             IntentOutcome.Rejected("that stack is not edible", EventTag.EAT_NOT_FOOD)
         EatOutcome.RESERVE_FULL ->
             IntentOutcome.Rejected(
-                "the player's food reserve is already full",
+                "the player's food bar is already full",
                 EventTag.EAT_RESERVE_FULL,
             )
         EatOutcome.SLOT_INACCESSIBLE ->

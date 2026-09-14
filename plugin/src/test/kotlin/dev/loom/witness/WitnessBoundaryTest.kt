@@ -17,9 +17,8 @@
  * WHY TWO TYPES ARE NAMED AS WELL AS THREE PACKAGES. `dev.loom.body` cannot be banned wholesale -
  * the witness genuinely reads `AgentId`, `BodyEvent`, `BodyEventLog`, `BodyEventRecord`,
  * `WitnessedPlayer` and `EventTag` from it, and it deliberately *reuses* `Mortality`, which is the
- * one type in Loom that states the permadeath rule. What it may not have is either of that
- * package's other two acting types: a `BodyPort` spawns and moves bodies, and a `Metabolism`
- * spends and refills a reserve. A witness is evidence and authorisation, never actuation.
+ * one type in Loom that states the permadeath rule. What it may not have is `BodyPort`,
+ * which spawns and moves bodies. A witness is evidence and authorisation, never actuation.
  */
 package dev.loom.witness
 
@@ -30,7 +29,6 @@ import com.tngtech.archunit.core.importer.ClassFileImporter
 import com.tngtech.archunit.core.importer.ImportOption
 import com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses
 import dev.loom.body.BodyPort
-import dev.loom.body.Metabolism
 import org.junit.jupiter.api.Test
 
 /** The witness's own package: engine-free, and where every permadeath decision is taken. */
@@ -75,13 +73,13 @@ class WitnessBoundaryTest {
             .resideInAPackage("$WITNESS..")
             .should()
             .dependOnClassesThat(
-                resideInAnyPackage("dev.loom.body.nms..", "dev.loom.mind..", "dev.loom.observe..", "$WIRING..")
-                    .or(belongToAnyOf(BodyPort::class.java, Metabolism::class.java)),
+                resideInAnyPackage("dev.loom.mind..", "dev.loom.observe..", "$WIRING..")
+                    .or(belongToAnyOf(BodyPort::class.java)),
             )
             .because(
                 "the witness records what the server did and decides who may connect; it " +
-                    "spawns nothing, moves nothing and spends no reserve, so BodyPort and " +
-                    "Metabolism are named as the two acting types it may not hold - while " +
+                    "spawns nothing and moves nothing, so BodyPort is the acting type it " +
+                    "may not hold - while " +
                     "Mortality is deliberately absent from that list, being the permadeath " +
                     "rule this package reuses rather than restates",
             )

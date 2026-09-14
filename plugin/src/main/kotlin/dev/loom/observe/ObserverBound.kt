@@ -1,7 +1,7 @@
 /*
  * What an observer may be shown, and how much of it.
  *
- * The counterpart of `PerceptionBound`, and for the same reason: a bound that lives in
+ * The counterpart of the body perception limits, and for the same reason: a bound that lives in
  * the domain is a bound a test can pin, while one spelled inline at the call site is a
  * bound that drifts. Perception bounds what an *agent* is told about the world; this
  * bounds what an *operator* is told about an agent.

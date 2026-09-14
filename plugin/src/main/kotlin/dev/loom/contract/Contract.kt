@@ -68,17 +68,6 @@ private fun requireBoundedRef(handle: String?) {
     }
 }
 
-/**
- * A full legacy Villager energy reserve.
- *
- * Retained for the unused Villager adapter and its tests. The active player
- * perception reports [SelfState.food] and [SelfState.saturation] instead.
- */
-const val ENERGY_FULL: Double = 1.0
-
-/** An exhausted legacy Villager energy reserve. */
-const val ENERGY_EXHAUSTED: Double = 0.0
-
 /** Vanilla's food and saturation ceiling. */
 const val MAX_FOOD_LEVEL: Int = 20
 

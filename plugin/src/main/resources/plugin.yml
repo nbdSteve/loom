@@ -7,7 +7,7 @@ name: Loom
 version: '0.1.0'
 main: dev.loom.plugin.LoomPlugin
 api-version: '1.21'
-description: Gives Loom agents physical bodies in the world, behind a swappable body port.
+description: Gives Loom agents persistent player bodies in the world.
 
 # `/loombody` drives live agents and, through `think`, spends a real model call on
 # the mind. A command block with no `permission:` key is open to every sender:

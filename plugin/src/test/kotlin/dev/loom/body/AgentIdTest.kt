@@ -17,12 +17,4 @@ class AgentIdTest {
     fun ordinaryIdIsAccepted() {
         assertEquals("ada", AgentId("ada").toString())
     }
-
-    @Test
-    @DisplayName("the reserved world id can never be an agent")
-    fun reservedWorldIdIsRefused() {
-        // Structural, not conventional: no agent may be created whose event-log
-        // records are indistinguishable from the world's own footprint records.
-        assertThrows<IllegalArgumentException> { AgentId(WORLD_AGENT_ID) }
-    }
 }

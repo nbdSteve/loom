@@ -106,18 +106,14 @@ jobs:
         with:
           distribution: corretto
           java-version: '21'
-      # The build compiles against a Mojang-mapped server that paperweight
-      # downloads, remaps, and decompiles - a few hundred MB and several minutes
-      # on a cold cache. Caching it keeps that cost off every run; the key is the
-      # build script, since that is what pins the server version.
-      - name: Cache paperweight and Gradle
+      - name: Cache Gradle
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-paperweight-${{ runner.os }}-${{ hashFiles('plugin/build.gradle.kts', 'plugin/settings.gradle.kts', 'plugin/gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: gradle-paperweight-${{ runner.os }}-
+          key: gradle-${{ runner.os }}-${{ hashFiles('plugin/build.gradle.kts', 'plugin/settings.gradle.kts', 'plugin/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
       - name: gate suite, conformance and architecture tests
         # `check` runs detekt, ktlint, ArchUnit, warnings-as-errors compile, and
         # the tests; all are configured to fail the build.
@@ -140,14 +136,14 @@ jobs:
         with:
           distribution: corretto
           java-version: '21'
-      - name: Cache paperweight and Gradle
+      - name: Cache Gradle
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-paperweight-${{ runner.os }}-${{ hashFiles('plugin/build.gradle.kts', 'plugin/settings.gradle.kts', 'plugin/gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: gradle-paperweight-${{ runner.os }}-
+          key: gradle-${{ runner.os }}-${{ hashFiles('plugin/build.gradle.kts', 'plugin/settings.gradle.kts', 'plugin/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
       - name: Start the cognition service
         working-directory: cognition
         # Backgrounded and then waited for: the test needs the port accepting

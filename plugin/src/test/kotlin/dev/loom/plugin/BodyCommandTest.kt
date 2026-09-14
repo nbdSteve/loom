@@ -6,7 +6,6 @@ import dev.loom.body.BodyLifecycle
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
 import dev.loom.body.IntentOutcome
-import dev.loom.body.WORLD_AGENT_ID
 import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Intent
@@ -21,7 +20,6 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.fail
 import java.util.concurrent.CompletableFuture
 
@@ -31,19 +29,6 @@ class BodyCommandTest {
 
     private fun drain() {
         while (scheduled.isNotEmpty()) scheduled.removeFirst().invoke()
-    }
-
-    @Test
-    @DisplayName("the reserved world id is refused before every identity command reaches the port")
-    fun reservedWorldIdIsRefusedAsAReply() {
-        val body = SpyBody()
-        val command = commandFor(body)
-        val refusal = assertThrows<IllegalArgumentException> { AgentId(WORLD_AGENT_ID) }.message
-
-        for (subcommand in listOf("create", "inspect", "think", "stop")) {
-            assertEquals(refusal, command.reply(arrayOf(subcommand, WORLD_AGENT_ID)), subcommand)
-        }
-        assertTrue(body.calls.isEmpty())
     }
 
     @Test

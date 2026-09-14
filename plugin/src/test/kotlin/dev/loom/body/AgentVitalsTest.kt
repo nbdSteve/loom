@@ -8,10 +8,7 @@
 package dev.loom.body
 
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -40,13 +37,6 @@ class AgentVitalsTest {
     }
 
     @Test
-    @DisplayName("exhaustion is nothing left, and nothing less than that")
-    fun exhaustionIsTerminal() {
-        assertTrue(AgentVitals(energy = 0.0, capacity = 20.0).isExhausted)
-        assertFalse(AgentVitals(energy = 0.5, capacity = 20.0).isExhausted, "half a heart is still alive")
-    }
-
-    @Test
     @DisplayName("a first reading has no trend: a newly-watched agent is not a dying one")
     fun aFirstReadingIsSteady() {
         assertEquals(EnergyTrend.STEADY, trendOf(previous = null, current = 1.0))
@@ -61,19 +51,18 @@ class AgentVitalsTest {
         assertEquals("energy 16 of 20", describe(AgentVitals(energy = 16.0, capacity = 20.0), "energy"))
         // The same shape carries either vital, so the caller names which one it read: a
         // health record whose detail said "energy" would be exactly the aliasing of the two
-        // that the separate reserve and health fields exist to prevent.
+        // that the separate food and health fields exist to prevent.
         assertEquals("health 12 of 20", describe(AgentVitals(energy = 12.0, capacity = 20.0), "health"))
     }
 
     @Test
-    @DisplayName("a reserve that does not divide is still readable by eye")
+    @DisplayName("a fractional reading is still readable by eye")
     fun anAmountIsRoundedForAReader() {
-        // A reserve is counted in ticks and reported as a percentage, so most readings
-        // repeat: this one is what an in-world run wrote into a record's detail as
-        // `98.76666666666667`. The exact number stays in the record's own vitals field,
+        // Saturation and health can be fractional, so a reading can carry more precision
+        // than belongs in prose. The exact number stays in the record's own vitals field,
         // where anything counting it looks.
-        assertEquals("98.8", amountOf(98.76666666666667))
-        assertEquals("100", amountOf(100.0))
+        assertEquals("18.8", amountOf(18.76666666666667))
+        assertEquals("20", amountOf(20.0))
         assertEquals("16.5", amountOf(16.5))
     }
 
@@ -100,15 +89,6 @@ class AgentVitalsTest {
             AgentVitals(energy = 19.0, capacity = 20.0),
             watch.sample(agent, AgentVitals(energy = 19.0, capacity = 20.0)),
         )
-    }
-
-    @Test
-    @DisplayName("exhaustion is recorded whatever the step, because that reading is the death")
-    fun exhaustionOutranksTheStep() {
-        val watch = EnergyWatch(step = 100.0)
-        watch.sample(agent, FULL)
-
-        assertNotNull(watch.sample(agent, AgentVitals(energy = 0.0, capacity = 20.0)))
     }
 
     @Test

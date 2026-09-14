@@ -74,7 +74,7 @@ class WitnessJournalTest {
     fun aDeathRecordSaysThatItIsTerminal() {
         journal.died(subjectOf(scout), "loomscout1 was slain by Zombie", TICK)
 
-        // Filed as Loom's own `died`, so a player body's death and a Villager's are one number.
+        // Filed as Loom's own `died`, so every player death is counted in the common event log.
         val record = log.of(BodyEvent.DIED).single()
         assertTrue(record.detail.contains("was slain by Zombie"), record.detail)
         assertTrue(record.detail.contains("Permadeath"), record.detail)

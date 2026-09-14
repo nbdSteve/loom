@@ -1,12 +1,9 @@
 /*
  * The durable half of permadeath.
  *
- * `Mortality` makes a death terminal for as long as the server process lives, which is enough
- * for the Villager body: a Villager exists only inside a running Loom, so a restart takes the
- * body with it. A player body is different in the one way that matters. The account outlives
- * the server, the client can reconnect at any time, and the process driving it is started by
- * something outside Loom - so an in-memory death is a death that a restart undoes, and Loom
- * would hand a fresh body to an agent it had already recorded as gone.
+ * `Mortality` makes a death terminal only for the life of one server process. A player
+ * account outlives that process and can reconnect at any time, so an in-memory death is
+ * a death that a restart undoes.
  *
  * This file is therefore where the ledger lives: one tombstone per line, appended and synced
  * before the death is treated as final, replayed before the first login is admitted.

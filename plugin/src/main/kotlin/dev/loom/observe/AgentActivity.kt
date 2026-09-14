@@ -58,11 +58,7 @@ enum class AgentActivity(
     FLEEING("fleeing", ObserverLevel.ALARM),
 
     /**
-     * Eating: the one thing an agent can do that refills its energy reserve.
-     *
-     * Its own state rather than a shade of resting, which is the distinction the whole
-     * survival loop turns on: an agent that rested is spending its life waiting, and an
-     * agent that ate has bought some of it back.
+     * Eating raises the player's vanilla food level.
      */
     EATING("eating", ObserverLevel.CALM),
 
@@ -80,9 +76,6 @@ enum class AgentActivity(
 
     /** The mind never answered. Not the agent's doing, and not a decision. */
     UNANSWERED("mind did not answer", ObserverLevel.CONCERN),
-
-    /** Crossing into another dimension. Continuity, not an ending. */
-    TRAVELLING("crossing dimensions", ObserverLevel.CONCERN),
 
     /** Gone for good. Loom is permadeath, so this state is never left. */
     DEAD("DEAD - will not return", ObserverLevel.ALARM),

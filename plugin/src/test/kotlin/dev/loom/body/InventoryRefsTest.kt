@@ -57,16 +57,16 @@ class InventoryRefsTest {
         val refs = RequestRefs()
         val creature = refs.creatures.mint(listOf(UUID.randomUUID())).single()
         val slot = refs.slots.mint(listOf(4)).single()
-        val before = refs.seamFor(ada, "req-1", NeverEats, atTick = 0)
-
-        assertEquals(RefResolution.Stale, before.threatOf(creature.handle))
-        assertEquals(SlotResolution.Stale, before.slotOf(slot.handle))
+        assertEquals(RefResolution.Stale, refs.creatures.resolve(ada, "req-1", creature.handle, atTick = 0))
+        assertEquals(SlotResolution.Stale, refs.slots.resolve(ada, "req-1", slot.handle, atTick = 0))
 
         refs.remember(ada, "req-1", listOf(creature), listOf(slot), atTick = 0)
-        val after = refs.seamFor(ada, "req-1", NeverEats, atTick = 0)
 
-        assertEquals(RefResolution.Bound(creature.subject), after.threatOf(creature.handle))
-        assertEquals(SlotResolution.Bound(4), after.slotOf(slot.handle))
+        assertEquals(
+            RefResolution.Bound(creature.subject),
+            refs.creatures.resolve(ada, "req-1", creature.handle, atTick = 0),
+        )
+        assertEquals(SlotResolution.Bound(4), refs.slots.resolve(ada, "req-1", slot.handle, atTick = 0))
     }
 
     @Test
@@ -213,11 +213,9 @@ class InventoryRefsTest {
         val refs = RequestRefs()
         val creature = refs.creatures.issue(ada, "req-1", listOf(UUID.randomUUID())).single().handle
         val slot = refs.slots.issue(ada, "req-1", listOf(0)).single().handle
-        val seam = refs.seamFor(ada, "req-1", NeverEats, atTick = 0)
-
-        assertEquals(SlotResolution.Unknown, seam.slotOf(creature))
-        assertEquals(RefResolution.Unknown, seam.threatOf(slot))
-        assertEquals(SlotResolution.Bound(0), seam.slotOf(slot))
+        assertEquals(SlotResolution.Unknown, refs.slots.resolve(ada, "req-1", creature))
+        assertEquals(RefResolution.Unknown, refs.creatures.resolve(ada, "req-1", slot))
+        assertEquals(SlotResolution.Bound(0), refs.slots.resolve(ada, "req-1", slot))
     }
 
     @Test
@@ -226,10 +224,9 @@ class InventoryRefsTest {
         val creature = refs.creatures.issue(ada, "req-1", listOf(UUID.randomUUID())).single().handle
         val slot = refs.slots.issue(ada, "req-1", listOf(0)).single().handle
         refs.forget(ada)
-        val seam = refs.seamFor(ada, "req-1", NeverEats, atTick = 0)
 
-        assertEquals(SlotResolution.Stale, seam.slotOf(slot))
-        assertEquals(RefResolution.Stale, seam.threatOf(creature))
+        assertEquals(SlotResolution.Stale, refs.slots.resolve(ada, "req-1", slot))
+        assertEquals(RefResolution.Stale, refs.creatures.resolve(ada, "req-1", creature))
     }
 
     @Test
@@ -243,10 +240,9 @@ class InventoryRefsTest {
         refs.remember(ada, "req-1", listOf(creature), listOf(slot), atTick = 0)
 
         refs.settle(ada, "req-1")
-        val seam = refs.seamFor(ada, "req-1", NeverEats, atTick = 0)
 
-        assertEquals(SlotResolution.Stale, seam.slotOf(slot.handle))
-        assertEquals(RefResolution.Stale, seam.threatOf(creature.handle))
+        assertEquals(SlotResolution.Stale, refs.slots.resolve(ada, "req-1", slot.handle))
+        assertEquals(RefResolution.Stale, refs.creatures.resolve(ada, "req-1", creature.handle))
     }
 
     @Test
@@ -259,19 +255,15 @@ class InventoryRefsTest {
         val slot = refs.slots.mint(listOf(2)).single()
         refs.remember(ada, "req-1", listOf(creature), listOf(slot), atTick = 100)
 
-        val inTime = refs.seamFor(ada, "req-1", NeverEats, atTick = 100 + REQUEST_REFS_LIFETIME_TICKS - 1)
-        val tooLate = refs.seamFor(ada, "req-1", NeverEats, atTick = 100 + REQUEST_REFS_LIFETIME_TICKS)
+        val inTime = 100 + REQUEST_REFS_LIFETIME_TICKS - 1
+        val tooLate = 100 + REQUEST_REFS_LIFETIME_TICKS
 
-        assertEquals(SlotResolution.Bound(2), inTime.slotOf(slot.handle))
-        assertEquals(RefResolution.Bound(creature.subject), inTime.threatOf(creature.handle))
-        assertEquals(SlotResolution.Stale, tooLate.slotOf(slot.handle))
-        assertEquals(RefResolution.Stale, tooLate.threatOf(creature.handle))
+        assertEquals(SlotResolution.Bound(2), refs.slots.resolve(ada, "req-1", slot.handle, inTime))
+        assertEquals(
+            RefResolution.Bound(creature.subject),
+            refs.creatures.resolve(ada, "req-1", creature.handle, inTime),
+        )
+        assertEquals(SlotResolution.Stale, refs.slots.resolve(ada, "req-1", slot.handle, tooLate))
+        assertEquals(RefResolution.Stale, refs.creatures.resolve(ada, "req-1", creature.handle, tooLate))
     }
-}
-
-/** A reserve for the tests that are about handles and never about eating. */
-private object NeverEats : EnergyReserve {
-    override fun standing(): ReserveStanding = ReserveStanding.HAS_ROOM
-
-    override fun credit(nutrition: Int): Long = 0L
 }

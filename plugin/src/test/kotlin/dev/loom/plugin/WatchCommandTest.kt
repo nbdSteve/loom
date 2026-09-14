@@ -2,9 +2,7 @@
  * The operator's way in, tested without a server.
  *
  * `reply` is the whole command apart from the two Bukkit lines that send its answer, so a
- * fake sink is enough to exercise every path. The one case worth stating outright is a
- * refused agent id: it must come back as the domain's own sentence rather than as an
- * exception escaping the command, and it must never leave a watch half-attached.
+ * fake sink is enough to exercise every path.
  */
 package dev.loom.plugin
 
@@ -12,7 +10,6 @@ import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventRecord
-import dev.loom.body.WORLD_AGENT_ID
 import dev.loom.observe.Note
 import dev.loom.observe.Observatory
 import dev.loom.observe.ObserverSink
@@ -23,7 +20,6 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertThrows
 
 /** The agent the operator asks to watch. */
 private const val AGENT = "agent-ada"
@@ -65,7 +61,7 @@ class WatchCommandTest {
     ): String? = command.reply(args, surface)
 
     /**
-     * Lets the run state a reserve for [AGENT], which is what a watch can come to know.
+     * Lets the run state a food reading for [AGENT], which is what a watch can come to know.
      *
      * Offered rather than shown: `saw` accumulates and only a refresh delivers, so this moves
      * what the display knows without touching a sink.
@@ -77,7 +73,7 @@ class WatchCommandTest {
                 agentId = AGENT,
                 event = BodyEvent.SPAWNED,
                 detail = "",
-                vitals = AgentVitals(energy = 98.5, capacity = 100.0),
+                vitals = AgentVitals(energy = 19.7, capacity = 20.0),
             ),
         )
 
@@ -152,19 +148,6 @@ class WatchCommandTest {
     }
 
     @Test
-    @DisplayName("a refused agent id is answered in the domain's own words, and starts no watch")
-    fun aRefusedAgentIdIsAReplyAndNotAnException() {
-        val refusal = assertThrows<IllegalArgumentException> { AgentId(WORLD_AGENT_ID) }.message
-
-        assertEquals(refusal, typed(WORLD_AGENT_ID))
-        assertEquals(
-            WatchStanding.Nobody,
-            observatory.standing(OPERATOR),
-            "a refused id must never leave a watch half-attached",
-        )
-    }
-
-    @Test
     @DisplayName("a blank agent id is refused the same way, since the domain refuses it")
     fun aBlankAgentIdIsRefusedToo() {
         assertEquals("agentId must not be blank", typed(" "))
@@ -208,7 +191,7 @@ class WatchCommandTest {
         // The command builds a sink before it knows one is needed; that is only safe
         // because an unwatched sink costs nothing and leaves nothing behind.
         typed()
-        typed(WORLD_AGENT_ID)
+        typed(" ")
         typed(AGENT, "please")
 
         assertEquals(0, sink.lines)
@@ -243,7 +226,7 @@ class WatchCommandTest {
 
         // Nothing at all happened here: the surface stays, and so does the state, because what
         // is known follows the agent. Advising this operator to attach before spawning is
-        // advice about an agent whose reserve their bar is already showing.
+        // advice about an agent whose food reading their bar is already showing.
         assertEquals("watching $AGENT, $KEPT_NOTE", reply)
         assertFalse(reply?.contains("attach before spawning") ?: true, "$reply")
     }

@@ -9,8 +9,7 @@
  *
  *  - a transport or provider failure's message, which is unbounded, can quote back the
  *    perception it was given, and belongs to the layer that already refuses to log it;
- *  - the chunk lists a world-hold failure names;
- *  - the free coordinates a spawn, a move, or a dimension arrival records;
+ *  - the free coordinates a spawn or move records;
  *  - anything at all that a later event adds to `detail` without thinking about who
  *    might be looking.
  *
@@ -86,10 +85,7 @@ class ObserverView(
             BodyEvent.COGNITION_UNAVAILABLE -> unansweredNote(record.outcome)
             BodyEvent.DESPAWNED -> Note("its body was put away", ObserverLevel.CALM)
             BodyEvent.DIED -> Note("DIED. Permadeath: this agent will not return.", ObserverLevel.ALARM)
-            BodyEvent.TRAVELLED -> Note("crossed into another dimension", ObserverLevel.CONCERN)
-            BodyEvent.CONVERTED -> convertedNote(record.outcome)
             BodyEvent.RETREATING -> retreatNote(record.outcome)
-            BodyEvent.WORLD_HOLD_FAILED -> Note(HOLD_FAILURE_CAVEAT, ObserverLevel.ALARM)
             BodyEvent.WITNESS_JOINED -> Note("connected to the server and has a body now", ObserverLevel.CALM)
             BodyEvent.WITNESS_QUIT ->
                 Note("disconnected. It is not dead; the agent continues.", ObserverLevel.CALM)
@@ -107,8 +103,6 @@ class ObserverView(
             // The same, for the other vital: a body under attack would otherwise fill the
             // note stream with a line per half-heart while the line already says the number.
             BodyEvent.HEALTH_CHANGED -> null
-            // World-level bookkeeping, and true of every agent at once rather than this one.
-            BodyEvent.WORLD_LOADED -> null
             // Deliberately quiet, and not an oversight. A suppressed sighting is evidence
             // about a bound Loom applied, which belongs in the append-only record where a
             // run's numbers are read from; recorded once a second for as long as anything
@@ -139,10 +133,6 @@ class ObserverView(
             BodyEvent.HEALTH_CHANGED,
             BodyEvent.DESPAWNED,
             BodyEvent.DIED,
-            BodyEvent.TRAVELLED,
-            BodyEvent.CONVERTED,
-            BodyEvent.WORLD_LOADED,
-            BodyEvent.WORLD_HOLD_FAILED,
             BodyEvent.RETREATING,
             // Names the creature and the request-scoped handle it was seen under. Neither
             // is a secret, and neither is a line: the bound that refused it is the whole
@@ -187,28 +177,23 @@ class ObserverView(
     }
 
     /**
-     * The vitals fields for the line: the energy reserve always, health only once hurt.
+     * The vitals fields for the line: player food always, health only once hurt.
      *
-     * The reserve is the vital the gauge follows and the one an unattended agent dies of,
-     * so it is always on the line, with its trend while there is still a trend to have. A
-     * reserve nothing is spending has none: a dead agent's last reading is on its way to
-     * zero and a put-away body's is simply frozen, so a live trend would sit on the
-     * tombstone, or beside `no body`, reading "declining" for the rest of the session. The
-     * reading itself stays either way, because it is the last one actually taken. Health is
-     * the other way a body can end, beaten down on a full reserve, so it earns a place only
-     * once there is something to say; a body at full health keeps the common survival case
-     * short and the most valuable line on the screen at its width.
+     * The compatibility field carries the player's food level and drives the gauge. Its
+     * trend is shown only while a body can still report samples; the last reading remains
+     * after disconnect or death because it is the last one actually taken. Health earns a
+     * place once it is below full, keeping the common line short.
      */
     private fun vitalFields(state: WatchState): List<String> {
         val vitals = state.vitals ?: return listOf("energy not read yet")
-        val settled = state.trend == EnergyTrend.STEADY || state.isReserveFrozen
+        val settled = state.trend == EnergyTrend.STEADY || state.isVitalsFrozen
         val trend = if (settled) "" else " ${state.trend.name.lowercase()}"
-        val reserve = "energy ${amountOf(vitals.energy)}/${amountOf(vitals.capacity)}$trend"
+        val primary = "energy ${amountOf(vitals.energy)}/${amountOf(vitals.capacity)}$trend"
         val health =
             state.health
                 ?.takeIf { it.fraction < FULL_FRACTION }
                 ?.let { "health ${amountOf(it.energy)}/${amountOf(it.capacity)}" }
-        return listOfNotNull(reserve, health)
+        return listOfNotNull(primary, health)
     }
 
     private fun cognitionField(state: WatchState): String? {
@@ -220,15 +205,8 @@ class ObserverView(
     /**
      * How much attention one vital deserves, from how much of it is left.
      *
-     * Read from the level and deliberately not from the trend. A reserve is spent by
-     * living, so `declining` is the standing condition of every living agent rather than
-     * news about one, and colouring it left an in-world run yellow four seconds after the
-     * spawn and yellow for the rest of the agent's life - the one channel an operator
-     * reads at a glance, spent on the fact that time passes. What is worth a colour is
-     * how much is left, because that is what runs out.
-     *
-     * Applied to both vitals, since either can end the agent: a body beaten down on a
-     * full reserve deserves the same colour as a reserve run down on an unhurt body.
+     * Read from the level and deliberately not from the trend. Applied to food and
+     * health alike, since either low reading deserves attention.
      */
     private fun vitalLevel(vitals: AgentVitals?): ObserverLevel =
         when {
@@ -247,14 +225,6 @@ class ObserverView(
      * ([decidedNote], [unansweredNote]) have to be bounded.
      */
     private companion object {
-        /**
-         * Said in full whenever Loom failed to hold the world.
-         *
-         * An operator watching a run needs to know that its permadeath numbers may be
-         * wrong, and needs to know it while watching rather than afterwards in the log.
-         */
-        const val HOLD_FAILURE_CAVEAT = "Loom could not hold the world: a death shown here may be a chunk unload."
-
         /** The model, tier, and prompt version, as one short field. */
         fun stampOf(provenance: Provenance): String =
             "${provenance.model}/${provenance.promptVersion} ${provenance.tier.name.lowercase()}"
@@ -339,8 +309,7 @@ class ObserverView(
          * added later is a cross-check nobody has written a sentence for, and the honest line
          * for it says only that the server disagreed. CONCERN throughout: nothing has happened
          * to the agent, and what is in doubt is whether what the body said about it can be
-         * trusted. Said while an operator is looking rather than only in the log afterwards,
-         * for the same reason `worldHoldFailed` is.
+         * trusted. Said while an operator is looking rather than only in the log afterwards.
          */
         fun disputedNote(outcome: String?): Note =
             when (outcome) {
@@ -368,21 +337,6 @@ class ObserverView(
             }
 
         /**
-         * What to say about a conversion, according to whether it took the body.
-         *
-         * A refusal is the ordinary case, and "something tried" is exactly right for it.
-         * A conversion that got past the refusal is not: the agent is alive with nothing
-         * to act through, nothing re-embodies it, and "something tried" would be the
-         * display understating the one thing an operator would need to intervene about.
-         */
-        fun convertedNote(outcome: String?): Note =
-            if (outcome == EventTag.BODY_TAKEN) {
-                Note("a conversion took its body. It is alive with nothing to act through.", ObserverLevel.ALARM)
-            } else {
-                Note("something tried to turn it into another creature", ObserverLevel.CONCERN)
-            }
-
-        /**
          * What an operator is told about a change in an agent's flight.
          *
          * Read from the countable tag rather than from the detail, like every other event
@@ -395,12 +349,6 @@ class ObserverView(
          */
         fun retreatNote(outcome: String?): Note =
             when (outcome) {
-                EventTag.RETREAT_STARTED -> Note("is running from a threat", ObserverLevel.ALARM)
-                EventTag.RETREAT_CONTINUED -> Note("is still running from a threat", ObserverLevel.ALARM)
-                EventTag.RETREAT_PENDING_GROUND ->
-                    Note("cannot run until it is back on the ground", ObserverLevel.ALARM)
-                EventTag.RETREAT_PENDING_BUDGET ->
-                    Note("is waiting for a path search to run from a threat", ObserverLevel.ALARM)
                 EventTag.RETREAT_SAFE -> Note("got away from the threat", ObserverLevel.CALM)
                 // Worded to hold for a flight that never started as well as one that did:
                 // this tag is also what a Flee naming a creature the world no longer holds

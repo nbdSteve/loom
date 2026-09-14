@@ -1,9 +1,8 @@
 /*
  * When a hostile in view is worth waking the mind for.
  *
- * The first survival drive Loom gave an agent was hunger, which is slow: a reserve
- * drains over half an hour and the scheduled goal review is a fine place to notice it.
- * Predation is not slow. An in-world run watched a zombie kill an agent whose every
+ * Hunger changes slowly enough for a scheduled goal review to notice. Predation is
+ * not slow. An in-world run watched a zombie kill an agent whose every
  * perception still said `goalReview`, because nothing between the world and the mind
  * was allowed to say "this is happening now" - so this is the seam that says it.
  *
@@ -28,36 +27,6 @@ package dev.loom.body
 import dev.loom.contract.Bearing
 import dev.loom.contract.Trigger
 import java.util.UUID
-
-/**
- * The living things in Paper 1.21.1 that hunt a villager on sight.
- *
- * A Loom body is a villager underneath (see `LoomBodyEntity`), and "not a monster" is
- * not safety: these eight all carry a vanilla goal that targets `AbstractVillager`, so
- * they come for an agent without being provoked. They are named by the engine's own
- * entity description id - the same string an [dev.loom.contract.Observation.what]
- * carries - so this table stays engine-free and testable, and the adapter has nothing
- * to classify.
- *
- * `zombie_villager` is here because it inherits Zombie's target goals rather than
- * declaring its own, which is exactly the kind of thing a table of class names would
- * have got wrong. Anything that hunts an agent only once provoked is deliberately
- * absent: this is the set that makes standing still dangerous.
- */
-val VILLAGER_HUNTERS: Set<String> =
-    setOf(
-        "entity.minecraft.zombie",
-        "entity.minecraft.drowned",
-        "entity.minecraft.zombie_villager",
-        "entity.minecraft.evoker",
-        "entity.minecraft.illusioner",
-        "entity.minecraft.pillager",
-        "entity.minecraft.vindicator",
-        "entity.minecraft.ravager",
-    )
-
-/** Whether [what] - an entity description id - hunts a Loom body unprovoked. */
-fun huntsVillagers(what: String): Boolean = what in VILLAGER_HUNTERS
 
 /** Hostile species that can choose an ordinary player as a target without provocation. */
 val PLAYER_HUNTERS: Set<String> =
@@ -119,17 +88,15 @@ const val THREAT_DEBOUNCE_TICKS: Long = 100
 /**
  * How close a hostile has to be before its sighting is worth the frontier model.
  *
- * Eight blocks, deliberately the same distance a body may be *sent* in one navigation
- * request ([PATH_REQUEST_REACH_BLOCKS]): that is the range in which the agent's own
- * options, retreat included, are still real. A threat further off than the body can act
- * over is news rather than a crisis.
+ * Eight blocks: close enough that the player's immediate options, retreat included,
+ * matter. A threat further off is news rather than a crisis.
  *
  * It lives here rather than beside the routing it drives, because the body is what
  * measures the distance and `dev.loom.mind`'s `importanceOf` is what spends money on
  * it; written down twice, a change to one would silently leave the other tiering the
  * same sighting differently from the watch that reported it.
  */
-const val PIVOTAL_THREAT_DISTANCE_BLOCKS: Double = PATH_REQUEST_REACH_BLOCKS
+const val PIVOTAL_THREAT_DISTANCE_BLOCKS: Double = 8.0
 
 /**
  * How many pivotal threat sightings one agent's night may pay for.
@@ -139,10 +106,8 @@ const val PIVOTAL_THREAT_DISTANCE_BLOCKS: Double = PATH_REQUEST_REACH_BLOCKS
  * once. Eight is enough that an agent meeting a group is asked about the first several
  * of them and cheap enough that a bad night cannot become a bill nobody chose.
  *
- * Per agent rather than server-wide, which is the opposite choice from
- * [NavigationPolicy]'s and made for the opposite reason. A path search is a cost to the
- * *server*, so a hundred agents deciding at once must share one budget or the tick
- * suffers. A model call is a cost to the *run*, and an agent that has spent nothing
+ * Per agent rather than server-wide. A model call is a cost to the *run*, and an
+ * agent that has spent nothing
  * tonight has done nothing to deserve being refused because its neighbour was busy
  * being hunted - which, with one shared ceiling, is exactly what would happen in the
  * scene the trigger exists for. The consequence is deliberate and worth stating: the
@@ -187,7 +152,7 @@ enum class ThreatSuppressionReason(
 data class ThreatCandidate(
     /** Which creature it is, so the watch can tell one zombie from another. */
     val subject: UUID,
-    /** The engine's own description of it, and what [huntsVillagers] is asked about. */
+    /** The engine's own description of it, and what [huntsPlayers] is asked about. */
     val what: String,
     /** The handle this perception issued for it, minted by [EntityRefs]. */
     val ref: String,
@@ -270,7 +235,7 @@ class ThreatWatch(
     private val debounceTicks: Long = THREAT_DEBOUNCE_TICKS,
     private val pivotalDistanceBlocks: Double = PIVOTAL_THREAT_DISTANCE_BLOCKS,
     private val maxPivotalCallsPerNight: Int = MAX_PIVOTAL_THREAT_CALLS_PER_NIGHT,
-    private val hunts: (String) -> Boolean = ::huntsVillagers,
+    private val hunts: (String) -> Boolean = ::huntsPlayers,
 ) {
     init {
         require(debounceTicks > 0) { "debounceTicks must be positive, got $debounceTicks" }
@@ -353,8 +318,8 @@ class ThreatWatch(
      *
      * For an agent whose body has gone - it has died, which in Loom is for good, or it
      * has been put away. What it deliberately does *not* drop is tonight's spend: that is
-     * a fact about the night rather than about the body, so a body put away and spawned
-     * again does not come back with a fresh allowance. The spend needs no clearing of its
+     * a fact about the night rather than about one process, so reconnecting the player
+     * does not grant a fresh allowance. The spend needs no clearing of its
      * own, because [rollBudgetToToday] discards every agent's count at the day boundary.
      */
     fun forget(agent: AgentId) {

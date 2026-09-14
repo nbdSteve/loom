@@ -39,7 +39,6 @@
 package dev.loom.observe
 
 import dev.loom.body.AgentId
-import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventRecord
 
 /**
@@ -152,10 +151,10 @@ class Observatory(
      * WHAT IS KNOWN FOLLOWS THE AGENT, NOT THE SURFACE. A watch already standing on
      * [agentId] keeps its [WatchState], because that state is a projection of the append-only
      * record rather than anything about who was looking: rebuilt blank, an operator who
-     * retyped the command they were already running lost the reserve reading until the next
-     * vitals-carrying record - eighteen seconds in world - and the activity until the next
-     * goal review, up to a whole cadence, while the gauge sat empty on an agent at full
-     * reserve. Retyping it against the same surface changes nothing at all, down to the lines
+     * retyped the command they were already running lost the food reading until the next
+     * vitals-carrying record and the activity until the next goal review, up to a whole
+     * cadence, while the gauge sat empty on an agent with a full food bar. Retyping it
+     * against the same surface changes nothing at all, down to the lines
      * not yet drained. Carried onto a *new* surface it is painted there from scratch, since
      * that surface has no bar up yet. Only naming a different agent starts blank, and so does
      * a watch that was stopped: the bar came down, and nothing here keeps history after that.
@@ -270,28 +269,14 @@ class Observatory(
      * Offers one record to whoever is watching.
      *
      * Cheap and total: with no watcher it does nothing, and with a watcher it accepts
-     * only records about that agent - plus the one world-level record that says the run's
-     * permadeath figures cannot be trusted, which an operator needs while watching
-     * rather than afterwards.
-     *
-     * That one exception is said to the operator and stops there. A world-level record is
-     * filed under `WORLD_AGENT_ID` and is a fact about the world rather than about this
-     * agent, so it may not move this agent's state: every field it carried would be read as
-     * the watched agent's own. It carries none today, which is the only reason letting it
-     * through has cost nothing so far - a single field added to a world record would have
-     * been silently attributed to whichever agent happened to be watched.
+     * only records about that agent.
      */
     fun saw(record: BodyEventRecord) {
         synchronized(lock) {
             val current = watch ?: return
-            val itsOwn = record.agentId == current.state.agentId
-            if (!itsOwn && record.event != BodyEvent.WORLD_HOLD_FAILED) {
-                return
-            }
+            if (record.agentId != current.state.agentId) return
             view.noteFor(record)?.let { current.offer(it, maxPendingNotes) }
-            if (itsOwn) {
-                current.state = advanced(current.state, record)
-            }
+            current.state = advanced(current.state, record)
         }
     }
 

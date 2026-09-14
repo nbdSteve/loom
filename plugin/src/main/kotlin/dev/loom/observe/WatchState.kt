@@ -13,7 +13,7 @@
  * activity are refused by the same answer, because a failure names the request it was
  * about and a superseded one is not news about the cycle on screen.
  *
- * The four events whose *name* does not settle what they mean are answered in
+ * The events whose *name* does not settle what they mean are answered in
  * `TaggedActivity.kt`, which owns the rule that such a fact is read from the record's countable
  * outcome tag and never from its prose.
  *
@@ -52,11 +52,11 @@ private val IN_MOTION = setOf(AgentActivity.MOVING, AgentActivity.FLEEING)
 data class WatchState(
     /** The agent being watched. */
     val agentId: String,
-    /** The last energy-reserve reading recorded for it, or `null` if none has landed yet. */
+    /** The last food reading recorded for it, or `null` if none has landed yet. */
     val vitals: AgentVitals? = null,
     /** The last health reading recorded for it, or `null` if none has landed yet. */
     val health: AgentVitals? = null,
-    /** What the reserve did between the last two readings. */
+    /** What food did between the last two readings. */
     val trend: EnergyTrend = EnergyTrend.STEADY,
     /** What the agent is visibly doing. */
     val activity: AgentActivity = AgentActivity.UNSEEN,
@@ -88,19 +88,16 @@ data class WatchState(
     val isFinal: Boolean get() = activity == AgentActivity.DEAD
 
     /**
-     * True once nothing is spending this agent's reserve any more.
+     * True once no further player vitals reading can arrive.
      *
-     * A reserve is charged to a body on the tick - `Metabolism.spendUpTo` is handed the
-     * live bodies and nothing else - so an agent with no body has a reserve that is frozen
-     * rather than falling, and no further reading of it can arrive. Its own predicate
-     * rather than a widening of [isFinal], because a bodiless agent is not final: it can be
-     * embodied again, while a dead one never is.
+     * A disconnected or dead player has no live body to report another sample. Its own
+     * predicate rather than a widening of [isFinal], because a disconnected agent is not
+     * final while a dead one never returns.
      *
-     * Read from [hasNoBody] and not from [activity], because the activity moves on while
-     * the body stays gone: a request still in flight when the body was put away fails a
-     * moment later, which is an `UNANSWERED` agent that is nonetheless spending nothing.
+     * Read from [hasNoBody] and not from [activity], because an in-flight request can
+     * fail after the body is gone and change the activity without restoring a reading.
      */
-    val isReserveFrozen: Boolean get() = isFinal || hasNoBody
+    val isVitalsFrozen: Boolean get() = isFinal || hasNoBody
 
     /**
      * Which mind answered, for a display that has no business with request ids.
@@ -158,11 +155,9 @@ fun decayed(
  * The trend after [reading], which is news only when the number actually moved.
  *
  * A reading identical to the one already held is a restatement rather than a second
- * reading, and two records state the same reserve on one tick by design: `energyChanged`
- * and `healthChanged` each carry both vitals, so a wound landing on the tick the reserve
- * steps writes that reserve twice. Read as a fresh sample, the repeat answered "steady" and
- * took the trend word off a live, still-draining agent - and the absence of that word is
- * the signal that a reserve has just been rested or has nobody spending it.
+ * reading, and two records can state the same food level on one tick by design:
+ * `energyChanged` and `healthChanged` each carry both vitals. Read as a fresh sample,
+ * the repeat would answer "steady" and erase the last actual food trend.
  */
 private fun trendAfter(
     state: WatchState,
@@ -197,15 +192,12 @@ private fun triggerAfter(
  * Held as a fact of its own rather than read back off the activity, because the activity is
  * about what the agent is *doing* and moves on while the body stays gone: a request that was
  * in flight when the body was put away fails a moment later and sets `UNANSWERED`, which
- * would put the trend word back on a reserve nothing is spending, permanently, since no
+ * would put the trend word back on a food reading nothing can update, permanently, since no
  * further record about a bodiless agent can arrive to correct it.
  *
- * Four records speak about a body and each states rather than carries: a spawn gives one, a
- * despawn puts one away, a refusal that is not `alreadyEmbodied` happens to an agent that has
- * none, and a conversion that took the body leaves none. A death leaves none either, though
- * [WatchState.isFinal] is what a tombstone is read from. Everything else says nothing about
- * it, and is grouped below rather than defaulted so a new body event has to answer this
- * question as well as the one [activityAfter] asks.
+ * Spawn, despawn, death, and spawn refusal speak directly about embodiment. Everything
+ * else says nothing about it and is grouped below rather than defaulted so a new body
+ * event must answer this question as well as [activityAfter]'s.
  *
  * A player body speaks about the same fact in its own vocabulary: a managed player that joined
  * is a body in the world, one that quit has none, and one that is in the world again after a
@@ -219,7 +211,7 @@ private fun triggerAfter(
  * other refusal is a fact about a connection attempt and not about the agent - a second body
  * process, or something that took a live agent's username, refused while that agent is standing in
  * the world - so what was already known stands. Read as bodilessness it labelled a connected agent
- * `no body` and froze its reserve trend, with no per-tick record from a player body able to correct
+ * `no body` and froze its food trend, with no later player reading able to correct
  * it; `refusedLoginActivity` states the other half of the same rule.
  */
 private fun bodilessAfter(
@@ -231,7 +223,6 @@ private fun bodilessAfter(
         BodyEvent.DESPAWNED -> true
         BodyEvent.DIED -> true
         BodyEvent.SPAWN_REJECTED -> record.outcome != EventTag.ALREADY_EMBODIED
-        BodyEvent.CONVERTED -> record.outcome == EventTag.BODY_TAKEN
         BodyEvent.WITNESS_JOINED -> false
         BodyEvent.WITNESS_QUIT -> true
         BodyEvent.WITNESS_DENIED -> record.outcome == EventTag.LOGIN_DEAD_IDENTITY || state.hasNoBody
@@ -244,10 +235,7 @@ private fun bodilessAfter(
         BodyEvent.MOVED,
         BodyEvent.ENERGY_CHANGED,
         BodyEvent.HEALTH_CHANGED,
-        BodyEvent.TRAVELLED,
         BodyEvent.RETREATING,
-        BodyEvent.WORLD_LOADED,
-        BodyEvent.WORLD_HOLD_FAILED,
         // A body that looked around is a body: the record says nothing either way about
         // whether the agent still has one, so what was already known stands.
         BodyEvent.THREAT_SUPPRESSED,
@@ -293,12 +281,10 @@ private fun activityAfter(
         BodyEvent.COGNITION_UNAVAILABLE -> unansweredActivity(state, record)
         BodyEvent.DESPAWNED -> AgentActivity.BODILESS
         BodyEvent.DIED -> AgentActivity.DEAD
-        BodyEvent.TRAVELLED -> AgentActivity.TRAVELLING
         // A decision is not yet an action: what the agent is doing changes when the body
         // answers it, one record later, and saying otherwise would show every refused
         // intent as briefly carried out.
         BodyEvent.DECIDED -> state.activity
-        BodyEvent.CONVERTED -> convertedActivity(state, record.outcome)
         BodyEvent.WITNESS_JOINED -> AgentActivity.EMBODIED
         BodyEvent.WITNESS_QUIT -> AgentActivity.BODILESS
         BodyEvent.WITNESS_DENIED -> refusedLoginActivity(state, record.outcome)
@@ -318,10 +304,6 @@ private fun activityAfter(
         // earlier, and every transition after that is about the *state* of the flight
         // rather than about a new thing the body was told to do. The note says which.
         BodyEvent.RETREATING,
-        -> state.activity
-        // World-level, and true of every agent at once rather than of this one.
-        BodyEvent.WORLD_LOADED,
-        BodyEvent.WORLD_HOLD_FAILED,
         -> state.activity
         // Nothing was asked of the body and no mind was woken, so the agent is doing
         // exactly what it was already doing. Saying otherwise would show a suppression as

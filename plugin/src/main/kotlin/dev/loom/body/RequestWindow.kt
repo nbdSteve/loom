@@ -7,9 +7,9 @@
  * hunted at once. A threat scan runs every second for every living agent, and a sighting
  * it *does* earn is a perception handed to a mind, so two earned sightings inside one
  * cognition round trip evicted the goal review whose decision was still in flight. The
- * meal it named then arrived as `EatRefusal.SlotForgotten` and the flight as
- * `RetreatRefusal.ThreatForgotten`: an agent starving with food in its hands, and nothing
- * in either refusal saying the handle had been valid when the mind chose it.
+ * meal it named then arrived as `eatSlotForgotten` and the flight as
+ * `retreatThreatForgotten`: an agent with food in its hands, and nothing in either
+ * refusal saying the handle had been valid when the mind chose it.
  *
  * So the window is bounded by *time* rather than by count, and closed by the answer when
  * one arrives. A request stays answerable until its decision has been dealt with
@@ -39,9 +39,9 @@ package dev.loom.body
  * answer is applied on. A handle that expired first would refuse a decision Loom itself
  * was still waiting for, which is the failure this bound exists to rule out.
  *
- * Counted in ticks rather than wall-clock time for the reason `Metabolism`'s reserve is:
- * the same tick sequence has to answer the same handle however fast it is replayed, and a
- * paused server must not expire anything. It is a constant here rather than derived from
+ * Counted in ticks rather than wall-clock time so the same tick sequence answers the
+ * same handle however fast it is replayed, and a paused server expires nothing. It is
+ * a constant here rather than derived from
  * `dev.loom.mind`, because `dev.loom.body` may not depend on that package -
  * `CognitionSettingsTest` pins the two against each other from the side that can see both.
  */
@@ -92,7 +92,7 @@ const val MAX_REQUESTS_IN_FLIGHT_PER_AGENT: Int =
  *
  * Holds no lock. Both callers are on the server's main thread - a perception is taken
  * there and a decision is applied back there through the `MainThread` port - so a handle
- * minted off it would be a perception taken off it, which no body flavor does.
+ * minted off it would be a perception taken off it, which the player adapter never does.
  *
  * @param T what a handle names: a creature's identity, or a slot of the body's own inventory.
  * @param lifetimeTicks how long a request's handles stay answerable.

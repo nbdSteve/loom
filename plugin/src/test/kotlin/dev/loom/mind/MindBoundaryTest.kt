@@ -110,7 +110,7 @@ class MindBoundaryTest {
             .resideInAPackage("$PORT..")
             .should()
             .dependOnClassesThat()
-            .resideInAPackage("dev.loom.body.nms..")
+            .resideInAPackage("dev.loom.body.player..")
             .because("the mind acts on a body only through BodyPort, never on one body flavor")
             .check(plugin)
     }

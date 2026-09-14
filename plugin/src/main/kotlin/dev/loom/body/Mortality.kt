@@ -7,8 +7,8 @@
  * an old one.
  *
  * That rule lives here, in the domain, rather than inside the adapter, because it
- * belongs to Loom and not to any engine: every body flavor must honour it, and a
- * rule this load-bearing should be pinned by a test rather than by a comment.
+ * belongs to Loom and not to Mineflayer. A rule this load-bearing is pinned by a
+ * test rather than by a comment.
  *
  * The type deliberately offers no way to un-record a death. Terminality is
  * structural: there is no method a future caller could reach for to revive an

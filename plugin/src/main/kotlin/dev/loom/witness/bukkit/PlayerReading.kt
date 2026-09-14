@@ -13,9 +13,9 @@
  * witnessing exactly where it matters. So this answers `ObservedVitals`, unbounded.
  *
  * It names an item with the game's own registry key rather than with a display name or a
- * table of Loom's, which is the same vocabulary the body reports and the same rule
- * `BodyEating.kt` follows for the villager flavour: a stack renamed on an anvil has to
- * compare equal to itself, and a mapping of Loom's would fall behind a version bump.
+ * table of Loom's, which is the same vocabulary the Mineflayer body reports: a stack
+ * renamed on an anvil has to compare equal to itself, and a mapping of Loom's would fall
+ * behind a version bump.
  */
 package dev.loom.witness.bukkit
 

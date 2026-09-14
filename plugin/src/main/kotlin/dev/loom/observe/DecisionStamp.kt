@@ -3,7 +3,7 @@
  *
  * Its own file beside `WatchState.kt` because it is the exception to that file's rule.
  * Every other thing a watcher knows is carried forward until a record restates it - an
- * agent does not stop having a reserve, a body, or an activity because the next record is
+ * agent does not stop having a food reading, a body, or an activity because the next record is
  * a step. A model stamp does: it is an answer to one question, and the question expires.
  * So this is the only part of a watcher's knowledge with rules about *dropping* a reading
  * and about *refusing* one, and both are answerable only by knowing which cycle the

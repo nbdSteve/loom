@@ -7,8 +7,8 @@
  * decoding go through `LoomJson` - the same configuration the conformance tests
  * pin - so the bytes on this socket are the bytes both runtimes agree on.
  *
- * It lives in its own adapter package for the same reason the body's NMS code
- * does: `dev.loom.mind` is the port, and a transport is one way of satisfying it.
+ * It lives in its own adapter package because `dev.loom.mind` is the port and a
+ * transport is one way of satisfying it.
  * A different mind deployment - a subprocess, a queue, an in-process model - is a
  * sibling package and one changed wiring line.
  *

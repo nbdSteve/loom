@@ -1,6 +1,6 @@
 package dev.loom.contract
 
-import dev.loom.body.bodyPerceptionBound
+import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -31,9 +31,6 @@ import kotlin.test.assertFailsWith
  *    "everything I can see" over a list that was trimmed.
  */
 class PerceptionOmissionTest {
-    /** The body's own bound, from the one place that states it rather than mirrored here. */
-    private val bound = bodyPerceptionBound()
-
     private val invalidFixtures =
         Paths.get(System.getProperty("user.dir"), "..", "contract", "fixtures", "invalid").toRealPath()
 
@@ -72,12 +69,11 @@ class PerceptionOmissionTest {
     fun theCountTheBoundCutIsTheCountTheWireCarries() {
         // Forty things a body could have described, every one of them in range, so only
         // the count bound can hold the snapshot down.
-        val eligible = (1..40).asSequence().map { it * 0.5 }
-        val kept = bound.nearest(eligible) { it }
+        val eligible = (1..40).map { it * 0.5 }
+        val shown = eligible.take(PERCEPTION_MAX_OBSERVATIONS)
+        val omitted = eligible.size - shown.size
 
-        // Each observation reports the distance the bound admitted it for, not a fresh
-        // reading: measured once, carried through.
-        val line = LoomJson.encodeToString(perceptionOf(kept.shown.map { it.blocksAway }, kept.omitted))
+        val line = LoomJson.encodeToString(perceptionOf(shown, omitted))
 
         val wire = Json.parseToJsonElement(line).jsonObject
         assertEquals(16, wire.getValue("surroundings").jsonArray.size, "the count bound keeps its nearest 16")

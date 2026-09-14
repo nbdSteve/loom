@@ -59,9 +59,7 @@ private data class WitnessRuntime(
 /**
  * Chooses the product body and mind deployments and owns their shutdown order.
  *
- * The Villager adapter remains in the tree as an unused implementation, but there
- * is no runtime switch: every `/loombody create` in this product starts the player
- * process wired here.
+ * Every `/loombody create` starts the Mineflayer player process wired here.
  */
 class LoomPlugin : JavaPlugin() {
     private var eventLog: FileBodyEventLog? = null

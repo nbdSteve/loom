@@ -8,8 +8,8 @@ contract, which is the versioned newline-delimited JSON protocol it is driven ov
 The Paper plugin registers one deterministic player identity with its server witness,
 starts `bin/loom-body.js`, connects to its loopback control channel and waits for both
 control readiness and the server-observed player before exposing the body to cognition.
-`/loombody create|inspect|think|stop` manages that identity. The older Villager adapter
-remains in the source tree but is not wired, and there is no compatibility switch.
+`/loombody create|inspect|think|stop` manages that identity. There is no alternate
+body implementation or compatibility switch.
 
 The current deployment owns one configured agent identity and one process. A second agent
 id is refused rather than sharing the process or its endpoint; multi-agent orchestration

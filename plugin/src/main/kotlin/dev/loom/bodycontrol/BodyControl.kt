@@ -161,8 +161,7 @@ enum class ErrorCode {
  * different questions: an [ErrorCode] is why a frame was not usable, while these are
  * what the body did about a request it understood perfectly. A refusal here is therefore
  * an answer, and it is a value rather than prose so that a run can count how many meals
- * were missed and why - the same reason the Villager body's own eat refusals are a tag on
- * the outcome rather than a sentence. Every refusal that is a fact about the request is
+ * were missed and why. Every refusal that is a fact about the request is
  * settled before anything is consumed, so a refused eat never costs an agent its food.
  *
  * [SLOT_UNNAMED] carries two readings, and a run counting them cannot tell which it has.
@@ -311,9 +310,7 @@ internal val THREAT_REFUSALS: Set<MoveOutcome> =
  * stomach and can starve without a scratch, so a wire reporting one figure for
  * "condition" could not say what ended an agent.
  *
- * These are the active perception contract's own survival readings too: the player
- * adapter passes food and saturation through separately and does not synthesize the
- * Villager adapter's legacy energy reserve.
+ * The player adapter passes food and saturation through separately.
  *
  * Saturation is never above the food level, because vanilla clamps it there when eating
  * and spends it before food falls: a report above it has read the two at different

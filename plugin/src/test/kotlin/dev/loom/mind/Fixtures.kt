@@ -4,7 +4,6 @@ import dev.loom.body.BodyEventLog
 import dev.loom.contract.DayPhase
 import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
-import dev.loom.contract.ENERGY_FULL
 import dev.loom.contract.Intent
 import dev.loom.contract.Observation
 import dev.loom.contract.Perception
@@ -74,7 +73,7 @@ fun silentJournal(): DecisionJournal = DecisionJournal(BodyEventLog { }, current
 /**
  * A perception with everything a test does not care about already filled in.
  *
- * [energy] defaults to a full reserve so a test that is not about the survival drive
+ * [food] defaults to a full food bar so a test that is not about survival
  * is never accidentally about it.
  */
 fun perception(
@@ -82,7 +81,7 @@ fun perception(
     agentId: String = "agent-alpha",
     trigger: Trigger = Trigger.GoalReview,
     importance: DecisionImportance = DecisionImportance.ROUTINE,
-    energy: Double = ENERGY_FULL,
+    food: Int = 20,
 ): Perception =
     Perception(
         requestId = requestId,
@@ -93,7 +92,7 @@ fun perception(
         selfState =
             SelfState(
                 health = 20.0,
-                food = (energy * 20).toInt(),
+                food = food,
                 saturation = 0.0,
                 position = listOf(1.0, 64.0, 2.0),
                 inventorySummary = emptyList(),

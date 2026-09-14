@@ -9,8 +9,8 @@
  * world - is `ObserveBoundaryTest`.) And the display must stay bounded and low-noise,
  * which is why a burst is asserted to be capped *and* to admit what it dropped.
  *
- * The awkward cases the criteria call out - death, disappearance, dimension travel, a
- * cognition timeout, and no observer at all - are each their own test below, because each
+ * The awkward cases the criteria call out - death, disappearance, a cognition timeout,
+ * and no observer at all - are each their own test below, because each
  * of them is a way a live demo goes wrong in front of an audience.
  */
 package dev.loom.observe
@@ -19,7 +19,6 @@ import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.EventTag
-import dev.loom.body.WORLD_AGENT_ID
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -35,9 +34,6 @@ private const val OTHER_OPERATOR = "operator-2"
 
 /** An arbitrary tick to refresh at, where the exact number does not matter. */
 private const val NOW = 100L
-
-/** The caveat a world-hold failure is said with, which the view owns the wording of. */
-private const val HOLD_FAILURE_LINE = "Loom could not hold the world: a death shown here may be a chunk unload."
 
 class ObservatoryTest {
     private val observatory = Observatory()
@@ -192,22 +188,6 @@ class ObservatoryTest {
     }
 
     @Test
-    @DisplayName("crossing a portal reads as travel, never as a death and a new agent")
-    fun dimensionTravelIsContinuity() {
-        attach()
-
-        deliver(
-            record(BodyEvent.SPAWNED).copy(vitals = energy(20.0)),
-            record(BodyEvent.TRAVELLED, detail = "to the_nether at 12,64,-8", tick = 1L),
-        )
-
-        assertEquals("crossed into another dimension", sink.notes.last().text)
-        assertTrue(sink.standing?.text?.contains("crossing dimensions") ?: false, "${sink.standing}")
-        // The arrival coordinates are the body's business, not the display's.
-        assertFalse(sink.everything.any { it.contains("the_nether") }, "${sink.everything}")
-    }
-
-    @Test
     @DisplayName("a mind that did not answer is reported as that, with no reason attached")
     fun aCognitionTimeoutIsVisibleAndRedacted() {
         attach()
@@ -221,52 +201,6 @@ class ObservatoryTest {
         assertEquals("its mind did not answer (timed out)", sink.notes.last().text)
         assertTrue(sink.standing?.text?.contains("mind did not answer") ?: false, "${sink.standing}")
         assertFalse(sink.everything.any { it.contains("14500") }, "${sink.everything}")
-    }
-
-    @Test
-    @DisplayName("a run whose permadeath figures cannot be trusted says so while it is being watched")
-    fun aWorldHoldFailureReachesTheWatcher() {
-        attach()
-
-        // Filed against the world rather than any agent, and still the one world-level
-        // record a watcher must hear: without it a chunk unload shown as a death is believed.
-        deliver(
-            record(BodyEvent.WORLD_HOLD_FAILED, detail = "ticketDeclined 3 chunks")
-                .copy(agentId = WORLD_AGENT_ID),
-        )
-
-        assertEquals(
-            "Loom could not hold the world: a death shown here may be a chunk unload.",
-            sink.notes.last().text,
-        )
-        assertFalse(sink.everything.any { it.contains("ticketDeclined") }, "${sink.everything}")
-    }
-
-    @Test
-    @DisplayName("a world-level record is said to the watcher and moves nothing about the agent")
-    fun aWorldRecordDoesNotMoveTheWatchedAgentsState() {
-        attach()
-        deliver(record(BodyEvent.SPAWNED).copy(vitals = reserve(80.0)))
-        val standing = sink.standing
-
-        // A world record carries no reading, trigger or outcome today, which is the only
-        // reason letting one through the state advance has cost nothing so far. Shaped like
-        // one that did, every field would be read as the watched agent's own - the world's
-        // number on this agent's gauge - so the record here carries the fields a future one
-        // might, and none of them may land.
-        deliver(
-            record(BodyEvent.WORLD_HOLD_FAILED, detail = "ticketDeclined 3 chunks", tick = 1L)
-                .copy(
-                    agentId = WORLD_AGENT_ID,
-                    vitals = reserve(2.0),
-                    health = energy(1.0),
-                    trigger = EventTag.DAMAGED,
-                ),
-        )
-
-        assertEquals("$WATCHED | energy 80/100 | standing by", standing?.text)
-        assertEquals(standing, sink.standing, "a fact about the world is not a reading of this agent")
-        assertEquals(HOLD_FAILURE_LINE, sink.notes.last().text, "and the caveat still has to reach the watcher")
     }
 
     @Test
@@ -405,49 +339,6 @@ class ObservatoryTest {
     }
 
     @Test
-    @DisplayName("a condition that recurs every tick is said once and does not evict the news")
-    fun aRepeatedLineIsSaidOnceAndCrowdsNothingOut() {
-        attach()
-
-        // A world hold that keeps being refused is recorded on every follow, so this
-        // arrives about twenty times a second for as long as the condition lasts. Queued
-        // each time, it filled the queue with one sentence and evicted the lines that
-        // sentence exists to qualify.
-        repeat(40) { tick ->
-            observatory.saw(
-                record(BodyEvent.WORLD_HOLD_FAILED, detail = "ticketDeclined 3 chunks", tick = tick.toLong())
-                    .copy(agentId = WORLD_AGENT_ID),
-            )
-        }
-        deliver(record(BodyEvent.DECIDED, detail = "walk to the village", tick = 40L).copy(provenance = STAMP))
-
-        val caveats = sink.notes.count { it.text == HOLD_FAILURE_LINE }
-        assertEquals(1, caveats, "${sink.notes.map { it.text }}")
-        assertTrue(
-            sink.notes.any { it.text == "decided [test-model/test-v1 routine]: walk to the village" },
-            "the news the caveat qualifies must still arrive: ${sink.notes.map { it.text }}",
-        )
-        assertFalse(sink.notes.any { it.text.contains("skipped") }, "${sink.notes.map { it.text }}")
-    }
-
-    @Test
-    @DisplayName("a condition that recurs after other news is stated again")
-    fun aRepeatedLineIsNotSuppressedForever() {
-        attach()
-
-        deliver(record(BodyEvent.WORLD_HOLD_FAILED, detail = "chunks").copy(agentId = WORLD_AGENT_ID))
-        deliver(record(BodyEvent.SPAWNED, tick = 1L))
-        deliver(record(BodyEvent.WORLD_HOLD_FAILED, detail = "chunks", tick = 2L).copy(agentId = WORLD_AGENT_ID))
-
-        // Suppressing only *consecutive* duplicates is what keeps the warning at full
-        // strength: a hold failure that comes back after a spawn is a new thing to know.
-        assertEquals(
-            listOf(HOLD_FAILURE_LINE, "has a body now", HOLD_FAILURE_LINE),
-            sink.notes.map { it.text },
-        )
-    }
-
-    @Test
     @DisplayName("a cap of nothing is refused, since it would drop every line silently")
     fun theCapMustBePositive() {
         assertThrows<IllegalArgumentException> { Observatory(maxPendingNotes = 0) }
@@ -523,7 +414,7 @@ class ObservatoryTest {
     fun rewatchingKeepsTheStateItWasAlreadyShowing() {
         attach()
         deliver(
-            record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)),
+            record(BodyEvent.SPAWNED).copy(vitals = energy(4.4)),
             record(BodyEvent.PERCEIVED, tick = 1L).copy(trigger = EventTag.GOAL_REVIEW),
         )
         val standing = sink.standing
@@ -533,12 +424,12 @@ class ObservatoryTest {
 
         // The state is a projection of the append-only record rather than anything about who
         // is looking, so retyping the command changes nothing about it. Rebuilt blank, an
-        // in-world run lost the reserve reading until the next vitals-carrying record -
+        // in-world run lost the food reading until the next vitals-carrying record -
         // eighteen seconds - and the activity until the next goal review, up to a whole
         // cadence, with the gauge emptied on an agent that was not empty at all.
-        assertEquals("$WATCHED | energy 22/100 | thinking | goal review", standing?.text)
+        assertEquals("$WATCHED | energy 4.4/20 | thinking | goal review", standing?.text)
         assertEquals(standing, sink.standing)
-        assertEquals(0.22, sink.standing?.progress, "the gauge must not empty on a live agent")
+        assertEquals(0.22, sink.standing?.progress ?: 0.0, 1e-9, "the gauge must not empty on a live agent")
     }
 
     @Test
@@ -548,7 +439,7 @@ class ObservatoryTest {
         // so rather than leaving the command to work it out from the arguments it typed: what
         // an operator is told about their own watch is then what actually happened to it.
         assertEquals(WatchAttachment.FRESH, observatory.watch(AgentId(WATCHED), sink))
-        deliver(record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)))
+        deliver(record(BodyEvent.SPAWNED).copy(vitals = energy(4.4)))
 
         assertEquals(
             WatchAttachment.KEPT,
@@ -592,7 +483,7 @@ class ObservatoryTest {
     @DisplayName("taking a watch over is a fresh attachment for whoever took it")
     fun aTakeoverIsFreshForTheOperatorWhoTookIt() {
         attach()
-        deliver(record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)))
+        deliver(record(BodyEvent.SPAWNED).copy(vitals = energy(4.4)))
         val takingOver = RecordingSink(observer = OTHER_OPERATOR)
 
         val attachment = observatory.watch(AgentId(WATCHED), takingOver)
@@ -604,7 +495,7 @@ class ObservatoryTest {
         assertEquals(WatchAttachment.FRESH, attachment)
         // The state is still inherited, and the displacement still happens: every field of it
         // derives from records about this agent that the new observer may see anyway.
-        assertEquals("$WATCHED | energy 22/100 | standing by", takingOver.standing?.text)
+        assertEquals("$WATCHED | energy 4.4/20 | standing by", takingOver.standing?.text)
         assertEquals("no longer watching $WATCHED", sink.notes.last().text)
         assertEquals(1, sink.releases, "the displaced display still has to come down")
     }
@@ -633,7 +524,7 @@ class ObservatoryTest {
     @DisplayName("a watch whose surface was replaced still kept what was known")
     fun aReplacedSurfaceIsStillAKeptWatch() {
         attach()
-        deliver(record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)))
+        deliver(record(BodyEvent.SPAWNED).copy(vitals = energy(4.4)))
         sink.isPresent = false
 
         val attachment = observatory.watch(AgentId(WATCHED), RecordingSink())
@@ -649,7 +540,7 @@ class ObservatoryTest {
     fun aReplacedSurfaceIsPaintedWithWhatIsAlreadyKnown() {
         attach()
         deliver(
-            record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)),
+            record(BodyEvent.SPAWNED).copy(vitals = energy(4.4)),
             record(BodyEvent.PERCEIVED, tick = 1L).copy(trigger = EventTag.GOAL_REVIEW),
         )
         sink.isPresent = false
@@ -661,21 +552,21 @@ class ObservatoryTest {
         // The reconnect case, where the surface really does have to be replaced. It has no
         // bar up yet, so it is painted from scratch - with the state the record has already
         // established and not with an empty one.
-        assertEquals("$WATCHED | energy 22/100 | thinking | goal review", reconnected.standing?.text)
+        assertEquals("$WATCHED | energy 4.4/20 | thinking | goal review", reconnected.standing?.text)
     }
 
     @Test
     @DisplayName("naming a different agent starts blank rather than carrying the last one's readings")
     fun switchingAgentsCarriesNothingOver() {
         attach()
-        deliver(record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)))
+        deliver(record(BodyEvent.SPAWNED).copy(vitals = energy(4.4)))
 
         observatory.watch(AgentId(OTHER), RecordingSink())
         observatory.refresh(NOW + 1)
 
         // Nothing has been recorded about this agent since the watch was attached, and the
         // display may only say what a record told it: carrying anything over would put one
-        // agent's reserve and activity on another agent's line.
+        // agent's food reading and activity on another agent's line.
         assertEquals("$OTHER | energy not read yet | nothing seen yet", sink.standing?.text)
     }
 
@@ -683,7 +574,7 @@ class ObservatoryTest {
     @DisplayName("a watch that was stopped and started again starts blank")
     fun aStoppedWatchKeepsNoHistory() {
         attach()
-        deliver(record(BodyEvent.SPAWNED).copy(vitals = reserve(22.0)))
+        deliver(record(BodyEvent.SPAWNED).copy(vitals = energy(4.4)))
         observatory.stop(OPERATOR)
         val restarted = RecordingSink()
 

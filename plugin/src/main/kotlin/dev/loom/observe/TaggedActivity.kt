@@ -1,7 +1,7 @@
 /*
  * What an event means when its name is not enough to say.
  *
- * `WatchState.activityAfter` decides by *event*, and for most events that is the whole answer. Four
+ * `WatchState.activityAfter` decides by *event*, and for most events that is the whole answer. Three
  * of them carry more than one fact under one name, and what tells those facts apart is the record's
  * countable `outcome` tag - never its prose, which this package may not look at. Those four answers
  * live here rather than beside the event switch, because they are asking a different question: not
@@ -61,7 +61,7 @@ internal fun refusedActivity(
  * the refusals reach the agent whose identity was named rather than whichever process connected:
  * a second body process for a live agent, or something that took its username, is refused while
  * that agent is standing in the world. Read as bodilessness it labelled a connected agent `no
- * body`, and froze its reserve trend, for the rest of the watch.
+ * body`, and froze its food trend, for the rest of the watch.
  */
 internal fun refusedLoginActivity(
     state: WatchState,
@@ -80,16 +80,3 @@ internal fun unansweredActivity(
     state: WatchState,
     record: BodyEventRecord,
 ): AgentActivity = if (answersTheCycle(state, record)) AgentActivity.UNANSWERED else state.activity
-
-/**
- * What a conversion leaves the agent in.
- *
- * One event name, two opposite facts. Loom refuses a conversion, so the ordinary case is
- * a body that never changed and an agent still doing whatever it was. A conversion that
- * got past the refusal took the body with it and nothing re-embodies the agent, so the
- * display has to stop claiming it is standing anywhere.
- */
-internal fun convertedActivity(
-    state: WatchState,
-    outcome: String?,
-): AgentActivity = if (outcome == EventTag.BODY_TAKEN) AgentActivity.BODILESS else state.activity
