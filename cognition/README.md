@@ -114,7 +114,7 @@ Three properties of that frame are load-bearing rather than cosmetic:
 The suite is hermetic and credential-free, and it must stay that way: no test reaches the live OpenAI service.
 
 ```sh
-cargo fmt --all --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test
+cargo fmt --all --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-features
 ```
 
 Three levels cover the provider path:

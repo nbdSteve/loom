@@ -23,6 +23,7 @@ private val WIRE_NAMES =
         BodyEvent.SPAWN_REJECTED to "spawnRejected",
         BodyEvent.INTENT_APPLIED to "intentApplied",
         BodyEvent.MOVED to "moved",
+        BodyEvent.WORLD_INTERACTION to "worldInteraction",
         BodyEvent.PERCEIVED to "perceived",
         BodyEvent.THREAT_SUPPRESSED to "threatSuppressed",
         BodyEvent.RETREATING to "retreating",

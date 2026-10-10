@@ -27,28 +27,28 @@
 //! give a second, driftable statement of the same thing.
 
 use loom_contract::{
-    Bearing, DayPhase, DecisionImportance, InventoryStack, Observation, Perception, SelfState,
-    Trigger, WorldState,
+    Bearing, DayPhase, DecisionImportance, InventoryStack, Observation, ObservationKind,
+    Perception, SelfState, Trigger, WorldState,
 };
 
 use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v9";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v10";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v9";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v10";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v9";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v10";
 
 /// How many surroundings entries reach the prompt.
 ///
 /// The perception bound already keeps this small in practice; the cap is here
 /// because "in practice" is a property of the body, and this side pays for the
 /// tokens either way.
-const MAX_OBSERVATIONS: usize = 24;
+const MAX_OBSERVATIONS: usize = 16;
 
 /// How many inventory lines reach the prompt.
 const MAX_INVENTORY_LINES: usize = 24;
@@ -74,19 +74,28 @@ pub struct Prompt {
 
 /// The standing instructions shared by every tier.
 ///
-/// States the agent's situation and the six things it can do, in the contract's
+/// States the agent's situation and the ten things it can do, in the contract's
 /// own vocabulary, so the intent it picks means the same thing to the body.
 const AGENT_BRIEF: &str = "\
 You are the mind of an agent that lives in a Minecraft world through a body you \
 do not directly control. You are told what your body just experienced, and you \
 answer with one action for it to take and your reasoning for taking it.
 
-Your body accepts exactly six actions:
+Your body accepts exactly ten actions:
 - say: speak a line of text out loud.
 - moveTo: walk toward a block position given as whole x, y, z coordinates.
 - eat: eat one item from one stack you are carrying, named by the ref that stack \
 carries. It asks vanilla to consume exactly that item, and it can be refused: the \
 stack may no longer be food, or your food bar may already be full.
+- dig: dig one nearby block, named by its ref. The body uses only what is already \
+in hand and refuses a block that moved, changed, is hidden, or is out of reach.
+- collect: collect one exact dropped-item entity, named by its ref. Set approach \
+true only when you want to permit one bounded walk to it; false permits no movement.
+- place: place one offered inventory stack against one chosen face of one nearby \
+support block. Name both refs. The item must already be in the main hand; equip it \
+in an earlier decision if necessary. The body places once and never builds a plan.
+- equip: equip one offered inventory stack to hand, offHand, head, torso, legs, or \
+feet. Name the stack ref and destination; the body refuses incompatible equipment.
 - rest: stop where you are and hold that position on purpose. It restores \
 nothing: it passes the time deliberately, and hunger continues by vanilla's rules.
 - idle: do nothing this time.
@@ -107,8 +116,8 @@ witness can establish that your one life ended.
 carries how far away it is, which compass direction it lies in, how far above or \
 below you it is, and whether you can actually see it right now - a thing you \
 cannot see is one you know is there through a wall or round a corner.
-- Some things in your surroundings carry a short ref, and every stack you are \
-carrying carries one. A ref is the handle for that one thing in this one message: \
+- Every thing in your surroundings carries its kind and a short ref, and every \
+stack you are carrying carries one. A ref is the handle for that one thing in this one message: \
 it is the only way to name it back to your body, it means nothing in any other \
 message, and a thing without one cannot be named at all. Never invent a ref and \
 never reuse one you were given earlier.
@@ -384,9 +393,13 @@ const fn bearing_word(bearing: Bearing) -> &'static str {
 /// about the rest as their absence, which is the opposite of what the body meant.
 fn observation_phrase(seen: &Observation) -> String {
     format!(
-        "{what}{handle} about {distance} blocks away to the {bearing}{height}, {sight}",
+        "{count}{kind} {what} (ref {handle}) about {distance} blocks away to the {bearing}{height}, {sight}",
+        count = seen
+            .count
+            .map_or_else(String::new, |count| format!("{count} ")),
+        kind = observation_kind_word(seen.kind),
         what = field(&seen.what),
-        handle = ref_phrase(seen.entity_ref.as_deref()),
+        handle = field(&seen.target_ref),
         distance = number(seen.distance),
         bearing = bearing_word(seen.direction),
         height = height_phrase(seen.vertical_offset),
@@ -398,15 +411,11 @@ fn observation_phrase(seen: &Observation) -> String {
     )
 }
 
-/// The ref of a living thing, or nothing at all for something that has none.
-///
-/// Absent is ordinary rather than a gap - only a living thing can be acted on as
-/// itself - so nothing is said about its absence, which would otherwise read as an
-/// omission the body regretted.
-fn ref_phrase(entity_ref: Option<&str>) -> String {
-    match entity_ref {
-        Some(handle) => format!(" (ref {handle})", handle = field(handle)),
-        None => String::new(),
+const fn observation_kind_word(kind: ObservationKind) -> &'static str {
+    match kind {
+        ObservationKind::Entity => "entity",
+        ObservationKind::Block => "block",
+        ObservationKind::DroppedItem => "dropped item",
     }
 }
 
@@ -498,8 +507,8 @@ mod tests {
     };
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
-        Bearing, DayPhase, DecisionImportance, InventoryStack, Observation, Perception, SelfState,
-        Trigger, WorldState,
+        Bearing, DayPhase, DecisionImportance, InventoryStack, Observation, ObservationKind,
+        Perception, SelfState, Trigger, WorldState,
     };
 
     fn router() -> Router {
@@ -536,12 +545,14 @@ mod tests {
                 },
             },
             surroundings: vec![Observation {
+                kind: ObservationKind::Entity,
                 what: "zombie".to_owned(),
                 distance: 6.5,
                 direction: Bearing::East,
                 vertical_offset: 2.0,
                 visible: true,
-                entity_ref: None,
+                target_ref: "e1".to_owned(),
+                count: None,
             }],
             surroundings_omitted: 0,
         }
@@ -668,7 +679,7 @@ mod tests {
         // unresolvable handle and be refused, with the capability silently off against a
         // real provider while every other test here stayed green.
         let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
-        seen.surroundings[0].entity_ref = Some("e3".to_owned());
+        seen.surroundings[0].target_ref = "e3".to_owned();
 
         let prompt = render(&router().route(seen.importance), &seen);
 
@@ -680,20 +691,17 @@ mod tests {
     }
 
     #[test]
-    fn an_observation_with_no_ref_is_not_given_one() {
-        // The other half: only a living thing carries a ref, so a phrase where there is no
-        // handle would offer a model something to name that the body could not resolve.
+    fn a_dropped_item_states_its_kind_count_and_ref() {
         let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
-        assert!(seen.surroundings[0].entity_ref.is_none());
-        // Every carried stack states a handle of its own, so the inventory is
-        // emptied to leave the surroundings as the only thing that could state one.
-        seen.self_state.inventory_summary = vec![];
+        seen.surroundings[0].kind = ObservationKind::DroppedItem;
+        seen.surroundings[0].target_ref = "d1".to_owned();
+        seen.surroundings[0].count = Some(3);
 
         let prompt = render(&router().route(seen.importance), &seen);
 
         assert!(
-            !prompt.situation.contains("(ref"),
-            "a thing with no handle must not be described as having one, got {situation}",
+            prompt.situation.contains("3 dropped item zombie (ref d1)"),
+            "a dropped item must state its bounded target evidence, got {situation}",
             situation = prompt.situation
         );
     }
@@ -983,12 +991,14 @@ mod tests {
         let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
         seen.surroundings = (0..MAX_OBSERVATIONS + 5)
             .map(|i| Observation {
+                kind: ObservationKind::Entity,
                 what: format!("thing-{i}"),
                 distance: 1.0,
                 direction: Bearing::North,
                 vertical_offset: 0.0,
                 visible: true,
-                entity_ref: None,
+                target_ref: format!("e{i}"),
+                count: None,
             })
             .collect();
         seen.surroundings_omitted = 7;
@@ -1011,12 +1021,14 @@ mod tests {
         let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
         seen.surroundings = (0..MAX_OBSERVATIONS + 5)
             .map(|i| Observation {
+                kind: ObservationKind::Entity,
                 what: format!("thing-{i}"),
                 distance: 1.0,
                 direction: Bearing::North,
                 vertical_offset: 0.0,
                 visible: true,
-                entity_ref: None,
+                target_ref: format!("e{i}"),
+                count: None,
             })
             .collect();
         seen.surroundings_omitted = -1_000;
@@ -1091,12 +1103,14 @@ mod tests {
         let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
         seen.surroundings = (0..MAX_OBSERVATIONS + 5)
             .map(|i| Observation {
+                kind: ObservationKind::Entity,
                 what: format!("thing-{i}"),
                 distance: 1.0,
                 direction: Bearing::North,
                 vertical_offset: 0.0,
                 visible: true,
-                entity_ref: None,
+                target_ref: format!("e{i}"),
+                count: None,
             })
             .collect();
         let prompt = render(&router().route(seen.importance), &seen);

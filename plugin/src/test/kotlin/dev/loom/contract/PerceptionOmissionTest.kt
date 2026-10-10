@@ -55,11 +55,13 @@ class PerceptionOmissionTest {
         surroundings =
             shown.map {
                 Observation(
+                    kind = ObservationKind.ENTITY,
                     what = "cow",
                     distance = it,
                     direction = Bearing.NORTH,
                     verticalOffset = 0.0,
                     visible = true,
+                    ref = "e${shown.indexOf(it)}",
                 )
             },
         surroundingsOmitted = omitted.toLong(),

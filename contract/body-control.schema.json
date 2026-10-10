@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://loom.dev/contract/body-control.schema.json",
   "title": "Loom body-control protocol",
-  "description": "The single source of truth for the control messages exchanged with a Loom player-body process (the Node/Mineflayer body in body/). A controller sends a BodyRequest; the process answers with exactly one BodyResponse or one BodyError, on the same line-delimited loopback socket. This is deliberately NOT the perception/decision contract in loom.schema.json: that one carries what an agent knows and decides, this one carries whether a body process is alive, which lifecycle state it is in, when to stop, the raw state the game reports about the player, one eat the controller names, and one walk or one flight the controller asks for. Nothing here decides anything: the raw state is reported unmeasured and untranslated, the eat names one stack a mind already chose, a walk goes to a place and a flight runs from a creature a mind already chose, and every judgement about what any of it means - what is near, what is dangerous, what is worth eating, whether to run - is made above this wire. A movement is the one operation whose answer is not immediate, so the rules that keep it from becoming a policy loop are on the wire itself: one request owns the route, a second is refused rather than taking it over, and every bound the request runs under is either stated in the request or held by the process, never inferred from the world. Union types use internal tagging: BodyRequest.op and BodyResponse.op select the variant and the variant's fields are inlined alongside it. JSON Schema sees a parsed number rather than the literal that carried it, so validation keywords cannot express this wire's numeric work guard: both codecs refuse a numeric literal longer than 32 characters, or one whose decimal-point shift would make exact integrality or range checking unbounded. Those are contract rules stated in prose here and enforced before either codec materialises such a value.",
+  "description": "The single source of truth for the control messages exchanged with a Loom player-body process (the Node/Mineflayer body in body/). A controller sends a BodyRequest; the process answers with exactly one BodyResponse or one BodyError, on the same line-delimited loopback socket. This is deliberately NOT the perception/decision contract in loom.schema.json: that one carries what an agent knows and decides, while this one carries lifecycle, bounded raw sense, and explicit one-shot operations against request-scoped offers. Nothing here chooses a target, item, tool, role, threshold, or follow-on goal. Dig, collect, place, equip, eat, move, and flee each act only on the target or stack a controller named from one retained sense answer; mutable state is re-read immediately before use; conflicting work is refused rather than multiplexed; and halt or shutdown bounds cleanup. Union types use internal tagging: BodyRequest.op and BodyResponse.op select the variant and the variant's fields are inlined alongside it. JSON Schema sees a parsed number rather than the literal that carried it, so validation keywords cannot express this wire's numeric work guard: both codecs refuse a numeric literal longer than 32 characters, or one whose decimal-point shift would make exact integrality or range checking unbounded. Those are contract rules stated in prose here and enforced before either codec materialises such a value.",
 
   "$defs": {
     "ProtocolVersion": {
-      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted, so a controller and a body process that disagree find out on the first frame rather than by misreading a field. A readable requestId may still be retained solely to correlate that refusal. Generation 2 is current; a frame naming any other, generation 1 included, is refused with unsupportedProtocol rather than interpreted. It moved from 1 when MoveOutcome gained 'searchOverBudget', and ControlOperation's description is the authority on why a response value set may not grow inside a generation where the operation set may. The const is a number rather than a spelling, so 2, 2.0 and 2e0 all name this generation: to this schema and to JSON.parse an integer is any number whose fractional part is zero. Subject to the wire's numeric work guard above, both bindings therefore read every integral spelling and refuse every fractional one, which is a rule neither serialization library states on its own.",
-      "const": 2
+      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted. Generation 3 is current. It moved from 2 because the body-chosen sense response widened with block and dropped-item offers and because new closed outcome sets became possible answers; adding the four request operations alone would not have moved it. The const is a numeric value rather than a spelling, so 3, 3.0 and 3e0 all name this generation.",
+      "const": 3
     },
 
     "ControlId": {
@@ -61,7 +61,7 @@
     },
 
     "SenseLimit": {
-      "description": "How many entities the answer may carry, as the caller states it, and for the same reason the radius is on the request. The maximum is what the frame-size bound can afford rather than a policy: an answer that named more entities than this could not be written inside the largest legal frame once a full inventory is beside it, and a body that trimmed silently to fit would report an omission count that had already stopped being true.",
+      "description": "How many entries each bounded world list may carry, as the caller states it. The same limit is independently applied to living entities, nearby blocks, and dropped items, and each list carries its own omission count. It is a wire and frame bound rather than a choice of what matters.",
       "type": "integer",
       "minimum": 1,
       "maximum": 24
@@ -107,6 +107,39 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 23
+    },
+
+    "BlockIndex": {
+      "description": "One block of a named sense answer's own blocks list, by zero-based position. An index past the actual list is blockUnnamed rather than a malformed frame.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 23
+    },
+
+    "ItemIndex": {
+      "description": "One dropped item of a named sense answer's own items list, by zero-based position. An index past the actual list is itemUnnamed rather than a malformed frame.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 23
+    },
+
+    "ActionDeadline": {
+      "description": "How long one native world interaction may remain active, in milliseconds. Required on every interaction request, positive, and below the control socket idle window so the correlated terminal answer can still be written.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20000
+    },
+
+    "BlockFace": {
+      "description": "The face of a sensed support block against which one held block is placed.",
+      "type": "string",
+      "enum": ["down", "up", "north", "south", "west", "east"]
+    },
+
+    "EquipmentDestination": {
+      "description": "One bounded Mineflayer player equipment destination selected by the controller.",
+      "type": "string",
+      "enum": ["hand", "offHand", "head", "torso", "legs", "feet"]
     },
 
     "TravelDistance": {
@@ -208,6 +241,47 @@
       }
     },
 
+    "SensedBlock": {
+      "description": "One non-air block in the body's bounded native interaction reach. The body reports the game's name, exact block position, and current line-of-sight reading; its private sense memory retains the state needed to reject a changed block later.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "position", "visible"],
+      "properties": {
+        "what": { "$ref": "#/$defs/ResourceName" },
+        "position": {
+          "description": "The block's integer x, y, z coordinates.",
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "integer",
+            "minimum": -30000000,
+            "maximum": 30000000
+          }
+        },
+        "visible": {
+          "description": "Whether Mineflayer's world ray reaches the block now. A later dig or placement revalidates this immediately before acting.",
+          "type": "boolean"
+        }
+      }
+    },
+
+    "SensedItem": {
+      "description": "One dropped-item entity in the requested radius. The public fields identify what the game reports; the body privately retains the exact Mineflayer entity object so an entity id reused later cannot spend this offer.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "count", "position", "visible"],
+      "properties": {
+        "what": { "$ref": "#/$defs/ResourceName" },
+        "count": { "$ref": "#/$defs/StackCount" },
+        "position": { "$ref": "#/$defs/WorldPosition" },
+        "visible": {
+          "description": "Whether a ray from the body's eyes reaches this dropped item without meeting a block.",
+          "type": "boolean"
+        }
+      }
+    },
+
     "SensedStack": {
       "description": "One occupied slot of the player's own inventory window. Empty slots are left out, which is what makes the count on a reported stack at least one, and every occupied slot is reported: there is no bound to omit against and so no omission count beside the list, because a body that trimmed its own inventory would be hiding the last food an agent has.",
       "type": "object",
@@ -256,6 +330,83 @@
       ]
     },
 
+    "DigOutcome": {
+      "description": "Every terminal answer to one dig. The first is a vanilla-confirmed block break; the next seven are exact pre-application facts; timedOut and cancelled stop an active dig; libraryFailure is the bounded residual when Mineflayer could not confirm a more specific result.",
+      "type": "string",
+      "enum": [
+        "dug",
+        "senseForgotten",
+        "blockUnnamed",
+        "blockGone",
+        "blockChanged",
+        "outOfReach",
+        "notVisible",
+        "notDiggable",
+        "timedOut",
+        "cancelled",
+        "libraryFailure"
+      ]
+    },
+
+    "CollectOutcome": {
+      "description": "Every terminal answer to collecting one exact dropped-item entity. Movement endings retain the same spelling and meaning as MoveOutcome; collected is emitted only for Mineflayer's pickup event naming this body and this exact retained entity object.",
+      "type": "string",
+      "enum": [
+        "collected",
+        "senseForgotten",
+        "itemUnnamed",
+        "itemGone",
+        "itemChanged",
+        "outOfRange",
+        "noRoute",
+        "searchOverBudget",
+        "stalled",
+        "overTravelled",
+        "timedOut",
+        "cancelled",
+        "libraryFailure"
+      ]
+    },
+
+    "PlaceOutcome": {
+      "description": "Every terminal answer to one placement against one sensed support block with one offered stack that was already held. placed is Mineflayer's confirmed block update; every other value either names the exact revalidation that refused the packet or states that the bounded library operation ended without such confirmation.",
+      "type": "string",
+      "enum": [
+        "placed",
+        "senseForgotten",
+        "blockUnnamed",
+        "slotUnnamed",
+        "blockGone",
+        "blockChanged",
+        "slotEmpty",
+        "slotChanged",
+        "itemNotHeld",
+        "notPlaceable",
+        "destinationBlocked",
+        "outOfReach",
+        "notVisible",
+        "timedOut",
+        "cancelled",
+        "libraryFailure"
+      ]
+    },
+
+    "EquipOutcome": {
+      "description": "Every terminal answer to equipping one offered stack into one chosen equipment destination. equipped is reported only after the client inventory shows that exact stack at Mineflayer's actual destination slot.",
+      "type": "string",
+      "enum": [
+        "equipped",
+        "senseForgotten",
+        "slotUnnamed",
+        "slotEmpty",
+        "slotChanged",
+        "incompatible",
+        "timedOut",
+        "cancelled",
+        "libraryFailure"
+      ]
+    },
+
     "LifecycleState": {
       "description": "Where the body process is in its one life. Seven states and no gameplay: this says whether there is a player on the server and whether it is still usable, never what the player should do. 'connecting' is before the server has accepted the login; 'loggedIn' is after the login packet and before the first spawn; 'ready' is a spawned, live player; 'dead' is a player the server has killed, which the process reports and never respawns; 'disconnected' is a connection the server or the network ended; 'stopping' is a shutdown in progress; 'failed' is a client error the process could not continue from. 'loggedIn' and 'dead' are separate from 'ready' for a reason found in world: a dead identity reconnecting arrives on the death screen, so it reaches loggedIn and then dead without ever reaching ready.",
       "type": "string",
@@ -271,9 +422,22 @@
     },
 
     "ControlOperation": {
-      "description": "What a controller may ask for. Eight operations: reach the process, identify it, stop it, read the raw state the game itself reports, eat one stack the controller names, walk to one place the controller names, run from one creature the controller names, and stop whichever of those two is running. The three movement operations were added after the first five, which is what the paragraph below is about. The operation set is the one part of a generation that may grow without the generation moving, because an operation a peer does not have is refused with unknownOperation and no field of an operation both peers do have changes spelling - which is the misreading ProtocolVersion exists to prevent. A generation moves when an existing field's spelling or meaning changes; adding an operation only widens what is accepted, in the same sense the research manifest schemas may only ever be loosened once evidence is committed under them. The asymmetry that makes the operation set the *only* growable part is worth stating, because it is what decided the move to generation 2: an operation is something a controller asks for, so a controller never meets one it does not have, while a response value set is the body's to choose from - so widening MoveOutcome hands a controller that agreed this generation a frame it cannot read, for a request it made in good faith and without having asked for anything new. Refusing that frame is fail-closed rather than a misreading, but a broken round trip a peer cannot anticipate is exactly what agreeing a generation is for, so a closed set the body answers from may only grow with the generation. That is why 'searchOverBudget' moved this file to 2 while moveTo, flee and halt did not move it at all. The earlier generation of this file said there was deliberately no operation that perceives the world, and the objection behind that sentence was to an unbounded, uncontracted second perception path rather than to world state on this wire at all. 'sense' is bounded by the caller's own limits and described field by field below, so it answers the objection instead of ignoring it: it reports what the game reported, and every meaning Loom reads into that - a bearing, a distance, a threat, a handle a mind may name - is derived by the coordinator above this wire, which is where the perception/decision contract's own bounds and vocabulary already live.",
+      "description": "What a controller may ask for. The operation set is the one part of a generation that may grow without moving the generation: an older body refuses an operation it does not know as unknownOperation, while a body-chosen response field or enum value can surprise a controller after an operation it did know and therefore requires a new generation. Generation 3 adds dig, collect, place, and equip, but moved because sense and response value sets widened, not merely because these request names exist.",
       "type": "string",
-      "enum": ["handshake", "status", "shutdown", "sense", "eat", "moveTo", "flee", "halt"]
+      "enum": [
+        "handshake",
+        "status",
+        "shutdown",
+        "sense",
+        "eat",
+        "moveTo",
+        "flee",
+        "halt",
+        "dig",
+        "collect",
+        "place",
+        "equip"
+      ]
     },
 
     "ErrorCode": {
@@ -419,7 +583,7 @@
         },
         {
           "title": "Halt",
-          "description": "Stop whichever movement is running. It carries no payload because there is at most one movement to stop and the connection already says whose body it is. The movement it stops is answered on its own request with the outcome 'cancelled', so a controller holding a moveTo open sees that request end rather than having to infer it; this request is answered separately and says only whether anything was in fact stopped. A halt with nothing running is not a refusal - see HaltReport.",
+          "description": "Stop whichever cancellable movement or world interaction is running. It carries no payload because there is at most one conflicting owner. The stopped request receives its own cancelled terminal outcome; this request separately reports whether anything was stopped.",
           "type": "object",
           "additionalProperties": false,
           "required": ["protocol", "requestId", "agentId", "op"],
@@ -428,6 +592,75 @@
             "requestId": { "$ref": "#/$defs/ControlId" },
             "agentId": { "$ref": "#/$defs/ControlId" },
             "op": { "const": "halt" }
+          }
+        },
+        {
+          "title": "Dig",
+          "description": "Dig one block offered by one retained sense answer, using only the item already held. The body revalidates identity, state, visibility, reach, and diggability immediately before invoking Mineflayer.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "senseId", "block", "timeoutMs"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "dig" },
+            "senseId": { "$ref": "#/$defs/ControlId" },
+            "block": { "$ref": "#/$defs/BlockIndex" },
+            "timeoutMs": { "$ref": "#/$defs/ActionDeadline" }
+          }
+        },
+        {
+          "title": "Collect",
+          "description": "Collect one exact dropped-item entity offered by one retained sense answer. approach explicitly permits one bounded path to the entity's admitted position; false permits no movement. The body never follows a moving target or chooses a substitute.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "senseId", "item", "approach", "timeoutMs", "sprint"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "collect" },
+            "senseId": { "$ref": "#/$defs/ControlId" },
+            "item": { "$ref": "#/$defs/ItemIndex" },
+            "approach": { "type": "boolean" },
+            "timeoutMs": { "$ref": "#/$defs/ActionDeadline" },
+            "sprint": { "type": "boolean" }
+          }
+        },
+        {
+          "title": "Place",
+          "description": "Place one offered stack that is already in the selected main hand against one chosen face of one offered support block. The support, destination, held stack, visibility, and reach are revalidated immediately before the single Mineflayer placement.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "senseId", "block", "slot", "face", "timeoutMs"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "place" },
+            "senseId": { "$ref": "#/$defs/ControlId" },
+            "block": { "$ref": "#/$defs/BlockIndex" },
+            "slot": { "$ref": "#/$defs/SlotIndex" },
+            "face": { "$ref": "#/$defs/BlockFace" },
+            "timeoutMs": { "$ref": "#/$defs/ActionDeadline" }
+          }
+        },
+        {
+          "title": "Equip",
+          "description": "Equip one stack offered by one retained sense answer into one chosen bounded destination. The exact slot contents are re-read before Mineflayer is invoked; Mineflayer's actual destination slot is reported.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "senseId", "slot", "destination", "timeoutMs"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "equip" },
+            "senseId": { "$ref": "#/$defs/ControlId" },
+            "slot": { "$ref": "#/$defs/SlotIndex" },
+            "destination": { "$ref": "#/$defs/EquipmentDestination" },
+            "timeoutMs": { "$ref": "#/$defs/ActionDeadline" }
           }
         }
       ]
@@ -517,6 +750,10 @@
             "time",
             "entities",
             "entitiesOmitted",
+            "blocks",
+            "blocksOmitted",
+            "items",
+            "itemsOmitted",
             "inventory"
           ],
           "properties": {
@@ -543,6 +780,30 @@
             },
             "entitiesOmitted": {
               "description": "How many entities were inside the radius and did not fit the limit. Zero when nothing was dropped. It rides inside the answer rather than being left for a caller to work out, because the caller cannot: the number the body cut against is the only place the dropped ones were ever counted, and a caller adding its own cut to this one counts each bound exactly once.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "blocks": {
+              "description": "Nearby non-air blocks inside the body's fixed native interaction reach, nearest first, cut independently to the request limit.",
+              "type": "array",
+              "maxItems": 24,
+              "items": { "$ref": "#/$defs/SensedBlock" }
+            },
+            "blocksOmitted": {
+              "description": "How many otherwise describable blocks inside native interaction reach did not fit the request limit.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "items": {
+              "description": "Dropped-item entities inside the request radius, nearest first, cut independently to the request limit.",
+              "type": "array",
+              "maxItems": 24,
+              "items": { "$ref": "#/$defs/SensedItem" }
+            },
+            "itemsOmitted": {
+              "description": "How many otherwise describable dropped-item entities inside the radius did not fit the request limit.",
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
@@ -682,8 +943,101 @@
           }
         },
         {
+          "title": "DigReport",
+          "description": "What became of one dig. attempted distinguishes a pre-application refusal from an operation handed to Mineflayer; tool is the actual main-hand item Mineflayer used and is absent for bare hand or when nothing was attempted.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "state", "outcome", "elapsedMs", "attempted"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "dig" },
+            "state": { "const": "ready" },
+            "outcome": { "$ref": "#/$defs/DigOutcome" },
+            "elapsedMs": { "$ref": "#/$defs/StatusCount" },
+            "attempted": { "type": "boolean" },
+            "tool": {
+              "description": "The item actually held when Mineflayer started the dig. Absent for bare hand and for a request refused before Mineflayer was invoked.",
+              "$ref": "#/$defs/ResourceName"
+            }
+          }
+        },
+        {
+          "title": "CollectReport",
+          "description": "What became of collecting one exact dropped-item entity, including the bounded journey. what and count are present exactly when the matching Mineflayer pickup event confirmed this body collected the retained entity object.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "state", "outcome", "from", "position", "travelled", "elapsedMs"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "collect" },
+            "state": { "const": "ready" },
+            "outcome": { "$ref": "#/$defs/CollectOutcome" },
+            "from": { "$ref": "#/$defs/WorldPosition" },
+            "position": { "$ref": "#/$defs/WorldPosition" },
+            "travelled": { "$ref": "#/$defs/TravelDistance" },
+            "elapsedMs": { "$ref": "#/$defs/StatusCount" },
+            "what": { "$ref": "#/$defs/ResourceName" },
+            "count": { "$ref": "#/$defs/StackCount" }
+          }
+        },
+        {
+          "title": "PlaceReport",
+          "description": "What became of one placement. what, position, and remaining are present exactly when Mineflayer observed the destination change and confirmed one block was placed.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "state", "outcome", "elapsedMs"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "place" },
+            "state": { "const": "ready" },
+            "outcome": { "$ref": "#/$defs/PlaceOutcome" },
+            "elapsedMs": { "$ref": "#/$defs/StatusCount" },
+            "what": { "$ref": "#/$defs/ResourceName" },
+            "position": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "integer",
+                "minimum": -30000000,
+                "maximum": 30000000
+              }
+            },
+            "remaining": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            }
+          }
+        },
+        {
+          "title": "EquipReport",
+          "description": "What became of one equip. what, count, and toSlot are present exactly when the client inventory confirms the offered stack at Mineflayer's actual destination slot; toSlot records Mineflayer's hand-slot choice separately from the controller's destination.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "state", "outcome", "elapsedMs"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "equip" },
+            "state": { "const": "ready" },
+            "outcome": { "$ref": "#/$defs/EquipOutcome" },
+            "elapsedMs": { "$ref": "#/$defs/StatusCount" },
+            "what": { "$ref": "#/$defs/ResourceName" },
+            "count": { "$ref": "#/$defs/StackCount" },
+            "toSlot": { "$ref": "#/$defs/SlotIndex" }
+          }
+        },
+        {
           "title": "HaltReport",
-          "description": "What one halt did. 'stopped' false means nothing was moving, and it is not a refusal: a controller that halts twice, or halts after a route has already ended, is asking what state the body is in rather than for an action, and a refusal would make it guess whether its own bookkeeping or the body's is right. The movement that was stopped is answered on its own request with the outcome 'cancelled', so this frame deliberately carries no position and no measurement - those belong to the request that did the walking, and stating them twice would give a run two accounts of one journey.",
+          "description": "What one halt did. stopped false means no cancellable movement or interaction was active; stopped true means the owning request is also answered with its own cancelled outcome.",
           "type": "object",
           "additionalProperties": false,
           "required": ["protocol", "requestId", "agentId", "op", "state", "stopped"],

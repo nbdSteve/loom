@@ -23,7 +23,7 @@
 
 use std::future::Future;
 
-use loom_contract::{Intent, Perception, Trigger};
+use loom_contract::{Intent, ObservationKind, Perception, Trigger};
 
 use crate::config::{bounded, ConfigError, Env};
 use crate::router::ModelRoute;
@@ -345,13 +345,15 @@ impl ModelBackend for ScriptedBackend {
 /// The ref of the nearest observed living thing, if the scene holds one.
 ///
 /// The body already sorted `surroundings` nearest-first, and only a living thing
-/// carries a ref, so the first ref in the list is the nearest thing that can be
-/// named. `None` says the scene holds nothing nameable rather than nothing at all.
+/// carries `kind = entity`, so the first entity in the list is the nearest thing
+/// that can be fled from. `None` says the scene holds no living target rather
+/// than no actionable blocks or dropped items.
 fn nearest_ref(perception: &Perception) -> Option<String> {
     perception
         .surroundings
         .iter()
-        .find_map(|seen| seen.entity_ref.clone())
+        .find(|seen| seen.kind == ObservationKind::Entity)
+        .map(|seen| seen.target_ref.clone())
 }
 
 #[cfg(test)]
@@ -365,8 +367,8 @@ mod tests {
     use crate::config::{ConfigError, Env};
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
-        Bearing, DayPhase, DecisionImportance, Intent, InventoryStack, Observation, Perception,
-        SelfState, Trigger, WorldState,
+        Bearing, DayPhase, DecisionImportance, Intent, InventoryStack, Observation,
+        ObservationKind, Perception, SelfState, Trigger, WorldState,
     };
 
     fn router() -> Router {
@@ -417,12 +419,14 @@ mod tests {
     /// something such a test can leave out.
     fn in_view(mut seen: Perception, what: &str, handle: &str) -> Perception {
         seen.surroundings.push(Observation {
+            kind: ObservationKind::Entity,
             what: what.to_owned(),
             distance: 3.0,
             direction: Bearing::North,
             vertical_offset: 0.0,
             visible: true,
-            entity_ref: Some(handle.to_owned()),
+            target_ref: handle.to_owned(),
+            count: None,
         });
         seen
     }

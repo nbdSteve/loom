@@ -8,7 +8,11 @@ It proves three concurrent agents through:
 
 - deterministic identity, endpoint, and process-directory allocation;
 - bounded concurrent startup and readiness;
-- independent perception, cognition, movement, eating, refs, and evidence;
+- independent perception, cognition, movement, eating, native interaction,
+  request-scoped refs, and evidence;
+- two agents completing different server-confirmed world interactions without
+  sharing refs;
+- one hard child-process crash while a peer remains ready and acts;
 - one process disconnect and restart without collateral damage;
 - one server-witnessed terminal death without collateral damage;
 - aggregate inspection and complete bounded shutdown.
@@ -182,7 +186,103 @@ Each command returns immediately. The record must reconstruct three independent
 `perceived` → `decided` → `intentApplied` chains by `agentId` and `requestId`.
 No chain may contain another agent's request, ref, decision, or action.
 
-## 6. Prove movement for alpha
+## 6. Prove native interaction and hard-crash isolation
+
+The default scripted backend deliberately does not invent a resource goal, so
+this section uses a temporary finite cognition fixture rather than adding such a
+policy to the product. Stop the default mind and start a loopback-only
+newline-delimited responder on `127.0.0.1:8642`. Keep it unarmed until the world
+is staged. For every response it must echo the perception's `requestId` and
+`agentId`, include fixed local proof provenance, and do only this:
+
+- for alpha, select an offered red-wool block ref for
+  `{"action":"dig","block":"<ref>"}`, then an offered dropped-apple ref for
+  `{"action":"collect","item":"<ref>","approach":true}`;
+- for beta, select its offered dirt inventory ref for
+  `{"action":"equip","item":"<ref>","destination":"hand"}`, then that same
+  offered dirt ref and an offered gold-block ref for
+  `{"action":"place","block":"<ref>","item":"<ref>","face":"up"}`;
+- otherwise return `{"action":"idle"}`.
+
+The fixture must advance only when the expected offer is present and must never
+accept a coordinate, entity id, slot number, or item name as an action target.
+It is an acceptance driver for typed Loom intents, not a body plugin or a
+background collector. Paper remains connected to it through the normal
+cognition bridge.
+
+Build isolated ground and stage alpha's first target:
+
+```text
+execute at <alpha> run fill ~-6 ~-1 ~-6 ~6 ~-1 ~6 minecraft:stone
+execute at <beta> run fill ~-6 ~-1 ~-6 ~6 ~-1 ~6 minecraft:stone
+execute at <alpha> run setblock ~1 ~ ~ minecraft:red_wool
+```
+
+Arm the fixture and request alpha's decision:
+
+```text
+loombody think proof-alpha
+```
+
+The evidence must contain an alpha `perceived` record offering the red-wool
+block ref, a `decided` `dig`, an `intentApplied`, and a `worldInteraction` with
+outcome `serverEffectConfirmed`. Its bounded detail must join the sense request,
+the body-control request, body outcome `dug`, and Paper's exact
+`blockBreak minecraft:red_wool` location and tick.
+
+Stage one exact dropped-item entity and ask again:
+
+```text
+execute at <alpha> run summon minecraft:item ~1.75 ~0.25 ~ {PickupDelay:40s,Item:{id:"minecraft:apple",count:2}}
+loombody think proof-alpha
+```
+
+The second chain must select only that perception's dropped-item ref and end in
+a confirmed `entityPickupItem` for the exact server entity UUID, item type, and
+`2/2` count.
+
+Now crash alpha's OS process without giving its signal handler a graceful
+shutdown path:
+
+```sh
+alpha_pid="$(lsof -tiTCP:25585 -sTCP:LISTEN)"
+test -n "$alpha_pid"
+kill -KILL "$alpha_pid"
+```
+
+Wait for `bodyDisconnected` and `witnessQuit` for alpha. There must be no alpha
+death tombstone, and beta and gamma must remain `ready`.
+
+Only after the crash, stage beta's independent refs and reset the fixture's
+beta phase to its first action:
+
+```text
+execute at <beta> run setblock ~1 ~-1 ~ minecraft:gold_block
+execute at <beta> run setblock ~1 ~ ~ minecraft:air
+item replace entity <beta> inventory.0 with minecraft:dirt 3
+loombody think proof-beta
+loombody think proof-beta
+```
+
+The first beta chain equips the exact offered dirt stack and is confirmed
+against Paper's final equipment slot. The second names a fresh gold-block ref,
+the dirt ref offered in that same perception, and face `up`; it must end in
+`blockPlace minecraft:dirt` at the block above the support and a confirmed
+`worldInteraction`. Alpha's block and item refs must never appear in either beta
+chain.
+
+Restart alpha before continuing the rest of the proof:
+
+```text
+loombody create proof-alpha
+loombody inspect proof-alpha
+```
+
+Its deterministic identity, endpoint, and process directory must be unchanged.
+Stop the finite fixture and restart the credential-free scripted mind before
+the survival-policy checks below.
+
+## 7. Prove movement for alpha
 
 Summon one stationary hostile near alpha:
 
@@ -207,7 +307,7 @@ Remove the zombie:
 kill @e[type=minecraft:zombie,distance=..16]
 ```
 
-## 7. Prove eating for beta
+## 8. Prove eating for beta
 
 Give beta bread and lower only beta's food:
 
@@ -229,7 +329,7 @@ stack, and later food/saturation reading. Alpha and gamma inventory refs remain
 unspendable by beta because a ref is scoped to one agent, one sense answer, and
 one control connection.
 
-## 8. Prove gamma disconnect containment
+## 9. Prove gamma disconnect containment
 
 Find the process listening on gamma's allocated control port and terminate it:
 
@@ -259,7 +359,7 @@ Its username, UUID, endpoint, process directory, cognition/ref state, and
 evidence attribution remain its own. Alpha and beta are neither stopped nor
 restarted.
 
-## 9. Prove beta terminal death containment
+## 10. Prove beta terminal death containment
 
 Kill beta through the server:
 
@@ -285,7 +385,7 @@ Restart Paper with the same `LOOM_BODY_AGENTS` set. The allocator must reproduce
 the same three identities, endpoints, and process directories. The replayed
 ledger refuses beta while alpha and gamma start independently.
 
-## 10. Reconstruct per-agent evidence
+## 11. Reconstruct per-agent evidence
 
 The following produces one ordered chain per agent without reading free-form
 detail:
@@ -313,13 +413,17 @@ Confirm:
 
 - every lifecycle, perception, decision, action, refusal, disconnect, and death
   is filed under exactly one configured `agentId`;
+- alpha's dig and collection each join one of alpha's offered refs to one exact
+  body-control request and one confirmed vanilla event;
+- beta's equip and placement use only beta's refs and complete after alpha's
+  `SIGKILL`;
 - alpha's movement records join alpha's perception only;
 - beta's meal and death records join beta only;
 - gamma's disconnect/restart records join gamma only;
 - aggregate Paper logs report counts and agent ids, never prompts,
   provider credentials, or unbounded transport messages.
 
-## 11. Prove bounded cleanup
+## 12. Prove bounded cleanup
 
 Stop Paper and cognition. Confirm no process or listener from the proof remains:
 

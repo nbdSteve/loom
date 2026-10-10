@@ -3,10 +3,10 @@
 /**
  * The bounded memory of what recent sense answers offered.
  *
- * A sense answer hands a controller two kinds of handle at once - a slot of the body's
- * inventory window, and an index into the scene it reported - and this is the whole of
- * what makes either mean something later. Nothing here decides anything: it remembers
- * what was offered, answers what a handle names, and forgets.
+ * A sense answer hands a controller four kinds of handle at once - an inventory slot,
+ * a creature, a nearby block, and a dropped item - and this is the whole of what makes
+ * any of them mean something later. Nothing here decides anything: it remembers what
+ * was offered, answers what a handle names, spends mutable offers, and forgets.
  *
  * **Both kinds are remembered together, which is the invariant rather than tidiness.**
  * One answer carries slot handles and entity handles, so a memory that kept one and not
@@ -65,15 +65,32 @@ function senseMemory () {
     return remembered.find((entry) => entry.connection === connection && entry.senseId === senseId)
   }
   return {
-    remember (connection, senseId, { inventory, entityOffers }) {
+    remember (connection, senseId, { slotOffers, entityOffers, blockOffers, itemOffers }) {
       remembered.push({
         connection,
         senseId,
-        slots: new Map(inventory.map((stack) => [stack.slot, stack.what])),
+        slots: new Map(slotOffers.map((stack) => [
+          stack.slot,
+          { what: stack.what, count: stack.count, detail: stack.detail }
+        ])),
         // Copied rather than held, because the caller's array is built per answer and this
         // memory outlives the frame it came from. Each offer keeps the exact object the sense
         // described, because an id reused later must not become the same handle.
-        entityOffers: entityOffers.map(({ id, entity }) => ({ id, entity, dead: false }))
+        entityOffers: entityOffers.map(({ id, entity }) => ({ id, entity, dead: false })),
+        blockOffers: blockOffers.map((offer) => ({
+          what: offer.what,
+          position: [...offer.position],
+          type: offer.type,
+          stateId: offer.stateId
+        })),
+        itemOffers: itemOffers.map(({ id, entity, what, count, detail }) => ({
+          id,
+          entity,
+          what,
+          count,
+          detail,
+          gone: false
+        }))
       })
       if (remembered.length > MAX_REMEMBERED_SENSES) remembered.shift()
     },
@@ -87,7 +104,12 @@ function senseMemory () {
     recall (connection, senseId) {
       const entry = held(connection, senseId)
       if (entry === undefined) return undefined
-      return { slots: entry.slots, entityOffers: entry.entityOffers }
+      return {
+        slots: entry.slots,
+        entityOffers: entry.entityOffers,
+        blockOffers: entry.blockOffers,
+        itemOffers: entry.itemOffers
+      }
     },
     /**
      * Marks every remembered handle for this exact entity as dead.
@@ -101,6 +123,14 @@ function senseMemory () {
       for (const entry of remembered) {
         for (const offered of entry.entityOffers) {
           if (offered.entity === entity) offered.dead = true
+        }
+      }
+    },
+    /** Marks an exact retained dropped-item object as no longer present. */
+    sawEntityGone (entity) {
+      for (const entry of remembered) {
+        for (const offered of entry.itemOffers) {
+          if (offered.entity === entity) offered.gone = true
         }
       }
     },
@@ -134,6 +164,16 @@ function senseMemory () {
     spend (connection, senseId, slot) {
       const entry = held(connection, senseId)
       if (entry !== undefined) entry.slots.delete(slot)
+    },
+    /** Drops one block offer after a successful dig or placement against it. */
+    spendBlock (connection, senseId, block) {
+      const entry = held(connection, senseId)
+      if (entry !== undefined) entry.blockOffers[block] = undefined
+    },
+    /** Drops one dropped-item offer after this body collected it. */
+    spendItem (connection, senseId, item) {
+      const entry = held(connection, senseId)
+      if (entry !== undefined) entry.itemOffers[item] = undefined
     },
     /**
      * Drops what `connection` was offered, once that connection has gone.

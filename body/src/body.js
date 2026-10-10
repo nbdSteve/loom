@@ -64,7 +64,10 @@ const { performance } = require('node:perf_hooks')
 const {
   LIFECYCLE_STATES,
   MAX_FRAME_BYTES,
+  collectReport,
+  digReport,
   eatReport,
+  equipReport,
   fleeReport,
   haltReport,
   handshakeAccepted,
@@ -73,6 +76,7 @@ const {
   decodeRequest,
   encodeResponse,
   moveReport,
+  placeReport,
   refusal,
   senseReport,
   shutdownAccepted,
@@ -80,8 +84,12 @@ const {
 } = require('./protocol')
 
 const { followWorldState } = require('./gamestate')
+const { collectOfferedItem } = require('./collecting')
+const { digOfferedBlock, installDigging } = require('./digging')
 const { eatFromSlot } = require('./eating')
+const { equipOfferedStack } = require('./equipping')
 const { installMovement } = require('./movement')
+const { installPlacing, placeHeldBlock } = require('./placing')
 const { senseMemory } = require('./senses')
 const { senseReading, vitalsOf } = require('./sensing')
 
@@ -222,25 +230,24 @@ const QUIT_REASON = 'disconnect.quitting'
  * can walk, because a player's movement in Minecraft is *client*-simulated and there is no
  * "server, please walk me there" packet - so it is loaded by `body/src/movement.js`, which
  * holds its simulation, its position reporting and the control packets a walk sets shut
- * unless one accepted `moveTo` or `flee` owns the path. That file's header is the authority
- * on the whole of that scope, including the one part of the plugin's lifetime the library
- * will not let anything stop, and why the scope needs a second seam beside the packet one.
+ * unless one accepted `moveTo`, `flee`, or explicitly approaching `collect` owns the path.
+ * That file's header is the authority on the whole of that scope, including the one part of
+ * the plugin's lifetime the library will not let anything stop, and why the scope needs a
+ * second seam beside the packet one.
  * Its *reading* half is unscoped and has to be: the clientbound `position` handler is what
  * moves `bot.entity.position` off the origin and what records the facing a meal is sent
  * with, so every perception and every meal depends on it whether or not anything is
  * walking. See `body/src/gamestate.js` for why that handler is the plugin's alone.
  *
  * The line is drawn per *plugin* and not per method, and three plugins bring actions with
- * them that nothing here wants: `entities` defines `bot.attack`, `bot.mount` and
+ * them that no operation names: `entities` defines `bot.attack`, `bot.mount` and
  * `bot.useOn` beside the entity index, `simple_inventory` defines `bot.toss` and
- * `bot.tossStack` beside the `equip` a meal needs, and `physics` defines `bot.elytraFly`
- * beside the simulation a walk needs. They cannot be left behind - the index, `equip` and
- * the simulation are exactly what a `sense`, an `eat` and a `moveTo` are read and carried
- * out through - so what keeps them from being taken is that no operation on this wire
- * calls one. That is the *wire* being eight operations rather than a list of methods being
- * withheld, which is why it is pinned as behaviour in `test/plugins.test.js` rather than
- * stated here alone. Note that `bot.quit` is *not* among them: it is `kick`'s, and `kick`
- * is not loaded, which is why `quitBot` cannot rely on it.
+ * `bot.tossStack` beside explicit equipment, and `physics` defines `bot.elytraFly`
+ * beside the simulation a walk needs. They cannot be left behind, so what keeps them
+ * unreachable is the closed operation set and the request-scoped modules that call only
+ * named primitives. `test/plugins.test.js` pins that as behaviour rather than trusting
+ * this list. Note that `bot.quit` is *not* among them: it is `kick`'s, and `kick` is not
+ * loaded, which is why `quitBot` cannot rely on it.
  *
  * `end`, `error` and `connect` are wired to the raw client by the loader itself and need
  * no plugin at all. `login` and `bot.game` are `body/src/gamestate.js`, which is the
@@ -497,12 +504,9 @@ function createBody (options) {
   // most one accepted movement. Undefined until then, so a movement request that arrives
   // before the body is `ready` is refused by the state check rather than by its absence.
   let movement
-  // The token of the movement in flight, naming the control connection that asked for it, and
-  // undefined when none is. The wrapper owns *whether* a movement is running, which is what
-  // refuses a takeover; this is only who to stop it for, so a connection closing takes down its
-  // own route and never a peer's. Written where the request is accepted rather than inside the
-  // wrapper, because a connection is a fact about this file's control channel and not about
-  // walking.
+  // The one cancellable or mutating request in flight, naming the control connection that
+  // asked for it. Movement, digging, collection, placement and equipment share this owner so
+  // pathing and world mutation can never overlap or silently displace each other.
   //
   // A **token per run** rather than the session alone, because the clear is asynchronous and
   // the set is not. A controller replacing a movement sends `halt` and its next request in one
@@ -514,7 +518,7 @@ function createBody (options) {
   // holding the wrapper's one movement slot against every later request. Keyed on the token it
   // finds an owner that is not its own and leaves it alone. The same token is what
   // `movement.js` keys the path and the simulation gate on, so all three are one identity.
-  let movementOwner
+  let actionOwner
   const sockets = new Set()
   const server = net.createServer({ allowHalfOpen: false }, (socket) => accept(socket))
   server.on('error', failControlServer)
@@ -572,8 +576,12 @@ function createBody (options) {
   function follow (created) {
     created.on('login', () => transition('loggedIn'))
     created.on('spawn', () => transition('ready'))
-    created.on('death', () => transition('dead'))
+    created.on('death', () => {
+      actionOwner?.abort()
+      transition('dead')
+    })
     created.on('end', () => {
+      actionOwner?.abort()
       clientGone = true
       transition('disconnected')
     })
@@ -609,16 +617,15 @@ function createBody (options) {
     silenceDependencyDebug(environment)
     const launch = createBot ?? require('mineflayer').createBot
     bot = launch(botOptionsFor(configuration))
-    // The two plugins a walk needs are loaded here rather than through `botOptionsFor`'s
-    // plugin table, which is the list of the client library's plugins that merely *report* -
-    // the one place the report-against-act rule is stated. One of them is third-party and the
-    // other is the client-side simulation, which is not a reporter and must not be resident;
-    // `movement.js` owns both and scopes the simulation to one accepted request.
-    // `installMovement` only registers them and builds the wrapper; nothing is configured
-    // until a request arrives, for the reason `movement.js` gives about `bot.pathfinder` not
-    // existing yet.
+    // Action plugins are loaded through the module that bounds the operation using them,
+    // rather than through `botOptionsFor`'s reporting-only plugin table. Loading one defines
+    // a mechanical primitive on the bot; it does not invoke it or select a target. Each
+    // module's own header states the request scope around that primitive.
     movement = installMovement(bot)
+    installDigging(bot)
+    installPlacing(bot)
     bot.on('entityDead', offered.sawEntityDead)
+    bot.on('entityGone', offered.sawEntityGone)
     follow(bot)
   }
 
@@ -670,7 +677,7 @@ function createBody (options) {
   function stop () {
     if (stopped !== undefined) return stopped
     closing = true
-    movement?.halt()
+    actionOwner?.abort()
     let settle
     stopped = new Promise((resolve) => { settle = resolve })
     transition('stopping')
@@ -772,7 +779,7 @@ function createBody (options) {
       // next connection, and be refused `notReady` for a request nothing is still driving.
       // Owning at most one movement is what makes this sound: there is no other connection's
       // route to stop by mistake.
-      if (movementOwner?.session === session) movement?.halt()
+      if (actionOwner?.session === session) actionOwner.abort()
     })
     if (sockets.size >= MAX_CONTROL_CONNECTIONS) {
       refuse(socket, session, { code: 'tooManyRequests', close: true })
@@ -881,7 +888,7 @@ function createBody (options) {
   }
 
   /**
-   * The eight operations of this generation.
+   * The twelve operations of this generation.
    *
    * A handshake is answered first, and refused while stopping: a process that has
    * begun leaving has nothing true to say about the generation it is agreeing to.
@@ -902,8 +909,8 @@ function createBody (options) {
    * arriving after it is that this process is going away, not `stopped: false`.
    *
    * A status is the residual rather than a branch of its own, which is total because
-   * `decodeRequest` admits exactly `OPERATIONS` and the seven above are the rest of
-   * them.
+   * `decodeRequest` admits exactly `OPERATIONS`, and status is the only operation not
+   * dispatched above it.
    */
   function answer (socket, session, request, requestId) {
     const op = request.op
@@ -931,6 +938,9 @@ function createBody (options) {
     if (op === 'sense') return sense(socket, session, request, requestId)
     if (op === 'eat') return eat(socket, session, request, requestId)
     if (op === 'moveTo' || op === 'flee') return move(socket, session, request, requestId)
+    if (['dig', 'collect', 'place', 'equip'].includes(op)) {
+      return interact(socket, session, request, requestId)
+    }
     if (op === 'halt') return halt(socket, requestId)
     const { stateMs, uptimeMs } = snapshot()
     return write(socket, statusReport({
@@ -976,8 +986,10 @@ function createBody (options) {
     // entities a flee may, and a memory that took one and not the other would resolve a
     // flight and refuse a meal off the same frame.
     offered.remember(session, requestId, {
-      inventory: answer.inventory,
-      entityOffers: answer.entityOffers
+      slotOffers: answer.slotOffers,
+      entityOffers: answer.entityOffers,
+      blockOffers: answer.blockOffers,
+      itemOffers: answer.itemOffers
     })
     return write(socket, answer.frame)
   }
@@ -1007,14 +1019,16 @@ function createBody (options) {
     try {
       const read = senseReading(bot, { radius: request.radius, limit: request.limit })
       if (read === undefined) return undefined
-      const { reading, entityOffers } = read
+      const { reading, entityOffers, blockOffers, itemOffers, slotOffers } = read
       // Only the reading is spread into the frame. `entityOffers` holds the client library's
       // private id and exact object identity, neither of which may reach the wire, so it comes
       // back beside the frame and travels no further than `offered`; `sensing.js` carries why
       // the two are named rather than spread into one object.
       return {
-        inventory: reading.inventory,
         entityOffers,
+        blockOffers,
+        itemOffers,
+        slotOffers,
         frame: senseReport({ requestId, agentId, ...reading })
       }
     } catch {
@@ -1041,7 +1055,8 @@ function createBody (options) {
    * fall back on rather than a refusal to invent for a meal that already happened.
    */
   function eat (socket, session, request, requestId) {
-    const admitted = state === 'ready' && !eating ? vitalsOf(bot) : undefined
+    const admitted =
+      state === 'ready' && !eating && actionOwner === undefined ? vitalsOf(bot) : undefined
     if (admitted === undefined) {
       return refuse(socket, session, { code: 'notReady', requestId })
     }
@@ -1120,6 +1135,103 @@ function createBody (options) {
   }
 
   /**
+   * Takes one explicit native world interaction and answers it on the asking connection.
+   *
+   * All four operations share [actionOwner] with movement. Their targets and inventory
+   * choices come only from this connection's retained sense answer; the operation modules
+   * revalidate those snapshots immediately before the first Mineflayer call.
+   */
+  function interact (socket, session, request, requestId) {
+    if (state !== 'ready' || eating || actionOwner !== undefined) {
+      return refuse(socket, session, { code: 'notReady', requestId })
+    }
+    if (request.op === 'collect' && movement === undefined) {
+      return refuse(socket, session, { code: 'notReady', requestId })
+    }
+    const remembered = offered.recall(session, request.senseId)
+    const owner = { session }
+    let running
+    if (request.op === 'dig') {
+      running = digOfferedBlock(bot, {
+        offered: remembered?.blockOffers,
+        block: request.block,
+        timeoutMs: request.timeoutMs,
+        now
+      })
+    } else if (request.op === 'collect') {
+      running = collectOfferedItem(bot, movement, {
+        offered: remembered?.itemOffers,
+        item: request.item,
+        approach: request.approach,
+        timeoutMs: request.timeoutMs,
+        sprint: request.sprint,
+        owner,
+        now
+      })
+    } else if (request.op === 'place') {
+      running = placeHeldBlock(bot, {
+        blockOffers: remembered?.blockOffers,
+        slots: remembered?.slots,
+        block: request.block,
+        slot: request.slot,
+        face: request.face,
+        timeoutMs: request.timeoutMs,
+        now
+      })
+    } else {
+      running = equipOfferedStack(bot, {
+        slots: remembered?.slots,
+        slot: request.slot,
+        destination: request.destination,
+        timeoutMs: request.timeoutMs,
+        now
+      })
+    }
+    if (running === undefined) {
+      return refuse(socket, session, { code: 'notReady', requestId })
+    }
+    actionOwner = {
+      token: owner,
+      kind: 'interaction',
+      session,
+      cancel: running.cancel,
+      abort: running.abort ?? running.cancel
+    }
+    settleInteraction(socket, session, request, requestId, running.promise, owner).catch(() => {})
+    return true
+  }
+
+  /** Waits for one interaction, spends every mutable handle it changed, and writes its report. */
+  async function settleInteraction (socket, session, request, requestId, result, owner) {
+    try {
+      const report = await result
+      if (report === undefined) {
+        return refuse(socket, session, { code: 'notReady', requestId })
+      }
+      if (request.op === 'dig' && report.outcome === 'dug') {
+        offered.spendBlock(session, request.senseId, request.block)
+      } else if (request.op === 'collect' && report.outcome === 'collected') {
+        offered.spendItem(session, request.senseId, request.item)
+      } else if (request.op === 'place' && report.outcome === 'placed') {
+        offered.spend(session, request.senseId, request.slot)
+      } else if (request.op === 'equip' && report.outcome === 'equipped') {
+        offered.spend(session, request.senseId, request.slot)
+      }
+
+      let frame
+      if (request.op === 'dig') frame = digReport({ requestId, agentId, ...report })
+      else if (request.op === 'collect') frame = collectReport({ requestId, agentId, ...report })
+      else if (request.op === 'place') frame = placeReport({ requestId, agentId, ...report })
+      else frame = equipReport({ requestId, agentId, ...report })
+      return write(socket, frame)
+    } catch {
+      return refuse(socket, session, { code: 'notReady', requestId })
+    } finally {
+      if (actionOwner?.token === owner) actionOwner = undefined
+    }
+  }
+
+  /**
    * Takes one movement - a walk or a flight - and answers it later.
    *
    * **A takeover is refused rather than served, and the wrapper is what refuses it.** One
@@ -1145,7 +1257,7 @@ function createBody (options) {
    * that answer: its slot offers are a meal's.
    */
   function move (socket, session, request, requestId) {
-    if (state !== 'ready' || movement === undefined) {
+    if (state !== 'ready' || movement === undefined || eating || actionOwner !== undefined) {
       return refuse(socket, session, { code: 'notReady', requestId })
     }
     // This run's own identity, minted before the wrapper is asked so that the path, the
@@ -1171,7 +1283,8 @@ function createBody (options) {
     if (walking === undefined) {
       return refuse(socket, session, { code: 'notReady', requestId })
     }
-    movementOwner = owner
+    const cancel = () => movement?.halt() ?? false
+    actionOwner = { token: owner, kind: 'movement', session, cancel, abort: cancel }
     // Nothing awaits this here, for the reason `eat` gives: the answer goes on the socket
     // rather than to a caller, so its own residual failure is caught rather than left to
     // become an unhandled rejection.
@@ -1221,7 +1334,7 @@ function createBody (options) {
     } catch {
       // Answered as `notReady` below, like any other movement this body cannot state.
     } finally {
-      if (movementOwner === owner) movementOwner = undefined
+      if (actionOwner?.token === owner) actionOwner = undefined
     }
     return refuse(socket, session, { code: 'notReady', requestId })
   }
@@ -1244,7 +1357,15 @@ function createBody (options) {
    * microtask later, but both go out.
    */
   function halt (socket, requestId) {
-    const stopped = movement?.halt() ?? false
+    const owned = actionOwner
+    const stopped = owned?.cancel() ?? false
+    // Movement cancellation releases the path synchronously. Give ownership back in the
+    // same socket data turn so a pipelined halt-then-move can be admitted; the old request's
+    // token-guarded `finally` cannot clear that replacement. Other interactions may answer
+    // `cancelled` synchronously too, but only movement has a documented replacement pattern.
+    if (stopped && owned?.kind === 'movement' && actionOwner === owned) {
+      actionOwner = undefined
+    }
     return write(socket, haltReport({ requestId, agentId, stopped }))
   }
 

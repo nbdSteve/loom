@@ -19,13 +19,14 @@
  * it *throws* has stopped witnessing. So [ObservedVitals] and [ObservedStack] carry
  * whatever the server says, unbounded, and the comparison is between the two shapes.
  *
- * **A continuous vital drifts and an item does not.** A claim travelled over a socket
- * before the server was asked, so health and saturation move between the two readings
- * for perfectly ordinary reasons and need a stated tolerance; an item's name and its
- * count do not drift, so they are compared exactly. Reading either rule as the other's
- * gives a check that is useless in one direction and a false alarm in the other. Exactly,
- * but not as *written*: the contract makes an item's namespace optional and the two sides
- * reach the comparison spelled differently, so both are normalised first - `ItemNames.kt`.
+ * **A continuous vital drifts and an item does not.** The server snapshot is taken
+ * immediately before the body sense request, and the client report returns after that
+ * socket round trip, so health and saturation can cross one ordinary update between the
+ * two readings and need a stated tolerance; an item's name and its count do not drift,
+ * so they are compared exactly. Reading either rule as the other's gives a check that is
+ * useless in one direction and a false alarm in the other. Exactly, but not as *written*:
+ * the contract makes an item's namespace optional and the two sides reach the comparison
+ * spelled differently, so both are normalised first - `ItemNames.kt`.
  *
  * **The comparison covers the slots the server can address, and says so.** Bukkit's
  * `PlayerInventory` numbers the armour, the main inventory, the hotbar and the offhand,
@@ -54,7 +55,7 @@ import java.util.Locale
  * How far apart two readings of one continuous vital may be and still agree.
  *
  * A whole point of health is half a heart, and a whole point of saturation is a whole
- * point: the claim was taken a socket round trip before the server was asked, so a
+ * point: the server snapshot and later client report straddle a socket round trip, so a
  * tighter bound would report ordinary regeneration as a body having lied about itself.
  */
 const val VITAL_DRIFT_TOLERANCE: Double = 1.0
@@ -125,7 +126,7 @@ data class ObservedStack(val slot: Int, val what: String, val count: Int)
  */
 data class BodyClaim(val vitals: SensedVitals, val inventory: List<SensedStack>)
 
-/** What the server itself reads about that player, at the moment it was asked. */
+/** What the server itself read about that player at the sense request's capture boundary. */
 data class ServerReading(val vitals: ObservedVitals, val inventory: List<ObservedStack>)
 
 /** Whether a body's account of itself stands up against the server's own reading. */

@@ -122,6 +122,7 @@ internal class PlayerActuation(
 /** Resolves main-thread handles before returning one immutable I/O operation. */
 internal class PlayerActionPreparer(
     private val context: PlayerBodyContext,
+    private val interactions: PlayerInteractionPreparer = PlayerInteractionPreparer(context),
 ) {
     fun prepare(
         runtime: PlayerRuntime,
@@ -144,6 +145,10 @@ internal class PlayerActionPreparer(
             }
             is Intent.Eat -> prepareEat(runtime, intent, requestId, sense)
             is Intent.Flee -> prepareFlee(runtime, intent, requestId, sense)
+            is Intent.Dig -> interactions.prepare(runtime, intent, requestId, sense)
+            is Intent.Collect -> interactions.prepare(runtime, intent, requestId, sense)
+            is Intent.Place -> interactions.prepare(runtime, intent, requestId, sense)
+            is Intent.Equip -> interactions.prepare(runtime, intent, requestId, sense)
         }
 
     private fun halt(

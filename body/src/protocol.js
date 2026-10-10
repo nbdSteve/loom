@@ -40,28 +40,24 @@
 /**
  * The current protocol generation. A frame naming any other is refused, not interpreted.
  *
- * It moved from 1 to 2 when [MOVE_OUTCOMES] gained `searchOverBudget`, and the schema's
- * `ControlOperation` description is the authority on why that moves a generation where adding
- * three whole *operations* did not.
+ * It moved from 2 to 3 when sense answers gained block and dropped-item offers and the
+ * body gained new closed response sets. Adding operation names alone would not have moved
+ * it; widening a body-chosen answer does.
  */
-const PROTOCOL_VERSION = 2
+const PROTOCOL_VERSION = 3
 
 /**
  * Longest frame this protocol will carry, in bytes.
  *
  * The largest legal frame in this generation is a sense report at every one of its
- * own bounds - both ids at their full length, [MAX_SENSE_ENTITIES] entities and a
- * full [MAX_SENSE_STACKS] slots of inventory, every resource name at
- * [MAX_RESOURCE_NAME_CHARS] and every coordinate at its widest - which measures a
- * little over 7 KiB, so 8 KiB is a real bound with room left rather than a generous
- * one. That is a change of kind from the earlier generation of this note, where the
- * largest frame was a 297-byte status report and the margin was a factor of
- * twenty-seven: the bound is now sized by the widest answer rather than chosen well
- * clear of every answer, which is why [MAX_SENSE_ENTITIES] and [MAX_SENSE_STACKS]
- * are derived from what fits here rather than from what a caller might like.
- * `protocol.test.js` measures the worst case rather than trusting this arithmetic.
+ * own bounds - both ids at their full length, [MAX_SENSE_ENTITIES] entities,
+ * [MAX_SENSE_BLOCKS] blocks, [MAX_SENSE_ITEMS] dropped items, every inventory slot,
+ * every resource name at [MAX_RESOURCE_NAME_CHARS] and every coordinate at its widest.
+ * It measures about 14.7 KiB on this runtime, so 32 KiB carries it with explicit
+ * headroom while remaining a small control-plane bound. `protocol.test.js` constructs
+ * and measures that exact worst case rather than trusting this arithmetic.
  *
- * It is still two orders of magnitude tighter than the cognition wire's 256 KiB,
+ * It is still eight times tighter than the cognition wire's 256 KiB,
  * which is sized for a whole perception with its prose. That there *is* a largest
  * legal frame is what `MAX_COUNT` buys: an `integer` bounded only from below admits
  * arbitrarily many digits, so before it this margin was a claim about no particular
@@ -80,13 +76,13 @@ const PROTOCOL_VERSION = 2
  * line of eight thousand astral characters is 32 KiB on the socket, and measuring
  * it as eight thousand would let a peer spend four times the bound.
  */
-const MAX_FRAME_BYTES = 8192
+const MAX_FRAME_BYTES = 32768
 
 /**
  * Deepest a frame may nest before it is refused unparsed.
  *
  * Not a size bound, and the two ends of this wire need it for different reasons.
- * Within the 8 KiB above a peer can write four thousand open brackets, and what that
+ * Within the 32 KiB above a peer can write sixteen thousand open brackets, and what that
  * costs depends on the reader: kotlinx's `parseToJsonElement` recurses once per level,
  * as does the JVM's own walk for explicit nulls, so there it arrives as a
  * `StackOverflowError` - an `Error` and not an exception any caller catches. V8's
@@ -100,11 +96,11 @@ const MAX_FRAME_BYTES = 8192
  * Eight is far above anything this generation can legally hold and far below anything
  * either parser is troubled by. The deepest legal frame is a sense answer at **four**: the
  * top object, its `entities` array, an entity object, and that entity's `position` array.
- * Raising `MAX_SENSE_ENTITIES` or `MAX_SENSE_STACKS` widens those lists rather than nesting
- * them, so the headroom this bound leaves is spent by a *shape* the generation does not have
- * rather than by any list bound growing. So the slack costs nothing and the bound refuses
- * only a line that is asking to be expensive. The JVM binding states the same number for
- * itself, where it is load-bearing.
+ * Raising any sense-list bound widens a list rather than nesting it, so the headroom this
+ * bound leaves is spent by a *shape* the generation does not have rather than by any list
+ * bound growing. So the slack costs nothing and the bound refuses only a line that is
+ * asking to be expensive. The JVM binding states the same number for itself, where it is
+ * load-bearing.
  */
 const MAX_FRAME_DEPTH = 8
 
@@ -248,6 +244,12 @@ const MAX_SENSE_RADIUS = 48
  */
 const MAX_SENSE_ENTITIES = 24
 
+/** Most nearby block offers one sense answer may carry. */
+const MAX_SENSE_BLOCKS = 24
+
+/** Most dropped-item offers one sense answer may carry. */
+const MAX_SENSE_ITEMS = 24
+
 /** Highest slot index of a player's own inventory window. */
 const MAX_SLOT_INDEX = 45
 
@@ -336,6 +338,15 @@ const MAX_RETREAT_DISTANCE = 32
  */
 const MAX_ENTITY_INDEX = 23
 
+/** Highest request-local block index an interaction may name. */
+const MAX_BLOCK_INDEX = MAX_SENSE_BLOCKS - 1
+
+/** Highest request-local dropped-item index a collection may name. */
+const MAX_ITEM_INDEX = MAX_SENSE_ITEMS - 1
+
+/** Longest one native world interaction may remain active. */
+const MAX_ACTION_DEADLINE_MS = 20000
+
 /**
  * Widest distance a movement answer may report, in blocks.
  *
@@ -372,6 +383,12 @@ const GROUND_FIELDS = ['standingIn', 'standingOn']
 /** What one sensed entity carries, in declaration order. */
 const SENSED_ENTITY_FIELDS = ['what', 'position', 'visible']
 
+/** What one sensed block carries, in declaration order. */
+const SENSED_BLOCK_FIELDS = ['what', 'position', 'visible']
+
+/** What one sensed dropped item carries, in declaration order. */
+const SENSED_ITEM_FIELDS = ['what', 'count', 'position', 'visible']
+
 /** What one sensed stack carries, in declaration order. */
 const SENSED_STACK_FIELDS = ['slot', 'what', 'count']
 
@@ -383,6 +400,10 @@ const SENSE_FIELDS = [
   'ground',
   'entities',
   'entitiesOmitted',
+  'blocks',
+  'blocksOmitted',
+  'items',
+  'itemsOmitted',
   'inventory'
 ]
 
@@ -401,6 +422,18 @@ const MOVE_FIELDS = ['outcome', 'from', 'position', 'travelled', 'elapsedMs']
  * shapes.
  */
 const FLEE_FIELDS = [...MOVE_FIELDS, 'separation', 'separationGained']
+
+/** What a dig answer carries beyond the envelope, in declaration order. */
+const DIG_FIELDS = ['outcome', 'elapsedMs', 'attempted', 'tool']
+
+/** What a collection answer carries beyond the envelope, in declaration order. */
+const COLLECT_FIELDS = [...MOVE_FIELDS, 'what', 'count']
+
+/** What a placement answer carries beyond the envelope, in declaration order. */
+const PLACE_FIELDS = ['outcome', 'elapsedMs', 'what', 'position', 'remaining']
+
+/** What an equip answer carries beyond the envelope, in declaration order. */
+const EQUIP_FIELDS = ['outcome', 'elapsedMs', 'what', 'count', 'toSlot']
 
 /** What a halt answer carries beyond the envelope, in declaration order. */
 const HALT_FIELDS = ['stopped']
@@ -449,6 +482,10 @@ const OPERATIONS = Object.freeze([
   'eat',
   'moveTo',
   'flee',
+  'dig',
+  'collect',
+  'place',
+  'equip',
   'halt'
 ])
 
@@ -519,6 +556,84 @@ const MOVE_OUTCOMES = Object.freeze([
   'senseForgotten',
   'threatUnnamed',
   'threatGone'
+])
+
+/** Every terminal answer to one explicit dig. */
+const DIG_OUTCOMES = Object.freeze([
+  'dug',
+  'senseForgotten',
+  'blockUnnamed',
+  'blockGone',
+  'blockChanged',
+  'outOfReach',
+  'notVisible',
+  'notDiggable',
+  'timedOut',
+  'cancelled',
+  'libraryFailure'
+])
+
+/** Every terminal answer to collecting one exact dropped item. */
+const COLLECT_OUTCOMES = Object.freeze([
+  'collected',
+  'senseForgotten',
+  'itemUnnamed',
+  'itemGone',
+  'itemChanged',
+  'outOfRange',
+  'noRoute',
+  'searchOverBudget',
+  'stalled',
+  'overTravelled',
+  'timedOut',
+  'cancelled',
+  'libraryFailure'
+])
+
+/** Every terminal answer to placing one already-held offered stack. */
+const PLACE_OUTCOMES = Object.freeze([
+  'placed',
+  'senseForgotten',
+  'blockUnnamed',
+  'slotUnnamed',
+  'blockGone',
+  'blockChanged',
+  'slotEmpty',
+  'slotChanged',
+  'itemNotHeld',
+  'notPlaceable',
+  'destinationBlocked',
+  'outOfReach',
+  'notVisible',
+  'timedOut',
+  'cancelled',
+  'libraryFailure'
+])
+
+/** Every terminal answer to equipping one offered stack. */
+const EQUIP_OUTCOMES = Object.freeze([
+  'equipped',
+  'senseForgotten',
+  'slotUnnamed',
+  'slotEmpty',
+  'slotChanged',
+  'incompatible',
+  'timedOut',
+  'cancelled',
+  'libraryFailure'
+])
+
+/** Faces a placement request can name. */
+const BLOCK_FACES = Object.freeze(['down', 'up', 'north', 'south', 'west', 'east'])
+
+/** Equipment destinations Mineflayer accepts and this wire exposes. */
+const EQUIPMENT_DESTINATIONS = Object.freeze([
+  'hand',
+  'offHand',
+  'head',
+  'torso',
+  'legs',
+  'feet'
 ])
 
 /**
@@ -603,6 +718,23 @@ function spellsWholeNumbers (literals, name, expected) {
   if (written === undefined) return expected === 0
   if (written.length !== expected) return false
   return written.every(wholeNumberLiteral)
+}
+
+/** Whether every literal at `name` is an integer by value, including signed coordinates. */
+function spellsIntegralNumbers (literals, name, expected) {
+  const written = literals.get(name)
+  if (written === undefined) return expected === 0
+  if (written.length !== expected) return false
+  return written.every(integralLiteral)
+}
+
+/** Whether one bounded literal has no fractional value, without imposing a sign. */
+function integralLiteral (literal) {
+  if (typeof literal !== 'string' || literal.length > MAX_NUMBER_LITERAL_CHARS) return false
+  const parts = NUMBER_LITERAL.exec(literal)
+  if (parts === null) return false
+  const [, , whole, fraction = '', exponent = '0'] = parts
+  return isWholeShift(whole + fraction, Number(exponent) - fraction.length)
 }
 
 /**
@@ -828,6 +960,13 @@ function isWorldPosition (value) {
     value.every((axis) => isReal(axis, -MAX_WORLD_COORDINATE, MAX_WORLD_COORDINATE))
 }
 
+/** Whether `value` is one integral block position inside the world border. */
+function isBlockPosition (value) {
+  return Array.isArray(value) &&
+    value.length === WORLD_POSITION_AXES &&
+    value.every((axis) => isBoundedInteger(axis, -MAX_WORLD_COORDINATE, MAX_WORLD_COORDINATE))
+}
+
 /**
  * Whether `raw` is a coherent set of vitals, with `food` spelled as a whole number.
  *
@@ -879,6 +1018,25 @@ function isSensedEntity (raw) {
     noUnknownKeys(raw, SENSED_ENTITY_FIELDS)
 }
 
+/** Whether `raw` is one request-local nearby block offer. */
+function isSensedBlock (raw) {
+  return isPlainObject(raw) &&
+    isResourceName(raw.what) &&
+    isBlockPosition(raw.position) &&
+    typeof raw.visible === 'boolean' &&
+    noUnknownKeys(raw, SENSED_BLOCK_FIELDS)
+}
+
+/** Whether `raw` is one request-local dropped-item offer. */
+function isSensedItem (raw) {
+  return isPlainObject(raw) &&
+    isResourceName(raw.what) &&
+    isBoundedInteger(raw.count, MIN_STACK_COUNT, MAX_STACK_COUNT) &&
+    isWorldPosition(raw.position) &&
+    typeof raw.visible === 'boolean' &&
+    noUnknownKeys(raw, SENSED_ITEM_FIELDS)
+}
+
 /** Whether `raw` is one occupied slot. */
 function isSensedStack (raw) {
   return isPlainObject(raw) &&
@@ -918,6 +1076,16 @@ function isSenseReport (raw, literals) {
   if (!raw.entities.every(isSensedEntity)) return false
   if (!isCount(raw.entitiesOmitted) || !spellsWholeNumber(literals, 'entitiesOmitted')) return false
   if (raw.entitiesOmitted > 0 && raw.entities.length === 0) return false
+  if (!Array.isArray(raw.blocks) || raw.blocks.length > MAX_SENSE_BLOCKS) return false
+  if (!raw.blocks.every(isSensedBlock)) return false
+  if (!spellsIntegralNumbers(literals, 'blocks.position', raw.blocks.length * WORLD_POSITION_AXES)) return false
+  if (!isCount(raw.blocksOmitted) || !spellsWholeNumber(literals, 'blocksOmitted')) return false
+  if (raw.blocksOmitted > 0 && raw.blocks.length === 0) return false
+  if (!Array.isArray(raw.items) || raw.items.length > MAX_SENSE_ITEMS) return false
+  if (!raw.items.every(isSensedItem)) return false
+  if (!spellsWholeNumbers(literals, 'items.count', raw.items.length)) return false
+  if (!isCount(raw.itemsOmitted) || !spellsWholeNumber(literals, 'itemsOmitted')) return false
+  if (raw.itemsOmitted > 0 && raw.items.length === 0) return false
   if (!Array.isArray(raw.inventory) || raw.inventory.length > MAX_SENSE_STACKS) return false
   if (!raw.inventory.every(isSensedStack)) return false
   if (!spellsWholeNumbers(literals, 'inventory.slot', raw.inventory.length)) return false
@@ -1008,6 +1176,65 @@ function isFleeReport (raw, literals) {
     isReal(raw.separationGained, -MAX_TRAVEL_DISTANCE, MAX_TRAVEL_DISTANCE)
 }
 
+/** Whether `raw` is a whole dig answer. */
+function isDigReport (raw, literals) {
+  if (!DIG_OUTCOMES.includes(raw.outcome)) return false
+  if (!isCount(raw.elapsedMs) || !spellsWholeNumber(literals, 'elapsedMs')) return false
+  if (typeof raw.attempted !== 'boolean') return false
+  const handedToMineflayer = new Set([
+    'dug',
+    'timedOut',
+    'cancelled',
+    'libraryFailure'
+  ]).has(raw.outcome)
+  if (raw.attempted !== handedToMineflayer) return false
+  if (raw.tool !== undefined && (!raw.attempted || !isResourceName(raw.tool))) return false
+  return true
+}
+
+/** Whether `raw` is a whole dropped-item collection answer. */
+function isCollectReport (raw, literals) {
+  if (!COLLECT_OUTCOMES.includes(raw.outcome)) return false
+  if (!isJourney(raw, literals)) return false
+  if (raw.outcome === 'outOfRange' && raw.travelled !== 0) return false
+  const collected = raw.outcome === 'collected'
+  if (collected !== (raw.what !== undefined)) return false
+  if (collected !== (raw.count !== undefined)) return false
+  if (collected && !isResourceName(raw.what)) return false
+  if (collected && !isBoundedInteger(raw.count, MIN_STACK_COUNT, MAX_STACK_COUNT)) return false
+  return spellsWholeNumbers(literals, 'count', collected ? 1 : 0)
+}
+
+/** Whether `raw` is a whole block placement answer. */
+function isPlaceReport (raw, literals) {
+  if (!PLACE_OUTCOMES.includes(raw.outcome)) return false
+  if (!isCount(raw.elapsedMs) || !spellsWholeNumber(literals, 'elapsedMs')) return false
+  const placed = raw.outcome === 'placed'
+  if (placed !== (raw.what !== undefined)) return false
+  if (placed !== (raw.position !== undefined)) return false
+  if (placed !== (raw.remaining !== undefined)) return false
+  if (placed && !isResourceName(raw.what)) return false
+  if (placed && !isBlockPosition(raw.position)) return false
+  if (placed && !isBoundedInteger(raw.remaining, 0, MAX_STACK_COUNT)) return false
+  if (!spellsIntegralNumbers(literals, 'position', placed ? WORLD_POSITION_AXES : 0)) return false
+  return spellsWholeNumbers(literals, 'remaining', placed ? 1 : 0)
+}
+
+/** Whether `raw` is a whole equip answer. */
+function isEquipReport (raw, literals) {
+  if (!EQUIP_OUTCOMES.includes(raw.outcome)) return false
+  if (!isCount(raw.elapsedMs) || !spellsWholeNumber(literals, 'elapsedMs')) return false
+  const equipped = raw.outcome === 'equipped'
+  if (equipped !== (raw.what !== undefined)) return false
+  if (equipped !== (raw.count !== undefined)) return false
+  if (equipped !== (raw.toSlot !== undefined)) return false
+  if (equipped && !isResourceName(raw.what)) return false
+  if (equipped && !isBoundedInteger(raw.count, MIN_STACK_COUNT, MAX_STACK_COUNT)) return false
+  if (equipped && !isBoundedInteger(raw.toSlot, 0, MAX_SLOT_INDEX)) return false
+  if (!spellsWholeNumbers(literals, 'count', equipped ? 1 : 0)) return false
+  return spellsWholeNumbers(literals, 'toSlot', equipped ? 1 : 0)
+}
+
 /**
  * Whether `raw` is a whole halt answer.
  *
@@ -1033,6 +1260,10 @@ const REPORT_SHAPES = Object.freeze({
   eat: { holds: isEatReport, fields: EAT_FIELDS },
   moveTo: { holds: isMoveReport, fields: MOVE_FIELDS },
   flee: { holds: isFleeReport, fields: FLEE_FIELDS },
+  dig: { holds: isDigReport, fields: DIG_FIELDS },
+  collect: { holds: isCollectReport, fields: COLLECT_FIELDS },
+  place: { holds: isPlaceReport, fields: PLACE_FIELDS },
+  equip: { holds: isEquipReport, fields: EQUIP_FIELDS },
   halt: { holds: isHaltReport, fields: HALT_FIELDS }
 })
 
@@ -1097,12 +1328,73 @@ function requestPayload (raw, literals) {
       sprint: raw.sprint
     }
   }
+  if (raw.op === 'dig') {
+    const bounded = isControlId(raw.senseId) &&
+      isBoundedInteger(raw.block, 0, MAX_BLOCK_INDEX) &&
+      spellsWholeNumber(literals, 'block') &&
+      isActionDeadline(raw, literals)
+    if (!bounded) return undefined
+    return { senseId: raw.senseId, block: raw.block, timeoutMs: raw.timeoutMs }
+  }
+  if (raw.op === 'collect') {
+    const bounded = isControlId(raw.senseId) &&
+      isBoundedInteger(raw.item, 0, MAX_ITEM_INDEX) &&
+      spellsWholeNumber(literals, 'item') &&
+      typeof raw.approach === 'boolean' &&
+      isActionDeadline(raw, literals) &&
+      typeof raw.sprint === 'boolean'
+    if (!bounded) return undefined
+    return {
+      senseId: raw.senseId,
+      item: raw.item,
+      approach: raw.approach,
+      timeoutMs: raw.timeoutMs,
+      sprint: raw.sprint
+    }
+  }
+  if (raw.op === 'place') {
+    const bounded = isControlId(raw.senseId) &&
+      isBoundedInteger(raw.block, 0, MAX_BLOCK_INDEX) &&
+      spellsWholeNumber(literals, 'block') &&
+      isBoundedInteger(raw.slot, 0, MAX_SLOT_INDEX) &&
+      spellsWholeNumber(literals, 'slot') &&
+      BLOCK_FACES.includes(raw.face) &&
+      isActionDeadline(raw, literals)
+    if (!bounded) return undefined
+    return {
+      senseId: raw.senseId,
+      block: raw.block,
+      slot: raw.slot,
+      face: raw.face,
+      timeoutMs: raw.timeoutMs
+    }
+  }
+  if (raw.op === 'equip') {
+    const bounded = isControlId(raw.senseId) &&
+      isBoundedInteger(raw.slot, 0, MAX_SLOT_INDEX) &&
+      spellsWholeNumber(literals, 'slot') &&
+      EQUIPMENT_DESTINATIONS.includes(raw.destination) &&
+      isActionDeadline(raw, literals)
+    if (!bounded) return undefined
+    return {
+      senseId: raw.senseId,
+      slot: raw.slot,
+      destination: raw.destination,
+      timeoutMs: raw.timeoutMs
+    }
+  }
   return {}
 }
 
 /** Whether `raw` carries a movement deadline a body may be asked to run under. */
 function isMoveDeadline (raw, literals) {
   return isBoundedInteger(raw.timeoutMs, 1, MAX_MOVE_DEADLINE_MS) &&
+    spellsWholeNumber(literals, 'timeoutMs')
+}
+
+/** Whether `raw` carries a native-interaction deadline this body can own. */
+function isActionDeadline (raw, literals) {
+  return isBoundedInteger(raw.timeoutMs, 1, MAX_ACTION_DEADLINE_MS) &&
     spellsWholeNumber(literals, 'timeoutMs')
 }
 
@@ -1500,6 +1792,19 @@ function canonicalResponse (frame) {
       visible: entity.visible
     }))
     canonical.entitiesOmitted = frame.entitiesOmitted
+    canonical.blocks = frame.blocks.map((block) => ({
+      what: block.what,
+      position: [...block.position],
+      visible: block.visible
+    }))
+    canonical.blocksOmitted = frame.blocksOmitted
+    canonical.items = frame.items.map((item) => ({
+      what: item.what,
+      count: item.count,
+      position: [...item.position],
+      visible: item.visible
+    }))
+    canonical.itemsOmitted = frame.itemsOmitted
     canonical.inventory = frame.inventory.map((stack) => ({
       slot: stack.slot,
       what: stack.what,
@@ -1522,6 +1827,35 @@ function canonicalResponse (frame) {
   if (frame.op === 'flee' && frame.separation !== undefined) {
     canonical.separation = frame.separation
     canonical.separationGained = frame.separationGained
+  }
+  if (frame.op === 'dig') {
+    canonical.outcome = frame.outcome
+    canonical.elapsedMs = frame.elapsedMs
+    canonical.attempted = frame.attempted
+    if (frame.tool !== undefined) canonical.tool = frame.tool
+  }
+  if (frame.op === 'collect') {
+    canonical.outcome = frame.outcome
+    canonical.from = [...frame.from]
+    canonical.position = [...frame.position]
+    canonical.travelled = frame.travelled
+    canonical.elapsedMs = frame.elapsedMs
+    if (frame.what !== undefined) canonical.what = frame.what
+    if (frame.count !== undefined) canonical.count = frame.count
+  }
+  if (frame.op === 'place') {
+    canonical.outcome = frame.outcome
+    canonical.elapsedMs = frame.elapsedMs
+    if (frame.what !== undefined) canonical.what = frame.what
+    if (frame.position !== undefined) canonical.position = [...frame.position]
+    if (frame.remaining !== undefined) canonical.remaining = frame.remaining
+  }
+  if (frame.op === 'equip') {
+    canonical.outcome = frame.outcome
+    canonical.elapsedMs = frame.elapsedMs
+    if (frame.what !== undefined) canonical.what = frame.what
+    if (frame.count !== undefined) canonical.count = frame.count
+    if (frame.toSlot !== undefined) canonical.toSlot = frame.toSlot
   }
   if (frame.op === 'halt') canonical.stopped = frame.stopped
   return canonical
@@ -1614,6 +1948,10 @@ function senseReport ({
   ground,
   entities,
   entitiesOmitted,
+  blocks = [],
+  blocksOmitted = 0,
+  items = [],
+  itemsOmitted = 0,
   inventory
 }) {
   const frame = {
@@ -1629,6 +1967,10 @@ function senseReport ({
   if (ground !== undefined) frame.ground = ground
   frame.entities = entities
   frame.entitiesOmitted = entitiesOmitted
+  frame.blocks = blocks
+  frame.blocksOmitted = blocksOmitted
+  frame.items = items
+  frame.itemsOmitted = itemsOmitted
   frame.inventory = inventory
   return checkedResponse(frame)
 }
@@ -1731,13 +2073,108 @@ function fleeReport ({
   return checkedResponse(frame)
 }
 
+/** The answer to one request to dig one exact offered block. */
+function digReport ({ requestId, agentId, outcome, elapsedMs, attempted, tool }) {
+  const frame = {
+    op: 'dig',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    outcome,
+    elapsedMs,
+    attempted
+  }
+  if (tool !== undefined) frame.tool = tool
+  return checkedResponse(frame)
+}
+
+/** The answer to collecting one exact offered dropped item. */
+function collectReport ({
+  requestId,
+  agentId,
+  outcome,
+  from,
+  position,
+  travelled,
+  elapsedMs,
+  what,
+  count
+}) {
+  const frame = {
+    op: 'collect',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    outcome,
+    from,
+    position,
+    travelled,
+    elapsedMs
+  }
+  if (what !== undefined) frame.what = what
+  if (count !== undefined) frame.count = count
+  return checkedResponse(frame)
+}
+
+/** The answer to placing one exact offered held stack. */
+function placeReport ({
+  requestId,
+  agentId,
+  outcome,
+  elapsedMs,
+  what,
+  position,
+  remaining
+}) {
+  const frame = {
+    op: 'place',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    outcome,
+    elapsedMs
+  }
+  if (what !== undefined) frame.what = what
+  if (position !== undefined) frame.position = position
+  if (remaining !== undefined) frame.remaining = remaining
+  return checkedResponse(frame)
+}
+
+/** The answer to equipping one exact offered inventory stack. */
+function equipReport ({
+  requestId,
+  agentId,
+  outcome,
+  elapsedMs,
+  what,
+  count,
+  toSlot
+}) {
+  const frame = {
+    op: 'equip',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    outcome,
+    elapsedMs
+  }
+  if (what !== undefined) frame.what = what
+  if (count !== undefined) frame.count = count
+  if (toSlot !== undefined) frame.toSlot = toSlot
+  return checkedResponse(frame)
+}
+
 /**
- * The answer to a halt: whether anything was in fact moving.
+ * The answer to a halt: whether anything cancellable was in fact running.
  *
  * `false` is not a refusal, which is why this is a report rather than an error frame: a
  * controller that halts twice, or halts after a route has already ended, is asking what
- * state the body is in. The movement that was stopped is answered on its own request,
- * with outcome `cancelled`.
+ * state the body is in. The request that was stopped is answered on its own request,
+ * with that operation's `cancelled` outcome.
  */
 function haltReport ({ requestId, agentId, stopped }) {
   return checkedResponse({
@@ -1798,6 +2235,8 @@ module.exports = {
   MAX_WORLD_COORDINATE,
   MAX_SENSE_RADIUS,
   MAX_SENSE_ENTITIES,
+  MAX_SENSE_BLOCKS,
+  MAX_SENSE_ITEMS,
   MAX_SLOT_INDEX,
   MAX_SENSE_STACKS,
   MIN_STACK_COUNT,
@@ -1807,8 +2246,11 @@ module.exports = {
   MAX_TIME_OF_DAY,
   MAX_MOVE_TOLERANCE,
   MAX_MOVE_DEADLINE_MS,
+  MAX_ACTION_DEADLINE_MS,
   MAX_RETREAT_DISTANCE,
   MAX_ENTITY_INDEX,
+  MAX_BLOCK_INDEX,
+  MAX_ITEM_INDEX,
   MAX_TRAVEL_DISTANCE,
   ID_PATTERN,
   USERNAME_PATTERN,
@@ -1818,6 +2260,12 @@ module.exports = {
   ERROR_CODES,
   EAT_OUTCOMES,
   MOVE_OUTCOMES,
+  DIG_OUTCOMES,
+  COLLECT_OUTCOMES,
+  PLACE_OUTCOMES,
+  EQUIP_OUTCOMES,
+  BLOCK_FACES,
+  EQUIPMENT_DESTINATIONS,
   THREAT_REFUSALS,
   isControlId,
   isUsername,
@@ -1832,6 +2280,10 @@ module.exports = {
   eatReport,
   moveReport,
   fleeReport,
+  digReport,
+  collectReport,
+  placeReport,
+  equipReport,
   haltReport,
   shutdownAccepted,
   refusal

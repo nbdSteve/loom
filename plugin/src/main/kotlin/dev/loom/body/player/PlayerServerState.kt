@@ -6,8 +6,76 @@ package dev.loom.body.player
 import dev.loom.body.AgentId
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
+import dev.loom.bodycontrol.SensedBlock
 import dev.loom.bodycontrol.SensedEntity
+import dev.loom.bodycontrol.SensedItem
+import dev.loom.bodycontrol.SensedStack
 import java.util.UUID
+
+/** The vanilla server effect found for one completed bounded interaction. */
+data class ServerInteractionAudit(
+    val confirmed: Boolean,
+    val detail: String,
+)
+
+/**
+ * Opaque server state captured at the same boundary that timestamps a sense request.
+ *
+ * The player adapter carries this across the body-control round trip without inspecting
+ * it. That lets the server implementation compare the later client report with the
+ * authoritative state from the start of that reading, rather than with state an action
+ * may already have changed while the request was in flight.
+ */
+interface SenseAuditSnapshot
+
+/** All request, offered-state and body-result facts needed for one server cross-check. */
+sealed interface ServerInteractionClaim {
+    val controlRequest: BodyRequest
+    val bodyOutcome: String
+    val startedTick: Long
+
+    data class Dig(
+        val request: BodyRequest.Dig,
+        val report: BodyResponse.DigReport,
+        val offered: SensedBlock,
+        override val startedTick: Long,
+    ) : ServerInteractionClaim {
+        override val controlRequest: BodyRequest = request
+        override val bodyOutcome: String = report.outcome.name
+    }
+
+    data class Collect(
+        val request: BodyRequest.Collect,
+        val report: BodyResponse.CollectReport,
+        val offered: SensedItem,
+        val itemSubject: UUID?,
+        override val startedTick: Long,
+    ) : ServerInteractionClaim {
+        override val controlRequest: BodyRequest = request
+        override val bodyOutcome: String = report.outcome.name
+    }
+
+    data class Place(
+        val request: BodyRequest.Place,
+        val report: BodyResponse.PlaceReport,
+        val offeredBlock: SensedBlock,
+        val offeredStack: SensedStack,
+        override val startedTick: Long,
+    ) : ServerInteractionClaim {
+        override val controlRequest: BodyRequest = request
+        override val bodyOutcome: String = report.outcome.name
+    }
+
+    data class Equip(
+        val request: BodyRequest.Equip,
+        val report: BodyResponse.EquipReport,
+        val offeredStack: SensedStack,
+        override val startedTick: Long,
+    ) : ServerInteractionClaim {
+        override val controlRequest: BodyRequest = request
+        override val bodyOutcome: String = report.outcome.name
+    }
+}
 
 /**
  * Server-authoritative facts used to reconcile a client-controlled player.
@@ -38,8 +106,18 @@ interface PlayerServerState {
         entities: List<SensedEntity>,
     ): List<UUID?>
 
+    /** Correlates each dropped-item offer to the exact server item entity when possible. */
+    fun itemSubjectsOf(
+        identity: PlayerIdentity,
+        items: List<SensedItem>,
+    ): List<UUID?> = List(items.size) { null }
+
+    /** Captures the server half of a sense audit immediately before the request is sent. */
+    fun captureSenseAudit(identity: PlayerIdentity): SenseAuditSnapshot? = null
+
     fun auditSense(
         identity: PlayerIdentity,
+        snapshot: SenseAuditSnapshot?,
         report: BodyResponse.SenseReport,
     )
 
@@ -54,4 +132,9 @@ interface PlayerServerState {
         request: BodyRequest.Flee,
         report: BodyResponse.FleeReport,
     )
+
+    fun auditInteraction(
+        identity: PlayerIdentity,
+        claim: ServerInteractionClaim,
+    ): ServerInteractionAudit = ServerInteractionAudit(true, "server interaction audit not installed")
 }

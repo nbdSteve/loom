@@ -276,66 +276,6 @@ class BodyControlConformanceTest {
     }
 
     /**
-     * The largest frame the per-field bounds admit still fits inside the frame bound.
-     *
-     * A sense answer is by far the biggest thing this wire carries, and how big it can get
-     * is decided by five bounds stated in three files that nothing relates arithmetically:
-     * the entity limit, the slot count, the longest resource name, the longest id, and the
-     * widest number. Raise any of them and the largest *correct* answer a peer can write
-     * grows; past 8 KiB it is refused unread as an oversized frame, which needs a live
-     * socket and a crowded scene to reach and arrives as `frameTooLarge` rather than as
-     * anything naming the bound that grew.
-     *
-     * So the worst case is built here from the bounds themselves rather than measured off
-     * the corpus - a fixture is a case somebody chose to write, and the largest one is 2.6
-     * KiB, which would keep passing long after a real answer had stopped fitting.
-     *
-     * The headroom this leaves is a twentieth of the frame, which is why the assertion is
-     * that it fits rather than that it fits comfortably: a bound raised even a little needs
-     * this test's answer, not an estimate.
-     */
-    @Test
-    fun theLargestAnswerTheBoundsAdmitFitsTheFrameBound() {
-        val name = "minecraft:" + "a".repeat(RESOURCE_NAME_MAX_CHARS - "minecraft:".length)
-        val id = "a".repeat(CONTROL_ID_MAX_CHARS)
-        // The widest coordinate *written down*, which is what a real contributes to a frame -
-        // see [WIDEST_COORDINATE]. Not the largest magnitude, and not an ordinary position
-        // inside the world either: both are shorter than an exponential form here, which is
-        // the opposite of what this used to claim.
-        val here = List(3) { WIDEST_COORDINATE }
-        assertTrue(
-            WIDEST_COORDINATE.toString().length > (-justInside(WORLD_BORDER)).toString().length,
-            "the widest coordinate must not be the largest one",
-        )
-        val fullest =
-            SensedVitals(
-                health = WIDEST_VITAL,
-                food = MAX_FOOD,
-                saturation = WIDEST_VITAL,
-            )
-        val widest =
-            BodyResponse.SenseReport(
-                protocol = BODY_CONTROL_PROTOCOL_VERSION,
-                requestId = id,
-                agentId = id,
-                state = LifecycleState.READY,
-                position = here,
-                vitals = fullest,
-                time = SensedTime(timeOfDay = MAX_TIME_OF_DAY, day = MAX_CONTROL_COUNT, isDay = true),
-                ground = SensedGround(standingIn = name, standingOn = name),
-                entities = List(MAX_SENSE_ENTITIES) { SensedEntity(what = name, position = here, visible = true) },
-                entitiesOmitted = MAX_CONTROL_COUNT,
-                inventory = List(MAX_SENSE_STACKS) { SensedStack(slot = it, what = name, count = MAX_STACK_COUNT) },
-            )
-        val measured = encodeBodyResponse(widest).toByteArray(Charsets.UTF_8).size
-        assertTrue(
-            measured <= MAX_BODY_CONTROL_FRAME_BYTES,
-            "the largest sense answer the bounds admit is $measured bytes, over the " +
-                "$MAX_BODY_CONTROL_FRAME_BYTES-byte frame bound",
-        )
-    }
-
-    /**
      * A frame from another generation is refused before its fields are believed.
      *
      * The bound is the generation and nothing else, which is why this edits a fixture
@@ -543,9 +483,10 @@ class BodyControlConformanceTest {
         }
 
         // Inside the bound as UTF-16 units and past it as bytes, which is the whole difference:
-        // three thousand astral characters are six thousand units and twelve thousand bytes, so
+        // nine thousand astral characters are eighteen thousand units and thirty-six thousand
+        // bytes, so
         // this case is refused only by the second clause of the measurement.
-        val astral = canonical.replace("\"agent-alpha\"", "\"${"🙂".repeat(3000)}\"")
+        val astral = canonical.replace("\"agent-alpha\"", "\"${"🙂".repeat(9000)}\"")
         assertTrue(astral.length <= MAX_BODY_CONTROL_FRAME_BYTES, "the case must be inside the bound in units")
         assertTrue(
             astral.toByteArray(Charsets.UTF_8).size > MAX_BODY_CONTROL_FRAME_BYTES,
@@ -1111,5 +1052,71 @@ class BodyControlConformanceTest {
          * cognition transport's drip test.
          */
         val NUMBER_PATIENCE: Duration = Duration.ofSeconds(10)
+    }
+}
+
+/**
+ * The arithmetic proof that every answer admitted by the field bounds fits one frame.
+ *
+ * Separate from fixture conformance because it constructs the extremal answer rather
+ * than reading the shared corpus.
+ */
+class BodyControlFrameBoundTest {
+    @Test
+    fun theLargestAnswerTheBoundsAdmitFitsTheFrameBound() {
+        val name = "minecraft:" + "a".repeat(RESOURCE_NAME_MAX_CHARS - "minecraft:".length)
+        val id = "a".repeat(CONTROL_ID_MAX_CHARS)
+        val here = List(3) { WIDEST_COORDINATE }
+        assertTrue(
+            WIDEST_COORDINATE.toString().length > (-justInside(WORLD_BORDER)).toString().length,
+            "the widest coordinate must not be the largest one",
+        )
+        val fullest =
+            SensedVitals(
+                health = WIDEST_VITAL,
+                food = MAX_FOOD,
+                saturation = WIDEST_VITAL,
+            )
+        val widest =
+            BodyResponse.SenseReport(
+                protocol = BODY_CONTROL_PROTOCOL_VERSION,
+                requestId = id,
+                agentId = id,
+                state = LifecycleState.READY,
+                position = here,
+                vitals = fullest,
+                time = SensedTime(timeOfDay = MAX_TIME_OF_DAY, day = MAX_CONTROL_COUNT, isDay = true),
+                ground = SensedGround(standingIn = name, standingOn = name),
+                entities =
+                    List(MAX_SENSE_ENTITIES) {
+                        SensedEntity(what = name, position = here, visible = true)
+                    },
+                entitiesOmitted = MAX_CONTROL_COUNT,
+                blocks =
+                    List(MAX_SENSE_BLOCKS) {
+                        SensedBlock(what = name, position = listOf(it, it, it), visible = true)
+                    },
+                blocksOmitted = MAX_CONTROL_COUNT,
+                items =
+                    List(MAX_SENSE_ITEMS) {
+                        SensedItem(
+                            what = name,
+                            count = MAX_STACK_COUNT,
+                            position = here,
+                            visible = true,
+                        )
+                    },
+                itemsOmitted = MAX_CONTROL_COUNT,
+                inventory =
+                    List(MAX_SENSE_STACKS) {
+                        SensedStack(slot = it, what = name, count = MAX_STACK_COUNT)
+                    },
+            )
+        val measured = encodeBodyResponse(widest).toByteArray(Charsets.UTF_8).size
+        assertTrue(
+            measured <= MAX_BODY_CONTROL_FRAME_BYTES,
+            "the largest sense answer the bounds admit is $measured bytes, over the " +
+                "$MAX_BODY_CONTROL_FRAME_BYTES-byte frame bound",
+        )
     }
 }

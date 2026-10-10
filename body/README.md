@@ -27,14 +27,15 @@ A process exit or socket failure is a disconnect and may be restarted under the 
 identity. Only the Paper witness can establish death and make that identity terminal.
 
 One operational refusal deserves special mention at this boundary: `notReady` while the
-child is still alive means another movement operation owns the path. The coordinator
-records a refused intent and leaves the process ready; it must not turn expected
-movement concurrency into a disconnect or terminate a healthy child.
+child is still alive can mean another exclusive action owns the player. The coordinator
+records a refused intent and leaves the process ready; it must not turn expected action
+contention into a disconnect or terminate a healthy child.
 
-The wire is **eight operations at protocol generation 2**, and the split between them is
+The wire is **twelve operations at protocol generation 3**, and the split between them is
 the split this whole package is built on.
-The generation is 2 rather than 1 because `MoveOutcome` gained `searchOverBudget`, and that is
-the one growth this wire does not allow inside a generation.
+Generation 3 moved because `sense` gained body-chosen block and dropped-item values and
+four new reports introduced closed outcome sets. Merely adding the four request operation
+names would not have moved it.
 An *operation* set may grow: a controller only ever asks for operations it has, and one a peer
 does not have is refused by name.
 A set the *body* answers from may not, because widening it hands a controller that agreed this
@@ -42,16 +43,19 @@ generation a frame it cannot read, for a request it made in good faith and witho
 for anything new.
 Refusing that frame is fail-closed rather than a misreading, but a broken round trip a peer
 cannot anticipate is exactly what agreeing a generation is for.
-So adding `moveTo`, `flee` and `halt` left the generation at 1 and adding one outcome moved it,
-and `contract/body-control.schema.json`'s own `ControlOperation` description is the authority.
+That is why adding `moveTo`, `flee` and `halt` left generation 1 in place, adding
+`searchOverBudget` moved it to 2, and this answer-shape growth moved it to 3.
+`contract/body-control.schema.json`'s own `ControlOperation` description is the authority.
 `handshake`, `status` and `shutdown` are the process's own lifecycle.
 `sense` is one bounded reading of a player's scene and vitals, `eat` is one explicit meal,
 `moveTo` is one explicit walk to a place the controller named, `flee` is one explicit
 flight from one creature a `sense` answer showed it, and `halt` cancels whichever movement
-is running.
-None of those five decides anything: a body senses because it was asked to, eats because a
-mind named one slot, walks because a mind named one destination and runs because a mind
-named one creature, and it does nothing at all in between.
+or interaction is cancellable.
+`dig`, `collect`, `place` and `equip` are one-shot native interactions against exact block,
+dropped-item and inventory offers from one retained `sense` answer.
+None decides anything: a body acts only because the controller named the destination,
+creature, block, dropped item, slot, face or equipment destination, and it does nothing at
+all in between.
 
 ## Build and test
 
@@ -136,30 +140,30 @@ Drive it over the control channel, on one connection, since a handshake is per
 connection and each `requestId` may be used once:
 
 ```sh
-{ printf '{"op":"handshake","protocol":2,"requestId":"h1","agentId":"loom.demo.body"}\n'
+{ printf '{"op":"handshake","protocol":3,"requestId":"h1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"status","protocol":2,"requestId":"s1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"status","protocol":3,"requestId":"s1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"sense","protocol":2,"requestId":"n1","agentId":"loom.demo.body","radius":24,"limit":16}\n'
+  printf '{"op":"sense","protocol":3,"requestId":"n1","agentId":"loom.demo.body","radius":24,"limit":16}\n'
   sleep 1
-  printf '{"op":"eat","protocol":2,"requestId":"e1","agentId":"loom.demo.body","senseId":"n1","slot":36}\n'
+  printf '{"op":"eat","protocol":3,"requestId":"e1","agentId":"loom.demo.body","senseId":"n1","slot":36}\n'
   sleep 1
-  printf '{"op":"flee","protocol":2,"requestId":"f1","agentId":"loom.demo.body","senseId":"n1","entity":0,"distance":16,"timeoutMs":10000,"sprint":true}\n'
+  printf '{"op":"flee","protocol":3,"requestId":"f1","agentId":"loom.demo.body","senseId":"n1","entity":0,"distance":16,"timeoutMs":10000,"sprint":true}\n'
   sleep 12
-  printf '{"op":"moveTo","protocol":2,"requestId":"m1","agentId":"loom.demo.body","destination":[12,64,12],"tolerance":0,"timeoutMs":10000,"sprint":false}\n'
+  printf '{"op":"moveTo","protocol":3,"requestId":"m1","agentId":"loom.demo.body","destination":[12,64,12],"tolerance":0,"timeoutMs":10000,"sprint":false}\n'
   sleep 1
-  printf '{"op":"halt","protocol":2,"requestId":"z1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"halt","protocol":3,"requestId":"z1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"shutdown","protocol":2,"requestId":"x1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"shutdown","protocol":3,"requestId":"x1","agentId":"loom.demo.body"}\n'
   sleep 1
 } | nc 127.0.0.1 25585
 ```
 
 A `status` answer carries the lifecycle state and three counts.
 A `sense` answer carries the body's position, its three vitals, the world's time, the two
-blocks it is standing in and on, the entities it can see nearest first with a count of
-those the bounds cut, and its whole inventory by slot; it is refused `notReady` unless the
-body is `ready`.
+blocks it is standing in and on, bounded independent lists of entities, nearby non-air
+blocks and dropped-item entities with omission counts, and its whole inventory by slot.
+It is refused `notReady` unless the body is `ready`.
 An `eat` names a `senseId` - the `requestId` of the `sense` answer that offered the slot -
 so the `e1` frame above eats from the answer `n1` returned, on that same connection.
 It is answered with one of eight closed outcomes rather than with an error, because every
@@ -201,12 +205,13 @@ A flight states two things more - `separation`, how far it ended from the creatu
 the three threat refusals, because there was then no creature to measure from.
 That relation is a codec rule rather than a schema conditional, and `src/protocol.js` owns
 it.
-A `halt` cancels whichever movement is running and answers `stopped`: `true` if one was and
-`false` if none was.
+A `halt` cancels whichever cancellable exclusive operation is running and answers `stopped`:
+`true` if movement, digging or collection was stopped, and `false` if none was stoppable.
 `false` is a report and not a refusal, because a controller that halts twice, or halts after
-a route has already ended, is asking what was moving.
-**One accepted movement owns the body**, so a second arriving while the first still runs is
-refused `notReady` rather than quietly taking the route over.
+an operation has already ended, is asking what can still be stopped.
+**One accepted movement or native interaction owns the body**, so a conflicting request
+arriving while it still runs is refused `notReady` rather than quietly taking the route or
+transaction over.
 An answer goes on the connection that asked for it, and a controller that asks and then
 waits sends nothing in the meantime, which is why `timeoutMs` is bounded well below
 `CONTROL_IDLE_MS`: a deadline at or past the idle window would let the socket's own timer
@@ -295,10 +300,13 @@ reported, and a second `halt` after it answers `stopped` false.
   trimming one field of it, and its own header owns why.
 - `src/eating.js` - the eight closed outcomes one meal can have, and the meal itself. Its
   header owns the order of those outcomes and why the slot is read again at apply time.
-- `src/senses.js` - the bounded memory of what recent `sense` answers offered, which both a
-  slot handle and a creature handle are resolved against. Both kinds are remembered
-  together, which its header states is the invariant rather than tidiness: a memory holding
-  one and not the other would resolve a flight and refuse a meal off the same answer.
+- `src/interaction.js`, `src/digging.js`, `src/collecting.js`, `src/placing.js` and
+  `src/equipping.js` - the shared offer resolution and four one-shot native world
+  interactions. Each module owns its revalidation, deadline, closed outcomes and cleanup;
+  none selects a target, tool, stack or follow-on action.
+- `src/senses.js` - the bounded memory of what recent `sense` answers offered, which slot,
+  creature, block and dropped-item handles are resolved against. All kinds are remembered
+  together, which its header states is the invariant rather than tidiness.
 - `src/movement.js` - the request scope around `mineflayer-pathfinder`: the whole movement
   policy stated field by field, the search settings, and the one owner, four measurements
   and deterministic cancellation the library has no notion of. Nothing in it searches,
@@ -324,6 +332,10 @@ reported, and a second `halt` after it answers `stopped` false.
   real Mineflayer loader: the bounds, the omission count, a handle scoped to one round
   trip on one connection, every one of the eight outcomes, and that nothing is sensed or
   eaten unless a frame asked for it.
+- `test/interactions.test.js` - all four native interactions below their modules and across
+  the real control socket: stale, foreign and changed offers, reach and visibility,
+  deadlines, exact pickup count, transformed placement results, conflicting ownership,
+  death, disconnect, halt and shutdown cleanup.
 - `test/movement.test.js` - the request scope, driven against the **real** pathfinder
   walking a **real** bot over ground the harness built. A player's movement is
   client-simulated, so `arrived`, `noRoute`, `timedOut`, `cancelled` and `outOfRange` are
@@ -363,16 +375,18 @@ So it cannot choose a meal, a threat, a resource, a target, a destination, or a 
 cannot do repeated work of its own.
 
 **Every timer in the process either bounds a request a controller asked for, or does nothing
-until one is in flight.** The first kind is a movement's own deadline and a meal's wait for
-the slot the server restates. The second is one timer and it is the client library's:
+until one is in flight.** The first kind is a movement or native interaction's own deadline
+and a meal's wait for the slot the server restates. The second is one timer and it is the
+client library's:
 Mineflayer's `physics` plugin arms a 50 ms interval on the bot's own `login` and clears it
 only when the connection ends, with no supported way to stop and start it again - so that
-interval is unavoidable and is instead made *inert*. With no `moveTo` or `flee` in flight the
-body is not stepped, no `physicsTick` is emitted, and every packet the client writes to move
-the body or to say where a step left it is dropped before it reaches the socket - the position
-reports and the two packets a control state writes alike. `src/movement.js` owns that scope
-and `test/movement.test.js` proves it by counting simulated ticks and written packets across
-every way a request can end, rather than by reading the source.
+interval is unavoidable and is instead made *inert*. With no `moveTo`, `flee`, or explicitly
+approaching `collect` in flight the body is not stepped, no `physicsTick` is emitted, and
+every packet the client writes to move the body or to say where a step left it is dropped
+before it reaches the socket - the position reports and the two packets a control state
+writes alike. `src/movement.js` owns that scope and `test/movement.test.js` proves it by
+counting simulated ticks and written packets across every way a request can end, rather than
+by reading the source.
 **The scope needs a second seam beside the wire, because a terminal event is not the end of the library's tick.**
 On the search-refusal path the library restores the best-effort partial route after emitting its terminal status and then looks at, walks and sprints the body.
 The terminal callback therefore puts the packet gate into a drain state without answering.
@@ -384,15 +398,16 @@ Each half is needed and neither is enough: a dropped deactivation leaves the ser
 The consequence is deliberate: a body the server left in mid-air stays there until a request
 owns it. Falling is simulation, and simulation is a request's.
 
-**Neither plugin loaded beside the reporting table decides anything, and the line is drawn per
+**None of the four plugins loaded beside the reporting table decides anything, and the line is drawn per
 plugin rather than per method.**
-There are two of them and the plugin section below names both; what matters here is that
-neither chooses.
+The plugin section below names all four; what matters here is that none chooses.
 `mineflayer-pathfinder` *searches* - it answers "is there a way from here to the block you
 named, and what is it" - and a search is arithmetic over the chunks the body already has,
 not a decision about where to go.
 `physics` *simulates*, which is the client's own role rather than a choice, and it runs only
 while a request owns the path, which the timer paragraph above is the authority on.
+Mineflayer's `digging` and `generic_place` plugins define the packet-level primitives one
+bounded module may invoke; loading either one does not select a block, tool, item or face.
 Every field of the pathfinder that would decide something is turned off, and a route is only
 ever run for a destination a frame named.
 Auto-eat, PVP, collectblock and tool are still excluded, because each of them picks its own
@@ -402,7 +417,7 @@ A disconnected body is left disconnected rather than reconnected, because when a
 whether to come back is the controller's call and a reconnect loop here would be
 gameplay policy in the one place that must hold none.
 
-**All five of the operations that touch the world are answer-only, which is a stronger
+**All seven operations that act on the world are answer-only, which is a stronger
 statement than "no auto-eat plugin" and "no pathfinder goal loop".**
 There is no threshold, no target selection and no scan of any kind anywhere in
 `body/`, and no timer that starts anything: a starving body with bread in its inventory does
@@ -424,19 +439,21 @@ refused by the library rather than by a number this process keeps.
 
 **A handle is scoped to one round trip on one connection, and both halves of that are
 load-bearing.**
-An `eat` names the `senseId` of the `sense` answer that offered the slot and a `flee` names
-the `senseId` of the answer that showed the creature, so a handle means something only
-against the reading it came from, and `src/senses.js` keeps the last
-`MAX_REMEMBERED_SENSES` (4) answers rather than a lookup in anything unbounded - a
-superseded handle is `senseForgotten`, never a growing map.
-Both kinds are remembered together and that is the invariant rather than tidiness: a memory
-holding one and not the other would resolve a flight and refuse a meal off the same answer,
-or the reverse.
+Every operation against sensed authority names the `senseId` of the answer that offered it,
+so a slot, creature, block or dropped-item handle means something only against the reading
+it came from. `src/senses.js` keeps the last `MAX_REMEMBERED_SENSES` (4) answers rather
+than a lookup in anything unbounded - a superseded handle is `senseForgotten`, never a
+growing map.
+All four kinds are remembered together, which is the invariant rather than tidiness: a
+partial memory could accept a flight and reject a meal or world interaction from the same
+answer.
 They are **spent** differently, though, and that difference is about the world rather than
 about handles.
-A slot handle names a *position* whose contents change, so the meal it buys spends it; a
-creature keeps its identity wherever it goes and however often it is run from, so one
-sighting may be fled from more than once.
+A slot handle names a mutable position and is spent by a successful meal, placement or
+equipment move. A block offer is spent when that exact block is dug, and a dropped-item
+offer when that exact entity is collected. A creature keeps its identity wherever it goes
+and however often it is run from, so one sighting may be fled from more than once; an
+unchanged support block may likewise support more than one explicit placement.
 That identity is the exact Mineflayer entity object beside its numeric id, because the id may be reused after the creature leaves.
 An `entityDead` event marks every remembered offer of that object dead before Mineflayer necessarily removes it from the live table, and an active flight listens for the same exact object until settlement.
 An entry is named by the *connection* as well as by the id, because a request id is the
@@ -491,8 +508,40 @@ makes spending the slot handle on `eaten` a rule about the meal rather than abou
 Exactly one item is consumed whatever the count says, because `bot.consume` is what consumed
 it.
 
-**Only the Mineflayer plugins that *report* are loaded, and what they leave out is
-Loom's own.**
+**The four native world interactions are one-shot applications of retained authority.**
+`dig` names one offered block and uses only the item already in the main hand.
+`collect` names one exact dropped-item entity and either waits within passive pickup reach or,
+when `approach` is true, gives the existing bounded movement wrapper that entity's sensed
+position as its single fixed destination.
+`place` names one support block, one offered slot and one face; the exact offered stack must
+already be in the selected main hand, so placement never equips or searches.
+`equip` names one offered slot and one of the closed destinations `hand`, `offHand`, `head`,
+`torso`, `legs` or `feet`; Mineflayer may choose the concrete hotbar slot for `hand`, and the
+report states the slot it actually used.
+
+Each module re-reads the mutable block, entity or stack immediately before its first
+Mineflayer call, including the private state/NBT/component fingerprint the public sense frame
+does not expose. Dig and place also re-check native reach and line of sight. A collection
+keeps watching the exact retained entity object and its stack metadata until pickup or
+settlement. No module selects a tool, a replacement target, a nearby item or a follow-on
+goal.
+
+`body.js` gives movement and all four interactions one shared owner. A conflicting request
+is `notReady`, never a takeover or a queue. Every accepted request has one deadline and one
+terminal report; connection loss, death and shutdown abort its listeners, timers and any
+owned route. `halt` cancels a dig or collection when Mineflayer exposes a stopping primitive.
+Placement and equipment transactions cannot be recalled once sent, so ordinary `halt`
+reports `stopped: false` for them while teardown still clears Loom's bounded wait.
+
+The operation modules live beside `movement.js` and `eating.js`: `digging.js`,
+`collecting.js`, `placing.js`, `equipping.js`, with their shared mechanical resolution in
+`interaction.js`. Their headers own the exact closed outcome ordering and cancellation
+semantics. The JVM coordinator separately reconciles a completed block break, pickup or
+placement against Paper events and equipment against final server inventory, recording both
+the body report and the resulting vanilla effect.
+
+**The internal plugin table contains only readers and primitives an operation explicitly
+names.**
 Mineflayer's default is to load all of them, which would put an automatic respawn and a
 whole shelf of action plugins inside a process whose purpose is to make no choices - so
 `loadInternalPlugins` is off and `INTERNAL_REPORTING_PLUGINS` is the whole of what is kept.
@@ -501,18 +550,16 @@ That is `health` for `spawn`, `death`, `bot.health`, `bot.food` and `bot.foodSat
 and `bot.world`, whose `raycast` is what a line of sight is measured with; `time` for
 `bot.time`; `inventory` with `simple_inventory` for `bot.inventory` and the two calls one
 explicit meal is made of - `bot.equip`, which is defined in the second of them, and
-`bot.consume`, which is defined in the first.
-Every entry is a reader, and that is the whole rule the list states.
+`bot.consume`, which is defined in the first. The same explicit `bot.equip` primitive
+now serves the bounded `equip` operation too.
 Left out are `kick` (an automatic respawn), `game` (the vanilla client's respawn on a
-`win_game` change), and every action plugin.
+`win_game` change), and every unrelated action plugin.
 The line is drawn per *plugin* rather than per method, though, so two of the ones kept
-bring actions with them that nothing here wants: `entities` defines `bot.attack`,
+bring actions the wire does not expose: `entities` defines `bot.attack`,
 `bot.mount` and `bot.useOn` beside the entity index, and `simple_inventory` defines
-`bot.toss` and `bot.tossStack` beside the `equip` a meal needs.
-Neither can be left behind, because the index and `equip` are exactly what a `sense` and an
-`eat` are read and carried out through - so what keeps those five actions from being taken
-is that no operation on this wire calls one, which is the wire being eight operations rather
-than a list of methods being withheld.
+`bot.toss` and `bot.tossStack` beside `equip`.
+Neither plugin can be left behind, so the closed operation set and focused call sites are
+what keep those unrelated methods unreachable.
 
 `bot.quit` is *not* among them: it is `kick`'s, and `kick` is not loaded, which is why
 this process ends a connection through `bot.end` and a reason of its own.
@@ -520,9 +567,8 @@ this process ends a connection through `bot.end` and a reason of its own.
 not evidence about what a loader does with it - including that a whole run of the
 operations calls none of those actions.
 
-**Two plugins are loaded beside that list, both by `src/movement.js`, and neither belongs in
-it.**
-Both arrive through `bot.loadPlugin`, which is a separate seam from `loadInternalPlugins` and
+**Four action plugins are loaded beside that list, each by the module that scopes it.**
+They arrive through `bot.loadPlugin`, a separate seam from `loadInternalPlugins` that
 leaves that setting off and the list above unchanged.
 `mineflayer-pathfinder` is the third-party one, and it is affordable for the same reason the
 readers are: it *searches* - it answers "is there a way from here to the block you named, and
@@ -536,13 +582,17 @@ It cannot be left out, because a player's movement in Minecraft is *client*-simu
 is no "server, please walk me there" packet - so a body that can be asked to walk has to
 simulate and report its own position, and that plugin is where all of it is.
 So it is loaded by the module that scopes it: both halves of it are held shut unless one
-accepted `moveTo` or `flee` owns the path, and the timer paragraph above is the whole of what
-that does and does not cover.
+accepted `moveTo`, `flee`, or explicitly approaching `collect` owns the path, and the timer
+paragraph above is the whole of what that does and does not cover.
+Mineflayer's `digging` plugin is loaded by `digging.js`, and `generic_place` by
+`placing.js`. Loading them defines `bot.dig`, `bot.stopDigging` and `_genericPlace`; it
+does not call one. The surrounding module supplies the retained offer, revalidation,
+deadline, one owner and closed result every time the primitive is reached.
 One part of it is unscoped and has to be: the clientbound `position` handler is what moves
 `bot.entity.position` off `(0,0,0)` and what records the facing a meal is sent with, so every
 perception and every meal depends on it whether or not anything is walking.
-It also brings `bot.elytraFly` with it, which is in the same category as the five actions
-above and is reached by no operation for the same reason.
+It also brings `bot.elytraFly` with it, which is in the same category as the unrelated
+actions above and is reached by no operation for the same reason.
 
 **Mineflayer's own `game` plugin is not loadable here whatever else it is useful for.**
 On a `win_game` game-state change it writes `client_command` back at the server, which is
@@ -883,11 +933,10 @@ a controller sent that could not be read as a request at all.
 
 `../contract/body-control.schema.json` is the single source of truth, and it is a
 **separate document from `../contract/loom.schema.json`**: that one carries what an
-agent perceives and decides, this one carries this process's own eight operations -
-whether a body is alive and which lifecycle state it is in, when to stop, one bounded
-reading of what its player can see and how it is doing, one named meal, one walk to a
-named place, one flight from a named creature, and one cancellation of whichever of those
-two is running. The contracts
+agent perceives and decides, this one carries this process's own twelve operations -
+lifecycle and shutdown, one bounded raw reading, one named meal, one walk, one flight,
+four request-scoped native interactions, and one cancellation of the exclusive work that
+can still be stopped. The contracts
 define separate message types, and neither codec imports the other contract's bindings.
 The overlap in subject is deliberate and is not a shared type: a `sense` answer is what
 one player client was told, and turning it into an agent's `Perception` - the radius, the
@@ -958,25 +1007,21 @@ past. Each runtime states each bound once, for itself, and the conformance corpu
 proves the two statements agree.
 
 **A frame's size and its nesting are settled before anything reads it, and the order is
-the whole of that guarantee.** `MAX_FRAME_BYTES` is 8 KiB, still an order of magnitude
-tighter than the cognition wire's 256 KiB, which is sized for a whole perception rather
-than for one bounded answer about a body.
-The largest frame the contract admits is 7 842 bytes of it - a sense report with every
-string and list at its own bound and every number written as long as a formatter writes
-one - so the margin is a twentieth, and `test/protocol.test.js` measures both rather than
-trusting either.
+the whole of that guarantee.** `MAX_FRAME_BYTES` is 32 KiB, eight times tighter than the
+cognition wire's 256 KiB, which is sized for a whole perception rather than for one
+bounded answer about a body.
+The largest frame the contract admits is a sense report with every entity, block,
+dropped-item and inventory list at its own bound, every string at its limit and every
+number written as long as a formatter writes one. It remains under 15 KiB on both
+runtimes, and both suites construct and measure it rather than trusting this note.
 A real's contribution is the length of its decimal *text*, which is longest nowhere near
 the world border: the widest legal coordinate is the double just inside the magnitude at
 which `Number.prototype.toString` stops writing plain decimals, and it is six characters
 wider than the largest coordinate the border admits.
-The test derives that rather than naming it, and the JVM twin derives its own, because
-`Double.toString` reaches its longest text at a different magnitude and so measures a
-slightly narrower worst case (7 740 bytes); a list bound raised later has to be checked
-against the wider of the two.
-That figure is not a comfortable one on purpose: `MAX_SENSE_ENTITIES` and
-`MAX_SENSE_STACKS` are derived from what fits, the test pins that what is spare is still
-more than one whole entity description, and a list bound raised past that would have to
-move the byte bound in both runtimes and the schema at once.
+The test derives that rather than naming it, and the JVM twin derives its own because
+`Double.toString` reaches its longest text at a different magnitude. A sense-list or
+string bound raised later still has to be checked against the wider measurement, and a
+frame-bound change must move in both runtimes and the schema description at once.
 The bound is
 enforced at *every* public decode rather than only in the framing reader `src/body.js`
 puts in front of the decoders, since a controller can reach a decoder without it. A
@@ -989,9 +1034,9 @@ four times the bound. On the JVM the measurement is deliberately two clauses
 unbounded array first - and UTF-8 never spends fewer bytes than a string spends UTF-16
 units, which makes the `String.length` clause a sound guard rather than a shortcut with
 a different meaning.
-`MAX_FRAME_DEPTH` (8) is a second bound and not the byte bound in another form: 8 KiB
-buys 4 095 open brackets, and the margin between the two measured out at none. A
-4 095-level line is 8 190 bytes, and with the guard removed it raises a
+`MAX_FRAME_DEPTH` (8) is a second bound and not the byte bound in another form: 32 KiB
+buys more than sixteen thousand open brackets, and a deeply nested line well inside that
+byte bound raises a
 `StackOverflowError` on the JVM off the walk for explicit nulls, which spends several
 call frames a level rather than one. A `StackOverflowError` is an `Error` and not an
 exception, so nothing in either decode path catches it. Both runtimes therefore settle
@@ -1001,9 +1046,9 @@ stack exhaustion that recursed per level would be the thing it exists to refuse.
 carries the number for parity rather than for safety**: both ends refusing the same
 frames is the point of three hand-written descriptions of one wire. Eight is far above
 anything this generation can hold: the deepest legal frame is a sense answer at **four** -
-the top object, its `entities` array, an entity object, and that entity's `position` array -
-and raising `MAX_SENSE_ENTITIES` or `MAX_SENSE_STACKS` widens those lists rather than nesting
-them, so the four spare levels are spent only by a shape this generation does not have. There is
+the top object, one sense list, an offered object, and its `position` array - and raising
+any list bound widens rather than nests it, so the four spare levels are spent only by a
+shape this generation does not have. There is
 deliberately no "too deep" code - over the byte bound is `frameTooLarge`, and a frame
 refused before it is parsed is a malformed frame. Both suites pin the depth at the
 deepest line the byte bound admits rather than at a round number, because a round number
@@ -1013,7 +1058,7 @@ passes with the guard gone.
 accept.** There is no `encodeLine`: `encodeRequest` and `encodeResponse` feed the line
 they produced back through their own decoder and throw
 `the body-control protocol will not carry this frame: <code>` if it comes back refused,
-and all four builders route through the same check. The throw carries only the
+and every frame builder routes through the same check. The throw carries only the
 closed-set code, never the frame. What they then write is the *canonical* line rather
 than the caller's - the schema's own key order with the `op` tag first - so a frame built
 with its fields in any order encodes to the bytes the fixtures carry. The JVM half needs

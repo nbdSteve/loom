@@ -29,6 +29,7 @@ const assert = require('node:assert/strict')
 const { afterEach, test } = require('node:test')
 
 const { SLOT_SETTLE_MS } = require('../src/eating')
+const { stackDetail } = require('../src/interaction')
 const { MAX_REMEMBERED_SENSES } = require('../src/senses')
 const { MAX_REFUSALS_PER_CONNECTION } = require('../src/body')
 const {
@@ -159,7 +160,10 @@ function read (bot, { radius = RADIUS, limit = LIMIT } = {}) {
 
 /** What a sense answer offering these slots would have remembered about them. */
 function offering (stacks) {
-  return new Map(stacks.map(([slot, what]) => [slot, what]))
+  return new Map(stacks.map(([slot, what, count]) => {
+    const described = stack(what, count)
+    return [slot, { what, count, detail: stackDetail(described) }]
+  }))
 }
 
 /** The server's own report that the item in hand finished being used. */
@@ -388,7 +392,10 @@ test('one meal is brought to hand, used once, and counted from the server own re
   stocked(client, [[BREAD_SLOT, 'bread', 3]])
   await settled()
   client.writes.length = 0
-  const eating = eatFromSlot(bot, { offered: offering([[BREAD_SLOT, 'bread']]), slot: BREAD_SLOT })
+  const eating = eatFromSlot(bot, {
+    offered: offering([[BREAD_SLOT, 'bread', 3]]),
+    slot: BREAD_SLOT
+  })
   await settled()
   // The library brought the stack to the held hotbar slot. That is why `remaining` is
   // counted in the hand rather than in the slot the request named: the move empties it.
@@ -420,7 +427,10 @@ test('a completion ahead of the slot update is still counted from the slot', asy
   const { bot, client } = await standing({ vitals: HUNGRY })
   stocked(client, [[BREAD_SLOT, 'bread', 3]])
   await settled()
-  const eating = eatFromSlot(bot, { offered: offering([[BREAD_SLOT, 'bread']]), slot: BREAD_SLOT })
+  const eating = eatFromSlot(bot, {
+    offered: offering([[BREAD_SLOT, 'bread', 3]]),
+    slot: BREAD_SLOT
+  })
   await settled()
   // The unfavourable order, and the one a tick boundary makes ordinary: vanilla completes
   // the use inside the entity tick and broadcasts the container change at the end of the
@@ -442,7 +452,10 @@ test('the last loaf of a stack is counted as nothing left', async () => {
   const { bot, client } = await standing({ vitals: HUNGRY })
   stocked(client, [[BREAD_SLOT, 'bread', 1]])
   await settled()
-  const eating = eatFromSlot(bot, { offered: offering([[BREAD_SLOT, 'bread']]), slot: BREAD_SLOT })
+  const eating = eatFromSlot(bot, {
+    offered: offering([[BREAD_SLOT, 'bread', 1]]),
+    slot: BREAD_SLOT
+  })
   await settled()
   // Same order, and the reading that matters most: an agent that has just eaten its last
   // loaf must not be told it still has one, which is what the pre-meal count said.
@@ -462,7 +475,7 @@ test('a full food bar is the library own refusal and costs the agent nothing', a
   await settled()
   client.writes.length = 0
   const report = await eatFromSlot(bot, {
-    offered: offering([[BREAD_SLOT, 'bread']]),
+    offered: offering([[BREAD_SLOT, 'bread', 3]]),
     slot: BREAD_SLOT
   })
   // This is the case the constant `FULL_FOOD_MESSAGE` is matched against: the real library
@@ -480,7 +493,7 @@ test('a food vanilla always accepts is eaten on a full bar', async () => {
   stocked(client, [[BREAD_SLOT, 'golden_apple', 1]])
   await settled()
   const eating = eatFromSlot(bot, {
-    offered: offering([[BREAD_SLOT, 'golden_apple']]),
+    offered: offering([[BREAD_SLOT, 'golden_apple', 1]]),
     slot: BREAD_SLOT
   })
   await settled()
@@ -499,7 +512,7 @@ test('a stack the game does not call food is refused before anything is brought 
   await settled()
   client.writes.length = 0
   const report = await eatFromSlot(bot, {
-    offered: offering([[BREAD_SLOT, 'iron_pickaxe']]),
+    offered: offering([[BREAD_SLOT, 'iron_pickaxe', 1]]),
     slot: BREAD_SLOT
   })
   // Edibility is minecraft-data's own food table for the version the server runs, so there
@@ -514,7 +527,7 @@ test('a stack the game does not call food is refused before anything is brought 
 
 test('an emptied slot, a changed slot and an unoffered slot are three separate refusals', async () => {
   const { bot, client } = await standing({ vitals: HUNGRY })
-  const offered = offering([[BREAD_SLOT, 'bread']])
+  const offered = offering([[BREAD_SLOT, 'bread', 3]])
   stocked(client, [[BREAD_SLOT, 'bread', 3]])
   await settled()
   // A slot handle names a *position*, so the position is read again at the meal. Something
@@ -547,7 +560,10 @@ test('a meal the server never completes is refused as inaccessible', async () =>
   // promise the food is still there - which is why every refusal that *can* promise it is
   // settled before the two library calls rather than folded in here.
   const report = await promptly(
-    eatFromSlot(bot, { offered: offering([[BREAD_SLOT, 'bread']]), slot: BREAD_SLOT }),
+    eatFromSlot(bot, {
+      offered: offering([[BREAD_SLOT, 'bread', 3]]),
+      slot: BREAD_SLOT
+    }),
     'the abandoned meal',
     10_000
   )

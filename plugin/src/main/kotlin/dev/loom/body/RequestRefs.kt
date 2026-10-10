@@ -1,15 +1,28 @@
 /*
  * The request-scoped handles a player body has issued.
  *
- * Creature and slot handles use separate stores because they name different kinds of
- * thing, but one perception opens and settles both windows together.
+ * Creature, block, dropped-item and slot handles use separate stores because they
+ * name different kinds of thing, but one perception opens and settles every window
+ * together.
  */
 package dev.loom.body
+
+/** Every namespace of handles one perception offered to cognition. */
+data class RequestRefBindings(
+    val creatures: List<EntityRefBinding> = emptyList(),
+    val blocks: List<WorldTargetRefBinding> = emptyList(),
+    val droppedItems: List<WorldTargetRefBinding> = emptyList(),
+    val slots: List<InventorySlotBinding> = emptyList(),
+)
 
 /** Every handle retained for player-body decision round trips. */
 class RequestRefs(
     /** Living things observed by the body. */
     val creatures: EntityRefs = EntityRefs(),
+    /** Nearby non-air blocks offered by the player body. */
+    val blocks: WorldTargetRefs = WorldTargetRefs("b"),
+    /** Nearby dropped-item entities offered by the player body. */
+    val droppedItems: WorldTargetRefs = WorldTargetRefs("d"),
     /** Occupied player-inventory slots observed by the body. */
     val slots: InventoryRefs = InventoryRefs(),
 ) {
@@ -22,26 +35,31 @@ class RequestRefs(
     fun remember(
         agent: AgentId,
         requestId: String,
-        creatures: List<EntityRefBinding>,
-        slots: List<InventorySlotBinding>,
+        bindings: RequestRefBindings,
         atTick: Long,
     ) {
-        this.creatures.remember(agent, requestId, creatures, atTick)
-        this.slots.remember(agent, requestId, slots, atTick)
+        creatures.remember(agent, requestId, bindings.creatures, atTick)
+        blocks.remember(agent, requestId, bindings.blocks, atTick)
+        droppedItems.remember(agent, requestId, bindings.droppedItems, atTick)
+        slots.remember(agent, requestId, bindings.slots, atTick)
     }
 
-    /** Drops both kinds of handle once the decision has been dealt with. */
+    /** Drops every kind of handle once the decision has been dealt with. */
     fun settle(
         agent: AgentId,
         requestId: String,
     ) {
         creatures.settle(agent, requestId)
+        blocks.settle(agent, requestId)
+        droppedItems.settle(agent, requestId)
         slots.settle(agent, requestId)
     }
 
     /** Drops every retained handle for [agent]. */
     fun forget(agent: AgentId) {
         creatures.forget(agent)
+        blocks.forget(agent)
+        droppedItems.forget(agent)
         slots.forget(agent)
     }
 }

@@ -19,16 +19,25 @@ import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
+import dev.loom.bodycontrol.CollectOutcome
+import dev.loom.bodycontrol.DigOutcome
 import dev.loom.bodycontrol.EatOutcome
+import dev.loom.bodycontrol.EquipOutcome
 import dev.loom.bodycontrol.ErrorCode
 import dev.loom.bodycontrol.LifecycleState
 import dev.loom.bodycontrol.MoveOutcome
+import dev.loom.bodycontrol.PlaceOutcome
+import dev.loom.bodycontrol.SensedBlock
 import dev.loom.bodycontrol.SensedEntity
 import dev.loom.bodycontrol.SensedGround
+import dev.loom.bodycontrol.SensedItem
 import dev.loom.bodycontrol.SensedStack
 import dev.loom.bodycontrol.SensedTime
 import dev.loom.bodycontrol.SensedVitals
+import dev.loom.contract.BlockFace
+import dev.loom.contract.EquipmentDestination
 import dev.loom.contract.Intent
+import dev.loom.contract.ObservationKind
 import dev.loom.contract.Trigger
 import dev.loom.mind.CognitionBridge
 import dev.loom.mind.CognitionCallbacks
@@ -133,7 +142,10 @@ private class FakePlayerServerState : PlayerServerState {
 
     val dead = mutableSetOf<AgentId>()
     val senseAudits = CopyOnWriteArrayList<Pair<PlayerIdentity, BodyResponse.SenseReport>>()
+    val senseAuditVersions = CopyOnWriteArrayList<Long>()
     val moveAudits = CopyOnWriteArrayList<Pair<PlayerIdentity, BodyRequest>>()
+    val interactionAudits = CopyOnWriteArrayList<Pair<PlayerIdentity, BodyRequest>>()
+    var senseAuditVersion: Long = 0
 
     override fun connected(identity: PlayerIdentity): Boolean = connected
 
@@ -151,10 +163,27 @@ private class FakePlayerServerState : PlayerServerState {
             )
         }
 
+    override fun itemSubjectsOf(
+        identity: PlayerIdentity,
+        items: List<SensedItem>,
+    ): List<UUID?> =
+        items.mapIndexed { index, item ->
+            UUID.nameUUIDFromBytes(
+                "item:$index:${item.what}:${item.count}".toByteArray(StandardCharsets.UTF_8),
+            )
+        }
+
+    override fun captureSenseAudit(identity: PlayerIdentity): SenseAuditSnapshot =
+        FakeSenseAuditSnapshot(identity, senseAuditVersion)
+
     override fun auditSense(
         identity: PlayerIdentity,
+        snapshot: SenseAuditSnapshot?,
         report: BodyResponse.SenseReport,
     ) {
+        val captured = snapshot as FakeSenseAuditSnapshot
+        assertEquals(identity, captured.identity)
+        senseAuditVersions += captured.version
         senseAudits += identity to report
     }
 
@@ -173,7 +202,31 @@ private class FakePlayerServerState : PlayerServerState {
     ) {
         moveAudits += identity to request
     }
+
+    override fun auditInteraction(
+        identity: PlayerIdentity,
+        claim: ServerInteractionClaim,
+    ): ServerInteractionAudit {
+        interactionAudits += identity to claim.controlRequest
+        val detail =
+            when (claim) {
+                is ServerInteractionClaim.Dig ->
+                    "blockBreak ${claim.offered.what} at ${claim.offered.position}"
+                is ServerInteractionClaim.Collect ->
+                    "entityPickupItem ${claim.itemSubject} ${claim.offered.what}"
+                is ServerInteractionClaim.Place ->
+                    "blockPlace ${claim.offeredStack.what} against ${claim.offeredBlock.position}"
+                is ServerInteractionClaim.Equip ->
+                    "server slot ${claim.report.toSlot} holds ${claim.offeredStack.what}"
+            }
+        return ServerInteractionAudit(true, detail)
+    }
 }
+
+private data class FakeSenseAuditSnapshot(
+    val identity: PlayerIdentity,
+    val version: Long,
+) : SenseAuditSnapshot
 
 private class FakeControlConnector(
     private val intercept: (BodyRequest) -> BodyResponse? = { null },
@@ -381,6 +434,31 @@ class PlayerBodyPortTest {
             movementPerception.requestId,
             eatingPerception.requestId,
         )
+    }
+
+    @Test
+    fun `sense audit uses the server snapshot from before the control round trip`() {
+        val agent = AgentId("agent-sense-audit")
+        val server = FakePlayerServerState().apply { senseAuditVersion = 7 }
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    server = server,
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let {
+                            server.senseAuditVersion = 8
+                            interactionSense(it)
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+
+        assertTrue(harness.port.perceive(agent, Trigger.GoalReview).await() != null)
+
+        assertEquals(listOf(7L), server.senseAuditVersions)
+        assertEquals(8L, server.senseAuditVersion)
     }
 
     @Test
@@ -757,61 +835,7 @@ class PlayerBodyPortTest {
     private fun harness(
         agent: AgentId,
         options: HarnessOptions = HarnessOptions(),
-    ): PortHarness {
-        val endpoint = BodyControlEndpoint("127.0.0.1", 25_585)
-        val supervisor = FakeBodySupervisor(endpoint, options.beforeStart)
-        val connector = FakeControlConnector(options.intercept)
-        val records = CopyOnWriteArrayList<BodyEventRecord>()
-        val io = Executors.newFixedThreadPool(2)
-        val scheduler = Executors.newSingleThreadScheduledExecutor()
-        val identity = playerIdentityOf(agent)
-        val port =
-            PlayerBodyPort(
-                infrastructures =
-                    listOf(
-                        PlayerBodyInfrastructure(
-                            identity = identity,
-                            settings =
-                                PlayerBodySettings(
-                                    bodyDirectory = temporary.toAbsolutePath(),
-                                    processDirectory = temporary.resolve(identity.username).toAbsolutePath(),
-                                    controlEndpoint = endpoint,
-                                    connectTimeout = Duration.ofMillis(100),
-                                    requestTimeout = Duration.ofMillis(100),
-                                    movementTimeout = Duration.ofMillis(200),
-                                    startupTimeout = Duration.ofSeconds(1),
-                                    shutdownTimeout = Duration.ofMillis(200),
-                                    healthCheckIntervalTicks = options.healthCheckIntervalTicks,
-                                    healthFailureLimit = options.healthFailureLimit,
-                                ),
-                            supervisor = supervisor,
-                            connector = connector,
-                            requestIds = BodyControlRequestIds(scope = identity.username),
-                            io = io,
-                            scheduler = scheduler,
-                        ),
-                    ),
-                authority =
-                    PlayerBodyAuthority(
-                        main = { task -> task.run() },
-                        registerIdentity = options.registered::add,
-                        serverState = options.server,
-                        eventLog = BodyEventLog(records::add),
-                        currentTick = tick::get,
-                    ),
-                startupConcurrency = 1,
-            )
-        return PortHarness(
-            port = port,
-            supervisor = supervisor,
-            connector = connector,
-            server = options.server,
-            registered = options.registered,
-            records = records,
-            io = io,
-            scheduler = scheduler,
-        ).also(harnesses::add)
-    }
+    ): PortHarness = buildPortHarness(temporary, tick, agent, options).also(harnesses::add)
 
     private fun fleetHarness(agents: List<AgentId>): FleetPortHarness {
         val server = FakePlayerServerState()
@@ -890,6 +914,354 @@ class PlayerBodyPortTest {
         )
 }
 
+class PlayerInteractionPortTest {
+    @TempDir
+    lateinit var temporary: Path
+
+    private val harnesses = mutableListOf<PortHarness>()
+    private val tick = AtomicLong(500)
+
+    @AfterEach
+    fun cleanUp() {
+        harnesses.forEach { runCatching(it.port::close) }
+    }
+
+    @Test
+    fun `native interactions retain typed refs control sessions server audits and evidence`() {
+        val agent = AgentId("agent-interactions")
+        val harness = interactionHarness(agent)
+        harness.port.spawn(agent).await()
+
+        val rounds = InteractionPortProof.perform(harness, agent)
+        val requests = InteractionPortProof.requests(harness, rounds)
+        InteractionPortProof.evidence(harness, agent, rounds, requests)
+    }
+
+    @Test
+    fun `world refs fail closed across namespaces requests and settled decisions`() {
+        val agent = AgentId("agent-refusal")
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let(::interactionSense)
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+
+        InteractionPortProof.rejectsWrongKind(harness, agent)
+        InteractionPortProof.rejectsSpentRef(harness, agent)
+        InteractionPortProof.rejectsWrongRequest(harness, agent)
+        assertEquals(1, harness.connector.requests.count { it is BodyRequest.Dig })
+    }
+
+    private fun interactionHarness(agent: AgentId): PortHarness =
+        harness(
+            agent,
+            HarnessOptions(
+                intercept = { request ->
+                    when (request) {
+                        is BodyRequest.Sense -> interactionSense(request)
+                        is BodyRequest.Equip ->
+                            BodyResponse.EquipReport(
+                                protocol = request.protocol,
+                                requestId = request.requestId,
+                                agentId = request.agentId,
+                                state = LifecycleState.READY,
+                                outcome = EquipOutcome.EQUIPPED,
+                                elapsedMs = 20,
+                                what = "minecraft:iron_helmet",
+                                count = 1,
+                                toSlot = 5,
+                            )
+                        else -> null
+                    }
+                },
+            ),
+        )
+
+    private fun harness(
+        agent: AgentId,
+        options: HarnessOptions,
+    ): PortHarness = buildPortHarness(temporary, tick, agent, options).also(harnesses::add)
+}
+
+private data class InteractionRounds(
+    val dig: String,
+    val collect: String,
+    val place: String,
+    val equip: String,
+) {
+    val all: List<String> = listOf(dig, collect, place, equip)
+}
+
+private data class InteractionRequests(
+    val dig: BodyRequest.Dig,
+    val collect: BodyRequest.Collect,
+    val place: BodyRequest.Place,
+    val equip: BodyRequest.Equip,
+) {
+    val all: List<BodyRequest> = listOf(dig, collect, place, equip)
+}
+
+private object InteractionPortProof {
+    fun perform(
+        harness: PortHarness,
+        agent: AgentId,
+    ): InteractionRounds =
+        InteractionRounds(
+            dig = dig(harness, agent),
+            collect = collect(harness, agent),
+            place = place(harness, agent),
+            equip = equip(harness, agent),
+        )
+
+    fun requests(
+        harness: PortHarness,
+        rounds: InteractionRounds,
+    ): InteractionRequests {
+        val requests =
+            InteractionRequests(
+                harness.connector.requests.filterIsInstance<BodyRequest.Dig>().single(),
+                harness.connector.requests.filterIsInstance<BodyRequest.Collect>().single(),
+                harness.connector.requests.filterIsInstance<BodyRequest.Place>().single(),
+                harness.connector.requests.filterIsInstance<BodyRequest.Equip>().single(),
+            )
+        assertEquals(rounds.dig, requests.dig.senseId)
+        assertEquals(0, requests.dig.block)
+        assertEquals(rounds.collect, requests.collect.senseId)
+        assertEquals(0, requests.collect.item)
+        assertTrue(requests.collect.approach)
+        assertEquals(rounds.place, requests.place.senseId)
+        assertEquals(0, requests.place.block)
+        assertEquals(36, requests.place.slot)
+        assertEquals(dev.loom.bodycontrol.BlockFace.UP, requests.place.face)
+        assertEquals(rounds.equip, requests.equip.senseId)
+        assertEquals(38, requests.equip.slot)
+        assertEquals(
+            dev.loom.bodycontrol.EquipmentDestination.HEAD,
+            requests.equip.destination,
+        )
+        rounds.all.zip(requests.all).forEach { (senseId, request) ->
+            assertRequestUsesSenseConnection(harness, senseId, request)
+        }
+        assertEquals(requests.all, harness.server.interactionAudits.map { it.second })
+        return requests
+    }
+
+    fun evidence(
+        harness: PortHarness,
+        agent: AgentId,
+        rounds: InteractionRounds,
+        requests: InteractionRequests,
+    ) {
+        val records = harness.records.filter { it.event == BodyEvent.WORLD_INTERACTION }
+        assertEquals(4, records.size)
+        assertEquals(rounds.all, records.map(BodyEventRecord::requestId))
+        records.zip(requests.all).forEach { (record, request) ->
+            assertEquals(agent.value, record.agentId)
+            assertEquals(playerIdentityOf(agent).uuid.toString(), record.witness?.uuid)
+            assertEquals(playerIdentityOf(agent).username, record.witness?.username)
+            assertEquals(EventTag.SERVER_EFFECT_CONFIRMED, record.outcome)
+            assertTrue(record.detail.contains("sense ${record.requestId}"))
+            assertTrue(record.detail.contains("control ${request.requestId}"))
+            assertTrue(record.detail.contains("vanilla "))
+            assertTrue(
+                harness.records.indexOfFirst {
+                    it.event == BodyEvent.INTENT_APPLIED &&
+                        it.requestId == record.requestId
+                } < harness.records.indexOf(record),
+                "the intent verdict must precede the server-effect evidence",
+            )
+        }
+    }
+
+    fun rejectsWrongKind(
+        harness: PortHarness,
+        agent: AgentId,
+    ) {
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val itemRef =
+            perception.surroundings.single {
+                it.kind == ObservationKind.DROPPED_ITEM
+            }.ref
+        val outcome =
+            harness.port
+                .apply(agent, Intent.Dig(itemRef), perception.requestId)
+                .await() as IntentOutcome.Rejected
+        assertEquals(EventTag.DIG_BLOCK_UNNAMED, outcome.tag)
+    }
+
+    fun rejectsSpentRef(
+        harness: PortHarness,
+        agent: AgentId,
+    ) {
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val block = perception.surroundings.single { it.kind == ObservationKind.BLOCK }.ref
+        assertTrue(
+            harness.port
+                .apply(agent, Intent.Dig(block), perception.requestId)
+                .await() is IntentOutcome.Accepted,
+        )
+        val outcome =
+            harness.port
+                .apply(agent, Intent.Dig(block), perception.requestId)
+                .await() as IntentOutcome.Rejected
+        assertEquals(EventTag.DIG_SENSE_FORGOTTEN, outcome.tag)
+    }
+
+    fun rejectsWrongRequest(
+        harness: PortHarness,
+        agent: AgentId,
+    ) {
+        val old = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val block = old.surroundings.single { it.kind == ObservationKind.BLOCK }.ref
+        val current = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val outcome =
+            harness.port
+                .apply(agent, Intent.Dig(block), current.requestId)
+                .await() as IntentOutcome.Rejected
+        assertEquals(EventTag.DIG_BLOCK_UNNAMED, outcome.tag)
+    }
+
+    private fun dig(
+        harness: PortHarness,
+        agent: AgentId,
+    ): String {
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val block = perception.surroundings.single { it.kind == ObservationKind.BLOCK }
+        assertEquals(
+            IntentOutcome.Accepted("dug the offered block"),
+            harness.port.apply(agent, Intent.Dig(block.ref), perception.requestId).await(),
+        )
+        return perception.requestId
+    }
+
+    private fun collect(
+        harness: PortHarness,
+        agent: AgentId,
+    ): String {
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val item =
+            perception.surroundings.single {
+                it.kind == ObservationKind.DROPPED_ITEM
+            }
+        assertEquals(
+            IntentOutcome.Accepted("collected 1 minecraft:apple"),
+            harness.port
+                .apply(agent, Intent.Collect(item.ref, approach = true), perception.requestId)
+                .await(),
+        )
+        return perception.requestId
+    }
+
+    private fun place(
+        harness: PortHarness,
+        agent: AgentId,
+    ): String {
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val support = perception.surroundings.single { it.kind == ObservationKind.BLOCK }
+        val dirt =
+            perception.selfState.inventorySummary.single {
+                it.what == "item.minecraft.dirt"
+            }
+        assertEquals(
+            IntentOutcome.Accepted("placed minecraft:dirt at 2,64,2"),
+            harness.port
+                .apply(
+                    agent,
+                    Intent.Place(support.ref, dirt.ref, BlockFace.UP),
+                    perception.requestId,
+                ).await(),
+        )
+        return perception.requestId
+    }
+
+    private fun equip(
+        harness: PortHarness,
+        agent: AgentId,
+    ): String {
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val helmet =
+            perception.selfState.inventorySummary.single {
+                it.what == "item.minecraft.iron_helmet"
+            }
+        assertEquals(
+            IntentOutcome.Accepted("equipped 1 minecraft:iron_helmet in slot 5"),
+            harness.port
+                .apply(
+                    agent,
+                    Intent.Equip(helmet.ref, EquipmentDestination.HEAD),
+                    perception.requestId,
+                ).await(),
+        )
+        return perception.requestId
+    }
+}
+
+private fun buildPortHarness(
+    temporary: Path,
+    tick: AtomicLong,
+    agent: AgentId,
+    options: HarnessOptions,
+): PortHarness {
+    val endpoint = BodyControlEndpoint("127.0.0.1", 25_585)
+    val supervisor = FakeBodySupervisor(endpoint, options.beforeStart)
+    val connector = FakeControlConnector(options.intercept)
+    val records = CopyOnWriteArrayList<BodyEventRecord>()
+    val io = Executors.newFixedThreadPool(2)
+    val scheduler = Executors.newSingleThreadScheduledExecutor()
+    val identity = playerIdentityOf(agent)
+    val port =
+        PlayerBodyPort(
+            infrastructures =
+                listOf(
+                    PlayerBodyInfrastructure(
+                        identity = identity,
+                        settings =
+                            PlayerBodySettings(
+                                bodyDirectory = temporary.toAbsolutePath(),
+                                processDirectory = temporary.resolve(identity.username).toAbsolutePath(),
+                                controlEndpoint = endpoint,
+                                connectTimeout = Duration.ofMillis(100),
+                                requestTimeout = Duration.ofMillis(100),
+                                movementTimeout = Duration.ofMillis(200),
+                                startupTimeout = Duration.ofSeconds(1),
+                                shutdownTimeout = Duration.ofMillis(200),
+                                healthCheckIntervalTicks = options.healthCheckIntervalTicks,
+                                healthFailureLimit = options.healthFailureLimit,
+                            ),
+                        supervisor = supervisor,
+                        connector = connector,
+                        requestIds = BodyControlRequestIds(scope = identity.username),
+                        io = io,
+                        scheduler = scheduler,
+                    ),
+                ),
+            authority =
+                PlayerBodyAuthority(
+                    main = { task -> task.run() },
+                    registerIdentity = options.registered::add,
+                    serverState = options.server,
+                    eventLog = BodyEventLog(records::add),
+                    currentTick = tick::get,
+                ),
+            startupConcurrency = 1,
+        )
+    return PortHarness(
+        port = port,
+        supervisor = supervisor,
+        connector = connector,
+        server = options.server,
+        registered = options.registered,
+        records = records,
+        io = io,
+        scheduler = scheduler,
+    )
+}
+
 private fun assertAgentChain(
     records: List<BodyEventRecord>,
     agentId: AgentId,
@@ -917,6 +1289,10 @@ private fun fakeResponse(
         is BodyRequest.MoveTo -> fakeMove(request)
         is BodyRequest.Flee -> fakeFlee(request)
         is BodyRequest.Eat -> fakeEat(request)
+        is BodyRequest.Dig -> fakeDig(request)
+        is BodyRequest.Collect -> fakeCollect(request)
+        is BodyRequest.Place -> fakePlace(request)
+        is BodyRequest.Equip -> fakeEquip(request)
         is BodyRequest.Halt -> fakeHalt(request)
         is BodyRequest.Status -> fakeStatus(request, handled)
         is BodyRequest.Handshake,
@@ -947,6 +1323,10 @@ private fun fakeSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
                 ),
             ),
         entitiesOmitted = 0,
+        blocks = emptyList(),
+        blocksOmitted = 0,
+        items = emptyList(),
+        itemsOmitted = 0,
         inventory =
             listOf(
                 SensedStack(
@@ -955,6 +1335,100 @@ private fun fakeSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
                     count = 3,
                 ),
             ),
+    )
+
+private fun interactionSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
+    BodyResponse.SenseReport(
+        protocol = request.protocol,
+        requestId = request.requestId,
+        agentId = request.agentId,
+        state = LifecycleState.READY,
+        position = SENSE_POSITION,
+        vitals = SensedVitals(health = 20.0, food = 20, saturation = 5.0),
+        time = SensedTime(timeOfDay = 6_000, day = 2, isDay = true),
+        ground =
+            SensedGround(
+                standingIn = "minecraft:air",
+                standingOn = "minecraft:stone",
+            ),
+        entities = emptyList(),
+        entitiesOmitted = 0,
+        blocks =
+            listOf(
+                SensedBlock(
+                    what = "minecraft:stone",
+                    position = listOf(2, 63, 2),
+                    visible = true,
+                ),
+            ),
+        blocksOmitted = 0,
+        items =
+            listOf(
+                SensedItem(
+                    what = "minecraft:apple",
+                    count = 1,
+                    position = listOf(3.5, 64.0, 2.5),
+                    visible = true,
+                ),
+            ),
+        itemsOmitted = 0,
+        inventory =
+            listOf(
+                SensedStack(slot = 36, what = "minecraft:dirt", count = 2),
+                SensedStack(slot = 38, what = "minecraft:iron_helmet", count = 1),
+            ),
+    )
+
+private fun fakeDig(request: BodyRequest.Dig): BodyResponse.DigReport =
+    BodyResponse.DigReport(
+        protocol = request.protocol,
+        requestId = request.requestId,
+        agentId = request.agentId,
+        state = LifecycleState.READY,
+        outcome = DigOutcome.DUG,
+        elapsedMs = 20,
+        attempted = true,
+    )
+
+private fun fakeCollect(request: BodyRequest.Collect): BodyResponse.CollectReport =
+    BodyResponse.CollectReport(
+        protocol = request.protocol,
+        requestId = request.requestId,
+        agentId = request.agentId,
+        state = LifecycleState.READY,
+        outcome = CollectOutcome.COLLECTED,
+        from = SENSE_POSITION,
+        position = SENSE_POSITION,
+        travelled = 0.0,
+        elapsedMs = 20,
+        what = "minecraft:apple",
+        count = 1,
+    )
+
+private fun fakePlace(request: BodyRequest.Place): BodyResponse.PlaceReport =
+    BodyResponse.PlaceReport(
+        protocol = request.protocol,
+        requestId = request.requestId,
+        agentId = request.agentId,
+        state = LifecycleState.READY,
+        outcome = PlaceOutcome.PLACED,
+        elapsedMs = 20,
+        what = "minecraft:dirt",
+        position = listOf(2, 64, 2),
+        remaining = 0,
+    )
+
+private fun fakeEquip(request: BodyRequest.Equip): BodyResponse.EquipReport =
+    BodyResponse.EquipReport(
+        protocol = request.protocol,
+        requestId = request.requestId,
+        agentId = request.agentId,
+        state = LifecycleState.READY,
+        outcome = EquipOutcome.EQUIPPED,
+        elapsedMs = 20,
+        what = "minecraft:bread",
+        count = 3,
+        toSlot = request.slot,
     )
 
 private fun fakeMove(request: BodyRequest.MoveTo): BodyResponse.MoveReport =
@@ -1066,6 +1540,21 @@ private fun assertRoundTripEvidence(
     assertEquals(
         movementRequestId,
         harness.records.first { it.event == BodyEvent.INTENT_APPLIED }.requestId,
+    )
+}
+
+private fun assertRequestUsesSenseConnection(
+    harness: PortHarness,
+    senseId: String,
+    request: BodyRequest,
+) {
+    assertTrue(
+        harness.connector.connections.any { connection ->
+            connection.requests.any {
+                it is BodyRequest.Sense && it.requestId == senseId
+            } && request in connection.requests
+        },
+        "${request::class.simpleName} must use the retained connection that answered $senseId",
     )
 }
 

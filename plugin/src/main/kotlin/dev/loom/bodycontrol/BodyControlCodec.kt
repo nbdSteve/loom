@@ -81,22 +81,18 @@ private val BodyControlJson: Json =
 /**
  * The longest frame this wire will read, in UTF-8 bytes.
  *
- * The same 8 KiB the Node codec's `MAX_FRAME_BYTES` states, and stated here for itself
+ * The same 32 KiB the Node codec's `MAX_FRAME_BYTES` states, and stated here for itself
  * rather than imported: `BodyControlBoundaryTest` pins that this package depends on nothing
  * else in Loom, and the other end of the wire is a different runtime, so each binding
  * states every shared number once. The shared conformance corpus is what keeps the two from
  * drifting.
  *
- * The headroom is real but no longer generous, and which frame is largest is now decided by
- * the per-field bounds rather than by this number: the widest sense answer they admit - the
- * caller's limit of entities, every slot of the inventory, the longest name and id each one
- * may carry, and every real written as long as a formatter writes one - measures 7740 bytes
- * here and 7842 bytes on the Node side. So a bound raised on `MAX_SENSE_ENTITIES`, on
- * `MAX_SENSE_STACKS`, on `RESOURCE_NAME_MAX_CHARS` or on `CONTROL_ID_MAX_CHARS` has to be
- * checked against this one, and against the wider of those two figures rather than this
- * runtime's own. `BodyControlConformanceTest` builds that answer from those bounds and
- * measures it here rather than trusting the arithmetic or the corpus, whose own largest
- * fixture is only 2.6 KiB.
+ * Which frame is largest is decided by the per-field bounds rather than by this number:
+ * the widest sense answer they admit includes every entity, block, dropped item and
+ * inventory slot, the longest name and id each may carry, and every real written as long
+ * as a formatter writes one. It remains under 15 KiB on both runtimes.
+ * `BodyControlConformanceTest` builds that answer from the live bounds and measures it
+ * here rather than trusting this note or the much smaller fixture corpus.
  *
  * The two runtimes differ because a real's contribution to a frame is the length of its
  * decimal *text*, and the two formatters write their longest text at different magnitudes:
@@ -113,29 +109,26 @@ private val BodyControlJson: Json =
  * bound. The `String.length` clause in [exceedsFrameBound] is only what keeps the
  * measurement itself from having to allocate an unbounded array first.
  */
-internal const val MAX_BODY_CONTROL_FRAME_BYTES = 8192
+internal const val MAX_BODY_CONTROL_FRAME_BYTES = 32768
 
 /**
  * The deepest a frame may nest before it is refused unparsed.
  *
- * Not a size bound but a stack bound, and the size bound above does not imply it: 8 KiB
- * buys 4 095 open brackets, and both [Json.parseToJsonElement] and [carriesANull] descend
- * per level, so the cost is the reader's stack rather than its heap. Measured on this
- * runtime with the guard removed, that is not a margin at all - a 4 095-level line is
- * 8 190 bytes, two inside the byte bound, and decoding it raises a `StackOverflowError`.
- * The parser alone survives that depth and overflows a little above it (10 000 levels
- * does), so what fails first is [carriesANull], which spends several frames a level
- * rather than one: the `any` call, its iterator, the lambda and the recursion. A
+ * Not a size bound but a stack bound, and the size bound above does not imply it:
+ * 32 KiB buys more than sixteen thousand open brackets, while both
+ * [Json.parseToJsonElement] and [carriesANull] descend per level, so the cost is the
+ * reader's stack rather than its heap. With the guard removed, a line well inside the
+ * byte bound raises a `StackOverflowError`; [carriesANull] spends several frames a
+ * level rather than one: the `any` call, its iterator, the lambda and the recursion. A
  * `StackOverflowError` is an `Error` and not an exception, so [decoded]'s catch does not
  * cover it and no caller of this file does either - which is why the depth is settled
  * ahead of the parse, by a walk that does not itself recurse (`nestsDeeperThan`).
  *
  * Eight is far above anything this generation can legally hold. The deepest legal frame is
- * a sense answer at **four**: the top object, its `entities` array, an entity object, and
- * that entity's `position` array. Raising `MAX_SENSE_ENTITIES` or `MAX_SENSE_STACKS` widens
- * those lists rather than nesting them, so the headroom left here is spent by a *shape* this
- * generation does not have rather than by any list bound growing. The Node codec states the
- * same
+ * a sense answer at **four**: the top object, one sense list, an offered object, and
+ * that object's `position` array. Raising any sense-list bound widens a list rather than
+ * nesting it, so the headroom left here is spent by a *shape* this generation does not
+ * have rather than by any list bound growing. The Node codec states the same
  * number for itself, where it is parity rather than safety: V8's own `JSON.parse` is
  * iterative and reads a hundred thousand levels without complaint, so only this runtime
  * is at risk, and both refuse the same frames anyway because a frame one end reads and

@@ -43,6 +43,51 @@ pub enum Bearing {
     West,
 }
 
+/// The vanilla shape one request-scoped world observation describes.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObservationKind {
+    #[serde(rename = "entity")]
+    Entity,
+    #[serde(rename = "block")]
+    Block,
+    #[serde(rename = "droppedItem")]
+    DroppedItem,
+}
+
+/// One face of a sensed support block, chosen by a place intent.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockFace {
+    #[serde(rename = "down")]
+    Down,
+    #[serde(rename = "up")]
+    Up,
+    #[serde(rename = "north")]
+    North,
+    #[serde(rename = "south")]
+    South,
+    #[serde(rename = "west")]
+    West,
+    #[serde(rename = "east")]
+    East,
+}
+
+/// The bounded player equipment destination chosen by an equip intent.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EquipmentDestination {
+    #[serde(rename = "hand")]
+    Hand,
+    #[serde(rename = "offHand")]
+    OffHand,
+    #[serde(rename = "head")]
+    Head,
+    #[serde(rename = "torso")]
+    Torso,
+    #[serde(rename = "legs")]
+    Legs,
+    #[serde(rename = "feet")]
+    Feet,
+}
+
 /// Which part of the world's day it is.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DayPhase {
@@ -241,21 +286,6 @@ where
     Ok(())
 }
 
-/// Refuses an out-of-bounds ref on an observation, where the field may be absent.
-///
-/// Only decoding is narrowed. Serialization is left as the derive wrote it, so
-/// every valid fixture still round-trips byte-for-byte.
-fn bounded_optional_ref<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let handle = Option::<String>::deserialize(deserializer)?;
-    if let Some(present) = handle.as_deref() {
-        refuse_unbounded_ref(present)?;
-    }
-    Ok(handle)
-}
-
 /// Refuses an out-of-bounds ref on an intent, where the field is required.
 ///
 /// Only decoding is narrowed, as with [`bounded_optional_ref`].
@@ -323,9 +353,11 @@ pub struct SelfState {
 
 /// One already-summarized observation the body chose to reveal. The perception
 /// carries a list of these instead of a live world handle.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Observation {
+    /// Whether this is a living entity, a block, or a dropped-item entity.
+    pub kind: ObservationKind,
     /// Human-readable summary of the observed thing.
     pub what: String,
     /// Distance from the agent to the observed thing, in blocks.
@@ -340,23 +372,58 @@ pub struct Observation {
     /// `false` means the body knows it is there and cannot see it, which is a
     /// different situation from not knowing at all.
     pub visible: bool,
-    /// The handle by which a decision may name this particular thing back to the
-    /// body, present only for a living thing.
-    ///
-    /// A block carries none, because a block is named by its position instead, so
-    /// `None` is a fact about what the observation is rather than an omission. The
-    /// field is named `entity_ref` in Rust and `ref` on the wire because `ref` is a
-    /// keyword here; it is skipped entirely when absent, which is what keeps a
-    /// block observation byte-identical on both sides of the contract. Its length
-    /// is narrowed at decode by [`bounded_optional_ref`], because a ref the body
-    /// could never have issued is worth refusing where it arrives.
-    #[serde(
-        rename = "ref",
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "bounded_optional_ref"
-    )]
-    pub entity_ref: Option<String>,
+    /// The request-scoped handle by which a decision may name this exact target
+    /// back to the body.
+    #[serde(rename = "ref", deserialize_with = "bounded_ref")]
+    pub target_ref: String,
+    /// How many items a dropped-item entity represents. Present only for
+    /// [`ObservationKind::DroppedItem`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ObservationWire {
+    kind: ObservationKind,
+    what: String,
+    distance: f64,
+    direction: Bearing,
+    vertical_offset: f64,
+    visible: bool,
+    #[serde(rename = "ref", deserialize_with = "bounded_ref")]
+    target_ref: String,
+    #[serde(default)]
+    count: Option<i64>,
+}
+
+impl<'de> Deserialize<'de> for Observation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = ObservationWire::deserialize(deserializer)?;
+        if raw.count.is_some() != (raw.kind == ObservationKind::DroppedItem) {
+            return Err(de::Error::custom(
+                "count is present exactly for a dropped-item observation",
+            ));
+        }
+        if raw.count.is_some_and(|count| count < 1) {
+            return Err(de::Error::custom(
+                "a dropped-item observation must hold at least one item",
+            ));
+        }
+        Ok(Self {
+            kind: raw.kind,
+            what: raw.what,
+            distance: raw.distance,
+            direction: raw.direction,
+            vertical_offset: raw.vertical_offset,
+            visible: raw.visible,
+            target_ref: raw.target_ref,
+            count: raw.count,
+        })
+    }
 }
 
 /// The event that triggered cognition. There is intentionally no per-tick
@@ -491,6 +558,37 @@ pub enum Intent {
     Eat {
         #[serde(rename = "ref", deserialize_with = "bounded_ref")]
         slot_ref: String,
+    },
+    /// Dig one nearby block named by a request-scoped observation ref.
+    #[serde(rename = "dig")]
+    Dig {
+        #[serde(deserialize_with = "bounded_ref")]
+        block: String,
+    },
+    /// Collect one nearby dropped item. `approach` explicitly permits one
+    /// bounded path to its admitted position.
+    #[serde(rename = "collect")]
+    Collect {
+        #[serde(deserialize_with = "bounded_ref")]
+        item: String,
+        approach: bool,
+    },
+    /// Place one offered stack that is already held against one face of one
+    /// sensed support block.
+    #[serde(rename = "place")]
+    Place {
+        #[serde(deserialize_with = "bounded_ref")]
+        block: String,
+        #[serde(deserialize_with = "bounded_ref")]
+        item: String,
+        face: BlockFace,
+    },
+    /// Equip one offered stack into one chosen equipment destination.
+    #[serde(rename = "equip")]
+    Equip {
+        #[serde(deserialize_with = "bounded_ref")]
+        item: String,
+        destination: EquipmentDestination,
     },
     /// Stop, and hold this position on purpose.
     ///

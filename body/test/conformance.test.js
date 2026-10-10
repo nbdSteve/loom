@@ -50,11 +50,19 @@ const {
   eatReport,
   moveReport,
   fleeReport,
+  digReport,
+  collectReport,
+  placeReport,
+  equipReport,
   haltReport,
   shutdownAccepted,
   refusal,
   EAT_OUTCOMES,
   MOVE_OUTCOMES,
+  DIG_OUTCOMES,
+  COLLECT_OUTCOMES,
+  PLACE_OUTCOMES,
+  EQUIP_OUTCOMES,
   THREAT_REFUSALS
 } = require('../src/protocol')
 
@@ -107,6 +115,10 @@ function rebuild (frame) {
   if (frame.op === 'eat') return eatReport(frame)
   if (frame.op === 'moveTo') return moveReport(frame)
   if (frame.op === 'flee') return fleeReport(frame)
+  if (frame.op === 'dig') return digReport(frame)
+  if (frame.op === 'collect') return collectReport(frame)
+  if (frame.op === 'place') return placeReport(frame)
+  if (frame.op === 'equip') return equipReport(frame)
   if (frame.op === 'halt') return haltReport(frame)
   return shutdownAccepted(frame)
 }
@@ -174,6 +186,10 @@ test('a refused fixture is refused for the reason its name gives', () => {
     'request-eat-missing-slot.json': 'invalidField',
     'request-eat-slot-too-large.json': 'invalidField',
     'request-eat-blank-sense-id.json': 'invalidField',
+    'request-dig-block-too-large.json': 'invalidField',
+    'request-collect-missing-approach.json': 'invalidField',
+    'request-place-unknown-face.json': 'invalidField',
+    'request-equip-unknown-destination.json': 'invalidField',
     'request-status-with-sense-payload.json': 'invalidField',
     'response-unknown-state.json': 'invalidField',
     'response-shutdown-not-stopping.json': 'invalidField',
@@ -194,6 +210,10 @@ test('a refused fixture is refused for the reason its name gives', () => {
     'response-sense-display-name.json': 'invalidField',
     'response-sense-too-many-entities.json': 'invalidField',
     'response-eat-unknown-outcome.json': 'invalidField',
+    'response-dig-unknown-outcome.json': 'invalidField',
+    'response-collect-zero-count.json': 'invalidField',
+    'response-place-fractional-position.json': 'invalidField',
+    'response-equip-slot-too-large.json': 'invalidField',
     'request-moveTo-zero-timeout.json': 'invalidField',
     'request-moveTo-timeout-too-large.json': 'invalidField',
     'request-moveTo-tolerance-too-large.json': 'invalidField',
@@ -236,12 +256,18 @@ test('a frame the schema cannot refuse is still refused by the codec', () => {
     'response-eat-refusal-names-food.json': 'a refused meal names food it did not eat',
     'response-sense-descending-slots.json': 'inventory slots do not ascend',
     'response-sense-omitted-with-no-entities.json': 'entities were omitted from an empty list',
+    'response-sense-blocks-omitted-with-no-blocks.json': 'blocks were omitted from an empty list',
+    'response-sense-items-omitted-with-no-items.json': 'items were omitted from an empty list',
     'response-sense-repeated-slot.json': 'one slot is reported twice',
     'response-sense-saturation-over-food.json': 'saturation is above the food level',
     'response-moveTo-names-threat-refusal.json': 'a walk answers a refusal only a flight can reach',
     'response-flee-refusal-names-separation.json': 'a flight that never found its threat measures separation',
     'response-flee-arrival-without-separation.json': 'a flight that ran measures no separation',
-    'response-moveTo-out-of-range-nonzero-travel.json': 'a pre-search refusal claims movement'
+    'response-moveTo-out-of-range-nonzero-travel.json': 'a pre-search refusal claims movement',
+    'response-dig-refusal-attempted.json': 'a pre-application dig refusal claims an attempt',
+    'response-collect-collected-without-item.json': 'a collection claims success without its item',
+    'response-place-refusal-names-effect.json': 'a refused placement names an effect',
+    'response-equip-equipped-without-destination.json': 'an equip claims success without its destination'
   }
   const present = fixtures('beyond-schema').map(({ name }) => name)
   assert.deepEqual(Object.keys(relations).sort(), present, 'a beyond-schema fixture has no stated relation here')
@@ -287,7 +313,20 @@ test('the corpus covers every operation and both directions of each', () => {
   // leave a whole operation unproven, so the coverage is asserted rather than
   // eyeballed.
   const valid = fixtures('valid').map(({ name }) => name)
-  for (const op of ['handshake', 'status', 'sense', 'eat', 'moveTo', 'flee', 'halt', 'shutdown']) {
+  for (const op of [
+    'handshake',
+    'status',
+    'sense',
+    'eat',
+    'moveTo',
+    'flee',
+    'dig',
+    'collect',
+    'place',
+    'equip',
+    'halt',
+    'shutdown'
+  ]) {
     assert.ok(valid.includes(`request-${op}.json`), `no valid request fixture for ${op}`)
     assert.ok(
       valid.some((name) => name.startsWith(`response-${op}`)),
@@ -295,6 +334,23 @@ test('the corpus covers every operation and both directions of each', () => {
     )
   }
   assert.ok(valid.some((name) => name.startsWith('error-')), 'no valid refusal fixture')
+})
+
+test('the corpus states every native interaction outcome', () => {
+  const outcomesOf = (op) => fixtures('valid')
+    .filter(({ name }) => name === `response-${op}.json` || name.startsWith(`response-${op}-`))
+    .map(({ text }) => JSON.parse(text).outcome)
+  for (const [op, outcomes] of [
+    ['dig', DIG_OUTCOMES],
+    ['collect', COLLECT_OUTCOMES],
+    ['place', PLACE_OUTCOMES],
+    ['equip', EQUIP_OUTCOMES]
+  ]) {
+    const stated = outcomesOf(op)
+    for (const outcome of outcomes) {
+      assert.ok(stated.includes(outcome), `no valid ${op} fixture reports ${outcome}`)
+    }
+  }
 })
 
 test('the corpus states every outcome an eat can have', () => {

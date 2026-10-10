@@ -1,1 +1,1 @@
-{"op":"flee","protocol":2,"requestId":"req-21","agentId":"agent-alpha","senseId":"req-5","entity":1,"distance":0,"timeoutMs":8000,"sprint":true}
+{"op":"flee","protocol":3,"requestId":"req-21","agentId":"agent-alpha","senseId":"req-5","entity":1,"distance":0,"timeoutMs":8000,"sprint":true}

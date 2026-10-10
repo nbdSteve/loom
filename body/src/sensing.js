@@ -31,6 +31,8 @@ const {
   MAX_COUNT,
   MAX_FOOD,
   MAX_HEALTH,
+  MAX_SENSE_BLOCKS,
+  MAX_SENSE_ITEMS,
   MAX_SLOT_INDEX,
   MAX_STACK_COUNT,
   MAX_TIME_OF_DAY,
@@ -38,6 +40,27 @@ const {
   MIN_STACK_COUNT,
   isResourceName
 } = require('./protocol')
+
+/** Mineflayer's native direct interaction reach, in blocks. */
+const INTERACTION_REACH_BLOCKS = 5.1
+
+/** Registry names the game uses for empty space rather than an interactable block. */
+const AIR_BLOCKS = Object.freeze(new Set(['air', 'cave_air', 'void_air']))
+
+/** Stable private fingerprint of the item details the wire deliberately omits. */
+function stackDetail (stack) {
+  try {
+    return JSON.stringify({
+      type: stack.type,
+      metadata: stack.metadata,
+      nbt: stack.nbt ?? null,
+      components: stack.components ?? null,
+      removedComponents: stack.removedComponents ?? null
+    })
+  } catch {
+    return undefined
+  }
+}
 
 /** Whether `value` is a whole number the wire will carry between `least` and `most`. */
 function wholeWithin (value, least, most) {
@@ -146,6 +169,22 @@ function inSight (bot, eyes, aim) {
   return bot.world.raycast(eyes, delta.scaled(1 / range), range) === null
 }
 
+/** Whether the ray from the body's eyes reaches `block` before any other block. */
+function blockInSight (bot, eyes, block) {
+  const aim = block.position.offset(0.5, 0.5, 0.5)
+  const delta = aim.minus(eyes)
+  const range = delta.norm()
+  if (range === 0) return true
+  const struck = bot.world.raycast(eyes, delta.scaled(1 / range), range)
+  if (struck === null || struck === undefined) return true
+  return struck.position?.equals(block.position) === true
+}
+
+/** Whether an entity is the dropped-item shape Mineflayer exposes. */
+function isDroppedEntity (entity) {
+  return entity?.name === 'item' || entity?.name === 'Item' || entity?.name === 'item_stack'
+}
+
 /**
  * Every entity the client library is tracking that this body could describe, each with
  * the distance from the body's eyes that both the radius and the order are measured by.
@@ -166,6 +205,7 @@ function describable (bot, eyes) {
   for (const entity of Object.values(bot.entities)) {
     if (entity === null || entity === undefined) continue
     if (entity.id === bot.entity.id) continue
+    if (isDroppedEntity(entity)) continue
     if (!isResourceName(entity.name)) continue
     const position = positionOf(entity.position)
     if (position === undefined) continue
@@ -178,6 +218,111 @@ function describable (bot, eyes) {
     })
   }
   return seen
+}
+
+/**
+ * Nearby non-air blocks, bounded independently from the general entity list.
+ *
+ * The scan is capped at Mineflayer's own direct interaction reach even when the caller asks
+ * for a wider scene. It does not form a map: at most [MAX_SENSE_BLOCKS] nearest candidates
+ * are reported, and the exact type/state snapshot is retained beside the wire offer so a
+ * later action can distinguish a changed block from the one the controller chose.
+ */
+function nearestBlocks (bot, eyes, standing, { radius, limit }) {
+  const reach = Math.min(radius, INTERACTION_REACH_BLOCKS)
+  const span = Math.ceil(reach)
+  const feet = standing.floored()
+  const within = []
+  for (let dx = -span; dx <= span; dx += 1) {
+    for (let dy = -span; dy <= span; dy += 1) {
+      for (let dz = -span; dz <= span; dz += 1) {
+        const block = bot.blockAt(feet.offset(dx, dy, dz))
+        if (block === null || block === undefined || AIR_BLOCKS.has(block.name)) continue
+        if (!isResourceName(block.name)) continue
+        if (!Number.isInteger(block.type) || !Number.isInteger(block.stateId)) continue
+        const away = block.position.offset(0.5, 0.5, 0.5).distanceTo(eyes)
+        if (!realWithin(away, 0, reach)) continue
+        within.push({ block, away })
+      }
+    }
+  }
+  within.sort((one, other) =>
+    one.away - other.away ||
+    one.block.position.x - other.block.position.x ||
+    one.block.position.y - other.block.position.y ||
+    one.block.position.z - other.block.position.z
+  )
+  const reported = within.slice(0, Math.min(limit, MAX_SENSE_BLOCKS))
+  return {
+    blocks: reported.map(({ block }) => ({
+      what: block.name,
+      position: [block.position.x, block.position.y, block.position.z],
+      visible: blockInSight(bot, eyes, block)
+    })),
+    blocksOmitted: within.length - reported.length,
+    blockOffers: reported.map(({ block }) => ({
+      what: block.name,
+      position: [block.position.x, block.position.y, block.position.z],
+      type: block.type,
+      stateId: block.stateId
+    }))
+  }
+}
+
+/** The item stack one dropped entity carries, or undefined until it is describable. */
+function droppedStack (entity) {
+  if (!isDroppedEntity(entity) || typeof entity.getDroppedItem !== 'function') return undefined
+  let item
+  try {
+    item = entity.getDroppedItem()
+  } catch {
+    return undefined
+  }
+  if (item === null || item === undefined) return undefined
+  if (!isResourceName(item.name)) return undefined
+  if (!wholeWithin(item.count, MIN_STACK_COUNT, MAX_STACK_COUNT)) return undefined
+  const detail = stackDetail(item)
+  if (detail === undefined) return undefined
+  return { what: item.name, count: item.count, detail }
+}
+
+/**
+ * Exact dropped-item entities inside the requested scene radius.
+ *
+ * The wire gets the vanilla item name/count and position. The retained half keeps the
+ * Mineflayer id and exact object as well, because ids are reused after despawn and a later
+ * object under the same number is not the item this sense offered.
+ */
+function nearestItems (bot, eyes, { radius, limit }) {
+  const within = []
+  for (const entity of Object.values(bot.entities)) {
+    if (entity === null || entity === undefined || entity.id === bot.entity.id) continue
+    const stack = droppedStack(entity)
+    if (stack === undefined) continue
+    const position = positionOf(entity.position)
+    if (position === undefined) continue
+    const away = entity.position.distanceTo(eyes)
+    if (!realWithin(away, 0, radius)) continue
+    within.push({ entity, stack, position, away })
+  }
+  within.sort((one, other) => one.away - other.away || one.entity.id - other.entity.id)
+  const reported = within.slice(0, Math.min(limit, MAX_SENSE_ITEMS))
+  return {
+    items: reported.map(({ entity, stack, position }) => ({
+      what: stack.what,
+      count: stack.count,
+      position,
+      visible: inSight(bot, eyes, entity.position)
+    })),
+    itemsOmitted: within.length - reported.length,
+    itemOffers: reported.map(({ entity, stack }) => ({
+      id: entity.id,
+      entity,
+      what: stack.what,
+      count: stack.count,
+      detail: stack.detail
+    }))
+  }
 }
 
 /**
@@ -240,12 +385,13 @@ function nearest (bot, eyes, { radius, limit }) {
  * so a window with more slots than the wire numbers is refused at the first extra one
  * and the list can never outgrow what a frame will carry.
  */
-function inventoryOf (bot) {
+function inventorySnapshot (bot) {
   const slots = bot.inventory === null || bot.inventory === undefined
     ? undefined
     : bot.inventory.slots
   if (!Array.isArray(slots)) return undefined
   const inventory = []
+  const slotOffers = []
   for (let slot = 0; slot < slots.length; slot += 1) {
     const stack = slots[slot]
     if (stack === null || stack === undefined) continue
@@ -253,8 +399,16 @@ function inventoryOf (bot) {
     if (!isResourceName(stack.name)) return undefined
     if (!wholeWithin(stack.count, MIN_STACK_COUNT, MAX_STACK_COUNT)) return undefined
     inventory.push({ slot, what: stack.name, count: stack.count })
+    const detail = stackDetail(stack)
+    if (detail === undefined) return undefined
+    slotOffers.push({ slot, what: stack.name, count: stack.count, detail })
   }
-  return inventory
+  return { inventory, slotOffers }
+}
+
+/** Every occupied slot as the wire reports it, without the retained fingerprints. */
+function inventoryOf (bot) {
+  return inventorySnapshot(bot)?.inventory
 }
 
 /**
@@ -280,22 +434,46 @@ function senseReading (bot, { radius, limit }) {
   const position = positionOf(standing)
   const vitals = vitalsOf(bot)
   const time = clockOf(bot)
-  const inventory = inventoryOf(bot)
+  const inventoryRead = inventorySnapshot(bot)
   if (position === undefined || vitals === undefined) return undefined
-  if (time === undefined || inventory === undefined) return undefined
+  if (time === undefined || inventoryRead === undefined) return undefined
   if (!realWithin(bot.entity.eyeHeight, 0, MAX_WORLD_COORDINATE)) return undefined
   const eyes = standing.offset(0, bot.entity.eyeHeight, 0)
   const { entities, entitiesOmitted, entityOffers } = nearest(bot, eyes, { radius, limit })
-  const reading = { position, vitals, time, entities, entitiesOmitted, inventory }
+  const { blocks, blocksOmitted, blockOffers } =
+    nearestBlocks(bot, eyes, standing, { radius, limit })
+  const { items, itemsOmitted, itemOffers } = nearestItems(bot, eyes, { radius, limit })
+  const reading = {
+    position,
+    vitals,
+    time,
+    entities,
+    entitiesOmitted,
+    blocks,
+    blocksOmitted,
+    items,
+    itemsOmitted,
+    inventory: inventoryRead.inventory
+  }
   const ground = footingOf(bot, standing)
   if (ground !== undefined) reading.ground = ground
-  return { reading, entityOffers }
+  return {
+    reading,
+    entityOffers,
+    blockOffers,
+    itemOffers,
+    slotOffers: inventoryRead.slotOffers
+  }
 }
 
 module.exports = {
+  INTERACTION_REACH_BLOCKS,
+  blockInSight,
   clockOf,
+  droppedStack,
   inventoryOf,
   positionOf,
   senseReading,
+  stackDetail,
   vitalsOf
 }

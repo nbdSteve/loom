@@ -92,9 +92,10 @@ internal class PlayerPerception(
                 limit = PERCEPTION_MAX_OBSERVATIONS,
             )
         val capturedTick = context.authority.currentTick()
+        val auditSnapshot = context.authority.serverState.captureSenseAudit(runtime.identity)
         val stage =
             CompletableFuture.supplyAsync(
-                { requestSense(runtime.identity, capturedTick, request) },
+                { requestSense(runtime.identity, capturedTick, auditSnapshot, request) },
                 context.infrastructure.io,
             )
         val answer = CompletableFuture<RawSense?>()
@@ -130,6 +131,7 @@ internal class PlayerPerception(
     private fun requestSense(
         identity: PlayerIdentity,
         capturedTick: Long,
+        auditSnapshot: SenseAuditSnapshot?,
         request: BodyRequest.Sense,
     ): RawSense {
         val connection =
@@ -145,7 +147,7 @@ internal class PlayerPerception(
                 ) as? BodyResponse.SenseReport
                     ?: throw BodyControlFailure.ProtocolViolation()
             validateSense(request, report)
-            RawSense(identity, capturedTick, connection, report)
+            RawSense(identity, capturedTick, auditSnapshot, connection, report)
         }.getOrElse { failure ->
             connection.close()
             throw failure
@@ -156,11 +158,7 @@ internal class PlayerPerception(
         request: BodyRequest.Sense,
         report: BodyResponse.SenseReport,
     ) {
-        if (report.entities.size > request.limit ||
-            report.entities.any {
-                blocksApart(report.position, it.position) > request.radius.toDouble()
-            }
-        ) {
+        if (!matchesSenseRequest(request, report)) {
             throw BodyControlFailure.ProtocolViolation()
         }
     }
@@ -235,4 +233,22 @@ internal class PlayerPerception(
                 TimeUnit.SECONDS,
             )
     }
+}
+
+private fun matchesSenseRequest(
+    request: BodyRequest.Sense,
+    report: BodyResponse.SenseReport,
+): Boolean {
+    val listsFit =
+        maxOf(report.entities.size, report.blocks.size, report.items.size) <= request.limit
+    val radius = request.radius.toDouble()
+    val entitiesFit =
+        report.entities.none { blocksApart(report.position, it.position) > radius }
+    val blocksFit =
+        report.blocks.none {
+            blocksApart(report.position, it.position.map(Int::toDouble)) > radius
+        }
+    val itemsFit =
+        report.items.none { blocksApart(report.position, it.position) > radius }
+    return listsFit && listOf(entitiesFit, blocksFit, itemsFit).all { it }
 }

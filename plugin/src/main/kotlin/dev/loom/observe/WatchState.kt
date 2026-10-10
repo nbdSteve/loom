@@ -231,6 +231,7 @@ private fun bodilessAfter(
         BodyEvent.PERCEIVED,
         BodyEvent.DECIDED,
         BodyEvent.INTENT_APPLIED,
+        BodyEvent.WORLD_INTERACTION,
         BodyEvent.DECISION_DISCARDED,
         BodyEvent.COGNITION_UNAVAILABLE,
         BodyEvent.MOVED,
@@ -299,6 +300,7 @@ private fun activityAfter(
         BodyEvent.WITNESS_REVIVED -> AgentActivity.DEAD
         // Something happened *to* the agent without changing what it is doing.
         BodyEvent.MOVED,
+        BodyEvent.WORLD_INTERACTION,
         BodyEvent.ENERGY_CHANGED,
         BodyEvent.HEALTH_CHANGED,
         BodyEvent.DECISION_DISCARDED,

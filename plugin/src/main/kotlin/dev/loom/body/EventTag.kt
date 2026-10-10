@@ -62,6 +62,18 @@ object EventTag {
     /** The mind chose to eat one stack the body is carrying. */
     const val EAT: String = "eat"
 
+    /** The mind chose to dig one offered block. */
+    const val DIG: String = "dig"
+
+    /** The mind chose to collect one offered dropped item. */
+    const val COLLECT: String = "collect"
+
+    /** The mind chose to place one offered held stack. */
+    const val PLACE: String = "place"
+
+    /** The mind chose to equip one offered inventory stack. */
+    const val EQUIP: String = "equip"
+
     /** The body carried the intent out. The only outcome that means the agent acted. */
     const val ACCEPTED: String = "accepted"
 
@@ -209,6 +221,61 @@ object EventTag {
     /** The game could not equip or consume a stack that was present and edible. */
     const val EAT_SLOT_INACCESSIBLE: String = "eatSlotInaccessible"
 
+    const val DIG_SENSE_FORGOTTEN: String = "digSenseForgotten"
+    const val DIG_BLOCK_UNNAMED: String = "digBlockUnnamed"
+    const val DIG_BLOCK_GONE: String = "digBlockGone"
+    const val DIG_BLOCK_CHANGED: String = "digBlockChanged"
+    const val DIG_OUT_OF_REACH: String = "digOutOfReach"
+    const val DIG_NOT_VISIBLE: String = "digNotVisible"
+    const val DIG_NOT_DIGGABLE: String = "digNotDiggable"
+    const val DIG_TIMED_OUT: String = "digTimedOut"
+    const val DIG_CANCELLED: String = "digCancelled"
+    const val DIG_LIBRARY_FAILURE: String = "digLibraryFailure"
+
+    const val COLLECT_SENSE_FORGOTTEN: String = "collectSenseForgotten"
+    const val COLLECT_ITEM_UNNAMED: String = "collectItemUnnamed"
+    const val COLLECT_ITEM_GONE: String = "collectItemGone"
+    const val COLLECT_ITEM_CHANGED: String = "collectItemChanged"
+    const val COLLECT_OUT_OF_RANGE: String = "collectOutOfRange"
+    const val COLLECT_NO_ROUTE: String = "collectNoRoute"
+    const val COLLECT_SEARCH_OVER_BUDGET: String = "collectSearchOverBudget"
+    const val COLLECT_STALLED: String = "collectStalled"
+    const val COLLECT_OVER_TRAVELLED: String = "collectOverTravelled"
+    const val COLLECT_TIMED_OUT: String = "collectTimedOut"
+    const val COLLECT_CANCELLED: String = "collectCancelled"
+    const val COLLECT_LIBRARY_FAILURE: String = "collectLibraryFailure"
+
+    const val PLACE_SENSE_FORGOTTEN: String = "placeSenseForgotten"
+    const val PLACE_BLOCK_UNNAMED: String = "placeBlockUnnamed"
+    const val PLACE_SLOT_UNNAMED: String = "placeSlotUnnamed"
+    const val PLACE_BLOCK_GONE: String = "placeBlockGone"
+    const val PLACE_BLOCK_CHANGED: String = "placeBlockChanged"
+    const val PLACE_SLOT_EMPTY: String = "placeSlotEmpty"
+    const val PLACE_SLOT_CHANGED: String = "placeSlotChanged"
+    const val PLACE_ITEM_NOT_HELD: String = "placeItemNotHeld"
+    const val PLACE_NOT_PLACEABLE: String = "placeNotPlaceable"
+    const val PLACE_DESTINATION_BLOCKED: String = "placeDestinationBlocked"
+    const val PLACE_OUT_OF_REACH: String = "placeOutOfReach"
+    const val PLACE_NOT_VISIBLE: String = "placeNotVisible"
+    const val PLACE_TIMED_OUT: String = "placeTimedOut"
+    const val PLACE_CANCELLED: String = "placeCancelled"
+    const val PLACE_LIBRARY_FAILURE: String = "placeLibraryFailure"
+
+    const val EQUIP_SENSE_FORGOTTEN: String = "equipSenseForgotten"
+    const val EQUIP_SLOT_UNNAMED: String = "equipSlotUnnamed"
+    const val EQUIP_SLOT_EMPTY: String = "equipSlotEmpty"
+    const val EQUIP_SLOT_CHANGED: String = "equipSlotChanged"
+    const val EQUIP_INCOMPATIBLE: String = "equipIncompatible"
+    const val EQUIP_TIMED_OUT: String = "equipTimedOut"
+    const val EQUIP_CANCELLED: String = "equipCancelled"
+    const val EQUIP_LIBRARY_FAILURE: String = "equipLibraryFailure"
+
+    /** The server observed exactly the vanilla effect a bounded interaction reported. */
+    const val SERVER_EFFECT_CONFIRMED: String = "serverEffectConfirmed"
+
+    /** The server's event or final inventory disagreed with the player body's report. */
+    const val DISPUTED_WORLD_INTERACTION: String = "disputedWorldInteraction"
+
     /**
      * A login was refused because the agent has died, and Loom agents do not return.
      *
@@ -310,6 +377,10 @@ fun tagOf(intent: Intent): String =
         is Intent.Say -> EventTag.SAY
         is Intent.Flee -> EventTag.FLEE
         is Intent.Eat -> EventTag.EAT
+        is Intent.Dig -> EventTag.DIG
+        is Intent.Collect -> EventTag.COLLECT
+        is Intent.Place -> EventTag.PLACE
+        is Intent.Equip -> EventTag.EQUIP
     }
 
 /**
@@ -333,6 +404,51 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.RETREAT_THREAT_FORGOTTEN,
         EventTag.RETREAT_THREAT_UNNAMED,
         EventTag.RETREAT_THREAT_GONE,
+        EventTag.DIG_SENSE_FORGOTTEN,
+        EventTag.DIG_BLOCK_UNNAMED,
+        EventTag.DIG_BLOCK_GONE,
+        EventTag.DIG_BLOCK_CHANGED,
+        EventTag.DIG_OUT_OF_REACH,
+        EventTag.DIG_NOT_VISIBLE,
+        EventTag.DIG_NOT_DIGGABLE,
+        EventTag.DIG_TIMED_OUT,
+        EventTag.DIG_CANCELLED,
+        EventTag.DIG_LIBRARY_FAILURE,
+        EventTag.COLLECT_SENSE_FORGOTTEN,
+        EventTag.COLLECT_ITEM_UNNAMED,
+        EventTag.COLLECT_ITEM_GONE,
+        EventTag.COLLECT_ITEM_CHANGED,
+        EventTag.COLLECT_OUT_OF_RANGE,
+        EventTag.COLLECT_NO_ROUTE,
+        EventTag.COLLECT_SEARCH_OVER_BUDGET,
+        EventTag.COLLECT_STALLED,
+        EventTag.COLLECT_OVER_TRAVELLED,
+        EventTag.COLLECT_TIMED_OUT,
+        EventTag.COLLECT_CANCELLED,
+        EventTag.COLLECT_LIBRARY_FAILURE,
+        EventTag.PLACE_SENSE_FORGOTTEN,
+        EventTag.PLACE_BLOCK_UNNAMED,
+        EventTag.PLACE_SLOT_UNNAMED,
+        EventTag.PLACE_BLOCK_GONE,
+        EventTag.PLACE_BLOCK_CHANGED,
+        EventTag.PLACE_SLOT_EMPTY,
+        EventTag.PLACE_SLOT_CHANGED,
+        EventTag.PLACE_ITEM_NOT_HELD,
+        EventTag.PLACE_NOT_PLACEABLE,
+        EventTag.PLACE_DESTINATION_BLOCKED,
+        EventTag.PLACE_OUT_OF_REACH,
+        EventTag.PLACE_NOT_VISIBLE,
+        EventTag.PLACE_TIMED_OUT,
+        EventTag.PLACE_CANCELLED,
+        EventTag.PLACE_LIBRARY_FAILURE,
+        EventTag.EQUIP_SENSE_FORGOTTEN,
+        EventTag.EQUIP_SLOT_UNNAMED,
+        EventTag.EQUIP_SLOT_EMPTY,
+        EventTag.EQUIP_SLOT_CHANGED,
+        EventTag.EQUIP_INCOMPATIBLE,
+        EventTag.EQUIP_TIMED_OUT,
+        EventTag.EQUIP_CANCELLED,
+        EventTag.EQUIP_LIBRARY_FAILURE,
     )
 
 /** Names how the body answered an intent, so refusals are countable. */

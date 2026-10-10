@@ -99,6 +99,32 @@ class BodyEventJournal(
         )
     }
 
+    /** Records the server-authoritative end of one bounded native interaction. */
+    fun recordWorldInteraction(
+        agentId: AgentId,
+        witness: WitnessedPlayer,
+        detail: String,
+        requestId: String?,
+        confirmed: Boolean,
+    ) {
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.WORLD_INTERACTION,
+                detail = detail,
+                requestId = requestId,
+                outcome =
+                    if (confirmed) {
+                        EventTag.SERVER_EFFECT_CONFIRMED
+                    } else {
+                        EventTag.DISPUTED_WORLD_INTERACTION
+                    },
+                witness = witness,
+            ),
+        )
+    }
+
     /** Records one non-terminal process/control disconnect for one exact agent. */
     fun recordDisconnect(
         agentId: AgentId,

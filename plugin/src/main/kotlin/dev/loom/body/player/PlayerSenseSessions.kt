@@ -7,7 +7,9 @@ import dev.loom.body.AgentId
 import dev.loom.body.EntityRefBinding
 import dev.loom.body.InventorySlotBinding
 import dev.loom.body.REQUEST_REFS_LIFETIME_TICKS
+import dev.loom.body.RequestRefBindings
 import dev.loom.body.ThreatCandidate
+import dev.loom.body.WorldTargetRefBinding
 import dev.loom.bodycontrol.BodyResponse
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Observation
@@ -21,6 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal data class RawSense(
     val identity: PlayerIdentity,
     val capturedTick: Long,
+    val auditSnapshot: SenseAuditSnapshot?,
     val connection: BodyControlConnection,
     val report: BodyResponse.SenseReport,
 )
@@ -28,9 +31,13 @@ internal data class RawSense(
 internal data class PlayerScene(
     val raw: RawSense,
     val creatureBindings: List<EntityRefBinding>,
+    val blockBindings: List<WorldTargetRefBinding>,
+    val droppedItemBindings: List<WorldTargetRefBinding>,
     val slotBindings: List<InventorySlotBinding>,
     val entityIndex: Map<UUID, Int>,
+    val droppedItemSubjects: Map<Int, UUID>,
     val surroundings: List<Observation>,
+    val surroundingsOmitted: Long,
     val candidates: List<ThreatCandidate>,
     val selfState: SelfState,
 ) {
@@ -43,13 +50,14 @@ internal data class PlayerScene(
             capturedTick = raw.capturedTick,
             selfState = selfState,
             surroundings = surroundings,
-            surroundingsOmitted = raw.report.entitiesOmitted,
+            surroundingsOmitted = surroundingsOmitted,
         )
 }
 
 internal class HeldSense(
     val raw: RawSense,
     val entityIndex: Map<UUID, Int>,
+    val droppedItemSubjects: Map<Int, UUID>,
     val rememberedAt: Long,
 ) {
     private val closed = AtomicBoolean()
@@ -88,11 +96,21 @@ internal class PlayerSenseSessions(
         context.refs.remember(
             agent = agentId,
             requestId = requestId,
-            creatures = scene.creatureBindings,
-            slots = scene.slotBindings,
+            bindings =
+                RequestRefBindings(
+                    creatures = scene.creatureBindings,
+                    blocks = scene.blockBindings,
+                    droppedItems = scene.droppedItemBindings,
+                    slots = scene.slotBindings,
+                ),
             atTick = scene.raw.capturedTick,
         )
-        return HeldSense(scene.raw, scene.entityIndex, scene.raw.capturedTick).also { sense ->
+        return HeldSense(
+            scene.raw,
+            scene.entityIndex,
+            scene.droppedItemSubjects,
+            scene.raw.capturedTick,
+        ).also { sense ->
             held.getOrPut(agentId) { LinkedHashMap() }[requestId] = sense
         }
     }

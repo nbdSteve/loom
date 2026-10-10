@@ -5,10 +5,11 @@
  *
  * Nothing here decides *whether* to walk, *where* to walk or *when* to stop. There is no
  * follow behaviour, no wander, no auto-retreat and no movement loop: a body moves because
- * a controller sent a `moveTo` naming a destination or a `flee` naming one creature of one
- * sense answer, and a body with no such request stands perfectly still. That is the same
- * rule `eating.js` obeys, and it is why the only state this module keeps is *which one
- * request owns the path right now*.
+ * a controller sent a `moveTo` naming a destination, a `flee` naming one creature of one
+ * sense answer, or an explicitly approaching `collect` naming one dropped item whose sensed
+ * position becomes the fixed destination. A body with no such request stands perfectly
+ * still. That is the same rule `eating.js` obeys, and it is why the only state this module
+ * keeps is *which one request owns the path right now*.
  *
  * **The route is `mineflayer-pathfinder`'s and the physics is Prismarine's.** Nothing here
  * searches, steps, jumps, falls or sends a movement packet. A player's movement in
@@ -492,7 +493,8 @@ function applyPathfinderPolicy (finder) {
 }
 
 /**
- * The request-scoped wrapper: `moveTo`, `flee`, `halt`, and the one owner between them.
+ * The request-scoped wrapper: `moveTo`, `flee`, the fixed route an explicit collection may
+ * borrow, `halt`, and the one path owner between them.
  *
  * `now` is injected for the reason `body.js`'s is - `elapsedMs` is a measurement, and a
  * measurement is only proven by being driven. `simulation` is injected because the gate needs

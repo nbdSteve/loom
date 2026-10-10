@@ -18,6 +18,7 @@ import dev.loom.contract.Bearing
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Intent
 import dev.loom.contract.Observation
+import dev.loom.contract.ObservationKind
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -30,6 +31,7 @@ import java.util.concurrent.CompletableFuture
 /** A zombie two blocks away, in the open: the case that must reach a mind at once. */
 private val CLOSE_ZOMBIE =
     Observation(
+        kind = ObservationKind.ENTITY,
         what = "entity.minecraft.zombie",
         distance = 2.0,
         direction = Bearing.NORTH,

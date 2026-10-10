@@ -1,1 +1,1 @@
-{"op":"shutdown","protocol":2,"requestId":"req-3","agentId":"agent-alpha","state":"ready"}
+{"op":"shutdown","protocol":3,"requestId":"req-3","agentId":"agent-alpha","state":"ready"}

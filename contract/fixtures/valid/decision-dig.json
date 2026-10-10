@@ -1,0 +1,1 @@
+{"requestId":"req-block-1","agentId":"agent-gamma","intent":{"action":"dig","block":"b1"},"reasoning":"the offered ore is nearby and visible; dig that exact block once","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}

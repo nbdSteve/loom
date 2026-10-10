@@ -1,0 +1,1 @@
+{"requestId":"req-equip-1","agentId":"agent-kappa","intent":{"action":"equip","item":"i2","destination":"hand"},"reasoning":"put the exact offered pickaxe into the main hand","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}

@@ -287,6 +287,207 @@ enum class MoveOutcome {
     THREAT_GONE,
 }
 
+@Serializable
+enum class DigOutcome {
+    @SerialName("dug")
+    DUG,
+
+    @SerialName("senseForgotten")
+    SENSE_FORGOTTEN,
+
+    @SerialName("blockUnnamed")
+    BLOCK_UNNAMED,
+
+    @SerialName("blockGone")
+    BLOCK_GONE,
+
+    @SerialName("blockChanged")
+    BLOCK_CHANGED,
+
+    @SerialName("outOfReach")
+    OUT_OF_REACH,
+
+    @SerialName("notVisible")
+    NOT_VISIBLE,
+
+    @SerialName("notDiggable")
+    NOT_DIGGABLE,
+
+    @SerialName("timedOut")
+    TIMED_OUT,
+
+    @SerialName("cancelled")
+    CANCELLED,
+
+    @SerialName("libraryFailure")
+    LIBRARY_FAILURE,
+}
+
+@Serializable
+enum class CollectOutcome {
+    @SerialName("collected")
+    COLLECTED,
+
+    @SerialName("senseForgotten")
+    SENSE_FORGOTTEN,
+
+    @SerialName("itemUnnamed")
+    ITEM_UNNAMED,
+
+    @SerialName("itemGone")
+    ITEM_GONE,
+
+    @SerialName("itemChanged")
+    ITEM_CHANGED,
+
+    @SerialName("outOfRange")
+    OUT_OF_RANGE,
+
+    @SerialName("noRoute")
+    NO_ROUTE,
+
+    @SerialName("searchOverBudget")
+    SEARCH_OVER_BUDGET,
+
+    @SerialName("stalled")
+    STALLED,
+
+    @SerialName("overTravelled")
+    OVER_TRAVELLED,
+
+    @SerialName("timedOut")
+    TIMED_OUT,
+
+    @SerialName("cancelled")
+    CANCELLED,
+
+    @SerialName("libraryFailure")
+    LIBRARY_FAILURE,
+}
+
+@Serializable
+enum class PlaceOutcome {
+    @SerialName("placed")
+    PLACED,
+
+    @SerialName("senseForgotten")
+    SENSE_FORGOTTEN,
+
+    @SerialName("blockUnnamed")
+    BLOCK_UNNAMED,
+
+    @SerialName("slotUnnamed")
+    SLOT_UNNAMED,
+
+    @SerialName("blockGone")
+    BLOCK_GONE,
+
+    @SerialName("blockChanged")
+    BLOCK_CHANGED,
+
+    @SerialName("slotEmpty")
+    SLOT_EMPTY,
+
+    @SerialName("slotChanged")
+    SLOT_CHANGED,
+
+    @SerialName("itemNotHeld")
+    ITEM_NOT_HELD,
+
+    @SerialName("notPlaceable")
+    NOT_PLACEABLE,
+
+    @SerialName("destinationBlocked")
+    DESTINATION_BLOCKED,
+
+    @SerialName("outOfReach")
+    OUT_OF_REACH,
+
+    @SerialName("notVisible")
+    NOT_VISIBLE,
+
+    @SerialName("timedOut")
+    TIMED_OUT,
+
+    @SerialName("cancelled")
+    CANCELLED,
+
+    @SerialName("libraryFailure")
+    LIBRARY_FAILURE,
+}
+
+@Serializable
+enum class EquipOutcome {
+    @SerialName("equipped")
+    EQUIPPED,
+
+    @SerialName("senseForgotten")
+    SENSE_FORGOTTEN,
+
+    @SerialName("slotUnnamed")
+    SLOT_UNNAMED,
+
+    @SerialName("slotEmpty")
+    SLOT_EMPTY,
+
+    @SerialName("slotChanged")
+    SLOT_CHANGED,
+
+    @SerialName("incompatible")
+    INCOMPATIBLE,
+
+    @SerialName("timedOut")
+    TIMED_OUT,
+
+    @SerialName("cancelled")
+    CANCELLED,
+
+    @SerialName("libraryFailure")
+    LIBRARY_FAILURE,
+}
+
+@Serializable
+enum class BlockFace {
+    @SerialName("down")
+    DOWN,
+
+    @SerialName("up")
+    UP,
+
+    @SerialName("north")
+    NORTH,
+
+    @SerialName("south")
+    SOUTH,
+
+    @SerialName("west")
+    WEST,
+
+    @SerialName("east")
+    EAST,
+}
+
+@Serializable
+enum class EquipmentDestination {
+    @SerialName("hand")
+    HAND,
+
+    @SerialName("offHand")
+    OFF_HAND,
+
+    @SerialName("head")
+    HEAD,
+
+    @SerialName("torso")
+    TORSO,
+
+    @SerialName("legs")
+    LEGS,
+
+    @SerialName("feet")
+    FEET,
+}
+
 /**
  * The three outcomes that say the body had no threat to measure against.
  *
@@ -396,6 +597,34 @@ data class SensedEntity(
 ) {
     init {
         requireResourceName("what", what)
+        requireWorldPosition("position", position)
+    }
+}
+
+/** One non-air block inside the body's bounded native interaction reach. */
+@Serializable
+data class SensedBlock(
+    val what: String,
+    val position: List<Int>,
+    val visible: Boolean,
+) {
+    init {
+        requireResourceName("what", what)
+        requireBlockPosition("position", position)
+    }
+}
+
+/** One dropped-item entity inside a sense request's radius. */
+@Serializable
+data class SensedItem(
+    val what: String,
+    val count: Int,
+    val position: List<Double>,
+    val visible: Boolean,
+) {
+    init {
+        requireResourceName("what", what)
+        requireWithin("count", count, MIN_STACK_COUNT..MAX_STACK_COUNT)
         requireWorldPosition("position", position)
     }
 }
@@ -627,6 +856,88 @@ sealed interface BodyRequest {
         }
     }
 
+    /** Dig one block offered by one retained sense answer. */
+    @Serializable
+    @SerialName("dig")
+    data class Dig(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        val senseId: String,
+        val block: Int,
+        val timeoutMs: Int,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireBoundedControlId("senseId", senseId)
+            requireWithin("block", block, 0..MAX_BLOCK_INDEX)
+            requireWithin("timeoutMs", timeoutMs, 1..MAX_ACTION_DEADLINE_MS)
+        }
+    }
+
+    /** Collect one exact dropped item offered by one retained sense answer. */
+    @Serializable
+    @SerialName("collect")
+    data class Collect(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        val senseId: String,
+        val item: Int,
+        val approach: Boolean,
+        val timeoutMs: Int,
+        val sprint: Boolean,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireBoundedControlId("senseId", senseId)
+            requireWithin("item", item, 0..MAX_ITEM_INDEX)
+            requireWithin("timeoutMs", timeoutMs, 1..MAX_ACTION_DEADLINE_MS)
+        }
+    }
+
+    /** Place one offered stack already held against one face of one offered block. */
+    @Serializable
+    @SerialName("place")
+    data class Place(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        val senseId: String,
+        val block: Int,
+        val slot: Int,
+        val face: BlockFace,
+        val timeoutMs: Int,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireBoundedControlId("senseId", senseId)
+            requireWithin("block", block, 0..MAX_BLOCK_INDEX)
+            requireWithin("slot", slot, 0..MAX_SLOT_INDEX)
+            requireWithin("timeoutMs", timeoutMs, 1..MAX_ACTION_DEADLINE_MS)
+        }
+    }
+
+    /** Equip one offered stack into one chosen bounded equipment destination. */
+    @Serializable
+    @SerialName("equip")
+    data class Equip(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        val senseId: String,
+        val slot: Int,
+        val destination: EquipmentDestination,
+        val timeoutMs: Int,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireBoundedControlId("senseId", senseId)
+            requireWithin("slot", slot, 0..MAX_SLOT_INDEX)
+            requireWithin("timeoutMs", timeoutMs, 1..MAX_ACTION_DEADLINE_MS)
+        }
+    }
+
     /**
      * Stop whatever movement is running, and leave the body standing still.
      *
@@ -796,6 +1107,10 @@ sealed interface BodyResponse {
         val ground: SensedGround? = null,
         val entities: List<SensedEntity>,
         val entitiesOmitted: Long,
+        val blocks: List<SensedBlock>,
+        val blocksOmitted: Long,
+        val items: List<SensedItem>,
+        val itemsOmitted: Long,
         val inventory: List<SensedStack>,
     ) : BodyResponse {
         init {
@@ -808,6 +1123,20 @@ sealed interface BodyResponse {
             requireCount("entitiesOmitted", entitiesOmitted)
             require(entitiesOmitted == 0L || entities.isNotEmpty()) {
                 "entitiesOmitted must be 0 when no entity is reported"
+            }
+            require(blocks.size <= MAX_SENSE_BLOCKS) {
+                "blocks must be at most $MAX_SENSE_BLOCKS"
+            }
+            requireCount("blocksOmitted", blocksOmitted)
+            require(blocksOmitted == 0L || blocks.isNotEmpty()) {
+                "blocksOmitted must be 0 when no block is reported"
+            }
+            require(items.size <= MAX_SENSE_ITEMS) {
+                "items must be at most $MAX_SENSE_ITEMS"
+            }
+            requireCount("itemsOmitted", itemsOmitted)
+            require(itemsOmitted == 0L || items.isNotEmpty()) {
+                "itemsOmitted must be 0 when no dropped item is reported"
             }
             require(inventory.size <= MAX_SENSE_STACKS) {
                 "inventory must be at most $MAX_SENSE_STACKS stacks"
@@ -961,6 +1290,148 @@ sealed interface BodyResponse {
             }
             separation?.let { requireReal("separation", it, MAX_TRAVEL_DISTANCE) }
             separationGained?.let { requireSignedReal("separationGained", it, MAX_TRAVEL_DISTANCE) }
+        }
+    }
+
+    /** What became of one request to dig one offered block. */
+    @Serializable
+    @SerialName("dig")
+    data class DigReport(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val outcome: DigOutcome,
+        val elapsedMs: Long,
+        val attempted: Boolean,
+        val tool: String? = null,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "a dig")
+            requireCount("elapsedMs", elapsedMs)
+            val handedToMineflayer =
+                outcome in
+                    setOf(
+                        DigOutcome.DUG,
+                        DigOutcome.TIMED_OUT,
+                        DigOutcome.CANCELLED,
+                        DigOutcome.LIBRARY_FAILURE,
+                    )
+            require(attempted == handedToMineflayer) {
+                "attempted is true exactly when the dig was handed to Mineflayer"
+            }
+            require(tool == null || attempted) {
+                "tool is absent when the dig was refused before Mineflayer was invoked"
+            }
+            tool?.let { requireResourceName("tool", it) }
+        }
+    }
+
+    /** What became of collecting one exact dropped-item entity and the journey it took. */
+    @Serializable
+    @SerialName("collect")
+    data class CollectReport(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val outcome: CollectOutcome,
+        val from: List<Double>,
+        val position: List<Double>,
+        @Serializable(with = CanonicalDistance::class)
+        val travelled: Double,
+        val elapsedMs: Long,
+        val what: String? = null,
+        val count: Int? = null,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "a collection")
+            requireWorldPosition("from", from)
+            requireWorldPosition("position", position)
+            requireReal("travelled", travelled, MAX_TRAVEL_DISTANCE)
+            requireCount("elapsedMs", elapsedMs)
+            require(outcome != CollectOutcome.OUT_OF_RANGE || travelled == 0.0) {
+                "outOfRange is decided before movement, so travelled must be zero"
+            }
+            val collected = outcome == CollectOutcome.COLLECTED
+            require((what != null) == collected) {
+                "what is present exactly when the outcome is ${CollectOutcome.COLLECTED}"
+            }
+            require((count != null) == collected) {
+                "count is present exactly when the outcome is ${CollectOutcome.COLLECTED}"
+            }
+            what?.let { requireResourceName("what", it) }
+            count?.let { requireWithin("count", it, MIN_STACK_COUNT..MAX_STACK_COUNT) }
+        }
+    }
+
+    /** What became of placing one held offered stack against one offered support block. */
+    @Serializable
+    @SerialName("place")
+    data class PlaceReport(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val outcome: PlaceOutcome,
+        val elapsedMs: Long,
+        val what: String? = null,
+        val position: List<Int>? = null,
+        val remaining: Int? = null,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "a placement")
+            requireCount("elapsedMs", elapsedMs)
+            val placed = outcome == PlaceOutcome.PLACED
+            require((what != null) == placed) {
+                "what is present exactly when the outcome is ${PlaceOutcome.PLACED}"
+            }
+            require((position != null) == placed) {
+                "position is present exactly when the outcome is ${PlaceOutcome.PLACED}"
+            }
+            require((remaining != null) == placed) {
+                "remaining is present exactly when the outcome is ${PlaceOutcome.PLACED}"
+            }
+            what?.let { requireResourceName("what", it) }
+            position?.let { requireBlockPosition("position", it) }
+            remaining?.let { requireWithin("remaining", it, 0..MAX_STACK_COUNT) }
+        }
+    }
+
+    /** What became of equipping one offered inventory stack. */
+    @Serializable
+    @SerialName("equip")
+    data class EquipReport(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val outcome: EquipOutcome,
+        val elapsedMs: Long,
+        val what: String? = null,
+        val count: Int? = null,
+        val toSlot: Int? = null,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "an equip")
+            requireCount("elapsedMs", elapsedMs)
+            val equipped = outcome == EquipOutcome.EQUIPPED
+            require((what != null) == equipped) {
+                "what is present exactly when the outcome is ${EquipOutcome.EQUIPPED}"
+            }
+            require((count != null) == equipped) {
+                "count is present exactly when the outcome is ${EquipOutcome.EQUIPPED}"
+            }
+            require((toSlot != null) == equipped) {
+                "toSlot is present exactly when the outcome is ${EquipOutcome.EQUIPPED}"
+            }
+            what?.let { requireResourceName("what", it) }
+            count?.let { requireWithin("count", it, MIN_STACK_COUNT..MAX_STACK_COUNT) }
+            toSlot?.let { requireWithin("toSlot", it, 0..MAX_SLOT_INDEX) }
         }
     }
 

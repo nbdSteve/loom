@@ -125,6 +125,63 @@ enum class Bearing {
     WEST,
 }
 
+/** The vanilla shape one request-scoped world observation describes. */
+@Serializable
+enum class ObservationKind {
+    @SerialName("entity")
+    ENTITY,
+
+    @SerialName("block")
+    BLOCK,
+
+    @SerialName("droppedItem")
+    DROPPED_ITEM,
+}
+
+/** One face of a sensed support block, chosen by a place intent. */
+@Serializable
+enum class BlockFace {
+    @SerialName("down")
+    DOWN,
+
+    @SerialName("up")
+    UP,
+
+    @SerialName("north")
+    NORTH,
+
+    @SerialName("south")
+    SOUTH,
+
+    @SerialName("west")
+    WEST,
+
+    @SerialName("east")
+    EAST,
+}
+
+/** The bounded player equipment destination chosen by an equip intent. */
+@Serializable
+enum class EquipmentDestination {
+    @SerialName("hand")
+    HAND,
+
+    @SerialName("offHand")
+    OFF_HAND,
+
+    @SerialName("head")
+    HEAD,
+
+    @SerialName("torso")
+    TORSO,
+
+    @SerialName("legs")
+    LEGS,
+
+    @SerialName("feet")
+    FEET,
+}
+
 /** Which part of the world's day it is. */
 @Serializable
 enum class DayPhase {
@@ -249,6 +306,8 @@ data class SelfState(
  */
 @Serializable
 data class Observation(
+    /** Whether this observation is a living entity, a block, or a dropped item. */
+    val kind: ObservationKind,
     /** Human-readable summary of the observed thing. */
     val what: String,
     /** Distance from the agent to the observed thing, in blocks. */
@@ -271,21 +330,26 @@ data class Observation(
      */
     val visible: Boolean,
     /**
-     * The handle by which a decision may name this particular thing back to the body,
-     * present only for a living thing.
-     *
-     * A block carries none, because a block is named by its position instead, so
-     * `null` is a fact about what the observation is rather than an omission. Absent
-     * and present are both ordinary, and a mind must never invent one. It is the last
-     * field so a block observation serializes to the same bytes it always did.
+     * The handle by which a decision may name this particular thing back to the body.
      *
      * Its length is narrowed at decode by [requireBoundedRef], because a ref the body
      * could never have issued is worth refusing where it arrives.
      */
-    val ref: String? = null,
+    val ref: String,
+    /**
+     * How many items a dropped-item entity currently represents.
+     *
+     * Present exactly for [ObservationKind.DROPPED_ITEM]. Entities and blocks have no
+     * count to report.
+     */
+    val count: Long? = null,
 ) {
     init {
         requireBoundedRef(ref)
+        require((count != null) == (kind == ObservationKind.DROPPED_ITEM)) {
+            "count is present exactly for a dropped-item observation"
+        }
+        count?.let { require(it >= 1) { "a dropped-item observation must hold at least one item" } }
     }
 }
 
@@ -471,6 +535,60 @@ sealed interface Intent {
     data class Eat(val ref: String) : Intent {
         init {
             requireBoundedRef(ref)
+        }
+    }
+
+    /** Dig one nearby block named by a request-scoped observation ref. */
+    @Serializable
+    @SerialName("dig")
+    data class Dig(val block: String) : Intent {
+        init {
+            requireBoundedRef(block)
+        }
+    }
+
+    /**
+     * Collect one nearby dropped item.
+     *
+     * [approach] is the mind's explicit permission for one bounded path to the
+     * item's admitted position. False permits no movement.
+     */
+    @Serializable
+    @SerialName("collect")
+    data class Collect(
+        val item: String,
+        val approach: Boolean,
+    ) : Intent {
+        init {
+            requireBoundedRef(item)
+        }
+    }
+
+    /**
+     * Place one offered stack that is already held against one face of one sensed block.
+     */
+    @Serializable
+    @SerialName("place")
+    data class Place(
+        val block: String,
+        val item: String,
+        val face: BlockFace,
+    ) : Intent {
+        init {
+            requireBoundedRef(block)
+            requireBoundedRef(item)
+        }
+    }
+
+    /** Equip one offered inventory stack into one chosen player equipment destination. */
+    @Serializable
+    @SerialName("equip")
+    data class Equip(
+        val item: String,
+        val destination: EquipmentDestination,
+    ) : Intent {
+        init {
+            requireBoundedRef(item)
         }
     }
 

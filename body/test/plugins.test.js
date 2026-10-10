@@ -30,8 +30,8 @@
  * `position` handler is what moves `bot.entity.position` off the origin and records the
  * facing a meal is sent with. `movement.test.js` is where the other side of the scope is
  * proven, by counting simulated ticks and position packets across every way a request can
- * end. The deciding half of the library - digging, placing, crafting, chatting, sleeping -
- * is still absent, and that is what `nothing decides for the body` states.
+ * end. The primitives for explicit digging and placement are resident but inert, and
+ * `nothing decides for the body` proves that merely loading them performs nothing.
  */
 
 const assert = require('node:assert/strict')
@@ -163,13 +163,10 @@ test('nothing decides for the body', async () => {
   // a bot that has not seen a login has none of them to check the presence of.
   spawned(client)
   await settled()
-  // The deciding half of the library is absent. `dig`, `placeBlock` and `craft` change
-  // the world; `chat` speaks; `openContainer` and `sleep` take over the body for a
-  // while; `creative` writes an inventory of its own choosing. None of them is reachable
-  // from a wire of eight operations, and none of them is loaded either - which is the
-  // stronger of the two statements, since it holds for an operation added later as well.
+  // Open-ended or unrelated action surfaces remain absent. The two native primitives
+  // this generation deliberately exposes are checked separately below.
   for (const absent of [
-    'dig', 'placeBlock', 'craft', 'chat', 'openContainer', 'sleep', 'creative'
+    'placeBlock', 'craft', 'chat', 'openContainer', 'sleep', 'creative'
   ]) {
     assert.equal(typeof bot[absent], 'undefined', absent)
   }
@@ -181,7 +178,9 @@ test('nothing decides for the body', async () => {
   for (const reading of ['health', 'food', 'foodSaturation']) {
     assert.equal(typeof bot[reading], 'number', reading)
   }
-  for (const operation of ['equip', 'consume', 'activateItem']) {
+  for (const operation of [
+    'equip', 'consume', 'activateItem', 'dig', 'stopDigging', 'digTime', '_genericPlace'
+  ]) {
     assert.equal(typeof bot[operation], 'function', operation)
   }
   // `world.raycast` is what a line of sight is measured with, and it is synchronous
@@ -243,8 +242,8 @@ test('a placed body with no request is not simulated, says nothing and sets no c
 test('the actions the reporting plugins bring with them are reached by no operation', async () => {
   // The plugin list is drawn per plugin, not per method, so the actions in
   // `UNREACHED_ACTIONS` are on the bot whether this process wants them or not. What keeps
-  // them from being taken is the wire being five operations - which is a claim about what
-  // those five operations do, and so has to be driven rather than read off the source.
+  // them from being taken is the closed operation set - which is a claim about what those
+  // operations do, and so has to be driven rather than read off the source.
   const { body, bot, client, port } = await embodied()
   spawned(client, HUNGRY)
   clockReported(client, { timeOfDay: 6_000, day: 1 })

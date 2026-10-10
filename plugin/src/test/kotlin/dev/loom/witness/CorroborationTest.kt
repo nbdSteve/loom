@@ -101,10 +101,10 @@ class CorroborationTest {
 
     @Test
     fun aContinuousVitalMayDriftUpToTheToleranceAndNoFurther() {
-        // The claim was taken a socket round trip before the server was asked, so health and
-        // saturation move for perfectly ordinary reasons. The bound is where the two readings
-        // stop being explainable by that; either side of it must answer differently or the
-        // tolerance is decoration.
+        // The server snapshot and later client claim straddle a socket round trip, so health
+        // and saturation move for perfectly ordinary reasons. The bound is where the two
+        // readings stop being explainable by that; either side of it must answer differently
+        // or the tolerance is decoration.
         val atTheBound =
             corroborate(
                 SensedVitals(health = 20.0, food = 20, saturation = 5.0),

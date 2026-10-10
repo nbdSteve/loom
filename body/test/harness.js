@@ -37,8 +37,10 @@ const mineflayer = require('mineflayer')
 const { Vec3 } = require('vec3')
 
 const { botOptionsFor, createBody } = require('../src/body')
+const { installDigging } = require('../src/digging')
 const { PROTOCOL_VERSION } = require('../src/protocol')
 const { installMovement } = require('../src/movement')
+const { installPlacing } = require('../src/placing')
 
 const AGENT = 'loom.test.body'
 const OTHER_AGENT = 'loom.test.other'
@@ -323,6 +325,8 @@ async function realBot () {
     version: VERSION
   })
   installMovement(bot)
+  installDigging(bot)
+  installPlacing(bot)
   openBots.add(bot)
   bot.once('end', () => openBots.delete(bot))
   const events = []

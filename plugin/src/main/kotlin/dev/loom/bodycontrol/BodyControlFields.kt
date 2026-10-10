@@ -31,13 +31,11 @@ import kotlin.math.sqrt
  * generation may spell the same field differently, and a value read under the wrong
  * generation is worse than a refusal.
  *
- * It moved from 1 to 2 when [MoveOutcome] gained [MoveOutcome.SEARCH_OVER_BUDGET]. The
- * schema's `ControlOperation` description is the authority on why a value the *body*
- * answers from moves a generation where three whole operations a *controller* asks for did
- * not: a controller never meets an operation it does not have, and cannot anticipate an
- * outcome it does not have.
+ * It moved from 2 to 3 when sense answers gained block and dropped-item offers and the
+ * body gained new closed response sets. Adding request operation names alone would not
+ * have moved it; widening a body-chosen answer does.
  */
-const val BODY_CONTROL_PROTOCOL_VERSION: Int = 2
+const val BODY_CONTROL_PROTOCOL_VERSION: Int = 3
 
 /** The shortest a requestId or agentId may be, mirroring the schema's `minLength`. */
 private const val CONTROL_ID_MIN_CHARS = 1
@@ -163,16 +161,22 @@ internal const val RESOURCE_NAME_MAX_CHARS = 40
 private val RESOURCE_NAME_PATTERN = Regex("^([a-z0-9_.-]+:)?[a-z0-9_.-]+(/[a-z0-9_.-]+)*$")
 
 /** How far from the origin a coordinate may be, mirroring the schema's `maximum`. */
-private const val MAX_WORLD_COORDINATE = 30_000_000
+internal const val MAX_WORLD_COORDINATE = 30_000_000
 
 /** How many numbers a position is, mirroring the schema's `minItems` and `maxItems`. */
-private const val WORLD_POSITION_AXES = 3
+internal const val WORLD_POSITION_AXES = 3
 
 /** The widest a caller may ask a sense to look, in blocks, mirroring the schema. */
 internal const val MAX_SENSE_RADIUS = 48
 
 /** The most entities a sense answer may carry, mirroring the schema's `maxItems`. */
 internal const val MAX_SENSE_ENTITIES = 24
+
+/** The most nearby blocks a sense answer may carry. */
+internal const val MAX_SENSE_BLOCKS = 24
+
+/** The most dropped items a sense answer may carry. */
+internal const val MAX_SENSE_ITEMS = 24
 
 /** The highest slot of a player's own inventory window, mirroring the schema. */
 internal const val MAX_SLOT_INDEX = 45
@@ -244,6 +248,15 @@ internal const val MAX_RETREAT_DISTANCE = 32
  */
 internal const val MAX_ENTITY_INDEX = MAX_SENSE_ENTITIES - 1
 
+/** The highest request-local block ordinal a world interaction may name. */
+internal const val MAX_BLOCK_INDEX = MAX_SENSE_BLOCKS - 1
+
+/** The highest request-local dropped-item ordinal a collection may name. */
+internal const val MAX_ITEM_INDEX = MAX_SENSE_ITEMS - 1
+
+/** The longest one native world interaction may remain active. */
+internal const val MAX_ACTION_DEADLINE_MS = 20_000
+
 /**
  * The widest distance a movement answer may report, in blocks.
  *
@@ -251,7 +264,7 @@ internal const val MAX_ENTITY_INDEX = MAX_SENSE_ENTITIES - 1
  * bounded accumulated movement sample. A request may have accumulated the whole
  * 128-block allowance before its last sample moves between two accepted positions, and
  * that truthful terminal measurement still has to fit. One ceiling is shared by
- * `travelled`, `separation`, and `separationGained` for generation 2.
+ * `travelled`, `separation`, and `separationGained`, as it has been since generation 2.
  */
 private const val MAX_FINAL_BOUNDED_TRAVEL = MAX_RETREAT_DISTANCE * 4
 private val WORLD_POSITION_DIAMETER =
@@ -347,21 +360,4 @@ internal fun requireReady(
     what: String,
 ) {
     require(state == LifecycleState.READY) { "$what reports ${LifecycleState.READY}" }
-}
-
-/**
- * Refuses a position that is not three coordinates inside the world's own limits.
- *
- * The axis count is checked here rather than by a fixed-arity type, because the wire
- * carries an array and a frame naming four coordinates is a peer describing a world this
- * one does not have - which is a refusal and not a value to interpret.
- */
-internal fun requireWorldPosition(
-    field: String,
-    value: List<Double>,
-) {
-    require(value.size == WORLD_POSITION_AXES) { "$field must be $WORLD_POSITION_AXES coordinates" }
-    require(value.all { it >= -MAX_WORLD_COORDINATE && it <= MAX_WORLD_COORDINATE }) {
-        "$field must be within $MAX_WORLD_COORDINATE of the origin"
-    }
 }

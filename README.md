@@ -23,8 +23,9 @@ The contracts are intentionally separate:
 
 - `contract/loom.schema.json` is the perception/decision contract between the
   Paper coordinator and the Rust mind.
-- `contract/body-control.schema.json` is the lifecycle, sensing, eating, and
-  movement contract between the Paper coordinator and one Mineflayer process.
+- `contract/body-control.schema.json` is the lifecycle, sensing, eating,
+  movement, and bounded native-interaction contract between the Paper
+  coordinator and one Mineflayer process.
 
 Both runtimes use hand-written bindings held to the schemas and fixture bytes by
 conformance tests.
@@ -44,26 +45,34 @@ and starts the configured processes through a bounded concurrency gate. The same
 set receives the same allocations after restart regardless of list order.
 
 Each member owns its process supervisor, control connector, request-id
-namespace, cognition/ref windows, threat and vitals watches, movement, inventory
-sessions, I/O workers, keepalive scheduler, health budget, and shutdown state.
+namespace, cognition/ref windows, threat and vitals watches, movement,
+world-interaction sessions, I/O workers, keepalive scheduler, health budget,
+and shutdown state.
 Only the server witness, append-only evidence sink, and globally bounded
 cognition worker pool are shared. A crash, exhausted health budget, or terminal
 death changes one member and cannot stop or reclassify another.
 
 The Mineflayer process is a mechanics boundary, not a second mind:
 
-- `sense` reports a bounded scene, health, vanilla food and saturation, and the
-  occupied player inventory slots.
+- `sense` reports a bounded scene including nearby blocks and dropped items,
+  health, vanilla food and saturation, and the occupied player inventory slots.
 - `eat` consumes the exact request-scoped slot the mind named.
 - `moveTo` and `flee` run the bounded movement policy already implemented in
   `body/src/movement.js`.
-- `halt` cancels the one movement operation in flight.
-- no timer in Node chooses a meal, destination, threat, or goal.
+- `dig`, `collect`, `place`, and `equip` apply one exact block, dropped-item, or
+  inventory reference offered by the sense result the mind answered.
+- `halt` cancels cancellable exclusive work; a conflicting request is refused
+  rather than queued or allowed to replace it.
+- no timer in Node chooses a meal, destination, threat, resource, item, face,
+  equipment destination, or goal.
 
 The coordinator preserves request identity across perception, decision, and
-actuation. Creature and inventory refs remain scoped to the sense answer that
-minted them. Threat debounce uses a server-corroborated entity UUID when one can
-be matched, while the body-control wire keeps its request-local indexes.
+actuation. Creature, block, dropped-item, and inventory refs remain scoped to
+the sense answer and control connection that minted them. Threat debounce uses
+a server-corroborated entity UUID when one can be matched, while the
+body-control wire keeps its request-local indexes. Paper separately reconciles
+completed native interactions against block-break, pickup, placement, or final
+inventory state and writes a `worldInteraction` record for the vanilla result.
 
 ## Lifecycle and permadeath
 
@@ -161,14 +170,15 @@ npm run check
 cd ../cognition
 cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+cargo test --all-features
 
 cd ../plugin
 JAVA_HOME=/path/to/jdk-21 ./gradlew check shadowJar
 ```
 
 See `DEMO.md` for the disposable Paper 1.21.1 acceptance path covering
-readiness, perception, cognition, movement, eating, disconnect, restart,
+readiness, perception, cognition, movement, eating, all four native
+interactions, one hard child-process crash with an unaffected peer, restart,
 permadeath, denied reconnect, tick-deterministic reviews, and complete cleanup.
-`AGENTS.md` carries the architectural invariants and sharp edges worth preserving
-when changing any of those seams.
+`AGENTS.md` carries the architectural invariants and sharp edges worth
+preserving when changing any of those seams.

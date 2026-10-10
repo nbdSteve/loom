@@ -60,7 +60,12 @@ class InventoryRefsTest {
         assertEquals(RefResolution.Stale, refs.creatures.resolve(ada, "req-1", creature.handle, atTick = 0))
         assertEquals(SlotResolution.Stale, refs.slots.resolve(ada, "req-1", slot.handle, atTick = 0))
 
-        refs.remember(ada, "req-1", listOf(creature), listOf(slot), atTick = 0)
+        refs.remember(
+            ada,
+            "req-1",
+            RequestRefBindings(creatures = listOf(creature), slots = listOf(slot)),
+            atTick = 0,
+        )
 
         assertEquals(
             RefResolution.Bound(creature.subject),
@@ -237,7 +242,12 @@ class InventoryRefsTest {
         val refs = RequestRefs()
         val creature = refs.creatures.mint(listOf(UUID.randomUUID())).single()
         val slot = refs.slots.mint(listOf(2)).single()
-        refs.remember(ada, "req-1", listOf(creature), listOf(slot), atTick = 0)
+        refs.remember(
+            ada,
+            "req-1",
+            RequestRefBindings(creatures = listOf(creature), slots = listOf(slot)),
+            atTick = 0,
+        )
 
         refs.settle(ada, "req-1")
 
@@ -253,7 +263,12 @@ class InventoryRefsTest {
         val refs = RequestRefs()
         val creature = refs.creatures.mint(listOf(UUID.randomUUID())).single()
         val slot = refs.slots.mint(listOf(2)).single()
-        refs.remember(ada, "req-1", listOf(creature), listOf(slot), atTick = 100)
+        refs.remember(
+            ada,
+            "req-1",
+            RequestRefBindings(creatures = listOf(creature), slots = listOf(slot)),
+            atTick = 100,
+        )
 
         val inTime = 100 + REQUEST_REFS_LIFETIME_TICKS - 1
         val tooLate = 100 + REQUEST_REFS_LIFETIME_TICKS

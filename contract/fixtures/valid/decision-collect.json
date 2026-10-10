@@ -1,0 +1,1 @@
+{"requestId":"req-drop-1","agentId":"agent-theta","intent":{"action":"collect","item":"d1","approach":true},"reasoning":"approach and collect the exact dropped apple the body offered","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}

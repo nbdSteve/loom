@@ -337,6 +337,48 @@ fn build_decision_schema() -> Value {
                             "description": "The ref of the one stack in your own inventory to eat one item from. A ref given in this message, never an item name or an invented one."
                         }
                     })),
+                    intent_variant("dig", &json!({
+                        "block": {
+                            "type": "string",
+                            "description": "The ref of the exact nearby block to dig once. A block ref from this message, never coordinates or an item name."
+                        }
+                    })),
+                    intent_variant("collect", &json!({
+                        "item": {
+                            "type": "string",
+                            "description": "The ref of the exact dropped-item entity to collect."
+                        },
+                        "approach": {
+                            "type": "boolean",
+                            "description": "Whether to permit one bounded walk toward that item. False permits no movement."
+                        }
+                    })),
+                    intent_variant("place", &json!({
+                        "block": {
+                            "type": "string",
+                            "description": "The ref of the exact sensed support block."
+                        },
+                        "item": {
+                            "type": "string",
+                            "description": "The ref of the offered inventory stack already held in the main hand."
+                        },
+                        "face": {
+                            "type": "string",
+                            "enum": ["down", "up", "north", "south", "west", "east"],
+                            "description": "The support-block face against which to place once."
+                        }
+                    })),
+                    intent_variant("equip", &json!({
+                        "item": {
+                            "type": "string",
+                            "description": "The ref of the exact offered inventory stack to equip."
+                        },
+                        "destination": {
+                            "type": "string",
+                            "enum": ["hand", "offHand", "head", "torso", "legs", "feet"],
+                            "description": "The bounded player equipment destination."
+                        }
+                    })),
                     intent_variant("rest", &json!({})),
                     intent_variant("idle", &json!({})),
                 ],
@@ -403,7 +445,7 @@ mod tests {
     fn every_intent_variant_is_a_closed_tagged_object() {
         let schema = decision_schema();
         let variants = schema["properties"]["intent"]["anyOf"].as_array().unwrap();
-        assert_eq!(variants.len(), 6, "one per contract Intent variant");
+        assert_eq!(variants.len(), 10, "one per contract Intent variant");
         let mut actions = Vec::new();
         for variant in variants {
             assert_eq!(variant["additionalProperties"], false);
@@ -418,7 +460,9 @@ mod tests {
         }
         assert_eq!(
             actions,
-            vec!["say", "moveTo", "flee", "eat", "rest", "idle"],
+            vec![
+                "say", "moveTo", "flee", "eat", "dig", "collect", "place", "equip", "rest", "idle",
+            ],
             "the tags must be the contract's own action names"
         );
     }

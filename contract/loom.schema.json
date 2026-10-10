@@ -17,8 +17,26 @@
       "enum": ["north", "east", "south", "west"]
     },
 
+    "ObservationKind": {
+      "description": "What kind of world fact an observation describes. This is descriptive evidence, not policy: entity, block, and droppedItem are the three vanilla shapes the player body can offer back as request-scoped targets.",
+      "type": "string",
+      "enum": ["entity", "block", "droppedItem"]
+    },
+
+    "BlockFace": {
+      "description": "One face of a sensed support block. A place intent combines the support block's request-scoped ref with this face, so the location is chosen without accepting an arbitrary coordinate.",
+      "type": "string",
+      "enum": ["down", "up", "north", "south", "west", "east"]
+    },
+
+    "EquipmentDestination": {
+      "description": "The equipment destination the mind chose for one offered inventory stack. These are Mineflayer's bounded player equipment destinations, translated at the body-control boundary rather than guessed from a slot number.",
+      "type": "string",
+      "enum": ["hand", "offHand", "head", "torso", "legs", "feet"]
+    },
+
     "EntityRef": {
-      "description": "A short opaque handle for one living thing the body observed, valid only inside the single perception that issued it and only for the agent that perception belongs to. It carries no meaning the mind may parse: it is not a name, not a type, not an entity id, and two things that are alike in every other way still get different refs. It exists so a decision can name one particular thing back to the body without the body having to guess which of two identical creatures was meant, and a ref from any other request or any other agent is refused rather than resolved.",
+      "description": "A short opaque handle for one world target the body observed: a living entity, a nearby block, or a dropped item. It is valid only inside the single perception that issued it and only for the agent that perception belongs to. It carries no meaning the mind may parse: it is not a name, type, coordinate, entity id, or slot, and two things that are alike in every other way still get different refs. The intent variant determines which target store may resolve it, so a block ref used as an item ref is refused rather than reinterpreted.",
       "type": "string",
       "minLength": 1,
       "maxLength": 8
@@ -121,8 +139,20 @@
       "description": "One already-summarized observation the body chose to reveal. The perception carries a list of these instead of a live world handle.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["what", "distance", "direction", "verticalOffset", "visible"],
+      "required": ["kind", "what", "distance", "direction", "verticalOffset", "visible", "ref"],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "droppedItem" }
+            }
+          },
+          "then": { "required": ["count"] },
+          "else": { "not": { "required": ["count"] } }
+        }
+      ],
       "properties": {
+        "kind": { "$ref": "#/$defs/ObservationKind" },
         "what": {
           "description": "Human-readable summary of the observed thing.",
           "type": "string"
@@ -141,8 +171,13 @@
           "type": "boolean"
         },
         "ref": {
-          "description": "The handle by which a decision may name this particular thing back to the body. Present only for a living thing, because only a living thing can be acted on as itself; a block is named by its position instead, so its absence is a fact about what the observation is rather than an omission. Absent and present are therefore both ordinary, and a mind must never invent one.",
+          "description": "The request-scoped handle by which a decision may name this particular entity, block, or dropped item back to the body. Every player-body world observation is actionable as exactly the kind it states, and a mind must name this handle rather than inventing a coordinate, entity id, item name, or slot.",
           "$ref": "#/$defs/EntityRef"
+        },
+        "count": {
+          "description": "How many items the dropped-item entity currently represents. Present only when kind is droppedItem; absent for entities and blocks. The bindings enforce that relation.",
+          "type": "integer",
+          "minimum": 1
         }
       }
     },
@@ -259,7 +294,8 @@
         "surroundings": {
           "description": "The summarized observations the body chose to reveal.",
           "type": "array",
-          "items": { "$ref": "#/$defs/Observation" }
+          "items": { "$ref": "#/$defs/Observation" },
+          "maxItems": 16
         },
         "surroundingsOmitted": {
           "description": "How many otherwise eligible observations the body's own count bound dropped before this perception was serialized: things that were in range, alive and would have been described, and are not in surroundings. Required and never negative, so a mind cannot read the absence of the field as a complete view of the scene. Zero is the ordinary case and says the list is everything the body had. Out-of-range and ineligible things are not omissions - they were never observations.",
@@ -319,6 +355,54 @@
           "properties": {
             "action": { "const": "eat" },
             "ref": { "$ref": "#/$defs/SlotRef" }
+          }
+        },
+        {
+          "title": "Dig",
+          "description": "Dig one nearby block named by the request-scoped ref in the perception being answered. The body re-reads the exact block immediately before asking Mineflayer to dig it, uses only the item already held, and refuses a removed, changed, hidden, unreachable, or undiggable target.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "block"],
+          "properties": {
+            "action": { "const": "dig" },
+            "block": { "$ref": "#/$defs/EntityRef" }
+          }
+        },
+        {
+          "title": "Collect",
+          "description": "Collect one nearby dropped-item entity named by the request-scoped ref in the perception being answered. approach explicitly permits one bounded path to the position that exact item occupied when the request was admitted; false permits no movement.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "item", "approach"],
+          "properties": {
+            "action": { "const": "collect" },
+            "item": { "$ref": "#/$defs/EntityRef" },
+            "approach": { "type": "boolean" }
+          }
+        },
+        {
+          "title": "Place",
+          "description": "Place one offered inventory stack that is already held against one face of one nearby sensed support block. Both refs come from the perception being answered; the body revalidates the held stack, the support block, the destination, visibility, and reach before asking Mineflayer to place exactly once.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "block", "item", "face"],
+          "properties": {
+            "action": { "const": "place" },
+            "block": { "$ref": "#/$defs/EntityRef" },
+            "item": { "$ref": "#/$defs/SlotRef" },
+            "face": { "$ref": "#/$defs/BlockFace" }
+          }
+        },
+        {
+          "title": "Equip",
+          "description": "Equip one inventory stack offered by the perception being answered into the destination the mind chose. The body re-reads the exact slot immediately before invoking Mineflayer and reports the actual destination slot Mineflayer used.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "item", "destination"],
+          "properties": {
+            "action": { "const": "equip" },
+            "item": { "$ref": "#/$defs/SlotRef" },
+            "destination": { "$ref": "#/$defs/EquipmentDestination" }
           }
         },
         {

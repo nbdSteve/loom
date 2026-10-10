@@ -225,16 +225,23 @@ private fun BodyResponse.matches(request: BodyRequest): Boolean =
     protocol == request.protocol &&
         requestId == request.requestId &&
         agentId == request.agentId &&
-        when (request) {
-            is BodyRequest.Handshake -> this is BodyResponse.HandshakeAccepted
-            is BodyRequest.Status -> this is BodyResponse.StatusReport
-            is BodyRequest.Shutdown -> this is BodyResponse.ShutdownAccepted
-            is BodyRequest.Sense -> this is BodyResponse.SenseReport
-            is BodyRequest.Eat -> this is BodyResponse.EatReport
-            is BodyRequest.MoveTo -> this is BodyResponse.MoveReport
-            is BodyRequest.Flee -> this is BodyResponse.FleeReport
-            is BodyRequest.Halt -> this is BodyResponse.HaltReport
-        }
+        matchesOperation(request)
+
+private fun BodyResponse.matchesOperation(request: BodyRequest): Boolean =
+    when (request) {
+        is BodyRequest.Handshake -> this is BodyResponse.HandshakeAccepted
+        is BodyRequest.Status -> this is BodyResponse.StatusReport
+        is BodyRequest.Shutdown -> this is BodyResponse.ShutdownAccepted
+        is BodyRequest.Sense -> this is BodyResponse.SenseReport
+        is BodyRequest.Eat -> this is BodyResponse.EatReport
+        is BodyRequest.MoveTo -> this is BodyResponse.MoveReport
+        is BodyRequest.Flee -> this is BodyResponse.FleeReport
+        is BodyRequest.Dig -> this is BodyResponse.DigReport
+        is BodyRequest.Collect -> this is BodyResponse.CollectReport
+        is BodyRequest.Place -> this is BodyResponse.PlaceReport
+        is BodyRequest.Equip -> this is BodyResponse.EquipReport
+        is BodyRequest.Halt -> this is BodyResponse.HaltReport
+    }
 
 private fun BufferedInputStream.readBoundedFrame(): String {
     val bytes = ByteArrayOutputStream()

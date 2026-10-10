@@ -81,6 +81,12 @@ class ObserverView(
             BodyEvent.PERCEIVED -> Note("perceived the world (${triggerWords(record.trigger)})", ObserverLevel.CALM)
             BodyEvent.DECIDED -> decidedNote(record)
             BodyEvent.INTENT_APPLIED -> appliedNote(record.outcome)
+            BodyEvent.WORLD_INTERACTION ->
+                if (record.outcome == EventTag.DISPUTED_WORLD_INTERACTION) {
+                    Note("the server disagreed with a world interaction result", ObserverLevel.CONCERN)
+                } else {
+                    null
+                }
             BodyEvent.DECISION_DISCARDED -> Note("its decision arrived too late to act on", ObserverLevel.CONCERN)
             BodyEvent.COGNITION_UNAVAILABLE -> unansweredNote(record.outcome)
             BodyEvent.BODY_DISCONNECTED ->
@@ -127,6 +133,7 @@ class ObserverView(
             BodyEvent.SPAWNED,
             BodyEvent.SPAWN_REJECTED,
             BodyEvent.INTENT_APPLIED,
+            BodyEvent.WORLD_INTERACTION,
             BodyEvent.MOVED,
             BodyEvent.PERCEIVED,
             BodyEvent.DECISION_DISCARDED,

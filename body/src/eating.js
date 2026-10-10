@@ -59,6 +59,7 @@
  */
 
 const { MAX_STACK_COUNT } = require('./protocol')
+const { stackMatchesOffer } = require('./interaction')
 
 /**
  * The message `bot.consume` throws when vanilla will not take another ordinary food.
@@ -254,22 +255,28 @@ async function eatFromSlot (bot, { offered, slot }) {
   if (!Array.isArray(slots)) return undefined
   const standing = slots[slot]
   if (standing === null || standing === undefined) return { outcome: 'slotEmpty' }
-  if (standing.name !== named) return { outcome: 'slotChanged' }
+  if (!stackMatchesOffer(standing, named)) {
+    return { outcome: 'slotChanged' }
+  }
   const foods = bot.registry?.foodsByName
   if (foods === null || foods === undefined) return undefined
-  if (foods[named] === undefined) return { outcome: 'notEdible' }
+  if (foods[named.what] === undefined) return { outcome: 'notEdible' }
   let brought
   try {
     await bot.equip(standing, 'hand')
     brought = bot.heldItem
-    if (brought === null || brought === undefined || brought.name !== named) {
+    if (brought === null || brought === undefined || brought.name !== named.what) {
       return { outcome: 'slotInaccessible' }
     }
     await bot.consume()
   } catch (cause) {
     return { outcome: reserveWasFull(cause) ? 'reserveFull' : 'slotInaccessible' }
   }
-  return { outcome: 'eaten', what: named, remaining: await countLeft(bot, brought, named) }
+  return {
+    outcome: 'eaten',
+    what: named.what,
+    remaining: await countLeft(bot, brought, named.what)
+  }
 }
 
 module.exports = {

@@ -7,21 +7,33 @@ import dev.loom.body.AgentId
 import dev.loom.body.PERCEPTION_RADIUS_BLOCKS
 import dev.loom.body.player.PlayerIdentity
 import dev.loom.body.player.PlayerServerState
+import dev.loom.body.player.SenseAuditSnapshot
+import dev.loom.body.player.ServerInteractionAudit
+import dev.loom.body.player.ServerInteractionClaim
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
 import dev.loom.bodycontrol.SensedEntity
+import dev.loom.bodycontrol.SensedItem
 import dev.loom.witness.BodyClaim
 import dev.loom.witness.ClaimAudit
 import dev.loom.witness.DurablePermadeath
+import dev.loom.witness.ServerReading
 import dev.loom.witness.bukkit.playerStandingOf
 import dev.loom.witness.bukkit.serverReadingOf
 import dev.loom.witness.movementClaimOf
 import org.bukkit.Server
 import org.bukkit.entity.Entity
+import org.bukkit.entity.Item
 import java.util.UUID
 
 private const val ENTITY_MATCH_TOLERANCE_BLOCKS = 2.0
 private const val MINECRAFT_NAMESPACE = "minecraft"
+
+private data class BukkitSenseAuditSnapshot(
+    val player: UUID,
+    val username: String,
+    val reading: ServerReading,
+) : SenseAuditSnapshot
 
 /** One server entity reduced to the facts needed to correlate a client reading. */
 internal data class ServerEntitySubject(
@@ -40,7 +52,10 @@ class BukkitPlayerServerState(
     private val server: Server,
     private val permadeath: DurablePermadeath,
     private val claimAudit: ClaimAudit,
+    private val interactionEvents: BukkitInteractionEvents? = null,
 ) : PlayerServerState {
+    private val interactionAuditor = BukkitInteractionAuditor(server, interactionEvents)
+
     override fun connected(identity: PlayerIdentity): Boolean =
         server.getPlayer(identity.uuid)?.let { player ->
             player.isOnline &&
@@ -68,16 +83,54 @@ class BukkitPlayerServerState(
         return matchServerSubjects(entities, candidates)
     }
 
+    override fun itemSubjectsOf(
+        identity: PlayerIdentity,
+        items: List<SensedItem>,
+    ): List<UUID?> {
+        val player = server.getPlayer(identity.uuid) ?: return List(items.size) { null }
+        val reach = PERCEPTION_RADIUS_BLOCKS + ENTITY_MATCH_TOLERANCE_BLOCKS
+        val candidates =
+            player
+                .getNearbyEntities(reach, reach, reach)
+                .asSequence()
+                .filterIsInstance<Item>()
+                .map { item ->
+                    ServerItemSubject(
+                        uuid = item.uniqueId,
+                        what = item.itemStack.type.key.toString(),
+                        count = item.itemStack.amount,
+                        position =
+                            listOf(
+                                item.location.x,
+                                item.location.y,
+                                item.location.z,
+                            ),
+                    )
+                }.toList()
+        return matchServerItems(items, candidates)
+    }
+
+    override fun captureSenseAudit(identity: PlayerIdentity): SenseAuditSnapshot? {
+        val player = server.getPlayer(identity.uuid) ?: return null
+        return BukkitSenseAuditSnapshot(
+            player = player.uniqueId,
+            username = player.name,
+            reading = serverReadingOf(player),
+        )
+    }
+
     override fun auditSense(
         identity: PlayerIdentity,
+        snapshot: SenseAuditSnapshot?,
         report: BodyResponse.SenseReport,
     ) {
-        val player = server.getPlayer(identity.uuid) ?: return
+        val captured = snapshot as? BukkitSenseAuditSnapshot ?: return
+        if (captured.player != identity.uuid) return
         claimAudit.sawClaim(
             uuid = identity.uuid,
-            username = player.name,
+            username = captured.username,
             claim = BodyClaim(report.vitals, report.inventory),
-            reading = serverReadingOf(player),
+            reading = captured.reading,
         )
     }
 
@@ -93,6 +146,11 @@ class BukkitPlayerServerState(
             standing = playerStandingOf(server.getPlayer(identity.uuid)),
         )
     }
+
+    override fun auditInteraction(
+        identity: PlayerIdentity,
+        claim: ServerInteractionClaim,
+    ): ServerInteractionAudit = interactionAuditor.audit(identity, claim)
 
     override fun auditMovement(
         identity: PlayerIdentity,
@@ -111,6 +169,13 @@ class BukkitPlayerServerState(
         const val TICKS_PER_DAY = 24_000L
     }
 }
+
+internal data class ServerItemSubject(
+    val uuid: UUID,
+    val what: String,
+    val count: Int,
+    val position: List<Double>,
+)
 
 /**
  * Greedily gives each sensed entity the nearest same-kind server identity.
@@ -143,6 +208,29 @@ internal fun matchServerSubjects(
     }
 }
 
+internal fun matchServerItems(
+    sensed: List<SensedItem>,
+    candidates: List<ServerItemSubject>,
+): List<UUID?> {
+    val remaining = candidates.toMutableList()
+    val toleranceSquared = ENTITY_MATCH_TOLERANCE_BLOCKS * ENTITY_MATCH_TOLERANCE_BLOCKS
+    return sensed.map { observation ->
+        val matching =
+            remaining
+                .asSequence()
+                .filter {
+                    canonicalResource(it.what) == canonicalResource(observation.what) &&
+                        it.count == observation.count
+                }.map { candidate -> candidate to squaredDistance(candidate.position, observation.position) }
+                .filter { (_, distance) -> distance <= toleranceSquared }
+                .minWithOrNull(
+                    compareBy<Pair<ServerItemSubject, Double>> { it.second }
+                        .thenBy { it.first.uuid.toString() },
+                )?.first
+        matching?.also(remaining::remove)?.uuid
+    }
+}
+
 private fun serverSubjectOf(entity: Entity): ServerEntitySubject {
     val location = entity.location
     return ServerEntitySubject(
@@ -152,7 +240,7 @@ private fun serverSubjectOf(entity: Entity): ServerEntitySubject {
     )
 }
 
-private fun canonicalResource(resource: String): String =
+internal fun canonicalResource(resource: String): String =
     if (':' in resource) resource else "$MINECRAFT_NAMESPACE:$resource"
 
 private fun squaredDistance(

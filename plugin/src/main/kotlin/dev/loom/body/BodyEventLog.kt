@@ -155,6 +155,18 @@ enum class BodyEvent {
     @SerialName("moved")
     MOVED,
 
+    /**
+     * The server-authoritative result of one explicit dig, collect, place, or equip.
+     *
+     * Written after [INTENT_APPLIED] with the same perception request id. Its detail
+     * names the offered ref, retained sense id, body-control request id, exact body
+     * outcome, and the vanilla event or final inventory state used to corroborate it.
+     * [BodyEventRecord.outcome] is `serverEffectConfirmed` when those agree and
+     * `disputedWorldInteraction` when they do not.
+     */
+    @SerialName("worldInteraction")
+    WORLD_INTERACTION,
+
     @SerialName("perceived")
     PERCEIVED,
 

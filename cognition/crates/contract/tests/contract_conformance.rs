@@ -366,10 +366,7 @@ fn a_ref_outside_its_length_is_refused_at_decode() {
     );
     let accepted: Perception = serde_json::from_str(&longest)
         .unwrap_or_else(|e| panic!("an eight-character ref should decode: {e}"));
-    assert_eq!(
-        accepted.surroundings[0].entity_ref.as_deref(),
-        Some("entity-4")
-    );
+    assert_eq!(accepted.surroundings[0].target_ref, "entity-4");
 }
 
 /// Produce a self-contained schema rooted at the named `$defs` entry, carrying

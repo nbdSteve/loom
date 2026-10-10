@@ -17,6 +17,10 @@ fun describe(intent: Intent): String =
         is Intent.Say -> "say"
         is Intent.Flee -> "flee from ${intent.from}"
         is Intent.Eat -> "eat ${intent.ref}"
+        is Intent.Dig -> "dig ${intent.block}"
+        is Intent.Collect -> "collect ${intent.item}"
+        is Intent.Place -> "place ${intent.item} at ${intent.block}/${intent.face.name.lowercase()}"
+        is Intent.Equip -> "equip ${intent.item} as ${intent.destination.name.lowercase()}"
         is Intent.Rest -> "rest"
         is Intent.Idle -> "idle"
     }

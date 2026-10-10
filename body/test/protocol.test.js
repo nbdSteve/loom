@@ -14,6 +14,8 @@ const {
   MAX_WORLD_COORDINATE,
   MAX_SENSE_RADIUS,
   MAX_SENSE_ENTITIES,
+  MAX_SENSE_BLOCKS,
+  MAX_SENSE_ITEMS,
   MAX_SLOT_INDEX,
   MAX_SENSE_STACKS,
   MAX_STACK_COUNT,
@@ -86,6 +88,16 @@ const PAYLOAD = {
   eat: { senseId: 'sense-1', slot: 0 },
   moveTo: { destination: [12, 71, -40], tolerance: 1, timeoutMs: 8000, sprint: false },
   flee: { senseId: 'sense-1', entity: 0, distance: 12, timeoutMs: 8000, sprint: true },
+  dig: { senseId: 'sense-1', block: 0, timeoutMs: 8000 },
+  collect: {
+    senseId: 'sense-1',
+    item: 0,
+    approach: true,
+    timeoutMs: 8000,
+    sprint: false
+  },
+  place: { senseId: 'sense-1', block: 0, slot: 36, face: 'up', timeoutMs: 8000 },
+  equip: { senseId: 'sense-1', slot: 36, destination: 'hand', timeoutMs: 8000 },
   halt: {}
 }
 
@@ -433,6 +445,10 @@ function sensed (overrides = {}) {
     time: whenItIs(),
     entities: [],
     entitiesOmitted: 0,
+    blocks: [],
+    blocksOmitted: 0,
+    items: [],
+    itemsOmitted: 0,
     inventory: [],
     ...overrides
   }
@@ -492,7 +508,7 @@ function widestWritten (values) {
  * This is what a worst-case frame has to be measured with. Measured with the coordinate of
  * largest *magnitude*, which reads nine characters shorter, the guard below under-reported
  * the widest legal answer by 225 bytes across the twenty-five positions in it - on the one
- * measurement `MAX_SENSE_ENTITIES` and `MAX_SENSE_STACKS` are derived from.
+ * measurement all four sense-list bounds are checked against.
  */
 const WIDEST_COORDINATE = widestWritten([
   -justInside(MAX_WORLD_COORDINATE),
@@ -508,7 +524,7 @@ function ate (overrides = {}) {
   return { requestId: 'req-1', agentId: AGENT, outcome: 'slotEmpty', vitals: vitals(), ...overrides }
 }
 
-test('a sense report carries a place, two vitals, a clock and two bounded lists', () => {
+test('a sense report carries a place, vitals, a clock and four bounded lists', () => {
   const full = sensed({
     ground: { standingIn: 'minecraft:air', standingOn: 'minecraft:grass_block' },
     entities: [
@@ -1000,6 +1016,10 @@ test('encoders emit canonical bytes regardless of caller key order', () => {
       // reach the wire, and the corpus is compared byte for byte.
       {
         inventory: [{ count: 3, what: 'minecraft:bread', slot: 0 }],
+        itemsOmitted: 0,
+        items: [],
+        blocksOmitted: 0,
+        blocks: [],
         entitiesOmitted: 2,
         entities: [{ visible: true, position: [14.5, 71.5, -40.5], what: 'minecraft:zombie' }],
         ground: { standingOn: 'minecraft:grass_block', standingIn: 'minecraft:air' },
@@ -1017,7 +1037,8 @@ test('encoders emit canonical bytes regardless of caller key order', () => {
         '"time":{"timeOfDay":6500,"day":12,"isDay":true},' +
         '"ground":{"standingIn":"minecraft:air","standingOn":"minecraft:grass_block"},' +
         '"entities":[{"what":"minecraft:zombie","position":[14.5,71.5,-40.5],"visible":true}],' +
-        '"entitiesOmitted":2,"inventory":[{"slot":0,"what":"minecraft:bread","count":3}]}'
+        '"entitiesOmitted":2,"blocks":[],"blocksOmitted":0,"items":[],"itemsOmitted":0,' +
+        '"inventory":[{"slot":0,"what":"minecraft:bread","count":3}]}'
     ],
     [
       {
@@ -1160,7 +1181,11 @@ test('the longest frame the contract admits is a sense report, and it still fits
     String(WIDEST_COORDINATE).length > String(-justInside(MAX_WORLD_COORDINATE)).length,
     'the widest coordinate must not be the largest one'
   )
-  const widest = (entities) => senseReport({
+  const widest = (
+    entities,
+    blocks = MAX_SENSE_BLOCKS,
+    items = MAX_SENSE_ITEMS
+  ) => senseReport({
     requestId: 'r'.repeat(MAX_ID_CHARS),
     agentId: 'a'.repeat(MAX_ID_CHARS),
     position: place,
@@ -1173,6 +1198,23 @@ test('the longest frame the contract admits is a sense report, and it still fits
       visible: false
     })),
     entitiesOmitted: MAX_COUNT,
+    blocks: Array.from({ length: blocks }, () => ({
+      what: name,
+      position: [
+        -MAX_WORLD_COORDINATE,
+        -MAX_WORLD_COORDINATE,
+        -MAX_WORLD_COORDINATE
+      ],
+      visible: false
+    })),
+    blocksOmitted: MAX_COUNT,
+    items: Array.from({ length: items }, () => ({
+      what: name,
+      count: MAX_STACK_COUNT,
+      position: place,
+      visible: false
+    })),
+    itemsOmitted: MAX_COUNT,
     inventory: Array.from({ length: MAX_SENSE_STACKS }, (each, slot) => ({
       slot,
       what: name,
@@ -1185,16 +1227,20 @@ test('the longest frame the contract admits is a sense report, and it still fits
 
   // It is the longest, so it is also the one with the least room to spare, and the
   // margin is stated rather than left to be discovered by a refusal in world. What is
-  // left has to be more than one whole entity description, measured rather than
-  // estimated: that is the largest thing the frame repeats, so a bound sitting inside
-  // one of them is a bound that a later `MAX_SENSE_ENTITIES` of one more would carry
+  // left has to be more than one whole repeated description, measured rather than
+  // estimated: a bound sitting inside one of them is a bound that raising a list limit
+  // by one would carry
   // past the wire. The margin is a twentieth of the bound and no more, because the
   // two list bounds are requirements - a player has the slots a player has - so it is
   // the byte bound that would have to move, in both runtimes and the schema at once.
-  const perEntity = bytes - sizeOf(widest(MAX_SENSE_ENTITIES - 1))
+  const repeated = Math.max(
+    bytes - sizeOf(widest(MAX_SENSE_ENTITIES - 1)),
+    bytes - sizeOf(widest(MAX_SENSE_ENTITIES, MAX_SENSE_BLOCKS - 1)),
+    bytes - sizeOf(widest(MAX_SENSE_ENTITIES, MAX_SENSE_BLOCKS, MAX_SENSE_ITEMS - 1))
+  )
   assert.ok(
-    MAX_FRAME_BYTES - bytes > perEntity,
-    `${MAX_FRAME_BYTES - bytes} bytes spare of ${MAX_FRAME_BYTES}, against ${perEntity} for one more entity`
+    MAX_FRAME_BYTES - bytes > repeated,
+    `${MAX_FRAME_BYTES - bytes} bytes spare of ${MAX_FRAME_BYTES}, against ${repeated} for one more offer`
   )
   // And it goes back through the decoder, so what was measured is a frame the far
   // end would actually accept rather than merely one this side would write.
@@ -1223,18 +1269,18 @@ test('a frame past the byte bound is refused by every decoder, unread', () => {
     assert.deepEqual(decode(pastIt), { ok: false, code: 'frameTooLarge' })
   }
 
-  // Bytes and not characters. Three thousand astral characters are six thousand
-  // UTF-16 units - inside the bound to `String.length` - and twelve thousand bytes on
+  // Bytes and not characters. Nine thousand astral characters are eighteen thousand
+  // UTF-16 units - inside the bound to `String.length` - and thirty-six thousand bytes on
   // the socket, so a runtime counting the shorter number carries twice what it
   // promised, and the two ends of one wire disagree about the one bound they share.
-  const astral = canonical.replace('"agent-alpha"', `"${'\u{1F642}'.repeat(3000)}"`)
+  const astral = canonical.replace('"agent-alpha"', `"${'\u{1F642}'.repeat(9000)}"`)
   assert.ok(astral.length <= MAX_FRAME_BYTES, 'the case must be inside the bound in UTF-16 units')
   assert.ok(Buffer.byteLength(astral, 'utf8') > MAX_FRAME_BYTES, 'the case must be past the bound in bytes')
   assert.deepEqual(decodeRequest(astral), { ok: false, code: 'frameTooLarge' })
 })
 
 test('a frame nesting past the depth bound is refused the way the other end refuses it', () => {
-  // Four thousand open brackets fit inside 8 KiB with room to spare, so the byte bound
+  // Four thousand open brackets fit inside 32 KiB with room to spare, so the byte bound
   // does not imply this one. On the JVM that line spends the reader's *stack* -
   // `parseToJsonElement` and the walk for explicit nulls each recurse once per level -
   // and arrives as a StackOverflowError. V8's `JSON.parse` is iterative and reads

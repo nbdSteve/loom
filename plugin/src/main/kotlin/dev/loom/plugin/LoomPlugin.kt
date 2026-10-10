@@ -191,6 +191,12 @@ class LoomPlugin : JavaPlugin() {
                 dataDirectory = dataFolder.toPath().toAbsolutePath().normalize(),
             )
         val bukkitMain = BukkitMainThread(this)
+        val interactionEvents =
+            BukkitInteractionEvents(
+                server,
+                fleet.deployments.map { it.identity.uuid }.toSet(),
+            )
+        server.pluginManager.registerEvents(interactionEvents, this)
         val authority =
             PlayerBodyAuthority(
                 main = Executor { command -> bukkitMain.execute { command.run() } },
@@ -208,6 +214,7 @@ class LoomPlugin : JavaPlugin() {
                         server = server,
                         permadeath = witness.permadeath,
                         claimAudit = witness.claimAudit,
+                        interactionEvents = interactionEvents,
                     ),
                 eventLog = eventLog,
                 currentTick = { server.currentTick.toLong() },

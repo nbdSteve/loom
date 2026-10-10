@@ -30,6 +30,8 @@ private const val MARKER = "zzsecretzz"
 private val DELIBERATELY_SILENT =
     mapOf(
         BodyEvent.MOVED to "one a tick for a walking agent",
+        BodyEvent.WORLD_INTERACTION to
+            "confirmed server effects stay in evidence; only a disagreement needs a note",
         BodyEvent.THREAT_SUPPRESSED to
             "the append-only record is the evidence; a note once a second for as long as " +
             "something hostile stood in view would fill all eight lines with the thing that " +

@@ -3,35 +3,73 @@
  */
 package dev.loom.body.player
 
-import dev.loom.body.EntityRefBinding
 import dev.loom.body.InventorySlotBinding
+import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import dev.loom.body.ThreatCandidate
 import dev.loom.body.WorldClock
 import dev.loom.body.blocksApart
 import dev.loom.body.horizontalBearing
 import dev.loom.contract.InventoryStack
 import dev.loom.contract.Observation
+import dev.loom.contract.ObservationKind
 import dev.loom.contract.SelfState
 import dev.loom.contract.WorldState
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 
+private const val BLOCK_CENTER_OFFSET = 0.5
+
 internal class PlayerSceneTranslator(
     private val context: PlayerBodyContext,
 ) {
     fun sceneOf(raw: RawSense): PlayerScene {
-        context.authority.serverState.auditSense(raw.identity, raw.report)
+        context.authority.serverState.auditSense(raw.identity, raw.auditSnapshot, raw.report)
         val subjects = subjectsOf(raw)
-        val creatureBindings = context.refs.creatures.mint(subjects)
+        val itemSubjects = context.authority.serverState.itemSubjectsOf(raw.identity, raw.report.items)
+        val selected = offersOf(raw, subjects, itemSubjects).take(PERCEPTION_MAX_OBSERVATIONS)
+        val entityOffers = selected.filter { it.kind == ObservationKind.ENTITY }
+        val blockOffers = selected.filter { it.kind == ObservationKind.BLOCK }
+        val itemOffers = selected.filter { it.kind == ObservationKind.DROPPED_ITEM }
+        val creatureBindings =
+            context.refs.creatures.mint(entityOffers.map { requireNotNull(it.subject) })
+        val blockBindings = context.refs.blocks.mint(blockOffers.map(SceneOffer::sourceIndex))
+        val droppedItemBindings =
+            context.refs.droppedItems.mint(itemOffers.map(SceneOffer::sourceIndex))
         val slotBindings = context.refs.slots.mint(raw.report.inventory.map { it.slot })
-        val surroundings = surroundingsOf(raw, creatureBindings)
+        val refs =
+            buildMap {
+                entityOffers.zip(creatureBindings).forEach { (offer, binding) ->
+                    put(offer.key, binding.handle)
+                }
+                blockOffers.zip(blockBindings).forEach { (offer, binding) ->
+                    put(offer.key, binding.handle)
+                }
+                itemOffers.zip(droppedItemBindings).forEach { (offer, binding) ->
+                    put(offer.key, binding.handle)
+                }
+            }
+        val surroundings = selected.map { observationOf(raw, it, requireNotNull(refs[it.key])) }
+        val omittedByBody =
+            raw.report.entitiesOmitted + raw.report.blocksOmitted + raw.report.itemsOmitted
+        val omittedBySceneBound =
+            raw.report.entities.size + raw.report.blocks.size + raw.report.items.size - selected.size
         return PlayerScene(
             raw = raw,
             creatureBindings = creatureBindings,
+            blockBindings = blockBindings,
+            droppedItemBindings = droppedItemBindings,
             slotBindings = slotBindings,
-            entityIndex = subjects.mapIndexed { index, subject -> subject to index }.toMap(),
+            entityIndex =
+                entityOffers.associate { offer ->
+                    requireNotNull(offer.subject) to offer.sourceIndex
+                },
+            droppedItemSubjects =
+                itemOffers.mapNotNull { offer ->
+                    offer.subject?.let { offer.sourceIndex to it }
+                }.toMap(),
             surroundings = surroundings,
-            candidates = candidatesOf(subjects, surroundings),
+            surroundingsOmitted = omittedByBody + omittedBySceneBound,
+            candidates = candidatesOf(selected, surroundings),
             selfState = selfStateOf(raw, slotBindings),
         )
     }
@@ -53,32 +91,81 @@ internal class PlayerSceneTranslator(
         }
     }
 
-    private fun surroundingsOf(
+    private fun offersOf(
         raw: RawSense,
-        bindings: List<EntityRefBinding>,
-    ): List<Observation> =
-        raw.report.entities.mapIndexed { index, entity ->
-            val deltaX = entity.position[0] - raw.report.position[0]
-            val deltaZ = entity.position[2] - raw.report.position[2]
-            Observation(
-                what = entityDescriptionId(entity.what),
-                distance = blocksApart(raw.report.position, entity.position),
-                direction = horizontalBearing(deltaX, deltaZ),
-                verticalOffset = entity.position[1] - raw.report.position[1],
-                visible = entity.visible,
-                ref = bindings[index].handle,
-            )
-        }
+        subjects: List<UUID>,
+        itemSubjects: List<UUID?>,
+    ): List<SceneOffer> {
+        val entities =
+            raw.report.entities.mapIndexed { index, entity ->
+                SceneOffer(
+                    kind = ObservationKind.ENTITY,
+                    sourceIndex = index,
+                    what = entityDescriptionId(entity.what),
+                    position = entity.position,
+                    visible = entity.visible,
+                    subject = subjects[index],
+                )
+            }
+        val blocks =
+            raw.report.blocks.mapIndexed { index, block ->
+                SceneOffer(
+                    kind = ObservationKind.BLOCK,
+                    sourceIndex = index,
+                    what = blockDescriptionId(block.what),
+                    position = block.position.map { it + BLOCK_CENTER_OFFSET },
+                    visible = block.visible,
+                )
+            }
+        val items =
+            raw.report.items.mapIndexed { index, item ->
+                SceneOffer(
+                    kind = ObservationKind.DROPPED_ITEM,
+                    sourceIndex = index,
+                    what = itemDescriptionId(item.what),
+                    position = item.position,
+                    visible = item.visible,
+                    subject = itemSubjects.getOrNull(index),
+                    count = item.count.toLong(),
+                )
+            }
+        return (entities + blocks + items).sortedWith(
+            compareBy<SceneOffer> { blocksApart(raw.report.position, it.position) }
+                .thenBy { it.kind.ordinal }
+                .thenBy(SceneOffer::sourceIndex),
+        )
+    }
+
+    private fun observationOf(
+        raw: RawSense,
+        offer: SceneOffer,
+        ref: String,
+    ): Observation {
+        val deltaX = offer.position[0] - raw.report.position[0]
+        val deltaZ = offer.position[2] - raw.report.position[2]
+        return Observation(
+            kind = offer.kind,
+            what = offer.what,
+            distance = blocksApart(raw.report.position, offer.position),
+            direction = horizontalBearing(deltaX, deltaZ),
+            verticalOffset = offer.position[1] - raw.report.position[1],
+            visible = offer.visible,
+            ref = ref,
+            count = offer.count,
+        )
+    }
 
     private fun candidatesOf(
-        subjects: List<UUID>,
+        offers: List<SceneOffer>,
         surroundings: List<Observation>,
     ): List<ThreatCandidate> =
-        surroundings.mapIndexed { index, observation ->
+        offers.zip(surroundings).mapNotNull { (offer, observation) ->
+            if (offer.kind != ObservationKind.ENTITY) return@mapNotNull null
+            val subject = offer.subject ?: return@mapNotNull null
             ThreatCandidate(
-                subject = subjects[index],
+                subject = subject,
                 what = observation.what,
-                ref = requireNotNull(observation.ref),
+                ref = observation.ref,
                 distance = observation.distance,
                 direction = observation.direction,
                 visible = observation.visible,
@@ -112,9 +199,26 @@ internal class PlayerSceneTranslator(
         )
 }
 
+private data class SceneOffer(
+    val kind: ObservationKind,
+    val sourceIndex: Int,
+    val what: String,
+    val position: List<Double>,
+    val visible: Boolean,
+    val subject: UUID? = null,
+    val count: Long? = null,
+) {
+    val key: Pair<ObservationKind, Int> = kind to sourceIndex
+}
+
 private fun entityDescriptionId(resource: String): String {
     val (namespace, path) = splitResource(resource)
     return "entity.$namespace.${path.replace('/', '.')}"
+}
+
+private fun blockDescriptionId(resource: String): String {
+    val (namespace, path) = splitResource(resource)
+    return "block.$namespace.${path.replace('/', '.')}"
 }
 
 private fun itemDescriptionId(resource: String): String {

@@ -52,8 +52,8 @@ sealed interface SlotResolution {
  * The slot handles a player body has issued, bounded per request and per agent.
  *
  * The lifetime and in-flight bounds are shared with creature handles through
- * [RequestWindow], because both kinds travel in one perception and are settled by one
- * decision.
+ * [RequestWindow], because every handle kind travels in one perception and is settled
+ * by one decision.
  */
 class InventoryRefs(
     lifetimeTicks: Long = REQUEST_REFS_LIFETIME_TICKS,

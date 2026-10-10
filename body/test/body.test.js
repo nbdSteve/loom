@@ -16,6 +16,8 @@ const assert = require('node:assert/strict')
 const net = require('node:net')
 const { test } = require('node:test')
 
+const digging = require('mineflayer/lib/plugins/digging')
+const genericPlace = require('mineflayer/lib/plugins/generic_place')
 const physics = require('mineflayer/lib/plugins/physics')
 const { pathfinder } = require('mineflayer-pathfinder')
 
@@ -94,12 +96,10 @@ test('only the reporting plugins are loaded and the rest is Loom own', async () 
       'auth', 'hideErrors', 'host', 'loadInternalPlugins', 'physicsEnabled', 'plugins',
       'port', 'respawn', 'username'
     ])
-    // The two plugins a walk needs arrive through `loadPlugin` rather than through the
-    // table above - which is the seam that keeps that table the statement about the
-    // library's *reporting* plugins it is written as - and in the order they are needed
-    // in, since the pathfinder drives what the simulation defines. Exactly two, so a
-    // third plugin cannot be added silently.
-    assert.deepEqual(bot.loaded, [physics, pathfinder])
+    // Action primitives arrive through their owning bounded modules rather than through
+    // the reporting table. Loading them makes no choice and performs no action; the wire
+    // cases prove they are reached only by one explicit request.
+    assert.deepEqual(bot.loaded, [physics, pathfinder, digging, genericPlace])
   } finally {
     await body.stop()
   }
@@ -144,7 +144,7 @@ test('a body follows the lifecycle events and no others', async () => {
   try {
     assert.deepEqual(
       [...bot.subscribed].sort(),
-      ['death', 'end', 'entityDead', 'error', 'login', 'spawn']
+      ['death', 'end', 'entityDead', 'entityGone', 'error', 'login', 'spawn']
     )
   } finally {
     await body.stop()
