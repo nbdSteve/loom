@@ -7,8 +7,24 @@ const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
 
-const { importProviderUsage, verifyNoListeners } = require('../lib/harness.js')
+const {
+  conciseJavaVersion,
+  importProviderUsage,
+  verifyNoListeners
+} = require('../lib/harness.js')
 const { openAiProofConfig, proofConfig, writeJsonLines } = require('./fixtures.js')
+
+test('the Java tool attestation keeps the version banner and drops runtime detail', () => {
+  const full =
+    'openjdk version "21.0.11" 2026-04-21 LTS ' +
+    'OpenJDK Runtime Environment Corretto-21.0.11.10.1 (build 21.0.11+10-LTS) ' +
+    'OpenJDK 64-Bit Server VM Corretto-21.0.11.10.1 (build 21.0.11+10-LTS, mixed mode, sharing)'
+  assert.equal(
+    conciseJavaVersion(full),
+    'openjdk version "21.0.11" 2026-04-21 LTS'
+  )
+  assert.ok(conciseJavaVersion('x'.repeat(300)).length <= 200)
+})
 
 test('provider usage is imported with exact pinned-price cost and request identity', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-usage-import-'))

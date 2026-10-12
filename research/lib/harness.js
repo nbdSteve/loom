@@ -60,6 +60,12 @@ function javaMajor (java) {
   return match === null ? null : Number(match[1])
 }
 
+function conciseJavaVersion (output) {
+  const banner =
+    /^((?:openjdk|java) version "[^"]+"(?: [0-9]{4}-[0-9]{2}-[0-9]{2})?(?: LTS)?)/i.exec(output)
+  return (banner?.[1] ?? output).slice(0, 200)
+}
+
 function findJava21 () {
   const candidates = []
   if (process.env.LOOM_JAVA_21) candidates.push(process.env.LOOM_JAVA_21)
@@ -411,7 +417,7 @@ function toolVersions (java, repositoryRoot) {
   return {
     os: `${os.platform()} ${os.release()}`,
     architecture: os.arch(),
-    java: combinedOutput(java, ['-version']),
+    java: conciseJavaVersion(combinedOutput(java, ['-version'])),
     node: process.version,
     npm: combinedOutput('npm', ['--version']),
     rustc: combinedOutput('rustc', ['--version']),
@@ -762,6 +768,7 @@ function paperWarnings (logFile) {
 module.exports = {
   bodyEvents,
   buildComponents,
+  conciseJavaVersion,
   ensurePaper,
   findJava21,
   importProviderUsage,
