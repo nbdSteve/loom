@@ -10,7 +10,6 @@ import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import dev.loom.body.PERCEPTION_RADIUS_BLOCKS
 import dev.loom.body.blocksApart
 import dev.loom.body.completedBodyOperation
-import dev.loom.body.tagOf
 import dev.loom.bodycontrol.BODY_CONTROL_PROTOCOL_VERSION
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
@@ -189,8 +188,7 @@ internal class PlayerPerception(
                     } else {
                         ""
                     },
-            requestId = requestId,
-            trigger = tagOf(trigger),
+            perception = perception,
             vitals = food,
         )
         context.vitalsWatch.recordChanges(agentId, food, health)

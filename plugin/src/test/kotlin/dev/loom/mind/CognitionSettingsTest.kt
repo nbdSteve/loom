@@ -24,6 +24,51 @@ class CognitionSettingsTest {
     }
 
     @Test
+    @DisplayName("a disposable run can allocate the mind endpoint without changing defaults")
+    fun theMindEndpointIsConfiguredAndBounded() {
+        val settings =
+            CognitionSettings.fromEnvironment(
+                mapOf(
+                    "LOOM_COGNITION_HOST" to "127.0.0.1",
+                    "LOOM_COGNITION_PORT" to "18642",
+                    "LOOM_COGNITION_TIMEOUT_MS" to "20000",
+                    "LOOM_COGNITION_CONNECT_TIMEOUT_MS" to "250",
+                    "LOOM_COGNITION_WORKERS" to "3",
+                    "LOOM_COGNITION_QUEUE_DEPTH" to "12",
+                ),
+            )
+        assertEquals("127.0.0.1", settings.host)
+        assertEquals(18_642, settings.port)
+        assertEquals(20.seconds, settings.timeout)
+        assertEquals(250.milliseconds, settings.connectTimeout)
+        assertEquals(3, settings.workers)
+        assertEquals(12, settings.queueDepth)
+        for (bad in listOf("0", "65536", "many")) {
+            assertThrows<IllegalArgumentException>(bad) {
+                CognitionSettings.fromEnvironment(mapOf("LOOM_COGNITION_PORT" to bad))
+            }
+        }
+        for ((name, bad) in listOf(
+            "LOOM_COGNITION_TIMEOUT_MS" to "2",
+            "LOOM_COGNITION_CONNECT_TIMEOUT_MS" to "0",
+            "LOOM_COGNITION_WORKERS" to "65",
+            "LOOM_COGNITION_QUEUE_DEPTH" to "1025",
+        )) {
+            assertThrows<IllegalArgumentException>("$name=$bad") {
+                CognitionSettings.fromEnvironment(mapOf(name to bad))
+            }
+        }
+        assertThrows<IllegalArgumentException> {
+            CognitionSettings.fromEnvironment(
+                mapOf(
+                    "LOOM_COGNITION_TIMEOUT_MS" to "1000",
+                    "LOOM_COGNITION_CONNECT_TIMEOUT_MS" to "1000",
+                ),
+            )
+        }
+    }
+
+    @Test
     @DisplayName("the per-agent outstanding budget is configured and bounded")
     fun perAgentBudgetIsBounded() {
         assertEquals(

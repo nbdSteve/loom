@@ -13,6 +13,7 @@
 //! one place.
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use reqwest::header::{HeaderValue, InvalidHeaderValue};
@@ -41,6 +42,12 @@ pub const TIMEOUT_MS_VAR: &str = "LOOM_OPENAI_TIMEOUT_MS";
 
 /// Environment variable bounding how many tokens one answer may cost.
 pub const MAX_OUTPUT_TOKENS_VAR: &str = "LOOM_OPENAI_MAX_OUTPUT_TOKENS";
+
+/// Environment variable bounding the serialized provider request.
+pub const MAX_REQUEST_BYTES_VAR: &str = "LOOM_OPENAI_MAX_REQUEST_BYTES";
+
+/// Optional append-only destination for provider-reported token usage.
+pub const USAGE_LOG_VAR: &str = "LOOM_OPENAI_USAGE_LOG";
 
 /// Default API root.
 pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
@@ -83,6 +90,13 @@ pub const DEFAULT_TIMEOUT_MS: u32 = 12_000;
 /// a clear error, so the bound is set well above the visible output a decision
 /// needs. If answers start failing as cut off, this is the setting to raise.
 pub const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 2_048;
+
+/// Default byte bound on one serialized provider request.
+///
+/// The perception wire is bounded to the same order. Keeping a separate bound
+/// here covers the instructions and strict response schema too, and refuses a
+/// future renderer that grows without making a provider call first.
+pub const DEFAULT_MAX_REQUEST_BYTES: u32 = 256 * 1024;
 
 /// The `OpenAI` credential.
 ///
@@ -127,13 +141,29 @@ impl fmt::Debug for ApiKey {
 }
 
 /// Everything the `OpenAI` backend was configured with.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct OpenAiConfig {
     api_key: ApiKey,
     chat_completions_url: String,
     catalog: ModelCatalog,
     request_timeout: Duration,
     max_output_tokens: u32,
+    max_request_bytes: u32,
+    usage_log: Option<PathBuf>,
+}
+
+impl fmt::Debug for OpenAiConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OpenAiConfig")
+            .field("api_key", &self.api_key)
+            .field("chat_completions_url", &self.chat_completions_url)
+            .field("catalog", &self.catalog)
+            .field("request_timeout", &self.request_timeout)
+            .field("max_output_tokens", &self.max_output_tokens)
+            .field("max_request_bytes", &self.max_request_bytes)
+            .field("usage_log_configured", &self.usage_log.is_some())
+            .finish()
+    }
 }
 
 impl OpenAiConfig {
@@ -176,6 +206,9 @@ impl OpenAiConfig {
             request_timeout: env.positive_millis(TIMEOUT_MS_VAR, DEFAULT_TIMEOUT_MS)?,
             max_output_tokens: env
                 .positive_u32(MAX_OUTPUT_TOKENS_VAR, DEFAULT_MAX_OUTPUT_TOKENS)?,
+            max_request_bytes: env
+                .positive_u32(MAX_REQUEST_BYTES_VAR, DEFAULT_MAX_REQUEST_BYTES)?,
+            usage_log: env.optional(USAGE_LOG_VAR)?.map(PathBuf::from),
         })
     }
 
@@ -210,6 +243,18 @@ impl OpenAiConfig {
     #[must_use]
     pub const fn max_output_tokens(&self) -> u32 {
         self.max_output_tokens
+    }
+
+    /// Largest serialized provider request that may be sent, in UTF-8 bytes.
+    #[must_use]
+    pub const fn max_request_bytes(&self) -> u32 {
+        self.max_request_bytes
+    }
+
+    /// Append-only usage destination, when an experiment requested one.
+    #[must_use]
+    pub fn usage_log(&self) -> Option<&Path> {
+        self.usage_log.as_deref()
     }
 }
 
@@ -289,8 +334,9 @@ mod tests {
 
     use super::{
         checked_base_url, ApiKey, OpenAiConfig, API_KEY_VAR, BASE_URL_VAR, DEEP_MODEL_VAR,
-        DEFAULT_DEEP_MODEL, DEFAULT_FAST_MODEL, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_TIMEOUT_MS,
-        FAST_MODEL_VAR, MAX_OUTPUT_TOKENS_VAR, TIMEOUT_MS_VAR,
+        DEFAULT_DEEP_MODEL, DEFAULT_FAST_MODEL, DEFAULT_MAX_OUTPUT_TOKENS,
+        DEFAULT_MAX_REQUEST_BYTES, DEFAULT_TIMEOUT_MS, FAST_MODEL_VAR, MAX_OUTPUT_TOKENS_VAR,
+        MAX_REQUEST_BYTES_VAR, TIMEOUT_MS_VAR, USAGE_LOG_VAR,
     };
     use crate::config::{ConfigError, Env};
     use crate::router::ModelClass;
@@ -333,6 +379,8 @@ mod tests {
             Duration::from_millis(u64::from(DEFAULT_TIMEOUT_MS))
         );
         assert_eq!(config.max_output_tokens(), DEFAULT_MAX_OUTPUT_TOKENS);
+        assert_eq!(config.max_request_bytes(), DEFAULT_MAX_REQUEST_BYTES);
+        assert_eq!(config.usage_log(), None);
     }
 
     #[test]
@@ -353,10 +401,18 @@ mod tests {
             (API_KEY_VAR, NOT_A_KEY),
             (TIMEOUT_MS_VAR, "1500"),
             (MAX_OUTPUT_TOKENS_VAR, "64"),
+            (MAX_REQUEST_BYTES_VAR, "65536"),
+            (USAGE_LOG_VAR, "usage.jsonl"),
         ]))
         .unwrap();
         assert_eq!(config.request_timeout(), Duration::from_millis(1_500));
         assert_eq!(config.max_output_tokens(), 64);
+        assert_eq!(config.max_request_bytes(), 65_536);
+        assert_eq!(
+            config.usage_log(),
+            Some(std::path::Path::new("usage.jsonl"))
+        );
+        assert!(!format!("{config:?}").contains("usage.jsonl"));
 
         assert!(matches!(
             OpenAiConfig::from_env(&env_of(&[(API_KEY_VAR, NOT_A_KEY), (TIMEOUT_MS_VAR, "0")])),
@@ -369,6 +425,18 @@ mod tests {
             ])),
             Err(ConfigError::NotAPositiveNumber { .. })
         ));
+        assert!(matches!(
+            OpenAiConfig::from_env(&env_of(&[
+                (API_KEY_VAR, NOT_A_KEY),
+                (MAX_REQUEST_BYTES_VAR, "0")
+            ])),
+            Err(ConfigError::NotAPositiveNumber { .. })
+        ));
+        assert_eq!(
+            OpenAiConfig::from_env(&env_of(&[(API_KEY_VAR, NOT_A_KEY), (USAGE_LOG_VAR, " ")]))
+                .unwrap_err(),
+            ConfigError::Blank { var: USAGE_LOG_VAR }
+        );
     }
 
     #[test]

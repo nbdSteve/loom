@@ -1,0 +1,553 @@
+'use strict'
+
+const fs = require('node:fs')
+const path = require('node:path')
+
+const { canonicalLine, sortedValue } = require('./util.js')
+
+const NORMALIZED_EVIDENCE_VERSION = 'loom-normalized-evidence/1'
+const METRICS_VERSION = 'loom-derived-metrics/1'
+const MAX_PUBLIC_STRING = 512
+
+const PUBLIC_SCAN_PATTERNS = [
+  {
+    name: 'OpenAI-style API key',
+    expression: /\bsk-[A-Za-z0-9_-]{16,}\b/g
+  },
+  {
+    name: 'authorization bearer value',
+    expression: /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi
+  },
+  {
+    name: 'private key material',
+    expression: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g
+  },
+  {
+    name: 'AWS secret access key assignment',
+    expression: /\bAWS_SECRET_ACCESS_KEY\s*[:=]\s*\S+/gi
+  },
+  {
+    name: 'secret-bearing JSON field',
+    expression: /"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|device[_-]?token|account[_-]?token|session[_-]?token|credential|authorization|cookie)"\s*:\s*"(?!\[redacted\])[^"]+"/gi
+  },
+  {
+    name: 'GitHub-style token',
+    expression: /\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]{16,}\b/g
+  },
+  {
+    name: 'local absolute filesystem path',
+    expression: /(?:\/Users\/|\/home\/|\/private\/tmp\/|\/tmp\/|\/var\/folders\/|[A-Za-z]:\\Users\\)[^\s"'<>]*/g
+  },
+  {
+    name: 'provider request or thread identifier',
+    expression: /\b(?:chatcmpl|resp|thread|run)_[A-Za-z0-9_-]{8,}\b/g
+  },
+  {
+    name: 'transient process id field',
+    expression: /"(?:pid|processId)"\s*:\s*[1-9][0-9]*/g
+  }
+]
+
+function resetExpression (pattern) {
+  pattern.expression.lastIndex = 0
+}
+
+function scanText (text) {
+  const matches = []
+  for (const pattern of PUBLIC_SCAN_PATTERNS) {
+    resetExpression(pattern)
+    const found = text.match(pattern.expression)
+    if (found !== null) {
+      matches.push({ pattern: pattern.name, count: found.length })
+    }
+  }
+  return matches
+}
+
+function sanitizeString (value, state) {
+  let result = value
+  for (const pattern of PUBLIC_SCAN_PATTERNS) {
+    resetExpression(pattern)
+    result = result.replace(pattern.expression, () => {
+      state.redactions += 1
+      return '[redacted]'
+    })
+  }
+  if (result.length > MAX_PUBLIC_STRING) {
+    state.redactions += 1
+    result = `${result.slice(0, MAX_PUBLIC_STRING - 15)}…[truncated]`
+  }
+  return result
+}
+
+function sensitiveField (key) {
+  const normalized = key.replace(/[^A-Za-z0-9]/g, '').toLowerCase()
+  return [
+    'apikey',
+    'accesstoken',
+    'refreshtoken',
+    'devicetoken',
+    'accounttoken',
+    'sessiontoken',
+    'credential',
+    'authorization',
+    'cookie'
+  ].includes(normalized)
+}
+
+function transientField (key) {
+  const normalized = key.replace(/[^A-Za-z0-9]/g, '').toLowerCase()
+  return ['pid', 'processid', 'providerrequestid', 'providerthreadid'].includes(normalized)
+}
+
+function sanitizeValue (value, state, key = '') {
+  if (sensitiveField(key) || transientField(key)) {
+    state.redactions += 1
+    return '[redacted]'
+  }
+  if (typeof value === 'string') return sanitizeString(value, state)
+  if (Array.isArray(value)) return value.map((item) => sanitizeValue(item, state))
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value).map(([childKey, item]) => [
+      childKey,
+      sanitizeValue(item, state, childKey)
+    ])
+  )
+}
+
+function readJsonLines (file, limits) {
+  const stat = fs.statSync(file)
+  if (stat.size > limits.maxBytes) {
+    throw new Error(`${path.basename(file)} is ${stat.size} bytes, over the ${limits.maxBytes} byte evidence input bound`)
+  }
+  const text = fs.readFileSync(file, 'utf8')
+  if (text.length === 0) return []
+  if (!text.endsWith('\n')) {
+    throw new Error(`${path.basename(file)} ends with a partial JSONL record`)
+  }
+  const lines = text.slice(0, -1).split('\n')
+  if (lines.length > limits.maxRecords) {
+    throw new Error(`${path.basename(file)} has ${lines.length} records, over the ${limits.maxRecords} record bound`)
+  }
+  return lines.map((line, index) => {
+    if (Buffer.byteLength(line) > limits.maxLineBytes) {
+      throw new Error(`${path.basename(file)} line ${index + 1} is over the ${limits.maxLineBytes} byte line bound`)
+    }
+    try {
+      return JSON.parse(line)
+    } catch (cause) {
+      throw new Error(`${path.basename(file)} line ${index + 1} is malformed JSON: ${cause.message}`)
+    }
+  })
+}
+
+function normalizeBodyRecord (experimentId, record, index, state) {
+  if (record === null || typeof record !== 'object' || Array.isArray(record)) {
+    throw new Error(`body evidence line ${index + 1} is not an object`)
+  }
+  if (!Number.isInteger(record.tick) || record.tick < 0) {
+    throw new Error(`body evidence line ${index + 1} has an invalid tick`)
+  }
+  if (typeof record.agentId !== 'string' || typeof record.event !== 'string') {
+    throw new Error(`body evidence line ${index + 1} has no agentId or event`)
+  }
+  if (record.perception?.agentId !== undefined && record.perception.agentId !== record.agentId) {
+    throw new Error(`body evidence line ${index + 1} files a perception under another agent`)
+  }
+
+  const requestId = record.requestId ?? record.perception?.requestId ?? record.decision?.requestId
+  const summary = record.event === 'cognitionUnavailable'
+    ? `cognition unavailable: ${record.outcome ?? 'unclassified'}`
+    : sanitizeString(String(record.detail ?? ''), state)
+  const normalized = {
+    schemaVersion: NORMALIZED_EVIDENCE_VERSION,
+    experimentId,
+    recordId: `body:${String(index + 1).padStart(8, '0')}`,
+    source: 'body',
+    sourceSequence: index + 1,
+    tick: record.tick,
+    agentId: record.agentId,
+    event: record.event,
+    summary
+  }
+  if (requestId !== undefined && requestId !== null) {
+    normalized.requestId = requestId
+    normalized.requestKey = `${record.agentId}:${requestId}`
+  }
+  for (const field of [
+    'trigger',
+    'intent',
+    'outcome',
+    'provenance',
+    'vitals',
+    'health',
+    'witness',
+    'perception',
+    'decision'
+  ]) {
+    if (record[field] !== undefined && record[field] !== null) {
+      normalized[field] = sanitizeValue(record[field], state)
+    }
+  }
+  return sortedValue(normalized)
+}
+
+function normalizeHarnessRecord (experimentId, record, index, state) {
+  if (record === null || typeof record !== 'object' || Array.isArray(record)) {
+    throw new Error(`harness evidence line ${index + 1} is not an object`)
+  }
+  if (typeof record.event !== 'string' || typeof record.observedAt !== 'string') {
+    throw new Error(`harness evidence line ${index + 1} has no event or observedAt`)
+  }
+  const normalized = {
+    schemaVersion: NORMALIZED_EVIDENCE_VERSION,
+    experimentId,
+    recordId: `harness:${String(index + 1).padStart(8, '0')}`,
+    source: 'harness',
+    sourceSequence: index + 1,
+    observedAt: record.observedAt,
+    event: record.event
+  }
+  for (const [key, value] of Object.entries(record)) {
+    if (
+      key === 'observedAt' ||
+      key === 'event' ||
+      key === 'schemaVersion' ||
+      key === 'experimentId' ||
+      value === undefined ||
+      value === null
+    ) continue
+    normalized[key] = sanitizeValue(value, state, key)
+  }
+  if (normalized.agentId !== undefined && normalized.requestId !== undefined) {
+    normalized.requestKey = `${normalized.agentId}:${normalized.requestId}`
+  }
+  return sortedValue(normalized)
+}
+
+function normalizeEvidence ({
+  experimentId,
+  bodyFile,
+  harnessFile,
+  outputFile,
+  maxInputBytes,
+  maxOutputBytes,
+  maxRecords,
+  maxLineBytes = 256 * 1024
+}) {
+  const limits = { maxBytes: maxInputBytes, maxRecords, maxLineBytes }
+  const body = readJsonLines(bodyFile, limits)
+  const harness = readJsonLines(harnessFile, limits)
+  if (body.length + harness.length > maxRecords) {
+    throw new Error(`combined evidence has ${body.length + harness.length} records, over the ${maxRecords} record bound`)
+  }
+  const state = { redactions: 0 }
+  const records = [
+    ...body.map((record, index) => normalizeBodyRecord(experimentId, record, index, state)),
+    ...harness.map((record, index) => normalizeHarnessRecord(experimentId, record, index, state))
+  ]
+  if (records.length === 0) throw new Error('an experiment cannot publish empty evidence')
+
+  let bytes = 0
+  const lines = records.map((record) => {
+    const line = `${canonicalLine(record)}\n`
+    bytes += Buffer.byteLength(line)
+    if (bytes > maxOutputBytes) {
+      throw new Error(`normalized evidence is over the ${maxOutputBytes} byte artifact bound`)
+    }
+    return line
+  })
+  fs.writeFileSync(outputFile, lines.join(''), { encoding: 'utf8', flag: 'wx' })
+  return { records, bytes, redactions: state.redactions }
+}
+
+function increment (object, key) {
+  object[key] = (object[key] ?? 0) + 1
+}
+
+function euclideanDistance (first, second) {
+  return Math.sqrt(first.reduce((sum, value, index) => sum + Math.pow(value - second[index], 2), 0))
+}
+
+function deriveMetrics (records, configuredAgents = []) {
+  const bodyRecords = records.filter((record) => record.source === 'body')
+  const harnessRecords = records.filter((record) => record.source === 'harness')
+  const agents = new Map(configuredAgents.map((agent) => [
+    agent.agentId,
+    {
+      agentId: agent.agentId,
+      records: 0,
+      byEvent: {},
+      decisionsByIntent: {},
+      appliedByIntent: {},
+      byOutcome: {},
+      decisions: 0,
+      actions: 0
+    }
+  ]))
+  const byEvent = {}
+  const decisionsByIntent = {}
+  const appliedByIntent = {}
+  const byOutcome = {}
+  const requestChains = new Map()
+  const stamps = new Map()
+  const positions = new Map()
+  const coLocations = []
+
+  for (const record of bodyRecords) {
+    increment(byEvent, record.event)
+    if (record.agentId !== 'loom:world') {
+      const agent = agents.get(record.agentId) ?? {
+        agentId: record.agentId,
+        records: 0,
+        byEvent: {},
+        decisionsByIntent: {},
+        appliedByIntent: {},
+        byOutcome: {},
+        decisions: 0,
+        actions: 0
+      }
+      agent.records += 1
+      increment(agent.byEvent, record.event)
+      if (record.event === 'decided') {
+        agent.decisions += 1
+        if (record.intent !== undefined) {
+          increment(agent.decisionsByIntent, record.intent)
+          increment(decisionsByIntent, record.intent)
+        }
+      }
+      if (record.event === 'intentApplied') {
+        agent.actions += 1
+        if (record.intent !== undefined) {
+          increment(agent.appliedByIntent, record.intent)
+          increment(appliedByIntent, record.intent)
+        }
+      }
+      if (record.outcome !== undefined) increment(agent.byOutcome, record.outcome)
+      agents.set(record.agentId, agent)
+    }
+    if (record.outcome !== undefined) increment(byOutcome, record.outcome)
+    if (record.requestKey !== undefined) {
+      const chain = requestChains.get(record.requestKey) ?? []
+      chain.push(record.event)
+      requestChains.set(record.requestKey, chain)
+    }
+    if (record.provenance !== undefined && record.event === 'decided') {
+      const key = [
+        record.provenance.tier,
+        record.provenance.model,
+        record.provenance.promptVersion
+      ].join('\0')
+      const stamp = stamps.get(key) ?? { ...record.provenance, decisions: 0 }
+      stamp.decisions += 1
+      stamps.set(key, stamp)
+    }
+    const position = record.perception?.selfState?.position
+    if (
+      record.event === 'perceived' &&
+      Array.isArray(position) &&
+      position.length === 3 &&
+      position.every(Number.isFinite)
+    ) {
+      positions.set(record.agentId, { tick: record.tick, position })
+      for (const [otherAgent, other] of positions) {
+        if (otherAgent === record.agentId || Math.abs(other.tick - record.tick) > 20) continue
+        const pair = [record.agentId, otherAgent].sort()
+        const distance = euclideanDistance(position, other.position)
+        if (distance <= 8) {
+          const finding = { agents: pair, tick: Math.max(record.tick, other.tick), distanceBlocks: distance }
+          const previous = coLocations[coLocations.length - 1]
+          if (
+            previous === undefined ||
+            previous.tick !== finding.tick ||
+            previous.agents.join('\0') !== finding.agents.join('\0')
+          ) {
+            coLocations.push(finding)
+          }
+        }
+      }
+    }
+  }
+
+  const forwarded = harnessRecords.filter((record) => record.event === 'cognitionForwarded')
+  const refused = harnessRecords.filter((record) => record.event === 'cognitionRefused')
+  const providerUsage = harnessRecords.filter((record) => record.event === 'providerUsage')
+  const crashes = harnessRecords.filter((record) => record.event === 'controlledBodyCrash')
+  const cleanup = harnessRecords.filter((record) => record.event === 'cleanupVerified')
+  const incomplete = []
+  for (const [requestKey, chain] of requestChains) {
+    const perceived = chain.includes('perceived')
+    const terminal =
+      chain.includes('intentApplied') ||
+      chain.includes('decisionDiscarded') ||
+      chain.includes('cognitionUnavailable')
+    if (perceived && !terminal) incomplete.push({ requestKey, events: chain })
+  }
+  const ticks = bodyRecords.map((record) => record.tick)
+  const observedFirstTick = ticks.length === 0 ? 0 : Math.min(...ticks)
+  const observedLastTick = ticks.length === 0 ? 0 : Math.max(...ticks)
+  const startTick = harnessRecords.find((record) => record.event === 'experimentStarted')?.startTick
+  const endTick = harnessRecords.findLast((record) => record.event === 'experimentEnded')?.endTick
+  const firstTick = Number.isInteger(startTick) ? startTick : observedFirstTick
+  const lastTick = Number.isInteger(endTick) ? endTick : observedLastTick
+  const sortedAgents = [...agents.values()]
+    .sort((first, second) => first.agentId.localeCompare(second.agentId))
+    .map((agent) => ({
+      ...agent,
+      byEvent: sortedValue(agent.byEvent),
+      decisionsByIntent: sortedValue(agent.decisionsByIntent),
+      appliedByIntent: sortedValue(agent.appliedByIntent),
+      byOutcome: sortedValue(agent.byOutcome)
+    }))
+  const usageByModel = {}
+  let externalSpendNanoUsd = 0
+  for (const record of providerUsage) {
+    if (
+      typeof record.model !== 'string' ||
+      !['promptTokens', 'cachedPromptTokens', 'completionTokens', 'totalTokens', 'costNanoUsd']
+        .every((field) => Number.isSafeInteger(record[field]) && record[field] >= 0) ||
+      record.cachedPromptTokens > record.promptTokens ||
+      record.promptTokens + record.completionTokens !== record.totalTokens
+    ) {
+      throw new Error(`provider usage ${record.recordId} is malformed or inconsistent`)
+    }
+    const model = usageByModel[record.model] ?? {
+      calls: 0,
+      promptTokens: 0,
+      cachedPromptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      costNanoUsd: 0
+    }
+    model.calls += 1
+    model.promptTokens += record.promptTokens
+    model.cachedPromptTokens += record.cachedPromptTokens
+    model.completionTokens += record.completionTokens
+    model.totalTokens += record.totalTokens
+    model.costNanoUsd += record.costNanoUsd
+    externalSpendNanoUsd += record.costNanoUsd
+    usageByModel[record.model] = model
+  }
+
+  const socialSpeech = appliedByIntent.say ?? 0
+  const attacks = appliedByIntent.attack ?? 0
+  const configuredBackend = harnessRecords
+    .find((record) => record.event === 'experimentStarted')
+    ?.cognitionBackend
+  const scriptedEvidence =
+    configuredBackend === 'scripted' ||
+    (stamps.size > 0 && [...stamps.values()].every((stamp) => stamp.model === 'scripted-stand-in'))
+  const observations = []
+  if (coLocations.length > 0) {
+    observations.push(`${coLocations.length} bounded co-location sample(s) placed two agents within eight blocks`)
+  }
+  if (socialSpeech > 0) observations.push(`${socialSpeech} speech intent(s) were applied`)
+  if (attacks > 0) observations.push(`${attacks} attack intent(s) were applied`)
+
+  const counterevidence = []
+  if (socialSpeech === 0) counterevidence.push('No agent produced a speech intent.')
+  if (coLocations.length === 0) counterevidence.push('No bounded perception sample placed two agents within eight blocks.')
+  if (attacks === 0) counterevidence.push('No attack intent was applied.')
+  if ((byEvent.worldInteraction ?? 0) === 0) {
+    counterevidence.push('No server-confirmed native world interaction occurred.')
+  }
+
+  return sortedValue({
+    schemaVersion: METRICS_VERSION,
+    records: {
+      total: records.length,
+      body: bodyRecords.length,
+      harness: harnessRecords.length,
+      byEvent: sortedValue(byEvent),
+      agents: sortedAgents
+    },
+    timing: {
+      firstTick,
+      lastTick,
+      tickSpan: lastTick - firstTick
+    },
+    cognition: {
+      forwardedCalls: forwarded.length,
+      refusedCalls: refused.length,
+      providerUsageCalls: providerUsage.length,
+      usageByModel: sortedValue(usageByModel),
+      externalSpendNanoUsd,
+      externalSpendUsd: Number((externalSpendNanoUsd / 1_000_000_000).toFixed(9)),
+      decisionsByStamp: [...stamps.values()].sort((first, second) =>
+        [first.tier, first.model, first.promptVersion]
+          .join('\0')
+          .localeCompare([second.tier, second.model, second.promptVersion].join('\0'))
+      )
+    },
+    cycles: {
+      perceived: byEvent.perceived ?? 0,
+      decided: byEvent.decided ?? 0,
+      applied: byEvent.intentApplied ?? 0,
+      unavailable: byEvent.cognitionUnavailable ?? 0,
+      discarded: byEvent.decisionDiscarded ?? 0,
+      incomplete
+    },
+    behavior: {
+      decisionsByIntent: sortedValue(decisionsByIntent),
+      byIntent: sortedValue(appliedByIntent),
+      byOutcome: sortedValue(byOutcome),
+      movementRecords: byEvent.moved ?? 0,
+      worldInteractionRecords: byEvent.worldInteraction ?? 0,
+      speechIntents: socialSpeech,
+      attackIntents: attacks,
+      sleepIntents: appliedByIntent.sleep ?? 0,
+      deaths: byEvent.died ?? 0,
+      disconnects: byEvent.bodyDisconnected ?? 0
+    },
+    spatial: {
+      coLocationThresholdBlocks: 8,
+      maximumTickSeparation: 20,
+      coLocationSamples: coLocations
+    },
+    crashContainment: {
+      controlledCrashes: crashes.map((record) => ({
+        agentId: record.agentId,
+        controlPort: record.controlPort
+      })),
+      cleanupVerified: cleanup.length === 1,
+      peerDecisionsAfterCrash: peerDecisionsAfterCrash(bodyRecords, crashes)
+    },
+    findings: {
+      observations,
+      interpretations: [
+        'Counts describe recorded behavior only; they do not establish motive, cooperation, specialization, hierarchy, or emergence.'
+      ],
+      counterevidence,
+      limitations: [
+        'Perception positions are samples rather than continuous trajectories.',
+        scriptedEvidence
+          ? 'A scripted cognition run validates composition and containment, not autonomous social behavior.'
+          : 'One bounded live-model run cannot establish that an observed pattern is stable or emergent.'
+      ]
+    }
+  })
+}
+
+function peerDecisionsAfterCrash (bodyRecords, crashes) {
+  const result = {}
+  for (const crash of crashes) {
+    const observedAtTick = Number.isInteger(crash.afterTick) ? crash.afterTick : -1
+    for (const record of bodyRecords) {
+      if (record.event !== 'decided' || record.agentId === crash.agentId || record.tick <= observedAtTick) continue
+      increment(result, record.agentId)
+    }
+  }
+  return sortedValue(result)
+}
+
+module.exports = {
+  METRICS_VERSION,
+  NORMALIZED_EVIDENCE_VERSION,
+  PUBLIC_SCAN_PATTERNS,
+  deriveMetrics,
+  normalizeEvidence,
+  readJsonLines,
+  sanitizeValue,
+  scanText
+}

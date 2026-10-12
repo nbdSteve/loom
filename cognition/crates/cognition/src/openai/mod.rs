@@ -39,12 +39,13 @@
 //! layer lower and invisibly. A lost decision is cheaper than a duplicated one.
 
 pub mod settings;
+mod usage;
 pub mod wire;
 
 use std::time::Duration;
 
 use loom_contract::Perception;
-use reqwest::header::{HeaderMap, AUTHORIZATION, RETRY_AFTER};
+use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use reqwest::{Response, StatusCode};
 
 use crate::config::{bounded, ConfigError};
@@ -77,6 +78,7 @@ const CUT_OFF: &str = "length";
 pub struct OpenAiBackend {
     http: reqwest::Client,
     config: OpenAiConfig,
+    usage: usage::UsageJournal,
 }
 
 impl OpenAiBackend {
@@ -104,7 +106,12 @@ impl OpenAiBackend {
                 what: "the OpenAI HTTP client",
                 reason: root_cause(&e),
             })?;
-        Ok(Self { http, config })
+        let usage = usage::UsageJournal::open(config.usage_log())?;
+        Ok(Self {
+            http,
+            config,
+            usage,
+        })
     }
 
     /// The configuration this backend was built with.
@@ -121,10 +128,22 @@ impl OpenAiBackend {
     ) -> Result<Draft, BackendError> {
         let prompt = render(route, perception);
         let request = wire::chat_request(route.model(), &prompt, self.config.max_output_tokens());
+        let request_bytes = serde_json::to_vec(&request)
+            .map_err(|_| BackendError::new("the model request could not be encoded"))?;
+        if request_bytes.len()
+            > usize::try_from(self.config.max_request_bytes()).unwrap_or(usize::MAX)
+        {
+            return Err(BackendError::new(format!(
+                "the model request exceeded {limit} bytes; raise {var}",
+                limit = self.config.max_request_bytes(),
+                var = settings::MAX_REQUEST_BYTES_VAR
+            )));
+        }
         let response = self
             .http
             .post(self.config.chat_completions_url())
-            .json(&request)
+            .header(CONTENT_TYPE, "application/json")
+            .body(request_bytes)
             .send()
             .await
             .map_err(|e| self.transport_failure(&e))?;
@@ -139,7 +158,9 @@ impl OpenAiBackend {
                 retry_after.as_deref(),
             ));
         }
-        self.draft_from_body(&body)
+        let parsed = Self::response_from_body(&body)?;
+        self.usage.append(route, perception, parsed.usage)?;
+        self.draft_from_response(parsed)
     }
 
     /// Reads a response body, refusing one that will not fit.
@@ -166,13 +187,16 @@ impl OpenAiBackend {
     }
 
     /// Turns a successful response body into a draft.
-    fn draft_from_body(&self, body: &[u8]) -> Result<Draft, BackendError> {
-        let parsed: wire::ChatResponse = serde_json::from_slice(body).map_err(|e| {
+    fn response_from_body(body: &[u8]) -> Result<wire::ChatResponse, BackendError> {
+        serde_json::from_slice(body).map_err(|e| {
             BackendError::new(format!(
                 "the model provider's answer was not a chat completion ({detail})",
                 detail = wire::describe_json_error(&e)
             ))
-        })?;
+        })
+    }
+
+    fn draft_from_response(&self, parsed: wire::ChatResponse) -> Result<Draft, BackendError> {
         let choice = parsed
             .choices
             .into_iter()
@@ -198,6 +222,15 @@ impl OpenAiBackend {
             .filter(|text| !text.trim().is_empty())
             .ok_or_else(|| BackendError::new("the model answered with nothing"))?;
         wire::draft_from_answer(&content).map_err(BackendError::new)
+    }
+
+    /// Parses a response body and turns its first answer into a draft.
+    ///
+    /// Kept as one seam for the unit tests; the live request path parses first so
+    /// configured usage evidence can be made durable before answer validation.
+    #[cfg(test)]
+    fn draft_from_body(&self, body: &[u8]) -> Result<Draft, BackendError> {
+        Self::response_from_body(body).and_then(|parsed| self.draft_from_response(parsed))
     }
 
     /// Why a request never produced a response, in Loom's own words.

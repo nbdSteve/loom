@@ -5,6 +5,8 @@
  */
 package dev.loom.body
 
+import dev.loom.contract.Perception
+
 /**
  * Records body events against [eventLog], stamped with the current server tick.
  *
@@ -56,8 +58,7 @@ class BodyEventJournal(
     fun recordPerception(
         agentId: AgentId,
         detail: String,
-        requestId: String?,
-        trigger: String,
+        perception: Perception,
         vitals: AgentVitals?,
     ) {
         eventLog.append(
@@ -66,9 +67,10 @@ class BodyEventJournal(
                 agentId = agentId.value,
                 event = BodyEvent.PERCEIVED,
                 detail = detail,
-                requestId = requestId,
-                trigger = trigger,
+                requestId = perception.requestId,
+                trigger = tagOf(perception.trigger),
                 vitals = vitals,
+                perception = perception,
             ),
         )
     }

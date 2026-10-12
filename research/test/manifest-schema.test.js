@@ -67,6 +67,30 @@ const ADJACENT_GENERATIONS = [
       { acceptedBy: 1, from: (manifestOf) => manifestOf(1) },
       { acceptedBy: 2, from: (manifestOf) => manifestOf(2) }
     ]
+  },
+  {
+    older: 2,
+    newer: 3,
+    // The first bounded fleet harness makes its reproducibility and safety
+    // configuration shared core rather than experiment-specific prose. Every
+    // path here is newly required, and the census names a list of agents rather
+    // than generation 2's one `agent` object.
+    paths: [
+      'metrics',
+      'software',
+      'agents',
+      'network',
+      'runtime',
+      'protocol',
+      'cognition',
+      'bounds',
+      'featureFlags',
+      'publication',
+      '/eventCounts/agents'
+    ],
+    witnesses: [
+      { acceptedBy: 2, from: (manifestOf) => manifestOf(2) }
+    ]
   }
 ]
 

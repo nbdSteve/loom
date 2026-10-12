@@ -9,32 +9,53 @@ When an experiment turns out to have been wrong, it stays and gets an erratum.
 
 ## One experiment, one directory
 
+Generations 1 and 2 use the original raw-log layout:
+
 ```
 research/experiments/<YYYY-MM-DD>-<short-slug>/
-  README.md            the human account: question, protocol, timeline, results, limitations, conclusion, next
-  manifest.json        the machine account: every number, derived, configured, or attested
-  body-events.jsonl    the raw evidence, exactly as the run wrote it
+  README.md
+  manifest.json
+  body-events.jsonl
+```
+
+Generation 3 is emitted by the bounded tribe harness:
+
+```
+research/experiments/<YYYY-MM-DD>-<short-slug>/
+  README.md
+  manifest.json
+  evidence.jsonl       sanitized normalized evidence
+  metrics.json         deterministic derivation of evidence.jsonl
 ```
 
 The date is the date the run happened, not the date it was written up.
 The slug names the question, not the outcome, so a directory does not have to be renamed when the result surprises.
 
-### `body-events.jsonl` is immutable
+### Evidence is immutable
 
-It is the append-only record `plugins/Loom/body-events.jsonl` produced by the run, copied byte for byte and never touched again.
+For generations 1 and 2, `body-events.jsonl` is the append-only record
+`plugins/Loom/body-events.jsonl` produced by the run, copied byte for byte and never touched again.
 Its `sha256` is recorded in `manifest.json`, so a later reader can prove the file they have is the file the numbers came from.
 No reformatting, no pretty-printing, no sorting, no removing records that turned out to be uninteresting.
+
+Generation 3 publishes `evidence.jsonl` instead. The harness preserves the
+bounded body and lifecycle facts, adds source sequence and fleet-safe request
+identity, removes unsafe provider/process/path material, and then derives
+`metrics.json`. The raw server directory and its logs remain disposable.
+`research/HARNESS.md` is the operator contract for that path.
 
 If a record in it is wrong, the record is still what the run wrote, and that is the fact being preserved.
 Say so in an erratum instead.
 
 ### `manifest.json` is derived, configured, or attested, and says which
 
-Most of it is **derived**: computable from `body-events.jsonl`, and nothing the evidence could have produced may be hand-typed instead.
+Most of it is **derived**: computable from the generation's evidence file, and nothing the evidence could have produced may be hand-typed instead.
 Hand-typing a number the log already carries is how a report and its evidence quietly stop agreeing.
 The rest is either a **setting the run was configured with**, which the protocol states and a repeat run would set again, or an **attestation**: a value the operator supplies from outside the raw evidence, which nobody reading this directory can re-derive.
 
-Wall-clock start and end, the JVM, the process exit codes, the hashes of artifacts that are not committed, `knownWarnings`, whether a client was connected, whether anything was watching, and the dropped-record check are all attestations.
+Wall-clock start and end, tool versions, the hashes of artifacts that are not committed,
+`knownWarnings`, whether a client was connected, whether anything was watching, and the
+dropped-record check are attestations.
 They come from the harness and the server log, and neither is committed.
 Every one of them sits inside an `attested` block naming its source, or inside an entry whose own `attested` block declares the whole entry to be log-sourced, so a reader can tell at a glance which numbers they can check and which they are taking on trust.
 An attestation that the event log could have produced instead is a derivation that was not done.
@@ -45,7 +66,7 @@ Ask `schema/manifest-schema.js` for the version a new manifest declares rather t
 ### `README.md` is the argument
 
 The manifest says what happened; the README says what it means and, more importantly, what it does not mean.
-It carries these sections, in this order:
+Generation 1 and 2 reports carry these sections, in this order:
 
 1. **Question** - the one thing the run was designed to answer.
 2. **Protocol** - enough to repeat it: the commit, the environment, the backend, the cadence, and the preconditions that had to hold for the run to count.
@@ -55,6 +76,13 @@ It carries these sections, in this order:
 6. **Conclusion** - whether the run is scientifically usable, and for what.
 7. **Next experiment** - the smallest run that answers the next question.
 
+Generation 3's deterministic publisher uses the corresponding fleet-oriented
+sections: **Question**, **Setup facts**, **Observations**, **Interpretations**,
+**Counterevidence and null results**, **Limitations**, and **Reproduction**.
+The split between observation and interpretation is deliberate: a model action,
+co-location sample, or line of speech is evidence that it happened, not by
+itself evidence of cooperation, role specialization, motive, or emergence.
+
 ## What must never enter this directory
 
 - Credentials, key fragments, or anything a credential can be reconstructed from.
@@ -63,8 +91,10 @@ It carries these sections, in this order:
 - Server logs, generated worlds, binaries, or server jars.
 - Harness scripts, scratch tooling, or the runs that were rehearsals rather than experiments.
 
-The event log is safe to commit because Loom is built so that it is: the mind's failures are bounded sentences that never carry the prompt or the credential.
-That is a property to verify per file rather than trust, so every experiment records the credential scan it passed.
+Generation 1 and 2 event logs were checked directly. Generation 3 takes the
+stronger route: its publisher sanitizes bounded fields, omits raw failure text,
+and then scans every committed file. Every manifest records that scan and the
+number of redactions.
 
 ## Corrections and errata
 
@@ -105,6 +135,9 @@ If the manifest was derived by a buggy derivation, fix the derivation, regenerat
 
 Start at `manifest.json` and read `integrityChecks` before anything else.
 Each check states what it requires and why, and a run with a failing check is not evidence for the thing it was measuring, however interesting its other numbers look.
-Note that one of them is an attestation rather than a derivation: `droppedRecordWarnings` is read from the server log, which is on the never-commit list above, so it cannot be re-checked from this directory alone.
-The rest are computable from `body-events.jsonl`.
+Generation 1 and 2 checks derive from `body-events.jsonl` except for their
+server-log warning attestation. Generation 3 checks derive from
+`evidence.jsonl` and `metrics.json`, except for the bounded warning scan and
+environment/build attestations named in the manifest. The generation-3
+validator re-derives the metrics and cost totals before accepting the artifact.
 Only then read the results.

@@ -141,6 +141,31 @@ pub struct ChatResponse {
     /// it to empty would report a proxy's error page as a model that had nothing
     /// to say, and an operator would look in the wrong place.
     pub choices: Vec<Choice>,
+    /// Provider-reported billing counts, when requested by an experiment.
+    #[serde(default)]
+    pub usage: Option<Usage>,
+}
+
+/// Provider-reported token counts for one successful request.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+pub struct Usage {
+    /// Tokens in the rendered request.
+    pub prompt_tokens: u64,
+    /// Tokens in the generated answer, including hidden reasoning tokens.
+    pub completion_tokens: u64,
+    /// Provider total, checked against the two component counts before logging.
+    pub total_tokens: u64,
+    /// Optional detail needed to price discounted cached input.
+    #[serde(default)]
+    pub prompt_tokens_details: PromptTokenDetails,
+}
+
+/// The subset of prompt-token detail that affects cost.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub struct PromptTokenDetails {
+    /// Input tokens served from the provider's prompt cache.
+    #[serde(default)]
+    pub cached_tokens: u64,
 }
 
 /// One answer.
@@ -595,6 +620,17 @@ mod tests {
         assert_eq!(choice.finish_reason.as_deref(), Some("length"));
         assert!(choice.message.content.is_none());
         assert!(choice.message.refusal.is_some());
+    }
+
+    #[test]
+    fn provider_usage_keeps_cached_input_separate() {
+        let body = r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":75}}}"#;
+        let response: ChatResponse = serde_json::from_str(body).unwrap();
+        let usage = response.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 20);
+        assert_eq!(usage.total_tokens, 120);
+        assert_eq!(usage.prompt_tokens_details.cached_tokens, 75);
     }
 
     #[test]

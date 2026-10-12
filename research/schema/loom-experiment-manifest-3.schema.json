@@ -1,0 +1,1063 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loom.dev/research/loom-experiment-manifest-3.schema.json",
+  "title": "Loom experiment manifest, generation 3",
+  "description": "The shared core for bounded, publishable multi-agent Loom runs. Generation 3 is intentionally narrower than generation 2: it requires the complete fleet allocation, component and tool versions, cognition routing and spend ceilings, lifecycle and artifact bounds, wall-clock timing, derived metric artifact, and publication validation. It also reshapes the record census from one agent to a fleet. Those newly required fields and the census shape are why this is a new compatibility generation.",
+  "$comment": "Self-contained on purpose. Like the earlier generations, experiment-specific measurement sections remain schema-neutral, so no object closes additional properties.",
+
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "experimentId",
+    "title",
+    "sourceCommit",
+    "sourceCommitShort",
+    "sourceRepository",
+    "fieldProvenance",
+    "rawEvidence",
+    "metrics",
+    "environment",
+    "clientPresence",
+    "network",
+    "runtime",
+    "protocol",
+    "software",
+    "agents",
+    "provenance",
+    "cognition",
+    "bounds",
+    "featureFlags",
+    "timing",
+    "eventCounts",
+    "integrityChecks",
+    "knownWarnings",
+    "outcome",
+    "scientificUsability",
+    "publication"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "loom-experiment-manifest/3"
+    },
+    "experimentId": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9][a-z0-9-]*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sourceCommitShort": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "sourceRepository": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "fieldProvenance": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "rawEvidence": {
+      "type": "object",
+      "required": [
+        "file",
+        "format",
+        "sha256",
+        "records",
+        "bytes",
+        "immutable",
+        "credentialScan"
+      ],
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/relativeFile"
+        },
+        "format": {
+          "const": "loom-normalized-evidence/1"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "records": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "immutable": {
+          "const": true
+        },
+        "credentialScan": {
+          "$ref": "#/$defs/credentialScan"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["file", "format", "sha256", "bytes", "derivedFrom"],
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/relativeFile"
+        },
+        "format": {
+          "const": "loom-derived-metrics/1"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "derivedFrom": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "server",
+        "world",
+        "loopbackOnly",
+        "onlineMode",
+        "tools",
+        "attested"
+      ],
+      "properties": {
+        "server": {
+          "type": "object",
+          "required": ["software", "minecraftVersion", "paperBuild", "paperSha256"],
+          "properties": {
+            "software": {
+              "const": "Paper"
+            },
+            "minecraftVersion": {
+              "type": "string",
+              "minLength": 1
+            },
+            "paperBuild": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "paperSha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "world": {
+          "type": "object",
+          "required": [
+            "seed",
+            "maxWorldSizeBlocks",
+            "worldBorderDiameterBlocks",
+            "viewDistanceChunks",
+            "simulationDistanceChunks"
+          ],
+          "properties": {
+            "seed": {
+              "type": "string",
+              "pattern": "^-?[0-9]+$"
+            },
+            "maxWorldSizeBlocks": {
+              "type": "integer",
+              "minimum": 32,
+              "maximum": 29999984
+            },
+            "worldBorderDiameterBlocks": {
+              "type": "integer",
+              "minimum": 16
+            },
+            "viewDistanceChunks": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 32
+            },
+            "simulationDistanceChunks": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 32
+            }
+          }
+        },
+        "loopbackOnly": {
+          "const": true
+        },
+        "onlineMode": {
+          "const": false
+        },
+        "tools": {
+          "type": "object",
+          "required": [
+            "os",
+            "architecture",
+            "java",
+            "node",
+            "npm",
+            "rustc",
+            "cargo",
+            "git",
+            "lsof",
+            "gradle"
+          ],
+          "properties": {
+            "os": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "architecture": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
+            "java": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "node": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "npm": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "rustc": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "cargo": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "git": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "lsof": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "gradle": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          }
+        },
+        "attested": {
+          "$ref": "#/$defs/attested"
+        }
+      }
+    },
+    "clientPresence": {
+      "type": "object",
+      "required": ["realPlayerAccounts", "interactiveObservers"],
+      "properties": {
+        "realPlayerAccounts": {
+          "const": 0
+        },
+        "interactiveObservers": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "required": [
+        "host",
+        "minecraftPort",
+        "bodyControlBasePort",
+        "cognitionProxyPort",
+        "cognitionUpstreamPort"
+      ],
+      "properties": {
+        "host": {
+          "const": "127.0.0.1"
+        },
+        "minecraftPort": {
+          "$ref": "#/$defs/port"
+        },
+        "bodyControlBasePort": {
+          "$ref": "#/$defs/port"
+        },
+        "cognitionProxyPort": {
+          "$ref": "#/$defs/port"
+        },
+        "cognitionUpstreamPort": {
+          "$ref": "#/$defs/port"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["paperMemoryMiB", "body", "cognitionBridge"],
+      "properties": {
+        "paperMemoryMiB": {
+          "type": "integer",
+          "minimum": 512,
+          "maximum": 4096
+        },
+        "body": {
+          "type": "object",
+          "required": [
+            "startupRetryMillis",
+            "healthCheckIntervalTicks",
+            "healthFailureLimit",
+            "ioWorkersPerAgent"
+          ],
+          "properties": {
+            "startupRetryMillis": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000
+            },
+            "healthCheckIntervalTicks": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12000
+            },
+            "healthFailureLimit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            },
+            "ioWorkersPerAgent": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            }
+          }
+        },
+        "cognitionBridge": {
+          "type": "object",
+          "required": [
+            "timeoutMillis",
+            "connectTimeoutMillis",
+            "workers",
+            "queueDepth",
+            "perAgentPending"
+          ],
+          "properties": {
+            "timeoutMillis": {
+              "type": "integer",
+              "minimum": 4,
+              "maximum": 120000
+            },
+            "connectTimeoutMillis": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30000
+            },
+            "workers": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
+            },
+            "queueDepth": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1024
+            },
+            "perAgentPending": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
+            }
+          }
+        }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "required": [
+        "goalReviewCycleSeconds",
+        "difficulty",
+        "mobSpawning",
+        "controlledBodyCrash"
+      ],
+      "properties": {
+        "goalReviewCycleSeconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "difficulty": {
+          "enum": ["peaceful", "easy", "normal", "hard"]
+        },
+        "mobSpawning": {
+          "type": "boolean"
+        },
+        "controlledBodyCrash": {
+          "type": "object",
+          "required": ["agentId", "afterSeconds", "signal"],
+          "properties": {
+            "agentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "afterSeconds": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "signal": {
+              "const": "SIGKILL"
+            }
+          }
+        }
+      }
+    },
+    "software": {
+      "type": "object",
+      "required": ["plugin", "body", "cognition"],
+      "properties": {
+        "plugin": {
+          "$ref": "#/$defs/component"
+        },
+        "body": {
+          "$ref": "#/$defs/component"
+        },
+        "cognition": {
+          "$ref": "#/$defs/component"
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["agentId", "username", "uuid", "controlPort", "processDirectory"],
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._:-]{1,64}$"
+          },
+          "username": {
+            "type": "string",
+            "pattern": "^loom_[0-9a-f]{10}$"
+          },
+          "uuid": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-3[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "controlPort": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "processDirectory": {
+            "type": "string",
+            "pattern": "^bodies/loom_[0-9a-f]{10}$"
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["backend", "provider", "models", "prompts", "decisionsByStamp", "attested"],
+      "properties": {
+        "backend": {
+          "enum": ["scripted", "openai"]
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "models": {
+          "type": "object",
+          "required": ["ordinary", "pivotal"],
+          "properties": {
+            "ordinary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "pivotal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          }
+        },
+        "prompts": {
+          "type": "object",
+          "required": ["routine", "notable", "pivotal"],
+          "properties": {
+            "routine": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "notable": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "pivotal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          }
+        },
+        "decisionsByStamp": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/decisionStamp"
+          }
+        },
+        "attested": {
+          "$ref": "#/$defs/attested"
+        }
+      }
+    },
+    "cognition": {
+      "type": "object",
+      "required": [
+        "eventDrivenOnly",
+        "socialRolesInjected",
+        "perAgentCallCeiling",
+        "globalCallCeiling",
+        "globalOutstandingCeiling",
+        "maxOutputTokens",
+        "maxRequestBytes",
+        "providerEndpoint",
+        "providerTimeoutMillis",
+        "providerRetryLimit",
+        "proxyRetryLimit",
+        "preWriteTransportRetryLimit",
+        "pricing",
+        "maxExternalSpendUsd",
+        "worstCaseConfiguredSpendUsd",
+        "actualExternalSpendUsd",
+        "spendAccounting",
+        "actualForwardedCalls",
+        "actualRefusedCalls"
+      ],
+      "properties": {
+        "eventDrivenOnly": {
+          "const": true
+        },
+        "socialRolesInjected": {
+          "const": false
+        },
+        "perAgentCallCeiling": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "globalCallCeiling": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16000
+        },
+        "globalOutstandingCeiling": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "maxRequestBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 262144
+        },
+        "providerEndpoint": {
+          "type": ["string", "null"],
+          "maxLength": 300
+        },
+        "providerTimeoutMillis": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120000
+        },
+        "providerRetryLimit": {
+          "const": 0
+        },
+        "proxyRetryLimit": {
+          "const": 0
+        },
+        "preWriteTransportRetryLimit": {
+          "const": 1
+        },
+        "pricing": {
+          "type": "object",
+          "required": ["currency", "effectiveDate", "source", "models"],
+          "properties": {
+            "currency": {
+              "const": "USD"
+            },
+            "effectiveDate": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "models": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "#/$defs/modelPrice"
+              }
+            }
+          }
+        },
+        "maxExternalSpendUsd": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "worstCaseConfiguredSpendUsd": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "actualExternalSpendUsd": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "spendAccounting": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "actualForwardedCalls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "actualRefusedCalls": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "bounds": {
+      "type": "object",
+      "required": [
+        "startupConcurrency",
+        "startupSeconds",
+        "runDurationSeconds",
+        "simulationTickCeiling",
+        "startupAttempts",
+        "shutdownSeconds",
+        "logBytes",
+        "artifactBytes",
+        "evidenceRecords"
+      ],
+      "properties": {
+        "startupConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "startupSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 900
+        },
+        "runDurationSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "simulationTickCeiling": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1728000
+        },
+        "startupAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "shutdownSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "logBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1073741824
+        },
+        "artifactBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1073741824
+        },
+        "evidenceRecords": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        }
+      }
+    },
+    "featureFlags": {
+      "type": "object",
+      "required": [
+        "movement",
+        "eating",
+        "digging",
+        "collection",
+        "placement",
+        "equipping",
+        "crafting",
+        "combat",
+        "sleep",
+        "permadeath"
+      ],
+      "properties": {
+        "movement": {
+          "type": "boolean"
+        },
+        "eating": {
+          "type": "boolean"
+        },
+        "digging": {
+          "type": "boolean"
+        },
+        "collection": {
+          "type": "boolean"
+        },
+        "placement": {
+          "type": "boolean"
+        },
+        "equipping": {
+          "type": "boolean"
+        },
+        "crafting": {
+          "type": "boolean"
+        },
+        "combat": {
+          "type": "boolean"
+        },
+        "sleep": {
+          "type": "boolean"
+        },
+        "permadeath": {
+          "const": true
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "required": [
+        "startedAt",
+        "endedAt",
+        "wallDurationMillis",
+        "firstTick",
+        "lastTick",
+        "tickSpan",
+        "stopReason",
+        "attested"
+      ],
+      "properties": {
+        "startedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "endedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "wallDurationMillis": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "firstTick": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastTick": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tickSpan": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stopReason": {
+          "enum": [
+            "durationElapsed",
+            "simulationTickCeiling",
+            "proofComplete",
+            "cancelled",
+            "paperFailed",
+            "cognitionFailed",
+            "startupFailed",
+            "logLimit",
+            "artifactLimit",
+            "diskFailure"
+          ]
+        },
+        "attested": {
+          "$ref": "#/$defs/attested"
+        }
+      }
+    },
+    "eventCounts": {
+      "type": "object",
+      "required": ["total", "byEvent", "agents"],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "byEvent": {
+          "$ref": "#/$defs/eventMap"
+        },
+        "agents": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "$ref": "#/$defs/recordCensus"
+          }
+        }
+      }
+    },
+    "integrityChecks": {
+      "type": "object",
+      "minProperties": 1
+    },
+    "knownWarnings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 500
+      }
+    },
+    "outcome": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "scientificUsability": {
+      "type": "object",
+      "required": ["verdict", "scope", "outOfScope"],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "scope": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "outOfScope": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      }
+    },
+    "publication": {
+      "type": "object",
+      "required": [
+        "manifestValidatedBeforeLaunch",
+        "manifestValidatedBeforePublication",
+        "normalized",
+        "rawWorldCommitted",
+        "serverLogsCommitted",
+        "deathLedgerCommitted"
+      ],
+      "properties": {
+        "manifestValidatedBeforeLaunch": {
+          "const": true
+        },
+        "manifestValidatedBeforePublication": {
+          "const": true
+        },
+        "normalized": {
+          "const": true
+        },
+        "rawWorldCommitted": {
+          "const": false
+        },
+        "serverLogsCommitted": {
+          "const": false
+        },
+        "deathLedgerCommitted": {
+          "const": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "relativeFile": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "attested": {
+      "type": "object",
+      "required": ["source"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
+      }
+    },
+    "credentialScan": {
+      "type": "object",
+      "required": ["scannedFor", "matches", "redactions", "note"],
+      "properties": {
+        "scannedFor": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "matches": {
+          "const": 0
+        },
+        "redactions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      }
+    },
+    "component": {
+      "type": "object",
+      "required": ["buildSha256", "sourceSha256"],
+      "properties": {
+        "buildSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sourceSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "decisionStamp": {
+      "type": "object",
+      "required": ["tier", "model", "promptVersion", "decisions"],
+      "properties": {
+        "tier": {
+          "enum": ["ROUTINE", "NOTABLE", "PIVOTAL"]
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "promptVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "decisions": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "modelPrice": {
+      "type": "object",
+      "required": [
+        "inputNanoUsdPerToken",
+        "cachedInputNanoUsdPerToken",
+        "outputNanoUsdPerToken"
+      ],
+      "properties": {
+        "inputNanoUsdPerToken": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "cachedInputNanoUsdPerToken": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "outputNanoUsdPerToken": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      }
+    },
+    "eventMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "recordCensus": {
+      "type": "object",
+      "required": ["agentId", "records", "byEvent"],
+      "properties": {
+        "agentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "byEvent": {
+          "$ref": "#/$defs/eventMap"
+        }
+      }
+    }
+  }
+}

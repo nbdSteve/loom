@@ -17,7 +17,8 @@ of its surroundings, and one permanent life.
   decision.
 - `contract/` — the two versioned JSON contracts and their shared fixture
   corpora.
-- `research/` — append-only experiment manifests and evidence.
+- `research/` — the bounded shared-world runner, append-only experiment
+  manifests, normalized evidence, and deterministic metrics.
 
 The contracts are intentionally separate:
 
@@ -151,6 +152,12 @@ LOOM_BODY_STARTUP_RETRY_MS=250
 LOOM_BODY_HEALTH_INTERVAL_TICKS=100
 LOOM_BODY_HEALTH_FAILURES=3
 LOOM_BODY_IO_WORKERS_PER_AGENT=4
+LOOM_COGNITION_HOST=127.0.0.1
+LOOM_COGNITION_PORT=8642
+LOOM_COGNITION_TIMEOUT_MS=30000
+LOOM_COGNITION_CONNECT_TIMEOUT_MS=500
+LOOM_COGNITION_WORKERS=4
+LOOM_COGNITION_QUEUE_DEPTH=64
 LOOM_COGNITION_PENDING_PER_AGENT=4
 ```
 
@@ -187,3 +194,10 @@ interactions, one hard child-process crash with an unaffected peer, restart,
 permadeath, denied reconnect, tick-deterministic reviews, and complete cleanup.
 `AGENTS.md` carries the architectural invariants and sharp edges worth
 preserving when changing any of those seams.
+
+For a repeatable, bounded, publishable three-agent run, use
+`research/HARNESS.md`. The harness pins the seed and runtime versions, enforces
+call/lifecycle/world/log/artifact/spend ceilings, contains a deliberate body
+crash, proves listener cleanup, normalizes unsafe evidence, imports only
+provider-reported token counts from paid calls, and regenerates every reported
+metric and spend total during publication validation.

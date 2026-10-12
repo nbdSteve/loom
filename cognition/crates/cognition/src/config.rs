@@ -181,6 +181,21 @@ where
         }
     }
 
+    /// The value of a setting that may be absent but may not be blank.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::Blank`] if the variable is present with no value. Treating
+    /// blank as absent would hide an operator mistake in the same way as
+    /// [`Env::or_default`].
+    pub fn optional(&self, name: &'static str) -> Result<Option<String>, ConfigError> {
+        match self.present(name) {
+            Some(value) => Ok(Some(value)),
+            None if self.set_at_all(name) => Err(ConfigError::Blank { var: name }),
+            None => Ok(None),
+        }
+    }
+
     /// The value of a variable that has a default.
     ///
     /// An *unset* variable takes the default; a variable set to nothing is an
@@ -279,6 +294,19 @@ mod tests {
         assert_eq!(
             empty.required("LOOM_Y"),
             Err(ConfigError::Missing { var: "LOOM_Y" })
+        );
+    }
+
+    #[test]
+    fn an_optional_variable_distinguishes_absent_from_blank() {
+        assert_eq!(env_of(&[]).optional("LOOM_X").unwrap(), None);
+        assert_eq!(
+            env_of(&[("LOOM_X", " value ")]).optional("LOOM_X").unwrap(),
+            Some("value".to_owned())
+        );
+        assert_eq!(
+            env_of(&[("LOOM_X", " ")]).optional("LOOM_X").unwrap_err(),
+            ConfigError::Blank { var: "LOOM_X" }
         );
     }
 
