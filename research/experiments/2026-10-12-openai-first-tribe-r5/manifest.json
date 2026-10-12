@@ -1,0 +1,352 @@
+{
+  "agents": [
+    {
+      "agentId": "tribe-alpha",
+      "controlPort": 25585,
+      "processDirectory": "bodies/loom_aa88da42d7",
+      "username": "loom_aa88da42d7",
+      "uuid": "65effc8b-efcc-3b44-83c1-8157de341f2e"
+    },
+    {
+      "agentId": "tribe-beta",
+      "controlPort": 25586,
+      "processDirectory": "bodies/loom_eab7eb8acb",
+      "username": "loom_eab7eb8acb",
+      "uuid": "0a3ecb58-852e-33f4-963b-e11ab547a48d"
+    },
+    {
+      "agentId": "tribe-gamma",
+      "controlPort": 25587,
+      "processDirectory": "bodies/loom_18c040d2cc",
+      "username": "loom_18c040d2cc",
+      "uuid": "e27687be-a707-314d-b013-2cfeb16a7a02"
+    }
+  ],
+  "bounds": {
+    "artifactBytes": 2097152,
+    "evidenceRecords": 20000,
+    "logBytes": 4194304,
+    "runDurationSeconds": 180,
+    "shutdownSeconds": 20,
+    "simulationTickCeiling": 4000,
+    "startupAttempts": 2,
+    "startupConcurrency": 2,
+    "startupSeconds": 120
+  },
+  "clientPresence": {
+    "interactiveObservers": 0,
+    "realPlayerAccounts": 0
+  },
+  "cognition": {
+    "actualExternalSpendUsd": 0.01014535,
+    "actualForwardedCalls": 19,
+    "actualRefusedCalls": 0,
+    "eventDrivenOnly": true,
+    "globalCallCeiling": 24,
+    "globalOutstandingCeiling": 3,
+    "maxExternalSpendUsd": 4.67,
+    "maxOutputTokens": 2048,
+    "maxRequestBytes": 65536,
+    "perAgentCallCeiling": 8,
+    "preWriteTransportRetryLimit": 1,
+    "pricing": {
+      "currency": "USD",
+      "effectiveDate": "2026-10-12",
+      "models": {
+        "gpt-5.4": {
+          "cachedInputNanoUsdPerToken": 250,
+          "inputNanoUsdPerToken": 2500,
+          "outputNanoUsdPerToken": 15000
+        },
+        "gpt-5.4-nano": {
+          "cachedInputNanoUsdPerToken": 20,
+          "inputNanoUsdPerToken": 200,
+          "outputNanoUsdPerToken": 1250
+        }
+      },
+      "source": "OpenAI API Pricing and official GPT-5.4 model pages, accessed 2026-10-12; standard-processing rates."
+    },
+    "providerEndpoint": "https://api.openai.com/v1",
+    "providerRetryLimit": 0,
+    "providerTimeoutMillis": 12000,
+    "proxyRetryLimit": 0,
+    "socialRolesInjected": false,
+    "spendAccounting": "Provider-reported tokens priced with the pinned integer nano-USD rates.",
+    "worstCaseConfiguredSpendUsd": 4.66944
+  },
+  "environment": {
+    "attested": {
+      "source": "harness startup probes and pinned run configuration"
+    },
+    "loopbackOnly": true,
+    "onlineMode": false,
+    "server": {
+      "minecraftVersion": "1.21.1",
+      "paperBuild": 133,
+      "paperSha256": "39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9",
+      "software": "Paper"
+    },
+    "tools": {
+      "architecture": "arm64",
+      "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+      "git": "git version 2.54.0 (Apple Git-157)",
+      "gradle": "Gradle 8.14",
+      "java": "openjdk version \"21.0.11\" 2026-04-21 LTS",
+      "lsof": "lsof version information: revision: 4.91 latest revision: ftp://lsof.itap.purdue.edu/pub/tools/unix/lsof/ latest FAQ: ftp://lsof.itap.purdue.edu/pub/tools/unix/lsof/FAQ latest man page: ftp://lsof.itap.purdue.edu/pub/tools/unix/lsof/lsof_man configuration info: libproc-based Anyone can list all files. /dev warnings are disabled. Kernel ID check is disabled.",
+      "node": "v25.9.0",
+      "npm": "11.12.1",
+      "os": "darwin 25.6.0",
+      "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+    },
+    "world": {
+      "maxWorldSizeBlocks": 256,
+      "seed": "76192346017",
+      "simulationDistanceChunks": 4,
+      "viewDistanceChunks": 4,
+      "worldBorderDiameterBlocks": 128
+    }
+  },
+  "eventCounts": {
+    "agents": [
+      {
+        "agentId": "tribe-alpha",
+        "byEvent": {
+          "bodyDisconnected": 1,
+          "decided": 3,
+          "healthChanged": 1,
+          "intentApplied": 3,
+          "perceived": 3,
+          "spawned": 1,
+          "witnessJoined": 1,
+          "witnessQuit": 1
+        },
+        "records": 14
+      },
+      {
+        "agentId": "tribe-beta",
+        "byEvent": {
+          "decided": 8,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 8,
+          "perceived": 8,
+          "spawned": 1,
+          "witnessJoined": 1
+        },
+        "records": 28
+      },
+      {
+        "agentId": "tribe-gamma",
+        "byEvent": {
+          "decided": 8,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 8,
+          "perceived": 8,
+          "spawned": 1,
+          "witnessJoined": 1
+        },
+        "records": 28
+      }
+    ],
+    "byEvent": {
+      "bodyDisconnected": 1,
+      "decided": 19,
+      "despawned": 2,
+      "healthChanged": 3,
+      "intentApplied": 19,
+      "perceived": 19,
+      "spawned": 3,
+      "witnessJoined": 3,
+      "witnessQuit": 1
+    },
+    "total": 70
+  },
+  "experimentId": "2026-10-12-openai-first-tribe-r5",
+  "featureFlags": {
+    "collection": true,
+    "combat": true,
+    "crafting": true,
+    "digging": true,
+    "eating": true,
+    "equipping": true,
+    "movement": true,
+    "permadeath": true,
+    "placement": true,
+    "sleep": true
+  },
+  "fieldProvenance": "Evidence counts, behavior metrics, timing ticks, cognition counts, provider-reported spend, and findings are generated from evidence.jsonl. Wall time, tool versions, component hashes, Paper identity, configuration, and cleanup are recorded by the harness.",
+  "integrityChecks": {
+    "absolutePermadeathEnabled": {
+      "configuredBy": "Loom player witness and synchronous death ledger",
+      "passed": true
+    },
+    "cleanupVerified": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "completeDecisionChains": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "crashContained": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "noDroppedEvidenceWarning": {
+      "attested": {
+        "source": "bounded Paper log scan performed by the harness"
+      },
+      "passed": true
+    },
+    "serverEvidenceUncontested": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "threeIndependentBodies": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    }
+  },
+  "knownWarnings": [],
+  "metrics": {
+    "bytes": 4295,
+    "derivedFrom": "2e127654d98b74121d80ab46e43d266fbec788653cba333bcc779df774195759",
+    "file": "metrics.json",
+    "format": "loom-derived-metrics/1",
+    "sha256": "d71a4b7f13549e4c9c4905cd0df0813a08536aee517287880defb400952fbb8a"
+  },
+  "network": {
+    "bodyControlBasePort": 25585,
+    "cognitionProxyPort": 8642,
+    "cognitionUpstreamPort": 8643,
+    "host": "127.0.0.1",
+    "minecraftPort": 25565
+  },
+  "outcome": "3 configured bodies produced 19 decisions in one bounded shared world; 1 controlled body crash(es) left 2 peer agent(s) deciding afterward. 0 bounded social or spatial observation class(es) were recorded; null results remain in counterevidence.",
+  "protocol": {
+    "controlledBodyCrash": {
+      "afterSeconds": 60,
+      "agentId": "tribe-alpha",
+      "reservedCallsPerPeer": 1,
+      "signal": "SIGKILL"
+    },
+    "difficulty": "normal",
+    "goalReviewCycleSeconds": 30,
+    "mobSpawning": true
+  },
+  "provenance": {
+    "attested": {
+      "source": "configured routing plus decision provenance in normalized evidence"
+    },
+    "backend": "openai",
+    "decisionsByStamp": [
+      {
+        "decisions": 19,
+        "model": "gpt-5.4-nano",
+        "promptVersion": "routine-v11",
+        "tier": "ROUTINE"
+      }
+    ],
+    "models": {
+      "ordinary": "gpt-5.4-nano",
+      "pivotal": "gpt-5.4"
+    },
+    "prompts": {
+      "notable": "notable-v11",
+      "pivotal": "pivotal-v11",
+      "routine": "routine-v11"
+    },
+    "provider": "OpenAI Chat Completions"
+  },
+  "publication": {
+    "deathLedgerCommitted": false,
+    "manifestValidatedBeforeLaunch": true,
+    "manifestValidatedBeforePublication": true,
+    "normalized": true,
+    "rawWorldCommitted": false,
+    "serverLogsCommitted": false
+  },
+  "rawEvidence": {
+    "bytes": 110391,
+    "credentialScan": {
+      "matches": 0,
+      "note": "The publisher recursively sanitized bounded strings, then scanned every committed artifact file.",
+      "redactions": 0,
+      "scannedFor": [
+        "OpenAI-style API key",
+        "authorization bearer value",
+        "private key material",
+        "AWS secret access key assignment",
+        "secret-bearing JSON field",
+        "GitHub-style token",
+        "local absolute filesystem path",
+        "provider request or thread identifier",
+        "transient process id field"
+      ]
+    },
+    "file": "evidence.jsonl",
+    "format": "loom-normalized-evidence/1",
+    "immutable": true,
+    "records": 119,
+    "sha256": "2e127654d98b74121d80ab46e43d266fbec788653cba333bcc779df774195759"
+  },
+  "runtime": {
+    "body": {
+      "healthCheckIntervalTicks": 100,
+      "healthFailureLimit": 3,
+      "ioWorkersPerAgent": 4,
+      "startupRetryMillis": 250
+    },
+    "cognitionBridge": {
+      "connectTimeoutMillis": 500,
+      "perAgentPending": 2,
+      "queueDepth": 16,
+      "timeoutMillis": 30000,
+      "workers": 4
+    },
+    "paperMemoryMiB": 1024
+  },
+  "schemaVersion": "loom-experiment-manifest/3",
+  "scientificUsability": {
+    "outOfScope": [
+      "No single bounded run establishes durable cooperation, role specialization, hierarchy, settlement, or conflict norms.",
+      "The controlled crash and fixed experimental setup are interventions, not emergent behavior."
+    ],
+    "scope": [
+      "The configured isolated bodies shared one disposable Paper world under fixed resource and cognition bounds.",
+      "Recorded per-agent cycles, action outcomes, lifecycle failures, and cleanup can be reproduced from normalized evidence."
+    ],
+    "verdict": "Usable only for the observations and counterevidence derivable from this bounded run."
+  },
+  "software": {
+    "body": {
+      "buildSha256": "c2a8868aafcd67647c6ecf95f6c796a9561f11f15c814264708e04dc11c4b702",
+      "sourceSha256": "ee9abbf3bf132a9f2c0f4aeb43fe7b5a2c6e218b22d0fcfeea285116991f2aa5"
+    },
+    "cognition": {
+      "buildSha256": "cf421faba9bc6457ecec6f0d8a3cf9e58ac2de4c5a5d9e39cd8318388ed7e0a8",
+      "sourceSha256": "8e355f7c8c8f6b6732ef6f86b6c4bf2f4d9c9a3aa4829b7b6943ad973c2b8b77"
+    },
+    "plugin": {
+      "buildSha256": "45f12b0233390ae1d116d704dfd404462ca0af2876176ff67774344c34819f5f",
+      "sourceSha256": "f9c229fdf873d1fdaf4b561164a189def8d6150f130d50ffdb38798e242873f6"
+    }
+  },
+  "sourceCommit": "0ed67ebb20296efa1b3c7e394d2e970f160a10e0",
+  "sourceCommitShort": "0ed67ebb2029",
+  "sourceRepository": "https://github.com/nbdSteve/loom.git",
+  "timing": {
+    "attested": {
+      "source": "harness monotonic deadline, UTC clock, and normalized body ticks"
+    },
+    "endedAt": "2026-10-12T06:02:27.092Z",
+    "firstTick": 16,
+    "lastTick": 3059,
+    "startedAt": "2026-10-12T05:59:27.091Z",
+    "stopReason": "durationElapsed",
+    "tickSpan": 3043,
+    "wallDurationMillis": 180001
+  },
+  "title": "Bounded live-model first tribe experiment"
+}

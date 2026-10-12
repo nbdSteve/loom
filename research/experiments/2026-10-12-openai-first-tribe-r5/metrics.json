@@ -1,0 +1,188 @@
+{
+  "behavior": {
+    "attackIntents": 0,
+    "byIntent": {
+      "idle": 19
+    },
+    "byOutcome": {
+      "accepted": 19,
+      "bodyProcessExited": 1
+    },
+    "deaths": 0,
+    "decisionsByIntent": {
+      "idle": 19
+    },
+    "disconnects": 1,
+    "movementRecords": 0,
+    "sleepIntents": 0,
+    "speechIntents": 0,
+    "witnessDisputeRecords": 0,
+    "witnessDisputesByOutcome": {},
+    "worldInteractionRecords": 0
+  },
+  "cognition": {
+    "decisionsByStamp": [
+      {
+        "decisions": 19,
+        "model": "gpt-5.4-nano",
+        "promptVersion": "routine-v11",
+        "tier": "ROUTINE"
+      }
+    ],
+    "externalSpendNanoUsd": 10145350,
+    "externalSpendUsd": 0.01014535,
+    "forwardedCalls": 19,
+    "providerUsageCalls": 19,
+    "refusedCalls": 0,
+    "usageByModel": {
+      "gpt-5.4-nano": {
+        "cachedPromptTokens": 0,
+        "calls": 19,
+        "completionTokens": 1167,
+        "costNanoUsd": 10145350,
+        "promptTokens": 43433,
+        "totalTokens": 44600
+      }
+    }
+  },
+  "crashContainment": {
+    "cleanupVerified": true,
+    "controlledCrashes": [
+      {
+        "agentId": "tribe-alpha",
+        "controlPort": 25585
+      }
+    ],
+    "peerDecisionsAfterCrash": {
+      "tribe-beta": 5,
+      "tribe-gamma": 5
+    }
+  },
+  "cycles": {
+    "applied": 19,
+    "decided": 19,
+    "discarded": 0,
+    "incomplete": [],
+    "perceived": 19,
+    "unavailable": 0
+  },
+  "findings": {
+    "counterevidence": [
+      "No agent produced a speech intent.",
+      "No bounded perception sample placed two agents within eight blocks.",
+      "No attack intent was applied.",
+      "No server-confirmed native world interaction occurred."
+    ],
+    "interpretations": [
+      "Counts describe recorded behavior only; they do not establish motive, cooperation, specialization, hierarchy, or emergence."
+    ],
+    "limitations": [
+      "Perception positions are samples rather than continuous trajectories.",
+      "One bounded live-model run cannot establish that an observed pattern is stable or emergent."
+    ],
+    "observations": []
+  },
+  "records": {
+    "agents": [
+      {
+        "actions": 3,
+        "agentId": "tribe-alpha",
+        "appliedByIntent": {
+          "idle": 3
+        },
+        "byEvent": {
+          "bodyDisconnected": 1,
+          "decided": 3,
+          "healthChanged": 1,
+          "intentApplied": 3,
+          "perceived": 3,
+          "spawned": 1,
+          "witnessJoined": 1,
+          "witnessQuit": 1
+        },
+        "byOutcome": {
+          "accepted": 3,
+          "bodyProcessExited": 1
+        },
+        "decisions": 3,
+        "decisionsByIntent": {
+          "idle": 3
+        },
+        "records": 14
+      },
+      {
+        "actions": 8,
+        "agentId": "tribe-beta",
+        "appliedByIntent": {
+          "idle": 8
+        },
+        "byEvent": {
+          "decided": 8,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 8,
+          "perceived": 8,
+          "spawned": 1,
+          "witnessJoined": 1
+        },
+        "byOutcome": {
+          "accepted": 8
+        },
+        "decisions": 8,
+        "decisionsByIntent": {
+          "idle": 8
+        },
+        "records": 28
+      },
+      {
+        "actions": 8,
+        "agentId": "tribe-gamma",
+        "appliedByIntent": {
+          "idle": 8
+        },
+        "byEvent": {
+          "decided": 8,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 8,
+          "perceived": 8,
+          "spawned": 1,
+          "witnessJoined": 1
+        },
+        "byOutcome": {
+          "accepted": 8
+        },
+        "decisions": 8,
+        "decisionsByIntent": {
+          "idle": 8
+        },
+        "records": 28
+      }
+    ],
+    "body": 70,
+    "byEvent": {
+      "bodyDisconnected": 1,
+      "decided": 19,
+      "despawned": 2,
+      "healthChanged": 3,
+      "intentApplied": 19,
+      "perceived": 19,
+      "spawned": 3,
+      "witnessJoined": 3,
+      "witnessQuit": 1
+    },
+    "harness": 49,
+    "total": 119
+  },
+  "schemaVersion": "loom-derived-metrics/1",
+  "spatial": {
+    "coLocationSamples": [],
+    "coLocationThresholdBlocks": 8,
+    "maximumTickSeparation": 20
+  },
+  "timing": {
+    "firstTick": 16,
+    "lastTick": 3059,
+    "tickSpan": 3043
+  }
+}
