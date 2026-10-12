@@ -84,7 +84,17 @@ private class RecordingBody(
     ): CompletableFuture<Perception?> =
         CompletableFuture.completedFuture(
             perceptions(trigger)?.also {
-                record(agentId, BodyEvent.PERCEIVED, "${it.surroundings.size} observation(s)", it.requestId)
+                events.append(
+                    BodyEventRecord(
+                        tick = currentTick(),
+                        agentId = agentId.value,
+                        event = BodyEvent.PERCEIVED,
+                        detail = "${it.surroundings.size} observation(s)",
+                        requestId = it.requestId,
+                        trigger = EventTag.GOAL_REVIEW,
+                        perception = it,
+                    ),
+                )
             },
         )
 
@@ -353,6 +363,8 @@ class EmbodiedCognitionTest {
             records[1].provenance,
             "the decision record carries the stamp the mind put on it, whole",
         )
+        assertEquals(records[0].perception?.requestId, records[1].decision?.requestId)
+        assertEquals(Intent.Say("hello"), records[1].decision?.intent)
         // A perception and an action claim no model: only the decision was answered by one.
         assertNull(records[0].provenance)
         assertNull(records[2].provenance)
@@ -437,6 +449,7 @@ class EmbodiedCognitionTest {
         assertEquals(EventTag.DAMAGED, unanswered.trigger)
         assertEquals("timedOut", unanswered.outcome)
         assertEquals("req-1", unanswered.requestId, "the loss must join to the perception that caused it")
+        assertEquals("req-1", unanswered.perception?.requestId)
         assertNull(unanswered.provenance, "no model answered, so no record of this may name one")
         assertNull(unanswered.intent, "an unanswered perception produced no action to name")
         assertTrue(body.applied.isEmpty(), "a lost decision must leave the body alone")

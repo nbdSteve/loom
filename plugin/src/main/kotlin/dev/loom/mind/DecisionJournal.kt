@@ -85,6 +85,7 @@ class DecisionJournal(
                 requestId = perception.requestId,
                 trigger = tagOf(perception.trigger),
                 outcome = outcome,
+                perception = perception,
             ),
         )
     }
@@ -106,6 +107,7 @@ class DecisionJournal(
                 requestId = decision.requestId,
                 provenance = decision.provenance,
                 intent = tagOf(decision.intent),
+                decision = decision,
             ),
         )
     }

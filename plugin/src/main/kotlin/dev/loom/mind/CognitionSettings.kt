@@ -10,7 +10,6 @@ package dev.loom.mind
 
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * How many connect-and-read attempts one `ask` may make.
@@ -45,6 +44,17 @@ internal const val ATTEMPTS_PER_ASK = 2
 internal const val MIN_SOCKET_TIMEOUT_MILLIS = 1L
 private const val DEFAULT_PER_AGENT_PENDING = 4
 private const val MAX_PER_AGENT_PENDING = 64
+private const val DEFAULT_PORT = 8642
+private const val DEFAULT_TIMEOUT_MILLIS = 30_000
+private const val DEFAULT_CONNECT_TIMEOUT_MILLIS = 500
+private const val DEFAULT_WORKERS = 4
+private const val DEFAULT_QUEUE_DEPTH = 64
+private const val MIN_REQUEST_TIMEOUT_MILLIS =
+    (MIN_SOCKET_TIMEOUT_MILLIS + MIN_SOCKET_TIMEOUT_MILLIS) * ATTEMPTS_PER_ASK
+private const val MAX_TIMEOUT_MILLIS = 120_000
+private const val MAX_CONNECT_TIMEOUT_MILLIS = 30_000
+private const val MAX_WORKERS = 64
+private const val MAX_QUEUE_DEPTH = 1_024
 
 /**
  * How the body reaches the mind.
@@ -72,11 +82,11 @@ private const val MAX_PER_AGENT_PENDING = 64
  */
 data class CognitionSettings(
     val host: String = "127.0.0.1",
-    val port: Int = 8642,
-    val timeout: Duration = 30.seconds,
-    val connectTimeout: Duration = 500.milliseconds,
-    val workers: Int = 4,
-    val queueDepth: Int = 64,
+    val port: Int = DEFAULT_PORT,
+    val timeout: Duration = DEFAULT_TIMEOUT_MILLIS.milliseconds,
+    val connectTimeout: Duration = DEFAULT_CONNECT_TIMEOUT_MILLIS.milliseconds,
+    val workers: Int = DEFAULT_WORKERS,
+    val queueDepth: Int = DEFAULT_QUEUE_DEPTH,
     val perAgentPending: Int = DEFAULT_PER_AGENT_PENDING,
 ) {
     init {
@@ -102,6 +112,12 @@ data class CognitionSettings(
         }
         require(perAgentPending in 1..MAX_PER_AGENT_PENDING) {
             "perAgentPending must be in 1..$MAX_PER_AGENT_PENDING, was $perAgentPending"
+        }
+        require(workers in 1..MAX_WORKERS) {
+            "workers must be in 1..$MAX_WORKERS, was $workers"
+        }
+        require(queueDepth in 1..MAX_QUEUE_DEPTH) {
+            "queueDepth must be in 1..$MAX_QUEUE_DEPTH, was $queueDepth"
         }
     }
 
@@ -134,6 +150,24 @@ data class CognitionSettings(
     companion object {
         private const val MAX_PORT = 65_535
 
+        private fun configuredInt(
+            environment: Map<String, String>,
+            name: String,
+            default: Int,
+            range: IntRange,
+        ): Int {
+            val raw = environment[name]
+            val parsed = raw?.toIntOrNull()
+            require(raw == null || parsed != null) {
+                "$name must be an integer"
+            }
+            val value = parsed ?: default
+            require(value in range) {
+                "$name must be in ${range.first}..${range.last}"
+            }
+            return value
+        }
+
         private fun configuredPerAgentPending(environment: Map<String, String>): Int {
             val raw = environment["LOOM_COGNITION_PENDING_PER_AGENT"]
             val parsed = raw?.toIntOrNull()
@@ -147,8 +181,40 @@ data class CognitionSettings(
             return value
         }
 
-        /** Reads the one per-agent resource budget owned by the JVM bridge. */
+        /** Reads the experiment-owned endpoint and per-agent resource budget. */
         fun fromEnvironment(environment: Map<String, String> = System.getenv()): CognitionSettings =
-            CognitionSettings(perAgentPending = configuredPerAgentPending(environment))
+            CognitionSettings(
+                host = environment["LOOM_COGNITION_HOST"]?.trim()?.takeIf(String::isNotEmpty) ?: "127.0.0.1",
+                port = configuredInt(environment, "LOOM_COGNITION_PORT", DEFAULT_PORT, 1..MAX_PORT),
+                timeout =
+                    configuredInt(
+                        environment,
+                        "LOOM_COGNITION_TIMEOUT_MS",
+                        DEFAULT_TIMEOUT_MILLIS,
+                        MIN_REQUEST_TIMEOUT_MILLIS.toInt()..MAX_TIMEOUT_MILLIS,
+                    ).milliseconds,
+                connectTimeout =
+                    configuredInt(
+                        environment,
+                        "LOOM_COGNITION_CONNECT_TIMEOUT_MS",
+                        DEFAULT_CONNECT_TIMEOUT_MILLIS,
+                        MIN_SOCKET_TIMEOUT_MILLIS.toInt()..MAX_CONNECT_TIMEOUT_MILLIS,
+                    ).milliseconds,
+                workers =
+                    configuredInt(
+                        environment,
+                        "LOOM_COGNITION_WORKERS",
+                        DEFAULT_WORKERS,
+                        1..MAX_WORKERS,
+                    ),
+                queueDepth =
+                    configuredInt(
+                        environment,
+                        "LOOM_COGNITION_QUEUE_DEPTH",
+                        DEFAULT_QUEUE_DEPTH,
+                        1..MAX_QUEUE_DEPTH,
+                    ),
+                perAgentPending = configuredPerAgentPending(environment),
+            )
     }
 }

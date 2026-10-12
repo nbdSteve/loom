@@ -5,22 +5,38 @@
 //! stays the currency crossing the mind/body boundary.
 //!
 //! One frame is *not* a contract type: a refusal. When a request cannot be
-//! answered at all (unparseable perception, unreachable model), the response is
-//! `{"error":"<message>"}`. That is a transport concern rather than a decision -
-//! a mind that cannot answer has not decided anything, and inventing an
-//! `Intent` to say so would put a fiction in the decision record. Answering
-//! immediately also matters: a body that gets a refusal fails that one request
-//! now instead of waiting out its watchdog.
+//! answered at all (unparseable perception, unreachable model), the response
+//! carries `{"error":"<message>"}` and may carry a bounded machine-readable
+//! `failure` beside it. That is a transport concern rather than a decision - a
+//! mind that cannot answer has not decided anything, and inventing an `Intent`
+//! to say so would put a fiction in the decision record. Answering immediately
+//! also matters: a body that gets a refusal fails that one request now instead
+//! of waiting out its watchdog.
 
 use loom_contract::{Decision, Perception};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-/// The refusal frame. Deliberately not a contract type: see the module note.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+use crate::model::BackendFailure;
+
+/// The refusal frame as a receiver decodes it. Deliberately not a contract type:
+/// see the module note.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct WireError {
     /// Human-readable reason, safe to surface to the body and log.
     pub error: String,
+    /// Optional bounded operator detail. The body gives this no authority.
+    #[serde(default)]
+    pub failure: Option<Value>,
+}
+
+/// The refusal frame as the cognition service encodes it.
+#[derive(Serialize)]
+struct EncodedWireError<'a> {
+    error: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure: Option<&'a BackendFailure>,
 }
 
 /// Renders `decision` as the response line to write, without the newline.
@@ -39,8 +55,16 @@ pub fn encode_decision(decision: &Decision) -> Result<String, serde_json::Error>
 /// workspace's no-`expect` gate without hiding a real error.
 #[must_use]
 pub fn encode_error(message: &str) -> String {
-    serde_json::to_string(&WireError {
-        error: message.to_owned(),
+    encode_error_with_failure(message, None)
+}
+
+/// Renders a refusal with bounded backend classification beside its
+/// human-readable message.
+#[must_use]
+pub fn encode_error_with_failure(message: &str, failure: Option<&BackendFailure>) -> String {
+    serde_json::to_string(&EncodedWireError {
+        error: message,
+        failure,
     })
     .unwrap_or_else(|_| {
         r#"{"error":"cognition failed, and the reason could not be encoded"}"#.to_owned()
@@ -61,7 +85,10 @@ pub fn decode_perception(line: &str) -> Result<Perception, String> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{decode_perception, encode_error, WireError};
+    use super::{decode_perception, encode_error, encode_error_with_failure, WireError};
+    use crate::model::{
+        BackendFailure, BackendFailureMapping, BackendResponseShape, BACKEND_FAILURE_SCHEMA_VERSION,
+    };
 
     #[test]
     fn a_perception_line_round_trips_into_the_contract_type() {
@@ -85,5 +112,27 @@ mod tests {
         assert!(!encoded.contains('\n'), "a frame must stay on one line");
         let decoded: WireError = serde_json::from_str(&encoded).expect("the refusal frame decodes");
         assert_eq!(decoded.error, "model unreachable");
+        assert!(decoded.failure.is_none());
+    }
+
+    #[test]
+    fn a_classified_refusal_carries_only_bounded_machine_readable_context() {
+        let failure = BackendFailure::openai(
+            "gpt-test",
+            Some(400),
+            Some("invalid_request_error"),
+            Some("invalid_json_schema"),
+            BackendResponseShape::ApiErrorEnvelope,
+            BackendFailureMapping::ProviderRequest,
+        );
+        let encoded = encode_error_with_failure("cognition failed safely", Some(&failure));
+        let decoded: WireError = serde_json::from_str(&encoded).expect("the refusal frame decodes");
+        let detail = decoded.failure.expect("classification is present");
+        assert_eq!(detail["schemaVersion"], BACKEND_FAILURE_SCHEMA_VERSION);
+        assert_eq!(detail["model"], "gpt-test");
+        assert_eq!(detail["httpStatus"], 400);
+        assert_eq!(detail["providerCode"], "invalid_json_schema");
+        assert_eq!(detail["responseShape"], "apiErrorEnvelope");
+        assert_eq!(detail["mapping"], "providerRequest");
     }
 }

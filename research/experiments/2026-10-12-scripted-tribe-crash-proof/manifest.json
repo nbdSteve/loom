@@ -1,0 +1,354 @@
+{
+  "agents": [
+    {
+      "agentId": "tribe-alpha",
+      "controlPort": 25585,
+      "processDirectory": "bodies/loom_aa88da42d7",
+      "username": "loom_aa88da42d7",
+      "uuid": "65effc8b-efcc-3b44-83c1-8157de341f2e"
+    },
+    {
+      "agentId": "tribe-beta",
+      "controlPort": 25586,
+      "processDirectory": "bodies/loom_eab7eb8acb",
+      "username": "loom_eab7eb8acb",
+      "uuid": "0a3ecb58-852e-33f4-963b-e11ab547a48d"
+    },
+    {
+      "agentId": "tribe-gamma",
+      "controlPort": 25587,
+      "processDirectory": "bodies/loom_18c040d2cc",
+      "username": "loom_18c040d2cc",
+      "uuid": "e27687be-a707-314d-b013-2cfeb16a7a02"
+    }
+  ],
+  "bounds": {
+    "artifactBytes": 2097152,
+    "evidenceRecords": 10000,
+    "logBytes": 4194304,
+    "runDurationSeconds": 28,
+    "shutdownSeconds": 20,
+    "simulationTickCeiling": 1200,
+    "startupAttempts": 2,
+    "startupConcurrency": 2,
+    "startupSeconds": 120
+  },
+  "clientPresence": {
+    "interactiveObservers": 0,
+    "realPlayerAccounts": 0
+  },
+  "cognition": {
+    "actualExternalSpendUsd": 0,
+    "actualForwardedCalls": 15,
+    "actualRefusedCalls": 5,
+    "eventDrivenOnly": true,
+    "globalCallCeiling": 18,
+    "globalOutstandingCeiling": 2,
+    "maxExternalSpendUsd": 0,
+    "maxOutputTokens": 256,
+    "maxRequestBytes": 65536,
+    "perAgentCallCeiling": 6,
+    "preWriteTransportRetryLimit": 1,
+    "pricing": {
+      "currency": "USD",
+      "effectiveDate": "2026-10-12",
+      "models": {
+        "scripted-stand-in": {
+          "cachedInputNanoUsdPerToken": 0,
+          "inputNanoUsdPerToken": 0,
+          "outputNanoUsdPerToken": 0
+        }
+      },
+      "source": "No external provider; the shipped scripted backend has zero price."
+    },
+    "providerEndpoint": null,
+    "providerRetryLimit": 0,
+    "providerTimeoutMillis": 12000,
+    "proxyRetryLimit": 0,
+    "socialRolesInjected": false,
+    "spendAccounting": "No external provider was called.",
+    "worstCaseConfiguredSpendUsd": 0
+  },
+  "environment": {
+    "attested": {
+      "source": "harness startup probes and pinned run configuration"
+    },
+    "loopbackOnly": true,
+    "onlineMode": false,
+    "server": {
+      "minecraftVersion": "1.21.1",
+      "paperBuild": 133,
+      "paperSha256": "39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9",
+      "software": "Paper"
+    },
+    "tools": {
+      "architecture": "arm64",
+      "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+      "git": "git version 2.54.0 (Apple Git-157)",
+      "gradle": "Gradle 8.14",
+      "java": "openjdk version \"21.0.11\" 2026-04-21 LTS",
+      "lsof": "lsof version information: revision: 4.91 latest revision: ftp://lsof.itap.purdue.edu/pub/tools/unix/lsof/ latest FAQ: ftp://lsof.itap.purdue.edu/pub/tools/unix/lsof/FAQ latest man page: ftp://lsof.itap.purdue.edu/pub/tools/unix/lsof/lsof_man configuration info: libproc-based Anyone can list all files. /dev warnings are disabled. Kernel ID check is disabled.",
+      "node": "v25.9.0",
+      "npm": "11.12.1",
+      "os": "darwin 25.6.0",
+      "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+    },
+    "world": {
+      "maxWorldSizeBlocks": 256,
+      "seed": "76192346017",
+      "simulationDistanceChunks": 4,
+      "viewDistanceChunks": 4,
+      "worldBorderDiameterBlocks": 128
+    }
+  },
+  "eventCounts": {
+    "agents": [
+      {
+        "agentId": "tribe-alpha",
+        "byEvent": {
+          "bodyDisconnected": 1,
+          "cognitionUnavailable": 1,
+          "decided": 3,
+          "healthChanged": 1,
+          "intentApplied": 3,
+          "perceived": 4,
+          "spawned": 1,
+          "witnessDisputed": 12,
+          "witnessJoined": 1,
+          "witnessQuit": 1
+        },
+        "records": 28
+      },
+      {
+        "agentId": "tribe-beta",
+        "byEvent": {
+          "cognitionUnavailable": 2,
+          "decided": 6,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 6,
+          "perceived": 8,
+          "spawned": 1,
+          "witnessDisputed": 33,
+          "witnessJoined": 1
+        },
+        "records": 59
+      },
+      {
+        "agentId": "tribe-gamma",
+        "byEvent": {
+          "cognitionUnavailable": 2,
+          "decided": 6,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 6,
+          "perceived": 8,
+          "spawned": 1,
+          "witnessDisputed": 33,
+          "witnessJoined": 1
+        },
+        "records": 59
+      }
+    ],
+    "byEvent": {
+      "bodyDisconnected": 1,
+      "cognitionUnavailable": 5,
+      "decided": 15,
+      "despawned": 2,
+      "healthChanged": 3,
+      "intentApplied": 15,
+      "perceived": 20,
+      "spawned": 3,
+      "witnessDisputed": 78,
+      "witnessJoined": 3,
+      "witnessQuit": 1
+    },
+    "total": 146
+  },
+  "experimentId": "2026-10-12-scripted-tribe-crash-proof",
+  "featureFlags": {
+    "collection": true,
+    "combat": true,
+    "crafting": true,
+    "digging": true,
+    "eating": true,
+    "equipping": true,
+    "movement": true,
+    "permadeath": true,
+    "placement": true,
+    "sleep": true
+  },
+  "fieldProvenance": "Evidence counts, behavior metrics, timing ticks, cognition counts, provider-reported spend, and findings are generated from evidence.jsonl. Wall time, tool versions, component hashes, Paper identity, configuration, and cleanup are recorded by the harness.",
+  "integrityChecks": {
+    "absolutePermadeathEnabled": {
+      "configuredBy": "Loom player witness and synchronous death ledger",
+      "passed": true
+    },
+    "cleanupVerified": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "completeDecisionChains": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "crashContained": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "noDroppedEvidenceWarning": {
+      "attested": {
+        "source": "bounded Paper log scan performed by the harness"
+      },
+      "passed": true
+    },
+    "serverEvidenceUncontested": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": false
+    },
+    "threeIndependentBodies": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    }
+  },
+  "knownWarnings": [],
+  "metrics": {
+    "bytes": 4823,
+    "derivedFrom": "7f9d158c2dbe13f4560e3f1a0e330ca7156016a9751a64ee63515448a764030c",
+    "file": "metrics.json",
+    "format": "loom-derived-metrics/1",
+    "sha256": "3cb5d1635ff10b337b3210402724d8c942c94f1e60b3d86777d84fede5d073ec"
+  },
+  "network": {
+    "bodyControlBasePort": 25585,
+    "cognitionProxyPort": 8642,
+    "cognitionUpstreamPort": 8643,
+    "host": "127.0.0.1",
+    "minecraftPort": 25565
+  },
+  "outcome": "3 configured bodies produced 15 decisions in one bounded shared world; 1 controlled body crash(es) left 2 peer agent(s) deciding afterward. 0 bounded social or spatial observation class(es) were recorded; null results remain in counterevidence.",
+  "protocol": {
+    "controlledBodyCrash": {
+      "afterSeconds": 10,
+      "agentId": "tribe-alpha",
+      "signal": "SIGKILL"
+    },
+    "difficulty": "peaceful",
+    "goalReviewCycleSeconds": 4,
+    "mobSpawning": false
+  },
+  "provenance": {
+    "attested": {
+      "source": "configured routing plus decision provenance in normalized evidence"
+    },
+    "backend": "scripted",
+    "decisionsByStamp": [
+      {
+        "decisions": 15,
+        "model": "scripted-stand-in",
+        "promptVersion": "routine-v11",
+        "tier": "ROUTINE"
+      }
+    ],
+    "models": {
+      "ordinary": "scripted-stand-in",
+      "pivotal": "scripted-stand-in"
+    },
+    "prompts": {
+      "notable": "notable-v11",
+      "pivotal": "pivotal-v11",
+      "routine": "routine-v11"
+    },
+    "provider": "none-scripted-local"
+  },
+  "publication": {
+    "deathLedgerCommitted": false,
+    "manifestValidatedBeforeLaunch": true,
+    "manifestValidatedBeforePublication": true,
+    "normalized": true,
+    "rawWorldCommitted": false,
+    "serverLogsCommitted": false
+  },
+  "rawEvidence": {
+    "bytes": 143274,
+    "credentialScan": {
+      "matches": 0,
+      "note": "The publisher recursively sanitized bounded strings, then scanned every committed artifact file.",
+      "redactions": 0,
+      "scannedFor": [
+        "OpenAI-style API key",
+        "authorization bearer value",
+        "private key material",
+        "AWS secret access key assignment",
+        "secret-bearing JSON field",
+        "GitHub-style token",
+        "local absolute filesystem path",
+        "provider request or thread identifier",
+        "transient process id field"
+      ]
+    },
+    "file": "evidence.jsonl",
+    "format": "loom-normalized-evidence/1",
+    "immutable": true,
+    "records": 176,
+    "sha256": "7f9d158c2dbe13f4560e3f1a0e330ca7156016a9751a64ee63515448a764030c"
+  },
+  "runtime": {
+    "body": {
+      "healthCheckIntervalTicks": 100,
+      "healthFailureLimit": 3,
+      "ioWorkersPerAgent": 4,
+      "startupRetryMillis": 250
+    },
+    "cognitionBridge": {
+      "connectTimeoutMillis": 500,
+      "perAgentPending": 2,
+      "queueDepth": 16,
+      "timeoutMillis": 30000,
+      "workers": 4
+    },
+    "paperMemoryMiB": 1024
+  },
+  "schemaVersion": "loom-experiment-manifest/3",
+  "scientificUsability": {
+    "outOfScope": [
+      "No single bounded run establishes durable cooperation, role specialization, hierarchy, settlement, or conflict norms.",
+      "Scripted cognition and harness staging are never evidence of emergence."
+    ],
+    "scope": [
+      "The configured isolated bodies shared one disposable Paper world under fixed resource and cognition bounds.",
+      "Recorded per-agent cycles, action outcomes, lifecycle failures, and cleanup can be reproduced from normalized evidence."
+    ],
+    "verdict": "Usable as a bounded composition, evidence, crash-containment, and cleanup proof; not as evidence of model-driven emergence."
+  },
+  "software": {
+    "body": {
+      "buildSha256": "c2a8868aafcd67647c6ecf95f6c796a9561f11f15c814264708e04dc11c4b702",
+      "sourceSha256": "ee9abbf3bf132a9f2c0f4aeb43fe7b5a2c6e218b22d0fcfeea285116991f2aa5"
+    },
+    "cognition": {
+      "buildSha256": "b8bed211158e73df97f7be2a9d16fc9d9a145e8d1dc7ad1e8eb22855be678dd6",
+      "sourceSha256": "7fa92fd6b2ac6b343278aa07182bbd28482856f8f779354788781fdf81ac39d2"
+    },
+    "plugin": {
+      "buildSha256": "914a4eb99a5b68ffbbb7c768b6ebaab89e093e8123aec73639760f56bc66d615",
+      "sourceSha256": "e18bc5064cc7ef18b419f58a2b9152f14fb2711418f66a9aced6c0714122b1f9"
+    }
+  },
+  "sourceCommit": "772e5cacd40e67fa835e5e62c1de0e2186e0fa87",
+  "sourceCommitShort": "772e5cacd40e",
+  "sourceRepository": "https://github.com/nbdSteve/loom.git",
+  "timing": {
+    "attested": {
+      "source": "harness monotonic deadline, UTC clock, and normalized body ticks"
+    },
+    "endedAt": "2026-10-12T01:48:44.190Z",
+    "firstTick": 17,
+    "lastTick": 560,
+    "startedAt": "2026-10-12T01:48:16.189Z",
+    "stopReason": "durationElapsed",
+    "tickSpan": 543,
+    "wallDurationMillis": 28001
+  },
+  "title": "Bounded scripted tribe and body-crash proof"
+}

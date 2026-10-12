@@ -117,9 +117,7 @@ mod tests {
             _route: &ModelRoute,
             _perception: &Perception,
         ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
-            std::future::ready(Err(BackendError {
-                message: "model unreachable".to_owned(),
-            }))
+            std::future::ready(Err(BackendError::new("model unreachable")))
         }
     }
 

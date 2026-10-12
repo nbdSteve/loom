@@ -11,7 +11,7 @@ cargo run --bin loom-cognition
 It prints what it will answer with before it starts answering:
 
 ```
-loom-cognition backend=openai fast=gpt-5-mini deep=gpt-5 (https://api.openai.com/v1/chat/completions, 12000ms timeout, 2048 token answers)
+loom-cognition backend=openai fast=gpt-5-mini deep=gpt-5 (https://api.openai.com/v1/chat/completions, 12000ms timeout, 2048 token answers, 262144 byte requests, usage evidence off)
 loom-cognition listening on 127.0.0.1:8642
 ```
 
@@ -70,6 +70,8 @@ Nothing in the routing rule knows which model it names, so moving a tier to a di
 | `LOOM_OPENAI_BASE_URL` | `https://api.openai.com/v1` | API root. `/chat/completions` is appended. |
 | `LOOM_OPENAI_TIMEOUT_MS` | `12000` | Longest one provider call may take. |
 | `LOOM_OPENAI_MAX_OUTPUT_TOKENS` | `2048` | Most tokens one answer may cost. |
+| `LOOM_OPENAI_MAX_REQUEST_BYTES` | `262144` | Largest serialized provider request. |
+| `LOOM_OPENAI_USAGE_LOG` | unset | Exclusive append-only provider token-usage sidecar for the experiment harness. |
 
 `LOOM_OPENAI_BASE_URL` accepts `https` anywhere and `http` only on loopback, so a compatible provider on the same host is reachable for development while a credential cannot be sent in the clear across a network.
 User info in the URL (a `user:pass@` before the host) is refused under both schemes, because its only effect would be to make the host you read differ from the host the request reaches.
@@ -84,6 +86,21 @@ Raising this means raising both of the others, in `dev.loom.mind.CognitionSettin
 `LOOM_OPENAI_MAX_OUTPUT_TOKENS` is not tight, deliberately: reasoning models spend hidden reasoning tokens out of the same budget, and running out arrives as a truncated answer rather than as a clear error.
 If decisions start failing as cut off, this is the setting to raise.
 
+`LOOM_OPENAI_MAX_REQUEST_BYTES` is checked over the complete JSON request before
+the socket is opened, including the standing prompt, current perception, and
+strict response schema. It is both a memory bound and the conservative input
+token ceiling used by the research harness when it proves that the configured
+call budget cannot cross the spend ceiling.
+
+`LOOM_OPENAI_USAGE_LOG` is normally absent. The bounded research harness points
+it at a new file inside its disposable run directory. Each successful provider
+response must then carry token usage; the mind appends only agent id, request id,
+routed model, prompt/completion totals, and cached prompt tokens, and syncs the
+record before returning the decision. The path, provider ids, prompt, answer,
+and credential are never written. A stale destination or a successful response
+without consistent usage is a refusal, because silently losing billing evidence
+would understate a paid run.
+
 ### The socket
 
 | Variable | Default | Meaning |
@@ -94,7 +111,11 @@ Loopback by default: the mind trusts whatever sends it a perception, so reaching
 
 ## What a failure looks like
 
-The mind either decides or refuses, and a refusal is one line naming the setting an operator would change:
+The mind either decides or refuses, and a refusal is one line naming the
+setting an operator would change. The examples show the human-readable field;
+an OpenAI refusal also carries a `loom-cognition-failure/1` object beside it
+with the routed model, HTTP status, safe provider type/code, response shape,
+and Loom mapping:
 
 ```
 {"error":"cognition failed: the model provider rejected Loom's credential (HTTP 401, invalid_request_error/invalid_api_key); check OPENAI_API_KEY"}
@@ -106,6 +127,10 @@ The mind either decides or refuses, and a refusal is one line naming the setting
 Three properties of that frame are load-bearing rather than cosmetic:
 
 - **No refusal carries the prompt or the credential.** The provider's own error `message` is the one field that can quote back what was sent, so it is not even read; only its short `type` and `code` are repeated. A malformed answer is reported as a category and a position, never as text.
+- **The classification is evidence, not authority.** The body acts only on a
+  contract `Decision`; it ignores the optional `failure` object. The experiment
+  proxy validates the object against the route before retaining aggregate
+  counts, and never retains the provider message or request id.
 - **A refusal is not a decision.** `{"error":...}` is deliberately outside the contract: a mind that could not answer has not decided anything, and inventing an idle `Intent` for it would put a fiction in the permanent decision record.
 - **Nothing is retried.** One perception is at most one inference. The body's transport retries only up to the point where its request is written, precisely so a single perception can never be billed twice, and the mind holds the other half of that bargain. A lost decision is cheaper than a duplicated one.
 

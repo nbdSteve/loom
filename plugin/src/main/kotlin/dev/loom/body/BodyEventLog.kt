@@ -15,7 +15,9 @@
  */
 package dev.loom.body
 
+import dev.loom.contract.Decision
 import dev.loom.contract.LoomJson
+import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -117,6 +119,22 @@ data class BodyEventRecord(
      * a registration that is only in memory.
      */
     val witness: WitnessedPlayer? = null,
+    /**
+     * The complete bounded perception supplied to cognition.
+     *
+     * Present on [BodyEvent.PERCEIVED] and [BodyEvent.COGNITION_UNAVAILABLE].
+     * The summary fields above remain for compatibility and cheap counting; this
+     * field is the audit record for what the mind was actually allowed to see.
+     */
+    val perception: Perception? = null,
+    /**
+     * The complete bounded, typed decision returned by cognition.
+     *
+     * Present on [BodyEvent.DECIDED] and [BodyEvent.DECISION_DISCARDED]. Keeping
+     * the typed intent and bounded reasoning beside the provenance means a public
+     * experiment does not have to recover either one from [detail].
+     */
+    val decision: Decision? = null,
 )
 
 /**

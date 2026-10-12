@@ -61,6 +61,7 @@ import dev.loom.mind.MIN_SOCKET_TIMEOUT_MILLIS
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
 import java.io.BufferedWriter
@@ -206,6 +207,7 @@ private class Deadline(
 @Serializable
 private data class WireError(
     @SerialName(ERROR_KEY) val error: String,
+    val failure: JsonObject? = null,
 )
 
 /**

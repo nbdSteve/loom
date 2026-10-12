@@ -26,16 +26,18 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+use std::fs;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use loom_cognition::config::Env;
 use loom_cognition::mind::Mind;
-use loom_cognition::model::BackendError;
+use loom_cognition::model::{BackendError, BackendFailureMapping, BackendResponseShape};
 use loom_cognition::openai::settings::{
     API_KEY_VAR, BASE_URL_VAR, DEEP_MODEL_VAR, FAST_MODEL_VAR, MAX_OUTPUT_TOKENS_VAR,
-    TIMEOUT_MS_VAR,
+    MAX_REQUEST_BYTES_VAR, TIMEOUT_MS_VAR, USAGE_LOG_VAR,
 };
 use loom_cognition::openai::{OpenAiBackend, OpenAiConfig, MAX_RESPONSE_BYTES};
 use loom_cognition::router::Router;
@@ -64,6 +66,7 @@ const PROMPT_MARKER: &str = "sixteen-emerald-marker";
 /// How long a silent mock waits before giving up, well past any timeout a test
 /// configures.
 const SILENCE: Duration = Duration::from_secs(30);
+static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// What the mock provider does with every connection it accepts.
 enum Reply {
@@ -86,6 +89,22 @@ impl Reply {
                 "finish_reason": "stop",
                 "message": { "role": "assistant", "content": answer.to_string() }
             }]
+        }))
+    }
+
+    /// A successful completion with provider-reported billing counts.
+    fn completion_with_usage(answer: &Value) -> Self {
+        Self::ok(&json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "role": "assistant", "content": answer.to_string() }
+            }],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "total_tokens": 120,
+                "prompt_tokens_details": { "cached_tokens": 25 }
+            }
         }))
     }
 
@@ -368,6 +387,14 @@ fn good_answer() -> Value {
     })
 }
 
+fn temporary_usage_file() -> std::path::PathBuf {
+    let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "loom-provider-usage-{}-{sequence}.jsonl",
+        std::process::id()
+    ))
+}
+
 #[tokio::test]
 async fn a_decision_comes_back_from_the_provider_and_is_stamped_by_loom() {
     let (provider, decided) = decide_with(
@@ -405,6 +432,71 @@ async fn a_decision_comes_back_from_the_provider_and_is_stamped_by_loom() {
             .as_str()
             .is_some_and(|text| text.contains(PROMPT_MARKER)),
         "the perception itself must reach the provider, got {sent}"
+    );
+}
+
+#[tokio::test]
+async fn configured_usage_is_appended_without_provider_or_prompt_secrets() {
+    let provider = MockProvider::start(Reply::completion_with_usage(&good_answer())).await;
+    let file = temporary_usage_file();
+    let configured = file.to_string_lossy().into_owned();
+    let mind = mind_for(&provider.base_url, &[(USAGE_LOG_VAR, &configured)]);
+    let decision = mind
+        .decide(&perception(DecisionImportance::Notable))
+        .await
+        .expect("a decision");
+    assert_eq!(decision.provenance.model, FAST_MODEL);
+    drop(mind);
+
+    let text = fs::read_to_string(&file).expect("usage was made durable");
+    let record: Value = serde_json::from_str(text.trim()).expect("usage is JSON");
+    assert_eq!(record["schemaVersion"], "loom-provider-usage/1");
+    assert_eq!(record["agentId"], "agent-mock");
+    assert_eq!(record["requestId"], "req-mock-1");
+    assert_eq!(record["model"], FAST_MODEL);
+    assert_eq!(record["promptTokens"], 100);
+    assert_eq!(record["cachedPromptTokens"], 25);
+    assert_eq!(record["completionTokens"], 20);
+    assert_eq!(record["totalTokens"], 120);
+    assert!(!text.contains(NOT_A_KEY));
+    assert!(!text.contains(PROMPT_MARKER));
+    assert!(!text.contains(&configured));
+    fs::remove_file(file).expect("temporary usage file is removable");
+}
+
+#[tokio::test]
+async fn configured_usage_refuses_a_success_response_that_omits_billing_counts() {
+    let provider = MockProvider::start(Reply::completion(&good_answer())).await;
+    let file = temporary_usage_file();
+    let configured = file.to_string_lossy().into_owned();
+    let mind = mind_for(&provider.base_url, &[(USAGE_LOG_VAR, &configured)]);
+    let failed = mind
+        .decide(&perception(DecisionImportance::Routine))
+        .await
+        .expect_err("configured accounting may not silently lose a provider call");
+    assert!(failed.message.contains(USAGE_LOG_VAR));
+    assert_eq!(provider.requests().len(), 1);
+    drop(mind);
+    assert_eq!(
+        fs::read_to_string(&file).expect("the exclusive journal exists"),
+        ""
+    );
+    fs::remove_file(file).expect("temporary usage file is removable");
+}
+
+#[tokio::test]
+async fn the_serialized_request_bound_is_checked_before_any_provider_call() {
+    let provider = MockProvider::start(Reply::completion(&good_answer())).await;
+    let mind = mind_for(&provider.base_url, &[(MAX_REQUEST_BYTES_VAR, "1")]);
+    let failed = mind
+        .decide(&perception(DecisionImportance::Routine))
+        .await
+        .expect_err("the request cannot fit in one byte");
+    assert!(failed.message.contains(MAX_REQUEST_BYTES_VAR));
+    assert_eq!(
+        provider.requests().len(),
+        0,
+        "a refused request must cost nothing"
     );
 }
 
@@ -464,6 +556,55 @@ async fn a_rejected_credential_names_the_variable_to_check() {
     let failed = decided.expect_err("a rejected credential is not a decision");
     assert!(failed.message.contains(API_KEY_VAR), "got {failed}");
     assert!(failed.message.contains("invalid_api_key"), "got {failed}");
+    let classification = failed.failure().expect("OpenAI failures are classified");
+    assert_eq!(
+        classification.mapping,
+        BackendFailureMapping::ProviderAuthentication
+    );
+    assert_eq!(
+        classification.response_shape,
+        BackendResponseShape::ApiErrorEnvelope
+    );
+    assert_eq!(classification.http_status, Some(401));
+    assert_eq!(
+        classification.provider_type.as_deref(),
+        Some("invalid_request_error")
+    );
+    assert_eq!(
+        classification.provider_code.as_deref(),
+        Some("invalid_api_key")
+    );
+    assert_eq!(provider.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn a_structured_output_rejection_is_classified_without_its_message() {
+    let (provider, decided) = decide_with(
+        Reply::refused(400, "invalid_request_error", "invalid_json_schema"),
+        DecisionImportance::Routine,
+    )
+    .await;
+    let failed = decided.expect_err("a rejected request is not a decision");
+    let classification = failed.failure().expect("OpenAI failures are classified");
+    assert_eq!(classification.model, FAST_MODEL);
+    assert_eq!(classification.http_status, Some(400));
+    assert_eq!(
+        classification.provider_type.as_deref(),
+        Some("invalid_request_error")
+    );
+    assert_eq!(
+        classification.provider_code.as_deref(),
+        Some("invalid_json_schema")
+    );
+    assert_eq!(
+        classification.response_shape,
+        BackendResponseShape::ApiErrorEnvelope
+    );
+    assert_eq!(
+        classification.mapping,
+        BackendFailureMapping::ProviderRequest
+    );
+    assert!(!failed.message.contains(PROMPT_MARKER), "got {failed}");
     assert_eq!(provider.requests().len(), 1);
 }
 
@@ -578,26 +719,60 @@ async fn a_body_that_is_not_a_completion_at_all_says_so() {
         failed.message.contains("not a chat completion"),
         "got {failed}"
     );
+    let classification = failed.failure().expect("OpenAI failures are classified");
+    assert_eq!(
+        classification.response_shape,
+        BackendResponseShape::OtherJson
+    );
+    assert_eq!(
+        classification.mapping,
+        BackendFailureMapping::ProviderResponseParse
+    );
 }
 
 #[tokio::test]
 async fn a_refusal_is_recorded_as_a_refusal_and_never_quoted() {
-    let (_provider, decided) = decide_with(
-        Reply::ok(&json!({
-            "choices": [{
-                "finish_reason": "stop",
-                "message": {
-                    "role": "assistant",
-                    "content": Value::Null,
-                    "refusal": format!("I will not discuss {PROMPT_MARKER}")
-                }
-            }]
-        })),
-        DecisionImportance::Notable,
-    )
+    let provider = MockProvider::start(Reply::ok(&json!({
+        "choices": [{
+            "finish_reason": "stop",
+            "message": {
+                "role": "assistant",
+                "content": Value::Null,
+                "refusal": format!("I will not discuss {PROMPT_MARKER}")
+            }
+        }],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120
+        }
+    })))
     .await;
-    let failed = decided.expect_err("a refusal is not a decision");
+    let file = temporary_usage_file();
+    let configured = file.to_string_lossy().into_owned();
+    let mind = mind_for(&provider.base_url, &[(USAGE_LOG_VAR, &configured)]);
+    let failed = mind
+        .decide(&perception(DecisionImportance::Notable))
+        .await
+        .expect_err("a refusal is not a decision");
     assert!(failed.message.contains("declined"), "got {failed}");
+    let classification = failed.failure().expect("OpenAI failures are classified");
+    assert_eq!(
+        classification.response_shape,
+        BackendResponseShape::ChatCompletion
+    );
+    assert_eq!(
+        classification.mapping,
+        BackendFailureMapping::ProviderSafetyRefusal
+    );
+    drop(mind);
+    assert!(
+        !fs::read_to_string(&file)
+            .expect("usage was made durable")
+            .is_empty(),
+        "a standard safety refusal is classified only after usage is durable"
+    );
+    fs::remove_file(file).expect("temporary usage file is removable");
 }
 
 #[tokio::test]

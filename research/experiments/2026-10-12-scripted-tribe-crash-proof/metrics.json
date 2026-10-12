@@ -1,0 +1,199 @@
+{
+  "behavior": {
+    "attackIntents": 0,
+    "byIntent": {
+      "idle": 15
+    },
+    "byOutcome": {
+      "accepted": 15,
+      "bodyProcessExited": 1,
+      "disputedVitals": 78,
+      "failed": 5
+    },
+    "deaths": 0,
+    "decisionsByIntent": {
+      "idle": 15
+    },
+    "disconnects": 1,
+    "movementRecords": 0,
+    "sleepIntents": 0,
+    "speechIntents": 0,
+    "witnessDisputeRecords": 78,
+    "witnessDisputesByOutcome": {
+      "disputedVitals": 78
+    },
+    "worldInteractionRecords": 0
+  },
+  "cognition": {
+    "decisionsByStamp": [
+      {
+        "decisions": 15,
+        "model": "scripted-stand-in",
+        "promptVersion": "routine-v11",
+        "tier": "ROUTINE"
+      }
+    ],
+    "externalSpendNanoUsd": 0,
+    "externalSpendUsd": 0,
+    "forwardedCalls": 15,
+    "providerUsageCalls": 0,
+    "refusedCalls": 5,
+    "usageByModel": {}
+  },
+  "crashContainment": {
+    "cleanupVerified": true,
+    "controlledCrashes": [
+      {
+        "agentId": "tribe-alpha",
+        "controlPort": 25585
+      }
+    ],
+    "peerDecisionsAfterCrash": {
+      "tribe-beta": 4,
+      "tribe-gamma": 3
+    }
+  },
+  "cycles": {
+    "applied": 15,
+    "decided": 15,
+    "discarded": 0,
+    "incomplete": [],
+    "perceived": 20,
+    "unavailable": 5
+  },
+  "findings": {
+    "counterevidence": [
+      "No agent produced a speech intent.",
+      "No bounded perception sample placed two agents within eight blocks.",
+      "No attack intent was applied.",
+      "No server-confirmed native world interaction occurred.",
+      "78 server witness dispute record(s) were emitted (disputedVitals: 78); client-reported readings were not fully corroborated."
+    ],
+    "interpretations": [
+      "Counts describe recorded behavior only; they do not establish motive, cooperation, specialization, hierarchy, or emergence."
+    ],
+    "limitations": [
+      "Perception positions are samples rather than continuous trajectories.",
+      "Server witness disputes limit any claim that depends on the disputed client-reported readings.",
+      "A scripted cognition run validates composition and containment, not autonomous social behavior."
+    ],
+    "observations": []
+  },
+  "records": {
+    "agents": [
+      {
+        "actions": 3,
+        "agentId": "tribe-alpha",
+        "appliedByIntent": {
+          "idle": 3
+        },
+        "byEvent": {
+          "bodyDisconnected": 1,
+          "cognitionUnavailable": 1,
+          "decided": 3,
+          "healthChanged": 1,
+          "intentApplied": 3,
+          "perceived": 4,
+          "spawned": 1,
+          "witnessDisputed": 12,
+          "witnessJoined": 1,
+          "witnessQuit": 1
+        },
+        "byOutcome": {
+          "accepted": 3,
+          "bodyProcessExited": 1,
+          "disputedVitals": 12,
+          "failed": 1
+        },
+        "decisions": 3,
+        "decisionsByIntent": {
+          "idle": 3
+        },
+        "records": 28
+      },
+      {
+        "actions": 6,
+        "agentId": "tribe-beta",
+        "appliedByIntent": {
+          "idle": 6
+        },
+        "byEvent": {
+          "cognitionUnavailable": 2,
+          "decided": 6,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 6,
+          "perceived": 8,
+          "spawned": 1,
+          "witnessDisputed": 33,
+          "witnessJoined": 1
+        },
+        "byOutcome": {
+          "accepted": 6,
+          "disputedVitals": 33,
+          "failed": 2
+        },
+        "decisions": 6,
+        "decisionsByIntent": {
+          "idle": 6
+        },
+        "records": 59
+      },
+      {
+        "actions": 6,
+        "agentId": "tribe-gamma",
+        "appliedByIntent": {
+          "idle": 6
+        },
+        "byEvent": {
+          "cognitionUnavailable": 2,
+          "decided": 6,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 6,
+          "perceived": 8,
+          "spawned": 1,
+          "witnessDisputed": 33,
+          "witnessJoined": 1
+        },
+        "byOutcome": {
+          "accepted": 6,
+          "disputedVitals": 33,
+          "failed": 2
+        },
+        "decisions": 6,
+        "decisionsByIntent": {
+          "idle": 6
+        },
+        "records": 59
+      }
+    ],
+    "body": 146,
+    "byEvent": {
+      "bodyDisconnected": 1,
+      "cognitionUnavailable": 5,
+      "decided": 15,
+      "despawned": 2,
+      "healthChanged": 3,
+      "intentApplied": 15,
+      "perceived": 20,
+      "spawned": 3,
+      "witnessDisputed": 78,
+      "witnessJoined": 3,
+      "witnessQuit": 1
+    },
+    "harness": 30,
+    "total": 176
+  },
+  "schemaVersion": "loom-derived-metrics/1",
+  "spatial": {
+    "coLocationSamples": [],
+    "coLocationThresholdBlocks": 8,
+    "maximumTickSeparation": 20
+  },
+  "timing": {
+    "firstTick": 17,
+    "lastTick": 560,
+    "tickSpan": 543
+  }
+}

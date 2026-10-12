@@ -71,10 +71,12 @@ async fn main() -> ExitCode {
             };
             let router = Router::new(config.catalog().clone());
             let endpoint = format!(
-                "{url}, {millis}ms timeout, {tokens} token answers",
+                "{url}, {millis}ms timeout, {tokens} token answers, {bytes} byte requests, usage evidence {usage}",
                 url = config.chat_completions_url(),
                 millis = config.request_timeout().as_millis(),
-                tokens = config.max_output_tokens()
+                tokens = config.max_output_tokens(),
+                bytes = config.max_request_bytes(),
+                usage = if config.usage_log().is_some() { "on" } else { "off" }
             );
             let backend = match OpenAiBackend::new(config) {
                 Ok(backend) => backend,

@@ -39,16 +39,19 @@
 //! layer lower and invisibly. A lost decision is cheaper than a duplicated one.
 
 pub mod settings;
+mod usage;
 pub mod wire;
 
 use std::time::Duration;
 
 use loom_contract::Perception;
-use reqwest::header::{HeaderMap, AUTHORIZATION, RETRY_AFTER};
+use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use reqwest::{Response, StatusCode};
 
 use crate::config::{bounded, ConfigError};
-use crate::model::{BackendError, Draft, ModelBackend};
+use crate::model::{
+    BackendError, BackendFailure, BackendFailureMapping, BackendResponseShape, Draft, ModelBackend,
+};
 use crate::prompt::render;
 use crate::router::ModelRoute;
 
@@ -72,11 +75,45 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 /// `finish_reason` meaning the answer was cut off at the token bound.
 const CUT_OFF: &str = "length";
 
+/// Builds one provider-safe classified backend failure.
+fn openai_failure(
+    message: impl Into<String>,
+    model: &str,
+    http_status: Option<StatusCode>,
+    provider_type: Option<&str>,
+    provider_code: Option<&str>,
+    response_shape: BackendResponseShape,
+    mapping: BackendFailureMapping,
+) -> BackendError {
+    BackendError::classified(
+        message,
+        BackendFailure::openai(
+            model,
+            http_status.map(|status| status.as_u16()),
+            provider_type,
+            provider_code,
+            response_shape,
+            mapping,
+        ),
+    )
+}
+
+/// Structural response shape corresponding to one JSON decoding failure.
+fn malformed_response_shape(error: &serde_json::Error) -> BackendResponseShape {
+    match error.classify() {
+        serde_json::error::Category::Data => BackendResponseShape::OtherJson,
+        serde_json::error::Category::Io
+        | serde_json::error::Category::Syntax
+        | serde_json::error::Category::Eof => BackendResponseShape::MalformedJson,
+    }
+}
+
 /// Drafts decisions by asking `OpenAI`.
 #[derive(Debug)]
 pub struct OpenAiBackend {
     http: reqwest::Client,
     config: OpenAiConfig,
+    usage: usage::UsageJournal,
 }
 
 impl OpenAiBackend {
@@ -104,7 +141,12 @@ impl OpenAiBackend {
                 what: "the OpenAI HTTP client",
                 reason: root_cause(&e),
             })?;
-        Ok(Self { http, config })
+        let usage = usage::UsageJournal::open(config.usage_log())?;
+        Ok(Self {
+            http,
+            config,
+            usage,
+        })
     }
 
     /// The configuration this backend was built with.
@@ -121,16 +163,45 @@ impl OpenAiBackend {
     ) -> Result<Draft, BackendError> {
         let prompt = render(route, perception);
         let request = wire::chat_request(route.model(), &prompt, self.config.max_output_tokens());
+        let request_bytes = serde_json::to_vec(&request).map_err(|_| {
+            openai_failure(
+                "the model request could not be encoded",
+                route.model(),
+                None,
+                None,
+                None,
+                BackendResponseShape::NotSent,
+                BackendFailureMapping::RequestEncoding,
+            )
+        })?;
+        if request_bytes.len()
+            > usize::try_from(self.config.max_request_bytes()).unwrap_or(usize::MAX)
+        {
+            return Err(openai_failure(
+                format!(
+                    "the model request exceeded {limit} bytes; raise {var}",
+                    limit = self.config.max_request_bytes(),
+                    var = settings::MAX_REQUEST_BYTES_VAR
+                ),
+                route.model(),
+                None,
+                None,
+                None,
+                BackendResponseShape::NotSent,
+                BackendFailureMapping::RequestBound,
+            ));
+        }
         let response = self
             .http
             .post(self.config.chat_completions_url())
-            .json(&request)
+            .header(CONTENT_TYPE, "application/json")
+            .body(request_bytes)
             .send()
             .await
-            .map_err(|e| self.transport_failure(&e))?;
+            .map_err(|e| self.transport_failure(route.model(), None, &e))?;
         let status = response.status();
         let retry_after = header_hint(&response, RETRY_AFTER.as_str());
-        let body = self.read_bounded(response).await?;
+        let body = self.read_bounded(response, route.model(), status).await?;
         if !status.is_success() {
             return Err(status_failure(
                 route.model(),
@@ -139,7 +210,9 @@ impl OpenAiBackend {
                 retry_after.as_deref(),
             ));
         }
-        self.draft_from_body(&body)
+        let parsed = Self::response_from_body(route.model(), status, &body)?;
+        self.usage.append(route, perception, status, parsed.usage)?;
+        self.draft_from_response(route.model(), status, parsed)
     }
 
     /// Reads a response body, refusing one that will not fit.
@@ -148,83 +221,204 @@ impl OpenAiBackend {
     /// body and checking afterwards, which is what makes the bound real: a body
     /// that never ends is refused instead of being buffered first. A declared
     /// `Content-Length` is not trusted for this, because it is the peer's claim.
-    async fn read_bounded(&self, mut response: Response) -> Result<Vec<u8>, BackendError> {
+    async fn read_bounded(
+        &self,
+        mut response: Response,
+        model: &str,
+        status: StatusCode,
+    ) -> Result<Vec<u8>, BackendError> {
         let mut body: Vec<u8> = Vec::new();
         loop {
             let chunk = response
                 .chunk()
                 .await
-                .map_err(|e| self.transport_failure(&e))?;
+                .map_err(|e| self.transport_failure(model, Some(status), &e))?;
             let Some(chunk) = chunk else { return Ok(body) };
             if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-                return Err(BackendError::new(format!(
-                    "the model provider's response exceeded {MAX_RESPONSE_BYTES} bytes"
-                )));
+                return Err(openai_failure(
+                    format!("the model provider's response exceeded {MAX_RESPONSE_BYTES} bytes"),
+                    model,
+                    Some(status),
+                    None,
+                    None,
+                    BackendResponseShape::OversizedHttpBody,
+                    BackendFailureMapping::ProviderResponseBound,
+                ));
             }
             body.extend_from_slice(&chunk);
         }
     }
 
     /// Turns a successful response body into a draft.
-    fn draft_from_body(&self, body: &[u8]) -> Result<Draft, BackendError> {
-        let parsed: wire::ChatResponse = serde_json::from_slice(body).map_err(|e| {
-            BackendError::new(format!(
-                "the model provider's answer was not a chat completion ({detail})",
-                detail = wire::describe_json_error(&e)
-            ))
+    fn response_from_body(
+        model: &str,
+        status: StatusCode,
+        body: &[u8],
+    ) -> Result<wire::ChatResponse, BackendError> {
+        serde_json::from_slice(body).map_err(|e| {
+            openai_failure(
+                format!(
+                    "the model provider's answer was not a chat completion ({detail})",
+                    detail = wire::describe_json_error(&e)
+                ),
+                model,
+                Some(status),
+                None,
+                None,
+                malformed_response_shape(&e),
+                BackendFailureMapping::ProviderResponseParse,
+            )
+        })
+    }
+
+    fn draft_from_response(
+        &self,
+        model: &str,
+        status: StatusCode,
+        parsed: wire::ChatResponse,
+    ) -> Result<Draft, BackendError> {
+        let choice = parsed.choices.into_iter().next().ok_or_else(|| {
+            openai_failure(
+                "the model provider returned no answer",
+                model,
+                Some(status),
+                None,
+                None,
+                BackendResponseShape::ChatCompletion,
+                BackendFailureMapping::ProviderAnswerMissing,
+            )
         })?;
-        let choice = parsed
-            .choices
-            .into_iter()
-            .next()
-            .ok_or_else(|| BackendError::new("the model provider returned no answer"))?;
         if choice.message.refusal.is_some() {
             // The refusal's own words are model output that can quote the
             // perception back, so the fact is recorded and the text is not.
-            return Err(BackendError::new(
+            return Err(openai_failure(
                 "the model declined to answer this perception",
+                model,
+                Some(status),
+                None,
+                None,
+                BackendResponseShape::ChatCompletion,
+                BackendFailureMapping::ProviderSafetyRefusal,
             ));
         }
         if choice.finish_reason.as_deref() == Some(CUT_OFF) {
-            return Err(BackendError::new(format!(
-                "the model's answer was cut off at {limit} tokens; raise {var}",
-                limit = self.config.max_output_tokens(),
-                var = settings::MAX_OUTPUT_TOKENS_VAR
-            )));
+            return Err(openai_failure(
+                format!(
+                    "the model's answer was cut off at {limit} tokens; raise {var}",
+                    limit = self.config.max_output_tokens(),
+                    var = settings::MAX_OUTPUT_TOKENS_VAR
+                ),
+                model,
+                Some(status),
+                None,
+                None,
+                BackendResponseShape::ChatCompletion,
+                BackendFailureMapping::ProviderAnswerCutOff,
+            ));
         }
         let content = choice
             .message
             .content
             .filter(|text| !text.trim().is_empty())
-            .ok_or_else(|| BackendError::new("the model answered with nothing"))?;
-        wire::draft_from_answer(&content).map_err(BackendError::new)
+            .ok_or_else(|| {
+                openai_failure(
+                    "the model answered with nothing",
+                    model,
+                    Some(status),
+                    None,
+                    None,
+                    BackendResponseShape::ChatCompletion,
+                    BackendFailureMapping::ProviderAnswerEmpty,
+                )
+            })?;
+        wire::draft_from_answer(&content).map_err(|message| {
+            openai_failure(
+                message,
+                model,
+                Some(status),
+                None,
+                None,
+                BackendResponseShape::ChatCompletion,
+                BackendFailureMapping::ProviderDecisionParse,
+            )
+        })
+    }
+
+    /// Parses a response body and turns its first answer into a draft.
+    ///
+    /// Kept as one seam for the unit tests; the live request path parses first so
+    /// configured usage evidence can be made durable before answer validation.
+    #[cfg(test)]
+    fn draft_from_body(&self, body: &[u8]) -> Result<Draft, BackendError> {
+        Self::response_from_body("test-model", StatusCode::OK, body)
+            .and_then(|parsed| self.draft_from_response("test-model", StatusCode::OK, parsed))
     }
 
     /// Why a request never produced a response, in Loom's own words.
-    fn transport_failure(&self, e: &reqwest::Error) -> BackendError {
+    fn transport_failure(
+        &self,
+        model: &str,
+        status: Option<StatusCode>,
+        e: &reqwest::Error,
+    ) -> BackendError {
         let url = self.config.chat_completions_url();
+        let response_shape = if status.is_some() {
+            BackendResponseShape::UnreadableHttpBody
+        } else {
+            BackendResponseShape::NoHttpResponse
+        };
         if e.is_timeout() {
-            return BackendError::new(format!(
-                "the model provider at {url} did not answer within {millis}ms; raise {var}",
-                millis = self.config.request_timeout().as_millis(),
-                var = settings::TIMEOUT_MS_VAR
-            ));
+            return openai_failure(
+                format!(
+                    "the model provider at {url} did not answer within {millis}ms; raise {var}",
+                    millis = self.config.request_timeout().as_millis(),
+                    var = settings::TIMEOUT_MS_VAR
+                ),
+                model,
+                status,
+                None,
+                None,
+                response_shape,
+                BackendFailureMapping::ProviderTimeout,
+            );
         }
         if e.is_connect() {
-            return BackendError::new(format!(
-                "the model provider at {url} could not be reached ({cause})",
-                cause = root_cause(e)
-            ));
+            return openai_failure(
+                format!(
+                    "the model provider at {url} could not be reached ({cause})",
+                    cause = root_cause(e)
+                ),
+                model,
+                status,
+                None,
+                None,
+                response_shape,
+                BackendFailureMapping::ProviderConnection,
+            );
         }
         if e.is_body() || e.is_decode() {
-            return BackendError::new(format!(
-                "the model provider at {url} sent a response that could not be read"
-            ));
+            return openai_failure(
+                format!("the model provider at {url} sent a response that could not be read"),
+                model,
+                status,
+                None,
+                None,
+                response_shape,
+                BackendFailureMapping::ProviderResponseRead,
+            );
         }
-        BackendError::new(format!(
-            "the request to the model provider at {url} failed ({cause})",
-            cause = root_cause(e)
-        ))
+        openai_failure(
+            format!(
+                "the request to the model provider at {url} failed ({cause})",
+                cause = root_cause(e)
+            ),
+            model,
+            status,
+            None,
+            None,
+            response_shape,
+            BackendFailureMapping::ProviderTransport,
+        )
     }
 }
 
@@ -254,33 +448,69 @@ fn status_failure(
     retry_after: Option<&str>,
 ) -> BackendError {
     let code = status.as_u16();
-    let told = serde_json::from_slice::<wire::ApiErrorEnvelope>(body)
-        .ok()
-        .and_then(|envelope| envelope.error.identifiers())
-        .map_or_else(String::new, |identifiers| format!(", {identifiers}"));
-    let message = match code {
-        401 | 403 => format!(
-            "the model provider rejected Loom's credential (HTTP {code}{told}); check {var}",
-            var = settings::API_KEY_VAR
+    let parsed = serde_json::from_slice::<wire::ApiErrorEnvelope>(body);
+    let (response_shape, provider_type, provider_code, told) = match &parsed {
+        Ok(envelope) => (
+            BackendResponseShape::ApiErrorEnvelope,
+            envelope.error.kind(),
+            envelope.error.code(),
+            envelope
+                .error
+                .identifiers()
+                .map_or_else(String::new, |identifiers| format!(", {identifiers}")),
         ),
-        404 => format!(
-            "the model provider does not know the model '{model}' (HTTP 404{told}); check {fast} and {deep}",
-            model = bounded(model),
-            fast = settings::FAST_MODEL_VAR,
-            deep = settings::DEEP_MODEL_VAR
-        ),
-        429 => format!(
-            "the model provider is rate limiting Loom (HTTP 429{told}){after}; this decision was not made",
-            after = retry_after.map_or_else(String::new, |after| format!(", retry after {after}"))
-        ),
-        400 | 422 => format!(
-            "the model provider refused Loom's request for '{model}' (HTTP {code}{told})",
-            model = bounded(model)
-        ),
-        500..=599 => format!("the model provider failed (HTTP {code}{told})"),
-        _ => format!("the model provider answered HTTP {code}{told}"),
+        Err(error) => (malformed_response_shape(error), None, None, String::new()),
     };
-    BackendError::new(message)
+    let (message, mapping) = match code {
+        401 | 403 => (
+            format!(
+                "the model provider rejected Loom's credential (HTTP {code}{told}); check {var}",
+                var = settings::API_KEY_VAR
+            ),
+            BackendFailureMapping::ProviderAuthentication,
+        ),
+        404 => (
+            format!(
+                "the model provider does not know the model '{model}' (HTTP 404{told}); check {fast} and {deep}",
+                model = bounded(model),
+                fast = settings::FAST_MODEL_VAR,
+                deep = settings::DEEP_MODEL_VAR
+            ),
+            BackendFailureMapping::ProviderModel,
+        ),
+        429 => (
+            format!(
+                "the model provider is rate limiting Loom (HTTP 429{told}){after}; this decision was not made",
+                after = retry_after
+                    .map_or_else(String::new, |after| format!(", retry after {after}"))
+            ),
+            BackendFailureMapping::ProviderRateLimit,
+        ),
+        400 | 422 => (
+            format!(
+                "the model provider refused Loom's request for '{model}' (HTTP {code}{told})",
+                model = bounded(model)
+            ),
+            BackendFailureMapping::ProviderRequest,
+        ),
+        500..=599 => (
+            format!("the model provider failed (HTTP {code}{told})"),
+            BackendFailureMapping::ProviderServer,
+        ),
+        _ => (
+            format!("the model provider answered HTTP {code}{told}"),
+            BackendFailureMapping::ProviderHttp,
+        ),
+    };
+    openai_failure(
+        message,
+        model,
+        Some(status),
+        provider_type,
+        provider_code,
+        response_shape,
+        mapping,
+    )
 }
 
 /// A response header's value, bounded, if it is present and printable.

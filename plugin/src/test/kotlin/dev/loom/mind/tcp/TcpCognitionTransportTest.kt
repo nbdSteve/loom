@@ -315,7 +315,18 @@ class TcpCognitionTransportTest {
     @Test
     @DisplayName("a refusal frame surfaces the mind's own message, not a parse error")
     fun aRefusalIsReportedAsARefusal() {
-        val mind = managed(FakeMind { """{"error":"perception was not valid JSON"}""" })
+        val response =
+            """{"error":"perception was not valid JSON","failure":{""" +
+                """"schemaVersion":"loom-cognition-failure/1","backend":"openai",""" +
+                """"model":"test-model","httpStatus":400,""" +
+                """"providerType":"invalid_request_error","providerCode":"invalid_json_schema",""" +
+                """"responseShape":"apiErrorEnvelope","mapping":"providerRequest"}}"""
+        val mind =
+            managed(
+                FakeMind {
+                    response
+                },
+            )
 
         val thrown = assertThrows<IOException> { transportTo(mind).ask(perception()) }
 

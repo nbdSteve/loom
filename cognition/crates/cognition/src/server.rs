@@ -25,7 +25,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::mind::Mind;
 use crate::model::ModelBackend;
-use crate::wire::{decode_perception, encode_decision, encode_error};
+use crate::wire::{decode_perception, encode_decision, encode_error, encode_error_with_failure};
 
 /// Longest request line the service will accumulate, in bytes.
 ///
@@ -210,7 +210,7 @@ async fn answer<B: ModelBackend>(mind: &Mind<B>, request: &str) -> String {
             Ok(line) => line,
             Err(e) => encode_error(&format!("decision could not be encoded: {e}")),
         },
-        Err(e) => encode_error(&format!("cognition failed: {e}")),
+        Err(e) => encode_error_with_failure(&format!("cognition failed: {e}"), e.failure()),
     }
 }
 
@@ -229,11 +229,14 @@ mod tests {
         UNTERMINATED,
     };
     use crate::mind::Mind;
-    use crate::model::{ScriptedBackend, SCRIPTED_MODEL_ID};
+    use crate::model::{
+        BackendError, BackendFailure, BackendFailureMapping, BackendResponseShape, Draft,
+        ModelBackend, ScriptedBackend, SCRIPTED_MODEL_ID,
+    };
     use crate::router::{ModelCatalog, Router};
     use crate::wire::WireError;
-    use loom_contract::{Decision, Intent};
-    use std::io;
+    use loom_contract::{Decision, Intent, Perception};
+    use std::{future, io};
 
     const SPOKEN_PERCEPTION: &str = r#"{"requestId":"req-spoken-1","agentId":"agent-alpha","trigger":{"event":"spoken","from":"player-steve","text":"want to trade?"},"importance":"NOTABLE","capturedTick":1024,"selfState":{"health":20.0,"food":20,"saturation":5.0,"position":[10.5,64.0,-8.25],"inventorySummary":[],"craftingOptions":[],"craftingOptionsOmitted":0,"world":{"dayPhase":"day","isDay":true,"ticksUntilNightfall":6000}},"surroundings":[],"surroundingsOmitted":0}"#;
 
@@ -242,6 +245,28 @@ mod tests {
             Router::new(ModelCatalog::uniform(SCRIPTED_MODEL_ID)),
             ScriptedBackend,
         )
+    }
+
+    struct ClassifiedBrokenBackend;
+
+    impl ModelBackend for ClassifiedBrokenBackend {
+        fn draft(
+            &self,
+            route: &crate::router::ModelRoute,
+            _perception: &Perception,
+        ) -> impl future::Future<Output = Result<Draft, BackendError>> + Send {
+            future::ready(Err(BackendError::classified(
+                "provider request rejected",
+                BackendFailure::openai(
+                    route.model(),
+                    Some(400),
+                    Some("invalid_request_error"),
+                    Some("invalid_json_schema"),
+                    BackendResponseShape::ApiErrorEnvelope,
+                    BackendFailureMapping::ProviderRequest,
+                ),
+            )))
+        }
     }
 
     fn refusal(line: &str) -> WireError {
@@ -262,6 +287,23 @@ mod tests {
         // The stand-in names itself, so nothing in the research record claims a
         // model that never saw this perception.
         assert_eq!(decision.provenance.model, SCRIPTED_MODEL_ID);
+    }
+
+    #[tokio::test]
+    async fn a_classified_backend_failure_reaches_the_refusal_frame() {
+        let mind = Mind::new(
+            Router::new(ModelCatalog::uniform("fast-model")),
+            ClassifiedBrokenBackend,
+        );
+        let failed = refusal(&answer(&mind, SPOKEN_PERCEPTION).await);
+        let classification = failed.failure.expect("classification reaches the wire");
+
+        assert_eq!(failed.error, "cognition failed: provider request rejected");
+        assert_eq!(classification["model"], "fast-model");
+        assert_eq!(classification["httpStatus"], 400);
+        assert_eq!(classification["providerCode"], "invalid_json_schema");
+        assert_eq!(classification["responseShape"], "apiErrorEnvelope");
+        assert_eq!(classification["mapping"], "providerRequest");
     }
 
     #[tokio::test]

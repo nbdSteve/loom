@@ -24,9 +24,139 @@
 use std::future::Future;
 
 use loom_contract::{Intent, ObservationKind, Perception, Trigger};
+use serde::Serialize;
 
-use crate::config::{bounded, ConfigError, Env};
+use crate::config::{bounded, bounded_to, ConfigError, Env};
 use crate::router::ModelRoute;
+
+/// Version of the bounded machine-readable failure detail carried beside a
+/// cognition refusal.
+pub const BACKEND_FAILURE_SCHEMA_VERSION: &str = "loom-cognition-failure/1";
+
+/// Which stage turned one model request into no decision.
+///
+/// These values are intentionally about Loom's mapping rather than provider
+/// prose. The provider's message can quote a prompt and is never retained.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BackendFailureMapping {
+    /// Loom could not encode its own provider request.
+    RequestEncoding,
+    /// Loom's configured request-byte ceiling refused the encoded request.
+    RequestBound,
+    /// No response arrived before the provider timeout.
+    ProviderTimeout,
+    /// A connection to the configured provider could not be established.
+    ProviderConnection,
+    /// A provider response body could not be read.
+    ProviderResponseRead,
+    /// Another transport failure ended the request.
+    ProviderTransport,
+    /// The provider rejected the credential.
+    ProviderAuthentication,
+    /// The provider did not recognize the routed model.
+    ProviderModel,
+    /// The provider rate-limited the request.
+    ProviderRateLimit,
+    /// The provider rejected the request shape or parameters.
+    ProviderRequest,
+    /// The provider returned a server error.
+    ProviderServer,
+    /// The provider returned another non-success HTTP status.
+    ProviderHttp,
+    /// The provider response crossed Loom's byte ceiling.
+    ProviderResponseBound,
+    /// A success response was not a Chat Completions response.
+    ProviderResponseParse,
+    /// Required provider usage was absent.
+    ProviderUsageMissing,
+    /// Provider usage counts contradicted each other.
+    ProviderUsageInconsistent,
+    /// Provider usage could not be made durable.
+    ProviderUsageJournal,
+    /// A Chat Completions response contained no choice.
+    ProviderAnswerMissing,
+    /// The model used the Chat Completions refusal field.
+    ProviderSafetyRefusal,
+    /// The model exhausted the configured completion-token ceiling.
+    ProviderAnswerCutOff,
+    /// The model returned no answer text.
+    ProviderAnswerEmpty,
+    /// The answer text did not decode as a Loom decision.
+    ProviderDecisionParse,
+}
+
+/// The bounded structural shape observed at the provider boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BackendResponseShape {
+    /// Loom rejected its own request before sending it.
+    NotSent,
+    /// The request ended without HTTP response headers.
+    NoHttpResponse,
+    /// HTTP headers arrived but the response body could not be read.
+    UnreadableHttpBody,
+    /// The HTTP response body crossed Loom's byte ceiling.
+    OversizedHttpBody,
+    /// A non-success response decoded as the provider's error envelope.
+    ApiErrorEnvelope,
+    /// The response was JSON, but not the expected provider object.
+    OtherJson,
+    /// The response was not complete valid JSON.
+    MalformedJson,
+    /// The response decoded as a Chat Completions object.
+    ChatCompletion,
+}
+
+/// Safe machine-readable context for one backend failure.
+///
+/// This accompanies, but never replaces, [`BackendError::message`]. It contains
+/// only bounded model/provider identifiers and structural classifications: no
+/// prompt, answer text, credential, request id, provider request id, or URL.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendFailure {
+    /// Version of this diagnostic object.
+    pub schema_version: &'static str,
+    /// Backend that produced the classification.
+    pub backend: &'static str,
+    /// Routed model for this one request.
+    pub model: String,
+    /// HTTP status, when response headers arrived.
+    pub http_status: Option<u16>,
+    /// Provider error type, when a safe error envelope supplied one.
+    pub provider_type: Option<String>,
+    /// Provider error code, when a safe error envelope supplied one.
+    pub provider_code: Option<String>,
+    /// Structural response shape observed by Loom.
+    pub response_shape: BackendResponseShape,
+    /// Loom stage that mapped the observation to a failed decision.
+    pub mapping: BackendFailureMapping,
+}
+
+impl BackendFailure {
+    /// Builds bounded diagnostic context for an `OpenAI` backend failure.
+    #[must_use]
+    pub fn openai(
+        model: &str,
+        http_status: Option<u16>,
+        provider_type: Option<&str>,
+        provider_code: Option<&str>,
+        response_shape: BackendResponseShape,
+        mapping: BackendFailureMapping,
+    ) -> Self {
+        Self {
+            schema_version: BACKEND_FAILURE_SCHEMA_VERSION,
+            backend: "openai",
+            model: bounded_to(model, 100),
+            http_status,
+            provider_type: provider_type.map(bounded),
+            provider_code: provider_code.map(bounded),
+            response_shape,
+            mapping,
+        }
+    }
+}
 
 /// The half of a decision a model produces: what to do, and why.
 ///
@@ -54,6 +184,8 @@ pub struct Draft {
 pub struct BackendError {
     /// Human-readable description, safe to log.
     pub message: String,
+    /// Optional bounded machine-readable failure context.
+    failure: Option<Box<BackendFailure>>,
 }
 
 impl BackendError {
@@ -62,7 +194,24 @@ impl BackendError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            failure: None,
         }
+    }
+
+    /// A failure with bounded context suitable for a private operator
+    /// diagnostic.
+    #[must_use]
+    pub fn classified(message: impl Into<String>, failure: BackendFailure) -> Self {
+        Self {
+            message: message.into(),
+            failure: Some(Box::new(failure)),
+        }
+    }
+
+    /// The bounded classification, when the backend supplied one.
+    #[must_use]
+    pub fn failure(&self) -> Option<&BackendFailure> {
+        self.failure.as_deref()
     }
 }
 

@@ -7,7 +7,7 @@ The policy is stated here and nowhere else; `research/README.md` and the project
 ## What a version is
 
 `schemaVersion` names a **compatibility class**, not a release.
-`loom-experiment-manifest/2` means "a reader written for generation 2 can read every field of the shared core out of this file without checking anything else first".
+`loom-experiment-manifest/3` means "a reader written for generation 3 can read every field of the shared core out of this file without checking anything else first".
 There is no minor number, because there is nothing a minor number would be for: either an old reader still works, in which case the generation is unchanged, or it does not, in which case the generation is new.
 
 ## The shared core, and everything else
@@ -72,21 +72,39 @@ Three other shared-core shapes changed in the same step, and any one of them alo
 `test/manifest-schema.test.js` declares this step in its table of adjacent generations and pins all four paths, by validating each committed manifest against the *other* generation and requiring it to be refused, so these two generations cannot quietly collapse into one.
 All four are type or path changes, which is why refusal runs both ways here; a later step need not.
 
+## The resolved case: bounded fleet publication
+
+Generation 3 makes the information needed to repeat and audit a shared-world
+fleet run part of the shared core. It newly requires component hashes, tool and
+Paper versions, deterministic agent allocations, cognition models/prompts/call
+and spend ceilings, lifecycle/artifact bounds, feature flags, normalized
+metrics, wall-clock timing, and the two publication validation passes.
+`eventCounts.agent` also becomes `eventCounts.agents`, because a single-agent
+object cannot faithfully represent a fleet.
+
+Every one of those additions narrows the accepted set, and the census changes
+path and shape, so generation 2 could not be edited in place. The adjacent-step
+test uses a committed generation-2 manifest as the witness: generation 2
+accepts it and generation 3 refuses the missing bounded-fleet core.
+
 ## Choosing a version for a new manifest
 
 Ask `manifest-schema.js`.
 
 ```js
 const { currentSchemaVersion, versionTag } = require('./schema/manifest-schema.js')
-const schemaVersion = versionTag(currentSchemaVersion()) // "loom-experiment-manifest/2"
+const schemaVersion = versionTag(currentSchemaVersion()) // "loom-experiment-manifest/3"
 ```
 
 `currentSchemaVersion()` is the highest generation with a schema file in this directory, read from the filesystem on every call.
 It is derived rather than written down so that adding `loom-experiment-manifest-3.schema.json` moves it with nothing else to remember, and so there is no constant that can disagree with the schemas beside it.
 
-There is no manifest generator in this repository yet - the two committed manifests were derived by hand from `body-events.jsonl` against the rules in `research/README.md`.
-When one lands, it must take its version from `currentSchemaVersion()` and must not hard-code a tag; the same goes for any manifest template.
-That is what "deterministic" means here: one function, one filesystem answer, no second copy.
+`research/lib/artifact.js` is the generation-3 publisher. It takes the version
+from `currentSchemaVersion()` and validates the prospective manifest before
+launch and the completed artifact before publication. Older committed
+manifests remain hand-derived under their own frozen generations.
+That is what "deterministic" means here: one function, one filesystem answer,
+no second copy.
 
 ## Adding a generation
 

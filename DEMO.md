@@ -1,8 +1,9 @@
 # Disposable three-agent Paper proof
 
-This is the smallest real-server proof for Loom's configured Mineflayer fleet.
-It is disposable, deterministic apart from ordinary Minecraft timing, and is
-not a long-duration or publishable experiment.
+This is the detailed manual acceptance proof for Loom's configured Mineflayer
+fleet. For the automated, bounded, publishable three-agent run, start with
+`research/HARNESS.md`; it uses the same production seams and turns the
+composition/crash subset into a validated generation-3 artifact.
 
 It proves three concurrent agents through:
 
