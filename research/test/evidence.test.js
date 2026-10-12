@@ -65,7 +65,48 @@ test('normalization keeps fleet request identity unambiguous and metrics are det
     2
   )
   assert.equal(metrics.findings.counterevidence.includes('No agent produced a speech intent.'), true)
+  assert.equal(
+    metrics.findings.counterevidence.includes(
+      'No movement record accompanied the co-location samples; shared spawn placement is a sufficient explanation.'
+    ),
+    true
+  )
   assert.deepEqual(scanText(fs.readFileSync(outputFile, 'utf8')), [])
+})
+
+test('server witness disputes remain explicit counterevidence and limitations', () => {
+  const directory = temporaryDirectory()
+  const bodyFile = path.join(directory, 'body.jsonl')
+  const harnessFile = path.join(directory, 'harness.jsonl')
+  const outputFile = path.join(directory, 'evidence.jsonl')
+  const raw = fixedRawRecords()
+  raw.body.push({
+    tick: 42,
+    agentId: 'tribe-beta',
+    event: 'witnessDisputed',
+    detail: 'saturation disagreed',
+    outcome: 'disputedVitals'
+  })
+  writeJsonLines(bodyFile, raw.body)
+  writeJsonLines(harnessFile, raw.harness)
+  const normalized = normalizeEvidence({
+    experimentId: '2026-10-12-scripted-tribe-crash-proof',
+    bodyFile,
+    harnessFile,
+    outputFile,
+    maxInputBytes: 1024 * 1024,
+    maxOutputBytes: 1024 * 1024,
+    maxRecords: 1000
+  })
+  const metrics = deriveMetrics(normalized.records)
+  assert.equal(metrics.behavior.witnessDisputeRecords, 1)
+  assert.deepEqual(metrics.behavior.witnessDisputesByOutcome, { disputedVitals: 1 })
+  assert.ok(metrics.findings.counterevidence.some((line) =>
+    line.includes('1 server witness dispute record(s)')
+  ))
+  assert.ok(metrics.findings.limitations.some((line) =>
+    line.includes('limit any claim')
+  ))
 })
 
 test('unsafe strings are redacted before public evidence is written', () => {

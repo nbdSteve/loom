@@ -429,7 +429,9 @@ function emptyMetrics (agents) {
       attackIntents: 0,
       sleepIntents: 0,
       deaths: 0,
-      disconnects: 0
+      disconnects: 0,
+      witnessDisputeRecords: 0,
+      witnessDisputesByOutcome: {}
     },
     spatial: {
       coLocationThresholdBlocks: 8,
@@ -644,6 +646,10 @@ function buildManifest ({
       noDroppedEvidenceWarning: {
         passed: !warnings.some((warning) => warning.includes('dropped')),
         attested: { source: 'bounded Paper log scan performed by the harness' }
+      },
+      serverEvidenceUncontested: {
+        passed: metricValue.behavior.witnessDisputeRecords === 0,
+        derivedFrom: EVIDENCE_FILE
       }
     },
     knownWarnings: warnings,

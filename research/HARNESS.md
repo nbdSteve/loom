@@ -162,7 +162,11 @@ timing, call ceilings, deterministic identities, artifact bounds, and README
 sections. The README generator separates setup facts, observations,
 interpretations, counterevidence/null results, and limitations. Absence of
 speech, co-location, attack, or server-confirmed interaction remains explicit
-counterevidence rather than being turned into a positive result.
+counterevidence rather than being turned into a positive result. Co-location
+without recorded movement is identified as compatible with shared spawn
+placement. Every `witnessDisputed` record is counted into counterevidence and a
+failed `serverEvidenceUncontested` integrity check instead of being buried among
+lifecycle counts.
 
 Absolute permadeath is unchanged. The witness is installed before bodies start,
 the synchronous ledger remains the login authority, and the ledger is excluded

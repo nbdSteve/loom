@@ -131,6 +131,7 @@ test('a publication is self-validating and every metric re-derives from normaliz
   assert.equal(published.manifest.cognition.actualExternalSpendUsd, 0)
   assert.equal(published.manifest.cognition.worstCaseConfiguredSpendUsd, 0)
   assert.equal(published.manifest.eventCounts.total, published.metrics.records.body)
+  assert.equal(published.manifest.integrityChecks.serverEvidenceUncontested.passed, true)
 })
 
 test('a live-model publication correlates successful decisions to pinned-price usage', () => {

@@ -432,6 +432,11 @@ function deriveMetrics (records, configuredAgents = []) {
 
   const socialSpeech = appliedByIntent.say ?? 0
   const attacks = appliedByIntent.attack ?? 0
+  const witnessDisputes = bodyRecords.filter((record) => record.event === 'witnessDisputed')
+  const witnessDisputesByOutcome = {}
+  for (const record of witnessDisputes) {
+    increment(witnessDisputesByOutcome, record.outcome ?? 'unclassified')
+  }
   const configuredBackend = harnessRecords
     .find((record) => record.event === 'experimentStarted')
     ?.cognitionBackend
@@ -451,6 +456,20 @@ function deriveMetrics (records, configuredAgents = []) {
   if (attacks === 0) counterevidence.push('No attack intent was applied.')
   if ((byEvent.worldInteraction ?? 0) === 0) {
     counterevidence.push('No server-confirmed native world interaction occurred.')
+  }
+  if (coLocations.length > 0 && (byEvent.moved ?? 0) === 0) {
+    counterevidence.push(
+      'No movement record accompanied the co-location samples; shared spawn placement is a sufficient explanation.'
+    )
+  }
+  if (witnessDisputes.length > 0) {
+    const classes = Object.entries(witnessDisputesByOutcome)
+      .sort(([first], [second]) => first.localeCompare(second))
+      .map(([outcome, count]) => `${outcome}: ${count}`)
+      .join(', ')
+    counterevidence.push(
+      `${witnessDisputes.length} server witness dispute record(s) were emitted (${classes}); client-reported readings were not fully corroborated.`
+    )
   }
 
   return sortedValue({
@@ -498,7 +517,9 @@ function deriveMetrics (records, configuredAgents = []) {
       attackIntents: attacks,
       sleepIntents: appliedByIntent.sleep ?? 0,
       deaths: byEvent.died ?? 0,
-      disconnects: byEvent.bodyDisconnected ?? 0
+      disconnects: byEvent.bodyDisconnected ?? 0,
+      witnessDisputeRecords: witnessDisputes.length,
+      witnessDisputesByOutcome: sortedValue(witnessDisputesByOutcome)
     },
     spatial: {
       coLocationThresholdBlocks: 8,
@@ -521,6 +542,9 @@ function deriveMetrics (records, configuredAgents = []) {
       counterevidence,
       limitations: [
         'Perception positions are samples rather than continuous trajectories.',
+        ...(witnessDisputes.length > 0
+          ? ['Server witness disputes limit any claim that depends on the disputed client-reported readings.']
+          : []),
         scriptedEvidence
           ? 'A scripted cognition run validates composition and containment, not autonomous social behavior.'
           : 'One bounded live-model run cannot establish that an observed pattern is stable or emergent.'
