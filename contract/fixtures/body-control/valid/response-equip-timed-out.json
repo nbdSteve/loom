@@ -1,1 +1,1 @@
-{"op":"equip","protocol":3,"requestId":"req-96","agentId":"agent-alpha","state":"ready","outcome":"timedOut","elapsedMs":4000}
+{"op":"equip","protocol":4,"requestId":"req-96","agentId":"agent-alpha","state":"ready","outcome":"timedOut","elapsedMs":4000}

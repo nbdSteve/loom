@@ -1,1 +1,1 @@
-{"op":"eat","protocol":3,"requestId":"req-6","agentId":"agent-alpha","state":"ready","outcome":"eaten","vitals":{"health":19.5,"food":20,"saturation":5.5}}
+{"op":"eat","protocol":4,"requestId":"req-6","agentId":"agent-alpha","state":"ready","outcome":"eaten","vitals":{"health":19.5,"food":20,"saturation":5.5}}

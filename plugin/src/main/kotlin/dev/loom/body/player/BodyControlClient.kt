@@ -23,6 +23,7 @@ import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.reflect.KClass
 
 private const val REQUEST_PURPOSE_CHARS = 12
 private const val REQUEST_SCOPE_CHARS = 16
@@ -227,21 +228,27 @@ private fun BodyResponse.matches(request: BodyRequest): Boolean =
         agentId == request.agentId &&
         matchesOperation(request)
 
+private val RESPONSE_TYPES: Map<KClass<out BodyRequest>, KClass<out BodyResponse>> =
+    mapOf(
+        BodyRequest.Handshake::class to BodyResponse.HandshakeAccepted::class,
+        BodyRequest.Status::class to BodyResponse.StatusReport::class,
+        BodyRequest.Shutdown::class to BodyResponse.ShutdownAccepted::class,
+        BodyRequest.Sense::class to BodyResponse.SenseReport::class,
+        BodyRequest.Eat::class to BodyResponse.EatReport::class,
+        BodyRequest.MoveTo::class to BodyResponse.MoveReport::class,
+        BodyRequest.Flee::class to BodyResponse.FleeReport::class,
+        BodyRequest.Dig::class to BodyResponse.DigReport::class,
+        BodyRequest.Collect::class to BodyResponse.CollectReport::class,
+        BodyRequest.Place::class to BodyResponse.PlaceReport::class,
+        BodyRequest.Equip::class to BodyResponse.EquipReport::class,
+        BodyRequest.Craft::class to BodyResponse.CraftReport::class,
+        BodyRequest.Attack::class to BodyResponse.AttackReport::class,
+        BodyRequest.Sleep::class to BodyResponse.SleepReport::class,
+        BodyRequest.Halt::class to BodyResponse.HaltReport::class,
+    )
+
 private fun BodyResponse.matchesOperation(request: BodyRequest): Boolean =
-    when (request) {
-        is BodyRequest.Handshake -> this is BodyResponse.HandshakeAccepted
-        is BodyRequest.Status -> this is BodyResponse.StatusReport
-        is BodyRequest.Shutdown -> this is BodyResponse.ShutdownAccepted
-        is BodyRequest.Sense -> this is BodyResponse.SenseReport
-        is BodyRequest.Eat -> this is BodyResponse.EatReport
-        is BodyRequest.MoveTo -> this is BodyResponse.MoveReport
-        is BodyRequest.Flee -> this is BodyResponse.FleeReport
-        is BodyRequest.Dig -> this is BodyResponse.DigReport
-        is BodyRequest.Collect -> this is BodyResponse.CollectReport
-        is BodyRequest.Place -> this is BodyResponse.PlaceReport
-        is BodyRequest.Equip -> this is BodyResponse.EquipReport
-        is BodyRequest.Halt -> this is BodyResponse.HaltReport
-    }
+    RESPONSE_TYPES[request::class]?.isInstance(this) == true
 
 private fun BufferedInputStream.readBoundedFrame(): String {
     val bytes = ByteArrayOutputStream()

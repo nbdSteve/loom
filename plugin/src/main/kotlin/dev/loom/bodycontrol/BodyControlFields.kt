@@ -31,11 +31,11 @@ import kotlin.math.sqrt
  * generation may spell the same field differently, and a value read under the wrong
  * generation is worse than a refusal.
  *
- * It moved from 2 to 3 when sense answers gained block and dropped-item offers and the
- * body gained new closed response sets. Adding request operation names alone would not
- * have moved it; widening a body-chosen answer does.
+ * It moved from 3 to 4 when sense answers gained recipe offers and the body gained the
+ * craft, attack, and sleep closed response sets. Adding request operation names alone
+ * would not have moved it; widening a body-chosen answer does.
  */
-const val BODY_CONTROL_PROTOCOL_VERSION: Int = 3
+const val BODY_CONTROL_PROTOCOL_VERSION: Int = 4
 
 /** The shortest a requestId or agentId may be, mirroring the schema's `minLength`. */
 private const val CONTROL_ID_MIN_CHARS = 1
@@ -178,6 +178,9 @@ internal const val MAX_SENSE_BLOCKS = 24
 /** The most dropped items a sense answer may carry. */
 internal const val MAX_SENSE_ITEMS = 24
 
+/** The most recipe offers a sense answer may carry. */
+internal const val MAX_SENSE_RECIPES = 24
+
 /** The highest slot of a player's own inventory window, mirroring the schema. */
 internal const val MAX_SLOT_INDEX = 45
 
@@ -195,6 +198,9 @@ internal const val MIN_STACK_COUNT = 1
 
 /** The most items one stack may hold, mirroring the schema's `maximum`. */
 internal const val MAX_STACK_COUNT = 255
+
+/** The most items one recipe application may return. */
+internal const val MAX_RECIPE_RESULT_COUNT = 64
 
 /** The game's own ceiling on a max-health attribute, mirroring the schema's `maximum`. */
 internal const val MAX_HEALTH = 1024
@@ -253,6 +259,21 @@ internal const val MAX_BLOCK_INDEX = MAX_SENSE_BLOCKS - 1
 
 /** The highest request-local dropped-item ordinal a collection may name. */
 internal const val MAX_ITEM_INDEX = MAX_SENSE_ITEMS - 1
+
+/** The highest request-local recipe ordinal a craft may name. */
+internal const val MAX_RECIPE_INDEX = MAX_SENSE_RECIPES - 1
+
+/** The most applications of one recipe a request may ask for. */
+internal const val MAX_CRAFTS = 8
+
+/** The most discrete attack packets one request may emit. */
+internal const val MAX_ATTACKS = 4
+
+/** The most result items one bounded craft may confirm. */
+internal const val MAX_CRAFTED_ITEMS = MAX_CRAFTS * 64
+
+/** The widest one fixed-position combat approach may travel. */
+internal const val MAX_PURSUIT_DISTANCE = 8
 
 /** The longest one native world interaction may remain active. */
 internal const val MAX_ACTION_DEADLINE_MS = 20_000

@@ -50,6 +50,8 @@ class PerceptionOmissionTest {
                 saturation = 0.0,
                 position = listOf(0.0, 64.0, 0.0),
                 inventorySummary = emptyList(),
+                craftingOptions = emptyList(),
+                craftingOptionsOmitted = 0,
                 world = WorldState(dayPhase = DayPhase.DUSK, isDay = false, ticksUntilNightfall = 900),
             ),
         surroundings =

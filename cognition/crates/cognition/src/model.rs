@@ -389,6 +389,8 @@ mod tests {
                 saturation: 5.0,
                 position: [10.5, 64.0, -8.25],
                 inventory_summary: vec![],
+                crafting_options: vec![],
+                crafting_options_omitted: 0,
                 world: WorldState {
                     day_phase: DayPhase::Day,
                     is_day: true,

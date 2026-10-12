@@ -156,7 +156,7 @@ enum class BodyEvent {
     MOVED,
 
     /**
-     * The server-authoritative result of one explicit dig, collect, place, or equip.
+     * The server-authoritative result of one explicit native interaction.
      *
      * Written after [INTENT_APPLIED] with the same perception request id. Its detail
      * names the offered ref, retained sense id, body-control request id, exact body

@@ -1,0 +1,1 @@
+{"requestId":"req-craft-bad","agentId":"agent-lambda","intent":{"action":"craft","recipe":"r1","crafts":9},"reasoning":"craft beyond the bounded operation","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}

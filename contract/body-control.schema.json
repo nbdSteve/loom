@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://loom.dev/contract/body-control.schema.json",
   "title": "Loom body-control protocol",
-  "description": "The single source of truth for the control messages exchanged with a Loom player-body process (the Node/Mineflayer body in body/). A controller sends a BodyRequest; the process answers with exactly one BodyResponse or one BodyError, on the same line-delimited loopback socket. This is deliberately NOT the perception/decision contract in loom.schema.json: that one carries what an agent knows and decides, while this one carries lifecycle, bounded raw sense, and explicit one-shot operations against request-scoped offers. Nothing here chooses a target, item, tool, role, threshold, or follow-on goal. Dig, collect, place, equip, eat, move, and flee each act only on the target or stack a controller named from one retained sense answer; mutable state is re-read immediately before use; conflicting work is refused rather than multiplexed; and halt or shutdown bounds cleanup. Union types use internal tagging: BodyRequest.op and BodyResponse.op select the variant and the variant's fields are inlined alongside it. JSON Schema sees a parsed number rather than the literal that carried it, so validation keywords cannot express this wire's numeric work guard: both codecs refuse a numeric literal longer than 32 characters, or one whose decimal-point shift would make exact integrality or range checking unbounded. Those are contract rules stated in prose here and enforced before either codec materialises such a value.",
+  "description": "The single source of truth for the control messages exchanged with a Loom player-body process (the Node/Mineflayer body in body/). A controller sends a BodyRequest; the process answers with exactly one BodyResponse or one BodyError, on the same line-delimited loopback socket. This is deliberately NOT the perception/decision contract in loom.schema.json: that one carries what an agent knows and decides, while this one carries lifecycle, bounded raw sense, and explicit one-shot operations against request-scoped offers. Nothing here chooses a target, item, tool, recipe, weapon, bed, role, threshold, or follow-on goal. Dig, collect, place, equip, craft, attack, sleep, eat, move, and flee each act only on authority a controller named from one retained sense answer; mutable state is re-read immediately before use; conflicting work is refused rather than multiplexed; and halt or shutdown bounds cleanup. Union types use internal tagging: BodyRequest.op and BodyResponse.op select the variant and the variant's fields are inlined alongside it. JSON Schema sees a parsed number rather than the literal that carried it, so validation keywords cannot express this wire's numeric work guard: both codecs refuse a numeric literal longer than 32 characters, or one whose decimal-point shift would make exact integrality or range checking unbounded. Those are contract rules stated in prose here and enforced before either codec materialises such a value.",
 
   "$defs": {
     "ProtocolVersion": {
-      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted. Generation 3 is current. It moved from 2 because the body-chosen sense response widened with block and dropped-item offers and because new closed outcome sets became possible answers; adding the four request operations alone would not have moved it. The const is a numeric value rather than a spelling, so 3, 3.0 and 3e0 all name this generation.",
-      "const": 3
+      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted. Generation 4 is current. It moved from 3 because sense gained body-chosen recipe offers and craft, attack, and sleep introduced new closed outcome sets; adding the three operation names alone would not have moved it. The const is a numeric value rather than a spelling, so 4, 4.0 and 4e0 all name this generation.",
+      "const": 4
     },
 
     "ControlId": {
@@ -61,7 +61,7 @@
     },
 
     "SenseLimit": {
-      "description": "How many entries each bounded world list may carry, as the caller states it. The same limit is independently applied to living entities, nearby blocks, and dropped items, and each list carries its own omission count. It is a wire and frame bound rather than a choice of what matters.",
+      "description": "How many entries each bounded offered list may carry, as the caller states it. The same limit is independently applied to living entities, nearby blocks, dropped items, and craftable recipes, and each list carries its own omission count. It is a wire and frame bound rather than a choice of what matters.",
       "type": "integer",
       "minimum": 1,
       "maximum": 24
@@ -121,6 +121,48 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 23
+    },
+
+    "RecipeIndex": {
+      "description": "One recipe of a named sense answer's own bounded recipe list, by zero-based position. An index past the actual list is recipeUnnamed rather than a malformed frame.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 23
+    },
+
+    "CraftCount": {
+      "description": "How many applications of one explicitly offered recipe the controller requests. The result count may be larger because one application can yield several items.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8
+    },
+
+    "AttackCount": {
+      "description": "How many discrete attacks this one request may emit before it must answer. This is a strike budget, never a loop-until-death instruction.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4
+    },
+
+    "CraftedItemCount": {
+      "description": "The total number of result items confirmed for one bounded craft request. Eight recipe applications yielding a full stack each is the largest legal result.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 512
+    },
+
+    "CombatHealthFloor": {
+      "description": "The inclusive health floor supplied by Loom for one combat request. The body stops before another attack when its latest health is at or below this value.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1024
+    },
+
+    "PursuitDistance": {
+      "description": "The maximum distance from the admitted position that a combat request may travel during its one optional approach. It does not permit a second search or following a moving target.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 8
     },
 
     "ActionDeadline": {
@@ -297,6 +339,24 @@
       }
     },
 
+    "SensedRecipe": {
+      "description": "One recipe the body could apply now from this exact inventory snapshot and, when required, one privately retained reachable crafting table. The wire reports only its result and bounded capacity; the retained recipe object, ingredient fingerprint, and workstation identity never leave the body.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "resultCount", "maxCrafts", "requiresTable"],
+      "properties": {
+        "what": { "$ref": "#/$defs/ResourceName" },
+        "resultCount": {
+          "description": "How many result items one application produces.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "maxCrafts": { "$ref": "#/$defs/CraftCount" },
+        "requiresTable": { "type": "boolean" }
+      }
+    },
+
     "EatOutcome": {
       "description": "What became of one eat request, as one value from a closed set. It is on the response rather than in ErrorCode because those are answers to different questions: an ErrorCode is why a frame was not usable, while these are what the body did about a request it understood perfectly. A refusal here is therefore an answer, and it is a value rather than prose so that a run can count how many meals were missed and why. Every refusal that is a fact about the request is settled before anything is consumed, so a refused eat never costs an agent its food. 'slotEmpty' and 'slotChanged' are kept apart because they are different facts about the run: the slot the mind named holds nothing now, against it holds something that is not what the mind chose. 'notEdible' and 'reserveFull' are kept apart for the same reason and it is the sharper of the two pairs: an agent that had nothing edible to eat and an agent that ate itself to a standstill and could not use the rest are opposite readings of the same run, and vanilla itself refuses the second - a full food bar cannot take an ordinary food, whatever the agent is carrying. 'slotInaccessible' is the residual, and the one outcome that cannot promise the food is still there: the stack was there and was edible and the meal still did not happen, because the body could not bring it to hand or the game never confirmed it - and a use the game never confirmed may still have been carried out, which is exactly why it reads as a fault to go and look at rather than as a fact about the agent.",
       "type": "string",
@@ -407,6 +467,79 @@
       ]
     },
 
+    "CraftOutcome": {
+      "description": "Every terminal answer to one bounded craft. crafted is emitted only after the requested applications complete and the result inventory delta is confirmed; the remaining values distinguish request authority, live ingredients, workstation state, bounds, lifecycle endings, and the library residual.",
+      "type": "string",
+      "enum": [
+        "crafted",
+        "senseForgotten",
+        "recipeUnnamed",
+        "ingredientsChanged",
+        "recipeUnavailable",
+        "workstationGone",
+        "workstationChanged",
+        "workstationOutOfReach",
+        "workstationNotVisible",
+        "timedOut",
+        "cancelled",
+        "bodyDied",
+        "disconnected",
+        "libraryFailure"
+      ]
+    },
+
+    "AttackOutcome": {
+      "description": "Every terminal answer to attacking one exact retained living entity with one exact retained inventory stack. attacked means the requested strike budget was emitted while the target remained live; targetDied means the exact target died first. Movement outcomes describe only the one optional fixed-position approach.",
+      "type": "string",
+      "enum": [
+        "attacked",
+        "targetDied",
+        "senseForgotten",
+        "targetUnnamed",
+        "targetGone",
+        "targetChanged",
+        "slotUnnamed",
+        "slotEmpty",
+        "slotChanged",
+        "healthBound",
+        "outOfRange",
+        "noRoute",
+        "searchOverBudget",
+        "stalled",
+        "overTravelled",
+        "timedOut",
+        "cancelled",
+        "bodyDied",
+        "disconnected",
+        "libraryFailure"
+      ]
+    },
+
+    "SleepOutcome": {
+      "description": "Every terminal answer to one sleep at one exact retained bed. woke means vanilla accepted the sleep and later woke this body; a timeout or cancellation may occur either before or after entry and the report states that separately.",
+      "type": "string",
+      "enum": [
+        "woke",
+        "senseForgotten",
+        "bedUnnamed",
+        "bedGone",
+        "bedChanged",
+        "notBed",
+        "wrongDimension",
+        "outOfReach",
+        "notVisible",
+        "occupied",
+        "notNight",
+        "unsafe",
+        "sleepRefused",
+        "timedOut",
+        "cancelled",
+        "bodyDied",
+        "disconnected",
+        "libraryFailure"
+      ]
+    },
+
     "LifecycleState": {
       "description": "Where the body process is in its one life. Seven states and no gameplay: this says whether there is a player on the server and whether it is still usable, never what the player should do. 'connecting' is before the server has accepted the login; 'loggedIn' is after the login packet and before the first spawn; 'ready' is a spawned, live player; 'dead' is a player the server has killed, which the process reports and never respawns; 'disconnected' is a connection the server or the network ended; 'stopping' is a shutdown in progress; 'failed' is a client error the process could not continue from. 'loggedIn' and 'dead' are separate from 'ready' for a reason found in world: a dead identity reconnecting arrives on the death screen, so it reaches loggedIn and then dead without ever reaching ready.",
       "type": "string",
@@ -422,7 +555,7 @@
     },
 
     "ControlOperation": {
-      "description": "What a controller may ask for. The operation set is the one part of a generation that may grow without moving the generation: an older body refuses an operation it does not know as unknownOperation, while a body-chosen response field or enum value can surprise a controller after an operation it did know and therefore requires a new generation. Generation 3 adds dig, collect, place, and equip, but moved because sense and response value sets widened, not merely because these request names exist.",
+      "description": "What a controller may ask for. The operation set is the one part of a generation that may grow without moving the generation: an older body refuses an operation it does not know as unknownOperation, while a body-chosen response field or enum value can surprise a controller after an operation it did know and therefore requires a new generation. Generation 4 adds craft, attack, and sleep, but moved because sense and response value sets widened, not merely because these request names exist.",
       "type": "string",
       "enum": [
         "handshake",
@@ -436,7 +569,10 @@
         "dig",
         "collect",
         "place",
-        "equip"
+        "equip",
+        "craft",
+        "attack",
+        "sleep"
       ]
     },
 
@@ -460,7 +596,7 @@
     },
 
     "BodyRequest": {
-      "description": "One request from a controller to a body process. Internally tagged on the 'op' property. Every variant carries the protocol generation, the correlation id its one answer will echo, and the agent whose body is being addressed - so a frame is self-describing and a reply can never be matched to the wrong request. Four variants carry no payload at all. The four that do carry the caller's own bounds and the one thing it names - a slot, a place or a creature - and never a threshold or a rule, because a payload carrying one of those would be the controller asking the body to decide something. A named place is the opposite of that and the earlier generation of this paragraph, which said a payload may carry no target, read it the wrong way round: a destination a controller states is the controller having decided, and a body given one searches for a route to it and reports what it found. What would make the body a decider is a target it chose itself - the nearest food, somewhere safe, a place to wait - and no operation here admits one.",
+      "description": "One request from a controller to a body process. Internally tagged on the 'op' property. Every variant carries the protocol generation, the correlation id its one answer will echo, and the agent whose body is being addressed - so a frame is self-describing and a reply can never be matched to the wrong request. Four lifecycle or cancellation variants carry no payload at all. Every action payload carries only the controller's own bounds and exact choices from a retained sense answer - a slot, place, creature, recipe, weapon, or bed - and never a body-owned threshold or selection rule. A named place is the opposite of body policy: a destination a controller states is the controller having decided, and a body given one searches for a route to it and reports what it found. What would make the body a decider is a target it chose itself - the nearest food, somewhere safe, a recipe to make, a creature to hunt, a bed to use - and no operation here admits one.",
       "oneOf": [
         {
           "title": "Handshake",
@@ -503,7 +639,7 @@
         },
         {
           "title": "Sense",
-          "description": "Read the raw state the game reports about the player: its vitals, the world clock, its footing, the entities the client library is tracking near it, and every occupied slot of its inventory. The two bounds are the caller's own and are required rather than defaulted, because a body that supplied a default would own a perception policy it has no business owning - and a default is the kind of number that quietly becomes the real one. Answered only for a spawned, live player whose readings the game has actually reported: any other lifecycle state is refused with notReady, since a body that has not spawned has no position to read and one that has been removed would be reporting the world it last saw - and so is a spawned player the server has not yet told the time of day, or whose vitals do not yet make sense together, because a reading the body would have to invent to fill a required field is not a reading.",
+          "description": "Read the raw state the game reports about the player: its vitals, the world clock, its footing, the entities, blocks, dropped items, and craftable recipes the client library can currently offer, and every occupied slot of its inventory. The two bounds are the caller's own and are required rather than defaulted, because a body that supplied a default would own a perception policy it has no business owning - and a default is the kind of number that quietly becomes the real one. Answered only for a spawned, live player whose readings the game has actually reported: any other lifecycle state is refused with notReady, since a body that has not spawned has no position to read and one that has been removed would be reporting the world it last saw - and so is a spawned player the server has not yet told the time of day, or whose vitals do not yet make sense together, because a reading the body would have to invent to fill a required field is not a reading.",
           "type": "object",
           "additionalProperties": false,
           "required": ["protocol", "requestId", "agentId", "op", "radius", "limit"],
@@ -662,6 +798,61 @@
             "destination": { "$ref": "#/$defs/EquipmentDestination" },
             "timeoutMs": { "$ref": "#/$defs/ActionDeadline" }
           }
+        },
+        {
+          "title": "Craft",
+          "description": "Apply one recipe offered by one retained sense answer a bounded number of times. The offer privately retains the exact recipe, full ingredient snapshot, and any required crafting table. All three are revalidated before the first inventory transaction; no ingredient is gathered and no substitute recipe or table is chosen.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "senseId", "recipe", "crafts", "timeoutMs"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "craft" },
+            "senseId": { "$ref": "#/$defs/ControlId" },
+            "recipe": { "$ref": "#/$defs/RecipeIndex" },
+            "crafts": { "$ref": "#/$defs/CraftCount" },
+            "timeoutMs": { "$ref": "#/$defs/ActionDeadline" }
+          }
+        },
+        {
+          "title": "Attack",
+          "description": "Attack one exact living entity and use one exact offered inventory stack for at most the stated number of strikes. approach permits one route to the target's admitted position, never a pursuit loop; maxPursuitDistance bounds that route and later target displacement. The body revalidates target identity, target life, weapon stack, health floor, and range before every strike.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "senseId", "entity", "slot", "attacks", "approach", "maxPursuitDistance", "minHealth", "timeoutMs", "sprint"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "attack" },
+            "senseId": { "$ref": "#/$defs/ControlId" },
+            "entity": { "$ref": "#/$defs/EntityIndex" },
+            "slot": { "$ref": "#/$defs/SlotIndex" },
+            "attacks": { "$ref": "#/$defs/AttackCount" },
+            "approach": { "type": "boolean" },
+            "maxPursuitDistance": { "$ref": "#/$defs/PursuitDistance" },
+            "minHealth": { "$ref": "#/$defs/CombatHealthFloor" },
+            "timeoutMs": { "$ref": "#/$defs/ActionDeadline" },
+            "sprint": { "type": "boolean" }
+          }
+        },
+        {
+          "title": "Sleep",
+          "description": "Sleep in one exact bed offered by one retained sense answer and hold the request until vanilla wakes the body or a bound ends it. No time-of-day policy or night-skip decision lives here: Mineflayer asks the server to use this bed once and reports the server's result.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "senseId", "block", "timeoutMs"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "sleep" },
+            "senseId": { "$ref": "#/$defs/ControlId" },
+            "block": { "$ref": "#/$defs/BlockIndex" },
+            "timeoutMs": { "$ref": "#/$defs/ActionDeadline" }
+          }
         }
       ]
     },
@@ -686,7 +877,7 @@
         },
         {
           "title": "StatusReport",
-          "description": "Where the body is in its life, and how long it has been there. Both durations are milliseconds measured by the process's own monotonic clock rather than a wall clock, so neither goes backwards when the host's time is adjusted. Still deliberately no position, health, hunger or inventory, now that a sense answer carries all four: a status report is what a controller asks for on a schedule to learn whether the process is alive, and a liveness check that dragged the world along with it would make every such poll cost a full read and would give two frames the same answer to keep in step. The bounded answer to 'what does the game say about this player' is SenseReport below, and it is asked for by name.",
+          "description": "Where the body is in its life, and how long it has been there. Both durations are milliseconds measured by the process's own monotonic clock rather than a wall clock, so neither goes backwards when the host's time is adjusted. Still deliberately no position, health, hunger, inventory, or world offers, now that a sense answer carries them: a status report is what a controller asks for on a schedule to learn whether the process is alive, and a liveness check that dragged the world along with it would make every such poll cost a full read and would give two frames the same answer to keep in step. The bounded answer to 'what does the game say about this player' is SenseReport below, and it is asked for by name.",
           "type": "object",
           "additionalProperties": false,
           "required": [
@@ -754,7 +945,9 @@
             "blocksOmitted",
             "items",
             "itemsOmitted",
-            "inventory"
+            "inventory",
+            "recipes",
+            "recipesOmitted"
           ],
           "properties": {
             "protocol": { "$ref": "#/$defs/ProtocolVersion" },
@@ -813,6 +1006,18 @@
               "type": "array",
               "maxItems": 46,
               "items": { "$ref": "#/$defs/SensedStack" }
+            },
+            "recipes": {
+              "description": "Recipes that can be applied from this exact inventory and any privately retained reachable crafting table, ordered deterministically by result and recipe fingerprint and cut to the request limit.",
+              "type": "array",
+              "maxItems": 24,
+              "items": { "$ref": "#/$defs/SensedRecipe" }
+            },
+            "recipesOmitted": {
+              "description": "How many otherwise offerable recipes did not fit the request limit.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
             }
           }
         },
@@ -1033,6 +1238,67 @@
             "what": { "$ref": "#/$defs/ResourceName" },
             "count": { "$ref": "#/$defs/StackCount" },
             "toSlot": { "$ref": "#/$defs/SlotIndex" }
+          }
+        },
+        {
+          "title": "CraftReport",
+          "description": "What became of one craft. attempted says whether at least one bounded recipe application was handed to Mineflayer; it can be false for a timeout or cancellation before the first application and true for a later revalidation failure after an earlier application. what, count, and crafts are present exactly when the full requested result was confirmed.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "state", "outcome", "elapsedMs", "attempted"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "craft" },
+            "state": { "const": "ready" },
+            "outcome": { "$ref": "#/$defs/CraftOutcome" },
+            "elapsedMs": { "$ref": "#/$defs/StatusCount" },
+            "attempted": { "type": "boolean" },
+            "what": { "$ref": "#/$defs/ResourceName" },
+            "count": { "$ref": "#/$defs/CraftedItemCount" },
+            "crafts": { "$ref": "#/$defs/CraftCount" }
+          }
+        },
+        {
+          "title": "AttackReport",
+          "description": "What became of one bounded combat request. The journey records the one optional approach and attacks is the exact number of attack packets emitted for this request, including when a later bound or target death ended it.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "state", "outcome", "from", "position", "travelled", "elapsedMs", "attacks"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "attack" },
+            "state": { "const": "ready" },
+            "outcome": { "$ref": "#/$defs/AttackOutcome" },
+            "from": { "$ref": "#/$defs/WorldPosition" },
+            "position": { "$ref": "#/$defs/WorldPosition" },
+            "travelled": { "$ref": "#/$defs/TravelDistance" },
+            "elapsedMs": { "$ref": "#/$defs/StatusCount" },
+            "attacks": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4
+            }
+          }
+        },
+        {
+          "title": "SleepReport",
+          "description": "What became of one sleep request. entered says whether the exact body was observed sleeping before the terminal outcome, so a timeout after entering cannot be mistaken for a refusal that had no vanilla effect.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "state", "outcome", "elapsedMs", "entered"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "sleep" },
+            "state": { "const": "ready" },
+            "outcome": { "$ref": "#/$defs/SleepOutcome" },
+            "elapsedMs": { "$ref": "#/$defs/StatusCount" },
+            "entered": { "type": "boolean" }
           }
         },
         {

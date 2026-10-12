@@ -1,0 +1,1 @@
+{"requestId":"req-sleep-1","agentId":"agent-nu","intent":{"action":"sleep","bed":"b1"},"reasoning":"use the exact offered bed once and wait for vanilla to wake the player","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}

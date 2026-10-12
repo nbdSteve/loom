@@ -10,9 +10,10 @@ It proves three concurrent agents through:
 - bounded concurrent startup and readiness;
 - independent perception, cognition, movement, eating, native interaction,
   request-scoped refs, and evidence;
-- two agents completing different server-confirmed world interactions without
-  sharing refs;
-- one hard child-process crash while a peer remains ready and acts;
+- two agents completing all seven server-confirmed native interactions without
+  sharing refs, including representative craft, fixed-target combat, and sleep;
+- one hard child-process crash while a peer remains ready and completes
+  independent actions;
 - one process disconnect and restart without collateral damage;
 - one server-witnessed terminal death without collateral damage;
 - aggregate inspection and complete bounded shutdown.
@@ -193,15 +194,23 @@ this section uses a temporary finite cognition fixture rather than adding such a
 policy to the product. Stop the default mind and start a loopback-only
 newline-delimited responder on `127.0.0.1:8642`. Keep it unarmed until the world
 is staged. For every response it must echo the perception's `requestId` and
-`agentId`, include fixed local proof provenance, and do only this:
+`agentId`, include fixed local proof provenance, and advance only when the
+expected current offer exists:
 
 - for alpha, select an offered red-wool block ref for
   `{"action":"dig","block":"<ref>"}`, then an offered dropped-apple ref for
-  `{"action":"collect","item":"<ref>","approach":true}`;
+  `{"action":"collect","item":"<ref>","approach":true}`; after alpha is
+  restarted, select an offered oak-planks recipe ref for
+  `{"action":"craft","recipe":"<ref>","crafts":1}`, an offered zombie and
+  iron-sword ref pair for
+  `{"action":"attack","target":"<ref>","weapon":"<ref>","attacks":1,"approach":false}`,
+  then an offered red-bed ref for `{"action":"sleep","bed":"<ref>"}`;
 - for beta, select its offered dirt inventory ref for
   `{"action":"equip","item":"<ref>","destination":"hand"}`, then that same
   offered dirt ref and an offered gold-block ref for
-  `{"action":"place","block":"<ref>","item":"<ref>","face":"up"}`;
+  `{"action":"place","block":"<ref>","item":"<ref>","face":"up"}`; then select
+  its offered oak-planks recipe, zombie and iron-sword pair, and red bed with
+  the same craft, attack, and sleep shapes used for alpha;
 - otherwise return `{"action":"idle"}`.
 
 The fixture must advance only when the expected offer is present and must never
@@ -271,7 +280,67 @@ the dirt ref offered in that same perception, and face `up`; it must end in
 `worldInteraction`. Alpha's block and item refs must never appear in either beta
 chain.
 
-Restart alpha before continuing the rest of the proof:
+Leave alpha disconnected while beta completes the first half of the
+craft/combat/sleep proof in the next section. That is the process-failure
+containment check: beta must continue through fresh perceptions, refs, control
+requests, and Paper evidence while alpha has no process.
+
+## 7. Prove craft, combat, and sleep for two isolated agents
+
+Keep the finite fixture running. First drive beta while alpha remains
+disconnected.
+
+Give beta one log and request one exact recipe application:
+
+```text
+item replace entity <beta> inventory.1 with minecraft:oak_log 1
+loombody think proof-beta
+```
+
+The perception must offer an oak-planks `craftingOptions` ref with
+`resultCount: 4` and `maxCrafts` at least one. The decision names only that ref.
+The `worldInteraction` record must carry body outcome `CRAFTED`, outcome
+`serverEffectConfirmed`, and Paper `craftItem` evidence for exactly four
+`minecraft:oak_planks`. No recursive craft or material collection occurs.
+
+Give beta one weapon, create one stationary living target inside melee reach,
+and ask for exactly one attack:
+
+```text
+item replace entity <beta> hotbar.1 with minecraft:iron_sword 1
+execute at <beta> run summon minecraft:zombie ~2 ~ ~ {NoAI:1b,PersistenceRequired:1b,Tags:["loom_proof_beta"]}
+loombody think proof-beta
+```
+
+The decision must use the zombie ref and iron-sword ref from the same
+perception, with `attacks: 1` and `approach: false`. Evidence must show one
+body attack packet and exactly one Paper damage event against the correlated
+zombie UUID with `minecraft:iron_sword`; no other entity may be damaged or
+killed. Remove that target before sleep:
+
+```text
+kill @e[type=minecraft:zombie,tag=loom_proof_beta]
+```
+
+Stop gamma so beta is the only live player after alpha's crash. Build one
+complete bed, keep the ordinary all-players sleep rule, and ask beta to use
+only the offered bed ref:
+
+```text
+loombody stop proof-gamma
+gamerule playersSleepingPercentage 100
+execute at <beta> run setblock ~1 ~ ~ minecraft:red_bed[part=foot,facing=east,occupied=false]
+execute at <beta> run setblock ~2 ~ ~ minecraft:red_bed[part=head,facing=east,occupied=false]
+time set night
+loombody think proof-beta
+```
+
+The body report must be `WOKE` with `entered: true`. Paper evidence must contain
+one successful bed entry and one leave for that exact bed. Paper's ordinary
+all-online-players rule performs the night skip; no Loom decision or body
+operation claims authority to schedule or skip the shared world's night.
+
+Now restart alpha:
 
 ```text
 loombody create proof-alpha
@@ -279,10 +348,34 @@ loombody inspect proof-alpha
 ```
 
 Its deterministic identity, endpoint, and process directory must be unchanged.
+Repeat the same three capabilities with alpha's own fresh refs:
+
+```text
+item replace entity <alpha> inventory.1 with minecraft:oak_log 1
+loombody think proof-alpha
+item replace entity <alpha> hotbar.1 with minecraft:iron_sword 1
+execute at <alpha> run summon minecraft:zombie ~2 ~ ~ {NoAI:1b,PersistenceRequired:1b,Tags:["loom_proof_alpha"]}
+loombody think proof-alpha
+kill @e[type=minecraft:zombie,tag=loom_proof_alpha]
+execute at <alpha> run setblock ~1 ~ ~ minecraft:red_bed[part=foot,facing=east,occupied=false]
+execute at <alpha> run setblock ~2 ~ ~ minecraft:red_bed[part=head,facing=east,occupied=false]
+loombody stop proof-beta
+time set night
+loombody think proof-alpha
+loombody create proof-beta
+loombody create proof-gamma
+```
+
+Alpha must produce the same three exact server confirmations under alpha's
+identity, request ids, recipe/target/weapon/bed refs, and control connection.
+None of beta's refs or event subjects may appear in alpha's chains.
+Beta and gamma must return with their unchanged deterministic allocations
+before the remaining proof proceeds.
+
 Stop the finite fixture and restart the credential-free scripted mind before
 the survival-policy checks below.
 
-## 7. Prove movement for alpha
+## 8. Prove movement for alpha
 
 Summon one stationary hostile near alpha:
 
@@ -307,7 +400,7 @@ Remove the zombie:
 kill @e[type=minecraft:zombie,distance=..16]
 ```
 
-## 8. Prove eating for beta
+## 9. Prove eating for beta
 
 Give beta bread and lower only beta's food:
 
@@ -329,7 +422,7 @@ stack, and later food/saturation reading. Alpha and gamma inventory refs remain
 unspendable by beta because a ref is scoped to one agent, one sense answer, and
 one control connection.
 
-## 9. Prove gamma disconnect containment
+## 10. Prove gamma disconnect containment
 
 Find the process listening on gamma's allocated control port and terminate it:
 
@@ -359,7 +452,7 @@ Its username, UUID, endpoint, process directory, cognition/ref state, and
 evidence attribution remain its own. Alpha and beta are neither stopped nor
 restarted.
 
-## 10. Prove beta terminal death containment
+## 11. Prove beta terminal death containment
 
 Kill beta through the server:
 
@@ -385,7 +478,7 @@ Restart Paper with the same `LOOM_BODY_AGENTS` set. The allocator must reproduce
 the same three identities, endpoints, and process directories. The replayed
 ledger refuses beta while alpha and gamma start independently.
 
-## 11. Reconstruct per-agent evidence
+## 12. Reconstruct per-agent evidence
 
 The following produces one ordered chain per agent without reading free-form
 detail:
@@ -415,15 +508,17 @@ Confirm:
   is filed under exactly one configured `agentId`;
 - alpha's dig and collection each join one of alpha's offered refs to one exact
   body-control request and one confirmed vanilla event;
-- beta's equip and placement use only beta's refs and complete after alpha's
-  `SIGKILL`;
+- beta's equip, placement, craft, combat, and sleep use only beta's refs and
+  complete after alpha's `SIGKILL`;
+- alpha's restarted process completes craft, combat, and sleep from a different
+  set of refs and exact server subjects;
 - alpha's movement records join alpha's perception only;
 - beta's meal and death records join beta only;
 - gamma's disconnect/restart records join gamma only;
 - aggregate Paper logs report counts and agent ids, never prompts,
   provider credentials, or unbounded transport messages.
 
-## 12. Prove bounded cleanup
+## 13. Prove bounded cleanup
 
 Stop Paper and cognition. Confirm no process or listener from the proof remains:
 

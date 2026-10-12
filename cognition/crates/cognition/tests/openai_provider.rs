@@ -336,6 +336,8 @@ fn perception(importance: DecisionImportance) -> Perception {
                 what: "bread".to_owned(),
                 count: 1,
             }],
+            crafting_options: vec![],
+            crafting_options_omitted: 0,
             world: WorldState {
                 day_phase: DayPhase::Day,
                 is_day: true,

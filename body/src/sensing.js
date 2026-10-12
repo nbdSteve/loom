@@ -264,7 +264,8 @@ function nearestBlocks (bot, eyes, standing, { radius, limit }) {
       what: block.name,
       position: [block.position.x, block.position.y, block.position.z],
       type: block.type,
-      stateId: block.stateId
+      stateId: block.stateId,
+      visible: blockInSight(bot, eyes, block)
     }))
   }
 }

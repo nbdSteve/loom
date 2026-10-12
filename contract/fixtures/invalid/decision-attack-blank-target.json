@@ -1,0 +1,1 @@
+{"requestId":"req-combat-bad","agentId":"agent-mu","intent":{"action":"attack","target":"","weapon":"i1","attacks":1,"approach":false},"reasoning":"attack an unnamed target","provenance":{"tier":"PIVOTAL","model":"opus-4.8","promptVersion":"pivotal-v2"}}

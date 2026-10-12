@@ -1,0 +1,1 @@
+{"op":"sleep","protocol":4,"requestId":"bad-sleep-response","agentId":"agent-alpha","state":"ready","outcome":"dreamed","elapsedMs":1,"entered":false}

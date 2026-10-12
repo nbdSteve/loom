@@ -1,1 +1,1 @@
-{"op":"flee","protocol":3,"requestId":"req-31","agentId":"agent-alpha","state":"ready","outcome":"threatUnnamed","from":[12.5,71.5,-40.5],"position":[12.5,71.5,-40.5],"travelled":0.25,"elapsedMs":1}
+{"op":"flee","protocol":4,"requestId":"req-31","agentId":"agent-alpha","state":"ready","outcome":"threatUnnamed","from":[12.5,71.5,-40.5],"position":[12.5,71.5,-40.5],"travelled":0.25,"elapsedMs":1}

@@ -27,21 +27,21 @@
 //! give a second, driftable statement of the same thing.
 
 use loom_contract::{
-    Bearing, DayPhase, DecisionImportance, InventoryStack, Observation, ObservationKind,
-    Perception, SelfState, Trigger, WorldState,
+    Bearing, CraftingOption, DayPhase, DecisionImportance, InventoryStack, Observation,
+    ObservationKind, Perception, SelfState, Trigger, WorldState,
 };
 
 use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v10";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v11";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v10";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v11";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v10";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v11";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -52,6 +52,9 @@ const MAX_OBSERVATIONS: usize = 16;
 
 /// How many inventory lines reach the prompt.
 const MAX_INVENTORY_LINES: usize = 24;
+
+/// How many exact recipe offers reach the prompt.
+const MAX_CRAFTING_LINES: usize = 24;
 
 /// Longest a single world-supplied string may be inside a prompt.
 ///
@@ -74,14 +77,14 @@ pub struct Prompt {
 
 /// The standing instructions shared by every tier.
 ///
-/// States the agent's situation and the ten things it can do, in the contract's
+/// States the agent's situation and the thirteen things it can do, in the contract's
 /// own vocabulary, so the intent it picks means the same thing to the body.
 const AGENT_BRIEF: &str = "\
 You are the mind of an agent that lives in a Minecraft world through a body you \
 do not directly control. You are told what your body just experienced, and you \
 answer with one action for it to take and your reasoning for taking it.
 
-Your body accepts exactly ten actions:
+Your body accepts exactly thirteen actions:
 - say: speak a line of text out loud.
 - moveTo: walk toward a block position given as whole x, y, z coordinates.
 - eat: eat one item from one stack you are carrying, named by the ref that stack \
@@ -96,6 +99,15 @@ support block. Name both refs. The item must already be in the main hand; equip 
 in an earlier decision if necessary. The body places once and never builds a plan.
 - equip: equip one offered inventory stack to hand, offHand, head, torso, legs, or \
 feet. Name the stack ref and destination; the body refuses incompatible equipment.
+- craft: apply one exact recipe from the craftable-options list, named by its ref, \
+between one and its stated maximum number of times. The body gathers nothing and \
+chooses no substitute recipe or workstation.
+- attack: strike one exact living target with one exact offered inventory stack, \
+up to four times. Name both refs. Set approach true only to permit one bounded path \
+to the target's sensed position; the body never hunts, retargets, or pursues beyond it.
+- sleep: attempt to sleep in one exact sensed bed, named by its ref, and wait only \
+for vanilla to wake you or the bounded request to end. This does not decide whether \
+the server skips the night.
 - rest: stop where you are and hold that position on purpose. It restores \
 nothing: it passes the time deliberately, and hunger continues by vanilla's rules.
 - idle: do nothing this time.
@@ -182,6 +194,10 @@ fn situation_of(perception: &Perception) -> String {
     lines.push(self_line(&perception.self_state));
     lines.push(world_line(&perception.self_state.world));
     lines.push(inventory_line(&perception.self_state.inventory_summary));
+    lines.push(crafting_line(
+        &perception.self_state.crafting_options,
+        perception.self_state.crafting_options_omitted,
+    ));
     lines.push(surroundings_line(
         &perception.surroundings,
         perception.surroundings_omitted,
@@ -281,6 +297,44 @@ fn inventory_line(inventory: &[InventoryStack]) -> String {
             "more item",
             "more items"
         )
+    )
+}
+
+/// Exact craftable recipe offers, capped with both body and prompt omissions stated.
+fn crafting_line(options: &[CraftingOption], omitted_by_the_body: i64) -> String {
+    let hidden = beyond(options.len(), MAX_CRAFTING_LINES)
+        .saturating_add(u64::try_from(omitted_by_the_body).unwrap_or(0));
+    if options.is_empty() {
+        return match hidden {
+            0 => "You have no currently offered craftable recipe.".to_owned(),
+            n => format!(
+                "You have no shown craftable recipe, though {n} {recipes} went unreported.",
+                recipes = noun_for(n, "recipe", "recipes")
+            ),
+        };
+    }
+    let shown = options
+        .iter()
+        .take(MAX_CRAFTING_LINES)
+        .map(|option| {
+            format!(
+                "{what}: {count} per craft, at most {maximum} craft(s), {table} (ref {handle})",
+                what = field(&option.what),
+                count = option.result_count,
+                maximum = option.max_crafts,
+                table = if option.requires_table {
+                    "using the retained crafting table"
+                } else {
+                    "no crafting table required"
+                },
+                handle = field(&option.recipe_ref)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!(
+        "You can craft: {shown}{more}",
+        more = omitted(hidden, "more recipe", "more recipes")
     )
 }
 
@@ -538,6 +592,8 @@ mod tests {
                 saturation: 5.0,
                 position: [10.5, 64.0, -8.25],
                 inventory_summary: vec![stack("i1", "bread", 3)],
+                crafting_options: vec![],
+                crafting_options_omitted: 0,
                 world: WorldState {
                     day_phase: DayPhase::Day,
                     is_day: true,

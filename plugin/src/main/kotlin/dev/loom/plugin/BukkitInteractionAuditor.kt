@@ -6,12 +6,20 @@ package dev.loom.plugin
 import dev.loom.body.player.PlayerIdentity
 import dev.loom.body.player.ServerInteractionAudit
 import dev.loom.body.player.ServerInteractionClaim
+import dev.loom.bodycontrol.AttackOutcome
 import dev.loom.bodycontrol.BodyRequest
+import dev.loom.bodycontrol.BodyResponse
 import dev.loom.bodycontrol.CollectOutcome
+import dev.loom.bodycontrol.CraftOutcome
 import dev.loom.bodycontrol.DigOutcome
 import dev.loom.bodycontrol.EquipOutcome
 import dev.loom.bodycontrol.EquipmentDestination
 import dev.loom.bodycontrol.PlaceOutcome
+import dev.loom.bodycontrol.SensedBlock
+import dev.loom.bodycontrol.SensedEntity
+import dev.loom.bodycontrol.SensedRecipe
+import dev.loom.bodycontrol.SensedStack
+import dev.loom.bodycontrol.SleepOutcome
 import dev.loom.witness.bukkit.serverReadingOf
 import org.bukkit.Server
 import org.bukkit.entity.Player
@@ -38,6 +46,9 @@ internal class BukkitInteractionAuditor(
             is ServerInteractionClaim.Collect -> auditCollect(identity, claim)
             is ServerInteractionClaim.Place -> auditPlace(identity, claim)
             is ServerInteractionClaim.Equip -> auditEquip(identity, claim)
+            is ServerInteractionClaim.Craft -> auditCraft(identity, claim)
+            is ServerInteractionClaim.Attack -> auditAttack(identity, claim)
+            is ServerInteractionClaim.Sleep -> auditSleep(identity, claim)
         }
 
     private fun auditDig(
@@ -45,7 +56,7 @@ internal class BukkitInteractionAuditor(
         claim: ServerInteractionClaim.Dig,
     ): ServerInteractionAudit {
         val event =
-            events?.takeBreak(
+            events?.evidence?.takeBreak(
                 identity.uuid,
                 claim.startedTick,
                 claim.offered.position.point(),
@@ -77,7 +88,7 @@ internal class BukkitInteractionAuditor(
             )
         }
         val event =
-            events?.takeCollection(
+            events?.evidence?.takeCollection(
                 identity.uuid,
                 claim.startedTick,
                 subject,
@@ -109,7 +120,7 @@ internal class BukkitInteractionAuditor(
         val expectedPosition =
             destinationOf(claim.offeredBlock.position.point(), claim.request)
         val event =
-            events?.takePlacement(
+            events?.evidence?.takePlacement(
                 identity.uuid,
                 claim.startedTick,
                 expectedPosition,
@@ -166,7 +177,227 @@ internal class BukkitInteractionAuditor(
                 },
         )
     }
+
+    private fun auditCraft(
+        identity: PlayerIdentity,
+        claim: ServerInteractionClaim.Craft,
+    ): ServerInteractionAudit {
+        val crafted =
+            events?.evidence?.takeCrafts(
+                identity.uuid,
+                claim.startedTick,
+            ).orEmpty()
+        return craftEventAudit(claim.request, claim.report, claim.offeredRecipe, crafted)
+    }
+
+    private fun auditAttack(
+        identity: PlayerIdentity,
+        claim: ServerInteractionClaim.Attack,
+    ): ServerInteractionAudit {
+        val target = claim.targetSubject
+        val damage = events?.evidence?.takeDamage(identity.uuid, claim.startedTick).orEmpty()
+        val killed = events?.evidence?.takeKills(identity.uuid, claim.startedTick).orEmpty()
+        return attackEventAudit(
+            claim.report,
+            claim.offeredTarget,
+            claim.offeredWeapon,
+            AttackAuditEvidence(target, damage, killed),
+        )
+    }
+
+    private fun auditSleep(
+        identity: PlayerIdentity,
+        claim: ServerInteractionClaim.Sleep,
+    ): ServerInteractionAudit {
+        val entered = events?.evidence?.takeBedEntries(identity.uuid, claim.startedTick).orEmpty()
+        val left = events?.evidence?.takeBedLeaves(identity.uuid, claim.startedTick).orEmpty()
+        return sleepEventAudit(
+            claim.report,
+            claim.offeredBed,
+            SleepAuditEvidence(entered, left),
+        )
+    }
 }
+
+internal fun craftEventAudit(
+    request: BodyRequest.Craft,
+    report: BodyResponse.CraftReport,
+    offered: SensedRecipe,
+    crafted: List<VanillaInteractionEvent.Crafted>,
+): ServerInteractionAudit {
+    val exactApplications =
+        crafted.all {
+            canonicalResource(it.what) == canonicalResource(offered.what) &&
+                it.count == offered.resultCount
+        }
+    val exactCompletion =
+        crafted.size == report.crafts &&
+            crafted.sumOf { it.count } == report.count &&
+            exactApplications
+    val confirmed =
+        when {
+            report.outcome == CraftOutcome.CRAFTED -> exactCompletion
+            !report.attempted -> crafted.isEmpty()
+            else -> crafted.size <= request.crafts && exactApplications
+        }
+    return ServerInteractionAudit(
+        confirmed = confirmed,
+        detail =
+            crafted
+                .takeIf { it.isNotEmpty() }
+                ?.joinToString(prefix = "craftItem ", separator = ", ") {
+                    "${it.count} ${it.what} on tick ${it.tick}"
+                }
+                ?: "no matching craftItem event",
+    )
+}
+
+internal fun attackEventAudit(
+    report: BodyResponse.AttackReport,
+    offeredTarget: SensedEntity,
+    offeredWeapon: SensedStack,
+    evidence: AttackAuditEvidence,
+): ServerInteractionAudit {
+    val targetSubject = evidence.targetSubject
+    if (targetSubject == null) {
+        return ServerInteractionAudit(
+            confirmed =
+                report.attacks == 0 &&
+                    evidence.damage.isEmpty() &&
+                    evidence.killed.isEmpty() &&
+                    report.outcome !in
+                    setOf(AttackOutcome.ATTACKED, AttackOutcome.TARGET_DIED),
+            detail = "target was not correlated to a server entity",
+        )
+    }
+    val exactDamage =
+        evidence.damage.all {
+            damageMatches(it, targetSubject, offeredTarget, offeredWeapon)
+        }
+    val exactKill =
+        evidence.killed.all {
+            killMatches(it, targetSubject, offeredTarget)
+        }
+    val confirmed = attackConfirmed(report, evidence, exactDamage, exactKill)
+    val detail =
+        buildString {
+            append("server damage events ")
+            append(evidence.damage.size)
+            append('/')
+            append(report.attacks)
+            if (evidence.damage.isNotEmpty()) {
+                append(", total damage ")
+                append(evidence.damage.sumOf { it.damage })
+            }
+            append(", target death ")
+            append(evidence.killed.size)
+        }
+    return ServerInteractionAudit(confirmed, detail)
+}
+
+internal data class AttackAuditEvidence(
+    val targetSubject: java.util.UUID?,
+    val damage: List<VanillaInteractionEvent.Damaged>,
+    val killed: List<VanillaInteractionEvent.Killed>,
+)
+
+private fun damageMatches(
+    damage: VanillaInteractionEvent.Damaged,
+    targetSubject: java.util.UUID,
+    offeredTarget: SensedEntity,
+    offeredWeapon: SensedStack,
+): Boolean =
+    listOf(
+        damage.target == targetSubject,
+        canonicalResource(damage.targetWhat) == canonicalResource(offeredTarget.what),
+        canonicalResource(damage.weapon) == canonicalResource(offeredWeapon.what),
+        damage.damage >= 0.0,
+    ).all { it }
+
+private fun killMatches(
+    killed: VanillaInteractionEvent.Killed,
+    targetSubject: java.util.UUID,
+    offeredTarget: SensedEntity,
+): Boolean =
+    listOf(
+        killed.target == targetSubject,
+        canonicalResource(killed.targetWhat) == canonicalResource(offeredTarget.what),
+    ).all { it }
+
+private fun attackConfirmed(
+    report: BodyResponse.AttackReport,
+    evidence: AttackAuditEvidence,
+    exactDamage: Boolean,
+    exactKill: Boolean,
+): Boolean =
+    when (report.outcome) {
+        AttackOutcome.ATTACKED ->
+            listOf(
+                evidence.killed.isEmpty(),
+                evidence.damage.size == report.attacks,
+                evidence.damage.isNotEmpty(),
+                exactDamage,
+                exactKill,
+            ).all { it }
+        AttackOutcome.TARGET_DIED ->
+            listOf(
+                evidence.killed.size == 1,
+                evidence.damage.isNotEmpty(),
+                evidence.damage.size <= report.attacks,
+                exactDamage,
+                exactKill,
+            ).all { it }
+        else ->
+            listOf(
+                evidence.killed.isEmpty(),
+                evidence.damage.size <= report.attacks,
+                exactDamage,
+                exactKill,
+            ).all { it }
+    }
+
+internal fun sleepEventAudit(
+    report: BodyResponse.SleepReport,
+    offeredBed: SensedBlock,
+    evidence: SleepAuditEvidence,
+): ServerInteractionAudit {
+    val bed = offeredBed.position.point()
+    val exactEntry = evidence.entered.all { it.matches(offeredBed, bed) }
+    val exactLeave = evidence.left.all { it.matches(offeredBed, bed) }
+    val boundedEvents = evidence.entered.size <= 1 && evidence.left.size <= 1
+    val serverEntered =
+        evidence.entered.singleOrNull()?.result ==
+            org.bukkit.event.player.PlayerBedEnterEvent.BedEnterResult.OK
+    val confirmed =
+        exactEntry &&
+            exactLeave &&
+            boundedEvents &&
+            report.entered == serverEntered &&
+            when (report.outcome) {
+                SleepOutcome.WOKE -> serverEntered && evidence.left.size == 1
+                SleepOutcome.TIMED_OUT,
+                SleepOutcome.CANCELLED,
+                SleepOutcome.BODY_DIED,
+                SleepOutcome.DISCONNECTED,
+                SleepOutcome.LIBRARY_FAILURE,
+                -> !serverEntered || evidence.left.size == 1
+                else -> !serverEntered
+            }
+    return ServerInteractionAudit(
+        confirmed = confirmed,
+        detail =
+            "bedEnter ${
+                evidence.entered.joinToString { it.result.name.lowercase() }.ifEmpty { "absent" }
+            }; bedLeave ${
+                evidence.left.joinToString { it.tick.toString() }.ifEmpty { "absent" }
+            }",
+    )
+}
+
+internal data class SleepAuditEvidence(
+    val entered: List<VanillaInteractionEvent.BedEntered>,
+    val left: List<VanillaInteractionEvent.BedLeft>,
+)
 
 private fun List<Int>.point(): BlockPoint {
     require(size == WORLD_POSITION_AXES)
@@ -203,15 +434,3 @@ private fun destinationOf(
         }
     return BlockPoint(support.x + delta.x, support.y + delta.y, support.z + delta.z)
 }
-
-internal fun interactionEventAudit(
-    claimed: Boolean,
-    eventFound: Boolean,
-    exact: Boolean,
-    foundDetail: String?,
-    absentDetail: String,
-): ServerInteractionAudit =
-    ServerInteractionAudit(
-        confirmed = if (claimed) exact else !eventFound,
-        detail = foundDetail ?: absentDetail,
-    )

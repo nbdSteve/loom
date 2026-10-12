@@ -114,6 +114,9 @@ internal class PlayerEvidenceRecorder(
                 is BodyRequest.Collect -> controlRequest.senseId
                 is BodyRequest.Place -> controlRequest.senseId
                 is BodyRequest.Equip -> controlRequest.senseId
+                is BodyRequest.Craft -> controlRequest.senseId
+                is BodyRequest.Attack -> controlRequest.senseId
+                is BodyRequest.Sleep -> controlRequest.senseId
                 else -> error("only world-interaction requests are recorded here")
             }
         context.journal.recordWorldInteraction(

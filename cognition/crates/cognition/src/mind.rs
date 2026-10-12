@@ -139,6 +139,8 @@ mod tests {
                 saturation: 5.0,
                 position: [0.0, 64.0, 0.0],
                 inventory_summary: vec![],
+                crafting_options: vec![],
+                crafting_options_omitted: 0,
                 world: WorldState {
                     day_phase: DayPhase::Day,
                     is_day: true,
@@ -203,7 +205,7 @@ mod tests {
         assert!(decided.reasoning.contains(DEEP));
         assert_eq!(decided.provenance.model, FAST);
         assert_eq!(decided.provenance.tier, DecisionImportance::Routine);
-        assert_eq!(decided.provenance.prompt_version, "routine-v10");
+        assert_eq!(decided.provenance.prompt_version, "routine-v11");
     }
 
     #[tokio::test]

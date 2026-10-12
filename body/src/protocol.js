@@ -40,22 +40,23 @@
 /**
  * The current protocol generation. A frame naming any other is refused, not interpreted.
  *
- * It moved from 2 to 3 when sense answers gained block and dropped-item offers and the
- * body gained new closed response sets. Adding operation names alone would not have moved
- * it; widening a body-chosen answer does.
+ * It moved from 3 to 4 when sense answers gained recipe offers and the body gained the
+ * craft, attack, and sleep closed response sets. Adding operation names alone would not
+ * have moved it; widening a body-chosen answer does.
  */
-const PROTOCOL_VERSION = 3
+const PROTOCOL_VERSION = 4
 
 /**
  * Longest frame this protocol will carry, in bytes.
  *
  * The largest legal frame in this generation is a sense report at every one of its
  * own bounds - both ids at their full length, [MAX_SENSE_ENTITIES] entities,
- * [MAX_SENSE_BLOCKS] blocks, [MAX_SENSE_ITEMS] dropped items, every inventory slot,
- * every resource name at [MAX_RESOURCE_NAME_CHARS] and every coordinate at its widest.
- * It measures about 14.7 KiB on this runtime, so 32 KiB carries it with explicit
- * headroom while remaining a small control-plane bound. `protocol.test.js` constructs
- * and measures that exact worst case rather than trusting this arithmetic.
+ * [MAX_SENSE_BLOCKS] blocks, [MAX_SENSE_ITEMS] dropped items,
+ * [MAX_SENSE_RECIPES] recipes, every inventory slot, every resource name at
+ * [MAX_RESOURCE_NAME_CHARS] and every coordinate at its widest. The 32 KiB ceiling
+ * carries it with explicit headroom while remaining a small control-plane bound.
+ * `protocol.test.js` constructs and measures that exact worst case rather than
+ * trusting this arithmetic.
  *
  * It is still eight times tighter than the cognition wire's 256 KiB,
  * which is sized for a whole perception with its prose. That there *is* a largest
@@ -250,6 +251,9 @@ const MAX_SENSE_BLOCKS = 24
 /** Most dropped-item offers one sense answer may carry. */
 const MAX_SENSE_ITEMS = 24
 
+/** Most recipe offers one sense answer may carry. */
+const MAX_SENSE_RECIPES = 24
+
 /** Highest slot index of a player's own inventory window. */
 const MAX_SLOT_INDEX = 45
 
@@ -344,6 +348,21 @@ const MAX_BLOCK_INDEX = MAX_SENSE_BLOCKS - 1
 /** Highest request-local dropped-item index a collection may name. */
 const MAX_ITEM_INDEX = MAX_SENSE_ITEMS - 1
 
+/** Highest request-local recipe index a craft may name. */
+const MAX_RECIPE_INDEX = MAX_SENSE_RECIPES - 1
+
+/** Most recipe applications one request may ask for. */
+const MAX_CRAFTS = 8
+
+/** Most discrete attack packets one request may emit. */
+const MAX_ATTACKS = 4
+
+/** Most result items one bounded craft report may confirm. */
+const MAX_CRAFTED_ITEMS = MAX_CRAFTS * 64
+
+/** Widest one fixed-position combat approach may travel. */
+const MAX_PURSUIT_DISTANCE = 8
+
 /** Longest one native world interaction may remain active. */
 const MAX_ACTION_DEADLINE_MS = 20000
 
@@ -392,6 +411,9 @@ const SENSED_ITEM_FIELDS = ['what', 'count', 'position', 'visible']
 /** What one sensed stack carries, in declaration order. */
 const SENSED_STACK_FIELDS = ['slot', 'what', 'count']
 
+/** What one sensed recipe carries, in declaration order. */
+const SENSED_RECIPE_FIELDS = ['what', 'resultCount', 'maxCrafts', 'requiresTable']
+
 /** What a sense answer carries beyond the envelope, in declaration order. */
 const SENSE_FIELDS = [
   'position',
@@ -404,7 +426,9 @@ const SENSE_FIELDS = [
   'blocksOmitted',
   'items',
   'itemsOmitted',
-  'inventory'
+  'inventory',
+  'recipes',
+  'recipesOmitted'
 ]
 
 /** What an eat answer carries beyond the envelope, in declaration order. */
@@ -434,6 +458,15 @@ const PLACE_FIELDS = ['outcome', 'elapsedMs', 'what', 'position', 'remaining']
 
 /** What an equip answer carries beyond the envelope, in declaration order. */
 const EQUIP_FIELDS = ['outcome', 'elapsedMs', 'what', 'count', 'toSlot']
+
+/** What a craft answer carries beyond the envelope, in declaration order. */
+const CRAFT_FIELDS = ['outcome', 'elapsedMs', 'attempted', 'what', 'count', 'crafts']
+
+/** What a combat answer carries beyond the envelope, in declaration order. */
+const ATTACK_FIELDS = [...MOVE_FIELDS, 'attacks']
+
+/** What a sleep answer carries beyond the envelope, in declaration order. */
+const SLEEP_FIELDS = ['outcome', 'elapsedMs', 'entered']
 
 /** What a halt answer carries beyond the envelope, in declaration order. */
 const HALT_FIELDS = ['stopped']
@@ -486,6 +519,9 @@ const OPERATIONS = Object.freeze([
   'collect',
   'place',
   'equip',
+  'craft',
+  'attack',
+  'sleep',
   'halt'
 ])
 
@@ -620,6 +656,70 @@ const EQUIP_OUTCOMES = Object.freeze([
   'incompatible',
   'timedOut',
   'cancelled',
+  'libraryFailure'
+])
+
+/** Every terminal answer to one explicitly offered bounded recipe. */
+const CRAFT_OUTCOMES = Object.freeze([
+  'crafted',
+  'senseForgotten',
+  'recipeUnnamed',
+  'ingredientsChanged',
+  'recipeUnavailable',
+  'workstationGone',
+  'workstationChanged',
+  'workstationOutOfReach',
+  'workstationNotVisible',
+  'timedOut',
+  'cancelled',
+  'bodyDied',
+  'disconnected',
+  'libraryFailure'
+])
+
+/** Every terminal answer to one exact retained combat target. */
+const ATTACK_OUTCOMES = Object.freeze([
+  'attacked',
+  'targetDied',
+  'senseForgotten',
+  'targetUnnamed',
+  'targetGone',
+  'targetChanged',
+  'slotUnnamed',
+  'slotEmpty',
+  'slotChanged',
+  'healthBound',
+  'outOfRange',
+  'noRoute',
+  'searchOverBudget',
+  'stalled',
+  'overTravelled',
+  'timedOut',
+  'cancelled',
+  'bodyDied',
+  'disconnected',
+  'libraryFailure'
+])
+
+/** Every terminal answer to one exact retained bed. */
+const SLEEP_OUTCOMES = Object.freeze([
+  'woke',
+  'senseForgotten',
+  'bedUnnamed',
+  'bedGone',
+  'bedChanged',
+  'notBed',
+  'wrongDimension',
+  'outOfReach',
+  'notVisible',
+  'occupied',
+  'notNight',
+  'unsafe',
+  'sleepRefused',
+  'timedOut',
+  'cancelled',
+  'bodyDied',
+  'disconnected',
   'libraryFailure'
 ])
 
@@ -1046,6 +1146,16 @@ function isSensedStack (raw) {
     noUnknownKeys(raw, SENSED_STACK_FIELDS)
 }
 
+/** Whether `raw` is one bounded recipe offer. */
+function isSensedRecipe (raw) {
+  return isPlainObject(raw) &&
+    isResourceName(raw.what) &&
+    isBoundedInteger(raw.resultCount, 1, 64) &&
+    isBoundedInteger(raw.maxCrafts, 1, MAX_CRAFTS) &&
+    typeof raw.requiresTable === 'boolean' &&
+    noUnknownKeys(raw, SENSED_RECIPE_FIELDS)
+}
+
 /**
  * Whether `raw` is a whole sense answer.
  *
@@ -1090,9 +1200,15 @@ function isSenseReport (raw, literals) {
   if (!raw.inventory.every(isSensedStack)) return false
   if (!spellsWholeNumbers(literals, 'inventory.slot', raw.inventory.length)) return false
   if (!spellsWholeNumbers(literals, 'inventory.count', raw.inventory.length)) return false
-  return raw.inventory.every(
+  if (!raw.inventory.every(
     (stack, at) => at === 0 || stack.slot > raw.inventory[at - 1].slot
-  )
+  )) return false
+  if (!Array.isArray(raw.recipes) || raw.recipes.length > MAX_SENSE_RECIPES) return false
+  if (!raw.recipes.every(isSensedRecipe)) return false
+  if (!spellsWholeNumbers(literals, 'recipes.resultCount', raw.recipes.length)) return false
+  if (!spellsWholeNumbers(literals, 'recipes.maxCrafts', raw.recipes.length)) return false
+  if (!isCount(raw.recipesOmitted) || !spellsWholeNumber(literals, 'recipesOmitted')) return false
+  return raw.recipesOmitted === 0 || raw.recipes.length > 0
 }
 
 /**
@@ -1235,6 +1351,58 @@ function isEquipReport (raw, literals) {
   return spellsWholeNumbers(literals, 'toSlot', equipped ? 1 : 0)
 }
 
+/** Whether `raw` is a whole craft answer. */
+function isCraftReport (raw, literals) {
+  if (!CRAFT_OUTCOMES.includes(raw.outcome)) return false
+  if (!isCount(raw.elapsedMs) || !spellsWholeNumber(literals, 'elapsedMs')) return false
+  if (typeof raw.attempted !== 'boolean') return false
+  if (raw.outcome === 'crafted' && !raw.attempted) return false
+  if (new Set(['senseForgotten', 'recipeUnnamed']).has(raw.outcome) && raw.attempted) return false
+  const crafted = raw.outcome === 'crafted'
+  if (crafted !== (raw.what !== undefined)) return false
+  if (crafted !== (raw.count !== undefined)) return false
+  if (crafted !== (raw.crafts !== undefined)) return false
+  if (crafted && !isResourceName(raw.what)) return false
+  if (crafted && !isBoundedInteger(raw.count, 1, MAX_CRAFTED_ITEMS)) return false
+  if (crafted && !isBoundedInteger(raw.crafts, 1, MAX_CRAFTS)) return false
+  if (!spellsWholeNumbers(literals, 'count', crafted ? 1 : 0)) return false
+  return spellsWholeNumbers(literals, 'crafts', crafted ? 1 : 0)
+}
+
+/** Whether `raw` is a whole bounded combat answer. */
+function isAttackReport (raw, literals) {
+  if (!ATTACK_OUTCOMES.includes(raw.outcome)) return false
+  if (!isJourney(raw, literals)) return false
+  if (!isBoundedInteger(raw.attacks, 0, MAX_ATTACKS)) return false
+  if (!spellsWholeNumber(literals, 'attacks')) return false
+  if (raw.outcome === 'attacked' && raw.attacks === 0) return false
+  if (raw.outcome === 'targetDied' && raw.attacks === 0) return false
+  return true
+}
+
+/** Whether `raw` is a whole sleep answer. */
+function isSleepReport (raw, literals) {
+  if (!SLEEP_OUTCOMES.includes(raw.outcome)) return false
+  if (!isCount(raw.elapsedMs) || !spellsWholeNumber(literals, 'elapsedMs')) return false
+  if (typeof raw.entered !== 'boolean') return false
+  if (raw.outcome === 'woke' && !raw.entered) return false
+  const beforeEntry = new Set([
+    'senseForgotten',
+    'bedUnnamed',
+    'bedGone',
+    'bedChanged',
+    'notBed',
+    'wrongDimension',
+    'outOfReach',
+    'notVisible',
+    'occupied',
+    'notNight',
+    'unsafe',
+    'sleepRefused'
+  ])
+  return !beforeEntry.has(raw.outcome) || !raw.entered
+}
+
 /**
  * Whether `raw` is a whole halt answer.
  *
@@ -1252,8 +1420,8 @@ function isHaltReport (raw) {
  * The pair is what keeps the two from drifting: the fields a decode allows and the fields
  * the check reads are the same entry, so an answer widened on one side without the other
  * either refuses a legal frame or admits an unknown key, rather than doing so on one
- * operation while the rest stay right. The five here are exactly the operations whose
- * answer only a live, spawned body can give.
+ * operation while the rest stay right. The entries here are exactly the operations
+ * whose answer only a live, spawned body can give.
  */
 const REPORT_SHAPES = Object.freeze({
   sense: { holds: isSenseReport, fields: SENSE_FIELDS },
@@ -1264,6 +1432,9 @@ const REPORT_SHAPES = Object.freeze({
   collect: { holds: isCollectReport, fields: COLLECT_FIELDS },
   place: { holds: isPlaceReport, fields: PLACE_FIELDS },
   equip: { holds: isEquipReport, fields: EQUIP_FIELDS },
+  craft: { holds: isCraftReport, fields: CRAFT_FIELDS },
+  attack: { holds: isAttackReport, fields: ATTACK_FIELDS },
+  sleep: { holds: isSleepReport, fields: SLEEP_FIELDS },
   halt: { holds: isHaltReport, fields: HALT_FIELDS }
 })
 
@@ -1382,6 +1553,55 @@ function requestPayload (raw, literals) {
       destination: raw.destination,
       timeoutMs: raw.timeoutMs
     }
+  }
+  if (raw.op === 'craft') {
+    const bounded = isControlId(raw.senseId) &&
+      isBoundedInteger(raw.recipe, 0, MAX_RECIPE_INDEX) &&
+      spellsWholeNumber(literals, 'recipe') &&
+      isBoundedInteger(raw.crafts, 1, MAX_CRAFTS) &&
+      spellsWholeNumber(literals, 'crafts') &&
+      isActionDeadline(raw, literals)
+    if (!bounded) return undefined
+    return {
+      senseId: raw.senseId,
+      recipe: raw.recipe,
+      crafts: raw.crafts,
+      timeoutMs: raw.timeoutMs
+    }
+  }
+  if (raw.op === 'attack') {
+    const bounded = isControlId(raw.senseId) &&
+      isBoundedInteger(raw.entity, 0, MAX_ENTITY_INDEX) &&
+      spellsWholeNumber(literals, 'entity') &&
+      isBoundedInteger(raw.slot, 0, MAX_SLOT_INDEX) &&
+      spellsWholeNumber(literals, 'slot') &&
+      isBoundedInteger(raw.attacks, 1, MAX_ATTACKS) &&
+      spellsWholeNumber(literals, 'attacks') &&
+      typeof raw.approach === 'boolean' &&
+      isReal(raw.maxPursuitDistance, 0, MAX_PURSUIT_DISTANCE) &&
+      isReal(raw.minHealth, 0, MAX_HEALTH) &&
+      isActionDeadline(raw, literals) &&
+      typeof raw.sprint === 'boolean'
+    if (!bounded) return undefined
+    return {
+      senseId: raw.senseId,
+      entity: raw.entity,
+      slot: raw.slot,
+      attacks: raw.attacks,
+      approach: raw.approach,
+      maxPursuitDistance: raw.maxPursuitDistance,
+      minHealth: raw.minHealth,
+      timeoutMs: raw.timeoutMs,
+      sprint: raw.sprint
+    }
+  }
+  if (raw.op === 'sleep') {
+    const bounded = isControlId(raw.senseId) &&
+      isBoundedInteger(raw.block, 0, MAX_BLOCK_INDEX) &&
+      spellsWholeNumber(literals, 'block') &&
+      isActionDeadline(raw, literals)
+    if (!bounded) return undefined
+    return { senseId: raw.senseId, block: raw.block, timeoutMs: raw.timeoutMs }
   }
   return {}
 }
@@ -1581,7 +1801,7 @@ function decodeResponse (line) {
       : { ok: false, code: 'invalidField' }
   }
   // Every answer below is one only a live, spawned body can give, so the state is fixed
-  // at `ready` for all five: any other state is a `notReady` refusal instead, and an
+  // at `ready` for all of them: any other state is a `notReady` refusal instead, and an
   // answer claiming to have read a world - or walked one - from a body that is not in one
   // is a lie about where its numbers came from. The state an answer names is the state the
   // request was *admitted under*, which is the same turn for a sense and an earlier one
@@ -1810,6 +2030,13 @@ function canonicalResponse (frame) {
       what: stack.what,
       count: stack.count
     }))
+    canonical.recipes = frame.recipes.map((recipe) => ({
+      what: recipe.what,
+      resultCount: recipe.resultCount,
+      maxCrafts: recipe.maxCrafts,
+      requiresTable: recipe.requiresTable
+    }))
+    canonical.recipesOmitted = frame.recipesOmitted
   }
   if (frame.op === 'eat') {
     canonical.outcome = frame.outcome
@@ -1856,6 +2083,27 @@ function canonicalResponse (frame) {
     if (frame.what !== undefined) canonical.what = frame.what
     if (frame.count !== undefined) canonical.count = frame.count
     if (frame.toSlot !== undefined) canonical.toSlot = frame.toSlot
+  }
+  if (frame.op === 'craft') {
+    canonical.outcome = frame.outcome
+    canonical.elapsedMs = frame.elapsedMs
+    canonical.attempted = frame.attempted
+    if (frame.what !== undefined) canonical.what = frame.what
+    if (frame.count !== undefined) canonical.count = frame.count
+    if (frame.crafts !== undefined) canonical.crafts = frame.crafts
+  }
+  if (frame.op === 'attack') {
+    canonical.outcome = frame.outcome
+    canonical.from = [...frame.from]
+    canonical.position = [...frame.position]
+    canonical.travelled = frame.travelled
+    canonical.elapsedMs = frame.elapsedMs
+    canonical.attacks = frame.attacks
+  }
+  if (frame.op === 'sleep') {
+    canonical.outcome = frame.outcome
+    canonical.elapsedMs = frame.elapsedMs
+    canonical.entered = frame.entered
   }
   if (frame.op === 'halt') canonical.stopped = frame.stopped
   return canonical
@@ -1952,7 +2200,9 @@ function senseReport ({
   blocksOmitted = 0,
   items = [],
   itemsOmitted = 0,
-  inventory
+  inventory,
+  recipes = [],
+  recipesOmitted = 0
 }) {
   const frame = {
     op: 'sense',
@@ -1972,6 +2222,8 @@ function senseReport ({
   frame.items = items
   frame.itemsOmitted = itemsOmitted
   frame.inventory = inventory
+  frame.recipes = recipes
+  frame.recipesOmitted = recipesOmitted
   return checkedResponse(frame)
 }
 
@@ -2168,6 +2420,73 @@ function equipReport ({
   return checkedResponse(frame)
 }
 
+/** The answer to applying one exact offered recipe. */
+function craftReport ({
+  requestId,
+  agentId,
+  outcome,
+  elapsedMs,
+  attempted,
+  what,
+  count,
+  crafts
+}) {
+  const frame = {
+    op: 'craft',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    outcome,
+    elapsedMs,
+    attempted
+  }
+  if (what !== undefined) frame.what = what
+  if (count !== undefined) frame.count = count
+  if (crafts !== undefined) frame.crafts = crafts
+  return checkedResponse(frame)
+}
+
+/** The answer to one bounded attack request, including its optional approach. */
+function attackReport ({
+  requestId,
+  agentId,
+  outcome,
+  from,
+  position,
+  travelled,
+  elapsedMs,
+  attacks
+}) {
+  return checkedResponse({
+    op: 'attack',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    outcome,
+    from,
+    position,
+    travelled,
+    elapsedMs,
+    attacks
+  })
+}
+
+/** The answer to one exact offered bed, held through vanilla wake or a bound. */
+function sleepReport ({ requestId, agentId, outcome, elapsedMs, entered }) {
+  return checkedResponse({
+    op: 'sleep',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    outcome,
+    elapsedMs,
+    entered
+  })
+}
+
 /**
  * The answer to a halt: whether anything cancellable was in fact running.
  *
@@ -2237,6 +2556,7 @@ module.exports = {
   MAX_SENSE_ENTITIES,
   MAX_SENSE_BLOCKS,
   MAX_SENSE_ITEMS,
+  MAX_SENSE_RECIPES,
   MAX_SLOT_INDEX,
   MAX_SENSE_STACKS,
   MIN_STACK_COUNT,
@@ -2251,6 +2571,11 @@ module.exports = {
   MAX_ENTITY_INDEX,
   MAX_BLOCK_INDEX,
   MAX_ITEM_INDEX,
+  MAX_RECIPE_INDEX,
+  MAX_CRAFTS,
+  MAX_ATTACKS,
+  MAX_CRAFTED_ITEMS,
+  MAX_PURSUIT_DISTANCE,
   MAX_TRAVEL_DISTANCE,
   ID_PATTERN,
   USERNAME_PATTERN,
@@ -2264,6 +2589,9 @@ module.exports = {
   COLLECT_OUTCOMES,
   PLACE_OUTCOMES,
   EQUIP_OUTCOMES,
+  CRAFT_OUTCOMES,
+  ATTACK_OUTCOMES,
+  SLEEP_OUTCOMES,
   BLOCK_FACES,
   EQUIPMENT_DESTINATIONS,
   THREAT_REFUSALS,
@@ -2284,6 +2612,9 @@ module.exports = {
   collectReport,
   placeReport,
   equipReport,
+  craftReport,
+  attackReport,
+  sleepReport,
   haltReport,
   shutdownAccepted,
   refusal

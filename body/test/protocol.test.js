@@ -16,6 +16,7 @@ const {
   MAX_SENSE_ENTITIES,
   MAX_SENSE_BLOCKS,
   MAX_SENSE_ITEMS,
+  MAX_SENSE_RECIPES,
   MAX_SLOT_INDEX,
   MAX_SENSE_STACKS,
   MAX_STACK_COUNT,
@@ -76,8 +77,7 @@ const LEAK_BEARING = [
  * The fields each operation requires beyond the envelope.
  *
  * A request is only well-formed for the operation it names, so the helper below
- * has to know this to build one: `sense`, `eat`, `moveTo` and `flee` carry a
- * payload the other four do not, and a test spoiling one field must start from a
+ * has to know this to build one, and a test spoiling one field must start from a
  * frame that was otherwise complete.
  */
 const PAYLOAD = {
@@ -98,6 +98,19 @@ const PAYLOAD = {
   },
   place: { senseId: 'sense-1', block: 0, slot: 36, face: 'up', timeoutMs: 8000 },
   equip: { senseId: 'sense-1', slot: 36, destination: 'hand', timeoutMs: 8000 },
+  craft: { senseId: 'sense-1', recipe: 0, crafts: 2, timeoutMs: 8000 },
+  attack: {
+    senseId: 'sense-1',
+    entity: 0,
+    slot: 36,
+    attacks: 2,
+    approach: true,
+    maxPursuitDistance: 8,
+    minHealth: 4,
+    timeoutMs: 8000,
+    sprint: false
+  },
+  sleep: { senseId: 'sense-1', block: 0, timeoutMs: 8000 },
   halt: {}
 }
 
@@ -450,6 +463,8 @@ function sensed (overrides = {}) {
     items: [],
     itemsOmitted: 0,
     inventory: [],
+    recipes: [],
+    recipesOmitted: 0,
     ...overrides
   }
 }
@@ -508,7 +523,7 @@ function widestWritten (values) {
  * This is what a worst-case frame has to be measured with. Measured with the coordinate of
  * largest *magnitude*, which reads nine characters shorter, the guard below under-reported
  * the widest legal answer by 225 bytes across the twenty-five positions in it - on the one
- * measurement all four sense-list bounds are checked against.
+ * measurement all five sense-list bounds are checked against.
  */
 const WIDEST_COORDINATE = widestWritten([
   -justInside(MAX_WORLD_COORDINATE),
@@ -524,7 +539,7 @@ function ate (overrides = {}) {
   return { requestId: 'req-1', agentId: AGENT, outcome: 'slotEmpty', vitals: vitals(), ...overrides }
 }
 
-test('a sense report carries a place, vitals, a clock and four bounded lists', () => {
+test('a sense report carries a place, vitals, a clock and five bounded lists', () => {
   const full = sensed({
     ground: { standingIn: 'minecraft:air', standingOn: 'minecraft:grass_block' },
     entities: [
@@ -536,7 +551,14 @@ test('a sense report carries a place, vitals, a clock and four bounded lists', (
       { slot: 0, what: 'minecraft:bread', count: 3 },
       { slot: 8, what: 'minecraft:cooked_beef', count: 1 },
       { slot: 45, what: 'minecraft:torch', count: 64 }
-    ]
+    ],
+    recipes: [{
+      what: 'minecraft:oak_planks',
+      resultCount: 4,
+      maxCrafts: 2,
+      requiresTable: false
+    }],
+    recipesOmitted: 2
   })
   const decoded = decodeResponse(encodeResponse(senseReport(full)))
   assert.equal(decoded.ok, true, encodeResponse(senseReport(full)))
@@ -895,7 +917,13 @@ test('a whole number nested inside a frame is read the same however it is spelle
   const crowded = senseReport(sensed({
     entities: [{ what: 'minecraft:zombie', position: [14.5, 71.5, -40.5], visible: true }],
     entitiesOmitted: 2,
-    inventory: [{ slot: 3, what: 'minecraft:bread', count: 5 }]
+    inventory: [{ slot: 3, what: 'minecraft:bread', count: 5 }],
+    recipes: [{
+      what: 'minecraft:oak_planks',
+      resultCount: 4,
+      maxCrafts: 2,
+      requiresTable: false
+    }]
   }))
   const meal = eatReport(ate({ outcome: 'eaten', what: 'minecraft:bread', remaining: 2 }))
   const nested = [
@@ -905,6 +933,8 @@ test('a whole number nested inside a frame is read the same however it is spelle
     [crowded, 'entitiesOmitted', '2'],
     [crowded, 'slot', '3'],
     [crowded, 'count', '5'],
+    [crowded, 'resultCount', '4'],
+    [crowded, 'maxCrafts', '2'],
     [meal, 'remaining', '2']
   ]
   for (const [response, field, written] of nested) {
@@ -1016,6 +1046,8 @@ test('encoders emit canonical bytes regardless of caller key order', () => {
       // reach the wire, and the corpus is compared byte for byte.
       {
         inventory: [{ count: 3, what: 'minecraft:bread', slot: 0 }],
+        recipesOmitted: 0,
+        recipes: [],
         itemsOmitted: 0,
         items: [],
         blocksOmitted: 0,
@@ -1038,7 +1070,7 @@ test('encoders emit canonical bytes regardless of caller key order', () => {
         '"ground":{"standingIn":"minecraft:air","standingOn":"minecraft:grass_block"},' +
         '"entities":[{"what":"minecraft:zombie","position":[14.5,71.5,-40.5],"visible":true}],' +
         '"entitiesOmitted":2,"blocks":[],"blocksOmitted":0,"items":[],"itemsOmitted":0,' +
-        '"inventory":[{"slot":0,"what":"minecraft:bread","count":3}]}'
+        '"inventory":[{"slot":0,"what":"minecraft:bread","count":3}],"recipes":[],"recipesOmitted":0}'
     ],
     [
       {
@@ -1184,7 +1216,8 @@ test('the longest frame the contract admits is a sense report, and it still fits
   const widest = (
     entities,
     blocks = MAX_SENSE_BLOCKS,
-    items = MAX_SENSE_ITEMS
+    items = MAX_SENSE_ITEMS,
+    recipes = MAX_SENSE_RECIPES
   ) => senseReport({
     requestId: 'r'.repeat(MAX_ID_CHARS),
     agentId: 'a'.repeat(MAX_ID_CHARS),
@@ -1219,7 +1252,14 @@ test('the longest frame the contract admits is a sense report, and it still fits
       slot,
       what: name,
       count: MAX_STACK_COUNT
-    }))
+    })),
+    recipes: Array.from({ length: recipes }, () => ({
+      what: name,
+      resultCount: 64,
+      maxCrafts: 8,
+      requiresTable: true
+    })),
+    recipesOmitted: MAX_COUNT
   })
   const sizeOf = (response) => Buffer.byteLength(`${encodeResponse(response)}\n`, 'utf8')
   const bytes = sizeOf(widest(MAX_SENSE_ENTITIES))
@@ -1231,12 +1271,20 @@ test('the longest frame the contract admits is a sense report, and it still fits
   // estimated: a bound sitting inside one of them is a bound that raising a list limit
   // by one would carry
   // past the wire. The margin is a twentieth of the bound and no more, because the
-  // two list bounds are requirements - a player has the slots a player has - so it is
+  // list bounds are requirements - a player has the slots a player has - so it is
   // the byte bound that would have to move, in both runtimes and the schema at once.
   const repeated = Math.max(
     bytes - sizeOf(widest(MAX_SENSE_ENTITIES - 1)),
     bytes - sizeOf(widest(MAX_SENSE_ENTITIES, MAX_SENSE_BLOCKS - 1)),
-    bytes - sizeOf(widest(MAX_SENSE_ENTITIES, MAX_SENSE_BLOCKS, MAX_SENSE_ITEMS - 1))
+    bytes - sizeOf(widest(MAX_SENSE_ENTITIES, MAX_SENSE_BLOCKS, MAX_SENSE_ITEMS - 1)),
+    bytes - sizeOf(
+      widest(
+        MAX_SENSE_ENTITIES,
+        MAX_SENSE_BLOCKS,
+        MAX_SENSE_ITEMS,
+        MAX_SENSE_RECIPES - 1
+      )
+    )
   )
   assert.ok(
     MAX_FRAME_BYTES - bytes > repeated,

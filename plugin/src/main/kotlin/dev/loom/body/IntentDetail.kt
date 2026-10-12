@@ -21,6 +21,9 @@ fun describe(intent: Intent): String =
         is Intent.Collect -> "collect ${intent.item}"
         is Intent.Place -> "place ${intent.item} at ${intent.block}/${intent.face.name.lowercase()}"
         is Intent.Equip -> "equip ${intent.item} as ${intent.destination.name.lowercase()}"
+        is Intent.Craft -> "craft ${intent.crafts} of ${intent.recipe}"
+        is Intent.Attack -> "attack ${intent.target} with ${intent.weapon} up to ${intent.attacks} times"
+        is Intent.Sleep -> "sleep in ${intent.bed}"
         is Intent.Rest -> "rest"
         is Intent.Idle -> "idle"
     }

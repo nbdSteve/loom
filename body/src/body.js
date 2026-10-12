@@ -64,7 +64,9 @@ const { performance } = require('node:perf_hooks')
 const {
   LIFECYCLE_STATES,
   MAX_FRAME_BYTES,
+  attackReport,
   collectReport,
+  craftReport,
   digReport,
   eatReport,
   equipReport,
@@ -79,12 +81,19 @@ const {
   placeReport,
   refusal,
   senseReport,
+  sleepReport,
   shutdownAccepted,
   statusReport
 } = require('./protocol')
 
 const { followWorldState } = require('./gamestate')
 const { collectOfferedItem } = require('./collecting')
+const { attackOfferedTarget } = require('./combat')
+const {
+  craftOfferedRecipe,
+  installCrafting,
+  recipeReading
+} = require('./crafting')
 const { digOfferedBlock, installDigging } = require('./digging')
 const { eatFromSlot } = require('./eating')
 const { equipOfferedStack } = require('./equipping')
@@ -92,6 +101,7 @@ const { installMovement } = require('./movement')
 const { installPlacing, placeHeldBlock } = require('./placing')
 const { senseMemory } = require('./senses')
 const { senseReading, vitalsOf } = require('./sensing')
+const { installSleeping, sleepInOfferedBed } = require('./sleeping')
 
 /** Every frame this generation ends with, and the byte a reader splits on. */
 const FRAME_TERMINATOR = '\n'
@@ -230,7 +240,8 @@ const QUIT_REASON = 'disconnect.quitting'
  * can walk, because a player's movement in Minecraft is *client*-simulated and there is no
  * "server, please walk me there" packet - so it is loaded by `body/src/movement.js`, which
  * holds its simulation, its position reporting and the control packets a walk sets shut
- * unless one accepted `moveTo`, `flee`, or explicitly approaching `collect` owns the path.
+ * unless one accepted `moveTo`, `flee`, or explicitly approaching `collect` or `attack`
+ * owns the path.
  * That file's header is the authority on the whole of that scope, including the one part of
  * the plugin's lifetime the library will not let anything stop, and why the scope needs a
  * second seam beside the packet one.
@@ -505,8 +516,8 @@ function createBody (options) {
   // before the body is `ready` is refused by the state check rather than by its absence.
   let movement
   // The one cancellable or mutating request in flight, naming the control connection that
-  // asked for it. Movement, digging, collection, placement and equipment share this owner so
-  // pathing and world mutation can never overlap or silently displace each other.
+  // asked for it. Movement and all seven native interactions share this owner so pathing,
+  // world mutation, combat and sleep can never overlap or silently displace each other.
   //
   // A **token per run** rather than the session alone, because the clear is asynchronous and
   // the set is not. A controller replacing a movement sends `halt` and its next request in one
@@ -577,11 +588,11 @@ function createBody (options) {
     created.on('login', () => transition('loggedIn'))
     created.on('spawn', () => transition('ready'))
     created.on('death', () => {
-      actionOwner?.abort()
+      actionOwner?.abort('bodyDied')
       transition('dead')
     })
     created.on('end', () => {
-      actionOwner?.abort()
+      actionOwner?.abort('disconnected')
       clientGone = true
       transition('disconnected')
     })
@@ -624,6 +635,8 @@ function createBody (options) {
     movement = installMovement(bot)
     installDigging(bot)
     installPlacing(bot)
+    installCrafting(bot)
+    installSleeping(bot)
     bot.on('entityDead', offered.sawEntityDead)
     bot.on('entityGone', offered.sawEntityGone)
     follow(bot)
@@ -677,7 +690,7 @@ function createBody (options) {
   function stop () {
     if (stopped !== undefined) return stopped
     closing = true
-    actionOwner?.abort()
+    actionOwner?.abort('cancelled')
     let settle
     stopped = new Promise((resolve) => { settle = resolve })
     transition('stopping')
@@ -779,7 +792,7 @@ function createBody (options) {
       // next connection, and be refused `notReady` for a request nothing is still driving.
       // Owning at most one movement is what makes this sound: there is no other connection's
       // route to stop by mistake.
-      if (actionOwner?.session === session) actionOwner.abort()
+      if (actionOwner?.session === session) actionOwner.abort('disconnected')
     })
     if (sockets.size >= MAX_CONTROL_CONNECTIONS) {
       refuse(socket, session, { code: 'tooManyRequests', close: true })
@@ -888,7 +901,7 @@ function createBody (options) {
   }
 
   /**
-   * The twelve operations of this generation.
+   * The fifteen operations of this generation.
    *
    * A handshake is answered first, and refused while stopping: a process that has
    * begun leaving has nothing true to say about the generation it is agreeing to.
@@ -938,7 +951,7 @@ function createBody (options) {
     if (op === 'sense') return sense(socket, session, request, requestId)
     if (op === 'eat') return eat(socket, session, request, requestId)
     if (op === 'moveTo' || op === 'flee') return move(socket, session, request, requestId)
-    if (['dig', 'collect', 'place', 'equip'].includes(op)) {
+    if (['dig', 'collect', 'place', 'equip', 'craft', 'attack', 'sleep'].includes(op)) {
       return interact(socket, session, request, requestId)
     }
     if (op === 'halt') return halt(socket, requestId)
@@ -981,15 +994,15 @@ function createBody (options) {
     // `session.seen`, which is per connection, so an id alone names an answer another peer
     // may have given.
     //
-    // Both kinds of handle are remembered in one call, which `senses.js` states as an
-    // invariant rather than tidiness: this one answer offers slots an eat may name and
-    // entities a flee may, and a memory that took one and not the other would resolve a
-    // flight and refuse a meal off the same frame.
+    // Every kind of handle is remembered in one call, which `senses.js` states as an
+    // invariant rather than tidiness: a partial memory could resolve one action and
+    // refuse another off the same frame.
     offered.remember(session, requestId, {
       slotOffers: answer.slotOffers,
       entityOffers: answer.entityOffers,
       blockOffers: answer.blockOffers,
-      itemOffers: answer.itemOffers
+      itemOffers: answer.itemOffers,
+      recipeOffers: answer.recipeOffers
     })
     return write(socket, answer.frame)
   }
@@ -1020,6 +1033,8 @@ function createBody (options) {
       const read = senseReading(bot, { radius: request.radius, limit: request.limit })
       if (read === undefined) return undefined
       const { reading, entityOffers, blockOffers, itemOffers, slotOffers } = read
+      const recipes = recipeReading(bot, { blockOffers, limit: request.limit })
+      if (recipes === undefined) return undefined
       // Only the reading is spread into the frame. `entityOffers` holds the client library's
       // private id and exact object identity, neither of which may reach the wire, so it comes
       // back beside the frame and travels no further than `offered`; `sensing.js` carries why
@@ -1029,7 +1044,14 @@ function createBody (options) {
         blockOffers,
         itemOffers,
         slotOffers,
-        frame: senseReport({ requestId, agentId, ...reading })
+        recipeOffers: recipes.recipeOffers,
+        frame: senseReport({
+          requestId,
+          agentId,
+          ...reading,
+          recipes: recipes.recipes,
+          recipesOmitted: recipes.recipesOmitted
+        })
       }
     } catch {
       return undefined
@@ -1137,7 +1159,7 @@ function createBody (options) {
   /**
    * Takes one explicit native world interaction and answers it on the asking connection.
    *
-   * All four operations share [actionOwner] with movement. Their targets and inventory
+   * All seven operations share [actionOwner] with movement. Their targets and inventory
    * choices come only from this connection's retained sense answer; the operation modules
    * revalidate those snapshots immediately before the first Mineflayer call.
    */
@@ -1145,7 +1167,8 @@ function createBody (options) {
     if (state !== 'ready' || eating || actionOwner !== undefined) {
       return refuse(socket, session, { code: 'notReady', requestId })
     }
-    if (request.op === 'collect' && movement === undefined) {
+    if ((request.op === 'collect' || (request.op === 'attack' && request.approach)) &&
+        movement === undefined) {
       return refuse(socket, session, { code: 'notReady', requestId })
     }
     const remembered = offered.recall(session, request.senseId)
@@ -1178,11 +1201,41 @@ function createBody (options) {
         timeoutMs: request.timeoutMs,
         now
       })
-    } else {
+    } else if (request.op === 'equip') {
       running = equipOfferedStack(bot, {
         slots: remembered?.slots,
         slot: request.slot,
         destination: request.destination,
+        timeoutMs: request.timeoutMs,
+        now
+      })
+    } else if (request.op === 'craft') {
+      running = craftOfferedRecipe(bot, {
+        offered: remembered?.recipeOffers,
+        recipe: request.recipe,
+        crafts: request.crafts,
+        timeoutMs: request.timeoutMs,
+        now
+      })
+    } else if (request.op === 'attack') {
+      running = attackOfferedTarget(bot, movement, {
+        entityOffers: remembered?.entityOffers,
+        slots: remembered?.slots,
+        entity: request.entity,
+        slot: request.slot,
+        attacks: request.attacks,
+        approach: request.approach,
+        maxPursuitDistance: request.maxPursuitDistance,
+        minHealth: request.minHealth,
+        timeoutMs: request.timeoutMs,
+        sprint: request.sprint,
+        owner,
+        now
+      })
+    } else {
+      running = sleepInOfferedBed(bot, {
+        offered: remembered?.blockOffers,
+        block: request.block,
         timeoutMs: request.timeoutMs,
         now
       })
@@ -1216,13 +1269,20 @@ function createBody (options) {
         offered.spend(session, request.senseId, request.slot)
       } else if (request.op === 'equip' && report.outcome === 'equipped') {
         offered.spend(session, request.senseId, request.slot)
+      } else if (request.op === 'craft' && report.attempted === true) {
+        offered.spendRecipe(session, request.senseId)
+      } else if (request.op === 'attack' && report.attacks > 0) {
+        offered.spend(session, request.senseId, request.slot)
       }
 
       let frame
       if (request.op === 'dig') frame = digReport({ requestId, agentId, ...report })
       else if (request.op === 'collect') frame = collectReport({ requestId, agentId, ...report })
       else if (request.op === 'place') frame = placeReport({ requestId, agentId, ...report })
-      else frame = equipReport({ requestId, agentId, ...report })
+      else if (request.op === 'equip') frame = equipReport({ requestId, agentId, ...report })
+      else if (request.op === 'craft') frame = craftReport({ requestId, agentId, ...report })
+      else if (request.op === 'attack') frame = attackReport({ requestId, agentId, ...report })
+      else frame = sleepReport({ requestId, agentId, ...report })
       return write(socket, frame)
     } catch {
       return refuse(socket, session, { code: 'notReady', requestId })

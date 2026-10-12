@@ -227,6 +227,15 @@ where
 /// Forty-six, the complete player inventory window.
 const MAX_INVENTORY_STACKS: usize = 46;
 
+/// The most exact recipe offers one perception may carry.
+const MAX_CRAFTING_OPTIONS: usize = 24;
+
+/// The most applications one craft intent may request.
+pub const MAX_CRAFTS_PER_INTENT: i64 = 8;
+
+/// The most swings one attack intent may request.
+pub const MAX_ATTACKS_PER_INTENT: i64 = 4;
+
 /// Refuses an inventory summary longer than a body's own container.
 ///
 /// The last of the bounds this file narrows, and it needs narrowing for exactly the reason the
@@ -249,6 +258,81 @@ where
         ));
     }
     Ok(stacks)
+}
+
+/// Refuses a crafting-option list longer than the perception contract permits.
+fn bounded_crafting_options<'de, D>(deserializer: D) -> Result<Vec<CraftingOption>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let options = Vec::<CraftingOption>::deserialize(deserializer)?;
+    if options.len() > MAX_CRAFTING_OPTIONS {
+        return Err(de::Error::invalid_length(
+            options.len(),
+            &"at most 24 exact crafting options",
+        ));
+    }
+    Ok(options)
+}
+
+/// Refuses a recipe yield outside the bounded item count shown to the mind.
+fn bounded_recipe_result_count<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let count = i64::deserialize(deserializer)?;
+    if !(1..=64).contains(&count) {
+        return Err(de::Error::invalid_value(
+            de::Unexpected::Signed(count),
+            &"a recipe result count from 1 to 64",
+        ));
+    }
+    Ok(count)
+}
+
+/// Refuses a recipe-application count outside the per-intent bound.
+fn bounded_crafts<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let count = i64::deserialize(deserializer)?;
+    if !(1..=MAX_CRAFTS_PER_INTENT).contains(&count) {
+        return Err(de::Error::invalid_value(
+            de::Unexpected::Signed(count),
+            &"a craft count from 1 to 8",
+        ));
+    }
+    Ok(count)
+}
+
+/// Refuses an attack count outside the per-intent strike bound.
+fn bounded_attacks<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let count = i64::deserialize(deserializer)?;
+    if !(1..=MAX_ATTACKS_PER_INTENT).contains(&count) {
+        return Err(de::Error::invalid_value(
+            de::Unexpected::Signed(count),
+            &"an attack count from 1 to 4",
+        ));
+    }
+    Ok(count)
+}
+
+/// Refuses a negative omission count.
+fn nonnegative_omission<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let count = i64::deserialize(deserializer)?;
+    if count < 0 {
+        return Err(de::Error::invalid_value(
+            de::Unexpected::Signed(count),
+            &"a non-negative omission count",
+        ));
+    }
+    Ok(count)
 }
 
 /// The shortest a ref may be, mirroring the schema's `minLength`.
@@ -325,6 +409,25 @@ pub struct InventoryStack {
     pub count: i64,
 }
 
+/// One exact currently craftable recipe offered by this perception.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CraftingOption {
+    /// Request-scoped handle retaining the exact recipe and workstation.
+    #[serde(rename = "ref", deserialize_with = "bounded_ref")]
+    pub recipe_ref: String,
+    /// The result item, as the body describes it.
+    pub what: String,
+    /// How many result items one application produces.
+    #[serde(deserialize_with = "bounded_recipe_result_count")]
+    pub result_count: i64,
+    /// How many applications current ingredients and Loom's bound permit.
+    #[serde(deserialize_with = "bounded_crafts")]
+    pub max_crafts: i64,
+    /// Whether the retained recipe is tied to one reachable crafting table.
+    pub requires_table: bool,
+}
+
 /// The bounded self-state the body chose to reveal. Owned primitives only, so
 /// the mind cannot reach back into world state through it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -347,6 +450,12 @@ pub struct SelfState {
     /// the schema's `maxItems` is not checked by anything on the wire.
     #[serde(deserialize_with = "bounded_inventory_summary")]
     pub inventory_summary: Vec<InventoryStack>,
+    /// Exact currently craftable recipes backed by this same perception.
+    #[serde(deserialize_with = "bounded_crafting_options")]
+    pub crafting_options: Vec<CraftingOption>,
+    /// Craftable recipe offers omitted by the body-side list bound.
+    #[serde(deserialize_with = "nonnegative_omission")]
+    pub crafting_options_omitted: i64,
     /// The bounded world clock the body reveals.
     pub world: WorldState,
 }
@@ -589,6 +698,31 @@ pub enum Intent {
         #[serde(deserialize_with = "bounded_ref")]
         item: String,
         destination: EquipmentDestination,
+    },
+    /// Apply one exact offered recipe a bounded number of times.
+    #[serde(rename = "craft")]
+    Craft {
+        #[serde(deserialize_with = "bounded_ref")]
+        recipe: String,
+        #[serde(deserialize_with = "bounded_crafts")]
+        crafts: i64,
+    },
+    /// Strike one exact target with one exact offered stack.
+    #[serde(rename = "attack")]
+    Attack {
+        #[serde(deserialize_with = "bounded_ref")]
+        target: String,
+        #[serde(deserialize_with = "bounded_ref")]
+        weapon: String,
+        #[serde(deserialize_with = "bounded_attacks")]
+        attacks: i64,
+        approach: bool,
+    },
+    /// Sleep in one exact offered bed.
+    #[serde(rename = "sleep")]
+    Sleep {
+        #[serde(deserialize_with = "bounded_ref")]
+        bed: String,
     },
     /// Stop, and hold this position on purpose.
     ///

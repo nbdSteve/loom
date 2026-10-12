@@ -16,6 +16,8 @@ const assert = require('node:assert/strict')
 const net = require('node:net')
 const { test } = require('node:test')
 
+const bed = require('mineflayer/lib/plugins/bed')
+const crafting = require('mineflayer/lib/plugins/craft')
 const digging = require('mineflayer/lib/plugins/digging')
 const genericPlace = require('mineflayer/lib/plugins/generic_place')
 const physics = require('mineflayer/lib/plugins/physics')
@@ -99,7 +101,7 @@ test('only the reporting plugins are loaded and the rest is Loom own', async () 
     // Action primitives arrive through their owning bounded modules rather than through
     // the reporting table. Loading them makes no choice and performs no action; the wire
     // cases prove they are reached only by one explicit request.
-    assert.deepEqual(bot.loaded, [physics, pathfinder, digging, genericPlace])
+    assert.deepEqual(bot.loaded, [physics, pathfinder, digging, genericPlace, crafting, bed])
   } finally {
     await body.stop()
   }

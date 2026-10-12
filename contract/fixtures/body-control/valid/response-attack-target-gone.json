@@ -1,0 +1,1 @@
+{"op":"attack","protocol":4,"requestId":"res-attack-target-gone","agentId":"agent-alpha","state":"ready","outcome":"targetGone","from":[0.5,64.5,0.5],"position":[0.5,64.5,0.5],"travelled":0,"elapsedMs":250,"attacks":0}

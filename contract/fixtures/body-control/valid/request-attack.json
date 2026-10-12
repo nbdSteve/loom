@@ -1,0 +1,1 @@
+{"op":"attack","protocol":4,"requestId":"req-attack","agentId":"agent-alpha","senseId":"sense-1","entity":0,"slot":36,"attacks":2,"approach":true,"maxPursuitDistance":7.5,"minHealth":4.5,"timeoutMs":8000,"sprint":false}

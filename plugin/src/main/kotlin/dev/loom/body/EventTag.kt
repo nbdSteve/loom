@@ -74,6 +74,15 @@ object EventTag {
     /** The mind chose to equip one offered inventory stack. */
     const val EQUIP: String = "equip"
 
+    /** The mind chose to apply one offered recipe. */
+    const val CRAFT: String = "craft"
+
+    /** The mind chose to attack one offered living target. */
+    const val ATTACK: String = "attack"
+
+    /** The mind chose to sleep in one offered bed. */
+    const val SLEEP: String = "sleep"
+
     /** The body carried the intent out. The only outcome that means the agent acted. */
     const val ACCEPTED: String = "accepted"
 
@@ -270,6 +279,59 @@ object EventTag {
     const val EQUIP_CANCELLED: String = "equipCancelled"
     const val EQUIP_LIBRARY_FAILURE: String = "equipLibraryFailure"
 
+    const val CRAFT_SENSE_FORGOTTEN: String = "craftSenseForgotten"
+    const val CRAFT_RECIPE_UNNAMED: String = "craftRecipeUnnamed"
+    const val CRAFT_QUANTITY_EXCEEDED: String = "craftQuantityExceeded"
+    const val CRAFT_INGREDIENTS_CHANGED: String = "craftIngredientsChanged"
+    const val CRAFT_RECIPE_UNAVAILABLE: String = "craftRecipeUnavailable"
+    const val CRAFT_WORKSTATION_GONE: String = "craftWorkstationGone"
+    const val CRAFT_WORKSTATION_CHANGED: String = "craftWorkstationChanged"
+    const val CRAFT_WORKSTATION_OUT_OF_REACH: String = "craftWorkstationOutOfReach"
+    const val CRAFT_WORKSTATION_NOT_VISIBLE: String = "craftWorkstationNotVisible"
+    const val CRAFT_TIMED_OUT: String = "craftTimedOut"
+    const val CRAFT_CANCELLED: String = "craftCancelled"
+    const val CRAFT_BODY_DIED: String = "craftBodyDied"
+    const val CRAFT_DISCONNECTED: String = "craftDisconnected"
+    const val CRAFT_LIBRARY_FAILURE: String = "craftLibraryFailure"
+
+    const val ATTACK_SENSE_FORGOTTEN: String = "attackSenseForgotten"
+    const val ATTACK_TARGET_UNNAMED: String = "attackTargetUnnamed"
+    const val ATTACK_TARGET_UNCORROBORATED: String = "attackTargetUncorroborated"
+    const val ATTACK_TARGET_GONE: String = "attackTargetGone"
+    const val ATTACK_TARGET_CHANGED: String = "attackTargetChanged"
+    const val ATTACK_SLOT_UNNAMED: String = "attackSlotUnnamed"
+    const val ATTACK_SLOT_EMPTY: String = "attackSlotEmpty"
+    const val ATTACK_SLOT_CHANGED: String = "attackSlotChanged"
+    const val ATTACK_HEALTH_BOUND: String = "attackHealthBound"
+    const val ATTACK_OUT_OF_RANGE: String = "attackOutOfRange"
+    const val ATTACK_NO_ROUTE: String = "attackNoRoute"
+    const val ATTACK_SEARCH_OVER_BUDGET: String = "attackSearchOverBudget"
+    const val ATTACK_STALLED: String = "attackStalled"
+    const val ATTACK_OVER_TRAVELLED: String = "attackOverTravelled"
+    const val ATTACK_TIMED_OUT: String = "attackTimedOut"
+    const val ATTACK_CANCELLED: String = "attackCancelled"
+    const val ATTACK_BODY_DIED: String = "attackBodyDied"
+    const val ATTACK_DISCONNECTED: String = "attackDisconnected"
+    const val ATTACK_LIBRARY_FAILURE: String = "attackLibraryFailure"
+
+    const val SLEEP_SENSE_FORGOTTEN: String = "sleepSenseForgotten"
+    const val SLEEP_BED_UNNAMED: String = "sleepBedUnnamed"
+    const val SLEEP_BED_GONE: String = "sleepBedGone"
+    const val SLEEP_BED_CHANGED: String = "sleepBedChanged"
+    const val SLEEP_NOT_BED: String = "sleepNotBed"
+    const val SLEEP_WRONG_DIMENSION: String = "sleepWrongDimension"
+    const val SLEEP_OUT_OF_REACH: String = "sleepOutOfReach"
+    const val SLEEP_NOT_VISIBLE: String = "sleepNotVisible"
+    const val SLEEP_OCCUPIED: String = "sleepOccupied"
+    const val SLEEP_NOT_NIGHT: String = "sleepNotNight"
+    const val SLEEP_UNSAFE: String = "sleepUnsafe"
+    const val SLEEP_REFUSED: String = "sleepRefused"
+    const val SLEEP_TIMED_OUT: String = "sleepTimedOut"
+    const val SLEEP_CANCELLED: String = "sleepCancelled"
+    const val SLEEP_BODY_DIED: String = "sleepBodyDied"
+    const val SLEEP_DISCONNECTED: String = "sleepDisconnected"
+    const val SLEEP_LIBRARY_FAILURE: String = "sleepLibraryFailure"
+
     /** The server observed exactly the vanilla effect a bounded interaction reported. */
     const val SERVER_EFFECT_CONFIRMED: String = "serverEffectConfirmed"
 
@@ -381,6 +443,9 @@ fun tagOf(intent: Intent): String =
         is Intent.Collect -> EventTag.COLLECT
         is Intent.Place -> EventTag.PLACE
         is Intent.Equip -> EventTag.EQUIP
+        is Intent.Craft -> EventTag.CRAFT
+        is Intent.Attack -> EventTag.ATTACK
+        is Intent.Sleep -> EventTag.SLEEP
     }
 
 /**
@@ -449,6 +514,56 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.EQUIP_TIMED_OUT,
         EventTag.EQUIP_CANCELLED,
         EventTag.EQUIP_LIBRARY_FAILURE,
+        EventTag.CRAFT_SENSE_FORGOTTEN,
+        EventTag.CRAFT_RECIPE_UNNAMED,
+        EventTag.CRAFT_QUANTITY_EXCEEDED,
+        EventTag.CRAFT_INGREDIENTS_CHANGED,
+        EventTag.CRAFT_RECIPE_UNAVAILABLE,
+        EventTag.CRAFT_WORKSTATION_GONE,
+        EventTag.CRAFT_WORKSTATION_CHANGED,
+        EventTag.CRAFT_WORKSTATION_OUT_OF_REACH,
+        EventTag.CRAFT_WORKSTATION_NOT_VISIBLE,
+        EventTag.CRAFT_TIMED_OUT,
+        EventTag.CRAFT_CANCELLED,
+        EventTag.CRAFT_BODY_DIED,
+        EventTag.CRAFT_DISCONNECTED,
+        EventTag.CRAFT_LIBRARY_FAILURE,
+        EventTag.ATTACK_SENSE_FORGOTTEN,
+        EventTag.ATTACK_TARGET_UNNAMED,
+        EventTag.ATTACK_TARGET_UNCORROBORATED,
+        EventTag.ATTACK_TARGET_GONE,
+        EventTag.ATTACK_TARGET_CHANGED,
+        EventTag.ATTACK_SLOT_UNNAMED,
+        EventTag.ATTACK_SLOT_EMPTY,
+        EventTag.ATTACK_SLOT_CHANGED,
+        EventTag.ATTACK_HEALTH_BOUND,
+        EventTag.ATTACK_OUT_OF_RANGE,
+        EventTag.ATTACK_NO_ROUTE,
+        EventTag.ATTACK_SEARCH_OVER_BUDGET,
+        EventTag.ATTACK_STALLED,
+        EventTag.ATTACK_OVER_TRAVELLED,
+        EventTag.ATTACK_TIMED_OUT,
+        EventTag.ATTACK_CANCELLED,
+        EventTag.ATTACK_BODY_DIED,
+        EventTag.ATTACK_DISCONNECTED,
+        EventTag.ATTACK_LIBRARY_FAILURE,
+        EventTag.SLEEP_SENSE_FORGOTTEN,
+        EventTag.SLEEP_BED_UNNAMED,
+        EventTag.SLEEP_BED_GONE,
+        EventTag.SLEEP_BED_CHANGED,
+        EventTag.SLEEP_NOT_BED,
+        EventTag.SLEEP_WRONG_DIMENSION,
+        EventTag.SLEEP_OUT_OF_REACH,
+        EventTag.SLEEP_NOT_VISIBLE,
+        EventTag.SLEEP_OCCUPIED,
+        EventTag.SLEEP_NOT_NIGHT,
+        EventTag.SLEEP_UNSAFE,
+        EventTag.SLEEP_REFUSED,
+        EventTag.SLEEP_TIMED_OUT,
+        EventTag.SLEEP_CANCELLED,
+        EventTag.SLEEP_BODY_DIED,
+        EventTag.SLEEP_DISCONNECTED,
+        EventTag.SLEEP_LIBRARY_FAILURE,
     )
 
 /** Names how the body answered an intent, so refusals are countable. */

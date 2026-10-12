@@ -75,6 +75,10 @@ tasks.test {
 
 // The plugin jar must carry the Kotlin stdlib and kotlinx-serialization, which
 // Paper does not provide.
+tasks.jar {
+    archiveClassifier.set("plain")
+}
+
 tasks.shadowJar {
     archiveClassifier.set("")
 }

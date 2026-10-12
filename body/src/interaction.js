@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * Shared mechanical checks for the four native world interactions.
+ * Shared mechanical checks for request-scoped native interactions.
  *
  * This module contains no target or item selection. It only resolves one request-local
  * offer against the live Mineflayer state immediately before an action, preserving the

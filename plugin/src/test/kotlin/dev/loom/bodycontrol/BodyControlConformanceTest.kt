@@ -1063,6 +1063,7 @@ class BodyControlConformanceTest {
  */
 class BodyControlFrameBoundTest {
     @Test
+    @Suppress("LongMethod")
     fun theLargestAnswerTheBoundsAdmitFitsTheFrameBound() {
         val name = "minecraft:" + "a".repeat(RESOURCE_NAME_MAX_CHARS - "minecraft:".length)
         val id = "a".repeat(CONTROL_ID_MAX_CHARS)
@@ -1111,6 +1112,16 @@ class BodyControlFrameBoundTest {
                     List(MAX_SENSE_STACKS) {
                         SensedStack(slot = it, what = name, count = MAX_STACK_COUNT)
                     },
+                recipes =
+                    List(MAX_SENSE_RECIPES) {
+                        SensedRecipe(
+                            what = name,
+                            resultCount = 64,
+                            maxCrafts = MAX_CRAFTS,
+                            requiresTable = true,
+                        )
+                    },
+                recipesOmitted = MAX_CONTROL_COUNT,
             )
         val measured = encodeBodyResponse(widest).toByteArray(Charsets.UTF_8).size
         assertTrue(

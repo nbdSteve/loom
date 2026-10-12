@@ -1,11 +1,11 @@
 'use strict'
 
 /**
- * The four explicit native world interactions, below and across the control wire.
+ * The seven explicit native world interactions, below and across the control wire.
  *
  * Unit-level cases use Mineflayer-shaped objects so every closed outcome can be driven
  * without a server clock. The wire case then proves that the same exact offers are scoped
- * to one sense answer and one connection, and that all four operations can complete through
+ * to one sense answer and one connection, and that all seven operations can complete through
  * the body process without any target or inventory choice being made below the request.
  */
 
@@ -16,12 +16,22 @@ const { test } = require('node:test')
 const { Vec3 } = require('vec3')
 
 const { collectOfferedItem } = require('../src/collecting')
+const {
+  ATTACK_REACH_BLOCKS,
+  attackOfferedTarget,
+  offeredTarget
+} = require('../src/combat')
+const {
+  craftOfferedRecipe,
+  recipeReading
+} = require('../src/crafting')
 const { digOfferedBlock } = require('../src/digging')
 const { equipOfferedStack } = require('../src/equipping')
 const { stackDetail } = require('../src/interaction')
 const { placeHeldBlock } = require('../src/placing')
 const { senseMemory } = require('../src/senses')
 const { senseReading } = require('../src/sensing')
+const { sleepInOfferedBed } = require('../src/sleeping')
 const {
   eventually,
   fakeBot,
@@ -89,21 +99,37 @@ function worldBot (bot = new EventEmitter()) {
   bot.food = 12
   bot.foodSaturation = 2
   bot.time = { timeOfDay: 6000, day: 1, isDay: true }
-  bot.inventory = { slots: Array(46).fill(null) }
+  bot.game = { dimension: 'overworld', gameMode: 'survival' }
+  bot.inventory = {
+    slots: Array(46).fill(null),
+    count: (type, metadata) =>
+      bot.inventory.slots.reduce((count, stack) =>
+        count + (
+          stack?.type === type &&
+          (metadata === null || metadata === undefined || stack.metadata === metadata)
+            ? stack.count
+            : 0
+        ), 0)
+  }
   bot.QUICK_BAR_START = HOTBAR_SLOT
   bot.quickBarSlot = 0
   bot.registry = {
+    recipes: {},
+    items: {},
+    entities: {},
     blocksByName: {
       dirt: { id: 3 },
       stone: { id: 1 }
     },
     foodsByName: {}
   }
+  bot.recipesAll = () => []
   bot._client = bot._client ?? new EventEmitter()
   bot._client.writes = []
   bot._client.write = (name, parameters) => {
     bot._client.writes.push({ name, parameters })
   }
+  bot.clickWindow = bot.clickWindow ?? (async () => {})
   bot.blockAt = (position) => blocks.get(blockKey(position)) ?? airBlock(position)
   bot.world = {
     raycast: () => bot.raycastHit ?? null
@@ -174,6 +200,81 @@ function itemOffer (entity) {
     detail: stackDetail(stack),
     gone: false
   }
+}
+
+function livingEntity (id, position, what = 'zombie', entityType = 54) {
+  return {
+    id,
+    name: what,
+    type: 'hostile',
+    entityType,
+    position,
+    height: 1.95,
+    isValid: true
+  }
+}
+
+function entityOffer (entity) {
+  return {
+    id: entity.id,
+    entity,
+    dead: false
+  }
+}
+
+function craftingSetup (
+  bot,
+  { logs = 3, requiresTable = false, tablePosition = new Vec3(1, 64, 0) } = {}
+) {
+  const recipe = {
+    result: { id: 5, metadata: 0, count: 4 },
+    inShape: null,
+    ingredients: [{ id: 17, metadata: 0, count: 1 }],
+    outShape: null,
+    delta: [
+      { id: 17, metadata: 0, count: -1 },
+      { id: 5, metadata: 0, count: 4 }
+    ],
+    requiresTable
+  }
+  bot.inventory.slots[INVENTORY_SLOT] = itemStack('oak_log', logs, { type: 17 })
+  bot.registry.items[5] = { name: 'oak_planks' }
+  bot.registry.recipes = { 5: [recipe] }
+  bot.recipesAll = () => [recipe]
+  bot.recipesFor = (resultId, metadata, resultCount, table) => {
+    const needed = Math.ceil(resultCount / recipe.result.count)
+    if (resultId !== recipe.result.id ||
+        metadata !== recipe.result.metadata ||
+        (requiresTable && table === null) ||
+        bot.inventory.count(17, 0) < needed) return []
+    return [recipe]
+  }
+  let table
+  let blockOffers = []
+  if (requiresTable) {
+    table = bot.putBlock(
+      solidBlock(tablePosition, 'crafting_table', { type: 58, stateId: 58 })
+    )
+    blockOffers = [{ ...blockOffer(table), visible: true }]
+  }
+  const reading = recipeReading(bot, { blockOffers, limit: 8 })
+  assert.notEqual(reading, undefined)
+  assert.equal(reading.recipes.length, 1)
+  return { recipe, table, reading }
+}
+
+function applyCraft (bot) {
+  const log = bot.inventory.slots[INVENTORY_SLOT]
+  assert.ok(log?.count > 0)
+  bot.inventory.slots[INVENTORY_SLOT] =
+    log.count === 1 ? null : itemStack('oak_log', log.count - 1, { type: 17 })
+  const resultSlot = INVENTORY_SLOT + 1
+  const held = bot.inventory.slots[resultSlot]
+  bot.inventory.slots[resultSlot] = itemStack(
+    'oak_planks',
+    (held?.count ?? 0) + 4,
+    { type: 5 }
+  )
 }
 
 async function reportOf (running, what = 'the interaction') {
@@ -674,7 +775,745 @@ test('equip distinguishes incompatibility, deadline, and teardown cancellation',
   assert.equal((await reportOf(aborted)).outcome, 'cancelled')
 })
 
-test('all four operations cross the wire using only one connection own sense offers', async () => {
+test('craft applies only one retained recipe and revalidates ingredients and workstation', async () => {
+  const bot = worldBot()
+  const { recipe, reading } = craftingSetup(bot, { logs: 2 })
+  let applications = 0
+  bot.currentWindow = null
+  bot.closeWindow = () => {}
+  bot.craft = async (selected, count, table) => {
+    assert.equal(selected, recipe)
+    assert.equal(count, 1)
+    assert.equal(table, null)
+    applications += 1
+    applyCraft(bot)
+  }
+
+  const report = await reportOf(craftOfferedRecipe(bot, {
+    offered: reading.recipeOffers,
+    recipe: 0,
+    crafts: 2,
+    timeoutMs: 100
+  }))
+  assert.deepEqual(report, {
+    outcome: 'crafted',
+    elapsedMs: report.elapsedMs,
+    attempted: true,
+    what: 'oak_planks',
+    count: 8,
+    crafts: 2
+  })
+  assert.equal(applications, 2)
+  assert.equal(bot.inventory.count(17, 0), 0)
+  assert.equal(bot.inventory.count(5, 0), 8)
+
+  const staleBot = worldBot()
+  const stale = craftingSetup(staleBot)
+  staleBot.inventory.slots[INVENTORY_SLOT] =
+    itemStack('oak_log', 3, { type: 17, nbt: { changed: true } })
+  assert.deepEqual(
+    await reportOf(craftOfferedRecipe(staleBot, {
+      offered: stale.reading.recipeOffers,
+      recipe: 0,
+      crafts: 1,
+      timeoutMs: 100
+    })),
+    {
+      outcome: 'ingredientsChanged',
+      elapsedMs: 0,
+      attempted: false
+    }
+  )
+
+  assert.equal((await reportOf(craftOfferedRecipe(staleBot, {
+    offered: undefined,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 100
+  }))).outcome, 'senseForgotten')
+  assert.equal((await reportOf(craftOfferedRecipe(staleBot, {
+    offered: stale.reading.recipeOffers,
+    recipe: 7,
+    crafts: 1,
+    timeoutMs: 100
+  }))).outcome, 'recipeUnnamed')
+})
+
+test('craft refuses a missing, changed, remote, or hidden retained workstation', async () => {
+  const goneBot = worldBot()
+  const gone = craftingSetup(goneBot, { requiresTable: true })
+  goneBot.removeBlock(gone.table.position)
+  assert.equal((await reportOf(craftOfferedRecipe(goneBot, {
+    offered: gone.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 100
+  }))).outcome, 'workstationGone')
+
+  const changedBot = worldBot()
+  const changed = craftingSetup(changedBot, { requiresTable: true })
+  changedBot.putBlock(
+    solidBlock(changed.table.position, 'crafting_table', { type: 58, stateId: 59 })
+  )
+  assert.equal((await reportOf(craftOfferedRecipe(changedBot, {
+    offered: changed.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 100
+  }))).outcome, 'workstationChanged')
+
+  const farBot = worldBot()
+  const far = craftingSetup(farBot, {
+    requiresTable: true,
+    tablePosition: new Vec3(8, 64, 0)
+  })
+  assert.equal((await reportOf(craftOfferedRecipe(farBot, {
+    offered: far.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 100
+  }))).outcome, 'workstationOutOfReach')
+
+  const hiddenBot = worldBot()
+  const hidden = craftingSetup(hiddenBot, { requiresTable: true })
+  hiddenBot.raycastHit = solidBlock(new Vec3(0, 64, 1))
+  assert.equal((await reportOf(craftOfferedRecipe(hiddenBot, {
+    offered: hidden.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 100
+  }))).outcome, 'workstationNotVisible')
+})
+
+test('craft confirms the exact recipe inventory delta before reporting success', async () => {
+  const unchangedBot = worldBot()
+  const unchanged = craftingSetup(unchangedBot)
+  unchangedBot.craft = async () => {}
+  assert.equal((await reportOf(craftOfferedRecipe(unchangedBot, {
+    offered: unchanged.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 100
+  }))).outcome, 'libraryFailure')
+
+  const collateralBot = worldBot()
+  const collateral = craftingSetup(collateralBot)
+  collateralBot.craft = async () => {
+    applyCraft(collateralBot)
+    collateralBot.inventory.slots[INVENTORY_SLOT + 2] = itemStack('dirt', 1, { type: 3 })
+  }
+  assert.equal((await reportOf(craftOfferedRecipe(collateralBot, {
+    offered: collateral.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 100
+  }))).outcome, 'libraryFailure')
+
+  const mutatedBot = worldBot()
+  const mutated = craftingSetup(mutatedBot, { logs: 2 })
+  mutatedBot.craft = async () => {
+    applyCraft(mutatedBot)
+    mutatedBot.inventory.slots[INVENTORY_SLOT] =
+      itemStack('oak_log', 1, { type: 17, nbt: { changed: true } })
+  }
+  assert.equal((await reportOf(craftOfferedRecipe(mutatedBot, {
+    offered: mutated.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 100
+  }))).outcome, 'libraryFailure')
+})
+
+test('craft cancellation and deadline close one window and bound an in-flight application', async () => {
+  const beforeBot = worldBot()
+  const before = craftingSetup(beforeBot)
+  let beforeCalls = 0
+  let beforeCloses = 0
+  beforeBot.currentWindow = {}
+  beforeBot.closeWindow = () => { beforeCloses += 1 }
+  beforeBot.craft = async () => { beforeCalls += 1 }
+  const cancelledBefore = craftOfferedRecipe(beforeBot, {
+    offered: before.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 1000
+  })
+  assert.equal(cancelledBefore.cancel(), true)
+  const beforeReport = await reportOf(cancelledBefore)
+  assert.equal(beforeReport.outcome, 'cancelled')
+  assert.equal(beforeReport.attempted, false)
+  assert.equal(beforeCalls, 0)
+  assert.equal(beforeCloses, 1)
+
+  const duringBot = worldBot()
+  const during = craftingSetup(duringBot)
+  let releaseClick
+  let duringCalls = 0
+  let duringCloses = 0
+  let duringDisconnects = 0
+  duringBot.currentWindow = {}
+  duringBot.closeWindow = () => { duringCloses += 1 }
+  duringBot._client.end = () => { duringDisconnects += 1 }
+  duringBot.clickWindow = () => new Promise((resolve, reject) => {
+    releaseClick = () => {
+      try {
+        duringBot._client.write('window_click', { slot: 1 })
+        resolve()
+      } catch (failure) {
+        reject(failure)
+      }
+    }
+  })
+  duringBot.craft = () => {
+    duringCalls += 1
+    return duringBot.clickWindow(1, 0, 0)
+  }
+  const cancelledDuring = craftOfferedRecipe(duringBot, {
+    offered: during.reading.recipeOffers,
+    recipe: 0,
+    crafts: 2,
+    timeoutMs: 1000,
+    cleanupGraceMs: 50
+  })
+  await eventually(() => assert.equal(duringCalls, 1))
+  await eventually(() => assert.equal(typeof releaseClick, 'function'))
+  assert.equal(cancelledDuring.cancel(), true)
+  releaseClick()
+  const duringReport = await reportOf(cancelledDuring)
+  assert.equal(duringReport.outcome, 'cancelled')
+  assert.equal(duringReport.attempted, true)
+  assert.equal(duringCloses, 1)
+  await eventually(() => assert.equal(duringDisconnects, 1))
+  assert.equal(
+    duringBot._client.writes.some(({ name }) => name === 'window_click'),
+    false
+  )
+
+  const timedBot = worldBot()
+  const timed = craftingSetup(timedBot)
+  let timedDisconnects = 0
+  timedBot.currentWindow = {}
+  timedBot.closeWindow = () => {}
+  timedBot._client.end = () => { timedDisconnects += 1 }
+  timedBot.craft = () => new Promise(() => {})
+  const timedReport = await reportOf(craftOfferedRecipe(timedBot, {
+    offered: timed.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 5,
+    cleanupGraceMs: 5
+  }))
+  assert.equal(timedReport.outcome, 'timedOut')
+  assert.equal(timedReport.attempted, true)
+  await eventually(() => assert.equal(timedDisconnects, 1))
+})
+
+test('combat keeps one living target, weapon, range, and health authority', async () => {
+  const bot = worldBot()
+  const target = livingEntity(40, new Vec3(2.5, 64, 0.5))
+  bot.entities[target.id] = target
+  const weapon = itemStack('iron_sword', 1, { type: 267 })
+  bot.inventory.slots[INVENTORY_SLOT] = weapon
+  bot.equip = async (stack) => {
+    bot.inventory.slots[INVENTORY_SLOT] = null
+    bot.inventory.slots[HOTBAR_SLOT] = stack
+  }
+  const struck = []
+  bot.attack = (entity, swing) => struck.push({ entity, swing })
+  const movement = { halt: () => false }
+  const report = await reportOf(attackOfferedTarget(bot, movement, {
+    entityOffers: [entityOffer(target)],
+    slots: slotOffers(INVENTORY_SLOT, weapon),
+    entity: 0,
+    slot: INVENTORY_SLOT,
+    attacks: 1,
+    approach: false,
+    maxPursuitDistance: 7.5,
+    minHealth: 4.5,
+    timeoutMs: 1000,
+    sprint: false,
+    owner: {}
+  }))
+  assert.equal(report.outcome, 'attacked')
+  assert.equal(report.attacks, 1)
+  assert.equal(report.travelled, 0)
+  assert.deepEqual(struck, [{ entity: target, swing: true }])
+
+  const replacement = livingEntity(target.id, target.position.clone())
+  bot.entities[target.id] = replacement
+  assert.equal((await reportOf(attackOfferedTarget(bot, movement, {
+    entityOffers: [entityOffer(target)],
+    slots: slotOffers(HOTBAR_SLOT, weapon),
+    entity: 0,
+    slot: HOTBAR_SLOT,
+    attacks: 1,
+    approach: false,
+    maxPursuitDistance: 7.5,
+    minHealth: 4.5,
+    timeoutMs: 100,
+    sprint: false,
+    owner: {}
+  }))).outcome, 'targetChanged')
+
+  bot.entities[target.id] = target
+  target.position = new Vec3(ATTACK_REACH_BLOCKS + 1, 64, 0.5)
+  assert.equal((await reportOf(attackOfferedTarget(bot, movement, {
+    entityOffers: [entityOffer(target)],
+    slots: slotOffers(HOTBAR_SLOT, weapon),
+    entity: 0,
+    slot: HOTBAR_SLOT,
+    attacks: 1,
+    approach: false,
+    maxPursuitDistance: 7.5,
+    minHealth: 4.5,
+    timeoutMs: 100,
+    sprint: false,
+    owner: {}
+  }))).outcome, 'outOfRange')
+
+  target.position = new Vec3(2.5, 64, 0.5)
+  bot.health = 4.5
+  assert.equal((await reportOf(attackOfferedTarget(bot, movement, {
+    entityOffers: [entityOffer(target)],
+    slots: slotOffers(HOTBAR_SLOT, weapon),
+    entity: 0,
+    slot: HOTBAR_SLOT,
+    attacks: 1,
+    approach: false,
+    maxPursuitDistance: 7.5,
+    minHealth: 4.5,
+    timeoutMs: 100,
+    sprint: false,
+    owner: {}
+  }))).outcome, 'healthBound')
+
+  bot.health = 20
+  target.position = new Vec3(4.5, 64, 0.5)
+  const overTravelled = await reportOf(attackOfferedTarget(bot, {
+    halt: () => true,
+    moveTo: async () => ({
+      outcome: 'arrived',
+      from: [0.5, 64, 0.5],
+      position: [4.5, 64, 0.5],
+      travelled: 8,
+      elapsedMs: 20
+    })
+  }, {
+    entityOffers: [entityOffer(target)],
+    slots: slotOffers(HOTBAR_SLOT, weapon),
+    entity: 0,
+    slot: HOTBAR_SLOT,
+    attacks: 1,
+    approach: true,
+    maxPursuitDistance: 7.5,
+    minHealth: 4.5,
+    timeoutMs: 100,
+    sprint: false,
+    owner: {}
+  }))
+  assert.equal(overTravelled.outcome, 'overTravelled')
+})
+
+test('combat accepts every living Mineflayer registry category and no nonliving one', () => {
+  const bot = worldBot()
+  const living = [
+    'ambient',
+    'animal',
+    'hostile',
+    'living',
+    'mob',
+    'passive',
+    'player',
+    'water_creature'
+  ]
+  for (const [offset, type] of living.entries()) {
+    const target = livingEntity(40 + offset, new Vec3(2.5, 64, 0.5))
+    target.type = type
+    bot.entities[target.id] = target
+    assert.equal(offeredTarget(bot, [entityOffer(target)], 0).entity, target)
+  }
+  for (const [offset, type] of ['other', 'projectile'].entries()) {
+    const target = livingEntity(60 + offset, new Vec3(2.5, 64, 0.5))
+    target.type = type
+    bot.entities[target.id] = target
+    assert.equal(offeredTarget(bot, [entityOffer(target)], 0).outcome, 'targetChanged')
+  }
+})
+
+test('combat stops on target death, replacement, cancellation, and timeout without switching', async () => {
+  function readyBot () {
+    const bot = worldBot()
+    const target = livingEntity(40, new Vec3(2.5, 64, 0.5))
+    const weapon = itemStack('iron_sword', 1, { type: 267 })
+    bot.entities[target.id] = target
+    bot.inventory.slots[HOTBAR_SLOT] = weapon
+    bot.equip = async () => {}
+    return { bot, target, weapon }
+  }
+  const requestFor = (target, weapon) => ({
+    entityOffers: [entityOffer(target)],
+    slots: slotOffers(HOTBAR_SLOT, weapon),
+    entity: 0,
+    slot: HOTBAR_SLOT,
+    attacks: 2,
+    approach: false,
+    maxPursuitDistance: 7.5,
+    minHealth: 4.5,
+    timeoutMs: 2000,
+    sprint: false,
+    owner: {}
+  })
+  const movement = { halt: () => true }
+
+  const goneBeforeStrike = readyBot()
+  goneBeforeStrike.bot.attack = () => assert.fail('a dead target must not be attacked')
+  const goneRunning = attackOfferedTarget(
+    goneBeforeStrike.bot,
+    movement,
+    requestFor(goneBeforeStrike.target, goneBeforeStrike.weapon)
+  )
+  goneBeforeStrike.bot.emit('entityDead', goneBeforeStrike.target)
+  const goneReport = await reportOf(goneRunning)
+  assert.equal(goneReport.outcome, 'targetGone')
+  assert.equal(goneReport.attacks, 0)
+
+  const died = readyBot()
+  died.bot.attack = (entity) => died.bot.emit('entityDead', entity)
+  const deathReport = await reportOf(attackOfferedTarget(
+    died.bot,
+    movement,
+    requestFor(died.target, died.weapon)
+  ))
+  assert.equal(deathReport.outcome, 'targetDied')
+  assert.equal(deathReport.attacks, 1)
+
+  const replaced = readyBot()
+  let replacementCalls = 0
+  replaced.bot.attack = () => {
+    replacementCalls += 1
+    replaced.bot.entities[replaced.target.id] =
+      livingEntity(replaced.target.id, replaced.target.position.clone())
+  }
+  const replacementReport = await reportOf(attackOfferedTarget(
+    replaced.bot,
+    movement,
+    requestFor(replaced.target, replaced.weapon)
+  ))
+  assert.equal(replacementReport.outcome, 'targetChanged')
+  assert.equal(replacementReport.attacks, 1)
+  assert.equal(replacementCalls, 1)
+
+  const cancelled = readyBot()
+  let cancelCalls = 0
+  cancelled.bot.attack = () => { cancelCalls += 1 }
+  const running = attackOfferedTarget(
+    cancelled.bot,
+    movement,
+    requestFor(cancelled.target, cancelled.weapon)
+  )
+  await eventually(() => assert.equal(cancelCalls, 1))
+  assert.equal(running.cancel(), true)
+  const cancelReport = await reportOf(running)
+  assert.equal(cancelReport.outcome, 'cancelled')
+  assert.equal(cancelReport.attacks, 1)
+
+  const timed = readyBot()
+  timed.bot.attack = () => {}
+  const timeoutReport = await reportOf(attackOfferedTarget(timed.bot, movement, {
+    ...requestFor(timed.target, timed.weapon),
+    timeoutMs: 5
+  }))
+  assert.equal(timeoutReport.outcome, 'timedOut')
+  assert.equal(timeoutReport.attacks, 1)
+})
+
+test('sleep revalidates one bed and reports vanilla refusal, wake, and bounded cleanup', async () => {
+  function readyBed () {
+    const bot = worldBot()
+    const bed = bot.putBlock(
+      solidBlock(new Vec3(1, 64, 0), 'red_bed', { type: 200, stateId: 200 })
+    )
+    bot.isABed = (block) => block.name.endsWith('_bed')
+    bot.parseBedMetadata = () => ({ occupied: false })
+    bot.isSleeping = false
+    return { bot, bed, offered: [blockOffer(bed)] }
+  }
+
+  const slept = readyBed()
+  let wakeCalls = 0
+  slept.bot.sleep = async () => {
+    slept.bot.isSleeping = true
+    slept.bot.emit('sleep')
+  }
+  slept.bot.wake = async () => {
+    wakeCalls += 1
+    slept.bot.isSleeping = false
+    slept.bot.emit('wake')
+  }
+  const sleeping = sleepInOfferedBed(slept.bot, {
+    offered: slept.offered,
+    block: 0,
+    timeoutMs: 1000
+  })
+  await eventually(() => assert.equal(slept.bot.isSleeping, true))
+  assert.equal(sleeping.cancel(), true)
+  const cancelled = await reportOf(sleeping)
+  assert.equal(cancelled.outcome, 'cancelled')
+  assert.equal(cancelled.entered, true)
+  assert.equal(wakeCalls, 1)
+
+  const woke = readyBed()
+  woke.bot.sleep = async () => {
+    woke.bot.isSleeping = true
+    woke.bot.emit('sleep')
+    setImmediate(() => {
+      woke.bot.isSleeping = false
+      woke.bot.emit('wake')
+    })
+  }
+  woke.bot.wake = async () => {}
+  const wakeReport = await reportOf(sleepInOfferedBed(woke.bot, {
+    offered: woke.offered,
+    block: 0,
+    timeoutMs: 1000
+  }))
+  assert.equal(wakeReport.outcome, 'woke')
+  assert.equal(wakeReport.entered, true)
+
+  const refused = readyBed()
+  refused.bot.sleep = async () => { throw new Error('there are monsters nearby') }
+  refused.bot.wake = async () => {}
+  assert.equal((await reportOf(sleepInOfferedBed(refused.bot, {
+    offered: refused.offered,
+    block: 0,
+    timeoutMs: 100
+  }))).outcome, 'unsafe')
+
+  const occupied = readyBed()
+  occupied.bot.parseBedMetadata = () => ({ occupied: true })
+  occupied.bot.sleep = async () => {}
+  occupied.bot.wake = async () => {}
+  assert.equal((await reportOf(sleepInOfferedBed(occupied.bot, {
+    offered: occupied.offered,
+    block: 0,
+    timeoutMs: 100
+  }))).outcome, 'occupied')
+
+  const wrongWorld = readyBed()
+  wrongWorld.bot.game.dimension = 'the_nether'
+  assert.equal((await reportOf(sleepInOfferedBed(wrongWorld.bot, {
+    offered: wrongWorld.offered,
+    block: 0,
+    timeoutMs: 100
+  }))).outcome, 'wrongDimension')
+})
+
+test('sleep guards a terminal request against late entry and a stuck library wait', async () => {
+  function readyBed () {
+    const bot = worldBot()
+    const bed = bot.putBlock(
+      solidBlock(new Vec3(1, 64, 0), 'red_bed', { type: 200, stateId: 200 })
+    )
+    bot.isABed = () => true
+    bot.parseBedMetadata = () => ({ occupied: false })
+    bot.isSleeping = false
+    return { bot, offered: [blockOffer(bed)] }
+  }
+
+  const late = readyBed()
+  let wakes = 0
+  late.bot.sleep = () => new Promise((resolve) => {
+    setTimeout(() => {
+      late.bot.isSleeping = true
+      late.bot.emit('sleep')
+      resolve()
+    }, 10)
+  })
+  late.bot.wake = async () => {
+    wakes += 1
+    late.bot.isSleeping = false
+    late.bot.emit('wake')
+  }
+  const lateReport = await reportOf(sleepInOfferedBed(late.bot, {
+    offered: late.offered,
+    block: 0,
+    timeoutMs: 5,
+    entryDrainMs: 50
+  }))
+  assert.equal(lateReport.outcome, 'timedOut')
+  assert.equal(lateReport.entered, true)
+  assert.equal(wakes, 1)
+  assert.equal(late.bot.isSleeping, false)
+
+  const rejectedThenLate = readyBed()
+  let rejectedWakes = 0
+  rejectedThenLate.bot.sleep = () => new Promise((resolve, reject) => {
+    setTimeout(() => reject(new Error('bot is not sleeping')), 8)
+    setTimeout(() => {
+      rejectedThenLate.bot.isSleeping = true
+      rejectedThenLate.bot.emit('sleep')
+      resolve()
+    }, 12)
+  })
+  rejectedThenLate.bot.wake = async () => {
+    rejectedWakes += 1
+    rejectedThenLate.bot.isSleeping = false
+    rejectedThenLate.bot.emit('wake')
+  }
+  const rejectedLateReport = await reportOf(sleepInOfferedBed(rejectedThenLate.bot, {
+    offered: rejectedThenLate.offered,
+    block: 0,
+    timeoutMs: 5,
+    entryDrainMs: 30
+  }))
+  assert.equal(rejectedLateReport.outcome, 'timedOut')
+  assert.equal(rejectedLateReport.entered, true)
+  assert.equal(rejectedWakes, 1)
+  assert.equal(rejectedThenLate.bot.isSleeping, false)
+
+  const stuck = readyBed()
+  stuck.bot.sleep = () => new Promise(() => {})
+  stuck.bot.wake = async () => {}
+  const stuckReport = await reportOf(sleepInOfferedBed(stuck.bot, {
+    offered: stuck.offered,
+    block: 0,
+    timeoutMs: 5,
+    entryDrainMs: 10
+  }))
+  assert.equal(stuckReport.outcome, 'timedOut')
+  assert.equal(stuckReport.entered, false)
+})
+
+test('sleep refuses stale, missing, remote, and hidden beds before entering', async () => {
+  function bedBot (position) {
+    const bot = worldBot()
+    const bed = bot.putBlock(
+      solidBlock(position, 'red_bed', { type: 200, stateId: 200 })
+    )
+    bot.isABed = (block) => block.name.endsWith('_bed')
+    bot.parseBedMetadata = () => ({ occupied: false })
+    bot.sleep = async () => {}
+    bot.wake = async () => {}
+    return { bot, bed, offered: [blockOffer(bed)] }
+  }
+
+  const gone = bedBot(new Vec3(1, 64, 0))
+  gone.bot.removeBlock(gone.bed.position)
+  assert.equal((await reportOf(sleepInOfferedBed(gone.bot, {
+    offered: gone.offered,
+    block: 0,
+    timeoutMs: 100
+  }))).outcome, 'bedGone')
+
+  const changed = bedBot(new Vec3(1, 64, 0))
+  changed.bot.putBlock(
+    solidBlock(changed.bed.position, 'blue_bed', { type: 201, stateId: 201 })
+  )
+  assert.equal((await reportOf(sleepInOfferedBed(changed.bot, {
+    offered: changed.offered,
+    block: 0,
+    timeoutMs: 100
+  }))).outcome, 'bedChanged')
+
+  const far = bedBot(new Vec3(8, 64, 0))
+  assert.equal((await reportOf(sleepInOfferedBed(far.bot, {
+    offered: far.offered,
+    block: 0,
+    timeoutMs: 100
+  }))).outcome, 'outOfReach')
+
+  const hidden = bedBot(new Vec3(1, 64, 0))
+  hidden.bot.raycastHit = solidBlock(new Vec3(0, 64, 1))
+  assert.equal((await reportOf(sleepInOfferedBed(hidden.bot, {
+    offered: hidden.offered,
+    block: 0,
+    timeoutMs: 100
+  }))).outcome, 'notVisible')
+
+  assert.equal((await reportOf(sleepInOfferedBed(hidden.bot, {
+    offered: undefined,
+    block: 0,
+    timeoutMs: 100
+  }))).outcome, 'senseForgotten')
+  assert.equal((await reportOf(sleepInOfferedBed(hidden.bot, {
+    offered: hidden.offered,
+    block: 7,
+    timeoutMs: 100
+  }))).outcome, 'bedUnnamed')
+})
+
+test('survival teardown preserves the exact death and disconnect causes', async () => {
+  const craftBot = worldBot()
+  const craft = craftingSetup(craftBot)
+  craftBot.craft = async () => assert.fail('a synchronous death must prevent the craft')
+  const dyingCraft = craftOfferedRecipe(craftBot, {
+    offered: craft.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 1000
+  })
+  assert.equal(dyingCraft.abort('bodyDied'), true)
+  assert.deepEqual(await reportOf(dyingCraft), {
+    outcome: 'bodyDied',
+    elapsedMs: 0,
+    attempted: false
+  })
+
+  const combatBot = worldBot()
+  const target = livingEntity(40, new Vec3(2.5, 64, 0.5))
+  combatBot.entities[target.id] = target
+  const weapon = itemStack('iron_sword', 1, { type: 267 })
+  combatBot.inventory.slots[INVENTORY_SLOT] = weapon
+  combatBot.equip = async (stack) => {
+    combatBot.inventory.slots[INVENTORY_SLOT] = null
+    combatBot.inventory.slots[HOTBAR_SLOT] = stack
+  }
+  let attacks = 0
+  combatBot.attack = () => { attacks += 1 }
+  const disconnectingAttack = attackOfferedTarget(combatBot, undefined, {
+    entityOffers: [entityOffer(target)],
+    slots: slotOffers(INVENTORY_SLOT, weapon),
+    entity: 0,
+    slot: INVENTORY_SLOT,
+    attacks: 2,
+    approach: false,
+    maxPursuitDistance: 7.5,
+    minHealth: 4.5,
+    timeoutMs: 2000,
+    sprint: false,
+    owner: {}
+  })
+  await eventually(() => assert.equal(attacks, 1))
+  assert.equal(disconnectingAttack.abort('disconnected'), true)
+  const attackReport = await reportOf(disconnectingAttack)
+  assert.equal(attackReport.outcome, 'disconnected')
+  assert.equal(attackReport.attacks, 1)
+
+  const sleepBot = worldBot()
+  const bed = sleepBot.putBlock(
+    solidBlock(new Vec3(1, 64, 0), 'red_bed', { type: 200, stateId: 200 })
+  )
+  sleepBot.isABed = () => true
+  sleepBot.parseBedMetadata = () => ({ occupied: false })
+  sleepBot.isSleeping = false
+  sleepBot.sleep = async () => {
+    sleepBot.isSleeping = true
+    sleepBot.emit('sleep')
+  }
+  sleepBot.wake = async () => assert.fail('death must not request a wake packet')
+  const dyingSleep = sleepInOfferedBed(sleepBot, {
+    offered: [blockOffer(bed)],
+    block: 0,
+    timeoutMs: 1000
+  })
+  await eventually(() => assert.equal(sleepBot.isSleeping, true))
+  assert.equal(dyingSleep.abort('bodyDied'), true)
+  const sleepReport = await reportOf(dyingSleep)
+  assert.equal(sleepReport.outcome, 'bodyDied')
+  assert.equal(sleepReport.entered, true)
+})
+
+test('all four original operations cross the wire using only one connection own sense offers', async () => {
   const bot = worldBot(fakeBot())
   const digTarget = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))
   bot.putBlock(solidBlock(new Vec3(0, 63, 0)))
@@ -787,6 +1626,195 @@ test('all four operations cross the wire using only one connection own sense off
   } finally {
     first.stop()
     foreign.stop()
+    await body.stop()
+  }
+})
+
+test('craft, combat, and sleep cross the wire using only the asking connection authority', async () => {
+  const bot = worldBot(fakeBot())
+  bot.putBlock(solidBlock(new Vec3(0, 63, 0)))
+  const bed = bot.putBlock(
+    solidBlock(new Vec3(1, 64, 0), 'red_bed', { type: 200, stateId: 200 })
+  )
+  const target = livingEntity(40, new Vec3(2.5, 64, 0.5))
+  bot.entities[target.id] = target
+  const craft = craftingSetup(bot, { logs: 1 })
+  const weaponSlot = INVENTORY_SLOT + 2
+  const weapon = itemStack('iron_sword', 1, { type: 267 })
+  bot.inventory.slots[weaponSlot] = weapon
+  bot.currentWindow = null
+  bot.closeWindow = () => {}
+  bot.craft = async (selected) => {
+    assert.equal(selected, craft.recipe)
+    applyCraft(bot)
+  }
+  bot.equip = async (stack) => {
+    bot.inventory.slots[weaponSlot] = null
+    bot.inventory.slots[HOTBAR_SLOT] = stack
+  }
+  let attacked
+  bot.attack = (entity) => { attacked = entity }
+  bot.isABed = (block) => block.name.endsWith('_bed')
+  bot.parseBedMetadata = () => ({ occupied: false })
+  bot.isSleeping = false
+  bot.sleep = async (selected) => {
+    assert.equal(selected, bed)
+    bot.isSleeping = true
+    bot.emit('sleep')
+    setImmediate(() => {
+      bot.isSleeping = false
+      bot.emit('wake')
+    })
+  }
+  bot.wake = async () => {}
+
+  const { body, port } = await startedBody({ bot })
+  const owner = await handshaken(port)
+  const foreign = await handshaken(port)
+  try {
+    bot.emit('spawn')
+    const craftSense = await owner.answer(request('sense', 'sense-craft', {
+      radius: 5,
+      limit: 8
+    }))
+    assert.deepEqual(craftSense.recipes, [{
+      what: 'oak_planks',
+      resultCount: 4,
+      maxCrafts: 1,
+      requiresTable: false
+    }])
+    assert.equal((await foreign.answer(request('craft', 'foreign-craft', {
+      senseId: 'sense-craft',
+      recipe: 0,
+      crafts: 1,
+      timeoutMs: 100
+    }))).outcome, 'senseForgotten')
+    const crafted = await owner.answer(request('craft', 'craft-1', {
+      senseId: 'sense-craft',
+      recipe: 0,
+      crafts: 1,
+      timeoutMs: 100
+    }))
+    assert.equal(crafted.outcome, 'crafted')
+    assert.equal(crafted.count, 4)
+
+    const attackSense = await owner.answer(request('sense', 'sense-attack', {
+      radius: 5,
+      limit: 8
+    }))
+    const entity = attackSense.entities.findIndex((it) => it.what === 'zombie')
+    assert.ok(entity >= 0)
+    assert.equal((await foreign.answer(request('attack', 'foreign-attack', {
+      senseId: 'sense-attack',
+      entity,
+      slot: weaponSlot,
+      attacks: 1,
+      approach: false,
+      maxPursuitDistance: 7.5,
+      minHealth: 4.5,
+      timeoutMs: 1000,
+      sprint: false
+    }))).outcome, 'senseForgotten')
+    const attack = await owner.answer(request('attack', 'attack-1', {
+      senseId: 'sense-attack',
+      entity,
+      slot: weaponSlot,
+      attacks: 1,
+      approach: false,
+      maxPursuitDistance: 7.5,
+      minHealth: 4.5,
+      timeoutMs: 1000,
+      sprint: false
+    }))
+    assert.equal(attack.outcome, 'attacked')
+    assert.equal(attack.attacks, 1)
+    assert.equal(attacked, target)
+
+    const sleepSense = await owner.answer(request('sense', 'sense-sleep', {
+      radius: 5,
+      limit: 8
+    }))
+    const block = sleepSense.blocks.findIndex((it) =>
+      it.position[0] === bed.position.x &&
+      it.position[1] === bed.position.y &&
+      it.position[2] === bed.position.z
+    )
+    assert.ok(block >= 0)
+    assert.equal((await foreign.answer(request('sleep', 'foreign-sleep', {
+      senseId: 'sense-sleep',
+      block,
+      timeoutMs: 1000
+    }))).outcome, 'senseForgotten')
+    const sleep = await owner.answer(request('sleep', 'sleep-1', {
+      senseId: 'sense-sleep',
+      block,
+      timeoutMs: 1000
+    }))
+    assert.equal(sleep.outcome, 'woke')
+    assert.equal(sleep.entered, true)
+  } finally {
+    owner.stop()
+    foreign.stop()
+    await body.stop()
+  }
+})
+
+test('a sleeping owner refuses conflicting work and halt wakes only that request', async () => {
+  const bot = worldBot(fakeBot())
+  bot.putBlock(solidBlock(new Vec3(0, 63, 0)))
+  const bed = bot.putBlock(
+    solidBlock(new Vec3(1, 64, 0), 'red_bed', { type: 200, stateId: 200 })
+  )
+  bot.isABed = (block) => block.name.endsWith('_bed')
+  bot.parseBedMetadata = () => ({ occupied: false })
+  bot.isSleeping = false
+  bot.sleep = async () => {
+    bot.isSleeping = true
+    bot.emit('sleep')
+  }
+  let wakes = 0
+  bot.wake = async () => {
+    wakes += 1
+    bot.isSleeping = false
+    bot.emit('wake')
+  }
+
+  const { body, port } = await startedBody({ bot })
+  const owner = await handshaken(port)
+  const peer = await handshaken(port)
+  try {
+    bot.emit('spawn')
+    const sensed = await owner.answer(request('sense', 'sense-sleep-owner', {
+      radius: 5,
+      limit: 8
+    }))
+    const block = sensed.blocks.findIndex((it) =>
+      it.position[0] === bed.position.x &&
+      it.position[1] === bed.position.y &&
+      it.position[2] === bed.position.z
+    )
+    owner.send(request('sleep', 'sleep-owner', {
+      senseId: 'sense-sleep-owner',
+      block,
+      timeoutMs: 1000
+    }))
+    await eventually(() => assert.equal(bot.isSleeping, true))
+    const conflict = await peer.answer(request('craft', 'craft-conflict', {
+      senseId: 'sense-sleep-owner',
+      recipe: 0,
+      crafts: 1,
+      timeoutMs: 100
+    }))
+    assert.equal(conflict.error, 'notReady')
+    const halt = await peer.answer(request('halt', 'halt-sleep'))
+    assert.equal(halt.stopped, true)
+    const stopped = await owner.read()
+    assert.equal(stopped.outcome, 'cancelled')
+    assert.equal(stopped.entered, true)
+    assert.equal(wakes, 1)
+  } finally {
+    owner.stop()
+    peer.stop()
     await body.stop()
   }
 })

@@ -305,6 +305,62 @@ fn intent_variant(action: &str, fields: &Value) -> Value {
     })
 }
 
+fn craft_intent_schema() -> Value {
+    intent_variant(
+        "craft",
+        &json!({
+            "recipe": {
+                "type": "string",
+                "description": "The ref of the exact offered recipe to apply."
+            },
+            "crafts": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8,
+                "description": "How many bounded applications of that offered recipe to request."
+            }
+        }),
+    )
+}
+
+fn attack_intent_schema() -> Value {
+    intent_variant(
+        "attack",
+        &json!({
+            "target": {
+                "type": "string",
+                "description": "The ref of the exact offered living target."
+            },
+            "weapon": {
+                "type": "string",
+                "description": "The ref of the exact offered inventory stack to use as the weapon."
+            },
+            "attacks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4,
+                "description": "The maximum number of bounded attack swings."
+            },
+            "approach": {
+                "type": "boolean",
+                "description": "Whether to permit one bounded approach to the target's sensed position."
+            }
+        }),
+    )
+}
+
+fn sleep_intent_schema() -> Value {
+    intent_variant(
+        "sleep",
+        &json!({
+            "bed": {
+                "type": "string",
+                "description": "The ref of the exact offered bed to use once."
+            }
+        }),
+    )
+}
+
 fn build_decision_schema() -> Value {
     json!({
         "type": "object",
@@ -379,6 +435,9 @@ fn build_decision_schema() -> Value {
                             "description": "The bounded player equipment destination."
                         }
                     })),
+                    craft_intent_schema(),
+                    attack_intent_schema(),
+                    sleep_intent_schema(),
                     intent_variant("rest", &json!({})),
                     intent_variant("idle", &json!({})),
                 ],
@@ -445,7 +504,7 @@ mod tests {
     fn every_intent_variant_is_a_closed_tagged_object() {
         let schema = decision_schema();
         let variants = schema["properties"]["intent"]["anyOf"].as_array().unwrap();
-        assert_eq!(variants.len(), 10, "one per contract Intent variant");
+        assert_eq!(variants.len(), 13, "one per contract Intent variant");
         let mut actions = Vec::new();
         for variant in variants {
             assert_eq!(variant["additionalProperties"], false);
@@ -461,7 +520,8 @@ mod tests {
         assert_eq!(
             actions,
             vec![
-                "say", "moveTo", "flee", "eat", "dig", "collect", "place", "equip", "rest", "idle",
+                "say", "moveTo", "flee", "eat", "dig", "collect", "place", "equip", "craft",
+                "attack", "sleep", "rest", "idle",
             ],
             "the tags must be the contract's own action names"
         );

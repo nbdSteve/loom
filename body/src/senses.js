@@ -3,16 +3,16 @@
 /**
  * The bounded memory of what recent sense answers offered.
  *
- * A sense answer hands a controller four kinds of handle at once - an inventory slot,
- * a creature, a nearby block, and a dropped item - and this is the whole of what makes
- * any of them mean something later. Nothing here decides anything: it remembers what
- * was offered, answers what a handle names, spends mutable offers, and forgets.
+ * A sense answer hands a controller five kinds of handle at once - an inventory slot,
+ * a creature, a nearby block, a dropped item, and a craftable recipe - and this is the
+ * whole of what makes any of them mean something later. Nothing here decides anything:
+ * it remembers what was offered, answers what a handle names, spends mutable offers,
+ * and forgets.
  *
- * **Both kinds are remembered together, which is the invariant rather than tidiness.**
- * One answer carries slot handles and entity handles, so a memory that kept one and not
- * the other would resolve a flight and refuse a meal off the same answer - or the reverse.
- * They are therefore one entry with one lifetime and one eviction, and [senseMemory] is
- * the only place either is written.
+ * **All kinds are remembered together, which is the invariant rather than tidiness.**
+ * One answer carries every handle, so a partial memory could resolve one action and
+ * refuse another off the same answer. They are therefore one entry with one lifetime
+ * and one eviction, and [senseMemory] is the only place any of them is written.
  *
  * **An entry is named by the connection as well as by the sense id, because a round trip
  * belongs to both.** Keyed on the id alone the scoping was not in fact structural: the
@@ -25,11 +25,12 @@
  * and an id a connection never held is forgotten to it, which is the outcome a superseded
  * handle already earns: nothing about the wire changes for it.
  *
- * **A slot handle is spent by the meal it buys and an entity handle is not**, because the
- * two name different kinds of thing. A slot is a *position* whose contents a meal changes,
- * so serving one meal against it makes the answer wrong about it - see [spend]. A creature
- * keeps its identity wherever it goes and however often it is run from, so a second flight
- * from one sighting is a legitimate request rather than a repeat of a spent one.
+ * **Mutable offers are spent, while stable identities may remain.** A slot is a
+ * *position* whose contents an eat, place, equip, or attack can change, so applying one
+ * action against it makes the answer wrong about it - see [spend]. A craft attempt can
+ * change several slots and therefore invalidates every slot and recipe from that answer.
+ * A creature keeps its identity wherever it goes, so a second flight from one sighting
+ * remains legitimate; combat still revalidates that exact object before every swing.
  */
 
 /**
@@ -65,7 +66,11 @@ function senseMemory () {
     return remembered.find((entry) => entry.connection === connection && entry.senseId === senseId)
   }
   return {
-    remember (connection, senseId, { slotOffers, entityOffers, blockOffers, itemOffers }) {
+    remember (
+      connection,
+      senseId,
+      { slotOffers, entityOffers, blockOffers, itemOffers, recipeOffers = [] }
+    ) {
       remembered.push({
         connection,
         senseId,
@@ -90,6 +95,12 @@ function senseMemory () {
           count,
           detail,
           gone: false
+        })),
+        recipeOffers: recipeOffers.map((offer) => ({
+          ...offer,
+          table: offer.table === undefined
+            ? undefined
+            : { ...offer.table, position: [...offer.table.position] }
         }))
       })
       if (remembered.length > MAX_REMEMBERED_SENSES) remembered.shift()
@@ -98,7 +109,7 @@ function senseMemory () {
      * What one sense answer still offers, or undefined for an answer this connection was
      * never given or that has since been evicted.
      *
-     * Both kinds come back together for the reason the module header gives, and a caller
+     * All kinds come back together for the reason the module header gives, and a caller
      * reads the one its own operation is about.
      */
     recall (connection, senseId) {
@@ -108,7 +119,8 @@ function senseMemory () {
         slots: entry.slots,
         entityOffers: entry.entityOffers,
         blockOffers: entry.blockOffers,
-        itemOffers: entry.itemOffers
+        itemOffers: entry.itemOffers,
+        recipeOffers: entry.recipeOffers
       }
     },
     /**
@@ -163,7 +175,10 @@ function senseMemory () {
      */
     spend (connection, senseId, slot) {
       const entry = held(connection, senseId)
-      if (entry !== undefined) entry.slots.delete(slot)
+      if (entry !== undefined) {
+        entry.slots.delete(slot)
+        entry.recipeOffers = []
+      }
     },
     /** Drops one block offer after a successful dig or placement against it. */
     spendBlock (connection, senseId, block) {
@@ -174,6 +189,14 @@ function senseMemory () {
     spendItem (connection, senseId, item) {
       const entry = held(connection, senseId)
       if (entry !== undefined) entry.itemOffers[item] = undefined
+    },
+    /** Invalidates every inventory and recipe handle after a successful craft. */
+    spendRecipe (connection, senseId) {
+      const entry = held(connection, senseId)
+      if (entry !== undefined) {
+        entry.slots.clear()
+        entry.recipeOffers = []
+      }
     },
     /**
      * Drops what `connection` was offered, once that connection has gone.

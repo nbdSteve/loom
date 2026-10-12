@@ -1,0 +1,1 @@
+{"requestId":"req-sleep-bad","agentId":"agent-nu","intent":{"action":"sleep","bed":""},"reasoning":"sleep in an unnamed bed","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}

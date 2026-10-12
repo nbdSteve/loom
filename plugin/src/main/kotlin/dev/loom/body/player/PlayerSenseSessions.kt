@@ -34,7 +34,9 @@ internal data class PlayerScene(
     val blockBindings: List<WorldTargetRefBinding>,
     val droppedItemBindings: List<WorldTargetRefBinding>,
     val slotBindings: List<InventorySlotBinding>,
+    val recipeBindings: List<WorldTargetRefBinding>,
     val entityIndex: Map<UUID, Int>,
+    val entitySubjects: Map<Int, UUID>,
     val droppedItemSubjects: Map<Int, UUID>,
     val surroundings: List<Observation>,
     val surroundingsOmitted: Long,
@@ -57,6 +59,7 @@ internal data class PlayerScene(
 internal class HeldSense(
     val raw: RawSense,
     val entityIndex: Map<UUID, Int>,
+    val entitySubjects: Map<Int, UUID>,
     val droppedItemSubjects: Map<Int, UUID>,
     val rememberedAt: Long,
 ) {
@@ -102,12 +105,14 @@ internal class PlayerSenseSessions(
                     blocks = scene.blockBindings,
                     droppedItems = scene.droppedItemBindings,
                     slots = scene.slotBindings,
+                    recipes = scene.recipeBindings,
                 ),
             atTick = scene.raw.capturedTick,
         )
         return HeldSense(
             scene.raw,
             scene.entityIndex,
+            scene.entitySubjects,
             scene.droppedItemSubjects,
             scene.raw.capturedTick,
         ).also { sense ->

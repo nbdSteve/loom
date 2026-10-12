@@ -447,6 +447,171 @@ enum class EquipOutcome {
 }
 
 @Serializable
+enum class CraftOutcome {
+    @SerialName("crafted")
+    CRAFTED,
+
+    @SerialName("senseForgotten")
+    SENSE_FORGOTTEN,
+
+    @SerialName("recipeUnnamed")
+    RECIPE_UNNAMED,
+
+    @SerialName("ingredientsChanged")
+    INGREDIENTS_CHANGED,
+
+    @SerialName("recipeUnavailable")
+    RECIPE_UNAVAILABLE,
+
+    @SerialName("workstationGone")
+    WORKSTATION_GONE,
+
+    @SerialName("workstationChanged")
+    WORKSTATION_CHANGED,
+
+    @SerialName("workstationOutOfReach")
+    WORKSTATION_OUT_OF_REACH,
+
+    @SerialName("workstationNotVisible")
+    WORKSTATION_NOT_VISIBLE,
+
+    @SerialName("timedOut")
+    TIMED_OUT,
+
+    @SerialName("cancelled")
+    CANCELLED,
+
+    @SerialName("bodyDied")
+    BODY_DIED,
+
+    @SerialName("disconnected")
+    DISCONNECTED,
+
+    @SerialName("libraryFailure")
+    LIBRARY_FAILURE,
+}
+
+@Serializable
+enum class AttackOutcome {
+    @SerialName("attacked")
+    ATTACKED,
+
+    @SerialName("targetDied")
+    TARGET_DIED,
+
+    @SerialName("senseForgotten")
+    SENSE_FORGOTTEN,
+
+    @SerialName("targetUnnamed")
+    TARGET_UNNAMED,
+
+    @SerialName("targetGone")
+    TARGET_GONE,
+
+    @SerialName("targetChanged")
+    TARGET_CHANGED,
+
+    @SerialName("slotUnnamed")
+    SLOT_UNNAMED,
+
+    @SerialName("slotEmpty")
+    SLOT_EMPTY,
+
+    @SerialName("slotChanged")
+    SLOT_CHANGED,
+
+    @SerialName("healthBound")
+    HEALTH_BOUND,
+
+    @SerialName("outOfRange")
+    OUT_OF_RANGE,
+
+    @SerialName("noRoute")
+    NO_ROUTE,
+
+    @SerialName("searchOverBudget")
+    SEARCH_OVER_BUDGET,
+
+    @SerialName("stalled")
+    STALLED,
+
+    @SerialName("overTravelled")
+    OVER_TRAVELLED,
+
+    @SerialName("timedOut")
+    TIMED_OUT,
+
+    @SerialName("cancelled")
+    CANCELLED,
+
+    @SerialName("bodyDied")
+    BODY_DIED,
+
+    @SerialName("disconnected")
+    DISCONNECTED,
+
+    @SerialName("libraryFailure")
+    LIBRARY_FAILURE,
+}
+
+@Serializable
+enum class SleepOutcome {
+    @SerialName("woke")
+    WOKE,
+
+    @SerialName("senseForgotten")
+    SENSE_FORGOTTEN,
+
+    @SerialName("bedUnnamed")
+    BED_UNNAMED,
+
+    @SerialName("bedGone")
+    BED_GONE,
+
+    @SerialName("bedChanged")
+    BED_CHANGED,
+
+    @SerialName("notBed")
+    NOT_BED,
+
+    @SerialName("wrongDimension")
+    WRONG_DIMENSION,
+
+    @SerialName("outOfReach")
+    OUT_OF_REACH,
+
+    @SerialName("notVisible")
+    NOT_VISIBLE,
+
+    @SerialName("occupied")
+    OCCUPIED,
+
+    @SerialName("notNight")
+    NOT_NIGHT,
+
+    @SerialName("unsafe")
+    UNSAFE,
+
+    @SerialName("sleepRefused")
+    SLEEP_REFUSED,
+
+    @SerialName("timedOut")
+    TIMED_OUT,
+
+    @SerialName("cancelled")
+    CANCELLED,
+
+    @SerialName("bodyDied")
+    BODY_DIED,
+
+    @SerialName("disconnected")
+    DISCONNECTED,
+
+    @SerialName("libraryFailure")
+    LIBRARY_FAILURE,
+}
+
+@Serializable
 enum class BlockFace {
     @SerialName("down")
     DOWN,
@@ -650,6 +815,21 @@ data class SensedStack(
         requireWithin("slot", slot, 0..MAX_SLOT_INDEX)
         requireResourceName("what", what)
         requireWithin("count", count, MIN_STACK_COUNT..MAX_STACK_COUNT)
+    }
+}
+
+/** One bounded recipe result offered by this exact sense answer. */
+@Serializable
+data class SensedRecipe(
+    val what: String,
+    val resultCount: Int,
+    val maxCrafts: Int,
+    val requiresTable: Boolean,
+) {
+    init {
+        requireResourceName("what", what)
+        requireWithin("resultCount", resultCount, 1..MAX_RECIPE_RESULT_COUNT)
+        requireWithin("maxCrafts", maxCrafts, 1..MAX_CRAFTS)
     }
 }
 
@@ -938,6 +1118,75 @@ sealed interface BodyRequest {
         }
     }
 
+    /** Apply one explicitly offered recipe a bounded number of times. */
+    @Serializable
+    @SerialName("craft")
+    data class Craft(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        val senseId: String,
+        val recipe: Int,
+        val crafts: Int,
+        val timeoutMs: Int,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireBoundedControlId("senseId", senseId)
+            requireWithin("recipe", recipe, 0..MAX_RECIPE_INDEX)
+            requireWithin("crafts", crafts, 1..MAX_CRAFTS)
+            requireWithin("timeoutMs", timeoutMs, 1..MAX_ACTION_DEADLINE_MS)
+        }
+    }
+
+    /** Attack one retained living target with one retained stack and one strike budget. */
+    @Serializable
+    @SerialName("attack")
+    data class Attack(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        val senseId: String,
+        val entity: Int,
+        val slot: Int,
+        val attacks: Int,
+        val approach: Boolean,
+        val maxPursuitDistance: Double,
+        val minHealth: Double,
+        val timeoutMs: Int,
+        val sprint: Boolean,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireBoundedControlId("senseId", senseId)
+            requireWithin("entity", entity, 0..MAX_ENTITY_INDEX)
+            requireWithin("slot", slot, 0..MAX_SLOT_INDEX)
+            requireWithin("attacks", attacks, 1..MAX_ATTACKS)
+            requireReal("maxPursuitDistance", maxPursuitDistance, MAX_PURSUIT_DISTANCE)
+            requireReal("minHealth", minHealth, MAX_HEALTH)
+            requireWithin("timeoutMs", timeoutMs, 1..MAX_ACTION_DEADLINE_MS)
+        }
+    }
+
+    /** Sleep in one exact bed offered by one retained sense answer. */
+    @Serializable
+    @SerialName("sleep")
+    data class Sleep(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        val senseId: String,
+        val block: Int,
+        val timeoutMs: Int,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireBoundedControlId("senseId", senseId)
+            requireWithin("block", block, 0..MAX_BLOCK_INDEX)
+            requireWithin("timeoutMs", timeoutMs, 1..MAX_ACTION_DEADLINE_MS)
+        }
+    }
+
     /**
      * Stop whatever movement is running, and leave the body standing still.
      *
@@ -1004,8 +1253,8 @@ sealed interface BodyResponse {
     /**
      * Where the body is in its life, and how long it has been there.
      *
-     * Still deliberately no position, health, hunger or inventory, now that a sense
-     * answer carries all four: a status is what a controller asks to know whether the
+     * Still deliberately no player or world reading, now that a sense answer carries it:
+     * a status is what a controller asks to know whether the
      * process is there at all, so it must stay answerable by a body that has not
      * spawned - and it is asked far more often than a perception is taken. The bounded
      * answer to "what does the game say about this player" is [SenseReport], and it is
@@ -1096,7 +1345,7 @@ sealed interface BodyResponse {
         // The frame is flat, so there is no seam to split this along: kotlinx cannot
         // inline a nested holder's fields into one JSON object, and grouping these into
         // one would change the wire rather than the code. The four envelope fields are
-        // the sealed interface's own, and the seven readings are what one sense answers.
+        // the sealed interface's own, and the nine readings are what one sense answers.
         override val protocol: Int,
         override val requestId: String,
         override val agentId: String,
@@ -1112,6 +1361,8 @@ sealed interface BodyResponse {
         val items: List<SensedItem>,
         val itemsOmitted: Long,
         val inventory: List<SensedStack>,
+        val recipes: List<SensedRecipe>,
+        val recipesOmitted: Long,
     ) : BodyResponse {
         init {
             requireEnvelope(protocol, requestId, agentId)
@@ -1143,6 +1394,13 @@ sealed interface BodyResponse {
             }
             require(inventory.zipWithNext().all { (earlier, later) -> earlier.slot < later.slot }) {
                 "inventory slots must ascend, and no slot may be reported twice"
+            }
+            require(recipes.size <= MAX_SENSE_RECIPES) {
+                "recipes must be at most $MAX_SENSE_RECIPES"
+            }
+            requireCount("recipesOmitted", recipesOmitted)
+            require(recipesOmitted == 0L || recipes.isNotEmpty()) {
+                "recipesOmitted must be 0 when no recipe is reported"
             }
         }
     }
@@ -1432,6 +1690,124 @@ sealed interface BodyResponse {
             what?.let { requireResourceName("what", it) }
             count?.let { requireWithin("count", it, MIN_STACK_COUNT..MAX_STACK_COUNT) }
             toSlot?.let { requireWithin("toSlot", it, 0..MAX_SLOT_INDEX) }
+        }
+    }
+
+    /** What became of one explicitly offered craft. */
+    @Serializable
+    @SerialName("craft")
+    data class CraftReport(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val outcome: CraftOutcome,
+        val elapsedMs: Long,
+        val attempted: Boolean,
+        val what: String? = null,
+        val count: Int? = null,
+        val crafts: Int? = null,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "a craft")
+            requireCount("elapsedMs", elapsedMs)
+            require(outcome != CraftOutcome.CRAFTED || attempted) {
+                "a completed craft was handed to Mineflayer"
+            }
+            require(
+                outcome !in setOf(CraftOutcome.SENSE_FORGOTTEN, CraftOutcome.RECIPE_UNNAMED) ||
+                    !attempted,
+            ) {
+                "a missing recipe authority was not handed to Mineflayer"
+            }
+            val crafted = outcome == CraftOutcome.CRAFTED
+            require((what != null) == crafted) {
+                "what is present exactly when the outcome is ${CraftOutcome.CRAFTED}"
+            }
+            require((count != null) == crafted) {
+                "count is present exactly when the outcome is ${CraftOutcome.CRAFTED}"
+            }
+            require((crafts != null) == crafted) {
+                "crafts is present exactly when the outcome is ${CraftOutcome.CRAFTED}"
+            }
+            what?.let { requireResourceName("what", it) }
+            count?.let { requireWithin("count", it, 1..MAX_CRAFTED_ITEMS) }
+            crafts?.let { requireWithin("crafts", it, 1..MAX_CRAFTS) }
+        }
+    }
+
+    /** What became of one bounded combat request and its optional fixed approach. */
+    @Serializable
+    @SerialName("attack")
+    data class AttackReport(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val outcome: AttackOutcome,
+        val from: List<Double>,
+        val position: List<Double>,
+        @Serializable(with = CanonicalDistance::class)
+        val travelled: Double,
+        val elapsedMs: Long,
+        val attacks: Int,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "an attack")
+            requireWorldPosition("from", from)
+            requireWorldPosition("position", position)
+            requireReal("travelled", travelled, MAX_TRAVEL_DISTANCE)
+            requireCount("elapsedMs", elapsedMs)
+            requireWithin("attacks", attacks, 0..MAX_ATTACKS)
+            require(outcome != AttackOutcome.ATTACKED || attacks > 0) {
+                "attacked requires at least one attack packet"
+            }
+            require(outcome != AttackOutcome.TARGET_DIED || attacks > 0) {
+                "targetDied requires at least one attack packet from this request"
+            }
+        }
+    }
+
+    /** What became of one exact offered bed, held through vanilla wake or cleanup. */
+    @Serializable
+    @SerialName("sleep")
+    data class SleepReport(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val outcome: SleepOutcome,
+        val elapsedMs: Long,
+        val entered: Boolean,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "a sleep")
+            requireCount("elapsedMs", elapsedMs)
+            require(outcome != SleepOutcome.WOKE || entered) {
+                "woke requires an observed sleep entry"
+            }
+            val beforeEntry =
+                outcome in
+                    setOf(
+                        SleepOutcome.SENSE_FORGOTTEN,
+                        SleepOutcome.BED_UNNAMED,
+                        SleepOutcome.BED_GONE,
+                        SleepOutcome.BED_CHANGED,
+                        SleepOutcome.NOT_BED,
+                        SleepOutcome.WRONG_DIMENSION,
+                        SleepOutcome.OUT_OF_REACH,
+                        SleepOutcome.NOT_VISIBLE,
+                        SleepOutcome.OCCUPIED,
+                        SleepOutcome.NOT_NIGHT,
+                        SleepOutcome.UNSAFE,
+                        SleepOutcome.SLEEP_REFUSED,
+                    )
+            require(!beforeEntry || !entered) {
+                "a pre-entry sleep refusal cannot claim an observed entry"
+            }
         }
     }
 

@@ -1,1 +1,1 @@
-{"op":"collect","protocol":3,"requestId":"req-67","agentId":"agent-alpha","state":"ready","outcome":"itemChanged","from":[12.5,71.5,-40.5],"position":[12.5,71.5,-40.5],"travelled":0,"elapsedMs":2}
+{"op":"collect","protocol":4,"requestId":"req-67","agentId":"agent-alpha","state":"ready","outcome":"itemChanged","from":[12.5,71.5,-40.5],"position":[12.5,71.5,-40.5],"travelled":0,"elapsedMs":2}

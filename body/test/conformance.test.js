@@ -54,6 +54,9 @@ const {
   collectReport,
   placeReport,
   equipReport,
+  craftReport,
+  attackReport,
+  sleepReport,
   haltReport,
   shutdownAccepted,
   refusal,
@@ -63,6 +66,9 @@ const {
   COLLECT_OUTCOMES,
   PLACE_OUTCOMES,
   EQUIP_OUTCOMES,
+  CRAFT_OUTCOMES,
+  ATTACK_OUTCOMES,
+  SLEEP_OUTCOMES,
   THREAT_REFUSALS
 } = require('../src/protocol')
 
@@ -119,6 +125,9 @@ function rebuild (frame) {
   if (frame.op === 'collect') return collectReport(frame)
   if (frame.op === 'place') return placeReport(frame)
   if (frame.op === 'equip') return equipReport(frame)
+  if (frame.op === 'craft') return craftReport(frame)
+  if (frame.op === 'attack') return attackReport(frame)
+  if (frame.op === 'sleep') return sleepReport(frame)
   if (frame.op === 'halt') return haltReport(frame)
   return shutdownAccepted(frame)
 }
@@ -190,6 +199,9 @@ test('a refused fixture is refused for the reason its name gives', () => {
     'request-collect-missing-approach.json': 'invalidField',
     'request-place-unknown-face.json': 'invalidField',
     'request-equip-unknown-destination.json': 'invalidField',
+    'request-craft-too-many.json': 'invalidField',
+    'request-attack-too-many.json': 'invalidField',
+    'request-sleep-block-too-large.json': 'invalidField',
     'request-status-with-sense-payload.json': 'invalidField',
     'response-unknown-state.json': 'invalidField',
     'response-shutdown-not-stopping.json': 'invalidField',
@@ -214,6 +226,9 @@ test('a refused fixture is refused for the reason its name gives', () => {
     'response-collect-zero-count.json': 'invalidField',
     'response-place-fractional-position.json': 'invalidField',
     'response-equip-slot-too-large.json': 'invalidField',
+    'response-craft-unknown-outcome.json': 'invalidField',
+    'response-attack-too-many-attacks.json': 'invalidField',
+    'response-sleep-unknown-outcome.json': 'invalidField',
     'request-moveTo-zero-timeout.json': 'invalidField',
     'request-moveTo-timeout-too-large.json': 'invalidField',
     'request-moveTo-tolerance-too-large.json': 'invalidField',
@@ -267,7 +282,13 @@ test('a frame the schema cannot refuse is still refused by the codec', () => {
     'response-dig-refusal-attempted.json': 'a pre-application dig refusal claims an attempt',
     'response-collect-collected-without-item.json': 'a collection claims success without its item',
     'response-place-refusal-names-effect.json': 'a refused placement names an effect',
-    'response-equip-equipped-without-destination.json': 'an equip claims success without its destination'
+    'response-equip-equipped-without-destination.json': 'an equip claims success without its destination',
+    'response-craft-crafted-without-result.json': 'a craft claims success without its result',
+    'response-craft-refusal-attempted.json': 'a pre-application craft refusal claims an attempt',
+    'response-attack-attacked-with-zero-attacks.json': 'combat claims success without an attack packet',
+    'response-attack-target-died-with-zero-attacks.json': 'combat credits an unrelated pre-strike death',
+    'response-sleep-woke-without-entry.json': 'a sleep claims wake without ever entering',
+    'response-sense-recipes-omitted-with-no-recipes.json': 'recipes were omitted from an empty list'
   }
   const present = fixtures('beyond-schema').map(({ name }) => name)
   assert.deepEqual(Object.keys(relations).sort(), present, 'a beyond-schema fixture has no stated relation here')
@@ -324,6 +345,9 @@ test('the corpus covers every operation and both directions of each', () => {
     'collect',
     'place',
     'equip',
+    'craft',
+    'attack',
+    'sleep',
     'halt',
     'shutdown'
   ]) {
@@ -344,7 +368,10 @@ test('the corpus states every native interaction outcome', () => {
     ['dig', DIG_OUTCOMES],
     ['collect', COLLECT_OUTCOMES],
     ['place', PLACE_OUTCOMES],
-    ['equip', EQUIP_OUTCOMES]
+    ['equip', EQUIP_OUTCOMES],
+    ['craft', CRAFT_OUTCOMES],
+    ['attack', ATTACK_OUTCOMES],
+    ['sleep', SLEEP_OUTCOMES]
   ]) {
     const stated = outcomesOf(op)
     for (const outcome of outcomes) {

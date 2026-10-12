@@ -54,25 +54,30 @@ death changes one member and cannot stop or reclassify another.
 
 The Mineflayer process is a mechanics boundary, not a second mind:
 
-- `sense` reports a bounded scene including nearby blocks and dropped items,
-  health, vanilla food and saturation, and the occupied player inventory slots.
+- `sense` reports a bounded scene including nearby blocks, dropped items, and
+  currently applicable recipes, plus health, vanilla food and saturation, and
+  the occupied player inventory slots.
 - `eat` consumes the exact request-scoped slot the mind named.
 - `moveTo` and `flee` run the bounded movement policy already implemented in
   `body/src/movement.js`.
 - `dig`, `collect`, `place`, and `equip` apply one exact block, dropped-item, or
   inventory reference offered by the sense result the mind answered.
+- `craft`, `attack`, and `sleep` apply one exact offered recipe, living target
+  and weapon, or bed under bounded quantity, pursuit, swing, health, reach, and
+  wait limits.
 - `halt` cancels cancellable exclusive work; a conflicting request is refused
   rather than queued or allowed to replace it.
-- no timer in Node chooses a meal, destination, threat, resource, item, face,
-  equipment destination, or goal.
+- no timer in Node chooses a meal, destination, threat, resource, item, recipe,
+  weapon, bed, face, equipment destination, or goal.
 
 The coordinator preserves request identity across perception, decision, and
-actuation. Creature, block, dropped-item, and inventory refs remain scoped to
+actuation. Creature, block, dropped-item, inventory, and recipe refs remain scoped to
 the sense answer and control connection that minted them. Threat debounce uses
 a server-corroborated entity UUID when one can be matched, while the
 body-control wire keeps its request-local indexes. Paper separately reconciles
-completed native interactions against block-break, pickup, placement, or final
-inventory state and writes a `worldInteraction` record for the vanilla result.
+completed native interactions against block-break, pickup, placement, crafting,
+entity damage/death, bed entry/leave, or final inventory state and writes a
+`worldInteraction` record for the vanilla result.
 
 ## Lifecycle and permadeath
 
@@ -177,7 +182,7 @@ JAVA_HOME=/path/to/jdk-21 ./gradlew check shadowJar
 ```
 
 See `DEMO.md` for the disposable Paper 1.21.1 acceptance path covering
-readiness, perception, cognition, movement, eating, all four native
+readiness, perception, cognition, movement, eating, all seven native
 interactions, one hard child-process crash with an unaffected peer, restart,
 permadeath, denied reconnect, tick-deterministic reviews, and complete cleanup.
 `AGENTS.md` carries the architectural invariants and sharp edges worth

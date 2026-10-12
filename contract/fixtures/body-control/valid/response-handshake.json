@@ -1,1 +1,1 @@
-{"op":"handshake","protocol":3,"requestId":"req-1","agentId":"agent-alpha","state":"loggedIn","username":"loom_alpha"}
+{"op":"handshake","protocol":4,"requestId":"req-1","agentId":"agent-alpha","state":"loggedIn","username":"loom_alpha"}

@@ -1,0 +1,1 @@
+{"requestId":"req-craft-1","agentId":"agent-lambda","intent":{"action":"craft","recipe":"r1","crafts":2},"reasoning":"apply the exact offered oak-plank recipe twice","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}

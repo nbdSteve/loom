@@ -1,0 +1,1 @@
+{"op":"sleep","protocol":4,"requestId":"res-sleep-timed-out","agentId":"agent-alpha","state":"ready","outcome":"timedOut","elapsedMs":500,"entered":true}

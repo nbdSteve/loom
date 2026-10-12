@@ -49,6 +49,13 @@
       "maxLength": 8
     },
 
+    "RecipeRef": {
+      "description": "A short opaque handle for one exact currently craftable recipe offered by the body. It is valid only inside the single perception that issued it and only for that agent. It is not a recipe id or item name, and the body retains the exact Mineflayer recipe, current ingredient snapshot, and any required workstation behind it.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8
+    },
+
     "InventoryStack": {
       "description": "One occupied slot of the body's own inventory, as the body describes it. It is the whole of what the mind is told about what it is carrying, and it carries a handle so a decision can name one exact stack back rather than a kind of item.",
       "type": "object",
@@ -67,6 +74,39 @@
           "description": "How many items the stack holds. At least one, because an empty slot is not reported at all.",
           "type": "integer",
           "minimum": 1
+        }
+      }
+    },
+
+    "CraftingOption": {
+      "description": "One exact recipe the body found craftable from the current inventory and, when required, one retained reachable crafting table. The ref is the only value a craft intent may name back; the descriptive result and bounds let the mind choose without learning a registry id.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "what", "resultCount", "maxCrafts", "requiresTable"],
+      "properties": {
+        "ref": {
+          "description": "The request-scoped handle for this exact recipe and retained workstation choice.",
+          "$ref": "#/$defs/RecipeRef"
+        },
+        "what": {
+          "description": "The result item, as the body describes it.",
+          "type": "string"
+        },
+        "resultCount": {
+          "description": "How many result items one application of this recipe produces.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "maxCrafts": {
+          "description": "The most recipe applications the current ingredients and Loom's per-request item bound permit. A craft intent chooses a positive count no larger than this value.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "requiresTable": {
+          "description": "Whether the retained exact recipe requires the reachable crafting table held behind this offer.",
+          "type": "boolean"
         }
       }
     },
@@ -100,7 +140,16 @@
       "description": "The bounded self-state the body chose to reveal. Owned primitives only, so the mind cannot reach back into world state through it.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["health", "food", "saturation", "position", "inventorySummary", "world"],
+      "required": [
+        "health",
+        "food",
+        "saturation",
+        "position",
+        "inventorySummary",
+        "craftingOptions",
+        "craftingOptionsOmitted",
+        "world"
+      ],
       "properties": {
         "health": {
           "description": "Current health of the agent's body.",
@@ -130,6 +179,17 @@
           "type": "array",
           "items": { "$ref": "#/$defs/InventoryStack" },
           "maxItems": 46
+        },
+        "craftingOptions": {
+          "description": "The exact currently craftable recipes this bounded perception offers. Each option is request-scoped and retains its ingredient snapshot and any required crafting table inside the body.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/CraftingOption" },
+          "maxItems": 24
+        },
+        "craftingOptionsOmitted": {
+          "description": "How many otherwise craftable recipe offers the body omitted because the bounded list was full. Required and never negative, so an empty or short list cannot be mistaken for a complete recipe catalogue.",
+          "type": "integer",
+          "minimum": 0
         },
         "world": { "$ref": "#/$defs/WorldState" }
       }
@@ -403,6 +463,51 @@
             "action": { "const": "equip" },
             "item": { "$ref": "#/$defs/SlotRef" },
             "destination": { "$ref": "#/$defs/EquipmentDestination" }
+          }
+        },
+        {
+          "title": "Craft",
+          "description": "Apply one exact recipe offered by this perception a bounded number of times. The body revalidates the recipe, complete inventory snapshot, output bound, and retained crafting table immediately before invoking Mineflayer. It gathers nothing and chooses no substitute recipe.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "recipe", "crafts"],
+          "properties": {
+            "action": { "const": "craft" },
+            "recipe": { "$ref": "#/$defs/RecipeRef" },
+            "crafts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            }
+          }
+        },
+        {
+          "title": "Attack",
+          "description": "Attack one exact living entity with one exact offered inventory stack for at most the chosen bounded strike count. approach explicitly permits one bounded path to the target's admitted position; false permits no movement. The body never changes targets or starts an open-ended pursuit.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "target", "weapon", "attacks", "approach"],
+          "properties": {
+            "action": { "const": "attack" },
+            "target": { "$ref": "#/$defs/EntityRef" },
+            "weapon": { "$ref": "#/$defs/SlotRef" },
+            "attacks": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            },
+            "approach": { "type": "boolean" }
+          }
+        },
+        {
+          "title": "Sleep",
+          "description": "Try to sleep in one exact bed offered by this perception, retaining ownership only until vanilla wakes the player or Loom's bounded wait ends. The body selects no other bed and never decides whether the server should skip the night.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "bed"],
+          "properties": {
+            "action": { "const": "sleep" },
+            "bed": { "$ref": "#/$defs/EntityRef" }
           }
         },
         {

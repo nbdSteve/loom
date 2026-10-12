@@ -7,8 +7,10 @@ import dev.loom.body.InventorySlotBinding
 import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import dev.loom.body.ThreatCandidate
 import dev.loom.body.WorldClock
+import dev.loom.body.WorldTargetRefBinding
 import dev.loom.body.blocksApart
 import dev.loom.body.horizontalBearing
+import dev.loom.contract.CraftingOption
 import dev.loom.contract.InventoryStack
 import dev.loom.contract.Observation
 import dev.loom.contract.ObservationKind
@@ -24,7 +26,12 @@ internal class PlayerSceneTranslator(
 ) {
     fun sceneOf(raw: RawSense): PlayerScene {
         context.authority.serverState.auditSense(raw.identity, raw.auditSnapshot, raw.report)
-        val subjects = subjectsOf(raw)
+        val serverSubjects =
+            context.authority.serverState.subjectsOf(
+                raw.identity,
+                raw.report.entities,
+            )
+        val subjects = subjectsOf(raw, serverSubjects)
         val itemSubjects = context.authority.serverState.itemSubjectsOf(raw.identity, raw.report.items)
         val selected = offersOf(raw, subjects, itemSubjects).take(PERCEPTION_MAX_OBSERVATIONS)
         val entityOffers = selected.filter { it.kind == ObservationKind.ENTITY }
@@ -36,18 +43,13 @@ internal class PlayerSceneTranslator(
         val droppedItemBindings =
             context.refs.droppedItems.mint(itemOffers.map(SceneOffer::sourceIndex))
         val slotBindings = context.refs.slots.mint(raw.report.inventory.map { it.slot })
+        val recipeBindings = context.refs.recipes.mint(raw.report.recipes.indices.toList())
         val refs =
-            buildMap {
-                entityOffers.zip(creatureBindings).forEach { (offer, binding) ->
-                    put(offer.key, binding.handle)
-                }
-                blockOffers.zip(blockBindings).forEach { (offer, binding) ->
-                    put(offer.key, binding.handle)
-                }
-                itemOffers.zip(droppedItemBindings).forEach { (offer, binding) ->
-                    put(offer.key, binding.handle)
-                }
-            }
+            refsOf(
+                entityOffers to creatureBindings.map { it.handle },
+                blockOffers to blockBindings.map { it.handle },
+                itemOffers to droppedItemBindings.map { it.handle },
+            )
         val surroundings = selected.map { observationOf(raw, it, requireNotNull(refs[it.key])) }
         val omittedByBody =
             raw.report.entitiesOmitted + raw.report.blocksOmitted + raw.report.itemsOmitted
@@ -59,10 +61,15 @@ internal class PlayerSceneTranslator(
             blockBindings = blockBindings,
             droppedItemBindings = droppedItemBindings,
             slotBindings = slotBindings,
+            recipeBindings = recipeBindings,
             entityIndex =
                 entityOffers.associate { offer ->
                     requireNotNull(offer.subject) to offer.sourceIndex
                 },
+            entitySubjects =
+                entityOffers.mapNotNull { offer ->
+                    serverSubjects.getOrNull(offer.sourceIndex)?.let { offer.sourceIndex to it }
+                }.toMap(),
             droppedItemSubjects =
                 itemOffers.mapNotNull { offer ->
                     offer.subject?.let { offer.sourceIndex to it }
@@ -70,16 +77,23 @@ internal class PlayerSceneTranslator(
             surroundings = surroundings,
             surroundingsOmitted = omittedByBody + omittedBySceneBound,
             candidates = candidatesOf(selected, surroundings),
-            selfState = selfStateOf(raw, slotBindings),
+            selfState = selfStateOf(raw, slotBindings, recipeBindings),
         )
     }
 
-    private fun subjectsOf(raw: RawSense): List<UUID> {
-        val corroborated =
-            context.authority.serverState.subjectsOf(
-                raw.identity,
-                raw.report.entities,
-            )
+    private fun refsOf(vararg groups: Pair<List<SceneOffer>, List<String>>): Map<Pair<ObservationKind, Int>, String> =
+        buildMap {
+            groups.forEach { (offers, handles) ->
+                offers.zip(handles).forEach { (offer, handle) ->
+                    put(offer.key, handle)
+                }
+            }
+        }
+
+    private fun subjectsOf(
+        raw: RawSense,
+        corroborated: List<UUID?>,
+    ): List<UUID> {
         val usedSubjects = mutableSetOf<UUID>()
         return raw.report.entities.indices.map { index ->
             corroborated
@@ -175,6 +189,7 @@ internal class PlayerSceneTranslator(
     private fun selfStateOf(
         raw: RawSense,
         bindings: List<InventorySlotBinding>,
+        recipeBindings: List<WorldTargetRefBinding>,
     ): SelfState =
         SelfState(
             health = raw.report.vitals.health,
@@ -189,6 +204,17 @@ internal class PlayerSceneTranslator(
                         count = stack.count.toLong(),
                     )
                 },
+            craftingOptions =
+                raw.report.recipes.mapIndexed { index, recipe ->
+                    CraftingOption(
+                        ref = recipeBindings[index].handle,
+                        what = itemDescriptionId(recipe.what),
+                        resultCount = recipe.resultCount.toLong(),
+                        maxCrafts = recipe.maxCrafts.toLong(),
+                        requiresTable = recipe.requiresTable,
+                    )
+                },
+            craftingOptionsOmitted = raw.report.recipesOmitted,
             world =
                 WorldState(
                     dayPhase = WorldClock.phaseOf(raw.report.time.timeOfDay.toLong()),

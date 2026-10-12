@@ -1,0 +1,1 @@
+{"op":"sleep","protocol":4,"requestId":"res-sleep-library-failure","agentId":"agent-alpha","state":"ready","outcome":"libraryFailure","elapsedMs":500,"entered":false}

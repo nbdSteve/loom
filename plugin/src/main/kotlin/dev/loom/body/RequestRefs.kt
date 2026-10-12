@@ -1,7 +1,7 @@
 /*
  * The request-scoped handles a player body has issued.
  *
- * Creature, block, dropped-item and slot handles use separate stores because they
+ * Creature, block, dropped-item, recipe, and slot handles use separate stores because they
  * name different kinds of thing, but one perception opens and settles every window
  * together.
  */
@@ -13,6 +13,7 @@ data class RequestRefBindings(
     val blocks: List<WorldTargetRefBinding> = emptyList(),
     val droppedItems: List<WorldTargetRefBinding> = emptyList(),
     val slots: List<InventorySlotBinding> = emptyList(),
+    val recipes: List<WorldTargetRefBinding> = emptyList(),
 )
 
 /** Every handle retained for player-body decision round trips. */
@@ -25,6 +26,8 @@ class RequestRefs(
     val droppedItems: WorldTargetRefs = WorldTargetRefs("d"),
     /** Occupied player-inventory slots observed by the body. */
     val slots: InventoryRefs = InventoryRefs(),
+    /** Exact craftable recipes offered by the player body. */
+    val recipes: WorldTargetRefs = WorldTargetRefs("r"),
 ) {
     /**
      * Makes the handles from one perception answerable together.
@@ -42,6 +45,7 @@ class RequestRefs(
         blocks.remember(agent, requestId, bindings.blocks, atTick)
         droppedItems.remember(agent, requestId, bindings.droppedItems, atTick)
         slots.remember(agent, requestId, bindings.slots, atTick)
+        recipes.remember(agent, requestId, bindings.recipes, atTick)
     }
 
     /** Drops every kind of handle once the decision has been dealt with. */
@@ -53,6 +57,7 @@ class RequestRefs(
         blocks.settle(agent, requestId)
         droppedItems.settle(agent, requestId)
         slots.settle(agent, requestId)
+        recipes.settle(agent, requestId)
     }
 
     /** Drops every retained handle for [agent]. */
@@ -61,5 +66,6 @@ class RequestRefs(
         blocks.forget(agent)
         droppedItems.forget(agent)
         slots.forget(agent)
+        recipes.forget(agent)
     }
 }

@@ -9,6 +9,7 @@ import dev.loom.bodycontrol.BodyResponse
 import dev.loom.bodycontrol.SensedBlock
 import dev.loom.bodycontrol.SensedEntity
 import dev.loom.bodycontrol.SensedItem
+import dev.loom.bodycontrol.SensedRecipe
 import dev.loom.bodycontrol.SensedStack
 import java.util.UUID
 
@@ -70,6 +71,38 @@ sealed interface ServerInteractionClaim {
         val request: BodyRequest.Equip,
         val report: BodyResponse.EquipReport,
         val offeredStack: SensedStack,
+        override val startedTick: Long,
+    ) : ServerInteractionClaim {
+        override val controlRequest: BodyRequest = request
+        override val bodyOutcome: String = report.outcome.name
+    }
+
+    data class Craft(
+        val request: BodyRequest.Craft,
+        val report: BodyResponse.CraftReport,
+        val offeredRecipe: SensedRecipe,
+        override val startedTick: Long,
+    ) : ServerInteractionClaim {
+        override val controlRequest: BodyRequest = request
+        override val bodyOutcome: String = report.outcome.name
+    }
+
+    data class Attack(
+        val request: BodyRequest.Attack,
+        val report: BodyResponse.AttackReport,
+        val offeredTarget: SensedEntity,
+        val targetSubject: UUID?,
+        val offeredWeapon: SensedStack,
+        override val startedTick: Long,
+    ) : ServerInteractionClaim {
+        override val controlRequest: BodyRequest = request
+        override val bodyOutcome: String = report.outcome.name
+    }
+
+    data class Sleep(
+        val request: BodyRequest.Sleep,
+        val report: BodyResponse.SleepReport,
+        val offeredBed: SensedBlock,
         override val startedTick: Long,
     ) : ServerInteractionClaim {
         override val controlRequest: BodyRequest = request

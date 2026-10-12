@@ -87,6 +87,18 @@ const val MAX_FOOD_LEVEL: Int = 20
  */
 const val MAX_INVENTORY_STACKS: Int = 46
 
+/** The most exact recipe offers one perception may carry. */
+const val MAX_CRAFTING_OPTIONS: Int = 24
+
+/** The most applications one craft intent may request. */
+const val MAX_CRAFTS_PER_INTENT: Long = 8
+
+/** Vanilla's largest result stack from one recipe application. */
+private const val MAX_RECIPE_RESULT_COUNT: Long = 64
+
+/** The most swings one attack intent may request. */
+const val MAX_ATTACKS_PER_INTENT: Long = 4
+
 /**
  * Importance tier that drives model routing on the mind side and is stamped onto
  * every decision's provenance for the decision log.
@@ -261,6 +273,31 @@ data class InventoryStack(
     }
 }
 
+/** One exact currently craftable recipe offered by this perception. */
+@Serializable
+data class CraftingOption(
+    /** Request-scoped handle retaining the exact recipe and any required workstation. */
+    val ref: String,
+    /** The result item, as the body describes it. */
+    val what: String,
+    /** How many result items one recipe application produces. */
+    val resultCount: Long,
+    /** How many applications current ingredients and Loom's output bound permit. */
+    val maxCrafts: Long,
+    /** Whether the retained recipe is tied to one exact reachable crafting table. */
+    val requiresTable: Boolean,
+) {
+    init {
+        requireBoundedRef(ref)
+        require(resultCount in 1..MAX_RECIPE_RESULT_COUNT) {
+            "resultCount must be in 1..$MAX_RECIPE_RESULT_COUNT, got $resultCount"
+        }
+        require(maxCrafts in 1..MAX_CRAFTS_PER_INTENT) {
+            "maxCrafts must be in 1..$MAX_CRAFTS_PER_INTENT, got $maxCrafts"
+        }
+    }
+}
+
 /**
  * The bounded self-state the body chose to reveal. Owned primitives only, so the
  * mind cannot reach back into world state through it.
@@ -280,6 +317,10 @@ data class SelfState(
      * one, bounded by the [MAX_INVENTORY_STACKS] slots a body has.
      */
     val inventorySummary: List<InventoryStack>,
+    /** Exact currently craftable recipes backed by this same request-scoped sense. */
+    val craftingOptions: List<CraftingOption>,
+    /** Craftable recipes omitted by the bounded option list. */
+    val craftingOptionsOmitted: Long,
     /** The bounded world clock the body reveals. */
     val world: WorldState,
 ) {
@@ -296,6 +337,13 @@ data class SelfState(
         require(inventorySummary.size <= MAX_INVENTORY_STACKS) {
             "inventorySummary must state at most $MAX_INVENTORY_STACKS occupied slots, " +
                 "got ${inventorySummary.size}"
+        }
+        require(craftingOptions.size <= MAX_CRAFTING_OPTIONS) {
+            "craftingOptions must state at most $MAX_CRAFTING_OPTIONS recipes, " +
+                "got ${craftingOptions.size}"
+        }
+        require(craftingOptionsOmitted >= 0) {
+            "craftingOptionsOmitted must not be negative, got $craftingOptionsOmitted"
         }
     }
 }
@@ -589,6 +637,59 @@ sealed interface Intent {
     ) : Intent {
         init {
             requireBoundedRef(item)
+        }
+    }
+
+    /**
+     * Apply one exact offered recipe a bounded number of times.
+     *
+     * [recipe] is not a registry id: it is the request-scoped handle on one recipe,
+     * ingredient snapshot, and any required reachable crafting table from
+     * [SelfState.craftingOptions].
+     */
+    @Serializable
+    @SerialName("craft")
+    data class Craft(
+        val recipe: String,
+        val crafts: Long,
+    ) : Intent {
+        init {
+            requireBoundedRef(recipe)
+            require(crafts in 1..MAX_CRAFTS_PER_INTENT) {
+                "crafts must be in 1..$MAX_CRAFTS_PER_INTENT, got $crafts"
+            }
+        }
+    }
+
+    /**
+     * Strike one exact offered living target with one exact offered inventory stack.
+     *
+     * [approach] permits one bounded path to the target's admitted position. It never
+     * permits target switching or a pursuit loop.
+     */
+    @Serializable
+    @SerialName("attack")
+    data class Attack(
+        val target: String,
+        val weapon: String,
+        val attacks: Long,
+        val approach: Boolean,
+    ) : Intent {
+        init {
+            requireBoundedRef(target)
+            requireBoundedRef(weapon)
+            require(attacks in 1..MAX_ATTACKS_PER_INTENT) {
+                "attacks must be in 1..$MAX_ATTACKS_PER_INTENT, got $attacks"
+            }
+        }
+    }
+
+    /** Sleep in one exact bed offered by the perception being answered. */
+    @Serializable
+    @SerialName("sleep")
+    data class Sleep(val bed: String) : Intent {
+        init {
+            requireBoundedRef(bed)
         }
     }
 

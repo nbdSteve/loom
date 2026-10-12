@@ -184,6 +184,8 @@ class InventoryRefsTest {
                 position = listOf(0.0, 64.0, 0.0),
                 inventorySummary =
                     issued.map { InventoryStack(ref = it.handle, what = "item.minecraft.bread", count = 1) },
+                craftingOptions = emptyList(),
+                craftingOptionsOmitted = 0,
                 world = WorldState(dayPhase = DayPhase.DAY, isDay = true, ticksUntilNightfall = 1),
             )
 

@@ -31,6 +31,7 @@ import dev.loom.bodycontrol.SensedBlock
 import dev.loom.bodycontrol.SensedEntity
 import dev.loom.bodycontrol.SensedGround
 import dev.loom.bodycontrol.SensedItem
+import dev.loom.bodycontrol.SensedRecipe
 import dev.loom.bodycontrol.SensedStack
 import dev.loom.bodycontrol.SensedTime
 import dev.loom.bodycontrol.SensedVitals
@@ -140,6 +141,7 @@ private class FakePlayerServerState : PlayerServerState {
     @Volatile
     var connected = true
 
+    var correlateEntities = true
     val dead = mutableSetOf<AgentId>()
     val senseAudits = CopyOnWriteArrayList<Pair<PlayerIdentity, BodyResponse.SenseReport>>()
     val senseAuditVersions = CopyOnWriteArrayList<Long>()
@@ -158,9 +160,13 @@ private class FakePlayerServerState : PlayerServerState {
         entities: List<SensedEntity>,
     ): List<UUID?> =
         entities.mapIndexed { index, entity ->
-            UUID.nameUUIDFromBytes(
-                "$index:${entity.what}".toByteArray(StandardCharsets.UTF_8),
-            )
+            if (correlateEntities) {
+                UUID.nameUUIDFromBytes(
+                    "$index:${entity.what}".toByteArray(StandardCharsets.UTF_8),
+                )
+            } else {
+                null
+            }
         }
 
     override fun itemSubjectsOf(
@@ -218,6 +224,12 @@ private class FakePlayerServerState : PlayerServerState {
                     "blockPlace ${claim.offeredStack.what} against ${claim.offeredBlock.position}"
                 is ServerInteractionClaim.Equip ->
                     "server slot ${claim.report.toSlot} holds ${claim.offeredStack.what}"
+                is ServerInteractionClaim.Craft ->
+                    "craftItem ${claim.report.count} ${claim.offeredRecipe.what}"
+                is ServerInteractionClaim.Attack ->
+                    "entityDamage ${claim.targetSubject} ${claim.offeredTarget.what}"
+                is ServerInteractionClaim.Sleep ->
+                    "bed ${claim.offeredBed.position} entered ${claim.report.entered}"
             }
         return ServerInteractionAudit(true, detail)
     }
@@ -952,9 +964,49 @@ class PlayerInteractionPortTest {
         harness.port.spawn(agent).await()
 
         InteractionPortProof.rejectsWrongKind(harness, agent)
+        InteractionPortProof.rejectsSurvivalWrongKinds(harness, agent)
+        InteractionPortProof.rejectsExcessCraftQuantity(harness, agent)
         InteractionPortProof.rejectsSpentRef(harness, agent)
+        InteractionPortProof.rejectsSpentRecipe(harness, agent)
         InteractionPortProof.rejectsWrongRequest(harness, agent)
         assertEquals(1, harness.connector.requests.count { it is BodyRequest.Dig })
+        assertEquals(1, harness.connector.requests.count { it is BodyRequest.Craft })
+    }
+
+    @Test
+    fun `combat refuses a client target the server did not corroborate`() {
+        val agent = AgentId("agent-uncorroborated")
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let(::interactionSense)
+                    },
+                ),
+            )
+        harness.server.correlateEntities = false
+        harness.port.spawn(agent).await()
+
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val target =
+            perception.surroundings.single {
+                it.what == "entity.minecraft.zombie"
+            }
+        val weapon =
+            perception.selfState.inventorySummary.single {
+                it.what == "item.minecraft.iron_sword"
+            }
+        val outcome =
+            harness.port
+                .apply(
+                    agent,
+                    Intent.Attack(target.ref, weapon.ref, attacks = 1, approach = false),
+                    perception.requestId,
+                ).await() as IntentOutcome.Rejected
+
+        assertEquals(EventTag.ATTACK_TARGET_UNCORROBORATED, outcome.tag)
+        assertTrue(harness.connector.requests.none { it is BodyRequest.Attack })
     }
 
     private fun interactionHarness(agent: AgentId): PortHarness =
@@ -993,8 +1045,11 @@ private data class InteractionRounds(
     val collect: String,
     val place: String,
     val equip: String,
+    val craft: String,
+    val attack: String,
+    val sleep: String,
 ) {
-    val all: List<String> = listOf(dig, collect, place, equip)
+    val all: List<String> = listOf(dig, collect, place, equip, craft, attack, sleep)
 }
 
 private data class InteractionRequests(
@@ -1002,8 +1057,11 @@ private data class InteractionRequests(
     val collect: BodyRequest.Collect,
     val place: BodyRequest.Place,
     val equip: BodyRequest.Equip,
+    val craft: BodyRequest.Craft,
+    val attack: BodyRequest.Attack,
+    val sleep: BodyRequest.Sleep,
 ) {
-    val all: List<BodyRequest> = listOf(dig, collect, place, equip)
+    val all: List<BodyRequest> = listOf(dig, collect, place, equip, craft, attack, sleep)
 }
 
 private object InteractionPortProof {
@@ -1016,6 +1074,9 @@ private object InteractionPortProof {
             collect = collect(harness, agent),
             place = place(harness, agent),
             equip = equip(harness, agent),
+            craft = craft(harness, agent),
+            attack = attack(harness, agent),
+            sleep = sleep(harness, agent),
         )
 
     fun requests(
@@ -1028,6 +1089,9 @@ private object InteractionPortProof {
                 harness.connector.requests.filterIsInstance<BodyRequest.Collect>().single(),
                 harness.connector.requests.filterIsInstance<BodyRequest.Place>().single(),
                 harness.connector.requests.filterIsInstance<BodyRequest.Equip>().single(),
+                harness.connector.requests.filterIsInstance<BodyRequest.Craft>().single(),
+                harness.connector.requests.filterIsInstance<BodyRequest.Attack>().single(),
+                harness.connector.requests.filterIsInstance<BodyRequest.Sleep>().single(),
             )
         assertEquals(rounds.dig, requests.dig.senseId)
         assertEquals(0, requests.dig.block)
@@ -1044,6 +1108,21 @@ private object InteractionPortProof {
             dev.loom.bodycontrol.EquipmentDestination.HEAD,
             requests.equip.destination,
         )
+        assertEquals(rounds.craft, requests.craft.senseId)
+        assertEquals(0, requests.craft.recipe)
+        assertEquals(2, requests.craft.crafts)
+        assertEquals(10_000, requests.craft.timeoutMs)
+        assertEquals(rounds.attack, requests.attack.senseId)
+        assertEquals(0, requests.attack.entity)
+        assertEquals(39, requests.attack.slot)
+        assertEquals(2, requests.attack.attacks)
+        assertTrue(requests.attack.approach)
+        assertEquals(7.5, requests.attack.maxPursuitDistance)
+        assertEquals(4.5, requests.attack.minHealth)
+        assertFalse(requests.attack.sprint)
+        assertEquals(rounds.sleep, requests.sleep.senseId)
+        assertEquals(1, requests.sleep.block)
+        assertEquals(20_000, requests.sleep.timeoutMs)
         rounds.all.zip(requests.all).forEach { (senseId, request) ->
             assertRequestUsesSenseConnection(harness, senseId, request)
         }
@@ -1058,7 +1137,7 @@ private object InteractionPortProof {
         requests: InteractionRequests,
     ) {
         val records = harness.records.filter { it.event == BodyEvent.WORLD_INTERACTION }
-        assertEquals(4, records.size)
+        assertEquals(7, records.size)
         assertEquals(rounds.all, records.map(BodyEventRecord::requestId))
         records.zip(requests.all).forEach { (record, request) ->
             assertEquals(agent.value, record.agentId)
@@ -1099,7 +1178,10 @@ private object InteractionPortProof {
         agent: AgentId,
     ) {
         val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
-        val block = perception.surroundings.single { it.kind == ObservationKind.BLOCK }.ref
+        val block =
+            perception.surroundings.single {
+                it.what == "block.minecraft.stone"
+            }.ref
         assertTrue(
             harness.port
                 .apply(agent, Intent.Dig(block), perception.requestId)
@@ -1112,12 +1194,94 @@ private object InteractionPortProof {
         assertEquals(EventTag.DIG_SENSE_FORGOTTEN, outcome.tag)
     }
 
+    fun rejectsSurvivalWrongKinds(
+        harness: PortHarness,
+        agent: AgentId,
+    ) {
+        val craftPerception =
+            requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val weapon =
+            craftPerception.selfState.inventorySummary.single {
+                it.what == "item.minecraft.iron_sword"
+            }
+        val craft =
+            harness.port
+                .apply(agent, Intent.Craft(weapon.ref, 1), craftPerception.requestId)
+                .await() as IntentOutcome.Rejected
+        assertEquals(EventTag.CRAFT_RECIPE_UNNAMED, craft.tag)
+
+        val sleepPerception =
+            requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val target =
+            sleepPerception.surroundings.single {
+                it.what == "entity.minecraft.zombie"
+            }
+        val sleep =
+            harness.port
+                .apply(agent, Intent.Sleep(target.ref), sleepPerception.requestId)
+                .await() as IntentOutcome.Rejected
+        assertEquals(EventTag.SLEEP_BED_UNNAMED, sleep.tag)
+
+        val attackPerception =
+            requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val bed =
+            attackPerception.surroundings.single {
+                it.what == "block.minecraft.red_bed"
+            }
+        val attackWeapon =
+            attackPerception.selfState.inventorySummary.single {
+                it.what == "item.minecraft.iron_sword"
+            }
+        val attack =
+            harness.port
+                .apply(
+                    agent,
+                    Intent.Attack(bed.ref, attackWeapon.ref, attacks = 1, approach = false),
+                    attackPerception.requestId,
+                ).await() as IntentOutcome.Rejected
+        assertEquals(EventTag.ATTACK_TARGET_UNNAMED, attack.tag)
+    }
+
+    fun rejectsExcessCraftQuantity(
+        harness: PortHarness,
+        agent: AgentId,
+    ) {
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val recipe = perception.selfState.craftingOptions.single()
+        val outcome =
+            harness.port
+                .apply(agent, Intent.Craft(recipe.ref, 3), perception.requestId)
+                .await() as IntentOutcome.Rejected
+        assertEquals(EventTag.CRAFT_QUANTITY_EXCEEDED, outcome.tag)
+    }
+
+    fun rejectsSpentRecipe(
+        harness: PortHarness,
+        agent: AgentId,
+    ) {
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val recipe = perception.selfState.craftingOptions.single()
+        assertTrue(
+            harness.port
+                .apply(agent, Intent.Craft(recipe.ref, 1), perception.requestId)
+                .await() is IntentOutcome.Accepted,
+        )
+        val outcome =
+            harness.port
+                .apply(agent, Intent.Craft(recipe.ref, 1), perception.requestId)
+                .await() as IntentOutcome.Rejected
+        assertEquals(EventTag.CRAFT_SENSE_FORGOTTEN, outcome.tag)
+    }
+
     fun rejectsWrongRequest(
         harness: PortHarness,
         agent: AgentId,
     ) {
         val old = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
-        val block = old.surroundings.single { it.kind == ObservationKind.BLOCK }.ref
+        val block =
+            old.surroundings.single {
+                it.what == "block.minecraft.stone"
+            }.ref
         val current = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
         val outcome =
             harness.port
@@ -1131,7 +1295,10 @@ private object InteractionPortProof {
         agent: AgentId,
     ): String {
         val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
-        val block = perception.surroundings.single { it.kind == ObservationKind.BLOCK }
+        val block =
+            perception.surroundings.single {
+                it.what == "block.minecraft.stone"
+            }
         assertEquals(
             IntentOutcome.Accepted("dug the offered block"),
             harness.port.apply(agent, Intent.Dig(block.ref), perception.requestId).await(),
@@ -1162,7 +1329,10 @@ private object InteractionPortProof {
         agent: AgentId,
     ): String {
         val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
-        val support = perception.surroundings.single { it.kind == ObservationKind.BLOCK }
+        val support =
+            perception.surroundings.single {
+                it.what == "block.minecraft.stone"
+            }
         val dirt =
             perception.selfState.inventorySummary.single {
                 it.what == "item.minecraft.dirt"
@@ -1196,6 +1366,64 @@ private object InteractionPortProof {
                     Intent.Equip(helmet.ref, EquipmentDestination.HEAD),
                     perception.requestId,
                 ).await(),
+        )
+        return perception.requestId
+    }
+
+    private fun craft(
+        harness: PortHarness,
+        agent: AgentId,
+    ): String {
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val recipe = perception.selfState.craftingOptions.single()
+        assertEquals(
+            IntentOutcome.Accepted("crafted 8 minecraft:oak_planks in 2 application(s)"),
+            harness.port
+                .apply(agent, Intent.Craft(recipe.ref, crafts = 2), perception.requestId)
+                .await(),
+        )
+        return perception.requestId
+    }
+
+    private fun attack(
+        harness: PortHarness,
+        agent: AgentId,
+    ): String {
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val target =
+            perception.surroundings.single {
+                it.what == "entity.minecraft.zombie"
+            }
+        val weapon =
+            perception.selfState.inventorySummary.single {
+                it.what == "item.minecraft.iron_sword"
+            }
+        assertEquals(
+            IntentOutcome.Accepted("completed 2 bounded attack(s)"),
+            harness.port
+                .apply(
+                    agent,
+                    Intent.Attack(target.ref, weapon.ref, attacks = 2, approach = true),
+                    perception.requestId,
+                ).await(),
+        )
+        return perception.requestId
+    }
+
+    private fun sleep(
+        harness: PortHarness,
+        agent: AgentId,
+    ): String {
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val bed =
+            perception.surroundings.single {
+                it.what == "block.minecraft.red_bed"
+            }
+        assertEquals(
+            IntentOutcome.Accepted("slept until vanilla woke the player"),
+            harness.port
+                .apply(agent, Intent.Sleep(bed.ref), perception.requestId)
+                .await(),
         )
         return perception.requestId
     }
@@ -1289,14 +1517,28 @@ private fun fakeResponse(
         is BodyRequest.MoveTo -> fakeMove(request)
         is BodyRequest.Flee -> fakeFlee(request)
         is BodyRequest.Eat -> fakeEat(request)
+        is BodyRequest.Status -> fakeStatus(request, handled)
+        is BodyRequest.Halt -> fakeHalt(request)
+        else -> fakeInteractionResponse(request)
+    }
+
+private fun fakeInteractionResponse(request: BodyRequest): BodyResponse =
+    when (request) {
         is BodyRequest.Dig -> fakeDig(request)
         is BodyRequest.Collect -> fakeCollect(request)
         is BodyRequest.Place -> fakePlace(request)
         is BodyRequest.Equip -> fakeEquip(request)
-        is BodyRequest.Halt -> fakeHalt(request)
-        is BodyRequest.Status -> fakeStatus(request, handled)
+        is BodyRequest.Craft -> fakeCraft(request)
+        is BodyRequest.Attack -> fakeAttack(request)
+        is BodyRequest.Sleep -> fakeSleep(request)
         is BodyRequest.Handshake,
         is BodyRequest.Shutdown,
+        is BodyRequest.Sense,
+        is BodyRequest.MoveTo,
+        is BodyRequest.Flee,
+        is BodyRequest.Eat,
+        is BodyRequest.Status,
+        is BodyRequest.Halt,
         -> error("the fake connector already represents a handshaken gameplay connection")
     }
 
@@ -1335,8 +1577,11 @@ private fun fakeSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
                     count = 3,
                 ),
             ),
+        recipes = emptyList(),
+        recipesOmitted = 0,
     )
 
+@Suppress("LongMethod")
 private fun interactionSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
     BodyResponse.SenseReport(
         protocol = request.protocol,
@@ -1351,13 +1596,25 @@ private fun interactionSense(request: BodyRequest.Sense): BodyResponse.SenseRepo
                 standingIn = "minecraft:air",
                 standingOn = "minecraft:stone",
             ),
-        entities = emptyList(),
+        entities =
+            listOf(
+                SensedEntity(
+                    what = "minecraft:zombie",
+                    position = listOf(4.5, 64.0, 2.5),
+                    visible = true,
+                ),
+            ),
         entitiesOmitted = 0,
         blocks =
             listOf(
                 SensedBlock(
                     what = "minecraft:stone",
                     position = listOf(2, 63, 2),
+                    visible = true,
+                ),
+                SensedBlock(
+                    what = "minecraft:red_bed",
+                    position = listOf(3, 63, 2),
                     visible = true,
                 ),
             ),
@@ -1376,7 +1633,19 @@ private fun interactionSense(request: BodyRequest.Sense): BodyResponse.SenseRepo
             listOf(
                 SensedStack(slot = 36, what = "minecraft:dirt", count = 2),
                 SensedStack(slot = 38, what = "minecraft:iron_helmet", count = 1),
+                SensedStack(slot = 39, what = "minecraft:iron_sword", count = 1),
+                SensedStack(slot = 40, what = "minecraft:oak_log", count = 2),
             ),
+        recipes =
+            listOf(
+                SensedRecipe(
+                    what = "minecraft:oak_planks",
+                    resultCount = 4,
+                    maxCrafts = 2,
+                    requiresTable = false,
+                ),
+            ),
+        recipesOmitted = 0,
     )
 
 private fun fakeDig(request: BodyRequest.Dig): BodyResponse.DigReport =
@@ -1429,6 +1698,45 @@ private fun fakeEquip(request: BodyRequest.Equip): BodyResponse.EquipReport =
         what = "minecraft:bread",
         count = 3,
         toSlot = request.slot,
+    )
+
+private fun fakeCraft(request: BodyRequest.Craft): BodyResponse.CraftReport =
+    BodyResponse.CraftReport(
+        protocol = request.protocol,
+        requestId = request.requestId,
+        agentId = request.agentId,
+        state = LifecycleState.READY,
+        outcome = dev.loom.bodycontrol.CraftOutcome.CRAFTED,
+        elapsedMs = 20,
+        attempted = true,
+        what = "minecraft:oak_planks",
+        count = 4 * request.crafts,
+        crafts = request.crafts,
+    )
+
+private fun fakeAttack(request: BodyRequest.Attack): BodyResponse.AttackReport =
+    BodyResponse.AttackReport(
+        protocol = request.protocol,
+        requestId = request.requestId,
+        agentId = request.agentId,
+        state = LifecycleState.READY,
+        outcome = dev.loom.bodycontrol.AttackOutcome.ATTACKED,
+        from = SENSE_POSITION,
+        position = SENSE_POSITION,
+        travelled = 0.0,
+        elapsedMs = 20,
+        attacks = request.attacks,
+    )
+
+private fun fakeSleep(request: BodyRequest.Sleep): BodyResponse.SleepReport =
+    BodyResponse.SleepReport(
+        protocol = request.protocol,
+        requestId = request.requestId,
+        agentId = request.agentId,
+        state = LifecycleState.READY,
+        outcome = dev.loom.bodycontrol.SleepOutcome.WOKE,
+        elapsedMs = 20,
+        entered = true,
     )
 
 private fun fakeMove(request: BodyRequest.MoveTo): BodyResponse.MoveReport =
