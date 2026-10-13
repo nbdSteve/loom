@@ -5,6 +5,9 @@ package dev.loom.body.player
 
 import dev.loom.body.InventorySlotBinding
 import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
+import dev.loom.body.PerceptionAudit
+import dev.loom.body.PerceptionKindAudit
+import dev.loom.body.PerceptionWorldClockAudit
 import dev.loom.body.ThreatCandidate
 import dev.loom.body.WorldClock
 import dev.loom.body.WorldTargetRefBinding
@@ -76,10 +79,56 @@ internal class PlayerSceneTranslator(
                 }.toMap(),
             surroundings = surroundings,
             surroundingsOmitted = omittedByBody + omittedBySceneBound,
+            perceptionAudit = perceptionAuditOf(raw, entityOffers.size, blockOffers.size, itemOffers.size),
             candidates = candidatesOf(selected, surroundings),
             selfState = selfStateOf(raw, slotBindings, recipeBindings),
         )
     }
+
+    private fun perceptionAuditOf(
+        raw: RawSense,
+        selectedEntities: Int,
+        selectedBlocks: Int,
+        selectedItems: Int,
+    ): PerceptionAudit =
+        PerceptionAudit(
+            worldClock =
+                PerceptionWorldClockAudit(
+                    timeOfDay = raw.report.time.timeOfDay,
+                    day = raw.report.time.day,
+                    isDay = raw.report.time.isDay,
+                ),
+            entities =
+                kindAudit(
+                    rawCount = raw.report.entities.size,
+                    bodyOmitted = raw.report.entitiesOmitted,
+                    selectedCount = selectedEntities,
+                ),
+            blocks =
+                kindAudit(
+                    rawCount = raw.report.blocks.size,
+                    bodyOmitted = raw.report.blocksOmitted,
+                    selectedCount = selectedBlocks,
+                ),
+            droppedItems =
+                kindAudit(
+                    rawCount = raw.report.items.size,
+                    bodyOmitted = raw.report.itemsOmitted,
+                    selectedCount = selectedItems,
+                ),
+        )
+
+    private fun kindAudit(
+        rawCount: Int,
+        bodyOmitted: Long,
+        selectedCount: Int,
+    ): PerceptionKindAudit =
+        PerceptionKindAudit(
+            rawBodyListCount = rawCount.toLong(),
+            bodyReportedOmittedCount = bodyOmitted,
+            jvmSelectedCount = selectedCount.toLong(),
+            jvmCutOmittedCount = (rawCount - selectedCount).toLong(),
+        )
 
     private fun refsOf(vararg groups: Pair<List<SceneOffer>, List<String>>): Map<Pair<ObservationKind, Int>, String> =
         buildMap {

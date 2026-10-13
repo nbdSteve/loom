@@ -16,6 +16,14 @@ const {
   scanText
 } = require('./evidence.js')
 const {
+  CRASH_CONTAINMENT_MODE,
+  PRIMARY_BEHAVIOR_AGENTS,
+  PRIMARY_BEHAVIOR_INITIAL_POSITIONS,
+  ROUTINE_V12_PRIMARY_BEHAVIOR_MODE,
+  configuredMode,
+  isPrimaryBehaviorMode
+} = require('./experiment-mode.js')
+const {
   canonicalJson,
   offlineIdentity,
   readJson,
@@ -33,6 +41,15 @@ const ALLOWED_ARTIFACT_FILES = new Set([MANIFEST_FILE, EVIDENCE_FILE, METRICS_FI
 const ZERO_SHA256 = '0'.repeat(64)
 const NANO_USD_PER_USD = 1_000_000_000
 const MAX_PROVIDER_REQUEST_BYTES = 256 * 1024
+const PRIMARY_BEHAVIOR_DIRECTIVES = [
+  'roles',
+  'resourceTargets',
+  'socialGoals',
+  'hierarchy',
+  'pairings',
+  'conflict',
+  'scriptedObjectives'
+]
 
 function configuredAgents (config) {
   return [...config.agents]
@@ -105,6 +122,127 @@ function maximumConfiguredSpendNanoUsd (config) {
   return perCall * config.cognition.globalCallCeiling
 }
 
+function sameJson (first, second) {
+  try {
+    assert.deepStrictEqual(first, second)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function primaryBehaviorErrors (config) {
+  const errors = []
+  const behavior = config.primaryBehavior
+  if (behavior === null || typeof behavior !== 'object' || Array.isArray(behavior)) {
+    return ['primaryBehavior must configure the research-only behavior mode']
+  }
+  if (!sameJson(config.agents, PRIMARY_BEHAVIOR_AGENTS)) {
+    errors.push('the primary behavior mode must use tribe-alpha, tribe-beta, and tribe-gamma')
+  }
+  if (!sameJson(behavior.initialPositions, PRIMARY_BEHAVIOR_INITIAL_POSITIONS)) {
+    errors.push('primaryBehavior.initialPositions must pin the r5 neutral coordinates')
+  }
+  const clock = behavior.initialWorldClock
+  if (
+    clock?.timeOfDay !== 0 ||
+    clock?.day !== 0 ||
+    clock?.isDay !== true
+  ) {
+    errors.push('primaryBehavior.initialWorldClock must pin day 0 at time 0')
+  }
+  const schedule = behavior.nativeGoalReviewSchedule
+  if (
+    schedule?.cadenceTicks !== 2400 ||
+    schedule?.sliceTicks !== 100 ||
+    schedule?.expectedReviewsPerAgent !== 2
+  ) {
+    errors.push('primaryBehavior.nativeGoalReviewSchedule must pin 2400/100 ticks and two reviews per agent')
+  }
+  if (
+    Number.isInteger(schedule?.expectedReviewsPerAgent) &&
+    schedule.expectedReviewsPerAgent > config.cognition?.perAgentCallCeiling
+  ) {
+    errors.push('planned native reviews exceed the per-agent cognition call ceiling')
+  }
+  if (
+    Number.isInteger(schedule?.expectedReviewsPerAgent) &&
+    Array.isArray(config.agents) &&
+    schedule.expectedReviewsPerAgent * config.agents.length >
+      config.cognition?.globalCallCeiling
+  ) {
+    errors.push('planned native reviews exceed the global cognition call ceiling')
+  }
+  if (behavior.externalCognitionStimuli !== 'none') {
+    errors.push('primaryBehavior.externalCognitionStimuli must be none')
+  }
+  if (behavior.startingInventories !== 'empty') {
+    errors.push('primaryBehavior.startingInventories must be empty')
+  }
+  for (const directive of PRIMARY_BEHAVIOR_DIRECTIVES) {
+    if (behavior.injectedDirectives?.[directive] !== false) {
+      errors.push(`primaryBehavior.injectedDirectives.${directive} must be false`)
+    }
+  }
+  if (behavior.scene !== 'r5-neutral') {
+    errors.push('primaryBehavior.scene must be r5-neutral')
+  }
+  if (behavior.categoryFairSelection !== false) {
+    errors.push('primaryBehavior.categoryFairSelection must remain false for this pilot')
+  }
+  if (config.proof !== undefined) {
+    errors.push('the primary behavior mode cannot configure crash or operator-think proof traffic')
+  }
+  if (
+    config.world?.seed !== '76192346017' ||
+    config.world?.difficulty !== 'normal' ||
+    config.world?.mobSpawning !== true ||
+    config.world?.worldBorderDiameterBlocks !== 128 ||
+    config.world?.viewDistanceChunks !== 4 ||
+    config.world?.simulationDistanceChunks !== 4
+  ) {
+    errors.push('the primary behavior mode must retain the r5 seed, normal world, 128-block border, and 4-chunk distances')
+  }
+  if (
+    config.bounds?.runDurationSeconds !== 180 ||
+    config.bounds?.simulationTickCeiling !== 4000
+  ) {
+    errors.push('the primary behavior mode must run for 180 seconds or 4000 simulation ticks')
+  }
+  if (
+    config.cognition?.perAgentCallCeiling !== 4 ||
+    config.cognition?.globalCallCeiling !== 12 ||
+    config.cognition?.globalOutstandingCeiling !== 3
+  ) {
+    errors.push('the primary behavior mode must retain the 4/12/3 cognition ceilings')
+  }
+  if (
+    config.cognition?.providerTimeoutMillis !== 12_000 ||
+    config.cognition?.maxRequestBytes !== 65_536 ||
+    config.cognition?.maxOutputTokens !== 2048
+  ) {
+    errors.push('the primary behavior mode must retain the provider timeout and request/output bounds')
+  }
+  if (!sameJson(config.cognition?.prompts, {
+    routine: 'routine-v12',
+    notable: 'notable-v12',
+    pivotal: 'pivotal-v12'
+  })) {
+    errors.push('the primary behavior mode must use routine, notable, and pivotal prompt v12')
+  }
+  if (
+    config.cognition?.backend === 'openai' &&
+    (
+      config.cognition.models?.ordinary !== 'gpt-5.4-nano' ||
+      config.cognition.models?.pivotal !== 'gpt-5.4' ||
+      config.cognition.maxExternalSpendUsd !== 2.34
+    )
+  ) {
+    errors.push('the live primary behavior mode must retain gpt-5.4-nano/gpt-5.4 and the $2.34 ceiling')
+  }
+  return errors
+}
+
 function validateRunConfig (config) {
   const errors = []
   if (config === null || typeof config !== 'object' || Array.isArray(config)) {
@@ -112,6 +250,9 @@ function validateRunConfig (config) {
   }
   if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9][a-z0-9-]*$/.test(config.experimentId ?? '')) {
     errors.push('experimentId must be a dated lowercase slug')
+  }
+  if (![CRASH_CONTAINMENT_MODE, ROUTINE_V12_PRIMARY_BEHAVIOR_MODE].includes(configuredMode(config))) {
+    errors.push('mode must be crash-containment or routine-v12-primary-behavior')
   }
   if (!Array.isArray(config.agents) || config.agents.length < 3 || config.agents.length > 16) {
     errors.push('agents must contain 3..16 agent ids')
@@ -318,35 +459,39 @@ function validateRunConfig (config) {
   } catch {
     errors.push('paper.downloadUrl must be an absolute HTTPS URL')
   }
-  if (!config.agents?.includes(config.proof?.crashAgent)) {
-    errors.push('proof.crashAgent must name one configured agent')
-  }
-  if (
-    typeof config.proof?.crashAfterSeconds !== 'number' ||
-    config.proof.crashAfterSeconds <= 0 ||
-    config.proof.crashAfterSeconds >= config.bounds?.runDurationSeconds
-  ) {
-    errors.push('proof.crashAfterSeconds must fall inside the run duration')
-  }
-  if (
-    typeof config.proof?.cycleIntervalSeconds !== 'number' ||
-    config.proof.cycleIntervalSeconds <= 0 ||
-    config.proof.cycleIntervalSeconds > config.bounds?.runDurationSeconds
-  ) {
-    errors.push('proof.cycleIntervalSeconds must be positive and no longer than the run')
-  }
-  if (
-    !Number.isInteger(config.proof?.postCrashCallsPerPeer) ||
-    config.proof.postCrashCallsPerPeer < 1 ||
-    config.proof.postCrashCallsPerPeer >= config.cognition?.perAgentCallCeiling
-  ) {
-    errors.push('proof.postCrashCallsPerPeer must fit below the per-agent call ceiling')
-  } else if (
-    Array.isArray(config.agents) &&
-    config.proof.postCrashCallsPerPeer * Math.max(0, config.agents.length - 1) >=
-      config.cognition?.globalCallCeiling
-  ) {
-    errors.push('the post-crash peer reserve must fit below the global call ceiling')
+  if (isPrimaryBehaviorMode(config)) {
+    errors.push(...primaryBehaviorErrors(config))
+  } else {
+    if (!config.agents?.includes(config.proof?.crashAgent)) {
+      errors.push('proof.crashAgent must name one configured agent')
+    }
+    if (
+      typeof config.proof?.crashAfterSeconds !== 'number' ||
+      config.proof.crashAfterSeconds <= 0 ||
+      config.proof.crashAfterSeconds >= config.bounds?.runDurationSeconds
+    ) {
+      errors.push('proof.crashAfterSeconds must fall inside the run duration')
+    }
+    if (
+      typeof config.proof?.cycleIntervalSeconds !== 'number' ||
+      config.proof.cycleIntervalSeconds <= 0 ||
+      config.proof.cycleIntervalSeconds > config.bounds?.runDurationSeconds
+    ) {
+      errors.push('proof.cycleIntervalSeconds must be positive and no longer than the run')
+    }
+    if (
+      !Number.isInteger(config.proof?.postCrashCallsPerPeer) ||
+      config.proof.postCrashCallsPerPeer < 1 ||
+      config.proof.postCrashCallsPerPeer >= config.cognition?.perAgentCallCeiling
+    ) {
+      errors.push('proof.postCrashCallsPerPeer must fit below the per-agent call ceiling')
+    } else if (
+      Array.isArray(config.agents) &&
+      config.proof.postCrashCallsPerPeer * Math.max(0, config.agents.length - 1) >=
+        config.cognition?.globalCallCeiling
+    ) {
+      errors.push('the post-crash peer reserve must fit below the global call ceiling')
+    }
   }
   return errors
 }
@@ -483,6 +628,165 @@ function validateProspectiveManifest (config, source) {
   return manifest
 }
 
+function initialConditionsMatch (config, metrics) {
+  const observed = metrics.perceptionAudit?.initialByAgent ?? []
+  if (
+    metrics.primaryBehavior?.initialConditionAttestations !== 1 ||
+    !sameJson(
+      metrics.primaryBehavior.configuredInitialPositions,
+      config.primaryBehavior.initialPositions
+    ) ||
+    !sameJson(
+      metrics.primaryBehavior.configuredInitialWorldClock,
+      config.primaryBehavior.initialWorldClock
+    ) ||
+    metrics.primaryBehavior.startingInventories !== 'empty' ||
+    observed.length !== config.agents.length
+  ) {
+    return false
+  }
+  return observed.every((entry) =>
+    sameJson(entry.position, config.primaryBehavior.initialPositions[entry.agentId]) &&
+    entry.inventoryStacks === 0 &&
+    entry.worldClock !== undefined
+  )
+}
+
+function expectedNativeReviewsObserved (config, metrics) {
+  const expected = config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent
+  const observed = metrics.primaryBehavior?.nativeGoalReviewsByAgent ?? {}
+  return config.agents.every((agentId) => observed[agentId] === expected)
+}
+
+function protocolFor (config, metrics) {
+  if (!isPrimaryBehaviorMode(config)) {
+    return {
+      mode: CRASH_CONTAINMENT_MODE,
+      goalReviewCycleSeconds: config.proof.cycleIntervalSeconds,
+      difficulty: config.world.difficulty,
+      mobSpawning: config.world.mobSpawning,
+      controlledBodyCrash: {
+        agentId: config.proof.crashAgent,
+        afterSeconds: config.proof.crashAfterSeconds,
+        reservedCallsPerPeer: config.proof.postCrashCallsPerPeer,
+        signal: 'SIGKILL'
+      }
+    }
+  }
+  return {
+    mode: ROUTINE_V12_PRIMARY_BEHAVIOR_MODE,
+    difficulty: config.world.difficulty,
+    mobSpawning: config.world.mobSpawning,
+    controlledBodyCrashPlanned: false,
+    nativeGoalReviewSchedule: structuredClone(
+      config.primaryBehavior.nativeGoalReviewSchedule
+    ),
+    externalCognitionStimuli: {
+      configured: config.primaryBehavior.externalCognitionStimuli,
+      harnessThinkCommandsIssued:
+        metrics.primaryBehavior?.harnessThinkCommandsIssued ?? 0,
+      nativeSchedulersOnly:
+        metrics.primaryBehavior?.nativeSchedulersOnly ?? false,
+      attested: {
+        source: 'bounded harness intervention schedule and cognition request-origin journal'
+      }
+    },
+    initialConditions: {
+      configuredPositions: structuredClone(config.primaryBehavior.initialPositions),
+      configuredWorldClock: structuredClone(config.primaryBehavior.initialWorldClock),
+      startingInventories: config.primaryBehavior.startingInventories,
+      observedFirstPerceptions:
+        structuredClone(metrics.perceptionAudit?.initialByAgent ?? []),
+      attested: {
+        source: 'Paper setup commands plus exact first body perception for each agent'
+      }
+    },
+    injectedDirectives: structuredClone(config.primaryBehavior.injectedDirectives),
+    scene: config.primaryBehavior.scene,
+    categoryFairSelection: config.primaryBehavior.categoryFairSelection
+  }
+}
+
+function integrityChecksFor (config, metrics, agents, warnings) {
+  const common = {
+    threeIndependentBodies: {
+      passed:
+        agents.length >= 3 &&
+        metrics.records.agents.filter((agent) => agent.byEvent.spawned > 0).length >= 3,
+      derivedFrom: EVIDENCE_FILE
+    },
+    completeDecisionChains: {
+      passed: metrics.cycles.incomplete.length === 0,
+      derivedFrom: EVIDENCE_FILE
+    },
+    cleanupVerified: {
+      passed: metrics.crashContainment.cleanupVerified,
+      derivedFrom: EVIDENCE_FILE
+    },
+    absolutePermadeathEnabled: {
+      passed: config.featureFlags.permadeath === true,
+      configuredBy: 'Loom player witness and synchronous death ledger'
+    },
+    noDroppedEvidenceWarning: {
+      passed: !warnings.some((warning) => warning.includes('dropped')),
+      attested: { source: 'bounded Paper log scan performed by the harness' }
+    },
+    serverEvidenceUncontested: {
+      passed: metrics.behavior.witnessDisputeRecords === 0,
+      derivedFrom: EVIDENCE_FILE
+    }
+  }
+  if (!isPrimaryBehaviorMode(config)) {
+    return {
+      ...common,
+      crashContained: {
+        passed:
+          metrics.crashContainment.controlledCrashes.length > 0 &&
+          Object.keys(metrics.crashContainment.peerDecisionsAfterCrash).length >= 2,
+        derivedFrom: EVIDENCE_FILE
+      }
+    }
+  }
+  return {
+    ...common,
+    noControlledBodyCrash: {
+      passed: metrics.crashContainment.controlledCrashes.length === 0,
+      derivedFrom: EVIDENCE_FILE
+    },
+    nativeSchedulersOnly: {
+      passed:
+        metrics.primaryBehavior?.stimulusAttestations === 1 &&
+        metrics.primaryBehavior.externalCognitionStimuli === 'none' &&
+        metrics.primaryBehavior.harnessThinkCommandsIssued === 0 &&
+        metrics.primaryBehavior.nativeSchedulersOnly === true &&
+        !Object.hasOwn(metrics.primaryBehavior.requestsByOrigin, 'unattested'),
+      derivedFrom: EVIDENCE_FILE
+    },
+    expectedNativeReviewsObserved: {
+      passed: expectedNativeReviewsObserved(config, metrics),
+      derivedFrom: EVIDENCE_FILE
+    },
+    initialConditionsRecorded: {
+      passed: initialConditionsMatch(config, metrics),
+      derivedFrom: EVIDENCE_FILE
+    },
+    perKindPerceptionAuditComplete: {
+      passed:
+        metrics.perceptionAudit?.complete === true &&
+        metrics.perceptionAudit.samples === metrics.cycles.perceived,
+      derivedFrom: EVIDENCE_FILE
+    },
+    plannedNativeCallsFitCeilings: {
+      passed:
+        config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent <=
+          config.cognition.perAgentCallCeiling &&
+        config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent *
+          config.agents.length <= config.cognition.globalCallCeiling,
+      configuredBy: 'native GoalReviewSchedule plan and cognition ceilings'
+    }
+  }
+}
+
 function buildManifest ({
   config,
   source,
@@ -556,17 +860,7 @@ function buildManifest ({
     },
     network: { ...config.network },
     runtime: structuredClone(config.runtime),
-    protocol: {
-      goalReviewCycleSeconds: config.proof.cycleIntervalSeconds,
-      difficulty: config.world.difficulty,
-      mobSpawning: config.world.mobSpawning,
-      controlledBodyCrash: {
-        agentId: config.proof.crashAgent,
-        afterSeconds: config.proof.crashAfterSeconds,
-        reservedCallsPerPeer: config.proof.postCrashCallsPerPeer,
-        signal: 'SIGKILL'
-      }
-    },
+    protocol: protocolFor(config, metricValue),
     software: components,
     agents,
     provenance: {
@@ -634,54 +928,18 @@ function buildManifest ({
         byEvent: agent.byEvent
       }))
     },
-    integrityChecks: {
-      threeIndependentBodies: {
-        passed: agents.length >= 3 && metricValue.records.agents.filter((agent) => agent.byEvent.spawned > 0).length >= 3,
-        derivedFrom: EVIDENCE_FILE
-      },
-      completeDecisionChains: {
-        passed: metricValue.cycles.incomplete.length === 0,
-        derivedFrom: EVIDENCE_FILE
-      },
-      crashContained: {
-        passed:
-          metricValue.crashContainment.controlledCrashes.length > 0 &&
-          Object.keys(metricValue.crashContainment.peerDecisionsAfterCrash).length >= 2,
-        derivedFrom: EVIDENCE_FILE
-      },
-      cleanupVerified: {
-        passed: metricValue.crashContainment.cleanupVerified,
-        derivedFrom: EVIDENCE_FILE
-      },
-      absolutePermadeathEnabled: {
-        passed: config.featureFlags.permadeath === true,
-        configuredBy: 'Loom player witness and synchronous death ledger'
-      },
-      noDroppedEvidenceWarning: {
-        passed: !warnings.some((warning) => warning.includes('dropped')),
-        attested: { source: 'bounded Paper log scan performed by the harness' }
-      },
-      serverEvidenceUncontested: {
-        passed: metricValue.behavior.witnessDisputeRecords === 0,
-        derivedFrom: EVIDENCE_FILE
-      }
-    },
+    integrityChecks: integrityChecksFor(config, metricValue, agents, warnings),
     knownWarnings: warnings,
     outcome: outcomeStatement(config, metricValue),
     scientificUsability: {
-      verdict:
-        config.cognition.backend === 'scripted'
-          ? 'Usable as a bounded composition, evidence, crash-containment, and cleanup proof; not as evidence of model-driven emergence.'
-          : 'Usable only for the observations and counterevidence derivable from this bounded run.',
+      verdict: scientificVerdict(config),
       scope: [
         'The configured isolated bodies shared one disposable Paper world under fixed resource and cognition bounds.',
         'Recorded per-agent cycles, action outcomes, lifecycle failures, and cleanup can be reproduced from normalized evidence.'
       ],
       outOfScope: [
         'No single bounded run establishes durable cooperation, role specialization, hierarchy, settlement, or conflict norms.',
-        config.cognition.backend === 'scripted'
-          ? 'Scripted cognition and harness staging are never evidence of emergence.'
-          : 'The controlled crash and fixed experimental setup are interventions, not emergent behavior.'
+        scientificOutOfScope(config)
       ]
     },
     publication: {
@@ -691,11 +949,39 @@ function buildManifest ({
       rawWorldCommitted: false,
       serverLogsCommitted: false,
       deathLedgerCommitted: false
-    }
+    },
+    ...(isPrimaryBehaviorMode(config)
+      ? { perceptionAudit: structuredClone(metricValue.perceptionAudit ?? null) }
+      : {})
   }
 }
 
+function scientificVerdict (config) {
+  if (config.cognition.backend === 'scripted') {
+    return isPrimaryBehaviorMode(config)
+      ? 'Usable as a credential-free proof of startup, native scheduling, audited publication, and cleanup; not as a behavior result.'
+      : 'Usable as a bounded composition, evidence, crash-containment, and cleanup proof; not as evidence of model-driven emergence.'
+  }
+  return 'Usable only for the observations and counterevidence derivable from this bounded run.'
+}
+
+function scientificOutOfScope (config) {
+  if (config.cognition.backend === 'scripted') {
+    return 'Scripted cognition and harness staging are never evidence of autonomous behavior or emergence.'
+  }
+  return isPrimaryBehaviorMode(config)
+    ? 'Pinned starting conditions are an experimental intervention; no goal, role, resource target, social policy, or cognition stimulus was injected.'
+    : 'The controlled crash and fixed experimental setup are interventions, not emergent behavior.'
+}
+
 function outcomeStatement (config, metrics) {
+  if (isPrimaryBehaviorMode(config)) {
+    const nativeReviews = Object.values(
+      metrics.primaryBehavior?.nativeGoalReviewsByAgent ?? {}
+    ).reduce((sum, count) => sum + count, 0)
+    return `${config.agents.length} configured bodies produced ${metrics.cycles.decided} decisions in one bounded shared world; ` +
+      `${nativeReviews} cognition request(s) came from the native goal-review schedule, with no harness-raised cognition stimulus or controlled body crash.`
+  }
   const crashes = metrics.crashContainment.controlledCrashes.length
   const peers = Object.keys(metrics.crashContainment.peerDecisionsAfterCrash).length
   const social = metrics.findings.observations.length
@@ -716,6 +1002,127 @@ function readNormalizedEvidence (file, bounds) {
     }
   }
   return records
+}
+
+function primaryBehaviorSemanticErrors (manifest, metrics, records) {
+  const errors = []
+  const protocol = manifest.protocol
+  if (Object.hasOwn(protocol, 'controlledBodyCrash')) {
+    errors.push('primary behavior protocol cannot contain a controlled body crash')
+  }
+  if (protocol.controlledBodyCrashPlanned !== false) {
+    errors.push('primary behavior protocol must attest that no body crash was planned')
+  }
+  if (metrics.crashContainment.controlledCrashes.length !== 0) {
+    errors.push('primary behavior evidence contains a controlled body crash')
+  }
+  if (
+    records.some((record) =>
+      record.source === 'harness' &&
+      ['processExited', 'processGroupSignalled'].includes(record.event) &&
+      record.signal === 'SIGKILL'
+    )
+  ) {
+    errors.push('primary behavior evidence contains a process terminated by SIGKILL')
+  }
+  if (
+    metrics.cognition.refusedCalls !== 0 ||
+    metrics.cycles.unavailable !== 0 ||
+    metrics.cycles.discarded !== 0
+  ) {
+    errors.push('primary behavior evidence contains a cognition refusal, unavailable decision, or discarded decision')
+  }
+  if (metrics.behavior.deaths !== 0 || metrics.behavior.disconnects !== 0) {
+    errors.push('primary behavior evidence contains a death or unmanaged body disconnect')
+  }
+  if (!sameJson(manifest.perceptionAudit, metrics.perceptionAudit)) {
+    errors.push('manifest per-kind perception audit does not match metrics.json')
+  }
+  if (
+    metrics.perceptionAudit?.complete !== true ||
+    metrics.perceptionAudit.samples !== metrics.cycles.perceived
+  ) {
+    errors.push('primary behavior perception audit is incomplete')
+  }
+  const primary = metrics.primaryBehavior
+  if (
+    primary?.stimulusAttestations !== 1 ||
+    primary.initialConditionAttestations !== 1 ||
+    primary.externalCognitionStimuli !== 'none' ||
+    primary.harnessThinkCommandsIssued !== 0 ||
+    primary.nativeSchedulersOnly !== true
+  ) {
+    errors.push('primary behavior native-only cognition attestation is incomplete or inconsistent')
+  }
+  if (
+    !sameJson(
+      primary?.nativeGoalReviewSchedule,
+      protocol.nativeGoalReviewSchedule
+    ) ||
+    !sameJson(
+      primary?.configuredInitialPositions,
+      protocol.initialConditions?.configuredPositions
+    ) ||
+    !sameJson(
+      primary?.configuredInitialWorldClock,
+      protocol.initialConditions?.configuredWorldClock
+    ) ||
+    primary?.startingInventories !== protocol.initialConditions?.startingInventories
+  ) {
+    errors.push('primary behavior harness attestations do not match the manifest protocol')
+  }
+  for (const record of records) {
+    if (
+      record.source !== 'harness' ||
+      !['cognitionForwarded', 'cognitionRefused'].includes(record.event)
+    ) continue
+    const expected = record.trigger === 'goalReview'
+      ? 'nativeGoalReviewSchedule'
+      : 'nativeEventDriver'
+    if (record.origin !== expected) {
+      errors.push(`cognition request ${record.requestKey ?? record.recordId} has no valid native origin`)
+    }
+  }
+  const expectedReviews = protocol.nativeGoalReviewSchedule?.expectedReviewsPerAgent
+  for (const agent of manifest.agents) {
+    if (primary?.nativeGoalReviewsByAgent?.[agent.agentId] !== expectedReviews) {
+      errors.push(`${agent.agentId} did not record the expected native scheduled reviews`)
+    }
+  }
+  const observed = new Map(
+    (metrics.perceptionAudit?.initialByAgent ?? [])
+      .map((entry) => [entry.agentId, entry])
+  )
+  for (const agent of manifest.agents) {
+    const first = observed.get(agent.agentId)
+    const configured = protocol.initialConditions?.configuredPositions?.[agent.agentId]
+    if (
+      first === undefined ||
+      !sameJson(first.position, configured) ||
+      first.inventoryStacks !== 0 ||
+      first.worldClock === undefined
+    ) {
+      errors.push(`${agent.agentId} has no matching empty-inventory initial perception`)
+    }
+  }
+  for (const name of [
+    'threeIndependentBodies',
+    'completeDecisionChains',
+    'cleanupVerified',
+    'noControlledBodyCrash',
+    'nativeSchedulersOnly',
+    'expectedNativeReviewsObserved',
+    'initialConditionsRecorded',
+    'perKindPerceptionAuditComplete',
+    'plannedNativeCallsFitCeilings',
+    'noDroppedEvidenceWarning',
+    'serverEvidenceUncontested'
+  ]) {
+    if (manifest.integrityChecks[name]?.passed !== true) {
+      errors.push(`primary behavior integrity check ${name} did not pass`)
+    }
+  }
+  return errors
 }
 
 function semanticErrors (artifactDirectory, manifest) {
@@ -767,7 +1174,13 @@ function semanticErrors (artifactDirectory, manifest) {
     return errors
   }
   if (records.length !== manifest.rawEvidence.records) errors.push('evidence record count does not match manifest')
-  const derived = deriveMetrics(records, manifest.agents)
+  let derived
+  try {
+    derived = deriveMetrics(records, manifest.agents)
+  } catch (cause) {
+    errors.push(cause.message)
+    return errors
+  }
   try {
     assert.deepStrictEqual(metrics, derived)
   } catch {
@@ -950,6 +1363,9 @@ function semanticErrors (artifactDirectory, manifest) {
   if (manifest.environment.world.worldBorderDiameterBlocks > manifest.environment.world.maxWorldSizeBlocks) {
     errors.push('world border diameter exceeds max world size')
   }
+  if (manifest.protocol.mode === ROUTINE_V12_PRIMARY_BEHAVIOR_MODE) {
+    errors.push(...primaryBehaviorSemanticErrors(manifest, metrics, records))
+  }
 
   const readme = fs.readFileSync(path.join(root, README_FILE), 'utf8')
   for (const heading of [
@@ -1016,7 +1432,8 @@ function publishArtifact ({
       outputFile: evidenceFile,
       maxInputBytes: config.bounds.logBytes,
       maxOutputBytes: config.bounds.artifactBytes,
-      maxRecords: config.bounds.evidenceRecords
+      maxRecords: config.bounds.evidenceRecords,
+      requirePerceptionAudit: isPrimaryBehaviorMode(config)
     })
     const evidenceSha = sha256File(evidenceFile)
     const metricValue = deriveMetrics(normalized.records, configuredAgents(config))
@@ -1074,12 +1491,29 @@ function renderReadme (config, manifest, metrics) {
     ? metrics.findings.observations
     : ['No bounded social or spatial observation class was recorded.']
   const scripted = config.cognition.backend === 'scripted'
+  const primaryBehavior = isPrimaryBehaviorMode(config)
   const questionQualification = scripted
-    ? 'This scripted proof tests the harness and runtime composition. It does not test model-driven emergence.'
+    ? primaryBehavior
+      ? 'This scripted run tests the research mode, native scheduling, evidence publication, and cleanup. It is not a model-behavior result.'
+      : 'This scripted proof tests the harness and runtime composition. It does not test model-driven emergence.'
     : 'This live-model run observes independently routed agents without assigned roles, pairings, social goals, or a scripted outcome.'
   const interpretationQualification = scripted
     ? '- Scripted decisions are acceptance traffic. They are not evidence of cooperation, specialization, avoidance,\n  conflict, settlement, or any other emergent social outcome.'
     : '- Model-driven actions are observations, not proof of motive or emergence. Any social or spatial interpretation is limited to the recorded evidence and counterevidence.'
+  const question = primaryBehavior
+    ? 'Can three independently embodied Loom agents complete the bounded routine-v12 pilot using only native event-driven cognition, while preserving complete per-kind perception and lifecycle evidence?'
+    : 'Can three independently embodied Loom agents continue repeated perceive/decide/act cycles in one bounded world, while one body process fails, without corrupting peer evidence or leaving processes behind?'
+  const protocolObservations = primaryBehavior
+    ? `- No body process was deliberately crashed and no harness \`/loombody think\` command was issued.
+- Native scheduled reviews by agent: ${JSON.stringify(metrics.primaryBehavior?.nativeGoalReviewsByAgent ?? {})}.
+- Per-kind audit samples: ${metrics.perceptionAudit?.samples ?? 0}; complete: ${metrics.perceptionAudit?.complete ?? false}.
+- Cleanup verification recorded: ${metrics.crashContainment.cleanupVerified}.`
+    : `- ${metrics.crashContainment.controlledCrashes.length} body process was deliberately crashed; peer decisions after it:
+  ${JSON.stringify(metrics.crashContainment.peerDecisionsAfterCrash)}.
+- Cleanup verification recorded: ${metrics.crashContainment.cleanupVerified}.`
+  const interpretation = primaryBehavior
+    ? '- The run supports the narrower claim that the bounded fleet, native scheduler, cognition bridge, per-kind evidence chain,\n  publication, and cleanup worked together under the declared conditions.'
+    : '- The run supports the narrower claim that the bounded fleet, cognition bridge, evidence chain, crash isolation,\n  publication, and cleanup worked together under the declared conditions.'
   return `# ${config.title}
 
 This directory is the sanitized, bounded publication from \`${config.experimentId}\`.
@@ -1088,8 +1522,7 @@ committed research publisher; [metrics.json](./metrics.json) is the complete det
 
 ## Question
 
-Can three independently embodied Loom agents continue repeated perceive/decide/act cycles in one
-bounded world, while one body process fails, without corrupting peer evidence or leaving processes behind?
+${question}
 ${questionQualification}
 
 ## Setup facts
@@ -1104,19 +1537,23 @@ ${questionQualification}
   and $${manifest.cognition.maxExternalSpendUsd.toFixed(6)} absolute declared ceiling.
 - Wall-clock ceiling: ${manifest.bounds.runDurationSeconds}s. Simulation ceiling: ${manifest.bounds.simulationTickCeiling} ticks.
 - The server, body control, and cognition listeners were loopback-only; no real player account was used.
+${primaryBehavior
+  ? `- Native goal reviews: ${manifest.protocol.nativeGoalReviewSchedule.expectedReviewsPerAgent} expected per agent,
+  ${manifest.protocol.nativeGoalReviewSchedule.cadenceTicks}-tick cadence, ${manifest.protocol.nativeGoalReviewSchedule.sliceTicks}-tick slices.
+- Initial positions: ${JSON.stringify(manifest.protocol.initialConditions.configuredPositions)}.
+- Initial world clock: ${JSON.stringify(manifest.protocol.initialConditions.configuredWorldClock)}.
+- Starting inventories were empty; no role, target, social goal, hierarchy, pairing, conflict, or scripted objective was injected.`
+  : ''}
 
 ## Observations
 
 ${observationLines.map((line) => `- ${line}`).join('\n')}
 - ${metrics.cycles.perceived} perceptions produced ${metrics.cycles.decided} decisions and ${metrics.cycles.applied} applied intents.
-- ${metrics.crashContainment.controlledCrashes.length} body process was deliberately crashed; peer decisions after it:
-  ${JSON.stringify(metrics.crashContainment.peerDecisionsAfterCrash)}.
-- Cleanup verification recorded: ${metrics.crashContainment.cleanupVerified}.
+${protocolObservations}
 
 ## Interpretations
 
-- The run supports the narrower claim that the bounded fleet, cognition bridge, evidence chain, crash isolation,
-  publication, and cleanup worked together under the declared conditions.
+${interpretation}
 ${interpretationQualification}
 
 ## Counterevidence and null results

@@ -16,7 +16,10 @@ const {
 const { readJson } = require('../lib/util.js')
 const {
   fixedRawRecords,
+  openAiPrimaryBehaviorConfig,
   openAiProofConfig,
+  primaryBehaviorConfig,
+  primaryBehaviorRawRecords,
   proofConfig,
   writeJsonLines
 } = require('./fixtures.js')
@@ -133,6 +136,50 @@ test('the committed live template preflights at its bounded spend envelope', () 
   assert.equal(manifest.cognition.maxExternalSpendUsd, 4.67)
 })
 
+test('the routine-v12 primary behavior pilot preflights with native calls inside every ceiling', () => {
+  const config = openAiPrimaryBehaviorConfig()
+  assert.deepEqual(validateRunConfig(config), [])
+  const manifest = validateProspectiveManifest(config, SOURCE)
+  assert.equal(manifest.protocol.mode, 'routine-v12-primary-behavior')
+  assert.equal(manifest.protocol.controlledBodyCrashPlanned, false)
+  assert.equal(Object.hasOwn(manifest.protocol, 'controlledBodyCrash'), false)
+  assert.deepEqual(manifest.protocol.nativeGoalReviewSchedule, {
+    cadenceTicks: 2400,
+    expectedReviewsPerAgent: 2,
+    sliceTicks: 100
+  })
+  assert.deepEqual(manifest.provenance.models, {
+    ordinary: 'gpt-5.4-nano',
+    pivotal: 'gpt-5.4'
+  })
+  assert.deepEqual(manifest.provenance.prompts, {
+    routine: 'routine-v12',
+    notable: 'notable-v12',
+    pivotal: 'pivotal-v12'
+  })
+  assert.equal(manifest.cognition.perAgentCallCeiling, 4)
+  assert.equal(manifest.cognition.globalCallCeiling, 12)
+  assert.equal(manifest.cognition.globalOutstandingCeiling, 3)
+  assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 2.33472)
+  assert.equal(manifest.cognition.maxExternalSpendUsd, 2.34)
+})
+
+test('primary behavior preflight refuses native review plans outside per-agent or global ceilings', () => {
+  const perAgent = primaryBehaviorConfig()
+  perAgent.cognition.perAgentCallCeiling = 1
+  assert.ok(
+    validateRunConfig(perAgent)
+      .includes('planned native reviews exceed the per-agent cognition call ceiling')
+  )
+
+  const global = primaryBehaviorConfig()
+  global.cognition.globalCallCeiling = 5
+  assert.ok(
+    validateRunConfig(global)
+      .includes('planned native reviews exceed the global cognition call ceiling')
+  )
+})
+
 test('preflight refuses unsafe public fields before launch', () => {
   const config = proofConfig()
   config.title = 'accidentally copied sk-abcdefghijklmnopqrstuvwxyz'
@@ -171,6 +218,35 @@ test('a live-model publication correlates successful decisions to pinned-price u
   const readme = fs.readFileSync(path.join(published.artifactDirectory, 'README.md'), 'utf8')
   assert.match(readme, /This live-model run observes independently routed agents/)
   assert.doesNotMatch(readme, /Scripted decisions are acceptance traffic/)
+})
+
+test('primary behavior publication round-trips native-only attestations and per-kind audits', () => {
+  const published = publishFixture({
+    config: primaryBehaviorConfig(),
+    raw: primaryBehaviorRawRecords()
+  })
+  const validation = validateArtifact(published.artifactDirectory)
+  assert.deepEqual(validation.errors, [])
+  assert.equal(validation.ok, true)
+  assert.equal(published.manifest.integrityChecks.noControlledBodyCrash.passed, true)
+  assert.equal(published.manifest.integrityChecks.nativeSchedulersOnly.passed, true)
+  assert.equal(published.manifest.integrityChecks.expectedNativeReviewsObserved.passed, true)
+  assert.equal(published.manifest.integrityChecks.initialConditionsRecorded.passed, true)
+  assert.equal(published.manifest.integrityChecks.perKindPerceptionAuditComplete.passed, true)
+  assert.equal(published.manifest.protocol.externalCognitionStimuli.harnessThinkCommandsIssued, 0)
+  assert.equal(published.manifest.protocol.externalCognitionStimuli.nativeSchedulersOnly, true)
+  assert.deepEqual(
+    published.manifest.perceptionAudit,
+    published.metrics.perceptionAudit
+  )
+  assert.equal(published.manifest.perceptionAudit.byKind.blocks.jvmCutOmittedCount, 3)
+  const text = fs.readFileSync(
+    path.join(published.artifactDirectory, 'evidence.jsonl'),
+    'utf8'
+  )
+  assert.match(text, /"origin":"nativeGoalReviewSchedule"/)
+  assert.match(text, /"perceptionAudit":/)
+  assert.doesNotMatch(text, /controlledBodyCrash|SIGKILL|loombody think/)
 })
 
 test('partial malformed secret-bearing and inconsistent artifacts are refused', () => {
@@ -273,6 +349,8 @@ test('run configuration rejects unsafe unbounded or inconsistent conditions', ()
   const valid = proofConfig()
   assert.deepEqual(validateRunConfig(valid), [])
   assert.deepEqual(validateRunConfig(openAiProofConfig()), [])
+  assert.deepEqual(validateRunConfig(primaryBehaviorConfig()), [])
+  assert.deepEqual(validateRunConfig(openAiPrimaryBehaviorConfig()), [])
   const cases = [
     { path: ['agents'], value: ['only-one'] },
     { path: ['network', 'host'], value: '0.0.0.0' },

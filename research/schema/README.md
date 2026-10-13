@@ -87,6 +87,12 @@ path and shape, so generation 2 could not be edited in place. The adjacent-step
 test uses a committed generation-2 manifest as the witness: generation 2
 accepts it and generation 3 refuses the missing bounded-fleet core.
 
+The generation was later loosened in place so `protocol.goalReviewCycleSeconds`
+and `protocol.controlledBodyCrash` are optional. They describe the original
+crash-containment experiment, not every bounded fleet protocol; making them
+optional preserves every manifest generation 3 already accepted while allowing
+a native-scheduler-only behavior run to omit interventions it did not perform.
+
 ## Choosing a version for a new manifest
 
 Ask `manifest-schema.js`.

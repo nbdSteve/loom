@@ -128,6 +128,14 @@ data class BodyEventRecord(
      */
     val perception: Perception? = null,
     /**
+     * Research-only counts and raw world clock for [perception].
+     *
+     * Present on player [BodyEvent.PERCEIVED] records. It describes what the body
+     * returned and what the JVM selected without changing the cognition contract
+     * or model-visible prompt.
+     */
+    val perceptionAudit: PerceptionAudit? = null,
+    /**
      * The complete bounded, typed decision returned by cognition.
      *
      * Present on [BodyEvent.DECIDED] and [BodyEvent.DECISION_DISCARDED]. Keeping

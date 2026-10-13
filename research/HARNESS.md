@@ -6,18 +6,23 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The first committed configuration is
+The original containment configuration is
 `research/config/first-tribe-scripted-proof.json`. It uses three independently
 supervised Mineflayer bodies and the shipped credential-free scripted cognition
 backend. Its deliberate body crash is an acceptance intervention, not behavior
-and not evidence of emergence.
+and not evidence of emergence. Its approval-gated OpenAI counterpart is
+`research/config/first-tribe-openai.json`; the committed `-r3` id was consumed
+by its failed shakedown and must not be run again.
 
-The approval-gated live plan is pinned separately in
-`research/config/first-tribe-openai.json`. Committing and validating that
-configuration is not authorization to run it: its experiment id may be used
-exactly once only after the paid-run decision described below. The committed
-`-r3` id was consumed by its failed shakedown and must not be run again. Any
-later live attempt needs both a new experiment id and a separate approval.
+The research-only primary behavior mode is pinned in
+`research/config/first-tribe-routine-v12-agency-pilot.json`, with a
+provider-free rehearsal in
+`research/config/first-tribe-routine-v12-agency-pilot-scripted.json`. This mode
+has no controlled crash and sends no `/loombody think` command. Its only
+cognition sources are Loom's native `GoalReviewSchedule` and native event
+drivers. The OpenAI experiment id is an unconsumed proposal placeholder, not
+authorization to run; a paid run still requires a fresh approved id and the
+separate decision described below.
 
 ## Reproduce from a clean checkout
 
@@ -30,7 +35,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-scripted-proof.json
+  --config research/config/first-tribe-routine-v12-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -47,8 +52,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-scripted-proof.json \
-  --artifact-root .scratch/tribe-rehearsal \
+  --config research/config/first-tribe-routine-v12-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v12-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -65,9 +70,13 @@ The configuration pins the experiment id, Paper and Minecraft versions, Paper
 hash, world seed, border and loaded distances, canonical agent set, consecutive
 control ports, difficulty and mob-spawning rule, model/provider ids, prompt
 versions, provider endpoint and timeout, integer nano-USD token prices, feature
-flags, and every resource ceiling. The plugin derives each `loom_<hash>`
-username and offline UUID from the sorted agent id set. The publisher
-independently derives the same mapping and rejects a manifest that disagrees.
+flags, and every resource ceiling. Primary behavior mode additionally pins the
+three r5 positions, an exact initial world clock, empty inventories, the native
+2,400-tick cadence and 100-tick slices, and the absence of injected roles,
+resource targets, social goals, hierarchy, pairings, conflict, and scripted
+objectives. The plugin derives each `loom_<hash>` username and offline UUID
+from the sorted agent id set. The publisher independently derives the same
+mapping and rejects a manifest that disagrees.
 
 All listeners use the literal `127.0.0.1`, Paper runs in offline mode, and the
 artifact records zero real player accounts. Never relax those properties for
@@ -113,6 +122,16 @@ Cognition remains event-driven. The proof uses `/loombody think` to produce
 bounded goal-review events; it does not create a per-tick call path. The normal
 driver's threat and scheduled-review triggers remain unchanged.
 
+Primary behavior mode does not use that proof intervention or reserve. Its
+planned native schedule is six calls: two reviews for each of three agents. Its
+preflight rejects a configuration unless those calls fit both the per-agent and
+global ceilings. The pilot proposal permits four calls per agent, twelve
+globally, and three outstanding, leaving bounded room for native event-triggered
+cognition. Every forwarded or refused cognition record carries either
+`nativeGoalReviewSchedule` or `nativeEventDriver` as its origin. Publication
+also requires the one run-level attestation that the harness issued zero think
+commands and that native schedulers were the only cognition source.
+
 ## Lifecycle and cleanup
 
 The harness starts cognition, the bounded proxy, and Paper in that order. Paper
@@ -122,12 +141,14 @@ partial startup enters the same cleanup path as cancellation, timeout, disk
 failure, cognition failure, or Paper failure.
 
 Paper and cognition are separate process groups. Cleanup sends Paper's ordinary
-`stop` and terminates cognition immediately, then terminates and finally kills
-any surviving complete process group inside one shared shutdown ceiling. It
-still closes the in-process proxy and probes the Minecraft, cognition, and
-every body-control port if an earlier cleanup step failed. Publication is
-possible only after every managed group and listener is gone. `SIGINT` and
-`SIGTERM` enter this same path.
+`stop` and terminates cognition immediately, waits for cooperative exit, then
+terminates and finally kills only a process group that still survives inside
+the one shared shutdown ceiling. Every group signal is recorded without a
+process id. A successful primary behavior artifact is invalid if any managed
+group received `SIGKILL`. Cleanup still closes the in-process proxy and probes
+the Minecraft, cognition, and every body-control port if an earlier cleanup
+step failed. Publication is possible only after every managed group and
+listener is gone. `SIGINT` and `SIGTERM` enter this same path.
 
 The proof resolves the one configured crash target from its body-control
 listener, verifies that the process command is Loom's body executable, and
@@ -173,6 +194,17 @@ perception and typed decision, including bounded reasoning and routed
 provenance. Action, movement, vitals, inventory, interaction, witness,
 disconnect, death, and lifecycle evidence retain their existing typed or
 countable fields.
+
+Each primary behavior perception also carries a research-only
+`perceptionAudit`. For entities, blocks, and dropped items separately it records
+the raw body-list count, the body's reported omission count, the JVM-selected
+count, and the JVM cut count. The same audit records the body's exact raw world
+clock. These fields never enter the perception/decision contract or model
+prompt, and the model-visible scene remains capped at 16. Normalization and
+publication reject a missing category, negative count, impossible omission,
+selected count outside its raw list, JVM cut other than raw minus selected, or
+selected total above 16. This instrumentation observes category starvation; it
+does not make category selection fair.
 
 Normalization recursively removes credential-shaped text, local absolute
 paths, provider request/thread ids, and process ids; it also truncates public
@@ -224,17 +256,16 @@ An empty value or lookup failure stops before cognition starts. An HTTP 401 or
 403 from the provider stops the whole run after that refusal, with no retry and
 only a stable provider-safe error.
 
-The committed proposal routes routine and notable decisions to
+The routine-v12 pilot proposal routes routine and notable decisions to
 `gpt-5.4-nano` and only the existing pivotal tier to `gpt-5.4`. It runs three
 agents for at most 180 wall-clock seconds or 4,000 server ticks, whichever
-comes first, and permits at most eight calls per agent, 24 calls globally, and
-three calls outstanding. Its 65,536-byte request and 2,048-output-token bounds
-make the estimate-independent worst case $4.66944 at the pinned rates; the
-configured spend ceiling is $4.67. A planning estimate of $0.09952 assumes 20
-nano calls and four pivotal calls, each with 4,000 input tokens and 512 output
-tokens. This estimate is not used for enforcement.
+comes first, and permits at most four calls per agent, twelve calls globally,
+and three calls outstanding. Its 65,536-byte request and 2,048-output-token
+bounds make the estimate-independent worst case $2.33472 at the pinned rates;
+the configured spend ceiling is $2.34.
 
-After explicit approval, run the bounded live configuration once. The `-r2`
-and `-r3` shakedowns were each consumed by their one authorized attempt and
-must never be retried. A later run first receives a new experiment id in the
-approval decision; changing the id is not itself authorization.
+After explicit approval, replace the proposal placeholder with the approved
+fresh experiment id and run the bounded live configuration once. The earlier
+`-r2` and `-r3` containment shakedowns were each consumed by their one
+authorized attempt and must never be retried. Changing an experiment id is not
+itself authorization.

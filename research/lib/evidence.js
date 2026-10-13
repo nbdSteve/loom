@@ -8,6 +8,8 @@ const { canonicalLine, sortedValue } = require('./util.js')
 const NORMALIZED_EVIDENCE_VERSION = 'loom-normalized-evidence/1'
 const METRICS_VERSION = 'loom-derived-metrics/1'
 const MAX_PUBLIC_STRING = 512
+const MAX_MODEL_VISIBLE_OBSERVATIONS = 16
+const PERCEPTION_AUDIT_KINDS = ['entities', 'blocks', 'droppedItems']
 
 const PUBLIC_SCAN_PATTERNS = [
   {
@@ -142,7 +144,81 @@ function readJsonLines (file, limits) {
   })
 }
 
-function normalizeBodyRecord (experimentId, record, index, state) {
+function validatePerceptionAudit (audit, label = 'perception audit') {
+  if (audit === null || typeof audit !== 'object' || Array.isArray(audit)) {
+    throw new Error(`${label} is not an object`)
+  }
+  const clock = audit.worldClock
+  if (
+    clock === null ||
+    typeof clock !== 'object' ||
+    Array.isArray(clock) ||
+    !Number.isInteger(clock.timeOfDay) ||
+    clock.timeOfDay < 0 ||
+    clock.timeOfDay > 23_999 ||
+    !Number.isSafeInteger(clock.day) ||
+    clock.day < 0 ||
+    typeof clock.isDay !== 'boolean'
+  ) {
+    throw new Error(`${label} has an incomplete or invalid world clock`)
+  }
+
+  let selectedTotal = 0
+  for (const kind of PERCEPTION_AUDIT_KINDS) {
+    const counts = audit[kind]
+    if (counts === null || typeof counts !== 'object' || Array.isArray(counts)) {
+      throw new Error(`${label} has no complete ${kind} counts`)
+    }
+    for (const field of [
+      'rawBodyListCount',
+      'bodyReportedOmittedCount',
+      'jvmSelectedCount',
+      'jvmCutOmittedCount'
+    ]) {
+      if (!Number.isSafeInteger(counts[field]) || counts[field] < 0) {
+        throw new Error(`${label} ${kind}.${field} must be a non-negative integer`)
+      }
+    }
+    if (counts.rawBodyListCount > MAX_MODEL_VISIBLE_OBSERVATIONS) {
+      throw new Error(`${label} ${kind}.rawBodyListCount exceeds the body list bound`)
+    }
+    if (
+      counts.bodyReportedOmittedCount > 0 &&
+      counts.rawBodyListCount !== MAX_MODEL_VISIBLE_OBSERVATIONS
+    ) {
+      throw new Error(`${label} ${kind} body omissions require a saturated body list`)
+    }
+    if (counts.jvmSelectedCount > counts.rawBodyListCount) {
+      throw new Error(`${label} ${kind} selected more than the body returned`)
+    }
+    if (
+      counts.jvmCutOmittedCount !==
+      counts.rawBodyListCount - counts.jvmSelectedCount
+    ) {
+      throw new Error(`${label} ${kind} JVM cut arithmetic is inconsistent`)
+    }
+    selectedTotal += counts.jvmSelectedCount
+  }
+  if (selectedTotal > MAX_MODEL_VISIBLE_OBSERVATIONS) {
+    throw new Error(`${label} exceeds the model-visible scene bound`)
+  }
+  return audit
+}
+
+function selectedPerceptionAuditCount (audit) {
+  return PERCEPTION_AUDIT_KINDS.reduce(
+    (sum, kind) => sum + audit[kind].jvmSelectedCount,
+    0
+  )
+}
+
+function normalizeBodyRecord (
+  experimentId,
+  record,
+  index,
+  state,
+  requirePerceptionAudit
+) {
   if (record === null || typeof record !== 'object' || Array.isArray(record)) {
     throw new Error(`body evidence line ${index + 1} is not an object`)
   }
@@ -154,6 +230,36 @@ function normalizeBodyRecord (experimentId, record, index, state) {
   }
   if (record.perception?.agentId !== undefined && record.perception.agentId !== record.agentId) {
     throw new Error(`body evidence line ${index + 1} files a perception under another agent`)
+  }
+  if (record.event === 'perceived') {
+    if (record.perceptionAudit === undefined || record.perceptionAudit === null) {
+      if (requirePerceptionAudit) {
+        throw new Error(`body evidence line ${index + 1} has no required per-kind perception audit`)
+      }
+    } else {
+      validatePerceptionAudit(record.perceptionAudit, `body evidence line ${index + 1} perception audit`)
+      const expectedOmitted = PERCEPTION_AUDIT_KINDS.reduce(
+        (sum, kind) =>
+          sum +
+          record.perceptionAudit[kind].bodyReportedOmittedCount +
+          record.perceptionAudit[kind].jvmCutOmittedCount,
+        0
+      )
+      if (
+        !Array.isArray(record.perception?.surroundings) ||
+        selectedPerceptionAuditCount(record.perceptionAudit) !==
+          record.perception.surroundings.length
+      ) {
+        throw new Error(
+          `body evidence line ${index + 1} perception audit does not match the model-visible scene`
+        )
+      }
+      if (record.perception.surroundingsOmitted !== expectedOmitted) {
+        throw new Error(
+          `body evidence line ${index + 1} perception audit does not match the aggregate omission count`
+        )
+      }
+    }
   }
 
   const requestId = record.requestId ?? record.perception?.requestId ?? record.decision?.requestId
@@ -184,6 +290,7 @@ function normalizeBodyRecord (experimentId, record, index, state) {
     'health',
     'witness',
     'perception',
+    'perceptionAudit',
     'decision'
   ]) {
     if (record[field] !== undefined && record[field] !== null) {
@@ -235,7 +342,8 @@ function normalizeEvidence ({
   maxInputBytes,
   maxOutputBytes,
   maxRecords,
-  maxLineBytes = 256 * 1024
+  maxLineBytes = 256 * 1024,
+  requirePerceptionAudit = false
 }) {
   const limits = { maxBytes: maxInputBytes, maxRecords, maxLineBytes }
   const body = readJsonLines(bodyFile, limits)
@@ -245,7 +353,14 @@ function normalizeEvidence ({
   }
   const state = { redactions: 0 }
   const records = [
-    ...body.map((record, index) => normalizeBodyRecord(experimentId, record, index, state)),
+    ...body.map((record, index) =>
+      normalizeBodyRecord(
+        experimentId,
+        record,
+        index,
+        state,
+        requirePerceptionAudit
+      )),
     ...harness.map((record, index) => normalizeHarnessRecord(experimentId, record, index, state))
   ]
   if (records.length === 0) throw new Error('an experiment cannot publish empty evidence')
@@ -295,6 +410,7 @@ function deriveMetrics (records, configuredAgents = []) {
   const stamps = new Map()
   const positions = new Map()
   const coLocations = []
+  const perceptionAudits = []
 
   for (const record of bodyRecords) {
     increment(byEvent, record.event)
@@ -369,6 +485,10 @@ function deriveMetrics (records, configuredAgents = []) {
         }
       }
     }
+    if (record.event === 'perceived' && record.perceptionAudit !== undefined) {
+      validatePerceptionAudit(record.perceptionAudit, `${record.recordId} perception audit`)
+      perceptionAudits.push(record)
+    }
   }
 
   const forwarded = harnessRecords.filter((record) => record.event === 'cognitionForwarded')
@@ -376,6 +496,9 @@ function deriveMetrics (records, configuredAgents = []) {
   const providerUsage = harnessRecords.filter((record) => record.event === 'providerUsage')
   const crashes = harnessRecords.filter((record) => record.event === 'controlledBodyCrash')
   const cleanup = harnessRecords.filter((record) => record.event === 'cleanupVerified')
+  const stimulusRecords = harnessRecords.filter(
+    (record) => record.event === 'cognitionStimulusAttested'
+  )
   const incomplete = []
   for (const [requestKey, chain] of requestChains) {
     const perceived = chain.includes('perceived')
@@ -473,7 +596,7 @@ function deriveMetrics (records, configuredAgents = []) {
     )
   }
 
-  return sortedValue({
+  const result = {
     schemaVersion: METRICS_VERSION,
     records: {
       total: records.length,
@@ -551,7 +674,99 @@ function deriveMetrics (records, configuredAgents = []) {
           : 'One bounded live-model run cannot establish that an observed pattern is stable or emergent.'
       ]
     }
-  })
+  }
+  if (perceptionAudits.length > 0) {
+    result.perceptionAudit = perceptionAuditMetrics(perceptionAudits, byEvent.perceived ?? 0)
+  }
+  if (
+    stimulusRecords.length > 0 ||
+    harnessRecords.some((record) => record.origin !== undefined)
+  ) {
+    result.primaryBehavior = primaryBehaviorMetrics(harnessRecords, stimulusRecords)
+  }
+  return sortedValue(result)
+}
+
+function perceptionAuditMetrics (records, perceivedCount) {
+  const byKind = {}
+  for (const kind of PERCEPTION_AUDIT_KINDS) {
+    byKind[kind] = {
+      samples: 0,
+      rawBodyListCount: 0,
+      bodyReportedOmittedCount: 0,
+      jvmSelectedCount: 0,
+      jvmCutOmittedCount: 0
+    }
+  }
+  const firstByAgent = new Map()
+  for (const record of records) {
+    for (const kind of PERCEPTION_AUDIT_KINDS) {
+      const totals = byKind[kind]
+      const counts = record.perceptionAudit[kind]
+      totals.samples += 1
+      totals.rawBodyListCount += counts.rawBodyListCount
+      totals.bodyReportedOmittedCount += counts.bodyReportedOmittedCount
+      totals.jvmSelectedCount += counts.jvmSelectedCount
+      totals.jvmCutOmittedCount += counts.jvmCutOmittedCount
+    }
+    const current = firstByAgent.get(record.agentId)
+    if (
+      current === undefined ||
+      record.tick < current.tick ||
+      (record.tick === current.tick && record.sourceSequence < current.sourceSequence)
+    ) {
+      firstByAgent.set(record.agentId, record)
+    }
+  }
+  return {
+    complete: records.length === perceivedCount,
+    samples: records.length,
+    byKind,
+    initialByAgent: [...firstByAgent.values()]
+      .sort((first, second) => first.agentId.localeCompare(second.agentId))
+      .map((record) => ({
+        agentId: record.agentId,
+        capturedTick: record.perception?.capturedTick ?? record.tick,
+        position: record.perception?.selfState?.position,
+        inventoryStacks: record.perception?.selfState?.inventorySummary?.length,
+        worldClock: record.perceptionAudit.worldClock
+      }))
+  }
+}
+
+function primaryBehaviorMetrics (harnessRecords, stimulusRecords) {
+  const initialConditionRecords = harnessRecords.filter(
+    (record) => record.event === 'initialConditionsAttested'
+  )
+  const requestsByOrigin = {}
+  const nativeGoalReviewsByAgent = {}
+  for (const record of harnessRecords) {
+    if (!['cognitionForwarded', 'cognitionRefused'].includes(record.event)) continue
+    increment(requestsByOrigin, record.origin ?? 'unattested')
+    if (
+      record.event === 'cognitionForwarded' &&
+      record.trigger === 'goalReview' &&
+      record.origin === 'nativeGoalReviewSchedule'
+    ) {
+      increment(nativeGoalReviewsByAgent, record.agentId)
+    }
+  }
+  const attestation = stimulusRecords.length === 1 ? stimulusRecords[0] : undefined
+  const initialConditions =
+    initialConditionRecords.length === 1 ? initialConditionRecords[0] : undefined
+  return {
+    stimulusAttestations: stimulusRecords.length,
+    initialConditionAttestations: initialConditionRecords.length,
+    externalCognitionStimuli: attestation?.externalCognitionStimuli ?? 'unattested',
+    harnessThinkCommandsIssued: attestation?.harnessThinkCommandsIssued ?? null,
+    nativeSchedulersOnly: attestation?.nativeSchedulersOnly === true,
+    nativeGoalReviewSchedule: attestation?.nativeGoalReviewSchedule ?? null,
+    configuredInitialPositions: initialConditions?.positions ?? null,
+    configuredInitialWorldClock: initialConditions?.worldClock ?? null,
+    startingInventories: initialConditions?.startingInventories ?? 'unattested',
+    requestsByOrigin,
+    nativeGoalReviewsByAgent: sortedValue(nativeGoalReviewsByAgent)
+  }
 }
 
 function peerDecisionsAfterCrash (bodyRecords, crashes) {
@@ -574,5 +789,6 @@ module.exports = {
   normalizeEvidence,
   readJsonLines,
   sanitizeValue,
-  scanText
+  scanText,
+  validatePerceptionAudit
 }

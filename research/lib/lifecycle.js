@@ -124,16 +124,18 @@ function waitForExit (child, milliseconds) {
 }
 
 function signalProcessGroup (child, signal) {
-  if (!Number.isInteger(child.pid) || child.pid <= 0) return
+  if (!Number.isInteger(child.pid) || child.pid <= 0) return false
   try {
     if (process.platform === 'win32') {
-      if (child.exitCode !== null || child.signalCode !== null) return
+      if (child.exitCode !== null || child.signalCode !== null) return false
       child.kill(signal)
     } else {
       process.kill(-child.pid, signal)
     }
+    return true
   } catch (cause) {
-    if (cause.code !== 'ESRCH') throw cause
+    if (cause.code === 'ESRCH') return false
+    throw cause
   }
 }
 
@@ -233,17 +235,25 @@ class ProcessSupervisor {
       if (handle.name === 'paper' && handle.child.stdin?.writable) {
         handle.child.stdin.write('stop\n')
       } else {
-        signalProcessGroup(handle.child, 'SIGTERM')
+        this.signal(handle, 'SIGTERM')
       }
     }
     const killReserve = Math.min(1000, Math.max(50, Math.floor(shutdownMilliseconds / 5)))
     const preKillBudget = Math.max(2, shutdownMilliseconds - killReserve)
     const gracefulBudget = Math.max(1, Math.floor(preKillBudget / 2))
     const terminateBudget = Math.max(1, preKillBudget - gracefulBudget)
-    await Promise.all(reversed.map((handle) => waitForExit(handle.child, gracefulBudget)))
-    for (const handle of reversed) signalProcessGroup(handle.child, 'SIGTERM')
-    await Promise.all(reversed.map((handle) => waitForExit(handle.child, terminateBudget)))
-    for (const handle of reversed) signalProcessGroup(handle.child, 'SIGKILL')
+    await Promise.all(
+      reversed.map((handle) => waitForProcessGroupExit(handle.child, gracefulBudget))
+    )
+    for (const handle of reversed) {
+      if (processGroupIsAlive(handle.child)) this.signal(handle, 'SIGTERM')
+    }
+    await Promise.all(
+      reversed.map((handle) => waitForProcessGroupExit(handle.child, terminateBudget))
+    )
+    for (const handle of reversed) {
+      if (processGroupIsAlive(handle.child)) this.signal(handle, 'SIGKILL')
+    }
     const groupsClosed = await Promise.all(
       reversed.map((handle) => waitForProcessGroupExit(handle.child, killReserve))
     )
@@ -253,6 +263,18 @@ class ProcessSupervisor {
       .map((handle) => handle.name)
     if (survivors.length > 0) {
       throw new RunFailure('startupFailed', `managed process groups survived cleanup: ${survivors.join(', ')}`)
+    }
+  }
+
+  signal (handle, signal) {
+    if (!signalProcessGroup(handle.child, signal)) return
+    try {
+      this.journal.append('processGroupSignalled', {
+        component: handle.name,
+        signal
+      })
+    } catch (cause) {
+      this.onFailure(cause)
     }
   }
 }

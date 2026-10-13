@@ -189,6 +189,7 @@ internal class PlayerPerception(
                         ""
                     },
             perception = perception,
+            perceptionAudit = scene.perceptionAudit,
             vitals = food,
         )
         context.vitalsWatch.recordChanges(agentId, food, health)

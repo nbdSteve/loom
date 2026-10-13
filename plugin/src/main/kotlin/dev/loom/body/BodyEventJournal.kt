@@ -59,6 +59,7 @@ class BodyEventJournal(
         agentId: AgentId,
         detail: String,
         perception: Perception,
+        perceptionAudit: PerceptionAudit,
         vitals: AgentVitals?,
     ) {
         eventLog.append(
@@ -71,6 +72,7 @@ class BodyEventJournal(
                 trigger = tagOf(perception.trigger),
                 vitals = vitals,
                 perception = perception,
+                perceptionAudit = perceptionAudit,
             ),
         )
     }

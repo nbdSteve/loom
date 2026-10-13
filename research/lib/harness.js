@@ -9,6 +9,13 @@ const { execFileSync, spawnSync } = require('node:child_process')
 const { assertRunConfig, componentSourceHashes, configuredAgents, publishArtifact, validateProspectiveManifest } = require('./artifact.js')
 const { CognitionBudgetProxy } = require('./budget-proxy.js')
 const { readJsonLines } = require('./evidence.js')
+const {
+  createInterventionSchedule,
+  isPrimaryBehaviorMode,
+  postCrashReserveFor,
+  primaryBehaviorStimulusRecord,
+  requestOriginFor
+} = require('./experiment-mode.js')
 const { writeFailureDiagnostic } = require('./failure-diagnostic.js')
 const {
   BoundedJournal,
@@ -253,6 +260,81 @@ function latestBodyTick (file) {
 function paperCommand (paper, command) {
   if (!paper.child.stdin?.writable) throw new RunFailure('paperFailed', 'Paper console is not writable')
   paper.child.stdin.write(`${command}\n`)
+}
+
+function applyPrimaryBehaviorInitialConditions (paper, config, journal) {
+  if (!isPrimaryBehaviorMode(config)) return
+  paperCommand(paper, 'gamerule doDaylightCycle true')
+  paperCommand(paper, `time set ${config.primaryBehavior.initialWorldClock.timeOfDay}`)
+  const positions = {}
+  for (const agent of configuredAgents(config)) {
+    const position = config.primaryBehavior.initialPositions[agent.agentId]
+    positions[agent.agentId] = position
+    paperCommand(paper, `clear ${agent.username}`)
+    paperCommand(paper, `tp ${agent.username} ${position.join(' ')}`)
+  }
+  journal.append('initialConditionsAttested', {
+    positions,
+    worldClock: config.primaryBehavior.initialWorldClock,
+    startingInventories: config.primaryBehavior.startingInventories
+  })
+}
+
+function primaryBehaviorRunFailure (config, records) {
+  if (!isPrimaryBehaviorMode(config)) return null
+  const fatalEvents = new Map([
+    ['bodyDisconnected', 'a body disconnected'],
+    ['cognitionUnavailable', 'a cognition request became unavailable'],
+    ['decisionDiscarded', 'a cognition decision was discarded'],
+    ['despawned', 'a body despawned during the run'],
+    ['died', 'an agent died'],
+    ['spawnRejected', 'a configured body spawn was rejected'],
+    ['witnessDenied', 'the player witness denied a managed login'],
+    ['witnessDisputed', 'the player witness disputed body evidence'],
+    ['witnessQuit', 'a managed player left the server during the run'],
+    ['witnessRevived', 'the player witness observed a permadeath breach']
+  ])
+  for (const record of records) {
+    const detail = fatalEvents.get(record.event)
+    if (detail !== undefined) {
+      return new RunFailure('startupFailed', `primary behavior run stopped because ${detail}`)
+    }
+    if (
+      record.event === 'worldInteraction' &&
+      record.outcome === 'disputedWorldInteraction'
+    ) {
+      return new RunFailure(
+        'startupFailed',
+        'primary behavior run stopped because a world interaction was disputed'
+      )
+    }
+  }
+
+  for (const agentId of config.agents) {
+    const first = records.find(
+      (record) => record.agentId === agentId && record.event === 'perceived'
+    )
+    if (first === undefined) continue
+    const expected = config.primaryBehavior.initialPositions[agentId]
+    const position = first.perception?.selfState?.position
+    const inventory = first.perception?.selfState?.inventorySummary
+    const worldClock = first.perceptionAudit?.worldClock
+    if (
+      !Array.isArray(position) ||
+      position.length !== expected.length ||
+      position.some((coordinate, index) => coordinate !== expected[index]) ||
+      !Array.isArray(inventory) ||
+      inventory.length !== 0 ||
+      worldClock === null ||
+      typeof worldClock !== 'object'
+    ) {
+      return new RunFailure(
+        'startupFailed',
+        `${agentId} lost a pinned initial condition before its first perception`
+      )
+    }
+  }
+  return null
 }
 
 function bodyPidForPort (port) {
@@ -644,14 +726,26 @@ async function runExperiment ({
       agents: config.agents,
       budget: config.cognition,
       models: config.cognition.models,
-      postCrashReserve: {
-        crashAgent: config.proof.crashAgent,
-        callsPerPeer: config.proof.postCrashCallsPerPeer
-      },
+      postCrashReserve: postCrashReserveFor(config),
+      requestOrigin: (trigger) => requestOriginFor(config, trigger),
       journal,
       onCognitionFailure: (message, classified) => {
         const failure = authenticationFailure(message, classified)
-        if (failure !== null) abort(failure)
+        if (failure !== null) {
+          abort(failure)
+        } else if (isPrimaryBehaviorMode(config)) {
+          abort(new RunFailure('cognitionFailed', 'primary behavior cognition returned a failed decision'))
+        }
+      },
+      onRefusal: () => {
+        if (isPrimaryBehaviorMode(config)) {
+          abort(new RunFailure('cognitionFailed', 'primary behavior cognition crossed a configured call bound'))
+        }
+      },
+      onUnavailable: () => {
+        if (isPrimaryBehaviorMode(config)) {
+          abort(new RunFailure('cognitionFailed', 'primary behavior cognition upstream became unavailable'))
+        }
       }
     })
     await proxy.start()
@@ -726,73 +820,119 @@ async function runExperiment ({
     paperCommand(paper, `gamerule doMobSpawning ${config.world.mobSpawning}`)
     paperCommand(paper, `difficulty ${config.world.difficulty}`)
     paperCommand(paper, `worldborder set ${config.world.worldBorderDiameterBlocks}`)
+    if (
+      isPrimaryBehaviorMode(config) &&
+      bodyEvents(rawBodyEvidence).some((record) => record.event === 'perceived')
+    ) {
+      throw new RunFailure(
+        'startupFailed',
+        'native cognition began before the primary behavior initial conditions were applied'
+      )
+    }
+    applyPrimaryBehaviorInitialConditions(paper, config, journal)
     const startTick = latestBodyTick(rawBodyEvidence)
     journal.append('experimentStarted', {
       agents: [...config.agents].sort(),
       cognitionBackend: config.cognition.backend,
+      mode: config.mode ?? 'crash-containment',
       startTick
     })
     startedAt = new Date().toISOString()
     const startedMillis = Date.now()
     const deadline = startedMillis + config.bounds.runDurationSeconds * 1000
-    let nextCycle = startedMillis
-    let crashed = false
+    const interventions = createInterventionSchedule(config, startedMillis)
+    let thinkCommandsIssued = 0
     while (Date.now() < deadline) {
       if (controller.signal.aborted) throw controller.signal.reason
       if (fs.existsSync(rawBodyEvidence) && fs.statSync(rawBodyEvidence).size > config.bounds.logBytes) {
         throw new RunFailure('logLimit', 'body evidence exceeded the configured log byte bound')
       }
-      if (latestBodyTick(rawBodyEvidence) - startTick >= config.bounds.simulationTickCeiling) {
+      const currentBodyEvents = bodyEvents(rawBodyEvidence)
+      const invalidPrimaryBehavior = primaryBehaviorRunFailure(config, currentBodyEvents)
+      if (invalidPrimaryBehavior !== null) throw invalidPrimaryBehavior
+      const currentTick = currentBodyEvents.length === 0
+        ? 0
+        : Math.max(...currentBodyEvents.map((record) => record.tick))
+      if (currentTick - startTick >= config.bounds.simulationTickCeiling) {
         stopReason = 'simulationTickCeiling'
         break
       }
       const now = Date.now()
-      if (!crashed && now - startedMillis >= config.proof.crashAfterSeconds * 1000) {
-        const crashAgent = configuredAgents(config).find((agent) => agent.agentId === config.proof.crashAgent)
-        if (crashAgent === undefined) throw new RunFailure('startupFailed', 'configured crash agent is absent')
+      for (const intervention of interventions.due(now)) {
+        if (intervention.type === 'operatorGoalReview') {
+          paperCommand(paper, intervention.command)
+          thinkCommandsIssued += 1
+          continue
+        }
+        const crashAgent = configuredAgents(config)
+          .find((agent) => agent.agentId === intervention.agentId)
+        if (crashAgent === undefined) {
+          throw new RunFailure('startupFailed', 'configured crash agent is absent')
+        }
         const before = bodyEvents(rawBodyEvidence)
-        const afterTick = before.length === 0 ? 0 : Math.max(...before.map((record) => record.tick))
+        const afterTick = before.length === 0
+          ? 0
+          : Math.max(...before.map((record) => record.tick))
         const pid = bodyPidForPort(crashAgent.controlPort)
-        process.kill(pid, 'SIGKILL')
+        process.kill(pid, intervention.signal)
         journal.append('controlledBodyCrash', {
           agentId: crashAgent.agentId,
           controlPort: crashAgent.controlPort,
           afterTick
         })
-        paperCommand(paper, `loombody think ${crashAgent.agentId}`)
-        crashed = true
         await waitForCondition({
           description: 'the controlled body crash to be recorded',
           timeoutMilliseconds: Math.min(15_000, Math.max(1, deadline - Date.now())),
           signal: controller.signal,
           poll: async () =>
             bodyEvents(rawBodyEvidence).some(
-              (record) => record.agentId === crashAgent.agentId && record.event === 'bodyDisconnected'
+              (record) =>
+                record.agentId === crashAgent.agentId &&
+                record.event === 'bodyDisconnected'
             )
         })
         proxy.markControlledBodyCrash(crashAgent.agentId)
       }
-      if (Date.now() >= nextCycle) {
-        for (const agent of config.agents) {
-          if (crashed && agent === config.proof.crashAgent) continue
-          paperCommand(paper, `loombody think ${agent}`)
-        }
-        nextCycle = Date.now() + config.proof.cycleIntervalSeconds * 1000
-      }
       await delay(Math.min(250, Math.max(1, deadline - Date.now())), controller.signal)
     }
     endedAt = new Date().toISOString()
-
-    const crashAgent = config.proof.crashAgent
-    const crashEvent = bodyEvents(rawHarnessEvidence).find((record) => record.event === 'controlledBodyCrash')
-    const peerDecisions = bodyEvents(rawBodyEvidence).filter(
-      (record) =>
-        record.event === 'decided' &&
-        record.agentId !== crashAgent &&
-        record.tick > crashEvent.afterTick
+    const invalidPrimaryBehavior = primaryBehaviorRunFailure(
+      config,
+      bodyEvents(rawBodyEvidence)
     )
-    if (new Set(peerDecisions.map((record) => record.agentId)).size < 2) {
-      throw new RunFailure('startupFailed', 'two peers did not decide after the controlled crash')
+    if (invalidPrimaryBehavior !== null) throw invalidPrimaryBehavior
+
+    const stimulus = primaryBehaviorStimulusRecord(config, thinkCommandsIssued)
+    if (stimulus !== undefined) {
+      journal.append('cognitionStimulusAttested', stimulus)
+      const forwarded = bodyEvents(rawHarnessEvidence)
+        .filter((record) =>
+          record.event === 'cognitionForwarded' &&
+          record.origin === 'nativeGoalReviewSchedule'
+        )
+      const expected =
+        config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent
+      for (const agentId of config.agents) {
+        if (forwarded.filter((record) => record.agentId === agentId).length !== expected) {
+          throw new RunFailure(
+            'startupFailed',
+            `${agentId} did not complete the expected native scheduled reviews`
+          )
+        }
+      }
+    } else {
+      const crashAgent = config.proof.crashAgent
+      const crashEvent = bodyEvents(rawHarnessEvidence)
+        .find((record) => record.event === 'controlledBodyCrash')
+      const peerDecisions = bodyEvents(rawBodyEvidence).filter(
+        (record) =>
+          record.event === 'decided' &&
+          record.agentId !== crashAgent &&
+          record.tick > crashEvent.afterTick
+      )
+      if (new Set(peerDecisions.map((record) => record.agentId)).size < 2) {
+        throw new RunFailure('startupFailed', 'two peers did not decide after the controlled crash')
+      }
     }
     journal.append('experimentEnded', {
       stopReason,
@@ -899,6 +1039,7 @@ module.exports = {
   findJava21,
   importProviderUsage,
   keychainCredentialProvider,
+  primaryBehaviorRunFailure,
   runExperiment,
   sourceIdentity,
   toolVersions,

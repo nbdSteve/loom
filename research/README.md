@@ -41,8 +41,11 @@ No reformatting, no pretty-printing, no sorting, no removing records that turned
 Generation 3 publishes `evidence.jsonl` instead. The harness preserves the
 bounded body and lifecycle facts, adds source sequence and fleet-safe request
 identity, removes unsafe provider/process/path material, and then derives
-`metrics.json`. The raw server directory and its logs remain disposable.
-`research/HARNESS.md` is the operator contract for that path.
+`metrics.json`. Primary behavior artifacts additionally retain the native
+cognition origin, exact initial-condition attestations, and research-only
+per-kind perception audit counts without changing the model-visible contract.
+The raw server directory and its logs remain disposable. `research/HARNESS.md`
+is the operator contract for that path.
 
 If a record in it is wrong, the record is still what the run wrote, and that is the fact being preserved.
 Say so in an erratum instead.

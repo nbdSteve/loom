@@ -14,9 +14,16 @@ const {
   ensurePaper,
   importProviderUsage,
   keychainCredentialProvider,
+  primaryBehaviorRunFailure,
   verifyNoListeners
 } = require('../lib/harness.js')
-const { openAiProofConfig, proofConfig, writeJsonLines } = require('./fixtures.js')
+const {
+  openAiProofConfig,
+  perceptionAuditFixture,
+  primaryBehaviorConfig,
+  proofConfig,
+  writeJsonLines
+} = require('./fixtures.js')
 
 test('the Java tool attestation keeps the version banner and drops runtime detail', () => {
   const full =
@@ -86,6 +93,33 @@ test('provider authentication refusals become one provider-safe fatal failure', 
     "the model provider rejected Loom's credential (HTTP 403); check OPENAI_API_KEY"
   )
   assert.equal(authenticationFailure('cognition failed: the provider was busy'), null)
+})
+
+test('primary behavior stops on fatal evidence and a lost initial condition', () => {
+  const config = primaryBehaviorConfig()
+  const firstPerception = {
+    event: 'perceived',
+    agentId: 'tribe-alpha',
+    perception: {
+      selfState: {
+        position: config.primaryBehavior.initialPositions['tribe-alpha'],
+        inventorySummary: []
+      }
+    },
+    perceptionAudit: perceptionAuditFixture()
+  }
+  assert.equal(primaryBehaviorRunFailure(config, [firstPerception]), null)
+
+  const moved = structuredClone(firstPerception)
+  moved.perception.selfState.position[0] += 1
+  assert.match(
+    primaryBehaviorRunFailure(config, [moved]).message,
+    /lost a pinned initial condition/
+  )
+  assert.match(
+    primaryBehaviorRunFailure(config, [{ event: 'died' }]).message,
+    /agent died/
+  )
 })
 
 test('Paper download identifies the harness and verifies bytes before caching', async () => {

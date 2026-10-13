@@ -6,6 +6,7 @@ package dev.loom.body.player
 import dev.loom.body.AgentId
 import dev.loom.body.EntityRefBinding
 import dev.loom.body.InventorySlotBinding
+import dev.loom.body.PerceptionAudit
 import dev.loom.body.REQUEST_REFS_LIFETIME_TICKS
 import dev.loom.body.RequestRefBindings
 import dev.loom.body.ThreatCandidate
@@ -40,6 +41,7 @@ internal data class PlayerScene(
     val droppedItemSubjects: Map<Int, UUID>,
     val surroundings: List<Observation>,
     val surroundingsOmitted: Long,
+    val perceptionAudit: PerceptionAudit,
     val candidates: List<ThreatCandidate>,
     val selfState: SelfState,
 ) {

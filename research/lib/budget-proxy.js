@@ -19,7 +19,10 @@ class CognitionBudgetProxy {
     models,
     journal,
     postCrashReserve,
+    requestOrigin = () => undefined,
     onCognitionFailure = () => {},
+    onRefusal = () => {},
+    onUnavailable = () => {},
     requestTimeoutMilliseconds = 20_000
   }) {
     this.listen = listen
@@ -29,6 +32,7 @@ class CognitionBudgetProxy {
     this.models = models
     this.journal = journal
     this.postCrashReserve = this.checkedPostCrashReserve(postCrashReserve)
+    this.requestOrigin = requestOrigin
     this.postCrashReserveReleased = this.postCrashReserve === null
     this.postCrashCallsRemaining = new Map(
       this.postCrashReserve?.peers.map((agent) => [
@@ -37,6 +41,8 @@ class CognitionBudgetProxy {
       ]) ?? []
     )
     this.onCognitionFailure = onCognitionFailure
+    this.onRefusal = onRefusal
+    this.onUnavailable = onUnavailable
     this.requestTimeoutMilliseconds = requestTimeoutMilliseconds
     this.total = 0
     this.outstanding = 0
@@ -185,6 +191,8 @@ class CognitionBudgetProxy {
       return
     }
     const agentCalls = this.perAgent.get(agentId) ?? 0
+    const origin = this.requestOrigin(perception.trigger?.event)
+    const originField = origin === undefined ? {} : { origin }
     let reason
     if (this.outstanding >= this.budget.globalOutstandingCeiling) {
       reason = 'globalOutstandingCeiling'
@@ -201,8 +209,10 @@ class CognitionBudgetProxy {
         requestId,
         reason,
         trigger: perception.trigger?.event ?? null,
-        importance: perception.importance ?? null
+        importance: perception.importance ?? null,
+        ...originField
       })
+      this.onRefusal({ agentId, requestId, reason })
       downstream.write(refusal('cognition request refused by experiment budget'))
       return
     }
@@ -233,6 +243,7 @@ class CognitionBudgetProxy {
         importance: perception.importance ?? null,
         outcome: cognitionFailed ? 'cognitionFailure' : 'decision',
         provenance: parsed?.provenance ?? null,
+        ...originField,
         ...(failure === null ? {} : { failure })
       })
       if (cognitionFailed) this.onCognitionFailure(parsed.error, failure)
@@ -244,8 +255,10 @@ class CognitionBudgetProxy {
         requestId,
         trigger: perception.trigger?.event ?? null,
         importance: perception.importance ?? null,
-        outcome: 'upstreamUnavailable'
+        outcome: 'upstreamUnavailable',
+        ...originField
       })
+      this.onUnavailable({ agentId, requestId })
       downstream.write(refusal('cognition upstream was unavailable'))
     } finally {
       this.outstanding -= 1

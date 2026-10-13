@@ -9,9 +9,15 @@ const path = require('node:path')
 const {
   deriveMetrics,
   normalizeEvidence,
-  scanText
+  scanText,
+  validatePerceptionAudit
 } = require('../lib/evidence.js')
-const { fixedRawRecords, writeJsonLines } = require('./fixtures.js')
+const {
+  fixedRawRecords,
+  perceptionAuditFixture,
+  primaryBehaviorRawRecords,
+  writeJsonLines
+} = require('./fixtures.js')
 
 function temporaryDirectory () {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'loom-evidence-test-'))
@@ -72,6 +78,126 @@ test('normalization keeps fleet request identity unambiguous and metrics are det
     true
   )
   assert.deepEqual(scanText(fs.readFileSync(outputFile, 'utf8')), [])
+})
+
+for (const fixture of ['empty', 'full', 'omitted']) {
+  test(`the ${fixture} per-kind perception audit fixture is complete and arithmetically valid`, () => {
+    const audit = perceptionAuditFixture(fixture)
+    assert.equal(validatePerceptionAudit(audit), audit)
+  })
+}
+
+test('incomplete and inconsistent per-kind perception audit fixtures are refused', () => {
+  assert.throws(
+    () => validatePerceptionAudit(perceptionAuditFixture('inconsistent')),
+    /droppedItems\.jvmCutOmittedCount|JVM cut arithmetic/
+  )
+  const incomplete = perceptionAuditFixture('empty')
+  delete incomplete.blocks
+  assert.throws(
+    () => validatePerceptionAudit(incomplete),
+    /no complete blocks counts/
+  )
+  const unsaturated = perceptionAuditFixture('empty')
+  unsaturated.entities = {
+    rawBodyListCount: 3,
+    bodyReportedOmittedCount: 1,
+    jvmSelectedCount: 3,
+    jvmCutOmittedCount: 0
+  }
+  assert.throws(
+    () => validatePerceptionAudit(unsaturated),
+    /body omissions require a saturated body list/
+  )
+})
+
+test('primary behavior normalization requires every perception audit and derives each kind separately', () => {
+  const directory = temporaryDirectory()
+  const bodyFile = path.join(directory, 'body.jsonl')
+  const harnessFile = path.join(directory, 'harness.jsonl')
+  const outputFile = path.join(directory, 'evidence.jsonl')
+  const raw = primaryBehaviorRawRecords()
+  writeJsonLines(bodyFile, raw.body)
+  writeJsonLines(harnessFile, raw.harness)
+
+  const normalized = normalizeEvidence({
+    experimentId: '2026-10-13-scripted-routine-v12-agency-pilot-dry-run',
+    bodyFile,
+    harnessFile,
+    outputFile,
+    maxInputBytes: 1024 * 1024,
+    maxOutputBytes: 1024 * 1024,
+    maxRecords: 1000,
+    requirePerceptionAudit: true
+  })
+  const metrics = deriveMetrics(normalized.records)
+  assert.equal(metrics.perceptionAudit.complete, true)
+  assert.equal(metrics.perceptionAudit.samples, 6)
+  assert.deepEqual(metrics.perceptionAudit.byKind.entities, {
+    samples: 6,
+    rawBodyListCount: 54,
+    bodyReportedOmittedCount: 9,
+    jvmSelectedCount: 9,
+    jvmCutOmittedCount: 45
+  })
+  assert.deepEqual(metrics.perceptionAudit.byKind.blocks, {
+    samples: 6,
+    rawBodyListCount: 84,
+    bodyReportedOmittedCount: 360,
+    jvmSelectedCount: 81,
+    jvmCutOmittedCount: 3
+  })
+  assert.deepEqual(metrics.perceptionAudit.byKind.droppedItems, {
+    samples: 6,
+    rawBodyListCount: 54,
+    bodyReportedOmittedCount: 3,
+    jvmSelectedCount: 6,
+    jvmCutOmittedCount: 48
+  })
+  assert.deepEqual(metrics.primaryBehavior.nativeGoalReviewsByAgent, {
+    'tribe-alpha': 2,
+    'tribe-beta': 2,
+    'tribe-gamma': 2
+  })
+
+  const missing = primaryBehaviorRawRecords()
+  delete missing.body.find((record) => record.event === 'perceived').perceptionAudit
+  writeJsonLines(path.join(directory, 'missing-body.jsonl'), missing.body)
+  assert.throws(
+    () => normalizeEvidence({
+      experimentId: '2026-10-13-scripted-routine-v12-agency-pilot-dry-run',
+      bodyFile: path.join(directory, 'missing-body.jsonl'),
+      harnessFile,
+      outputFile: path.join(directory, 'missing-evidence.jsonl'),
+      maxInputBytes: 1024 * 1024,
+      maxOutputBytes: 1024 * 1024,
+      maxRecords: 1000,
+      requirePerceptionAudit: true
+    }),
+    /no required per-kind perception audit/
+  )
+
+  const inconsistentOmission = primaryBehaviorRawRecords()
+  inconsistentOmission.body.find(
+    (record) => record.event === 'perceived'
+  ).perception.surroundingsOmitted += 1
+  writeJsonLines(
+    path.join(directory, 'inconsistent-omission-body.jsonl'),
+    inconsistentOmission.body
+  )
+  assert.throws(
+    () => normalizeEvidence({
+      experimentId: '2026-10-13-scripted-routine-v12-agency-pilot-dry-run',
+      bodyFile: path.join(directory, 'inconsistent-omission-body.jsonl'),
+      harnessFile,
+      outputFile: path.join(directory, 'inconsistent-omission-evidence.jsonl'),
+      maxInputBytes: 1024 * 1024,
+      maxOutputBytes: 1024 * 1024,
+      maxRecords: 1000,
+      requirePerceptionAudit: true
+    }),
+    /does not match the aggregate omission count/
+  )
 })
 
 test('server witness disputes remain explicit counterevidence and limitations', () => {

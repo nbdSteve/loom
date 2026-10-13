@@ -24,7 +24,10 @@ const BODY_EVENTS = new Set([
   'slept',
   'spawned',
   'spoke',
+  'witnessDenied',
   'witnessDisputed',
+  'witnessQuit',
+  'witnessRevived',
   'worldInteraction'
 ])
 const HARNESS_EVENTS = new Set([
@@ -32,12 +35,15 @@ const HARNESS_EVENTS = new Set([
   'cognitionForwarded',
   'cognitionProxyReady',
   'cognitionRefused',
+  'cognitionStimulusAttested',
   'controlledBodyCrash',
   'experimentEnded',
   'experimentStarted',
+  'initialConditionsAttested',
   'postCrashCallReserveReleased',
   'preflightValidated',
   'processExited',
+  'processGroupSignalled',
   'processStarted',
   'providerUsage',
   'runFailed'

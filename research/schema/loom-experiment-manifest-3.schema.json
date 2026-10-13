@@ -391,10 +391,8 @@
     "protocol": {
       "type": "object",
       "required": [
-        "goalReviewCycleSeconds",
         "difficulty",
-        "mobSpawning",
-        "controlledBodyCrash"
+        "mobSpawning"
       ],
       "properties": {
         "goalReviewCycleSeconds": {

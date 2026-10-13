@@ -421,6 +421,21 @@ class PlayerBodyPortTest {
         assertEquals(1.5, movementPerception.selfState.saturation)
         assertEquals("entity.minecraft.zombie", movementPerception.surroundings.single().what)
         assertEquals("item.minecraft.bread", movementPerception.selfState.inventorySummary.single().what)
+        val perceptionAudit =
+            requireNotNull(
+                harness.records
+                    .single {
+                        it.event == BodyEvent.PERCEIVED &&
+                            it.requestId == movementPerception.requestId
+                    }.perceptionAudit,
+            )
+        assertEquals(6_000, perceptionAudit.worldClock.timeOfDay)
+        assertEquals(2, perceptionAudit.worldClock.day)
+        assertEquals(1, perceptionAudit.entities.rawBodyListCount)
+        assertEquals(1, perceptionAudit.entities.jvmSelectedCount)
+        assertEquals(0, perceptionAudit.entities.jvmCutOmittedCount)
+        assertEquals(0, perceptionAudit.blocks.rawBodyListCount)
+        assertEquals(0, perceptionAudit.droppedItems.rawBodyListCount)
 
         val moveOutcome =
             harness.port

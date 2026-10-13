@@ -126,6 +126,38 @@ test('the proxy refuses excess outstanding work instead of queueing it without a
   }
 })
 
+test('the primary behavior proxy records one native origin on every cognition request', async () => {
+  const upstream = await startUpstream()
+  const events = []
+  const proxy = new CognitionBudgetProxy({
+    listen: { host: '127.0.0.1', port: 0 },
+    upstream: { host: '127.0.0.1', port: upstream.address().port },
+    agents: ['alpha'],
+    budget: {
+      perAgentCallCeiling: 1,
+      globalCallCeiling: 1,
+      globalOutstandingCeiling: 1
+    },
+    requestOrigin: (trigger) =>
+      trigger === 'goalReview'
+        ? 'nativeGoalReviewSchedule'
+        : 'nativeEventDriver',
+    journal: { append: (event, fields) => events.push({ event, ...fields }) }
+  })
+  await proxy.start()
+  try {
+    assert.equal((await request(proxy.listen.port, 'alpha', 'one')).intent.action, 'idle')
+    assert.match((await request(proxy.listen.port, 'alpha', 'two')).error, /experiment budget/)
+    assert.deepEqual(
+      events.map((event) => event.origin),
+      ['nativeGoalReviewSchedule', 'nativeGoalReviewSchedule']
+    )
+  } finally {
+    await proxy.close()
+    await new Promise((resolve) => upstream.close(resolve))
+  }
+})
+
 test('the proxy preserves one sanitized cognition classification for the diagnostic owner', async () => {
   const error =
     "cognition failed: the model provider refused Loom's request for " +
