@@ -86,5 +86,17 @@ data class PerceptionAudit(
         require(selected <= PERCEPTION_MAX_OBSERVATIONS) {
             "JVM-selected observations exceed the perception scene bound"
         }
+        requireRepresentative("entities", entities)
+        requireRepresentative("blocks", blocks)
+        requireRepresentative("dropped items", droppedItems)
+    }
+}
+
+private fun requireRepresentative(
+    kind: String,
+    audit: PerceptionKindAudit,
+) {
+    require(audit.rawBodyListCount == 0L || audit.jvmSelectedCount > 0L) {
+        "a non-empty $kind body list must keep a JVM-selected representative"
     }
 }

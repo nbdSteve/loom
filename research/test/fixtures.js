@@ -178,14 +178,14 @@ function perceptionAuditFixture (kind = 'empty', worldClock = {
       blocks: {
         rawBodyListCount: 16,
         bodyReportedOmittedCount: 120,
-        jvmSelectedCount: 15,
-        jvmCutOmittedCount: 1
+        jvmSelectedCount: 14,
+        jvmCutOmittedCount: 2
       },
       droppedItems: {
         rawBodyListCount: 16,
         bodyReportedOmittedCount: 1,
-        jvmSelectedCount: 0,
-        jvmCutOmittedCount: 16
+        jvmSelectedCount: 1,
+        jvmCutOmittedCount: 15
       }
     }
   }

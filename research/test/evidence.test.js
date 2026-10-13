@@ -109,6 +109,19 @@ test('incomplete and inconsistent per-kind perception audit fixtures are refused
     () => validatePerceptionAudit(unsaturated),
     /body omissions require a saturated body list/
   )
+  for (const kind of ['entities', 'blocks', 'droppedItems']) {
+    const starved = perceptionAuditFixture('empty')
+    starved[kind] = {
+      rawBodyListCount: 1,
+      bodyReportedOmittedCount: 0,
+      jvmSelectedCount: 0,
+      jvmCutOmittedCount: 1
+    }
+    assert.throws(
+      () => validatePerceptionAudit(starved),
+      /kept no representative from a non-empty body list/
+    )
+  }
 })
 
 test('primary behavior normalization requires every perception audit and derives each kind separately', () => {
@@ -144,15 +157,15 @@ test('primary behavior normalization requires every perception audit and derives
     samples: 6,
     rawBodyListCount: 84,
     bodyReportedOmittedCount: 360,
-    jvmSelectedCount: 81,
-    jvmCutOmittedCount: 3
+    jvmSelectedCount: 78,
+    jvmCutOmittedCount: 6
   })
   assert.deepEqual(metrics.perceptionAudit.byKind.droppedItems, {
     samples: 6,
     rawBodyListCount: 54,
     bodyReportedOmittedCount: 3,
-    jvmSelectedCount: 6,
-    jvmCutOmittedCount: 48
+    jvmSelectedCount: 9,
+    jvmCutOmittedCount: 45
   })
   assert.deepEqual(metrics.primaryBehavior.nativeGoalReviewsByAgent, {
     'tribe-alpha': 2,

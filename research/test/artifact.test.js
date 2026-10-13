@@ -239,7 +239,7 @@ test('primary behavior publication round-trips native-only attestations and per-
     published.manifest.perceptionAudit,
     published.metrics.perceptionAudit
   )
-  assert.equal(published.manifest.perceptionAudit.byKind.blocks.jvmCutOmittedCount, 3)
+  assert.equal(published.manifest.perceptionAudit.byKind.blocks.jvmCutOmittedCount, 6)
   const text = fs.readFileSync(
     path.join(published.artifactDirectory, 'evidence.jsonl'),
     'utf8'

@@ -192,6 +192,12 @@ function validatePerceptionAudit (audit, label = 'perception audit') {
       throw new Error(`${label} ${kind} selected more than the body returned`)
     }
     if (
+      counts.rawBodyListCount > 0 &&
+      counts.jvmSelectedCount === 0
+    ) {
+      throw new Error(`${label} ${kind} kept no representative from a non-empty body list`)
+    }
+    if (
       counts.jvmCutOmittedCount !==
       counts.rawBodyListCount - counts.jvmSelectedCount
     ) {

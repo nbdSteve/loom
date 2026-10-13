@@ -941,6 +941,110 @@ class PlayerBodyPortTest {
         )
 }
 
+class PlayerSceneSelectionIntegrationTest {
+    @TempDir
+    lateinit var temporary: Path
+
+    private val harnesses = mutableListOf<PortHarness>()
+    private val tick = AtomicLong(400)
+
+    @AfterEach
+    fun cleanUp() {
+        harnesses.forEach { runCatching(it.port::close) }
+    }
+
+    @Test
+    fun `crowded perception keeps category refs omissions and audit arithmetic consistent`() {
+        val agent = AgentId("agent-category-fair")
+        val harness = crowdedHarness(agent)
+        harness.port.spawn(agent).await()
+
+        val first = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val entity = first.surroundings.single { it.kind == ObservationKind.ENTITY }
+        val item = first.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }
+        assertCrowdedAudit(harness, first.requestId)
+        assertEquals(16, first.surroundings.size)
+        assertEquals(14, first.surroundings.count { it.kind == ObservationKind.BLOCK })
+        assertEquals(16, first.surroundings.map { it.ref }.distinct().size)
+        assertEquals(2, first.surroundingsOmitted)
+
+        val second = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val wrongRequest =
+            harness.port
+                .apply(agent, Intent.Collect(item.ref, approach = false), second.requestId)
+                .await() as IntentOutcome.Rejected
+        assertEquals(EventTag.COLLECT_ITEM_UNNAMED, wrongRequest.tag)
+        assertEquals(
+            IntentOutcome.Accepted("collected 1 minecraft:apple"),
+            harness.port
+                .apply(agent, Intent.Collect(item.ref, approach = false), first.requestId)
+                .await(),
+        )
+
+        val collect = harness.connector.requests.filterIsInstance<BodyRequest.Collect>().single()
+        assertEquals(first.requestId, collect.senseId)
+        assertEquals(0, collect.item)
+        assertTrue(entity.ref.startsWith("e"))
+        assertTrue(item.ref.startsWith("d"))
+    }
+
+    @Test
+    fun `threat scanning sees the selected hostile behind sixteen closer blocks`() {
+        val agent = AgentId("agent-crowded-threat")
+        val harness = crowdedHarness(agent)
+        harness.port.spawn(agent).await()
+
+        val perception = requireNotNull(harness.port.senseThreat(agent).await())
+        val trigger = perception.trigger as Trigger.ThreatSighted
+        val entity = perception.surroundings.single { it.kind == ObservationKind.ENTITY }
+
+        assertEquals("entity.minecraft.zombie", trigger.threat)
+        assertEquals(entity.ref, trigger.ref)
+        assertEquals(14, perception.surroundings.count { it.kind == ObservationKind.BLOCK })
+        assertTrue(perception.surroundings.any { it.kind == ObservationKind.DROPPED_ITEM })
+        assertTrue(
+            harness.port
+                .apply(agent, Intent.Flee(trigger.ref), perception.requestId)
+                .await() is IntentOutcome.Accepted,
+        )
+        val flee = harness.connector.requests.filterIsInstance<BodyRequest.Flee>().single()
+        assertEquals(perception.requestId, flee.senseId)
+        assertEquals(0, flee.entity)
+    }
+
+    private fun crowdedHarness(agent: AgentId): PortHarness =
+        buildPortHarness(
+            temporary,
+            tick,
+            agent,
+            HarnessOptions(
+                intercept = { request ->
+                    (request as? BodyRequest.Sense)?.let(::crowdedSense)
+                },
+            ),
+        ).also(harnesses::add)
+
+    private fun assertCrowdedAudit(
+        harness: PortHarness,
+        requestId: String,
+    ) {
+        val audit =
+            requireNotNull(
+                harness.records
+                    .single {
+                        it.event == BodyEvent.PERCEIVED &&
+                            it.requestId == requestId
+                    }.perceptionAudit,
+            )
+        assertEquals(1, audit.entities.jvmSelectedCount)
+        assertEquals(0, audit.entities.jvmCutOmittedCount)
+        assertEquals(14, audit.blocks.jvmSelectedCount)
+        assertEquals(2, audit.blocks.jvmCutOmittedCount)
+        assertEquals(1, audit.droppedItems.jvmSelectedCount)
+        assertEquals(0, audit.droppedItems.jvmCutOmittedCount)
+    }
+}
+
 class PlayerInteractionPortTest {
     @TempDir
     lateinit var temporary: Path
@@ -1594,6 +1698,37 @@ private fun fakeSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
             ),
         recipes = emptyList(),
         recipesOmitted = 0,
+    )
+
+private fun crowdedSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
+    fakeSense(request).copy(
+        entities =
+            listOf(
+                SensedEntity(
+                    what = "minecraft:zombie",
+                    position = listOf(5.5, 64.0, 2.5),
+                    visible = true,
+                ),
+            ),
+        blocks =
+            (0 until 16).map { index ->
+                val deltaX = index % 4 - 1
+                val deltaZ = index / 4 - 1
+                SensedBlock(
+                    what = "minecraft:stone",
+                    position = listOf(1 + deltaX, 63, 2 + deltaZ),
+                    visible = true,
+                )
+            },
+        items =
+            listOf(
+                SensedItem(
+                    what = "minecraft:apple",
+                    count = 1,
+                    position = listOf(6.5, 64.0, 2.5),
+                    visible = true,
+                ),
+            ),
     )
 
 @Suppress("LongMethod")

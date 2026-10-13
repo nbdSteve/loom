@@ -33,16 +33,29 @@ class PerceptionAuditTest {
         val audit =
             auditOf(
                 kind(raw = 16, bodyOmitted = 7, selected = 1),
-                kind(raw = 16, bodyOmitted = 40, selected = 15),
-                kind(raw = 16, bodyOmitted = 3, selected = 0),
+                kind(raw = 16, bodyOmitted = 40, selected = 14),
+                kind(raw = 16, bodyOmitted = 3, selected = 1),
             )
 
         assertEquals(7, audit.entities.bodyReportedOmittedCount)
         assertEquals(15, audit.entities.jvmCutOmittedCount)
         assertEquals(40, audit.blocks.bodyReportedOmittedCount)
-        assertEquals(1, audit.blocks.jvmCutOmittedCount)
+        assertEquals(2, audit.blocks.jvmCutOmittedCount)
         assertEquals(3, audit.droppedItems.bodyReportedOmittedCount)
-        assertEquals(16, audit.droppedItems.jvmCutOmittedCount)
+        assertEquals(15, audit.droppedItems.jvmCutOmittedCount)
+    }
+
+    @Test
+    fun `every non-empty scene category keeps a selected representative`() {
+        assertFailsWith<IllegalArgumentException> {
+            auditOf(kind(raw = 1, selected = 0), emptyKind(), emptyKind())
+        }
+        assertFailsWith<IllegalArgumentException> {
+            auditOf(emptyKind(), kind(raw = 1, selected = 0), emptyKind())
+        }
+        assertFailsWith<IllegalArgumentException> {
+            auditOf(emptyKind(), emptyKind(), kind(raw = 1, selected = 0))
+        }
     }
 
     @Test

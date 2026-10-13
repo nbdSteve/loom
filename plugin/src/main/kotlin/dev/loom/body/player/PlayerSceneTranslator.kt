@@ -4,7 +4,6 @@
 package dev.loom.body.player
 
 import dev.loom.body.InventorySlotBinding
-import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import dev.loom.body.PerceptionAudit
 import dev.loom.body.PerceptionKindAudit
 import dev.loom.body.PerceptionWorldClockAudit
@@ -36,7 +35,7 @@ internal class PlayerSceneTranslator(
             )
         val subjects = subjectsOf(raw, serverSubjects)
         val itemSubjects = context.authority.serverState.itemSubjectsOf(raw.identity, raw.report.items)
-        val selected = offersOf(raw, subjects, itemSubjects).take(PERCEPTION_MAX_OBSERVATIONS)
+        val selected = selectedOffers(raw, subjects, itemSubjects)
         val entityOffers = selected.filter { it.kind == ObservationKind.ENTITY }
         val blockOffers = selected.filter { it.kind == ObservationKind.BLOCK }
         val itemOffers = selected.filter { it.kind == ObservationKind.DROPPED_ITEM }
@@ -84,6 +83,16 @@ internal class PlayerSceneTranslator(
             selfState = selfStateOf(raw, slotBindings, recipeBindings),
         )
     }
+
+    private fun selectedOffers(
+        raw: RawSense,
+        subjects: List<UUID>,
+        itemSubjects: List<UUID?>,
+    ): List<SceneOffer> =
+        PlayerSceneSelector.select(
+            raw.report.position,
+            offersOf(raw, subjects, itemSubjects),
+        )
 
     private fun perceptionAuditOf(
         raw: RawSense,
@@ -192,11 +201,7 @@ internal class PlayerSceneTranslator(
                     count = item.count.toLong(),
                 )
             }
-        return (entities + blocks + items).sortedWith(
-            compareBy<SceneOffer> { blocksApart(raw.report.position, it.position) }
-                .thenBy { it.kind.ordinal }
-                .thenBy(SceneOffer::sourceIndex),
-        )
+        return entities + blocks + items
     }
 
     private fun observationOf(
@@ -272,18 +277,6 @@ internal class PlayerSceneTranslator(
                         WorldClock.ticksUntilNightfall(raw.report.time.timeOfDay.toLong()),
                 ),
         )
-}
-
-private data class SceneOffer(
-    val kind: ObservationKind,
-    val sourceIndex: Int,
-    val what: String,
-    val position: List<Double>,
-    val visible: Boolean,
-    val subject: UUID? = null,
-    val count: Long? = null,
-) {
-    val key: Pair<ObservationKind, Int> = kind to sourceIndex
 }
 
 private fun entityDescriptionId(resource: String): String {
