@@ -203,7 +203,7 @@ mod tests {
         assert!(decided.reasoning.contains(DEEP));
         assert_eq!(decided.provenance.model, FAST);
         assert_eq!(decided.provenance.tier, DecisionImportance::Routine);
-        assert_eq!(decided.provenance.prompt_version, "routine-v11");
+        assert_eq!(decided.provenance.prompt_version, "routine-v12");
     }
 
     #[tokio::test]

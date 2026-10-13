@@ -35,13 +35,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v11";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v12";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v11";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v12";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v11";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v12";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -154,8 +154,11 @@ the choice, briefly and honestly.";
 const fn tier_brief(tier: DecisionImportance) -> &'static str {
     match tier {
         DecisionImportance::Routine => {
-            "This is a routine moment. Keep it simple and cheap; a small sensible \
-             action, or idle, is usually right."
+            "Keep this routine decision simple and cheap. If one safe, reversible \
+             action can advance a self-chosen short-term goal or reduce relevant \
+             uncertainty, take that action. An empty inventory still permits movement \
+             and any offered block-ref dig. Idle is correct when no useful step is \
+             justified. Never act only to stay busy."
         }
         DecisionImportance::Notable => {
             "This moment involves someone or something outside yourself, and what \
@@ -248,7 +251,9 @@ about {distance} blocks away to the {bearing}, {sight}, and {reach}",
             format!("you caught sight of {block}", block = field(block))
         }
         Trigger::GoalReview => {
-            "nothing in particular; you are pausing to reconsider what you are doing".to_owned()
+            "Your scheduled goal review: choose a short-term goal of your own from the \
+             evidence available now."
+                .to_owned()
         }
     }
 }
@@ -611,6 +616,122 @@ mod tests {
                 count: None,
             }],
             surroundings_omitted: 0,
+        }
+    }
+
+    fn r5_goal_review_perception() -> Perception {
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.captured_tick = 18;
+        seen.self_state.health = 20.0;
+        seen.self_state.food = 20;
+        seen.self_state.saturation = 5.0;
+        seen.self_state.position = [10.5, 68.0, 3.5];
+        seen.self_state.inventory_summary.clear();
+        seen.self_state.crafting_options.clear();
+        seen.self_state.crafting_options_omitted = 0;
+        seen.self_state.world.ticks_until_nightfall = 13_790;
+        seen.surroundings = vec![
+            Observation {
+                kind: ObservationKind::Block,
+                what: "grass block".to_owned(),
+                distance: 0.5,
+                direction: Bearing::North,
+                vertical_offset: -1.0,
+                visible: true,
+                target_ref: "b0".to_owned(),
+                count: None,
+            },
+            Observation {
+                kind: ObservationKind::Block,
+                what: "short grass".to_owned(),
+                distance: 1.5,
+                direction: Bearing::East,
+                vertical_offset: 0.0,
+                visible: true,
+                target_ref: "b1".to_owned(),
+                count: None,
+            },
+        ];
+        seen.surroundings_omitted = 117;
+        seen
+    }
+
+    #[test]
+    fn an_r5_shaped_goal_review_asks_for_a_self_chosen_short_term_goal() {
+        let seen = r5_goal_review_perception();
+        let prompt = render(&router().route(seen.importance), &seen);
+
+        assert!(
+            prompt.situation.contains(
+                "Your scheduled goal review: choose a short-term goal of your own from \
+                 the evidence available now."
+            ),
+            "a goal review must ask the agent to choose its own near-term aim, got {situation}",
+            situation = prompt.situation
+        );
+    }
+
+    #[test]
+    fn an_r5_shaped_goal_review_favours_one_safe_reversible_grounded_step() {
+        let seen = r5_goal_review_perception();
+        let prompt = render(&router().route(seen.importance), &seen);
+
+        for expected in [
+            "one safe, reversible action",
+            "advance a self-chosen short-term goal",
+            "reduce relevant uncertainty",
+            "take that action",
+        ] {
+            assert!(
+                prompt.system.contains(expected),
+                "the routine instruction must permit {expected:?}, got {system}",
+                system = prompt.system
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_r5_inventory_still_allows_movement_and_an_offered_block_ref_dig() {
+        let seen = r5_goal_review_perception();
+        let prompt = render(&router().route(seen.importance), &seen);
+
+        assert!(prompt.situation.contains("You are carrying nothing."));
+        assert!(prompt.situation.contains("block grass block (ref b0)"));
+        assert!(prompt
+            .system
+            .contains("An empty inventory still permits movement and any offered block-ref dig."));
+    }
+
+    #[test]
+    fn routine_agency_keeps_idle_valid_without_rewarding_activity_for_its_own_sake() {
+        let seen = r5_goal_review_perception();
+        let prompt = render(&router().route(seen.importance), &seen);
+
+        assert!(prompt
+            .system
+            .contains("Idle is correct when no useful step is justified."));
+        assert!(prompt.system.contains("Never act only to stay busy."));
+    }
+
+    #[test]
+    fn a_goal_review_is_no_longer_framed_as_an_empty_pause_that_prefers_idle() {
+        let seen = r5_goal_review_perception();
+        let prompt = render(&router().route(seen.importance), &seen);
+        let rendered = format!(
+            "{system}\n{situation}",
+            system = prompt.system,
+            situation = prompt.situation
+        );
+
+        for old_wording in [
+            "nothing in particular",
+            "you are pausing",
+            "idle is usually right",
+        ] {
+            assert!(
+                !rendered.contains(old_wording),
+                "the goal-review path must not retain {old_wording:?}, got {rendered}"
+            );
         }
     }
 
