@@ -1,0 +1,606 @@
+{
+  "agents": [
+    {
+      "agentId": "tribe-alpha",
+      "controlPort": 25585,
+      "processDirectory": "bodies/loom_aa88da42d7",
+      "username": "loom_aa88da42d7",
+      "uuid": "65effc8b-efcc-3b44-83c1-8157de341f2e"
+    },
+    {
+      "agentId": "tribe-beta",
+      "controlPort": 25586,
+      "processDirectory": "bodies/loom_eab7eb8acb",
+      "username": "loom_eab7eb8acb",
+      "uuid": "0a3ecb58-852e-33f4-963b-e11ab547a48d"
+    },
+    {
+      "agentId": "tribe-gamma",
+      "controlPort": 25587,
+      "processDirectory": "bodies/loom_18c040d2cc",
+      "username": "loom_18c040d2cc",
+      "uuid": "e27687be-a707-314d-b013-2cfeb16a7a02"
+    }
+  ],
+  "behaviorGate": {
+    "calls": {
+      "forwardedByAgent": {
+        "tribe-alpha": 2,
+        "tribe-beta": 2,
+        "tribe-gamma": 2
+      },
+      "forwardedPerThousandTicks": 2.203452,
+      "peakOutstanding": 1
+    },
+    "cleanupVerified": true,
+    "externalSpendNanoUsd": 3447040,
+    "goalContinuityAgents": [
+      "tribe-alpha",
+      "tribe-beta",
+      "tribe-gamma"
+    ],
+    "goalReviewActions": {
+      "accepted": 1,
+      "acceptedAndConfirmedRate": 0.333333,
+      "byConfirmation": {
+        "movement": 1
+      },
+      "confirmed": 1,
+      "nonIdle": 3
+    },
+    "manualCriteria": [
+      "each counted meaningful behavior has an evidence-grounded aim",
+      "no counted action is justified only by being active",
+      "no cross-agent goal leakage in the typed fields"
+    ],
+    "meaningfulBehaviorByAgent": {
+      "tribe-gamma": 1
+    },
+    "nightPerceptionsByAgent": {},
+    "omissionsByKind": {
+      "blocks": {
+        "bodyReportedOmissionShare": 0.692308,
+        "bodyReportedOmittedCount": 648,
+        "jvmCutOmittedCount": 0,
+        "rawBodyListCount": 288
+      },
+      "droppedItems": {
+        "bodyReportedOmissionShare": 0,
+        "bodyReportedOmittedCount": 0,
+        "jvmCutOmittedCount": 0,
+        "rawBodyListCount": 0
+      },
+      "entities": {
+        "bodyReportedOmissionShare": 0,
+        "bodyReportedOmittedCount": 0,
+        "jvmCutOmittedCount": 0,
+        "rawBodyListCount": 12
+      }
+    },
+    "pilotCriteria": {
+      "completeNativeReviews": true,
+      "meaningfulBehaviorAgents": false,
+      "noFailureEvidence": true,
+      "noJvmCut": true,
+      "typedGoalContinuity": true
+    },
+    "pilotVerdict": "no-go",
+    "version": "loom-primary-behavior-gate/1"
+  },
+  "bounds": {
+    "artifactBytes": 2097152,
+    "evidenceRecords": 20000,
+    "logBytes": 4194304,
+    "runDurationSeconds": 180,
+    "shutdownSeconds": 20,
+    "simulationTickCeiling": 4000,
+    "startupAttempts": 2,
+    "startupConcurrency": 2,
+    "startupSeconds": 120
+  },
+  "clientPresence": {
+    "interactiveObservers": 0,
+    "realPlayerAccounts": 0
+  },
+  "cognition": {
+    "actualExternalSpendUsd": 0.00344704,
+    "actualForwardedCalls": 6,
+    "actualRefusedCalls": 0,
+    "eventDrivenOnly": true,
+    "globalCallCeiling": 12,
+    "globalOutstandingCeiling": 3,
+    "maxExternalSpendUsd": 2.34,
+    "maxOutputTokens": 2048,
+    "maxRequestBytes": 65536,
+    "perAgentCallCeiling": 6,
+    "preWriteTransportRetryLimit": 1,
+    "pricing": {
+      "currency": "USD",
+      "effectiveDate": "2026-10-12",
+      "models": {
+        "gpt-5.4": {
+          "cachedInputNanoUsdPerToken": 250,
+          "inputNanoUsdPerToken": 2500,
+          "outputNanoUsdPerToken": 15000
+        },
+        "gpt-5.4-nano": {
+          "cachedInputNanoUsdPerToken": 20,
+          "inputNanoUsdPerToken": 200,
+          "outputNanoUsdPerToken": 1250
+        }
+      },
+      "source": "OpenAI API Pricing and official GPT-5.4 model pages, accessed 2026-10-12; standard-processing rates."
+    },
+    "providerEndpoint": "https://api.openai.com/v1",
+    "providerRetryLimit": 0,
+    "providerTimeoutMillis": 12000,
+    "proxyRetryLimit": 0,
+    "socialRolesInjected": false,
+    "spendAccounting": "Provider-reported tokens priced with the pinned integer nano-USD rates.",
+    "worstCaseConfiguredSpendUsd": 2.33472
+  },
+  "environment": {
+    "attested": {
+      "source": "harness startup probes and pinned run configuration"
+    },
+    "loopbackOnly": true,
+    "onlineMode": false,
+    "server": {
+      "minecraftVersion": "1.21.1",
+      "paperBuild": 133,
+      "paperSha256": "39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9",
+      "software": "Paper"
+    },
+    "tools": {
+      "architecture": "arm64",
+      "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+      "git": "git version 2.54.0 (Apple Git-157)",
+      "gradle": "Gradle 8.14",
+      "java": "openjdk version \"21.0.11\" 2026-04-21 LTS",
+      "lsof": "lsof version information: revision: 4.91 latest revision: ftp://lsof.itap.purdue.edu/pub/tools/unix/lsof/ latest FAQ: ftp://lsof.itap.purdue.edu/pub/tools/unix/lsof/FAQ latest man page: ftp://lsof.itap.purdue.edu/pub/tools/unix/lsof/lsof_man configuration info: libproc-based Anyone can list all files. /dev warnings are disabled. Kernel ID check is disabled.",
+      "node": "v25.9.0",
+      "npm": "11.12.1",
+      "os": "darwin 25.6.0",
+      "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+    },
+    "world": {
+      "maxWorldSizeBlocks": 256,
+      "seed": "76192346017",
+      "simulationDistanceChunks": 4,
+      "viewDistanceChunks": 4,
+      "worldBorderDiameterBlocks": 128
+    }
+  },
+  "eventCounts": {
+    "agents": [
+      {
+        "agentId": "tribe-alpha",
+        "byEvent": {
+          "decided": 2,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 2,
+          "perceived": 2,
+          "spawned": 1,
+          "witnessJoined": 1,
+          "worldInteraction": 1
+        },
+        "records": 11
+      },
+      {
+        "agentId": "tribe-beta",
+        "byEvent": {
+          "decided": 2,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 2,
+          "perceived": 2,
+          "spawned": 1,
+          "witnessJoined": 1
+        },
+        "records": 10
+      },
+      {
+        "agentId": "tribe-gamma",
+        "byEvent": {
+          "decided": 2,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 2,
+          "moved": 1,
+          "perceived": 2,
+          "spawned": 1,
+          "witnessJoined": 1
+        },
+        "records": 11
+      }
+    ],
+    "byEvent": {
+      "decided": 6,
+      "despawned": 3,
+      "healthChanged": 3,
+      "intentApplied": 6,
+      "moved": 1,
+      "perceived": 6,
+      "spawned": 3,
+      "witnessJoined": 3,
+      "worldInteraction": 1
+    },
+    "total": 32
+  },
+  "experimentId": "2026-10-15-openai-routine-v13-agency-pilot-r5",
+  "featureFlags": {
+    "collection": true,
+    "combat": true,
+    "crafting": true,
+    "digging": true,
+    "eating": true,
+    "equipping": true,
+    "movement": true,
+    "permadeath": true,
+    "placement": true,
+    "sleep": true
+  },
+  "fieldProvenance": "Evidence counts, behavior metrics, timing ticks, cognition counts, provider-reported spend, and findings are generated from evidence.jsonl. Wall time, tool versions, component hashes, Paper identity, configuration, and cleanup are recorded by the harness.",
+  "integrityChecks": {
+    "absolutePermadeathEnabled": {
+      "configuredBy": "Loom player witness and synchronous death ledger",
+      "passed": true
+    },
+    "cleanupVerified": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "completeDecisionChains": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "expectedNativeReviewsObserved": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "initialConditionsRecorded": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "nativeSchedulersOnly": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "noControlledBodyCrash": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "noDroppedEvidenceWarning": {
+      "attested": {
+        "source": "bounded Paper log scan performed by the harness"
+      },
+      "passed": true
+    },
+    "perKindPerceptionAuditComplete": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "plannedNativeCallsFitCeilings": {
+      "configuredBy": "native GoalReviewSchedule plan and cognition ceilings",
+      "passed": true
+    },
+    "serverEvidenceUncontested": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    },
+    "threeIndependentBodies": {
+      "derivedFrom": "evidence.jsonl",
+      "passed": true
+    }
+  },
+  "knownWarnings": [],
+  "metrics": {
+    "bytes": 10056,
+    "derivedFrom": "51adb29bbd3c348d5f80fd3e28aee94f28039727221b93a0cb81251f9b68cec9",
+    "file": "metrics.json",
+    "format": "loom-derived-metrics/1",
+    "sha256": "c519ce9d00c5a23efd5ebcba7bfee05c6a0a1245739c82edddec3b33badcfe56"
+  },
+  "network": {
+    "bodyControlBasePort": 25585,
+    "cognitionProxyPort": 8642,
+    "cognitionUpstreamPort": 8643,
+    "host": "127.0.0.1",
+    "minecraftPort": 25565
+  },
+  "outcome": "3 configured bodies produced 6 decisions in one bounded shared world; 6 cognition request(s) came from the native goal-review schedule, with no harness-raised cognition stimulus or controlled body crash.",
+  "perceptionAudit": {
+    "byKind": {
+      "blocks": {
+        "bodyReportedOmittedCount": 648,
+        "jvmCutOmittedCount": 0,
+        "jvmSelectedCount": 288,
+        "rawBodyListCount": 288,
+        "samples": 6
+      },
+      "droppedItems": {
+        "bodyReportedOmittedCount": 0,
+        "jvmCutOmittedCount": 0,
+        "jvmSelectedCount": 0,
+        "rawBodyListCount": 0,
+        "samples": 6
+      },
+      "entities": {
+        "bodyReportedOmittedCount": 0,
+        "jvmCutOmittedCount": 0,
+        "jvmSelectedCount": 12,
+        "rawBodyListCount": 12,
+        "samples": 6
+      }
+    },
+    "complete": true,
+    "initialByAgent": [
+      {
+        "agentId": "tribe-alpha",
+        "capturedTick": 99,
+        "inventoryStacks": 0,
+        "position": [
+          10.5,
+          68,
+          3.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 62
+        }
+      },
+      {
+        "agentId": "tribe-beta",
+        "capturedTick": 199,
+        "inventoryStacks": 0,
+        "position": [
+          1.5,
+          68,
+          1.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 161
+        }
+      },
+      {
+        "agentId": "tribe-gamma",
+        "capturedTick": 299,
+        "inventoryStacks": 0,
+        "position": [
+          -9.5,
+          68,
+          -7.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 259
+        }
+      }
+    ],
+    "samples": 6
+  },
+  "protocol": {
+    "categoryFairSelection": true,
+    "controlledBodyCrashPlanned": false,
+    "difficulty": "normal",
+    "externalCognitionStimuli": {
+      "attested": {
+        "source": "bounded harness intervention schedule and cognition request-origin journal"
+      },
+      "configured": "none",
+      "harnessThinkCommandsIssued": 0,
+      "nativeSchedulersOnly": true
+    },
+    "initialConditions": {
+      "attested": {
+        "source": "Paper setup commands plus exact first body perception for each agent"
+      },
+      "configuredPositions": {
+        "tribe-alpha": [
+          10.5,
+          68,
+          3.5
+        ],
+        "tribe-beta": [
+          1.5,
+          68,
+          1.5
+        ],
+        "tribe-gamma": [
+          -9.5,
+          68,
+          -7.5
+        ]
+      },
+      "configuredWorldClock": {
+        "day": 0,
+        "isDay": true,
+        "timeOfDay": 0
+      },
+      "observedFirstPerceptions": [
+        {
+          "agentId": "tribe-alpha",
+          "capturedTick": 99,
+          "inventoryStacks": 0,
+          "position": [
+            10.5,
+            68,
+            3.5
+          ],
+          "worldClock": {
+            "day": 0,
+            "isDay": true,
+            "timeOfDay": 62
+          }
+        },
+        {
+          "agentId": "tribe-beta",
+          "capturedTick": 199,
+          "inventoryStacks": 0,
+          "position": [
+            1.5,
+            68,
+            1.5
+          ],
+          "worldClock": {
+            "day": 0,
+            "isDay": true,
+            "timeOfDay": 161
+          }
+        },
+        {
+          "agentId": "tribe-gamma",
+          "capturedTick": 299,
+          "inventoryStacks": 0,
+          "position": [
+            -9.5,
+            68,
+            -7.5
+          ],
+          "worldClock": {
+            "day": 0,
+            "isDay": true,
+            "timeOfDay": 259
+          }
+        }
+      ],
+      "startingInventories": "empty"
+    },
+    "injectedDirectives": {
+      "conflict": false,
+      "hierarchy": false,
+      "pairings": false,
+      "resourceTargets": false,
+      "roles": false,
+      "scriptedObjectives": false,
+      "socialGoals": false
+    },
+    "mobSpawning": true,
+    "mode": "routine-v13-goal-continuity",
+    "nativeGoalReviewSchedule": {
+      "cadenceTicks": 2400,
+      "expectedReviewsPerAgent": 2,
+      "sliceTicks": 100
+    },
+    "scene": "r5-neutral"
+  },
+  "provenance": {
+    "attested": {
+      "source": "configured routing plus decision provenance in normalized evidence"
+    },
+    "backend": "openai",
+    "decisionsByStamp": [
+      {
+        "decisions": 6,
+        "model": "gpt-5.4-nano",
+        "promptVersion": "routine-v13",
+        "tier": "ROUTINE"
+      }
+    ],
+    "models": {
+      "ordinary": "gpt-5.4-nano",
+      "pivotal": "gpt-5.4"
+    },
+    "prompts": {
+      "notable": "notable-v13",
+      "pivotal": "pivotal-v13",
+      "routine": "routine-v13"
+    },
+    "provider": "OpenAI Chat Completions"
+  },
+  "publication": {
+    "deathLedgerCommitted": false,
+    "manifestValidatedBeforeLaunch": true,
+    "manifestValidatedBeforePublication": true,
+    "normalized": true,
+    "rawWorldCommitted": false,
+    "serverLogsCommitted": false
+  },
+  "rawEvidence": {
+    "bytes": 78320,
+    "credentialScan": {
+      "matches": 0,
+      "note": "The publisher recursively sanitized bounded strings, then scanned every committed artifact file.",
+      "redactions": 0,
+      "scannedFor": [
+        "OpenAI-style API key",
+        "authorization bearer value",
+        "private key material",
+        "AWS secret access key assignment",
+        "secret-bearing JSON field",
+        "GitHub-style token",
+        "local absolute filesystem path",
+        "provider request or thread identifier",
+        "transient process id field"
+      ]
+    },
+    "file": "evidence.jsonl",
+    "format": "loom-normalized-evidence/1",
+    "immutable": true,
+    "records": 57,
+    "sha256": "51adb29bbd3c348d5f80fd3e28aee94f28039727221b93a0cb81251f9b68cec9"
+  },
+  "runtime": {
+    "body": {
+      "healthCheckIntervalTicks": 100,
+      "healthFailureLimit": 3,
+      "ioWorkersPerAgent": 4,
+      "startupRetryMillis": 250
+    },
+    "cognitionBridge": {
+      "connectTimeoutMillis": 500,
+      "perAgentPending": 2,
+      "queueDepth": 16,
+      "timeoutMillis": 30000,
+      "workers": 3
+    },
+    "paperMemoryMiB": 1024
+  },
+  "schemaVersion": "loom-experiment-manifest/3",
+  "scientificUsability": {
+    "outOfScope": [
+      "No single bounded run establishes durable cooperation, role specialization, hierarchy, settlement, or conflict norms.",
+      "Pinned starting conditions are an experimental intervention; no goal, role, resource target, social policy, or cognition stimulus was injected."
+    ],
+    "scope": [
+      "The configured isolated bodies shared one disposable Paper world under fixed resource and cognition bounds.",
+      "Recorded per-agent cycles, action outcomes, lifecycle failures, and cleanup can be reproduced from normalized evidence."
+    ],
+    "verdict": "Usable only for the observations and counterevidence derivable from this bounded run."
+  },
+  "software": {
+    "body": {
+      "buildSha256": "883c95f3039881c148303900a274583ae123593fa5d9f5488baf8e87b41839af",
+      "sourceSha256": "659541c9292162710fed21cc9b60ff33103d2634311154915a16008d7310de5d"
+    },
+    "cognition": {
+      "buildSha256": "9758c92e2a6156df4366a08a4baf5fd29f6fa738acf3a5787b74d93ab6254623",
+      "sourceSha256": "e29e2538220a8af52df0db055d15169c149bbada50caa0301ec22a03de3b8731"
+    },
+    "plugin": {
+      "buildSha256": "844c6364c59dc64a59c3675d91ef03a97f2776e0261bd12d98407ab3d075a275",
+      "sourceSha256": "963cdfc286408a398b25df8ab78d39f3fa4ae6b431440b625a8606a51babab24"
+    }
+  },
+  "sourceCommit": "c672c5e1ec87d1f1cfd1401cf75dd50e8e68b568",
+  "sourceCommitShort": "c672c5e1ec87",
+  "sourceRepository": "https://github.com/nbdSteve/loom.git",
+  "timing": {
+    "attested": {
+      "source": "harness monotonic deadline, UTC clock, and normalized body ticks"
+    },
+    "endedAt": "2026-10-14T23:30:18.697Z",
+    "firstTick": 24,
+    "lastTick": 2747,
+    "startedAt": "2026-10-14T23:27:18.688Z",
+    "stopReason": "durationElapsed",
+    "tickSpan": 2723,
+    "wallDurationMillis": 180009
+  },
+  "title": "Routine-v13 three-agent goal-continuity pilot"
+}
