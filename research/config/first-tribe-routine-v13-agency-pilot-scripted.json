@@ -62,7 +62,7 @@
     "providerEndpoint": null,
     "providerTimeoutMillis": 12000,
     "maxRequestBytes": 65536,
-    "perAgentCallCeiling": 4,
+    "perAgentCallCeiling": 6,
     "globalCallCeiling": 12,
     "globalOutstandingCeiling": 3,
     "maxOutputTokens": 2048,

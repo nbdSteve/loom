@@ -145,9 +145,12 @@ driver's threat and scheduled-review triggers remain unchanged.
 Primary behavior mode does not use that proof intervention or reserve. Its
 planned native schedule is six calls: two reviews for each of three agents. Its
 preflight rejects a configuration unless those calls fit both the per-agent and
-global ceilings. The pilot proposal permits four calls per agent, twelve
+global ceilings. The routine-v12 pilot permits four calls per agent, twelve
 globally, and three outstanding, leaving bounded room for native event-triggered
-cognition. Preflight also refuses more cognition bridge workers than outstanding
+cognition. The routine-v13 pilot permits six per agent under the same twelve
+global and three outstanding, because a live run saw daytime threat sightings
+draw three flight calls from one agent before its second review; the global
+ceiling, and so the worst-case spend, is unchanged. Preflight also refuses more cognition bridge workers than outstanding
 slots, because the bridge would then send a fourth concurrent request that the
 proxy can only refuse; with three workers that request waits in the bridge's
 bounded queue instead. Every forwarded or refused cognition record carries either

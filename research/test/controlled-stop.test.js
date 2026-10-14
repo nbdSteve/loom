@@ -122,11 +122,11 @@ test('a global-outstanding stop publishes complete earlier chains and the draine
 
 test('a per-agent call stop names its agent and reconciles that agent\'s forwarded calls', () => {
   const published = publish({
-    raw: controlledStopRawRecords({ bound: 'perAgentCall', eventChains: 3 })
+    raw: controlledStopRawRecords({ bound: 'perAgentCall', eventChains: 5 })
   })
   const stop = assertNoGo(published, 'cognitionBudgetExhausted')
   assert.equal(stop.trigger.agentId, 'tribe-beta')
-  assert.deepEqual(stop.refusal, { bound: 'perAgentCall', unit: 'calls', ceiling: 4, observed: 4 })
+  assert.deepEqual(stop.refusal, { bound: 'perAgentCall', unit: 'calls', ceiling: 6, observed: 6 })
 })
 
 test('a global call stop counts calls admitted before the closure, including in-flight ones', () => {

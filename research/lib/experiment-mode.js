@@ -9,11 +9,16 @@ const ROUTINE_V13_GOAL_CONTINUITY_MODE = 'routine-v13-goal-continuity'
 const PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V12_PRIMARY_BEHAVIOR_MODE]: Object.freeze({
     prompts: Object.freeze({ routine: 'routine-v12', notable: 'notable-v12', pivotal: 'pivotal-v12' }),
-    categoryFairSelection: false
+    categoryFairSelection: false,
+    callCeilings: Object.freeze({ perAgent: 4, global: 12, outstanding: 3 })
   }),
   [ROUTINE_V13_GOAL_CONTINUITY_MODE]: Object.freeze({
     prompts: Object.freeze({ routine: 'routine-v13', notable: 'notable-v13', pivotal: 'pivotal-v13' }),
-    categoryFairSelection: true
+    categoryFairSelection: true,
+    // A live pilot saw daytime threat sightings draw three event calls from one agent before
+    // its second review, so the per-agent share widens; the global ceiling, and with it the
+    // worst-case spend, is unchanged.
+    callCeilings: Object.freeze({ perAgent: 6, global: 12, outstanding: 3 })
   })
 })
 const PRIMARY_BEHAVIOR_AGENTS = ['tribe-alpha', 'tribe-beta', 'tribe-gamma']

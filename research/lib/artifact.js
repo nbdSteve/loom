@@ -226,12 +226,15 @@ function primaryBehaviorErrors (config) {
   ) {
     errors.push('the primary behavior mode must run for 180 seconds or 4000 simulation ticks')
   }
+  const ceilings = pinned.callCeilings
   if (
-    config.cognition?.perAgentCallCeiling !== 4 ||
-    config.cognition?.globalCallCeiling !== 12 ||
-    config.cognition?.globalOutstandingCeiling !== 3
+    config.cognition?.perAgentCallCeiling !== ceilings.perAgent ||
+    config.cognition?.globalCallCeiling !== ceilings.global ||
+    config.cognition?.globalOutstandingCeiling !== ceilings.outstanding
   ) {
-    errors.push('the primary behavior mode must retain the 4/12/3 cognition ceilings')
+    errors.push(
+      `${configuredMode(config)} must use the ${ceilings.perAgent}/${ceilings.global}/${ceilings.outstanding} cognition ceilings`
+    )
   }
   // More bridge workers than outstanding slots turns ordinary concurrency into refusals.
   if (

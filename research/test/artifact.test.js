@@ -183,11 +183,16 @@ test('the routine-v13 goal-continuity pilot preflights under the v12 treatment p
   assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 2.33472)
   assert.equal(manifest.cognition.maxExternalSpendUsd, 2.34)
 
-  // Everything but the mode, title, prompts and the fairness attestation is the v12 pilot.
+  assert.equal(manifest.cognition.perAgentCallCeiling, 6)
+  assert.equal(manifest.cognition.globalCallCeiling, 12)
+
+  // Everything but the mode, title, prompts, fairness attestation and per-agent call share
+  // is the v12 pilot.
   const v12 = openAiPrimaryBehaviorConfig()
   for (const drop of [v12, config]) {
     for (const key of ['experimentId', 'title', 'mode', 'configFile']) delete drop[key]
     delete drop.cognition.prompts
+    delete drop.cognition.perAgentCallCeiling
     delete drop.primaryBehavior.categoryFairSelection
   }
   assert.deepEqual(config, v12)
