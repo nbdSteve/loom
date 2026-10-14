@@ -19,7 +19,8 @@ const {
   CRASH_CONTAINMENT_MODE,
   PRIMARY_BEHAVIOR_AGENTS,
   PRIMARY_BEHAVIOR_INITIAL_POSITIONS,
-  ROUTINE_V12_PRIMARY_BEHAVIOR_MODE,
+  PRIMARY_BEHAVIOR_MODES,
+  primaryBehaviorModeOf,
   configuredMode,
   isPrimaryBehaviorMode
 } = require('./experiment-mode.js')
@@ -187,8 +188,9 @@ function primaryBehaviorErrors (config) {
   if (behavior.scene !== 'r5-neutral') {
     errors.push('primaryBehavior.scene must be r5-neutral')
   }
-  if (behavior.categoryFairSelection !== false) {
-    errors.push('primaryBehavior.categoryFairSelection must remain false for this pilot')
+  const pinned = primaryBehaviorModeOf(configuredMode(config))
+  if (behavior.categoryFairSelection !== pinned.categoryFairSelection) {
+    errors.push(`primaryBehavior.categoryFairSelection must be ${pinned.categoryFairSelection} for ${configuredMode(config)}`)
   }
   if (config.proof !== undefined) {
     errors.push('the primary behavior mode cannot configure crash or operator-think proof traffic')
@@ -223,12 +225,8 @@ function primaryBehaviorErrors (config) {
   ) {
     errors.push('the primary behavior mode must retain the provider timeout and request/output bounds')
   }
-  if (!sameJson(config.cognition?.prompts, {
-    routine: 'routine-v12',
-    notable: 'notable-v12',
-    pivotal: 'pivotal-v12'
-  })) {
-    errors.push('the primary behavior mode must use routine, notable, and pivotal prompt v12')
+  if (!sameJson(config.cognition?.prompts, { ...pinned.prompts })) {
+    errors.push(`${configuredMode(config)} must use prompts ${Object.values(pinned.prompts).join(', ')}`)
   }
   if (
     config.cognition?.backend === 'openai' &&
@@ -251,8 +249,9 @@ function validateRunConfig (config) {
   if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9][a-z0-9-]*$/.test(config.experimentId ?? '')) {
     errors.push('experimentId must be a dated lowercase slug')
   }
-  if (![CRASH_CONTAINMENT_MODE, ROUTINE_V12_PRIMARY_BEHAVIOR_MODE].includes(configuredMode(config))) {
-    errors.push('mode must be crash-containment or routine-v12-primary-behavior')
+  const modes = [CRASH_CONTAINMENT_MODE, ...Object.keys(PRIMARY_BEHAVIOR_MODES)]
+  if (!modes.includes(configuredMode(config))) {
+    errors.push(`mode must be one of ${modes.join(', ')}`)
   }
   if (!Array.isArray(config.agents) || config.agents.length < 3 || config.agents.length > 16) {
     errors.push('agents must contain 3..16 agent ids')
@@ -674,7 +673,7 @@ function protocolFor (config, metrics) {
     }
   }
   return {
-    mode: ROUTINE_V12_PRIMARY_BEHAVIOR_MODE,
+    mode: configuredMode(config),
     difficulty: config.world.difficulty,
     mobSpawning: config.world.mobSpawning,
     controlledBodyCrashPlanned: false,
@@ -1012,6 +1011,10 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
   }
   if (protocol.controlledBodyCrashPlanned !== false) {
     errors.push('primary behavior protocol must attest that no body crash was planned')
+  }
+  const pinned = primaryBehaviorModeOf(protocol.mode)
+  if (protocol.categoryFairSelection !== pinned.categoryFairSelection) {
+    errors.push(`${protocol.mode} protocol must attest categoryFairSelection ${pinned.categoryFairSelection}`)
   }
   if (metrics.crashContainment.controlledCrashes.length !== 0) {
     errors.push('primary behavior evidence contains a controlled body crash')
@@ -1363,7 +1366,7 @@ function semanticErrors (artifactDirectory, manifest) {
   if (manifest.environment.world.worldBorderDiameterBlocks > manifest.environment.world.maxWorldSizeBlocks) {
     errors.push('world border diameter exceeds max world size')
   }
-  if (manifest.protocol.mode === ROUTINE_V12_PRIMARY_BEHAVIOR_MODE) {
+  if (primaryBehaviorModeOf(manifest.protocol.mode) !== undefined) {
     errors.push(...primaryBehaviorSemanticErrors(manifest, metrics, records))
   }
 
@@ -1501,7 +1504,7 @@ function renderReadme (config, manifest, metrics) {
     ? '- Scripted decisions are acceptance traffic. They are not evidence of cooperation, specialization, avoidance,\n  conflict, settlement, or any other emergent social outcome.'
     : '- Model-driven actions are observations, not proof of motive or emergence. Any social or spatial interpretation is limited to the recorded evidence and counterevidence.'
   const question = primaryBehavior
-    ? 'Can three independently embodied Loom agents complete the bounded routine-v12 pilot using only native event-driven cognition, while preserving complete per-kind perception and lifecycle evidence?'
+    ? `Can three independently embodied Loom agents complete the bounded ${config.cognition.prompts.routine} pilot using only native event-driven cognition, while preserving complete per-kind perception and lifecycle evidence?`
     : 'Can three independently embodied Loom agents continue repeated perceive/decide/act cycles in one bounded world, while one body process fails, without corrupting peer evidence or leaving processes behind?'
   const protocolObservations = primaryBehavior
     ? `- No body process was deliberately crashed and no harness \`/loombody think\` command was issued.

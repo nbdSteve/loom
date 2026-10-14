@@ -42,8 +42,8 @@ use loom_cognition::openai::settings::{
 use loom_cognition::openai::{OpenAiBackend, OpenAiConfig, MAX_RESPONSE_BYTES};
 use loom_cognition::router::Router;
 use loom_contract::{
-    DayPhase, Decision, DecisionImportance, Intent, InventoryStack, Perception, SelfState, Trigger,
-    WorldState,
+    DayPhase, Decision, DecisionImportance, GoalChoice, GoalDisposition, Intent, InventoryStack,
+    Perception, SelfState, Trigger, WorldState,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -426,7 +426,11 @@ async fn a_decision_comes_back_from_the_provider_and_is_stamped_by_loom() {
     assert_eq!(sent["response_format"]["json_schema"]["strict"], true);
     assert_eq!(
         sent["response_format"]["json_schema"]["schema"]["required"],
-        json!(["intent", "reasoning"])
+        json!(["intent", "reasoning", "goal"])
+    );
+    assert_eq!(
+        decision.goal, None,
+        "an answer without a goal choice makes none"
     );
     assert!(
         sent["messages"][1]["content"]
@@ -434,6 +438,28 @@ async fn a_decision_comes_back_from_the_provider_and_is_stamped_by_loom() {
             .is_some_and(|text| text.contains(PROMPT_MARKER)),
         "the perception itself must reach the provider, got {sent}"
     );
+}
+
+#[tokio::test]
+async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
+    let answer = json!({
+        "intent": { "action": "idle" },
+        "reasoning": "the held goal is still worth it and nothing to step toward",
+        "goal": { "disposition": "revise", "statement": "gather wood nearer the hill" }
+    });
+    let (_provider, decided) =
+        decide_with(Reply::completion(&answer), DecisionImportance::Routine).await;
+    let decision = decided.expect("a goal choice is part of a decision");
+    assert_eq!(
+        decision.goal,
+        Some(GoalChoice {
+            disposition: GoalDisposition::Revise,
+            statement: Some("gather wood nearer the hill".to_owned()),
+        })
+    );
+    assert_eq!(decision.intent, Intent::Idle);
+    assert_eq!(decision.provenance.model, FAST_MODEL);
+    assert_eq!(decision.provenance.prompt_version, "routine-v13");
 }
 
 #[tokio::test]

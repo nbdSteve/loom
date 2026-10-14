@@ -49,6 +49,21 @@ function openAiPrimaryBehaviorConfig () {
   return config
 }
 
+function configNamed (name) {
+  const file = path.join(__dirname, '..', 'config', name)
+  const config = structuredClone(readJson(file))
+  config.configFile = file
+  return config
+}
+
+function goalContinuityConfig () {
+  return configNamed('first-tribe-routine-v13-agency-pilot-scripted.json')
+}
+
+function openAiGoalContinuityConfig () {
+  return configNamed('first-tribe-routine-v13-agency-pilot.json')
+}
+
 function openAiProofConfig () {
   const config = proofConfig()
   config.cognition.backend = 'openai'
@@ -335,8 +350,39 @@ function fixedRawRecords () {
   return { body, harness }
 }
 
-function primaryBehaviorRawRecords () {
-  const config = primaryBehaviorConfig()
+// The scripted stand-in's goal rule, as the ledger records it: adopt at the first
+// review, continue the carried goal at the second.
+const SCRIPTED_GOAL_STATEMENT = 'scripted stand-in goal: stay fed and unhurt'
+
+function scriptedGoalStep (review, agentId, tick) {
+  if (review === 0) {
+    return {
+      choice: { disposition: 'adopt', statement: SCRIPTED_GOAL_STATEMENT },
+      evidence: { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'native-1', revision: 0 }
+    }
+  }
+  return {
+    carried: {
+      goalId: 'native-1',
+      statement: SCRIPTED_GOAL_STATEMENT,
+      revision: 0,
+      adoptedTick: tick - 2400,
+      lastStep: { requestId: 'native-1', action: 'idle', outcome: 'accepted' }
+    },
+    choice: { disposition: 'continue' },
+    evidence: {
+      outcome: 'goalContinued',
+      disposition: 'continue',
+      presentedGoalId: 'native-1',
+      presentedRevision: 0,
+      goalId: 'native-1',
+      revision: 0
+    }
+  }
+}
+
+function primaryBehaviorRawRecords (config = primaryBehaviorConfig()) {
+  const carriesGoals = config.mode === 'routine-v13-goal-continuity'
   const body = []
   const harness = [
     {
@@ -375,8 +421,11 @@ function primaryBehaviorRawRecords () {
         agentId,
         requestId,
         'The scripted dry run stands still.',
-        'routine-v12'
+        config.cognition.prompts.routine
       )
+      const goal = carriesGoals ? scriptedGoalStep(review, agentId, tick) : undefined
+      if (goal?.carried !== undefined) seen.goal = goal.carried
+      if (goal !== undefined) chose.goal = goal.choice
       const audit = perceptionAuditFixture(
         review === 0 ? 'full' : 'omitted',
         {
@@ -407,7 +456,8 @@ function primaryBehaviorRawRecords () {
         requestId,
         provenance: chose.provenance,
         intent: 'idle',
-        decision: chose
+        decision: chose,
+        ...(goal === undefined ? {} : { goal: goal.evidence })
       }))
       body.push(bodyRecord(tick + 1, agentId, 'intentApplied', 'idle accepted', {
         requestId,
@@ -459,6 +509,8 @@ module.exports = {
   bodyRecord,
   decision,
   fixedRawRecords,
+  goalContinuityConfig,
+  openAiGoalContinuityConfig,
   openAiPrimaryBehaviorConfig,
   openAiProofConfig,
   perception,

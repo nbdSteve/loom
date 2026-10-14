@@ -28,7 +28,7 @@
 
 use std::sync::LazyLock;
 
-use loom_contract::Intent;
+use loom_contract::{GoalChoice, GoalDisposition, Intent, MAX_GOAL_STATEMENT_CHARS};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -258,6 +258,36 @@ struct Answer {
     intent: Intent,
     /// The model's justification.
     reasoning: String,
+    /// The optional goal choice. `null` and absence both mean no choice, so a
+    /// held goal is left as it is; the strict schema always sends the key.
+    #[serde(default)]
+    goal: Option<GoalChoice>,
+}
+
+/// Refuses a goal choice whose fields do not match its disposition.
+///
+/// The contract type admits a statement on any disposition and leaves the body to
+/// ignore it, but an answer is held to the closed shapes the strict schema
+/// offers: a statement is required for adopt and revise and forbidden for the
+/// rest, so a statement the agent wrote but the ledger would silently discard
+/// never enters the record as if it meant something.
+fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> {
+    let Some(choice) = goal else {
+        return Ok(None);
+    };
+    let worded = matches!(
+        choice.disposition,
+        GoalDisposition::Adopt | GoalDisposition::Revise
+    );
+    match (worded, choice.statement.is_some()) {
+        (true, true) | (false, false) => Ok(Some(choice)),
+        (true, false) => {
+            Err("the model's goal choice needs a statement it did not give".to_owned())
+        }
+        (false, true) => {
+            Err("the model's goal choice gave a statement its disposition forbids".to_owned())
+        }
+    }
 }
 
 /// Parses the model's answer text into a [`Draft`].
@@ -272,6 +302,7 @@ struct Answer {
 pub fn draft_from_answer(content: &str) -> Result<Draft, String> {
     match serde_json::from_str::<Answer>(content) {
         Ok(answer) => Ok(Draft {
+            goal: checked_goal(answer.goal)?,
             intent: answer.intent,
             reasoning: bounded_to(&answer.reasoning, MAX_REASONING_CHARS),
         }),
@@ -397,6 +428,59 @@ fn sleep_intent_schema() -> Value {
     )
 }
 
+/// One goal disposition, as a closed object, with or without its statement.
+fn goal_variant(disposition: &str, description: &str, worded: bool) -> Value {
+    let mut properties = json!({
+        "disposition": {
+            "type": "string",
+            "enum": [disposition],
+            "description": description,
+        }
+    });
+    let mut required = vec![json!("disposition")];
+    if worded {
+        if let Some(properties) = properties.as_object_mut() {
+            properties.insert(
+                "statement".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": format!(
+                        "The goal in your own words, one short sentence of at most \
+                         {MAX_GOAL_STATEMENT_CHARS} characters."
+                    ),
+                }),
+            );
+        }
+        required.push(json!("statement"));
+    }
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": false,
+    })
+}
+
+/// The optional goal choice: `null`, or exactly one closed disposition shape.
+///
+/// Strict mode requires the key, so "no choice" is an explicit `null` rather than
+/// an absent field. The statement exists only on the two dispositions that word a
+/// goal, which is what keeps a statement from riding on a disposition that would
+/// discard it.
+fn goal_choice_schema() -> Value {
+    json!({
+        "description": "Your choice about your one short-term goal, only at a scheduled goal review; null makes no choice and leaves any held goal as it is.",
+        "anyOf": [
+            { "type": "null" },
+            goal_variant("adopt", "Take up a new goal when you hold none.", true),
+            goal_variant("continue", "Keep the held goal unchanged.", false),
+            goal_variant("revise", "Keep pursuing the held goal under new wording.", true),
+            goal_variant("complete", "The held goal is achieved; drop it.", false),
+            goal_variant("abandon", "The held goal is no longer worth pursuing; drop it.", false),
+        ],
+    })
+}
+
 fn build_decision_schema() -> Value {
     json!({
         "type": "object",
@@ -482,8 +566,9 @@ fn build_decision_schema() -> Value {
                 "type": "string",
                 "description": "One or two sentences on why this action, recorded permanently.",
             },
+            "goal": goal_choice_schema(),
         },
-        "required": ["intent", "reasoning"],
+        "required": ["intent", "reasoning", "goal"],
         "additionalProperties": false,
     })
 }
@@ -499,7 +584,10 @@ mod tests {
     use crate::openai::settings::DEFAULT_MAX_REQUEST_BYTES;
     use crate::prompt::{render, Prompt};
     use crate::router::{ModelCatalog, Router};
-    use loom_contract::{Intent, Perception};
+    use loom_contract::{
+        DecisionImportance, GoalChoice, GoalDisposition, GoalStep, GoalSummary, Intent, Perception,
+        Trigger, MAX_GOAL_ID_CHARS, MAX_GOAL_STATEMENT_CHARS,
+    };
     use serde_json::Value;
 
     fn prompt() -> Prompt {
@@ -541,6 +629,43 @@ mod tests {
             measured <= usize::try_from(DEFAULT_MAX_REQUEST_BYTES / 4).unwrap(),
             "the 144-observation provider request is {measured} bytes against the \
              {DEFAULT_MAX_REQUEST_BYTES}-byte request bound"
+        );
+    }
+
+    #[test]
+    fn the_complete_envelope_at_a_goal_review_with_the_widest_goal_fits_the_bound() {
+        let mut seen: Perception = serde_json::from_str(include_str!(
+            "../../../../../contract/fixtures/valid/perception-max-observations.json"
+        ))
+        .unwrap();
+        // The goal line renders at a goal review only, so the widest goal is
+        // measured on that trigger with every goal field at its contract limit.
+        seen.trigger = Trigger::GoalReview;
+        seen.importance = DecisionImportance::Routine;
+        seen.goal = Some(GoalSummary {
+            goal_id: "g".repeat(MAX_GOAL_ID_CHARS),
+            statement: "s".repeat(MAX_GOAL_STATEMENT_CHARS),
+            revision: i64::MAX,
+            adopted_tick: i64::MAX,
+            last_step: Some(GoalStep {
+                request_id: "r".repeat(MAX_GOAL_ID_CHARS),
+                action: "a".repeat(32),
+                outcome: "o".repeat(MAX_GOAL_ID_CHARS),
+            }),
+        });
+        let router = Router::new(ModelCatalog::new("fast", "deep"));
+        let prompt = render(&router.route(seen.importance), &seen);
+        let measured = serde_json::to_vec(&chat_request("fast", &prompt, 2_048))
+            .unwrap()
+            .len();
+        let bound = usize::try_from(DEFAULT_MAX_REQUEST_BYTES / 4).unwrap();
+
+        assert!(prompt
+            .situation
+            .contains(&"s".repeat(MAX_GOAL_STATEMENT_CHARS)));
+        assert!(
+            measured <= bound,
+            "the widest goal-review provider request is {measured} bytes against {bound}"
         );
     }
 
@@ -629,6 +754,97 @@ mod tests {
             }
         );
         assert_eq!(draft.reasoning, "hurt");
+    }
+
+    fn goal_of(goal: &str) -> Result<Option<GoalChoice>, String> {
+        draft_from_answer(&format!(
+            r#"{{"intent":{{"action":"idle"}},"reasoning":"r","goal":{goal}}}"#
+        ))
+        .map(|draft| draft.goal)
+    }
+
+    #[test]
+    fn every_disposition_parses_into_the_contract_choice_unchanged() {
+        let worded = |disposition, statement: &str| GoalChoice {
+            disposition,
+            statement: Some(statement.to_owned()),
+        };
+        let bare = |disposition| GoalChoice {
+            disposition,
+            statement: None,
+        };
+        let cases = [
+            (
+                r#"{"disposition":"adopt","statement":"find shelter"}"#,
+                worded(GoalDisposition::Adopt, "find shelter"),
+            ),
+            (
+                r#"{"disposition":"continue"}"#,
+                bare(GoalDisposition::Continue),
+            ),
+            (
+                r#"{"disposition":"revise","statement":"find shelter north"}"#,
+                worded(GoalDisposition::Revise, "find shelter north"),
+            ),
+            (
+                r#"{"disposition":"complete"}"#,
+                bare(GoalDisposition::Complete),
+            ),
+            (
+                r#"{"disposition":"abandon"}"#,
+                bare(GoalDisposition::Abandon),
+            ),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(goal_of(text).unwrap(), Some(expected), "{text}");
+        }
+    }
+
+    #[test]
+    fn no_goal_choice_is_optional_and_keeps_idle_rational() {
+        assert_eq!(goal_of("null").unwrap(), None);
+        let absent =
+            draft_from_answer(r#"{"intent":{"action":"idle"},"reasoning":"nothing to do"}"#)
+                .unwrap();
+        assert_eq!(absent.goal, None);
+        assert_eq!(absent.intent, Intent::Idle);
+    }
+
+    #[test]
+    fn a_statement_is_required_for_adopt_and_revise_and_forbidden_elsewhere() {
+        for missing in [r#"{"disposition":"adopt"}"#, r#"{"disposition":"revise"}"#] {
+            let reason = goal_of(missing).expect_err(missing);
+            assert!(reason.contains("needs a statement"), "{missing}: {reason}");
+        }
+        for disposition in ["continue", "complete", "abandon"] {
+            let text = format!(r#"{{"disposition":"{disposition}","statement":"sk-lookalike"}}"#);
+            let reason = goal_of(&text).expect_err(&text);
+            assert!(reason.contains("forbids"), "{text}: {reason}");
+            assert!(!reason.contains("sk-lookalike"), "{reason}");
+        }
+    }
+
+    #[test]
+    fn a_malformed_goal_choice_is_a_bounded_malformed_answer() {
+        let too_long = format!(
+            r#"{{"disposition":"adopt","statement":"{}"}}"#,
+            "x".repeat(161)
+        );
+        for bad in [
+            r#"{"disposition":"adopt","statement":"go","priority":1}"#,
+            r#"{"disposition":"pursue"}"#,
+            r#"{"disposition":"adopt","statement":""}"#,
+            r#"{"disposition":"adopt","statement":7}"#,
+            r#""continue""#,
+            too_long.as_str(),
+        ] {
+            let reason = goal_of(bad).expect_err(bad);
+            assert!(reason.contains("wrong shape"), "{bad}: {reason}");
+        }
+        let truncated =
+            draft_from_answer(r#"{"intent":{"action":"idle"},"reasoning":"r","goal":{"disp"#)
+                .expect_err("a cut-off goal is not a decision");
+        assert!(truncated.contains("ended early"), "{truncated}");
     }
 
     #[test]

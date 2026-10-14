@@ -23,7 +23,7 @@
 
 use std::future::Future;
 
-use loom_contract::{Intent, ObservationKind, Perception, Trigger};
+use loom_contract::{GoalChoice, GoalDisposition, Intent, ObservationKind, Perception, Trigger};
 use serde::Serialize;
 
 use crate::config::{bounded, bounded_to, ConfigError, Env};
@@ -169,6 +169,9 @@ pub struct Draft {
     /// The natural-language justification, carried into the decision for
     /// research.
     pub reasoning: String,
+    /// The explicit goal choice, carried into the decision unchanged; `None`
+    /// leaves any held goal as it is.
+    pub goal: Option<GoalChoice>,
 }
 
 /// Why a backend could not produce a draft.
@@ -329,6 +332,10 @@ const SIGHTED_STEP_BLOCKS: i64 = 2;
 /// weighs resting against whatever else the agent is doing.
 const LOW_FOOD_LEVEL: i64 = 7;
 
+/// The one goal the stand-in ever adopts, worded as the stand-in's own so no
+/// record reads it as a model's choice.
+pub const SCRIPTED_GOAL_STATEMENT: &str = "scripted stand-in goal: stay fed and unhurt";
+
 /// Converts a continuous world coordinate to the block coordinate an
 /// [`Intent::MoveTo`] target carries.
 ///
@@ -362,8 +369,39 @@ impl ScriptedBackend {
     /// they are - a table from trigger to intent - with no runtime involved.
     #[must_use]
     pub fn draft_now(route: &ModelRoute, perception: &Perception) -> Draft {
+        let mut draft = Self::step_now(route, perception);
+        draft.goal = Self::goal_now(perception);
+        draft
+    }
+
+    /// The scripted goal rule: adopt one fixed placeholder goal at the first goal
+    /// review that carries none, and continue it at every later one.
+    ///
+    /// It exists so the goal round trip - choice, ledger, carried summary, next
+    /// choice - is exercised deterministically without credentials. A fixed rule
+    /// that never weighs evidence is not agency, which is why its wording says it
+    /// is the stand-in's and why it never revises, completes or abandons.
+    fn goal_now(perception: &Perception) -> Option<GoalChoice> {
+        if !matches!(perception.trigger, Trigger::GoalReview) {
+            return None;
+        }
+        Some(match perception.goal {
+            None => GoalChoice {
+                disposition: GoalDisposition::Adopt,
+                statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
+            },
+            Some(_) => GoalChoice {
+                disposition: GoalDisposition::Continue,
+                statement: None,
+            },
+        })
+    }
+
+    /// The per-trigger action rule, before any goal choice is attached.
+    fn step_now(route: &ModelRoute, perception: &Perception) -> Draft {
         match &perception.trigger {
             Trigger::Spoken { from, text } => Draft {
+                goal: None,
                 intent: Intent::Say {
                     text: format!("Hello, {from}."),
                 },
@@ -387,6 +425,7 @@ impl ScriptedBackend {
             // sight is alive is the honest answer.
             Trigger::Damaged { amount, source } => match nearest_ref(perception) {
                 Some(handle) => Draft {
+                    goal: None,
                     intent: Intent::Flee { from: handle },
                     reasoning: format!(
                         "took {amount} damage from {source} at health {health:.1}; disengage",
@@ -394,6 +433,7 @@ impl ScriptedBackend {
                     ),
                 },
                 None => Draft {
+                    goal: None,
                     intent: Intent::Idle,
                     reasoning: format!(
                         "took {amount} damage from {source} at health {health:.1}, and nothing in sight can be named to flee from",
@@ -408,6 +448,7 @@ impl ScriptedBackend {
             Trigger::ThreatSighted {
                 threat, entity_ref, ..
             } => Draft {
+                goal: None,
                 intent: Intent::Flee {
                     from: entity_ref.clone(),
                 },
@@ -416,6 +457,7 @@ impl ScriptedBackend {
             Trigger::BlockSighted { block } => {
                 let [x, y, z] = perception.self_state.position;
                 Draft {
+                    goal: None,
                     intent: Intent::MoveTo {
                         // The stand-in has no spatial reasoning. The perception
                         // now carries a bearing for every observation, but the
@@ -452,6 +494,7 @@ impl ScriptedBackend {
                 let saturation = perception.self_state.saturation;
                 match perception.self_state.inventory_summary.first() {
                     Some(stack) => Draft {
+                        goal: None,
                         intent: Intent::Eat {
                             slot_ref: stack.slot_ref.clone(),
                         },
@@ -461,6 +504,7 @@ impl ScriptedBackend {
                         ),
                     },
                     None => Draft {
+                        goal: None,
                         intent: Intent::Rest,
                         reasoning: format!(
                             "food is {food} of 20 with saturation {saturation:.1} and there is nothing to eat; holding position"
@@ -469,6 +513,7 @@ impl ScriptedBackend {
                 }
             }
             Trigger::GoalReview => Draft {
+                goal: None,
                 intent: Intent::Idle,
                 reasoning: format!(
                     "reviewed goals at the {tier:?} tier; nothing outranks what is already underway",
@@ -511,13 +556,13 @@ mod tests {
 
     use super::{
         block_coord, BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, LOW_FOOD_LEVEL,
-        WORLD_LIMIT_BLOCKS,
+        SCRIPTED_GOAL_STATEMENT, WORLD_LIMIT_BLOCKS,
     };
     use crate::config::{ConfigError, Env};
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
-        Bearing, DayPhase, DecisionImportance, Intent, InventoryStack, Observation,
-        ObservationKind, Perception, SelfState, Trigger, WorldState,
+        Bearing, DayPhase, DecisionImportance, GoalDisposition, GoalSummary, Intent,
+        InventoryStack, Observation, ObservationKind, Perception, SelfState, Trigger, WorldState,
     };
 
     fn router() -> Router {
@@ -670,6 +715,39 @@ mod tests {
                 "every decision must carry reasoning, {trigger:?} did not"
             );
         }
+    }
+
+    #[test]
+    fn the_stand_in_adopts_at_its_first_review_and_continues_at_the_next() {
+        let route = router().route(DecisionImportance::Routine);
+        let first = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        let adopted = ScriptedBackend::draft_now(&route, &first).goal.unwrap();
+        assert_eq!(adopted.disposition, GoalDisposition::Adopt);
+        assert_eq!(adopted.statement.as_deref(), Some(SCRIPTED_GOAL_STATEMENT));
+
+        let mut later = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        later.goal = Some(GoalSummary {
+            goal_id: "req-1".to_owned(),
+            statement: SCRIPTED_GOAL_STATEMENT.to_owned(),
+            revision: 0,
+            adopted_tick: 0,
+            last_step: None,
+        });
+        let continued = ScriptedBackend::draft_now(&route, &later).goal.unwrap();
+        assert_eq!(continued.disposition, GoalDisposition::Continue);
+        assert_eq!(continued.statement, None);
+        assert!(SCRIPTED_GOAL_STATEMENT.starts_with("scripted stand-in"));
+    }
+
+    #[test]
+    fn the_stand_in_makes_no_goal_choice_outside_a_goal_review() {
+        let spoken = Trigger::Spoken {
+            from: "p".to_owned(),
+            text: "hi".to_owned(),
+        };
+        let route = router().route(DecisionImportance::Notable);
+        let seen = perception(spoken, DecisionImportance::Notable);
+        assert_eq!(ScriptedBackend::draft_now(&route, &seen).goal, None);
     }
 
     #[test]

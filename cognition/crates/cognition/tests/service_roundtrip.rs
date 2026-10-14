@@ -13,10 +13,12 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 
 use loom_cognition::mind::Mind;
-use loom_cognition::model::ScriptedBackend;
+use loom_cognition::model::{ScriptedBackend, SCRIPTED_GOAL_STATEMENT};
 use loom_cognition::router::{ModelCatalog, Router};
 use loom_cognition::server::serve;
-use loom_contract::{Decision, DecisionImportance, Perception};
+use loom_contract::{
+    Decision, DecisionImportance, GoalChoice, GoalDisposition, Perception, Trigger,
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
@@ -126,6 +128,19 @@ async fn every_shared_perception_fixture_gets_a_routed_decision_over_a_socket() 
                 "a routine perception must never be answered by the deep model"
             );
         }
+        // The stand-in adopts where nothing is held and continues a carried goal, and
+        // that choice must survive the socket exactly as the mind made it.
+        let expected = (sent.trigger == Trigger::GoalReview).then(|| match sent.goal {
+            None => GoalChoice {
+                disposition: GoalDisposition::Adopt,
+                statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
+            },
+            Some(_) => GoalChoice {
+                disposition: GoalDisposition::Continue,
+                statement: None,
+            },
+        });
+        assert_eq!(decision.goal, expected, "{}", fixture.display());
     }
 }
 

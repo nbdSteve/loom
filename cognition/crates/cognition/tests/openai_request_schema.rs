@@ -57,7 +57,11 @@ fn decision_fixtures() -> Vec<(PathBuf, Value)> {
 
 /// An answer of the shape the provider is asked for, carrying `intent`.
 fn answer_with(intent: &Value) -> Value {
-    json!({ "intent": intent, "reasoning": "because the fixture says so" })
+    answer_with_goal(intent, &Value::Null)
+}
+
+fn answer_with_goal(intent: &Value, goal: &Value) -> Value {
+    json!({ "intent": intent, "reasoning": "because the fixture says so", "goal": goal })
 }
 
 #[test]
@@ -71,7 +75,7 @@ fn every_intent_the_contract_can_express_is_one_the_provider_may_answer() {
             "{} has no intent to check",
             path.display()
         );
-        let answer = answer_with(intent);
+        let answer = answer_with_goal(intent, fixture.get("goal").unwrap_or(&Value::Null));
         assert!(
             validator.is_valid(&answer),
             "the contract can express {intent}, but the request schema would not let a model \
@@ -136,5 +140,71 @@ fn an_answer_the_body_could_not_apply_is_rejected_by_the_schema() {
     assert!(
         !validator.is_valid(&json!({ "intent": { "action": "idle" } })),
         "reasoning is required: it is the permanent record of why an agent acted"
+    );
+}
+
+#[test]
+fn every_goal_disposition_the_contract_names_is_one_the_provider_may_answer() {
+    let validator = jsonschema::validator_for(decision_schema()).expect("the schema compiles");
+    let idle = json!({ "action": "idle" });
+    let accepted = [
+        Value::Null,
+        json!({ "disposition": "adopt", "statement": "find shelter before night" }),
+        json!({ "disposition": "continue" }),
+        json!({ "disposition": "revise", "statement": "find shelter to the north instead" }),
+        json!({ "disposition": "complete" }),
+        json!({ "disposition": "abandon" }),
+    ];
+    for goal in &accepted {
+        assert!(
+            validator.is_valid(&answer_with_goal(&idle, goal)),
+            "{goal} is a goal choice the contract can carry, so the schema must admit it"
+        );
+    }
+    let in_schema: BTreeSet<String> = decision_schema()["properties"]["goal"]["anyOf"]
+        .as_array()
+        .expect("the goal choice is an anyOf")
+        .iter()
+        .filter_map(|variant| variant["properties"]["disposition"]["enum"][0].as_str())
+        .map(str::to_owned)
+        .collect();
+    let in_contract: BTreeSet<String> =
+        serde_json::from_str::<Value>(include_str!("../../../../contract/loom.schema.json"))
+            .unwrap()["$defs"]["GoalDisposition"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_owned())
+            .collect();
+    assert_eq!(
+        in_schema, in_contract,
+        "the request schema must offer every disposition"
+    );
+}
+
+#[test]
+fn a_goal_choice_with_the_wrong_fields_is_rejected_by_the_schema() {
+    let validator = jsonschema::validator_for(decision_schema()).expect("the schema compiles");
+    let idle = json!({ "action": "idle" });
+    let refused = [
+        json!({ "disposition": "adopt" }),
+        json!({ "disposition": "revise" }),
+        json!({ "disposition": "continue", "statement": "keep going" }),
+        json!({ "disposition": "complete", "statement": "done" }),
+        json!({ "disposition": "abandon", "statement": "give up" }),
+        json!({ "disposition": "adopt", "statement": "go", "priority": 1 }),
+        json!({ "disposition": "pursue" }),
+        json!({ "disposition": "adopt", "statement": 7 }),
+        json!("continue"),
+    ];
+    for goal in &refused {
+        assert!(
+            !validator.is_valid(&answer_with_goal(&idle, goal)),
+            "{goal} is not one closed goal choice, so the schema must refuse it"
+        );
+    }
+    assert!(
+        !validator.is_valid(&json!({ "intent": idle, "reasoning": "r" })),
+        "strict mode requires the goal key, so no choice is an explicit null"
     );
 }

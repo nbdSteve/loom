@@ -24,6 +24,22 @@ drivers. The OpenAI experiment id is an unconsumed proposal placeholder, not
 authorization to run; a paid run still requires a fresh approved id and the
 separate decision described below.
 
+The routine-v13 goal-continuity pilot is pinned in
+`research/config/first-tribe-routine-v13-agency-pilot.json`, with its
+provider-free twin in
+`research/config/first-tribe-routine-v13-agency-pilot-scripted.json`.
+Its treatment is the routine-v12 pilot's, unchanged, except for three pins
+that `research/lib/experiment-mode.js` owns per mode.
+It uses the v13 prompts, which show each agent its own carried goal and let the
+model return an optional typed goal choice.
+It attests `categoryFairSelection: true`, because the 48-per-kind selector it
+runs on is category-fair, while the v12 pilot keeps `false` for its evidence.
+Preflight and artifact validation refuse either mode with the other's prompts
+or attestation.
+In the scripted twin the stand-in adopts one fixed placeholder goal at each
+agent's first review and continues it at the second.
+That exercises the goal round trip; it is not evidence of agency.
+
 ## Reproduce from a clean checkout
 
 Prerequisites are Java 21, Node 22 or newer, npm, Rust/Cargo, and `lsof`.

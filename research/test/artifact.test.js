@@ -18,6 +18,8 @@ const {
   fixedRawRecords,
   openAiPrimaryBehaviorConfig,
   openAiProofConfig,
+  goalContinuityConfig,
+  openAiGoalContinuityConfig,
   primaryBehaviorConfig,
   primaryBehaviorRawRecords,
   proofConfig,
@@ -162,6 +164,105 @@ test('the routine-v12 primary behavior pilot preflights with native calls inside
   assert.equal(manifest.cognition.globalOutstandingCeiling, 3)
   assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 2.33472)
   assert.equal(manifest.cognition.maxExternalSpendUsd, 2.34)
+})
+
+test('the routine-v13 goal-continuity pilot preflights under the v12 treatment plus v13 prompts and category fairness', () => {
+  const config = openAiGoalContinuityConfig()
+  assert.deepEqual(validateRunConfig(config), [])
+  assert.deepEqual(validateRunConfig(goalContinuityConfig()), [])
+  const manifest = validateProspectiveManifest(config, SOURCE)
+  assert.equal(manifest.protocol.mode, 'routine-v13-goal-continuity')
+  assert.equal(manifest.protocol.categoryFairSelection, true)
+  assert.equal(manifest.protocol.controlledBodyCrashPlanned, false)
+  assert.deepEqual(manifest.provenance.prompts, {
+    routine: 'routine-v13',
+    notable: 'notable-v13',
+    pivotal: 'pivotal-v13'
+  })
+  assert.deepEqual(manifest.provenance.models, { ordinary: 'gpt-5.4-nano', pivotal: 'gpt-5.4' })
+  assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 2.33472)
+  assert.equal(manifest.cognition.maxExternalSpendUsd, 2.34)
+
+  // Everything but the mode, title, prompts and the fairness attestation is the v12 pilot.
+  const v12 = openAiPrimaryBehaviorConfig()
+  for (const drop of [v12, config]) {
+    for (const key of ['experimentId', 'title', 'mode', 'configFile']) delete drop[key]
+    delete drop.cognition.prompts
+    delete drop.primaryBehavior.categoryFairSelection
+  }
+  assert.deepEqual(config, v12)
+})
+
+test('each native-scheduler pilot refuses the other pilot prompts or fairness attestation', () => {
+  const v13 = goalContinuityConfig()
+  v13.primaryBehavior.categoryFairSelection = false
+  assert.ok(validateRunConfig(v13).some((error) => error.includes('categoryFairSelection must be true')))
+
+  const v13OldPrompts = goalContinuityConfig()
+  v13OldPrompts.cognition.prompts = primaryBehaviorConfig().cognition.prompts
+  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v13')))
+
+  const v12 = primaryBehaviorConfig()
+  v12.primaryBehavior.categoryFairSelection = true
+  assert.ok(validateRunConfig(v12).some((error) => error.includes('categoryFairSelection must be false')))
+
+  const v12NewPrompts = primaryBehaviorConfig()
+  v12NewPrompts.cognition.prompts = goalContinuityConfig().cognition.prompts
+  assert.ok(validateRunConfig(v12NewPrompts).some((error) => error.includes('routine-v12')))
+
+  const drifted = [
+    (config) => { config.world.seed = '1' },
+    (config) => { config.bounds.runDurationSeconds = 240 },
+    (config) => { config.cognition.perAgentCallCeiling = 5 },
+    (config) => { config.primaryBehavior.injectedDirectives.socialGoals = true },
+    (config) => { config.primaryBehavior.startingInventories = 'kit' },
+    (config) => { config.primaryBehavior.initialPositions['tribe-alpha'] = [0, 68, 0] }
+  ]
+  for (const drift of drifted) {
+    const config = openAiGoalContinuityConfig()
+    drift(config)
+    assert.notDeepEqual(validateRunConfig(config), [], drift.toString())
+  }
+  const spend = openAiGoalContinuityConfig()
+  spend.cognition.maxExternalSpendUsd = 3
+  assert.notDeepEqual(validateRunConfig(spend), [])
+  const model = openAiGoalContinuityConfig()
+  model.cognition.models.ordinary = 'gpt-5.4'
+  assert.notDeepEqual(validateRunConfig(model), [])
+})
+
+test('the scripted v13 publication carries adoption then continuity without claiming agency', () => {
+  const config = goalContinuityConfig()
+  const published = publishFixture({ config, raw: primaryBehaviorRawRecords(config) })
+  const validation = validateArtifact(published.artifactDirectory)
+  assert.deepEqual(validation.errors, [])
+  assert.equal(published.manifest.protocol.mode, 'routine-v13-goal-continuity')
+  assert.equal(published.manifest.protocol.categoryFairSelection, true)
+  assert.equal(published.manifest.perceptionAudit.byKind.entities.jvmCutOmittedCount, 0)
+  assert.equal(published.metrics.goalContinuity.byOutcome.goalAdopted, 3)
+  assert.equal(published.metrics.goalContinuity.byOutcome.goalContinued, 3)
+  assert.deepEqual(
+    published.metrics.goalContinuity.agentsWithContinuity,
+    ['tribe-alpha', 'tribe-beta', 'tribe-gamma']
+  )
+  const readme = fs.readFileSync(path.join(published.artifactDirectory, 'README.md'), 'utf8')
+  assert.match(readme, /routine-v13 pilot/)
+  assert.match(readme, /It is not a model-behavior result/)
+})
+
+test('a v13 manifest that attests no category fairness is refused at validation', () => {
+  const config = goalContinuityConfig()
+  const published = publishFixture({ config, raw: primaryBehaviorRawRecords(config) })
+  const file = path.join(published.artifactDirectory, 'manifest.json')
+  const manifest = JSON.parse(fs.readFileSync(file, 'utf8'))
+  manifest.protocol.categoryFairSelection = false
+  fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
+  const validation = validateArtifact(published.artifactDirectory)
+  assert.equal(validation.ok, false)
+  assert.ok(
+    validation.errors.some((error) => error.includes('categoryFairSelection true')),
+    validation.errors.join('\n')
+  )
 })
 
 test('primary behavior preflight refuses native review plans outside per-agent or global ceilings', () => {

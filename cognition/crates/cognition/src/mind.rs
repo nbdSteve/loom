@@ -66,8 +66,9 @@ impl<B: ModelBackend> Mind<B> {
                 model: routed.model().to_owned(),
                 prompt_version: routed.prompt_version().to_owned(),
             },
-            // The mind does not yet choose a goal disposition; a carried goal stays unchanged.
-            goal: None,
+            // Carried unchanged: the body's goal ledger resolves it against the exact
+            // goal this perception presented, so the mind neither checks nor rewrites it.
+            goal: draft.goal,
         })
     }
 }
@@ -82,7 +83,8 @@ mod tests {
     use crate::model::{BackendError, Draft, ModelBackend, ScriptedBackend};
     use crate::router::{ModelCatalog, ModelRoute, Router};
     use loom_contract::{
-        DayPhase, DecisionImportance, Intent, Perception, SelfState, Trigger, WorldState,
+        DayPhase, DecisionImportance, GoalChoice, GoalDisposition, Intent, Perception, SelfState,
+        Trigger, WorldState,
     };
 
     const FAST: &str = "a-small-model";
@@ -104,6 +106,7 @@ mod tests {
             _perception: &Perception,
         ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
             std::future::ready(Ok(Draft {
+                goal: None,
                 intent: Intent::Idle,
                 reasoning: format!("answered by {DEEP}, honestly"),
             }))
@@ -206,7 +209,53 @@ mod tests {
         assert!(decided.reasoning.contains(DEEP));
         assert_eq!(decided.provenance.model, FAST);
         assert_eq!(decided.provenance.tier, DecisionImportance::Routine);
-        assert_eq!(decided.provenance.prompt_version, "routine-v12");
+        assert_eq!(decided.provenance.prompt_version, "routine-v13");
+    }
+
+    /// A backend that answers with one fixed goal choice.
+    struct ChoosingBackend(GoalChoice);
+
+    impl ModelBackend for ChoosingBackend {
+        fn draft(
+            &self,
+            _route: &ModelRoute,
+            _perception: &Perception,
+        ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
+            std::future::ready(Ok(Draft {
+                goal: Some(self.0.clone()),
+                intent: Intent::Idle,
+                reasoning: "the goal still holds".to_owned(),
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_backend_goal_choice_reaches_the_decision_unchanged_beside_true_provenance() {
+        for disposition in [
+            GoalDisposition::Adopt,
+            GoalDisposition::Continue,
+            GoalDisposition::Revise,
+            GoalDisposition::Complete,
+            GoalDisposition::Abandon,
+        ] {
+            let choice = GoalChoice {
+                disposition,
+                statement: matches!(
+                    disposition,
+                    GoalDisposition::Adopt | GoalDisposition::Revise
+                )
+                .then(|| "keep watch by the trees".to_owned()),
+            };
+            let mind = Mind::new(router(), ChoosingBackend(choice.clone()));
+            let decided = mind
+                .decide(&perception(DecisionImportance::Routine))
+                .await
+                .unwrap();
+            assert_eq!(decided.goal, Some(choice));
+            assert_eq!(decided.intent, Intent::Idle);
+            assert_eq!(decided.provenance.model, FAST);
+            assert_eq!(decided.provenance.prompt_version, "routine-v13");
+        }
     }
 
     #[tokio::test]
