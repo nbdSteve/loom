@@ -274,6 +274,34 @@ test('a wall makes a known entity invisible and open ground makes it visible', a
   assert.ok(EYE_HEIGHT < 2, 'a two-block wall must reach above the eyes')
 })
 
+/** A dropped stack lying where a server put it, with the item metadata a server sends. */
+function droppedAt (client, { id, what, x, y, z }) {
+  spotted(client, { id, what: 'item', x, y, z })
+  client.emit('entity_metadata', {
+    entityId: id,
+    metadata: [{ key: 8, type: 'item_stack', value: Item.toNotch(stack(what, 1)) }]
+  })
+}
+
+test('a dropped item on open ground is offered and one behind a wall is not offered at all', async () => {
+  const seeds = { id: 77, what: 'wheat_seeds', x: 11.5, y: FEET.y, z: 8.5 }
+  // Resting on the floor: a ray aimed at the point it rests on would meet the floor first.
+  const open = await standing()
+  droppedAt(open.client, seeds)
+  await settled()
+  assert.deepEqual(read(open.bot).items, [
+    { what: 'wheat_seeds', count: 1, position: [11.5, FEET.y, 8.5], visible: true }
+  ])
+  const walled = await standing({ walls: [{ x: 10, y: FEET.y, z: 8 }] })
+  droppedAt(walled.client, seeds)
+  await settled()
+  const hidden = senseReading(walled.bot, { radius: RADIUS, limit: LIMIT })
+  // Unseen is not "did not fit", so it is neither listed, offered nor counted.
+  assert.deepEqual(hidden.reading.items, [])
+  assert.equal(hidden.reading.itemsOmitted, 0)
+  assert.deepEqual(hidden.itemOffers, [])
+})
+
 test('the nearest entities fill the limit and the rest are counted as omitted', async () => {
   const { bot, client } = await standing()
   // Deliberately spawned furthest first, so the order below is the sense answer's own

@@ -271,6 +271,12 @@ function nearestBlocks (bot, eyes, standing, { radius, limit }) {
   }
 }
 
+/** Where a line of sight to a dropped item is aimed: the middle of its small box. */
+function itemAim (entity) {
+  const height = realWithin(entity.height, 0, MAX_WORLD_COORDINATE) ? entity.height : 0
+  return entity.position.offset(0, height / 2, 0)
+}
+
 /** The item stack one dropped entity carries, or undefined until it is describable. */
 function droppedStack (entity) {
   if (!isDroppedEntity(entity) || typeof entity.getDroppedItem !== 'function') return undefined
@@ -289,7 +295,14 @@ function droppedStack (entity) {
 }
 
 /**
- * Exact dropped-item entities inside the requested scene radius.
+ * Exact dropped-item entities inside the requested scene radius that the body can see.
+ *
+ * Only an item in sight is offered, because every offer is a handle a `collect` may name
+ * and an item behind a wall or under the ground is one the body cannot reach by any
+ * route it would take. An unseen item is skipped rather than counted as omitted: the
+ * omission count means "seen and did not fit the limit". Sight is aimed at the item's
+ * centre, as it is for a creature, because a ray to the point the item rests on meets
+ * the floor under it and would call every item on open ground unseen.
  *
  * The wire gets the vanilla item name/count and position. The retained half keeps the
  * Mineflayer id and exact object as well, because ids are reused after despawn and a later
@@ -305,16 +318,17 @@ function nearestItems (bot, eyes, { radius, limit }) {
     if (position === undefined) continue
     const away = entity.position.distanceTo(eyes)
     if (!realWithin(away, 0, radius)) continue
+    if (!inSight(bot, eyes, itemAim(entity))) continue
     within.push({ entity, stack, position, away })
   }
   within.sort((one, other) => one.away - other.away || one.entity.id - other.entity.id)
   const reported = within.slice(0, Math.min(limit, MAX_SENSE_ITEMS))
   return {
-    items: reported.map(({ entity, stack, position }) => ({
+    items: reported.map(({ stack, position }) => ({
       what: stack.what,
       count: stack.count,
       position,
-      visible: inSight(bot, eyes, entity.position)
+      visible: true
     })),
     itemsOmitted: within.length - reported.length,
     itemOffers: reported.map(({ entity, stack }) => ({

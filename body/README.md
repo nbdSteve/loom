@@ -171,6 +171,10 @@ blocks, dropped-item entities, and currently applicable recipes with omission co
 plus its whole inventory by slot. The request limit is independently applied to the three
 world-observation lists up to 48 entries each. Recipes retain their independent 24-entry
 ceiling and use the smaller of that ceiling and the requested limit.
+Only dropped items the body can see are listed, because each one is a handle a `collect` may
+name; an item behind a wall or under the ground is skipped, not counted as omitted. Sight to
+an item is aimed at its centre, as it is to a creature, because a ray to the point it rests on
+meets the floor and would call every item on open ground unseen.
 It is refused `notReady` unless the body is `ready`.
 An `eat` names a `senseId` - the `requestId` of the `sense` answer that offered the slot -
 so the `e1` frame above eats from the answer `n1` returned, on that same connection.
