@@ -19,11 +19,12 @@ function isNativeReviewRecord (record) {
   return record.trigger === 'goalReview' && record.origin === 'nativeGoalReviewSchedule'
 }
 
-// A goal-review action counts as confirmed only by later server or body evidence that
-// it changed something: its own server-confirmed interaction, a movement report before
-// that agent's next decision, or a food change before that decision for an eat.
-function confirmationOf (decision, applied, bodyRecords, nextDecisionIndex) {
-  const window = bodyRecords.slice(bodyRecords.indexOf(applied) + 1, nextDecisionIndex)
+// A goal-review action counts as confirmed only by server or body evidence, between its
+// decision and that agent's next one, that it changed something: its own
+// server-confirmed interaction, a movement report, or a food change for an eat. The
+// body may record that evidence before or after the intentApplied record.
+function confirmationOf (decision, decisionIndex, bodyRecords, nextDecisionIndex) {
+  const window = bodyRecords.slice(decisionIndex + 1, nextDecisionIndex)
   if (
     window.some((record) =>
       record.event === 'worldInteraction' &&
@@ -64,7 +65,7 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
   })
   const actions = { nonIdle: 0, accepted: 0, confirmed: 0, byConfirmation: {} }
   const meaningful = {}
-  for (const { record, next } of decisions) {
+  for (const { record, index, next } of decisions) {
     if (!nativeReviewKeys.has(record.requestKey) || PASSIVE_INTENTS.includes(record.intent)) continue
     actions.nonIdle += 1
     const applied = bodyRecords.find((entry) =>
@@ -72,7 +73,7 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
     )
     if (applied?.outcome !== 'accepted') continue
     actions.accepted += 1
-    const confirmation = confirmationOf(record, applied, bodyRecords, next)
+    const confirmation = confirmationOf(record, index, bodyRecords, next)
     if (confirmation === null) continue
     actions.confirmed += 1
     actions.byConfirmation[confirmation] = (actions.byConfirmation[confirmation] ?? 0) + 1
