@@ -90,7 +90,7 @@ const FAILURE_CODES = new Set([
   'cognitionDecisionFailed',
   'cognitionProcessOrProviderFailure',
   'cognitionUpstreamUnavailable',
-  'controlledStopDrainTimedOut',
+  'cognitionDrainTimedOut',
   'logByteLimitReached',
   'paperProcessFailure',
   'postCrashPeerDecisionRequirement',

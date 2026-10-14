@@ -29,6 +29,8 @@ const {
   controlledStopRawRecords,
   goalContinuityConfig,
   openAiGoalContinuityConfig,
+  perception,
+  perceptionAuditFixture,
   primaryBehaviorRawRecords,
   proofConfig,
   writeJsonLines
@@ -568,7 +570,7 @@ test('the controlled-stop drain waits for settled chains, is bounded, and stops 
   const proxy = { snapshot: () => ({ outstandingCalls: outstanding }) }
   await assert.rejects(
     drainControlledStop({ proxy, ...drainer(), timeoutMilliseconds: 250 }),
-    (cause) => cause.code === 'controlledStopDrainTimedOut'
+    (cause) => cause.code === 'cognitionDrainTimedOut'
   )
   const settling = drainer()
   setTimeout(() => {
@@ -692,4 +694,88 @@ test('a controlled stop is always a no-go gate', () => {
   assert.equal(published.metrics.behaviorGate.pilotVerdict, 'no-go')
   assert.equal(published.metrics.behaviorGate.pilotCriteria.noFailureEvidence, false)
   assert.equal(published.metrics.behaviorGate.pilotCriteria.completeNativeReviews, false)
+})
+
+function endedRaw ({ endTick = 2900, drop = [], lateAgent = 'tribe-beta', raw = actingRaw() } = {}) {
+  for (const [agentId, requestId] of drop) {
+    raw.body = raw.body.filter((record) => !(record.agentId === agentId && record.requestId === requestId))
+    raw.harness = raw.harness.filter((record) => !(record.agentId === agentId && record.requestId === requestId))
+  }
+  const tailIndex = raw.harness.findIndex((record) => record.event === 'cognitionStimulusAttested')
+  const forwarded = raw.harness.filter((record) => record.event === 'cognitionForwarded').length
+  const inserted = [{
+    observedAt: '2026-10-13T00:02:50.000Z',
+    event: 'cognitionAdmissionEnded',
+    kind: 'runEnded',
+    reason: 'durationElapsed',
+    endTick,
+    outstandingCalls: 0,
+    forwardedCalls: forwarded
+  }]
+  if (lateAgent !== null) {
+    const seen = perception(lateAgent, 'late-1', endTick, goalContinuityConfig().primaryBehavior.initialPositions[lateAgent])
+    seen.trigger = { event: 'damaged' }
+    raw.body.push(bodyRecord(endTick, lateAgent, 'perceived', 'audited perception', {
+      requestId: 'late-1',
+      trigger: 'damaged',
+      perception: seen,
+      perceptionAudit: perceptionAuditFixture('empty', { timeOfDay: endTick, day: 0, isDay: true })
+    }))
+    raw.body.push(bodyRecord(endTick + 1, lateAgent, 'cognitionUnavailable', 'refused', {
+      requestId: 'late-1', trigger: 'damaged', outcome: 'mindRefused', perception: seen
+    }))
+    inserted.push({
+      observedAt: '2026-10-13T00:02:51.000Z',
+      event: 'cognitionRefused',
+      agentId: lateAgent,
+      requestId: 'late-1',
+      bound: 'admissionClosed',
+      reason: 'admissionClosed',
+      unit: 'calls',
+      ceiling: 0,
+      observed: 0,
+      forwarded: false,
+      trigger: 'damaged',
+      importance: 'ROUTINE',
+      origin: 'nativeEventDriver'
+    })
+  }
+  raw.harness.splice(tailIndex, 0, ...inserted)
+  return raw
+}
+
+test('a normal ending closes admission and still passes with a typed late refusal', () => {
+  const published = publish({ raw: endedRaw(), stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  assert.equal(published.metrics.admissionEnd.refusedAfterEnd, 1)
+  assert.equal(published.metrics.admissionEnd.windowTicks, 2885)
+  assert.equal(published.metrics.behaviorGate.pilotVerdict, 'pass')
+})
+
+test('a slow host that ended before a review was due publishes as a no-go', () => {
+  const raw = endedRaw({ endTick: 2650, drop: [['tribe-gamma', 'native-2']], lateAgent: null })
+  const published = publish({ raw, stopReason: 'durationElapsed' })
+  assert.deepEqual(published.metrics.admissionEnd.nativeReviews.byAgent['tribe-gamma'], {
+    attempted: 1, completed: 1, minimum: 1, maximum: 2
+  })
+  assert.equal(published.manifest.integrityChecks.expectedNativeReviewsObserved.passed, true)
+  assert.equal(published.metrics.behaviorGate.pilotCriteria.completeNativeReviews, false)
+  assert.equal(published.metrics.behaviorGate.pilotVerdict, 'no-go')
+  const owed = endedRaw({ endTick: 2900, drop: [['tribe-gamma', 'native-2']], lateAgent: null })
+  assert.throws(
+    () => publish({ raw: owed, stopReason: 'durationElapsed' }),
+    /tribe-gamma did not record the expected native scheduled reviews/
+  )
+})
+
+test('a normal ending refuses refusals before the end, untyped late refusals and wrong reasons', () => {
+  const early = endedRaw()
+  const refusal = early.harness.find((record) => record.event === 'cognitionRefused')
+  early.harness.splice(early.harness.indexOf(refusal), 1)
+  early.harness.splice(3, 0, refusal)
+  assert.throws(() => publish({ raw: early, stopReason: 'durationElapsed' }), /cognition refusal, unavailable decision|no typed refusal/)
+  const untyped = endedRaw()
+  untyped.harness.find((record) => record.event === 'cognitionRefused').bound = 'globalCall'
+  assert.throws(() => publish({ raw: untyped, stopReason: 'durationElapsed' }), /not a typed admission refusal/)
+  assert.throws(() => publish({ raw: endedRaw(), stopReason: 'simulationTickCeiling' }), /does not name the run stop reason/)
 })

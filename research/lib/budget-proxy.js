@@ -3,7 +3,7 @@
 const net = require('node:net')
 
 const { validatedCognitionFailure } = require('./cognition-failure.js')
-const { PROXY_REQUEST_TIMEOUT_MILLIS } = require('./controlled-stop.js')
+const { ADMISSION_CLOSED_EVENT, PROXY_REQUEST_TIMEOUT_MILLIS } = require('./controlled-stop.js')
 
 const MAX_FRAME_BYTES = 256 * 1024
 const REFUSAL_BOUNDS = Object.freeze([
@@ -182,10 +182,10 @@ class CognitionBudgetProxy {
 
   // Refuses every later request. Journalled synchronously so evidence order separates
   // work admitted before the stop from work refused after it.
-  closeAdmission (stop) {
+  closeAdmission (stop, event = ADMISSION_CLOSED_EVENT) {
     if (this.admissionClosed !== null) return false
-    this.admissionClosed = { reason: stop.reason }
-    this.journal.append('cognitionAdmissionClosed', {
+    this.admissionClosed = { reason: 'admissionClosed' }
+    this.journal.append(event, {
       ...stop,
       outstandingCalls: this.outstanding,
       forwardedCalls: this.total

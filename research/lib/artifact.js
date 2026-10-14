@@ -10,6 +10,7 @@ const { GATE_VERSION } = require('./behavior-gate.js')
 const {
   ADMISSION_CLOSED_BOUND,
   ADMISSION_CLOSED_EVENT,
+  ADMISSION_ENDED_EVENT,
   BUDGET_STOP_BOUNDS,
   CONTROLLED_STOP_DRAIN_MILLIS,
   CONTROLLED_STOP_REASON,
@@ -695,6 +696,9 @@ function agentReviewsObserved (agentId, metrics, expected) {
     return windowEntryHolds(death)
   }
   if (stop !== undefined) return windowEntryHolds(stop.nativeReviews?.byAgent?.[agentId])
+  if (metrics.admissionEnd !== undefined) {
+    return windowEntryHolds(metrics.admissionEnd.nativeReviews?.byAgent?.[agentId])
+  }
   return metrics.primaryBehavior?.nativeGoalReviewsByAgent?.[agentId] === expected
 }
 
@@ -1106,8 +1110,14 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
   }
   const stopped = manifest.timing.stopReason === CONTROLLED_STOP_REASON
   const deaths = metrics.witnessedDeaths
+  const ended = metrics.admissionEnd
+  if (ended !== undefined) errors.push(...admissionEndErrors(manifest, metrics, records))
+  const refusedAfterEnd = ended?.refusedAfterEnd ?? 0
   if (
-    (!stopped && (metrics.cognition.refusedCalls !== 0 || metrics.cycles.unavailable !== 0)) ||
+    (!stopped && (
+      metrics.cognition.refusedCalls !== refusedAfterEnd ||
+      metrics.cycles.unavailable !== refusedAfterEnd
+    )) ||
     (deaths === undefined && metrics.cycles.discarded !== 0)
   ) {
     errors.push('primary behavior evidence contains a cognition refusal, unavailable decision, or discarded decision')
@@ -1248,6 +1258,63 @@ function typedRefusal (record) {
     Number.isSafeInteger(record.ceiling) &&
     Number.isSafeInteger(record.observed) &&
     record.forwarded === false
+}
+
+// A normal ending closes admission once; only typed admission refusals may follow it.
+function admissionEndErrors (manifest, metrics, records) {
+  const errors = []
+  const ended = metrics.admissionEnd
+  const harness = records.filter((record) => record.source === 'harness')
+  const body = records.filter((record) => record.source === 'body')
+  const endIndex = harness.findIndex((record) => record.event === ADMISSION_ENDED_EVENT)
+  if (ended.closures !== 1) errors.push('a run must end admission at most once')
+  if (manifest.timing.stopReason === CONTROLLED_STOP_REASON) {
+    errors.push('a controlled stop cannot also end admission normally')
+  }
+  if (!['durationElapsed', 'simulationTickCeiling'].includes(ended.reason) || ended.reason !== manifest.timing.stopReason) {
+    errors.push('admission end does not name the run stop reason')
+  }
+  if (
+    ended.endTick === null ||
+    ended.endTick > metrics.timing.lastTick ||
+    ended.windowTicks < 0
+  ) {
+    errors.push('admission end is not bounded by the run ticks')
+  }
+  const before = harness.slice(0, endIndex)
+  const after = harness.slice(endIndex + 1)
+  if (
+    !Number.isInteger(ended.outstandingAtEnd) ||
+    ended.outstandingAtEnd > manifest.cognition.globalOutstandingCeiling ||
+    ended.forwardedAfterEnd !== ended.outstandingAtEnd ||
+    ended.forwardedAtEnd !==
+      before.filter((record) => record.event === 'cognitionForwarded').length + ended.forwardedAfterEnd
+  ) {
+    errors.push('admission end in-flight accounting is impossible')
+  }
+  const refusedKeys = new Set()
+  for (const record of after) {
+    if (record.event !== 'cognitionRefused') continue
+    refusedKeys.add(record.requestKey)
+    if (record.bound !== ADMISSION_CLOSED_BOUND || !typedRefusal(record)) {
+      errors.push(`refusal ${record.requestKey} after the run ended is not a typed admission refusal`)
+    }
+    const chain = new Set(body.filter((entry) => entry.requestKey === record.requestKey).map((entry) => entry.event))
+    if (!chain.has('perceived') || !chain.has('cognitionUnavailable') || chain.has('decided')) {
+      errors.push(`refusal ${record.requestKey} after the run ended has no matching refused chain`)
+    }
+  }
+  for (const record of body) {
+    if (record.event === 'cognitionUnavailable' && !refusedKeys.has(record.requestKey)) {
+      errors.push(`unavailable decision ${record.requestKey} has no typed refusal`)
+    }
+  }
+  for (const record of harness) {
+    if (record.event === 'providerUsage' && refusedKeys.has(record.requestKey)) {
+      errors.push(`refused request ${record.requestKey} carries provider usage`)
+    }
+  }
+  return [...new Set(errors)]
 }
 
 // Every claim a controlled stop makes must be re-derivable from the evidence it names.

@@ -165,13 +165,17 @@ An HTTP 401 or 403 still stops the run immediately as a failure, and every other
 
 On a stop the proxy journals one `cognitionAdmissionClosed` record before it answers, and refuses every later request under the `admissionClosed` bound.
 The harness then waits, inside an explicit bounded drain, until no forwarded call is outstanding and every perception has a terminal body record.
-A drain that does not settle is the fatal `controlledStopDrainTimedOut`.
+A drain that does not settle is the fatal `cognitionDrainTimedOut`.
 Cleanup and usage import then run as for any completed run, and the publisher writes an artifact with stop reason `controlledStop`.
 
 Its manifest, metrics, and README carry a `controlledStop` section: the stop kind, the exact refusal or provider classification, the calls forwarded and outstanding at the closure, planned versus completed native reviews, complete and refused chain counts, provider usage and spend, and behavioral verdict `no-go`.
 Validation derives the owed reviews from the stop window: review k of each agent may be due from k cadences after the start, and must be due one population stagger plus one slice after that.
 It refuses a stop with no matching refusal or classification, an untyped refusal, an impossible count, any refusal that is not the first before the closure, a missing earlier chain, provider usage that does not reconcile, a dirty shutdown, and a killed process.
-A normal duration or tick-ceiling completion still requires the exact configured review plan, and crash-containment evidence can never claim a controlled stop.
+Crash-containment evidence can never claim a controlled stop.
+
+A normal duration or tick-ceiling ending in primary behavior mode closes admission the same way, with one `cognitionAdmissionEnded` record, and drains inside the same bound before shutdown, so a decision in flight at the deadline completes instead of becoming an incomplete chain.
+Requests refused after that record are typed `admissionClosed` refusals and are not owed an answer.
+Validation then owes each agent the scheduled reviews the window up to the ending made due, so a slow host that ends before a second review is due still publishes; the behavioral gate still requires the full configured plan.
 
 ## Witnessed deaths
 

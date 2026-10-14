@@ -17,6 +17,8 @@ const PROVIDER_UNAVAILABLE_MAPPINGS = Object.freeze([
 ])
 const ADMISSION_CLOSED_BOUND = 'admissionClosed'
 const ADMISSION_CLOSED_EVENT = 'cognitionAdmissionClosed'
+// A normal ending closes admission too, so in-flight work can settle before shutdown.
+const ADMISSION_ENDED_EVENT = 'cognitionAdmissionEnded'
 // The proxy bounds every forwarded request at 20 s; the rest lets the body record it.
 const PROXY_REQUEST_TIMEOUT_MILLIS = 20_000
 const CONTROLLED_STOP_DRAIN_MILLIS = PROXY_REQUEST_TIMEOUT_MILLIS + 5_000
@@ -212,15 +214,64 @@ function controlledStopMetrics (bodyRecords, harnessRecords, firstTick) {
   return stop
 }
 
+// Derived only when the evidence holds a normal-ending closure.
+function admissionEndMetrics (bodyRecords, harnessRecords, firstTick) {
+  const ends = harnessRecords.filter((record) => record.event === ADMISSION_ENDED_EVENT)
+  if (ends.length === 0) return undefined
+  const end = ends[0]
+  const endedAt = harnessRecords.indexOf(end)
+  const before = harnessRecords.slice(0, endedAt)
+  const after = harnessRecords.slice(endedAt + 1)
+  const schedule = harnessRecords
+    .find((record) => record.event === 'cognitionStimulusAttested')
+    ?.nativeGoalReviewSchedule
+  const agents = [...new Set(bodyRecords.map((record) => record.agentId))]
+    .filter((agentId) => typeof agentId === 'string')
+    .sort()
+  const endTick = Number.isInteger(end.endTick) ? end.endTick : null
+  const windowTicks = endTick === null ? null : endTick - firstTick
+  const byAgent = {}
+  for (const agentId of agents) {
+    const attempted = before.filter((record) =>
+      ['cognitionForwarded', 'cognitionRefused'].includes(record.event) &&
+      record.agentId === agentId &&
+      isNativeReview(record)
+    ).length
+    const completed = harnessRecords.filter((record) =>
+      record.event === 'cognitionForwarded' &&
+      record.outcome === 'decision' &&
+      record.agentId === agentId &&
+      isNativeReview(record)
+    ).length
+    const bounds = schedule === undefined || windowTicks === null
+      ? { minimum: null, maximum: null }
+      : reviewWindowBounds(schedule, agents.length, windowTicks)
+    byAgent[agentId] = { attempted, completed, ...bounds }
+  }
+  return {
+    closures: ends.length,
+    reason: end.reason ?? null,
+    endTick,
+    windowTicks,
+    forwardedAtEnd: end.forwardedCalls ?? null,
+    outstandingAtEnd: end.outstandingCalls ?? null,
+    forwardedAfterEnd: after.filter((record) => record.event === 'cognitionForwarded').length,
+    refusedAfterEnd: after.filter((record) => record.event === 'cognitionRefused').length,
+    nativeReviews: { byAgent }
+  }
+}
+
 module.exports = {
   ADMISSION_CLOSED_BOUND,
   ADMISSION_CLOSED_EVENT,
+  ADMISSION_ENDED_EVENT,
   BUDGET_STOP_BOUNDS,
   CONTROLLED_STOP_DRAIN_MILLIS,
   CONTROLLED_STOP_REASON,
   PROVIDER_UNAVAILABLE_MAPPINGS,
   PROXY_REQUEST_TIMEOUT_MILLIS,
   STOP_KINDS,
+  admissionEndMetrics,
   budgetStopFor,
   controlledStopMetrics,
   providerStopFor,

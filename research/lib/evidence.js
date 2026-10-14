@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const { behaviorGateMetrics } = require('./behavior-gate.js')
-const { controlledStopMetrics } = require('./controlled-stop.js')
+const { admissionEndMetrics, controlledStopMetrics } = require('./controlled-stop.js')
 const { maximumOf, minimumOf } = require('./log-tail.js')
 const { deathMetrics } = require('./witnessed-death.js')
 const { canonicalLine, sortedValue } = require('./util.js')
@@ -747,6 +747,8 @@ function deriveMetrics (records, configuredAgents = []) {
         'planned native reviews; its behavioral verdict is no-go.'
     )
   }
+  const admissionEnd = admissionEndMetrics(bodyRecords, harnessRecords, firstTick)
+  if (admissionEnd !== undefined) result.admissionEnd = admissionEnd
   const deaths = deathMetrics(bodyRecords, harnessRecords, firstTick)
   if (deaths !== undefined) {
     result.witnessedDeaths = deaths

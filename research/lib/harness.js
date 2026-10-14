@@ -18,6 +18,7 @@ const { CognitionBudgetProxy } = require('./budget-proxy.js')
 const {
   ADMISSION_CLOSED_BOUND,
   ADMISSION_CLOSED_EVENT,
+  ADMISSION_ENDED_EVENT,
   BUDGET_STOP_BOUNDS,
   CONTROLLED_STOP_DRAIN_MILLIS,
   CONTROLLED_STOP_REASON,
@@ -327,6 +328,7 @@ class PrimaryBehaviorGuard {
   observeHarness (records) {
     if (!this.active) return
     for (const record of records) {
+      if (record.event === ADMISSION_ENDED_EVENT) this.closed = true
       if (record.event === ADMISSION_CLOSED_EVENT && !this.closed) {
         this.closed = true
         if (record.kind === 'providerUnavailable') this.typed.add(`${record.agentId}:${record.requestId}`)
@@ -1055,8 +1057,16 @@ async function runExperiment ({
       }
       await delay(Math.min(250, Math.max(1, deadline - Date.now())), controller.signal)
     }
-    if (controlledStop !== undefined) {
-      stopReason = CONTROLLED_STOP_REASON
+    if (controlledStop === undefined && isPrimaryBehaviorMode(config)) {
+      pollEvidence()
+      proxy.closeAdmission({
+        kind: 'runEnded',
+        reason: stopReason,
+        endTick: bodyTail.maxTick
+      }, ADMISSION_ENDED_EVENT)
+    }
+    if (controlledStop !== undefined || isPrimaryBehaviorMode(config)) {
+      if (controlledStop !== undefined) stopReason = CONTROLLED_STOP_REASON
       await drainControlledStop({
         proxy,
         poll: pollEvidence,
@@ -1198,7 +1208,8 @@ async function runExperiment ({
   }
 }
 
-// Lets already-forwarded work settle, inside one explicit bound, before shutdown.
+// Lets already-forwarded work settle, inside one explicit bound, before shutdown, after
+// a controlled stop or a normal primary-behavior ending closed admission.
 async function drainControlledStop ({
   proxy,
   poll,
@@ -1209,7 +1220,7 @@ async function drainControlledStop ({
   let invalid = null
   try {
     await waitForCondition({
-      description: 'controlled-stop cognition to settle',
+      description: 'admitted cognition to settle',
       timeoutMilliseconds,
       signal,
       poll: async () => {
@@ -1222,8 +1233,8 @@ async function drainControlledStop ({
     if (signal?.aborted) throw cause
     throw new RunFailure(
       'cognitionFailed',
-      'already-forwarded cognition did not settle within the controlled-stop drain bound',
-      'controlledStopDrainTimedOut'
+      'already-forwarded cognition did not settle within the drain bound',
+      'cognitionDrainTimedOut'
     )
   }
   if (invalid !== null) throw invalid

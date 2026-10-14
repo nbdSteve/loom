@@ -114,6 +114,8 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
   const reviews = metrics.primaryBehavior?.nativeGoalReviewsByAgent ?? {}
   const agents = metrics.records.agents.map((agent) => agent.agentId)
   const jvmCut = Object.values(omissions).reduce((sum, kind) => sum + kind.jvmCutOmittedCount, 0)
+  // Requests refused after a normal ending were never owed an answer.
+  const afterEnd = metrics.admissionEnd?.refusedAfterEnd ?? 0
   const pilot = {
     meaningfulBehaviorAgents: Object.keys(meaningful).length >= 2,
     typedGoalContinuity: goalAgents.length >= 1,
@@ -123,9 +125,9 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
     noFailureEvidence:
       metrics.controlledStop === undefined &&
       metrics.cycles.incomplete.length === 0 &&
-      metrics.cycles.unavailable === 0 &&
+      metrics.cycles.unavailable === afterEnd &&
       metrics.cycles.discarded === 0 &&
-      metrics.cognition.refusedCalls === 0 &&
+      metrics.cognition.refusedCalls === afterEnd &&
       metrics.behavior.deaths === 0 &&
       metrics.behavior.disconnects === 0 &&
       metrics.behavior.witnessDisputeRecords === 0 &&
