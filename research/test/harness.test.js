@@ -117,9 +117,32 @@ test('primary behavior stops on fatal evidence and a lost initial condition', ()
     /lost a pinned initial condition/
   )
   assert.match(
-    primaryBehaviorRunFailure(config, [{ event: 'died' }]).message,
-    /agent died/
+    primaryBehaviorRunFailure(config, [{ event: 'witnessRevived', agentId: 'tribe-alpha' }]).message,
+    /permadeath breach/
   )
+})
+
+test('a witnessed death ends only that agent while its peers continue', () => {
+  const config = primaryBehaviorConfig()
+  const died = { event: 'died', agentId: 'tribe-alpha', tick: 900 }
+  const peer = { event: 'decided', agentId: 'tribe-beta', tick: 950 }
+  assert.equal(primaryBehaviorRunFailure(config, [died, peer]), null)
+  assert.equal(primaryBehaviorRunFailure(config, [
+    died,
+    { event: 'decisionDiscarded', agentId: 'tribe-alpha' },
+    { event: 'bodyDisconnected', agentId: 'tribe-alpha' }
+  ]), null)
+  assert.match(
+    primaryBehaviorRunFailure(config, [died, { event: 'perceived', agentId: 'tribe-alpha' }]).message,
+    /tribe-alpha recorded perceived after its witnessed death/
+  )
+  assert.match(
+    primaryBehaviorRunFailure(config, [died, { event: 'bodyDisconnected', agentId: 'tribe-beta' }]).message,
+    /a body disconnected/
+  )
+  for (const event of ['witnessRevived', 'witnessDisputed', 'witnessDenied', 'witnessQuit']) {
+    assert.notEqual(primaryBehaviorRunFailure(config, [died, { event, agentId: 'tribe-beta' }]), null, event)
+  }
 })
 
 test('Paper download identifies the harness and verifies bytes before caching', async () => {

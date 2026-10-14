@@ -33,6 +33,7 @@ const {
   requestOriginFor
 } = require('./experiment-mode.js')
 const { writeFailureDiagnostic } = require('./failure-diagnostic.js')
+const { AFTER_DEATH_EVENTS } = require('./witnessed-death.js')
 const {
   BoundedJournal,
   ProcessSupervisor,
@@ -323,14 +324,25 @@ function primaryBehaviorRunFailure (config, records, harnessRecords = []) {
     ['cognitionUnavailable', 'a cognition request became unavailable'],
     ['decisionDiscarded', 'a cognition decision was discarded'],
     ['despawned', 'a body despawned during the run'],
-    ['died', 'an agent died'],
     ['spawnRejected', 'a configured body spawn was rejected'],
     ['witnessDenied', 'the player witness denied a managed login'],
     ['witnessDisputed', 'the player witness disputed body evidence'],
     ['witnessQuit', 'a managed player left the server during the run'],
     ['witnessRevived', 'the player witness observed a permadeath breach']
   ])
+  const dead = new Set()
   for (const record of records) {
+    if (dead.has(record.agentId)) {
+      if (AFTER_DEATH_EVENTS.includes(record.event)) continue
+      return new RunFailure(
+        'startupFailed',
+        `primary behavior run stopped because ${record.agentId} recorded ${record.event} after its witnessed death`
+      )
+    }
+    if (record.event === 'died') {
+      dead.add(record.agentId)
+      continue
+    }
     if (
       record.event === 'cognitionUnavailable' &&
       typedUnavailable.has(`${record.agentId}:${record.requestId}`)
@@ -1023,8 +1035,14 @@ async function runExperiment ({
         )
       const expected =
         config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent
-      // A controlled stop's review window is validated by the publisher.
+      // A stopped run's or a dead agent's review window is validated by the publisher.
+      const died = new Set(
+        bodyEvents(rawBodyEvidence)
+          .filter((record) => record.event === 'died')
+          .map((record) => record.agentId)
+      )
       for (const agentId of controlledStop === undefined ? config.agents : []) {
+        if (died.has(agentId)) continue
         if (forwarded.filter((record) => record.agentId === agentId).length !== expected) {
           throw new RunFailure(
             'startupFailed',

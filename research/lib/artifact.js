@@ -665,25 +665,29 @@ function initialConditionsMatch (config, metrics) {
 }
 
 function expectedNativeReviewsObserved (config, metrics) {
-  if (metrics.controlledStop !== undefined) {
-    return controlledStopReviewsWithinWindow(config.agents, metrics.controlledStop)
-  }
   const expected = config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent
-  const observed = metrics.primaryBehavior?.nativeGoalReviewsByAgent ?? {}
-  return config.agents.every((agentId) => observed[agentId] === expected)
+  return config.agents.every((agentId) => agentReviewsObserved(agentId, metrics, expected))
 }
 
-// A stopped run owes only the reviews its stop window made due, and cannot have more.
-function controlledStopReviewsWithinWindow (agentIds, stop) {
-  return agentIds.every((agentId) => {
-    const entry = stop.nativeReviews?.byAgent?.[agentId]
-    return entry !== undefined &&
-      Number.isInteger(entry.minimum) &&
-      Number.isInteger(entry.maximum) &&
-      entry.attempted >= entry.minimum &&
-      entry.attempted <= entry.maximum &&
-      entry.completed <= entry.attempted
-  })
+function windowEntryHolds (entry) {
+  return entry !== undefined &&
+    Number.isInteger(entry.minimum) &&
+    Number.isInteger(entry.maximum) &&
+    entry.attempted >= entry.minimum &&
+    entry.attempted <= entry.maximum &&
+    entry.completed <= entry.attempted
+}
+
+// A run owes each agent's full plan, unless a death or a controlled stop ended that
+// agent's window first; then it owes only the reviews that window made due.
+function agentReviewsObserved (agentId, metrics, expected) {
+  const death = metrics.witnessedDeaths?.byAgent?.[agentId]
+  const stop = metrics.controlledStop
+  if (death !== undefined && (stop === undefined || stop.stopTick === null || death.tick <= stop.stopTick)) {
+    return windowEntryHolds(death)
+  }
+  if (stop !== undefined) return windowEntryHolds(stop.nativeReviews?.byAgent?.[agentId])
+  return metrics.primaryBehavior?.nativeGoalReviewsByAgent?.[agentId] === expected
 }
 
 function protocolFor (config, metrics) {
@@ -804,6 +808,14 @@ function integrityChecksFor (config, metrics, agents, warnings) {
         metrics.perceptionAudit.samples === metrics.cycles.perceived,
       derivedFrom: EVIDENCE_FILE
     },
+    ...(metrics.witnessedDeaths === undefined
+      ? {}
+      : {
+          witnessedDeathsAccounted: {
+            passed: metrics.witnessedDeaths.violation === null,
+            derivedFrom: EVIDENCE_FILE
+          }
+        }),
     ...(metrics.controlledStop === undefined
       ? {}
       : {
@@ -995,7 +1007,10 @@ function buildManifest ({
       : {}),
     ...(metricValue.controlledStop === undefined
       ? {}
-      : { controlledStop: structuredClone(metricValue.controlledStop) })
+      : { controlledStop: structuredClone(metricValue.controlledStop) }),
+    ...(metricValue.witnessedDeaths === undefined
+      ? {}
+      : { witnessedDeaths: structuredClone(metricValue.witnessedDeaths) })
   }
 }
 
@@ -1079,17 +1094,29 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
     errors.push('primary behavior evidence contains a process terminated by SIGKILL')
   }
   const stopped = manifest.timing.stopReason === CONTROLLED_STOP_REASON
+  const deaths = metrics.witnessedDeaths
   if (
     (!stopped && (metrics.cognition.refusedCalls !== 0 || metrics.cycles.unavailable !== 0)) ||
-    metrics.cycles.discarded !== 0
+    (deaths === undefined && metrics.cycles.discarded !== 0)
   ) {
     errors.push('primary behavior evidence contains a cognition refusal, unavailable decision, or discarded decision')
   }
   if (stopped || metrics.controlledStop !== undefined || manifest.controlledStop !== undefined) {
     errors.push(...controlledStopErrors(manifest, metrics, records))
   }
-  if (metrics.behavior.deaths !== 0 || metrics.behavior.disconnects !== 0) {
-    errors.push('primary behavior evidence contains a death or unmanaged body disconnect')
+  if (deaths === undefined) {
+    if (metrics.behavior.deaths !== 0 || metrics.behavior.disconnects !== 0) {
+      errors.push('primary behavior evidence contains a death or unmanaged body disconnect')
+    }
+  } else {
+    if (deaths.violation !== null) errors.push(`primary behavior death evidence is inconsistent: ${deaths.violation}`)
+    if (deaths.deaths !== metrics.behavior.deaths) errors.push('witnessed deaths do not match the death count')
+    if (!sameJson(manifest.witnessedDeaths, deaths)) {
+      errors.push('manifest witnessed deaths do not match metrics.json')
+    }
+  }
+  if (deaths === undefined && manifest.witnessedDeaths !== undefined) {
+    errors.push('manifest claims witnessed deaths the evidence does not hold')
   }
   if (!sameJson(manifest.perceptionAudit, metrics.perceptionAudit)) {
     errors.push('manifest per-kind perception audit does not match metrics.json')
@@ -1141,11 +1168,7 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
   }
   const expectedReviews = protocol.nativeGoalReviewSchedule?.expectedReviewsPerAgent
   for (const agent of manifest.agents) {
-    if (
-      stopped
-        ? !controlledStopReviewsWithinWindow([agent.agentId], metrics.controlledStop ?? {})
-        : primary?.nativeGoalReviewsByAgent?.[agent.agentId] !== expectedReviews
-    ) {
+    if (!agentReviewsObserved(agent.agentId, metrics, expectedReviews)) {
       errors.push(`${agent.agentId} did not record the expected native scheduled reviews`)
     }
   }
@@ -1177,7 +1200,8 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
     'plannedNativeCallsFitCeilings',
     'noDroppedEvidenceWarning',
     'serverEvidenceUncontested',
-    ...(stopped ? ['controlledStopAccounted'] : [])
+    ...(stopped ? ['controlledStopAccounted'] : []),
+    ...(deaths === undefined ? [] : ['witnessedDeathsAccounted'])
   ]) {
     if (manifest.integrityChecks[name]?.passed !== true) {
       errors.push(`primary behavior integrity check ${name} did not pass`)
@@ -1773,6 +1797,9 @@ function renderReadme (config, manifest, metrics) {
   const protocolObservations = primaryBehavior
     ? `- No body process was deliberately crashed and no harness \`/loombody think\` command was issued.
 - Native scheduled reviews by agent: ${JSON.stringify(metrics.primaryBehavior?.nativeGoalReviewsByAgent ?? {})}.
+${metrics.witnessedDeaths === undefined
+  ? '- No agent died.'
+  : `- Server-witnessed deaths: ${JSON.stringify(metrics.witnessedDeaths.byAgent)}; surviving agents continued.`}
 - Per-kind audit samples: ${metrics.perceptionAudit?.samples ?? 0}; complete: ${metrics.perceptionAudit?.complete ?? false}.
 - Cleanup verification recorded: ${metrics.crashContainment.cleanupVerified}.`
     : `- ${metrics.crashContainment.controlledCrashes.length} body process was deliberately crashed; peer decisions after it:

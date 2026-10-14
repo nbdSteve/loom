@@ -98,7 +98,8 @@ function assertNoGo (published, kind) {
 }
 
 function rejects (raw, pattern, config = goalContinuityConfig()) {
-  assert.throws(() => publish({ config, raw }), pattern)
+  const stopped = raw.harness.some((record) => record.event === 'cognitionAdmissionClosed')
+  assert.throws(() => publish({ config, raw, stopReason: stopped ? 'controlledStop' : 'durationElapsed' }), pattern)
 }
 
 test('a global-outstanding stop publishes complete earlier chains and the drained in-flight work', () => {
@@ -261,8 +262,10 @@ test('a stop with no matching evidence is refused', () => {
     if (record.event === 'cognitionAdmissionClosed') record.requestId = 'never-1'
   }
   rejects(orphan, /no matching perception and refusal evidence|no matching typed refusal/)
-  const reason = primaryBehaviorRawRecords(goalContinuityConfig())
-  rejects(reason, /controlled stop must carry both its stop reason and its admission closure/)
+  assert.throws(
+    () => publish({ raw: primaryBehaviorRawRecords(goalContinuityConfig()) }),
+    /controlled stop must carry both its stop reason and its admission closure/
+  )
 })
 
 test('a dirty shutdown or a killed process is refused', () => {
@@ -349,7 +352,7 @@ test('the live run treats only typed refusals after an admission closure as non-
   )
   const untyped = [...body, bodyRecord(600, 'tribe-gamma', 'cognitionUnavailable', 'x', { requestId: 'other-1' })]
   assert.match(primaryBehaviorRunFailure(config, untyped, raw.harness).message, /became unavailable/)
-  for (const event of ['died', 'witnessDisputed', 'witnessRevived', 'bodyDisconnected', 'decisionDiscarded']) {
+  for (const event of ['witnessDisputed', 'witnessRevived', 'bodyDisconnected', 'decisionDiscarded']) {
     const fatal = [...body, bodyRecord(600, 'tribe-gamma', event, 'x')]
     assert.notEqual(primaryBehaviorRunFailure(config, fatal, raw.harness), null, event)
   }
@@ -559,4 +562,49 @@ test('the controlled-stop drain waits for settled chains and is bounded', async 
     ])
   }, 150)
   await drainControlledStop({ proxy, rawBodyEvidence: file, timeoutMilliseconds: 2000 })
+})
+
+function deathRaw ({ agentId = 'tribe-alpha', tick = 1000, after = ['bodyDisconnected'] } = {}) {
+  const raw = primaryBehaviorRawRecords(goalContinuityConfig())
+  raw.body = raw.body.filter((record) => !(record.agentId === agentId && record.requestId === 'native-2'))
+  raw.harness = raw.harness.filter((record) => !(record.agentId === agentId && record.requestId === 'native-2'))
+  const index = raw.body.findIndex((record) => record.tick > tick)
+  raw.body.splice(index === -1 ? raw.body.length : index, 0,
+    bodyRecord(tick, agentId, 'died', 'witnessed death', { outcome: 'died' }),
+    ...after.map((event) => bodyRecord(tick + 1, agentId, event, 'after death'))
+  )
+  return raw
+}
+
+test('a witnessed death publishes as an outcome while surviving agents keep their full plan', () => {
+  const published = publish({ raw: deathRaw(), stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  const deaths = published.metrics.witnessedDeaths
+  assert.equal(deaths.deaths, 1)
+  assert.equal(deaths.violation, null)
+  assert.deepEqual(deaths.byAgent['tribe-alpha'], {
+    tick: 1000, lifeTicks: 985, attempted: 1, completed: 1, minimum: 1, maximum: 1
+  })
+  assert.deepEqual(published.manifest.witnessedDeaths, deaths)
+  assert.equal(published.manifest.integrityChecks.witnessedDeathsAccounted.passed, true)
+  assert.equal(published.manifest.integrityChecks.expectedNativeReviewsObserved.passed, true)
+  assert.match(readme(published), /Server-witnessed deaths: .*tribe-alpha.*surviving agents continued/)
+})
+
+test('a death does not excuse a survivor\'s missing review or a revived chain', () => {
+  const short = deathRaw()
+  short.body = short.body.filter((record) => !(record.agentId === 'tribe-beta' && record.requestId === 'native-2'))
+  short.harness = short.harness.filter((record) => !(record.agentId === 'tribe-beta' && record.requestId === 'native-2'))
+  rejects(short, /tribe-beta did not record the expected native scheduled reviews/)
+  const boundary = deathRaw({ tick: 2500 })
+  assert.equal(validateArtifact(publish({ raw: boundary, stopReason: 'durationElapsed' }).artifactDirectory).ok, true)
+  const late = deathRaw({ tick: 2900 })
+  rejects(late, /tribe-alpha did not record the expected native scheduled reviews/)
+  const revived = deathRaw({ after: ['moved'] })
+  rejects(revived, /recorded moved after its witnessed death/)
+  const twice = deathRaw({ after: ['bodyDisconnected', 'bodyDisconnected'] })
+  rejects(twice, /disconnected twice after its death/)
+  const stranger = deathRaw()
+  stranger.body.push(bodyRecord(2900, 'tribe-gamma', 'bodyDisconnected', 'gone'))
+  rejects(stranger, /bodyDisconnected without a witnessed death/)
 })

@@ -170,6 +170,16 @@ Validation derives the owed reviews from the stop window: review k of each agent
 It refuses a stop with no matching refusal or classification, an untyped refusal, an impossible count, any refusal that is not the first before the closure, a missing earlier chain, provider usage that does not reconcile, a dirty shutdown, and a killed process.
 A normal duration or tick-ceiling completion still requires the exact configured review plan, and crash-containment evidence can never claim a controlled stop.
 
+## Witnessed deaths
+
+In primary behavior mode a server-witnessed `died` record is an experiment outcome, not a failure.
+That agent's chain ends there and its peers continue under the same deadline.
+After its death only that agent's own `bodyDisconnected` (at most once) and `decisionDiscarded` records may follow; anything else for it, a second death, or a disconnect or discard of an agent that did not die, stays fatal.
+Witness disputes, revivals, denials, quits, and an unsafe ledger stay fatal as well.
+The publisher derives a `witnessedDeaths` section, present only when a death occurred, and owes a dead agent only the scheduled reviews its life window made due, by the same rule as a controlled stop.
+Survivors still owe the full configured plan.
+`research/lib/witnessed-death.js` owns the rule.
+
 ## Lifecycle and cleanup
 
 The harness starts cognition, the bounded proxy, and Paper in that order. Paper
