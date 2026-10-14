@@ -499,3 +499,35 @@ test('component source hashes use committed files and ignore generated caches', 
     fs.rmSync(generated, { recursive: true, force: true })
   }
 })
+
+test('publication renames a validated directory into place and leaves nothing partial behind', () => {
+  const published = publishFixture()
+  const root = path.dirname(published.artifactDirectory)
+  assert.deepEqual(fs.readdirSync(root), [published.config.experimentId])
+  assert.equal(validateArtifact(published.artifactDirectory).ok, true)
+
+  const config = proofConfig()
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-artifact-partial-'))
+  const body = path.join(temporary, 'body.jsonl')
+  const harness = path.join(temporary, 'harness.jsonl')
+  fs.writeFileSync(body, '{"not":"a body record"}\n')
+  writeJsonLines(harness, [])
+  const artifactRoot = path.join(temporary, 'published')
+  try {
+    assert.throws(() => publishArtifact({
+      config,
+      source: SOURCE,
+      components: COMPONENTS,
+      tools: TOOLS,
+      startedAt: '2026-10-12T00:00:00.000Z',
+      endedAt: '2026-10-12T00:00:28.000Z',
+      stopReason: 'durationElapsed',
+      rawBodyEvidence: body,
+      rawHarnessEvidence: harness,
+      artifactDirectory: path.join(artifactRoot, config.experimentId)
+    }))
+    assert.deepEqual(fs.readdirSync(artifactRoot), [])
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true })
+  }
+})

@@ -46,7 +46,7 @@ function startRefusingUpstream (error, failure) {
   })
 }
 
-function request (port, agentId, requestId) {
+function request (port, agentId, requestId, trigger = 'goalReview') {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: '127.0.0.1', port })
     let response = ''
@@ -54,7 +54,7 @@ function request (port, agentId, requestId) {
       socket.write(`${JSON.stringify({
         requestId,
         agentId,
-        trigger: { event: 'goalReview' },
+        trigger: { event: trigger },
         importance: 'ROUTINE'
       })}\n`)
     })
@@ -272,10 +272,9 @@ test('a controlled body crash leaves one scheduled cognition call for each peer'
     }
     assert.equal(postCrashCycle.beta.intent.action, 'idle')
     assert.equal(postCrashCycle.gamma.intent.action, 'idle')
-    assert.equal(
-      events.filter((event) => event.reason === 'postCrashCallReserve').length,
-      3
-    )
+    const reserved = events.filter((event) => event.reason === 'postCrashCallReserve')
+    assert.equal(reserved.length, 3)
+    assert.ok(reserved.every((event) => event.bound === 'postCrashReserve' && event.forwarded === false))
     assert.deepEqual(proxy.snapshot().postCrashReserve.remainingByPeer, {
       beta: 0,
       gamma: 0
@@ -284,4 +283,143 @@ test('a controlled body crash leaves one scheduled cognition call for each peer'
     await proxy.close()
     await new Promise((resolve) => upstream.close(resolve))
   }
+})
+
+function typedProxy (upstream, { budget, spend, agents = ['alpha', 'beta'] }) {
+  const events = []
+  const refusals = []
+  const proxy = new CognitionBudgetProxy({
+    listen: { host: '127.0.0.1', port: 0 },
+    upstream: { host: '127.0.0.1', port: upstream.address().port },
+    agents,
+    budget,
+    spend,
+    requestOrigin: (trigger) =>
+      trigger === 'goalReview' ? 'nativeGoalReviewSchedule' : 'nativeEventDriver',
+    journal: { append: (event, fields) => events.push({ event, ...fields }) },
+    onRefusal: (refusal) => refusals.push(refusal)
+  })
+  return { proxy, events, refusals }
+}
+
+function typed (refusal) {
+  const { agentId, bound, reason, unit, ceiling, observed, forwarded, origin, trigger } = refusal
+  return { agentId, bound, reason, unit, ceiling, observed, forwarded, origin, trigger }
+}
+
+test('a refusal names its exact bound, agent, origin, ceiling, and observed count', async () => {
+  const upstream = await startUpstream()
+  const { proxy, events, refusals } = typedProxy(upstream, {
+    budget: { perAgentCallCeiling: 1, globalCallCeiling: 2, globalOutstandingCeiling: 2 }
+  })
+  await proxy.start()
+  try {
+    await request(proxy.listen.port, 'alpha', 'a1')
+    await request(proxy.listen.port, 'alpha', 'a2', 'damaged')
+    await request(proxy.listen.port, 'beta', 'b1')
+    await request(proxy.listen.port, 'beta', 'b2')
+    assert.deepEqual(refusals.map(typed), [
+      {
+        agentId: 'alpha',
+        bound: 'perAgentCall',
+        reason: 'perAgentCallCeiling',
+        unit: 'calls',
+        ceiling: 1,
+        observed: 1,
+        forwarded: false,
+        origin: 'nativeEventDriver',
+        trigger: 'damaged'
+      },
+      {
+        agentId: 'beta',
+        bound: 'globalCall',
+        reason: 'globalCallCeiling',
+        unit: 'calls',
+        ceiling: 2,
+        observed: 2,
+        forwarded: false,
+        origin: 'nativeGoalReviewSchedule',
+        trigger: 'goalReview'
+      }
+    ])
+    assert.deepEqual(
+      events.filter((event) => event.event === 'cognitionRefused').map(typed),
+      refusals.map(typed)
+    )
+    assert.deepEqual(proxy.snapshot().refusedByBound, { perAgentCall: 1, globalCall: 1 })
+  } finally {
+    await proxy.close()
+    await new Promise((resolve) => upstream.close(resolve))
+  }
+})
+
+test('a native event call arriving with every outstanding slot occupied is a globalOutstanding refusal', async () => {
+  const upstream = await startUpstream(150)
+  const { proxy, refusals } = typedProxy(upstream, {
+    agents: ['alpha', 'beta', 'gamma', 'delta'],
+    budget: { perAgentCallCeiling: 4, globalCallCeiling: 12, globalOutstandingCeiling: 3 }
+  })
+  await proxy.start()
+  try {
+    const inFlight = ['alpha', 'beta', 'gamma'].map((agent) =>
+      request(proxy.listen.port, agent, `${agent}-review`))
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    const refused = await request(proxy.listen.port, 'delta', 'delta-threat', 'threatSighted')
+    assert.match(refused.error, /experiment budget/)
+    assert.deepEqual(refusals.map(typed), [{
+      agentId: 'delta',
+      bound: 'globalOutstanding',
+      reason: 'globalOutstandingCeiling',
+      unit: 'calls',
+      ceiling: 3,
+      observed: 3,
+      forwarded: false,
+      origin: 'nativeEventDriver',
+      trigger: 'threatSighted'
+    }])
+    for (const response of await Promise.all(inFlight)) assert.equal(response.intent.action, 'idle')
+    assert.equal(proxy.snapshot().forwardedCalls, 3)
+  } finally {
+    await proxy.close()
+    await new Promise((resolve) => upstream.close(resolve))
+  }
+})
+
+test('the spend bound refuses a call whose worst-case price would cross the ceiling', async () => {
+  const upstream = await startUpstream()
+  const { proxy, refusals } = typedProxy(upstream, {
+    budget: { perAgentCallCeiling: 4, globalCallCeiling: 8, globalOutstandingCeiling: 2 },
+    spend: { ceilingNanoUsd: 250, worstCaseCallNanoUsd: 100 }
+  })
+  await proxy.start()
+  try {
+    await request(proxy.listen.port, 'alpha', 'a1')
+    await request(proxy.listen.port, 'beta', 'b1')
+    assert.match((await request(proxy.listen.port, 'alpha', 'a2')).error, /experiment budget/)
+    assert.deepEqual(refusals.map(typed), [{
+      agentId: 'alpha',
+      bound: 'spend',
+      reason: 'spendCeiling',
+      unit: 'nanoUsd',
+      ceiling: 250,
+      observed: 200,
+      forwarded: false,
+      origin: 'nativeGoalReviewSchedule',
+      trigger: 'goalReview'
+    }])
+  } finally {
+    await proxy.close()
+    await new Promise((resolve) => upstream.close(resolve))
+  }
+})
+
+test('a malformed spend bound is refused at construction', () => {
+  assert.throws(() => new CognitionBudgetProxy({
+    listen: { host: '127.0.0.1', port: 0 },
+    upstream: { host: '127.0.0.1', port: 1 },
+    agents: ['alpha'],
+    budget: { perAgentCallCeiling: 1, globalCallCeiling: 1, globalOutstandingCeiling: 1 },
+    spend: { ceilingNanoUsd: 1.5, worstCaseCallNanoUsd: 1 },
+    journal: { append () {} }
+  }), /spend bound/)
 })

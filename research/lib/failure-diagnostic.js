@@ -1,14 +1,32 @@
 'use strict'
 
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 
+const { REFUSAL_BOUNDS } = require('./budget-proxy.js')
 const { validatedCognitionFailure } = require('./cognition-failure.js')
 const { scanText } = require('./evidence.js')
 const { canonicalJson, sortedValue } = require('./util.js')
 
-const FAILURE_DIAGNOSTIC_VERSION = 'loom-failed-run-diagnostic/2'
+const FAILURE_DIAGNOSTIC_VERSION = 'loom-failed-run-diagnostic/3'
+const FALLBACK_DIAGNOSTIC_VERSION = 'loom-failed-run-fallback-diagnostic/1'
 const MAX_FAILURE_DIAGNOSTIC_BYTES = 64 * 1024
+const MAX_FALLBACK_DIAGNOSTIC_BYTES = 8 * 1024
+const MAX_REFUSAL_DETAILS = 32
+const DIAGNOSTIC_STAGES = ['inputRead', 'summary', 'serialize', 'sanitize', 'sizeCheck', 'write']
+const EXPERIMENT_ID = /^[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9][a-z0-9-]{0,99}$/
+const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,31}$/
+const COMMIT = /^[0-9a-f]{40}$/
+const TRIGGER = /^[a-z][A-Za-z]{0,39}$/
+const IMPORTANCES = new Set(['ROUTINE', 'NOTABLE', 'PIVOTAL'])
+const ORIGINS = new Set(['nativeEventDriver', 'nativeGoalReviewSchedule'])
+const REFUSAL_UNITS = new Set(['calls', 'nanoUsd'])
+const MODES = new Set([
+  'crash-containment',
+  'routine-v12-primary-behavior',
+  'routine-v13-goal-continuity'
+])
 const MAX_INPUT_LINE_BYTES = 256 * 1024
 const BODY_EVENTS = new Set([
   'attacked',
@@ -62,7 +80,23 @@ const REFUSAL_REASONS = new Set([
   'globalCallCeiling',
   'globalOutstandingCeiling',
   'perAgentCallCeiling',
-  'postCrashCallReserve'
+  'postCrashCallReserve',
+  'spendCeiling'
+])
+const REFUSAL_BOUND_SET = new Set(REFUSAL_BOUNDS)
+const FAILURE_CODES = new Set([
+  'boundedJournalFailure',
+  'cognitionBudgetRefused',
+  'cognitionDecisionFailed',
+  'cognitionProcessOrProviderFailure',
+  'cognitionUpstreamUnavailable',
+  'logByteLimitReached',
+  'paperProcessFailure',
+  'postCrashPeerDecisionRequirement',
+  'providerAuthenticationRejected',
+  'runCancelled',
+  'simulationTickCeilingReached',
+  'startupOrAcceptanceFailure'
 ])
 const STOP_REASONS = new Set([
   'cancelled',
@@ -212,10 +246,30 @@ function cognitionPhase () {
   }
 }
 
+// Closed fields only: the agent, bound, numbers, and origin are enough to say which
+// configured ceiling stopped a call without retaining the request or its perception.
+function typedRefusal (record) {
+  return {
+    agentId: record.agentId,
+    bound: REFUSAL_BOUND_SET.has(record.bound) ? record.bound : 'unclassified',
+    unit: REFUSAL_UNITS.has(record.unit) ? record.unit : null,
+    ceiling: safeCount(record.ceiling),
+    observed: safeCount(record.observed),
+    forwarded: record.forwarded === false ? false : null,
+    origin: ORIGINS.has(record.origin) ? record.origin : null,
+    trigger: typeof record.trigger === 'string' && TRIGGER.test(record.trigger)
+      ? record.trigger
+      : null,
+    importance: IMPORTANCES.has(record.importance) ? record.importance : null
+  }
+}
+
 function harnessSummary (records, config) {
   const configuredAgentIds = config.agents
-  const crashAgent = config.proof.crashAgent
+  const crashAgent = config.proof?.crashAgent ?? null
   const configuredAgents = new Set(configuredAgentIds)
+  const refusals = []
+  let refusalsOmitted = 0
   const agents = new Map(configuredAgentIds.map((agentId) => [
     agentId,
     { agentId, beforeCrash: cognitionPhase(), afterCrash: cognitionPhase() }
@@ -298,6 +352,8 @@ function harnessSummary (records, config) {
       } else {
         increment(summary.refusedByReason, 'unclassified')
       }
+      if (refusals.length < MAX_REFUSAL_DETAILS) refusals.push(typedRefusal(record))
+      else refusalsOmitted += 1
     }
   }
 
@@ -313,6 +369,8 @@ function harnessSummary (records, config) {
           .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
           .map(([, value]) => value)
       },
+      refusals,
+      refusalsOmitted,
       unknownAgentRecords,
       unclassifiedEvents,
       invalidShapeRecords
@@ -393,31 +451,42 @@ function safeCount (value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
+function safeRefusedByBound (value) {
+  return Object.fromEntries(
+    REFUSAL_BOUNDS
+      .filter((bound) => safeCount(value?.[bound]) !== null)
+      .map((bound) => [bound, value[bound]])
+  )
+}
+
 function safeProxySnapshot (snapshot, config) {
   if (snapshot === undefined || snapshot === null) return null
   const peers = [...config.agents]
-    .filter((agent) => agent !== config.proof.crashAgent)
+    .filter((agent) => agent !== config.proof?.crashAgent)
     .sort()
   return {
     forwardedCalls: safeCount(snapshot.forwardedCalls),
     outstandingCalls: safeCount(snapshot.outstandingCalls),
+    refusedByBound: safeRefusedByBound(snapshot.refusedByBound),
     callsByAgent: Object.fromEntries(
       [...config.agents].sort().map((agent) => [
         agent,
         safeCount(snapshot.callsByAgent?.[agent])
       ])
     ),
-    postCrashReserve: {
-      crashAgent: config.proof.crashAgent,
-      callsPerPeer: config.proof.postCrashCallsPerPeer,
-      released: snapshot.postCrashReserve?.released === true,
-      remainingByPeer: Object.fromEntries(
-        peers.map((agent) => [
-          agent,
-          safeCount(snapshot.postCrashReserve?.remainingByPeer?.[agent])
-        ])
-      )
-    }
+    postCrashReserve: config.proof === undefined
+      ? null
+      : {
+          crashAgent: config.proof.crashAgent,
+          callsPerPeer: config.proof.postCrashCallsPerPeer,
+          released: snapshot.postCrashReserve?.released === true,
+          remainingByPeer: Object.fromEntries(
+            peers.map((agent) => [
+              agent,
+              safeCount(snapshot.postCrashReserve?.remainingByPeer?.[agent])
+            ])
+          )
+        }
   }
 }
 
@@ -428,6 +497,7 @@ function stableStopReason (failure) {
 }
 
 function failureCode (failure) {
+  if (FAILURE_CODES.has(failure?.code)) return failure.code
   const message = typeof failure?.message === 'string' ? failure.message : ''
   if (message === 'two peers did not decide after the controlled crash') {
     return 'postCrashPeerDecisionRequirement'
@@ -480,6 +550,7 @@ function failureDiagnostic ({
       retainedAt
     },
     configuredConditions: {
+      mode: config.mode ?? 'crash-containment',
       agents: [...config.agents].sort(),
       cognitionBackend: config.cognition.backend,
       models: [...new Set([
@@ -491,13 +562,16 @@ function failureDiagnostic ({
         global: config.cognition.globalCallCeiling,
         outstanding: config.cognition.globalOutstandingCeiling
       },
+      maxExternalSpendUsd: config.cognition.maxExternalSpendUsd,
       durationSeconds: config.bounds.runDurationSeconds,
       simulationTickCeiling: config.bounds.simulationTickCeiling,
-      controlledCrash: {
-        agentId: config.proof.crashAgent,
-        afterSeconds: config.proof.crashAfterSeconds,
-        reservedCallsPerPeer: config.proof.postCrashCallsPerPeer
-      }
+      controlledCrash: config.proof === undefined
+        ? null
+        : {
+            agentId: config.proof.crashAgent,
+            afterSeconds: config.proof.crashAfterSeconds,
+            reservedCallsPerPeer: config.proof.postCrashCallsPerPeer
+          }
     },
     cleanup: {
       verifiedByListenerProbe: cleanupVerified === true,
@@ -514,19 +588,21 @@ function failureDiagnostic ({
       proxy: safeProxySnapshot(proxySnapshot, config),
       providerUsage: providerUsageSummary(providerUsageInput.records, config)
     },
-    crashContainment: {
-      crashObserved: harness.crash.observed,
-      crashAfterTick: harness.crash.afterTick,
-      reserveReleased: harness.crash.reserveReleased,
-      peerDecisionsAfterCrash: Object.fromEntries(
-        body.agents
-          .filter((agent) => agent.agentId !== config.proof.crashAgent)
-          .map((agent) => [
-            agent.agentId,
-            agent.postCrashEvents.decided ?? 0
-          ])
-      )
-    },
+    crashContainment: config.proof === undefined
+      ? null
+      : {
+          crashObserved: harness.crash.observed,
+          crashAfterTick: harness.crash.afterTick,
+          reserveReleased: harness.crash.reserveReleased,
+          peerDecisionsAfterCrash: Object.fromEntries(
+            body.agents
+              .filter((agent) => agent.agentId !== config.proof.crashAgent)
+              .map((agent) => [
+                agent.agentId,
+                agent.postCrashEvents.decided ?? 0
+              ])
+          )
+        },
     privacy: {
       aggregateOnly: true,
       credentialsRetained: false,
@@ -539,66 +615,237 @@ function failureDiagnostic ({
   })
 }
 
-function writeFailureDiagnostic ({
-  repositoryRoot,
-  diagnosticRoot,
+// Publishes text under `file` only whole and never over an existing file: a partial
+// write stays at a temporary name, and link(2) refuses an existing target.
+function writeExclusiveAtomic (file, text) {
+  const directory = path.dirname(file)
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+  const temporary = path.join(
+    directory,
+    `.${path.basename(file)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.partial`
+  )
+  let descriptor
+  try {
+    descriptor = fs.openSync(temporary, 'wx', 0o600)
+    fs.writeSync(descriptor, text)
+    fs.fsyncSync(descriptor)
+    fs.closeSync(descriptor)
+    descriptor = undefined
+    fs.chmodSync(temporary, 0o600)
+    fs.linkSync(temporary, file)
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
+    fs.rmSync(temporary, { force: true })
+  }
+}
+
+function retainedLabel (repositoryRoot, file) {
+  const relative = path.relative(repositoryRoot, file)
+  return relative !== '' &&
+    !path.isAbsolute(relative) &&
+    relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`)
+    ? relative
+    : path.basename(file)
+}
+
+const DEFAULT_STAGES = Object.freeze({
+  readInput: boundedJsonLines,
+  summarize: failureDiagnostic,
+  serialize: canonicalJson,
+  scan: scanText,
+  write: writeExclusiveAtomic
+})
+
+// Independent of the normal reader so a fault there cannot erase the spend record.
+function fallbackProviderUsage (file, config) {
+  try {
+    const stat = fs.statSync(file)
+    if (stat.size > config.bounds.logBytes) return { status: 'overBound' }
+    const text = fs.readFileSync(file, 'utf8')
+    const lines = text.slice(0, Math.max(0, text.lastIndexOf('\n'))).split('\n').filter(Boolean)
+    if (lines.length > config.bounds.evidenceRecords) return { status: 'overBound' }
+    const records = lines.map((line) => {
+      try {
+        return JSON.parse(line)
+      } catch {
+        return null
+      }
+    }).filter((record) => record !== null && typeof record === 'object')
+    return { status: 'aggregated', ...providerUsageSummary(records, config) }
+  } catch (cause) {
+    return { status: cause?.code === 'ENOENT' ? 'absent' : 'unreadable' }
+  }
+}
+
+// A string survives only when it matches its closed shape and the public secret scan.
+function closedString (value, pattern) {
+  return typeof value === 'string' && pattern.test(value) && scanText(value).length === 0
+}
+
+function fallbackDiagnostic ({
   config,
   source,
   failure,
-  startedAt,
-  endedAt,
+  failedStage,
+  retainedAt,
   cleanupVerified,
-  bodyFile,
-  harnessFile,
   providerUsageFile,
-  proxySnapshot,
-  clock = () => new Date(),
-  maxBytes = MAX_FAILURE_DIAGNOSTIC_BYTES
+  proxySnapshot
 }) {
+  const agents = Array.isArray(config?.agents)
+    ? [...config.agents].filter((agent) => closedString(agent, AGENT_ID)).sort().slice(0, 16)
+    : []
+  let proxy = null
+  if (proxySnapshot !== null && typeof proxySnapshot === 'object') {
+    proxy = {
+      forwardedCalls: safeCount(proxySnapshot.forwardedCalls),
+      outstandingCalls: safeCount(proxySnapshot.outstandingCalls),
+      refusedByBound: safeRefusedByBound(proxySnapshot.refusedByBound),
+      callsByAgent: Object.fromEntries(
+        agents.map((agent) => [agent, safeCount(proxySnapshot.callsByAgent?.[agent])])
+      )
+    }
+  }
+  const usage = fallbackProviderUsage(providerUsageFile, config)
+  const providerUsage = usage.status === 'aggregated'
+    ? {
+        status: 'aggregated',
+        calls: Object.values(usage.byModel).reduce((sum, model) => sum + model.calls, 0),
+        invalidRecords: usage.invalidRecords,
+        byModel: usage.byModel,
+        externalSpendNanoUsd: usage.externalSpendNanoUsd,
+        externalSpendUsd: usage.externalSpendUsd
+      }
+    : { status: usage.status }
+  return sortedValue({
+    schemaVersion: FALLBACK_DIAGNOSTIC_VERSION,
+    experimentId: closedString(config?.experimentId, EXPERIMENT_ID) ? config.experimentId : null,
+    sourceCommit: closedString(source?.commit, COMMIT) ? source.commit : null,
+    mode: MODES.has(config?.mode ?? 'crash-containment') ? (config?.mode ?? 'crash-containment') : null,
+    failedStage: DIAGNOSTIC_STAGES.includes(failedStage) ? failedStage : 'unknown',
+    failure: {
+      code: failureCode(failure),
+      stopReason: stableStopReason(failure)
+    },
+    retainedAt,
+    cleanup: { verifiedByListenerProbe: cleanupVerified === true },
+    proxy,
+    providerUsage,
+    privacy: {
+      aggregateOnly: true,
+      allowlistedFieldsOnly: true,
+      publicResearchEvidence: false
+    }
+  })
+}
+
+function writeFallbackDiagnostic (options, failedStage, maxBytes) {
+  const diagnostic = fallbackDiagnostic({ ...options, failedStage })
+  const text = canonicalJson(diagnostic)
+  const unsafe = scanText(text)
+  if (unsafe.length > 0) throw new Error('fallback diagnostic contained unsafe material')
+  const bytes = Buffer.byteLength(text)
+  if (bytes > maxBytes) throw new Error(`fallback diagnostic exceeded its ${maxBytes} byte bound`)
+  // Never named after an unvalidated id: an id that fails the slug test is not a path.
+  const name = diagnostic.experimentId ?? `unidentified-${crypto.randomBytes(6).toString('hex')}`
+  const file = path.join(options.diagnosticRoot, `${name}.fallback.json`)
+  writeExclusiveAtomic(file, text)
+  return {
+    diagnostic,
+    file,
+    label: retainedLabel(options.repositoryRoot, file),
+    bytes,
+    fallback: true,
+    failedStage: diagnostic.failedStage
+  }
+}
+
+function writeNormalDiagnostic (options, stages, maxBytes, progress) {
+  const { config } = options
   const limits = {
     maxBytes: config.bounds.logBytes,
     maxRecords: config.bounds.evidenceRecords
   }
-  const diagnostic = failureDiagnostic({
+  progress.stage = 'inputRead'
+  const bodyInput = stages.readInput(options.bodyFile, limits)
+  const harnessInput = stages.readInput(options.harnessFile, limits)
+  const providerUsageInput = stages.readInput(options.providerUsageFile, limits)
+  progress.stage = 'summary'
+  const diagnostic = stages.summarize({
     config,
-    source,
-    failure,
-    startedAt,
-    endedAt,
-    retainedAt: clock().toISOString(),
-    cleanupVerified,
-    bodyInput: boundedJsonLines(bodyFile, limits),
-    harnessInput: boundedJsonLines(harnessFile, limits),
-    providerUsageInput: boundedJsonLines(providerUsageFile, limits),
-    proxySnapshot
+    source: options.source,
+    failure: options.failure,
+    startedAt: options.startedAt,
+    endedAt: options.endedAt,
+    retainedAt: options.retainedAt,
+    cleanupVerified: options.cleanupVerified,
+    bodyInput,
+    harnessInput,
+    providerUsageInput,
+    proxySnapshot: options.proxySnapshot
   })
-  const text = canonicalJson(diagnostic)
-  const unsafe = scanText(text)
-  if (unsafe.length > 0) {
+  progress.stage = 'serialize'
+  const text = stages.serialize(diagnostic)
+  if (typeof text !== 'string') throw new Error('failed-run diagnostic did not serialize')
+  progress.stage = 'sanitize'
+  if (stages.scan(text).length > 0) {
     throw new Error('failed-run diagnostic contained unsafe material')
   }
+  progress.stage = 'sizeCheck'
   const bytes = Buffer.byteLength(text)
   if (bytes > maxBytes) {
     throw new Error(`failed-run diagnostic exceeded its ${maxBytes} byte bound`)
   }
-  fs.mkdirSync(diagnosticRoot, { recursive: true })
-  const file = path.join(diagnosticRoot, `${config.experimentId}.json`)
-  fs.writeFileSync(file, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
-  const relative = path.relative(repositoryRoot, file)
-  const label =
-    relative !== '' &&
-    !path.isAbsolute(relative) &&
-    relative !== '..' &&
-    !relative.startsWith(`..${path.sep}`)
-      ? relative
-      : path.basename(file)
-  return { diagnostic, file, label, bytes }
+  progress.stage = 'write'
+  const file = path.join(options.diagnosticRoot, `${config.experimentId}.json`)
+  stages.write(file, text)
+  return {
+    diagnostic,
+    file,
+    label: retainedLabel(options.repositoryRoot, file),
+    bytes,
+    fallback: false
+  }
+}
+
+// The normal diagnostic is preferred; any fault in reading, summarizing, sanitizing,
+// bounding, serializing, or writing it falls back to a closed allowlisted record.
+function writeFailureDiagnostic ({
+  clock = () => new Date(),
+  maxBytes = MAX_FAILURE_DIAGNOSTIC_BYTES,
+  fallbackMaxBytes = MAX_FALLBACK_DIAGNOSTIC_BYTES,
+  stages = {},
+  ...options
+}) {
+  let retainedAt
+  try {
+    retainedAt = clock().toISOString()
+  } catch {
+    retainedAt = new Date().toISOString()
+  }
+  const context = { ...options, retainedAt }
+  const progress = { stage: 'inputRead' }
+  try {
+    return writeNormalDiagnostic(
+      context,
+      { ...DEFAULT_STAGES, ...stages },
+      maxBytes,
+      progress
+    )
+  } catch {
+    return writeFallbackDiagnostic(context, progress.stage, fallbackMaxBytes)
+  }
 }
 
 module.exports = {
+  DIAGNOSTIC_STAGES,
   FAILURE_DIAGNOSTIC_VERSION,
+  FALLBACK_DIAGNOSTIC_VERSION,
   MAX_FAILURE_DIAGNOSTIC_BYTES,
+  MAX_FALLBACK_DIAGNOSTIC_BYTES,
   boundedJsonLines,
   failureCode,
+  writeExclusiveAtomic,
   writeFailureDiagnostic
 }

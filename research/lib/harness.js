@@ -6,7 +6,14 @@ const os = require('node:os')
 const path = require('node:path')
 const { execFileSync, spawnSync } = require('node:child_process')
 
-const { assertRunConfig, componentSourceHashes, configuredAgents, publishArtifact, validateProspectiveManifest } = require('./artifact.js')
+const {
+  assertRunConfig,
+  componentSourceHashes,
+  configuredAgents,
+  publishArtifact,
+  validateProspectiveManifest,
+  worstCaseCallNanoUsd
+} = require('./artifact.js')
 const { CognitionBudgetProxy } = require('./budget-proxy.js')
 const { readJsonLines } = require('./evidence.js')
 const {
@@ -473,7 +480,8 @@ function authenticationFailure (message, classified) {
   ) {
     return new RunFailure(
       'cognitionFailed',
-      `the model provider rejected Loom's credential (HTTP ${classified.httpStatus}); check OPENAI_API_KEY`
+      `the model provider rejected Loom's credential (HTTP ${classified.httpStatus}); check OPENAI_API_KEY`,
+      'providerAuthenticationRejected'
     )
   }
   if (typeof message !== 'string') return null
@@ -481,7 +489,18 @@ function authenticationFailure (message, classified) {
   if (match === null) return null
   return new RunFailure(
     'cognitionFailed',
-    `the model provider rejected Loom's credential (HTTP ${match[1]}); check OPENAI_API_KEY`
+    `the model provider rejected Loom's credential (HTTP ${match[1]}); check OPENAI_API_KEY`,
+    'providerAuthenticationRejected'
+  )
+}
+
+function budgetRefusalFailure (refusal) {
+  const origin = refusal.origin ?? 'unattested'
+  return new RunFailure(
+    'cognitionFailed',
+    `primary behavior cognition for ${refusal.agentId} (${origin}) was refused by the ` +
+      `${refusal.bound} bound at ${refusal.observed} of ${refusal.ceiling} ${refusal.unit}`,
+    'cognitionBudgetRefused'
   )
 }
 
@@ -647,6 +666,12 @@ async function runExperiment ({
   const throwRetainedFailure = (runFailure) => {
     let retained
     let retentionFailed = false
+    let proxySnapshot
+    try {
+      proxySnapshot = proxy?.snapshot()
+    } catch {
+      proxySnapshot = undefined
+    }
     try {
       retained = writeFailureDiagnostic({
         repositoryRoot: absoluteRoot,
@@ -660,7 +685,7 @@ async function runExperiment ({
         bodyFile: rawBodyEvidence,
         harnessFile: rawHarnessEvidence,
         providerUsageFile: rawProviderUsage,
-        proxySnapshot: proxy?.snapshot()
+        proxySnapshot
       })
     } catch {
       retentionFailed = true
@@ -670,12 +695,17 @@ async function runExperiment ({
     if (retentionFailed) {
       throw new RunFailure(
         runFailure.stopReason,
-        `${runFailure.message}; sanitized failed-run diagnostic could not be retained`
+        `${runFailure.message}; sanitized failed-run diagnostic could not be retained`,
+        runFailure.code
       )
     }
+    const kind = retained.fallback
+      ? `minimal fallback diagnostic (${retained.failedStage} stage failed)`
+      : 'sanitized failed-run diagnostic'
     throw new RunFailure(
       runFailure.stopReason,
-      `${runFailure.message}; sanitized failed-run diagnostic retained at ${retained.label}`
+      `${runFailure.message}; ${kind} retained at ${retained.label}`,
+      runFailure.code
     )
   }
   try {
@@ -728,23 +758,33 @@ async function runExperiment ({
       models: config.cognition.models,
       postCrashReserve: postCrashReserveFor(config),
       requestOrigin: (trigger) => requestOriginFor(config, trigger),
+      spend: {
+        ceilingNanoUsd: Math.round(config.cognition.maxExternalSpendUsd * 1_000_000_000),
+        worstCaseCallNanoUsd: worstCaseCallNanoUsd(config)
+      },
       journal,
       onCognitionFailure: (message, classified) => {
         const failure = authenticationFailure(message, classified)
         if (failure !== null) {
           abort(failure)
         } else if (isPrimaryBehaviorMode(config)) {
-          abort(new RunFailure('cognitionFailed', 'primary behavior cognition returned a failed decision'))
+          abort(new RunFailure(
+            'cognitionFailed',
+            'primary behavior cognition returned a failed decision',
+            'cognitionDecisionFailed'
+          ))
         }
       },
-      onRefusal: () => {
-        if (isPrimaryBehaviorMode(config)) {
-          abort(new RunFailure('cognitionFailed', 'primary behavior cognition crossed a configured call bound'))
-        }
+      onRefusal: (refusal) => {
+        if (isPrimaryBehaviorMode(config)) abort(budgetRefusalFailure(refusal))
       },
       onUnavailable: () => {
         if (isPrimaryBehaviorMode(config)) {
-          abort(new RunFailure('cognitionFailed', 'primary behavior cognition upstream became unavailable'))
+          abort(new RunFailure(
+            'cognitionFailed',
+            'primary behavior cognition upstream became unavailable',
+            'cognitionUpstreamUnavailable'
+          ))
         }
       }
     })
@@ -1033,6 +1073,7 @@ function paperWarnings (logFile) {
 module.exports = {
   authenticationFailure,
   bodyEvents,
+  budgetRefusalFailure,
   buildComponents,
   conciseJavaVersion,
   ensurePaper,

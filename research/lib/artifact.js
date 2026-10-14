@@ -104,6 +104,10 @@ function pricingErrors (config) {
 }
 
 function maximumConfiguredSpendNanoUsd (config) {
+  return worstCaseCallNanoUsd(config) * config.cognition.globalCallCeiling
+}
+
+function worstCaseCallNanoUsd (config) {
   let perCall = 0
   for (const model of new Set([
     config.cognition.models.ordinary,
@@ -120,7 +124,7 @@ function maximumConfiguredSpendNanoUsd (config) {
         (config.cognition.maxOutputTokens * rates.outputNanoUsdPerToken)
     )
   }
-  return perCall * config.cognition.globalCallCeiling
+  return perCall
 }
 
 function sameJson (first, second) {
@@ -1421,10 +1425,17 @@ function publishArtifact ({
   warnings = []
 }) {
   assertRunConfig(config)
-  if (fs.existsSync(artifactDirectory)) {
-    throw new Error(`artifact directory already exists: ${artifactDirectory}`)
+  const finalDirectory = artifactDirectory
+  if (fs.existsSync(finalDirectory)) {
+    throw new Error(`artifact directory already exists: ${finalDirectory}`)
   }
-  fs.mkdirSync(path.dirname(artifactDirectory), { recursive: true })
+  fs.mkdirSync(path.dirname(finalDirectory), { recursive: true })
+  // Built and validated under a hidden sibling, then renamed whole, so a crash never
+  // leaves a partial directory at the published name.
+  const staging = fs.mkdtempSync(
+    path.join(path.dirname(finalDirectory), `.publishing-${path.basename(finalDirectory)}-`)
+  )
+  artifactDirectory = path.join(staging, path.basename(finalDirectory))
   fs.mkdirSync(artifactDirectory, { recursive: false })
   try {
     const evidenceFile = path.join(artifactDirectory, EVIDENCE_FILE)
@@ -1482,10 +1493,13 @@ function publishArtifact ({
     if (!validation.ok) {
       throw new Error(`published artifact is invalid:\n- ${validation.errors.join('\n- ')}`)
     }
+    if (fs.existsSync(finalDirectory)) {
+      throw new Error(`artifact directory already exists: ${finalDirectory}`)
+    }
+    fs.renameSync(artifactDirectory, finalDirectory)
     return { manifest, metrics: metricValue, validation }
-  } catch (cause) {
-    fs.rmSync(artifactDirectory, { recursive: true, force: true })
-    throw cause
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true })
   }
 }
 
@@ -1624,5 +1638,6 @@ module.exports = {
   semanticErrors,
   validateArtifact,
   validateProspectiveManifest,
-  validateRunConfig
+  validateRunConfig,
+  worstCaseCallNanoUsd
 }

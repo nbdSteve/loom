@@ -7,14 +7,18 @@ const os = require('node:os')
 const path = require('node:path')
 
 const {
+  DIAGNOSTIC_STAGES,
   FAILURE_DIAGNOSTIC_VERSION,
+  FALLBACK_DIAGNOSTIC_VERSION,
+  MAX_FALLBACK_DIAGNOSTIC_BYTES,
   boundedJsonLines,
   failureCode,
   writeFailureDiagnostic
 } = require('../lib/failure-diagnostic.js')
+const { budgetRefusalFailure } = require('../lib/harness.js')
 const { RunFailure } = require('../lib/lifecycle.js')
 const { scanText } = require('../lib/evidence.js')
-const { openAiProofConfig, writeJsonLines } = require('./fixtures.js')
+const { openAiGoalContinuityConfig, openAiProofConfig, writeJsonLines } = require('./fixtures.js')
 
 const SOURCE = {
   commit: '1'.repeat(40),
@@ -280,33 +284,6 @@ test('partial and oversized raw journals are summarized without becoming evidenc
   }
 })
 
-test('diagnostic output is fail-closed when its own byte bound is too small', () => {
-  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-diagnostic-bound-'))
-  const files = rawFiles(repositoryRoot)
-  const config = openAiProofConfig()
-  writeJsonLines(files.bodyFile, [])
-  writeJsonLines(files.harnessFile, [])
-  writeJsonLines(files.providerUsageFile, [])
-  try {
-    assert.throws(
-      () => writeFailureDiagnostic({
-        repositoryRoot,
-        diagnosticRoot: path.join(repositoryRoot, 'diagnostics'),
-        config,
-        source: SOURCE,
-        failure: new RunFailure('cancelled', 'cancelled'),
-        cleanupVerified: true,
-        ...files,
-        clock: () => new Date('2026-10-12T00:00:00.000Z'),
-        maxBytes: 100
-      }),
-      /exceeded its 100 byte bound/
-    )
-  } finally {
-    fs.rmSync(repositoryRoot, { recursive: true, force: true })
-  }
-})
-
 test('provider authentication failures have a stable provider-safe code', () => {
   assert.equal(
     failureCode(new RunFailure(
@@ -314,5 +291,253 @@ test('provider authentication failures have a stable provider-safe code', () => 
       "the model provider rejected Loom's credential (HTTP 401); check OPENAI_API_KEY"
     )),
     'providerAuthenticationRejected'
+  )
+})
+
+const SECRET = 'sk-this-is-a-fake-secret-value-1234567890'
+const PROVIDER_ID = 'resp_provider-private-request-12345678'
+const LOCAL_PATH = '/Users/operator/private/loom'
+
+// The primary-behavior shape of the lost run: two forwarded calls with usage, then one
+// native event call refused at the per-agent ceiling.
+function refusedPrimaryRun (directory) {
+  const files = rawFiles(directory)
+  writeJsonLines(files.bodyFile, [
+    { tick: 5, agentId: 'tribe-beta', event: 'perceived', requestId: PROVIDER_ID, detail: LOCAL_PATH }
+  ])
+  writeJsonLines(files.harnessFile, [
+    {
+      event: 'cognitionForwarded',
+      agentId: 'tribe-beta',
+      requestId: PROVIDER_ID,
+      trigger: 'goalReview',
+      importance: 'ROUTINE',
+      origin: 'nativeGoalReviewSchedule',
+      outcome: 'decision'
+    },
+    {
+      event: 'cognitionRefused',
+      agentId: 'tribe-beta',
+      requestId: 'loom-private-request',
+      reason: 'perAgentCallCeiling',
+      bound: 'perAgentCall',
+      unit: 'calls',
+      ceiling: 4,
+      observed: 4,
+      forwarded: false,
+      trigger: 'threatSighted',
+      importance: 'NOTABLE',
+      origin: 'nativeEventDriver',
+      prompt: `${SECRET} raw prompt`
+    }
+  ])
+  writeJsonLines(files.providerUsageFile, [
+    {
+      schemaVersion: 'loom-provider-usage/1',
+      agentId: 'tribe-beta',
+      requestId: PROVIDER_ID,
+      model: 'gpt-5.4-nano',
+      promptTokens: 1000,
+      cachedPromptTokens: 0,
+      completionTokens: 100,
+      totalTokens: 1100
+    },
+    {
+      schemaVersion: 'loom-provider-usage/1',
+      agentId: 'tribe-alpha',
+      requestId: 'another',
+      model: 'gpt-5.4',
+      promptTokens: 2000,
+      cachedPromptTokens: 1000,
+      completionTokens: 10,
+      totalTokens: 2010
+    }
+  ])
+  return files
+}
+
+// nano: 1000*200 + 100*1250 = 325000; full: 1000*2500 + 1000*250 + 10*15000 = 2900000
+const EXPECTED_SPEND_NANO_USD = 3_225_000
+
+const PROXY_SNAPSHOT = {
+  forwardedCalls: 11,
+  outstandingCalls: 0,
+  refusedByBound: { perAgentCall: 1 },
+  callsByAgent: { 'tribe-alpha': 4, 'tribe-beta': 4, 'tribe-gamma': 3 },
+  postCrashReserve: null
+}
+
+function retain (directory, overrides = {}) {
+  const files = refusedPrimaryRun(directory)
+  return writeFailureDiagnostic({
+    repositoryRoot: directory,
+    diagnosticRoot: path.join(directory, '.scratch', 'tribe-failures'),
+    config: openAiGoalContinuityConfig(),
+    source: SOURCE,
+    failure: budgetRefusalFailure({
+      agentId: 'tribe-beta',
+      origin: 'nativeEventDriver',
+      bound: 'perAgentCall',
+      unit: 'calls',
+      ceiling: 4,
+      observed: 4
+    }),
+    startedAt: '2026-10-14T00:00:00.000Z',
+    endedAt: '2026-10-14T00:01:00.000Z',
+    cleanupVerified: true,
+    ...files,
+    proxySnapshot: PROXY_SNAPSHOT,
+    clock: () => new Date('2026-10-14T00:01:01.000Z'),
+    ...overrides
+  })
+}
+
+function assertPrivate (file) {
+  const text = fs.readFileSync(file, 'utf8')
+  assert.deepEqual(scanText(text), [])
+  for (const value of [SECRET, PROVIDER_ID, LOCAL_PATH, 'loom-private-request', 'raw prompt']) {
+    assert.equal(text.includes(value), false, `${value} leaked`)
+  }
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600)
+  assert.deepEqual(
+    fs.readdirSync(path.dirname(file)).filter((name) => name.endsWith('.partial')),
+    []
+  )
+  return text
+}
+
+test('a primary-behavior budget refusal retains the exact typed refusal and usage aggregates', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-primary-diagnostic-'))
+  try {
+    const retained = retain(directory)
+    assert.equal(retained.fallback, false)
+    assertPrivate(retained.file)
+    const diagnostic = retained.diagnostic
+    assert.equal(diagnostic.schemaVersion, FAILURE_DIAGNOSTIC_VERSION)
+    assert.deepEqual(diagnostic.failure, { code: 'cognitionBudgetRefused', stopReason: 'cognitionFailed' })
+    assert.equal(diagnostic.configuredConditions.mode, 'routine-v13-goal-continuity')
+    assert.equal(diagnostic.configuredConditions.controlledCrash, null)
+    assert.equal(diagnostic.crashContainment, null)
+    assert.deepEqual(diagnostic.cognition.harness.refusals, [{
+      agentId: 'tribe-beta',
+      bound: 'perAgentCall',
+      ceiling: 4,
+      forwarded: false,
+      importance: 'NOTABLE',
+      observed: 4,
+      origin: 'nativeEventDriver',
+      trigger: 'threatSighted',
+      unit: 'calls'
+    }])
+    assert.equal(diagnostic.cognition.proxy.postCrashReserve, null)
+    assert.deepEqual(diagnostic.cognition.proxy.refusedByBound, { perAgentCall: 1 })
+    const usage = diagnostic.cognition.providerUsage
+    assert.equal(usage.externalSpendNanoUsd, EXPECTED_SPEND_NANO_USD)
+    assert.equal(usage.byModel['gpt-5.4-nano'].totalTokens, 1100)
+    assert.equal(usage.byModel['gpt-5.4'].calls, 1)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+const STAGE_FAULTS = {
+  inputRead: { stages: { readInput: () => { throw new Error(LOCAL_PATH) } } },
+  summary: { stages: { summarize: () => { throw new TypeError('no proof') } } },
+  serialize: { stages: { serialize: () => undefined } },
+  sanitize: { stages: { scan: () => [{ pattern: 'openaiKey', count: 1 }] } },
+  sizeCheck: { maxBytes: 100 },
+  write: { stages: { write: () => { throw new Error('ENOSPC') } } }
+}
+
+test('every ordinary diagnostic stage failure falls back to the minimal diagnostic', () => {
+  assert.deepEqual(Object.keys(STAGE_FAULTS), DIAGNOSTIC_STAGES)
+  for (const [stage, overrides] of Object.entries(STAGE_FAULTS)) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), `loom-fallback-${stage}-`))
+    try {
+      const retained = retain(directory, overrides)
+      assert.equal(retained.fallback, true, stage)
+      assert.equal(retained.failedStage, stage)
+      assert.equal(path.basename(retained.file), `${openAiGoalContinuityConfig().experimentId}.fallback.json`)
+      assert.ok(retained.bytes <= MAX_FALLBACK_DIAGNOSTIC_BYTES)
+      const text = assertPrivate(retained.file)
+      const fallback = JSON.parse(text)
+      assert.equal(fallback.schemaVersion, FALLBACK_DIAGNOSTIC_VERSION)
+      assert.equal(fallback.failedStage, stage)
+      assert.deepEqual(fallback.failure, { code: 'cognitionBudgetRefused', stopReason: 'cognitionFailed' })
+      assert.equal(fallback.mode, 'routine-v13-goal-continuity')
+      assert.equal(fallback.proxy.forwardedCalls, 11)
+      assert.deepEqual(fallback.proxy.refusedByBound, { perAgentCall: 1 })
+      assert.equal(fallback.providerUsage.status, 'aggregated')
+      assert.equal(fallback.providerUsage.calls, 2)
+      assert.equal(fallback.providerUsage.externalSpendNanoUsd, EXPECTED_SPEND_NANO_USD)
+      assert.equal(fallback.providerUsage.byModel['gpt-5.4'].cachedPromptTokens, 1000)
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true })
+    }
+  }
+})
+
+test('the fallback drops unsafe identifiers and fails closed past its byte bound', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-fallback-unsafe-'))
+  try {
+    const config = openAiGoalContinuityConfig()
+    config.experimentId = `2026-10-14-${SECRET}`
+    config.agents = ['tribe-alpha', LOCAL_PATH, PROVIDER_ID]
+    const retained = retain(directory, {
+      config,
+      source: { commit: PROVIDER_ID },
+      stages: { summarize: () => { throw new Error('boom') } }
+    })
+    const fallback = JSON.parse(assertPrivate(retained.file))
+    assert.equal(fallback.experimentId, null)
+    assert.equal(fallback.sourceCommit, null)
+    assert.deepEqual(Object.keys(fallback.proxy.callsByAgent), ['tribe-alpha'])
+    assert.match(path.basename(retained.file), /^unidentified-[0-9a-f]{12}\.fallback\.json$/)
+
+    assert.throws(
+      () => retain(fs.mkdtempSync(path.join(directory, 'tight-')), {
+        maxBytes: 100,
+        fallbackMaxBytes: 100
+      }),
+      /fallback diagnostic exceeded its 100 byte bound/
+    )
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('an existing diagnostic is never overwritten', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-no-overwrite-'))
+  try {
+    const first = retain(directory)
+    const original = fs.readFileSync(first.file, 'utf8')
+    const second = retain(directory)
+    assert.equal(second.fallback, true)
+    assert.equal(second.failedStage, 'write')
+    assert.equal(fs.readFileSync(first.file, 'utf8'), original)
+    const fallback = fs.readFileSync(second.file, 'utf8')
+    assert.throws(() => retain(directory), /EEXIST/)
+    assert.equal(fs.readFileSync(first.file, 'utf8'), original)
+    assert.equal(fs.readFileSync(second.file, 'utf8'), fallback)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a budget refusal failure states the bound in its message and a closed code', () => {
+  const failure = budgetRefusalFailure({
+    agentId: 'tribe-gamma',
+    origin: 'nativeEventDriver',
+    bound: 'globalOutstanding',
+    unit: 'calls',
+    ceiling: 3,
+    observed: 3
+  })
+  assert.equal(failure.stopReason, 'cognitionFailed')
+  assert.equal(failureCode(failure), 'cognitionBudgetRefused')
+  assert.match(failure.message, /tribe-gamma \(nativeEventDriver\).*globalOutstanding bound at 3 of 3 calls/)
+  assert.equal(
+    failureCode(new RunFailure('cognitionFailed', 'x', 'not-a-closed-code')),
+    'cognitionProcessOrProviderFailure'
   )
 })

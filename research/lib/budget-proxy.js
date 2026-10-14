@@ -5,6 +5,13 @@ const net = require('node:net')
 const { validatedCognitionFailure } = require('./cognition-failure.js')
 
 const MAX_FRAME_BYTES = 256 * 1024
+const REFUSAL_BOUNDS = Object.freeze([
+  'globalOutstanding',
+  'globalCall',
+  'perAgentCall',
+  'postCrashReserve',
+  'spend'
+])
 
 function refusal (message) {
   return `${JSON.stringify({ error: message })}\n`
@@ -23,6 +30,7 @@ class CognitionBudgetProxy {
     onCognitionFailure = () => {},
     onRefusal = () => {},
     onUnavailable = () => {},
+    spend,
     requestTimeoutMilliseconds = 20_000
   }) {
     this.listen = listen
@@ -44,7 +52,9 @@ class CognitionBudgetProxy {
     this.onRefusal = onRefusal
     this.onUnavailable = onUnavailable
     this.requestTimeoutMilliseconds = requestTimeoutMilliseconds
+    this.spend = this.checkedSpend(spend)
     this.total = 0
+    this.refusedByBound = {}
     this.outstanding = 0
     this.perAgent = new Map()
     this.connections = new Set()
@@ -72,23 +82,75 @@ class CognitionBudgetProxy {
     return { crashAgent, callsPerPeer, peers }
   }
 
+  // Spend is reserved at the worst configured call price, so the bound holds before
+  // any provider usage is known.
+  checkedSpend (configured) {
+    if (configured === undefined) return null
+    const { ceilingNanoUsd, worstCaseCallNanoUsd } = configured
+    if (
+      !Number.isSafeInteger(ceilingNanoUsd) || ceilingNanoUsd < 0 ||
+      !Number.isSafeInteger(worstCaseCallNanoUsd) || worstCaseCallNanoUsd < 0
+    ) {
+      throw new Error('spend bound must be non-negative integer nano-USD')
+    }
+    return { ceilingNanoUsd, worstCaseCallNanoUsd }
+  }
+
+  // Returns the post-crash threshold this call would cross, or null.
   reserveBlocks (agentId, agentCalls) {
     const reserve = this.postCrashReserve
-    if (reserve === null) return false
+    if (reserve === null) return null
     if (!this.postCrashReserveReleased) {
-      if (
-        reserve.peers.includes(agentId) &&
-        agentCalls >= this.budget.perAgentCallCeiling - reserve.callsPerPeer
-      ) {
-        return true
+      const perAgent = this.budget.perAgentCallCeiling - reserve.callsPerPeer
+      if (reserve.peers.includes(agentId) && agentCalls >= perAgent) {
+        return { ceiling: perAgent, observed: agentCalls }
       }
-      return this.total >=
+      const global =
         this.budget.globalCallCeiling - reserve.peers.length * reserve.callsPerPeer
+      return this.total >= global ? { ceiling: global, observed: this.total } : null
     }
-    if ((this.postCrashCallsRemaining.get(agentId) ?? 0) > 0) return false
+    if ((this.postCrashCallsRemaining.get(agentId) ?? 0) > 0) return null
     const remaining = [...this.postCrashCallsRemaining.values()]
       .reduce((sum, calls) => sum + calls, 0)
-    return this.total >= this.budget.globalCallCeiling - remaining
+    const global = this.budget.globalCallCeiling - remaining
+    return this.total >= global ? { ceiling: global, observed: this.total } : null
+  }
+
+  // The first bound this call would cross, in a fixed order, with its exact numbers.
+  crossedBound (agentId, agentCalls) {
+    const calls = (bound, reason, ceiling, observed) =>
+      ({ bound, reason, unit: 'calls', ceiling, observed })
+    if (this.outstanding >= this.budget.globalOutstandingCeiling) {
+      return calls(
+        'globalOutstanding',
+        'globalOutstandingCeiling',
+        this.budget.globalOutstandingCeiling,
+        this.outstanding
+      )
+    }
+    if (this.total >= this.budget.globalCallCeiling) {
+      return calls('globalCall', 'globalCallCeiling', this.budget.globalCallCeiling, this.total)
+    }
+    if (agentCalls >= this.budget.perAgentCallCeiling) {
+      return calls('perAgentCall', 'perAgentCallCeiling', this.budget.perAgentCallCeiling, agentCalls)
+    }
+    const reserve = this.reserveBlocks(agentId, agentCalls)
+    if (reserve !== null) {
+      return calls('postCrashReserve', 'postCrashCallReserve', reserve.ceiling, reserve.observed)
+    }
+    if (this.spend !== null) {
+      const reserved = this.total * this.spend.worstCaseCallNanoUsd
+      if (reserved + this.spend.worstCaseCallNanoUsd > this.spend.ceilingNanoUsd) {
+        return {
+          bound: 'spend',
+          reason: 'spendCeiling',
+          unit: 'nanoUsd',
+          ceiling: this.spend.ceilingNanoUsd,
+          observed: reserved
+        }
+      }
+    }
+    return null
   }
 
   consumePostCrashReserve (agentId) {
@@ -117,6 +179,7 @@ class CognitionBudgetProxy {
     return {
       forwardedCalls: this.total,
       outstandingCalls: this.outstanding,
+      refusedByBound: { ...this.refusedByBound },
       callsByAgent: Object.fromEntries(
         [...this.agents]
           .sort()
@@ -193,26 +256,20 @@ class CognitionBudgetProxy {
     const agentCalls = this.perAgent.get(agentId) ?? 0
     const origin = this.requestOrigin(perception.trigger?.event)
     const originField = origin === undefined ? {} : { origin }
-    let reason
-    if (this.outstanding >= this.budget.globalOutstandingCeiling) {
-      reason = 'globalOutstandingCeiling'
-    } else if (this.total >= this.budget.globalCallCeiling) {
-      reason = 'globalCallCeiling'
-    } else if (agentCalls >= this.budget.perAgentCallCeiling) {
-      reason = 'perAgentCallCeiling'
-    } else if (this.reserveBlocks(agentId, agentCalls)) {
-      reason = 'postCrashCallReserve'
-    }
-    if (reason !== undefined) {
-      this.journal.append('cognitionRefused', {
+    const crossed = this.crossedBound(agentId, agentCalls)
+    if (crossed !== null) {
+      this.refusedByBound[crossed.bound] = (this.refusedByBound[crossed.bound] ?? 0) + 1
+      const refused = {
         agentId,
         requestId,
-        reason,
+        ...crossed,
+        forwarded: false,
         trigger: perception.trigger?.event ?? null,
         importance: perception.importance ?? null,
         ...originField
-      })
-      this.onRefusal({ agentId, requestId, reason })
+      }
+      this.journal.append('cognitionRefused', refused)
+      this.onRefusal(refused)
       downstream.write(refusal('cognition request refused by experiment budget'))
       return
     }
@@ -309,5 +366,6 @@ class CognitionBudgetProxy {
 
 module.exports = {
   CognitionBudgetProxy,
-  MAX_FRAME_BYTES
+  MAX_FRAME_BYTES,
+  REFUSAL_BOUNDS
 }

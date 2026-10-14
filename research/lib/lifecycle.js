@@ -8,10 +8,11 @@ const { spawn } = require('node:child_process')
 const { canonicalLine } = require('./util.js')
 
 class RunFailure extends Error {
-  constructor (stopReason, message) {
+  constructor (stopReason, message, code) {
     super(message)
     this.name = 'RunFailure'
     this.stopReason = stopReason
+    if (code !== undefined) this.code = code
   }
 }
 

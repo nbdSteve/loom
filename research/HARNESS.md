@@ -63,7 +63,9 @@ configuration. `--skip-build` is for a repeated local rehearsal only and fails
 if the expected build outputs do not exist.
 
 The command refuses an existing artifact directory rather than overwriting
-evidence. Rehearse into a disposable parent directory, delete that parent after
+evidence. It builds and validates the artifact in a hidden `.publishing-*`
+sibling and renames it into place only once it is valid, so a partial
+directory never appears under the experiment id. Rehearse into a disposable parent directory, delete that parent after
 inspection, then run once without `--artifact-root` to publish:
 
 ```sh
@@ -121,7 +123,9 @@ single pre-write retry, which cannot duplicate a billed request. Those three
 limits are explicit in the manifest. Preflight prices the worst possible
 configured call against the request/output bounds and refuses a spend ceiling
 too small to cover every allowed call, so the ceiling does not depend on an
-average token estimate. The plugin still treats every decision as untrusted
+average token estimate. At run time the proxy also reserves that worst-case
+price for every forwarded call and refuses, as the `spend` bound, a call whose
+reservation would cross the ceiling. The plugin still treats every decision as untrusted
 typed intent and validates request-scoped references against fresh body and
 server state.
 
@@ -177,22 +181,18 @@ The mutable server directory, worlds, raw process logs, raw provider failures,
 credentials, binaries, Paper jar, and synchronous death ledger are destroyed or
 kept only in ignored local caches. They are never research artifacts.
 
-If a run fails after its disposable directory has been created, cleanup still
-removes that directory and all raw records. Before removal, the harness writes
-one mode-0600 operator diagnostic under
-`.scratch/tribe-failures/<experiment-id>.json`. That file is capped at 64 KiB
-and contains only allow-listed event counts, per-agent cycle counts, call-budget
-state, aggregate provider token/cost totals, crash-reserve state, input
-completeness flags, a stable failure code, and aggregate cognition-failure
-classifications. Each classified tuple contains only the routed model, numeric
-HTTP status, allow-listed provider type/code, structural response shape, Loom
-mapping, and count. A missing or route-inconsistent classification stays
-explicitly unclassified; the harness never guesses it from a zero-byte usage
-journal. The diagnostic never copies prompts, reasoning, credentials,
-provider/request/thread ids, process ids, local paths, raw provider messages,
-or raw evidence, and it is explicitly not a publishable research artifact. A
-secret scan and the byte bound run before the file is created; an existing
-diagnostic is never overwritten.
+If a run fails after its disposable directory has been created, cleanup still removes that directory and all raw records.
+Before removal, the harness writes one mode-0600 operator diagnostic under `.scratch/tribe-failures/<experiment-id>.json`.
+That file is capped at 64 KiB and contains only allow-listed event counts, per-agent cycle counts, call-budget state, aggregate provider token/cost totals, crash-reserve state (crash-containment mode only), input completeness flags, a stable failure code, aggregate cognition-failure classifications, and up to 32 typed budget refusals.
+Each classified tuple contains only the routed model, numeric HTTP status, allow-listed provider type/code, structural response shape, Loom mapping, and count.
+A missing or route-inconsistent classification stays explicitly unclassified; the harness never guesses it from a zero-byte usage journal.
+Each typed refusal names the agent, the bound (`perAgentCall`, `globalCall`, `globalOutstanding`, `postCrashReserve`, or `spend`), its unit, the configured ceiling, the observed count, that the call was not forwarded, and the trigger, importance, and native origin.
+The diagnostic never copies prompts, reasoning, credentials, provider/request/thread ids, process ids, local paths, raw provider messages, or raw evidence, and it is explicitly not a publishable research artifact.
+
+If any stage of that diagnostic fails - reading inputs, summarizing, serializing, the secret scan, the byte bound, or the write - the harness writes a minimal fallback to `.scratch/tribe-failures/<experiment-id>.fallback.json` instead.
+The fallback is capped at 8 KiB, names the stage that failed, and keeps only closed facts: the failure code, the cleanup probe result, proxy call and refusal counts, and provider calls, tokens, and spend aggregated by an independent reader of the usage journal.
+A string field is kept only if it matches its closed shape and passes the secret scan; otherwise it is null, and an unusable experiment id never becomes a file name.
+Both files are written to a temporary name, synced, and linked into place, so a partial file never appears under a diagnostic name and an existing diagnostic is never overwritten.
 
 The committed directory contains:
 
