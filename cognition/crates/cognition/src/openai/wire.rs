@@ -496,8 +496,10 @@ mod tests {
         chat_request, decision_schema, draft_from_answer, ApiErrorBody, ChatResponse,
         MAX_REASONING_CHARS, SCHEMA_NAME,
     };
-    use crate::prompt::Prompt;
-    use loom_contract::Intent;
+    use crate::openai::settings::DEFAULT_MAX_REQUEST_BYTES;
+    use crate::prompt::{render, Prompt};
+    use crate::router::{ModelCatalog, Router};
+    use loom_contract::{Intent, Perception};
     use serde_json::Value;
 
     fn prompt() -> Prompt {
@@ -521,6 +523,44 @@ mod tests {
         assert_eq!(sent["response_format"]["type"], "json_schema");
         assert_eq!(sent["response_format"]["json_schema"]["name"], SCHEMA_NAME);
         assert_eq!(sent["response_format"]["json_schema"]["strict"], true);
+    }
+
+    #[test]
+    fn the_complete_observation_envelope_fits_the_provider_request_bound() {
+        let seen: Perception = serde_json::from_str(include_str!(
+            "../../../../../contract/fixtures/valid/perception-max-observations.json"
+        ))
+        .unwrap();
+        let router = Router::new(ModelCatalog::new("fast", "deep"));
+        let prompt = render(&router.route(seen.importance), &seen);
+        let measured = serde_json::to_vec(&chat_request("fast", &prompt, 2_048))
+            .unwrap()
+            .len();
+
+        assert!(
+            measured <= usize::try_from(DEFAULT_MAX_REQUEST_BYTES / 4).unwrap(),
+            "the 144-observation provider request is {measured} bytes against the \
+             {DEFAULT_MAX_REQUEST_BYTES}-byte request bound"
+        );
+    }
+
+    #[test]
+    fn a_maximum_measured_prompt_still_fits_when_every_byte_needs_json_escaping() {
+        const MAX_MEASURED_PROMPT_BYTES: usize = 64 * 1024;
+        let prompt = Prompt {
+            system: "\\".repeat(MAX_MEASURED_PROMPT_BYTES / 2),
+            situation: "\\".repeat(MAX_MEASURED_PROMPT_BYTES / 2),
+        };
+        let measured = serde_json::to_vec(&chat_request("fast", &prompt, 2_048))
+            .unwrap()
+            .len();
+        let request_bound = usize::try_from(DEFAULT_MAX_REQUEST_BYTES).unwrap();
+
+        assert!(
+            measured <= request_bound * 3 / 4,
+            "a {MAX_MEASURED_PROMPT_BYTES}-byte prompt with every byte escaped produces a \
+             {measured}-byte provider request against the {request_bound}-byte bound"
+        );
     }
 
     #[test]

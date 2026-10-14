@@ -25,15 +25,14 @@ package dev.loom.body
 import java.util.UUID
 
 /**
- * How many handles one request may issue.
+ * How many handles one request may issue in one world-target namespace.
  *
- * Derived from [PERCEPTION_MAX_OBSERVATIONS] rather than chosen, because a handle is
- * minted for an observation: a lower bound here would send a living thing the mind
- * can see and cannot name, which on the wire is indistinguishable from a block. The
- * count bound upstream is what keeps a scene small; this is the same bound, restated
- * where the minting happens so the two cannot disagree.
+ * Derived from [BODY_SENSE_MAX_OFFERS_PER_KIND] rather than chosen, because entity,
+ * block, and dropped-item refs occupy separate namespaces and each kind may fill its
+ * whole body list. A lower bound here would send a target the mind can see and cannot
+ * name. The combined scene stays bounded separately by [PERCEPTION_MAX_OBSERVATIONS].
  */
-const val MAX_REFS_PER_REQUEST: Int = PERCEPTION_MAX_OBSERVATIONS
+const val MAX_REFS_PER_REQUEST: Int = BODY_SENSE_MAX_OFFERS_PER_KIND
 
 /** The character a handle starts with, so it never reads to a model as a number. */
 private const val HANDLE_PREFIX = "e"

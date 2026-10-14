@@ -924,7 +924,7 @@ sealed interface BodyRequest {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireWithin("radius", radius, 1..MAX_SENSE_RADIUS)
-            requireWithin("limit", limit, 1..MAX_SENSE_ENTITIES)
+            requireWithin("limit", limit, 1..MAX_SENSE_OFFERS_PER_KIND)
         }
     }
 

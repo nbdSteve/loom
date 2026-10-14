@@ -90,7 +90,9 @@ private val BodyControlJson: Json =
  * Which frame is largest is decided by the per-field bounds rather than by this number:
  * the widest sense answer they admit includes every entity, block, dropped item and
  * inventory slot, the longest name and id each may carry, and every real written as long
- * as a formatter writes one. It remains under 15 KiB on both runtimes.
+ * as a formatter writes one. At the 48/48/48 world-observation limits it is 26,346 bytes
+ * here and 27,823 bytes including the newline under Node's wider formatter, leaving at
+ * least 4 KiB under the shared 32 KiB ceiling.
  * `BodyControlConformanceTest` builds that answer from the live bounds and measures it
  * here rather than trusting this note or the much smaller fixture corpus.
  *

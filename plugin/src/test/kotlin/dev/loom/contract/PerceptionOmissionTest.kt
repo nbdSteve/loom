@@ -1,6 +1,5 @@
 package dev.loom.contract
 
-import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -71,23 +70,27 @@ class PerceptionOmissionTest {
 
     @Test
     fun theCountTheBoundCutIsTheCountTheWireCarries() {
-        // Forty things a body could have described, every one of them in range, so only
+        // Two hundred things a body could have described, every one of them in range, so only
         // the count bound can hold the snapshot down.
-        val eligible = (1..40).map { it * 0.5 }
-        val shown = eligible.take(PERCEPTION_MAX_OBSERVATIONS)
+        val eligible = (1..200).map { it * 0.5 }
+        val shown = eligible.take(MAX_PERCEPTION_OBSERVATIONS)
         val omitted = eligible.size - shown.size
 
         val line = LoomJson.encodeToString(perceptionOf(shown, omitted))
 
         val wire = Json.parseToJsonElement(line).jsonObject
-        assertEquals(16, wire.getValue("surroundings").jsonArray.size, "the count bound keeps its nearest 16")
         assertEquals(
-            24L,
+            MAX_PERCEPTION_OBSERVATIONS,
+            wire.getValue("surroundings").jsonArray.size,
+            "the count bound keeps its nearest 144",
+        )
+        assertEquals(
+            56L,
             wire.getValue("surroundingsOmitted").jsonPrimitive.long,
-            "the wire must carry the 24 the bound dropped, or the mind is told a trimmed scene is whole",
+            "the wire must carry the 56 the bound dropped, or the mind is told a trimmed scene is whole",
         )
         // And it survives the round trip a mind's decode performs.
-        assertEquals(24L, LoomJson.decodeFromString<Perception>(line).surroundingsOmitted)
+        assertEquals(56L, LoomJson.decodeFromString<Perception>(line).surroundingsOmitted)
     }
 
     @Test

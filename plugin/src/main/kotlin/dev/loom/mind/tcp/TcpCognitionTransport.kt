@@ -36,9 +36,9 @@
  *   what is left of it. `CognitionSettings` is what keeps both connects and both
  *   reads fitting inside the bridge deadline.
  * - The write leg has no clock at all, because Java exposes no `SO_SNDTIMEO` to
- *   narrow it onto. It is bounded instead by the perception: `PerceptionBound` caps
- *   a snapshot at a handful of observations, roughly 1-2 KB, which fits a send
- *   buffer without blocking.
+ *   narrow it onto. It is bounded instead by [MAX_REQUEST_LINE_BYTES], with the
+ *   144-observation worst case measured well below that ceiling so it fits a send
+ *   buffer without turning a richer scene into unbounded write work.
  *
  * Bounding either of those by the clock would take a non-blocking channel, and is
  * separate work.
@@ -95,6 +95,15 @@ private const val NEWLINE = '\n'.code
  * number the transport enforces, instead of restating it and drifting.
  */
 internal const val MAX_RESPONSE_LINE_BYTES = 256 * 1024
+
+/**
+ * Longest perception request this transport will write, in UTF-8 bytes.
+ *
+ * Mirrors the cognition service's request-frame guard. A legal 144-observation
+ * perception is measured in the transport tests with ample headroom; this separate
+ * check keeps unexpectedly large free-text fields fail-closed before a socket write.
+ */
+internal const val MAX_REQUEST_LINE_BYTES = 256 * 1024
 
 /**
  * How much of a response is taken from the socket per read.
@@ -262,6 +271,12 @@ class TcpCognitionTransport(
 
     override fun ask(perception: Perception): Decision {
         val request = LoomJson.encodeToString(perception)
+        val requestBytes = request.toByteArray(StandardCharsets.UTF_8).size
+        if (requestBytes > MAX_REQUEST_LINE_BYTES) {
+            throw IOException(
+                "the perception request line is over the $MAX_REQUEST_LINE_BYTES-byte transport bound",
+            )
+        }
         // Armed before the first connect, so a slow connect, a retry, and both reads
         // all spend the same budget. Per-attempt timers are what let a drip outlast
         // every configured bound.

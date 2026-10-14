@@ -75,11 +75,10 @@ const val MAX_FOOD_LEVEL: Int = 20
  * The most occupied slots a [SelfState.inventorySummary] may state, mirroring the
  * schema's `maxItems`.
  *
- * Forty-six, the complete player inventory window. Unlike
- * [Perception.surroundings], whose length is the body's own policy and carries no
- * schema bound, this one is a contract rule: a summary of forty-seven slots is not a body
- * having chosen to say more, it is a body that read something which is not its own
- * inventory.
+ * Forty-six, the complete player inventory window. Unlike the independently bounded
+ * [Perception.surroundings], this describes a different container: a summary of
+ * forty-seven slots is not a body having chosen to say more, it is a body that read
+ * something which is not its own inventory.
  *
  * Narrowed at decode rather than left to the schema, because nothing on either wire
  * is schema-validated at runtime - `maxItems` alone is a rule a socket walks straight
@@ -89,6 +88,9 @@ const val MAX_INVENTORY_STACKS: Int = 46
 
 /** The most exact recipe offers one perception may carry. */
 const val MAX_CRAFTING_OPTIONS: Int = 24
+
+/** The most entity, block, and dropped-item observations one perception may combine. */
+const val MAX_PERCEPTION_OBSERVATIONS: Int = 144
 
 /** The most applications one craft intent may request. */
 const val MAX_CRAFTS_PER_INTENT: Long = 8
@@ -516,6 +518,10 @@ data class Perception(
     val surroundingsOmitted: Long,
 ) {
     init {
+        require(surroundings.size <= MAX_PERCEPTION_OBSERVATIONS) {
+            "surroundings must state at most $MAX_PERCEPTION_OBSERVATIONS observations, " +
+                "got ${surroundings.size}"
+        }
         require(surroundingsOmitted >= 0) {
             "surroundingsOmitted must not be negative, got $surroundingsOmitted"
         }

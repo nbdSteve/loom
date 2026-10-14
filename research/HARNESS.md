@@ -200,11 +200,14 @@ Each primary behavior perception also carries a research-only
 the raw body-list count, the body's reported omission count, the JVM-selected
 count, and the JVM cut count. The same audit records the body's exact raw world
 clock. These fields never enter the perception/decision contract or model
-prompt, and the model-visible scene remains capped at 16. Normalization and
-publication reject a missing category, negative count, impossible omission,
-selected count outside its raw list, JVM cut other than raw minus selected, or
-selected total above 16. This instrumentation observes category starvation; it
-does not make category selection fair.
+prompt. Each body list is capped at 48 and the model-visible scene is capped at
+144, so a current-generation 48/48/48 answer passes through without a JVM cut.
+Normalization and publication reject a missing category, negative count,
+impossible omission, a raw or selected per-kind count above 48, JVM cut other
+than raw minus selected, any current-generation JVM cut, or a selected total
+above 144. The production selector still applies deterministic category
+reservation and global ordering to malformed or future inputs outside that
+envelope.
 
 Normalization recursively removes credential-shaped text, local absolute
 paths, provider request/thread ids, and process ids; it also truncates public

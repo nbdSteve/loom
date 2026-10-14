@@ -279,9 +279,10 @@ class EntityRefsTest {
 
     @Test
     fun theRefBoundIsTheSameBoundAPerceptionCountsTo() {
-        // Derived rather than chosen: a lower bound here would send a living thing the
-        // mind can see and cannot name, which on the wire looks exactly like a block.
-        assertEquals(PERCEPTION_MAX_OBSERVATIONS, MAX_REFS_PER_REQUEST)
+        // One namespace can fill its whole per-kind body list. The three namespaces
+        // together are what reach the larger combined perception bound.
+        assertEquals(BODY_SENSE_MAX_OFFERS_PER_KIND, MAX_REFS_PER_REQUEST)
+        assertEquals(PERCEPTION_MAX_OBSERVATIONS, MAX_REFS_PER_REQUEST * 3)
     }
 
     @Test

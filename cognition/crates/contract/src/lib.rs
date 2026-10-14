@@ -230,6 +230,9 @@ const MAX_INVENTORY_STACKS: usize = 46;
 /// The most exact recipe offers one perception may carry.
 const MAX_CRAFTING_OPTIONS: usize = 24;
 
+/// The most entity, block, and dropped-item observations one perception may combine.
+pub const MAX_PERCEPTION_OBSERVATIONS: usize = 144;
+
 /// The most applications one craft intent may request.
 pub const MAX_CRAFTS_PER_INTENT: i64 = 8;
 
@@ -273,6 +276,21 @@ where
         ));
     }
     Ok(options)
+}
+
+/// Refuses a surroundings list longer than the shared perception contract permits.
+fn bounded_surroundings<'de, D>(deserializer: D) -> Result<Vec<Observation>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let observations = Vec::<Observation>::deserialize(deserializer)?;
+    if observations.len() > MAX_PERCEPTION_OBSERVATIONS {
+        return Err(de::Error::invalid_length(
+            observations.len(),
+            &"at most 144 world observations",
+        ));
+    }
+    Ok(observations)
 }
 
 /// Refuses a recipe yield outside the bounded item count shown to the mind.
@@ -613,6 +631,7 @@ pub struct Perception {
     /// The bounded self-state the body chose to reveal.
     pub self_state: SelfState,
     /// The summarized observations the body chose to reveal.
+    #[serde(deserialize_with = "bounded_surroundings")]
     pub surroundings: Vec<Observation>,
     /// How many otherwise eligible observations the body's own count bound
     /// dropped before this perception was serialized: things in range and alive

@@ -5,8 +5,8 @@ package dev.loom.body.player
 
 import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
+import dev.loom.body.BODY_SENSE_MAX_OFFERS_PER_KIND
 import dev.loom.body.EventTag
-import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import dev.loom.body.PERCEPTION_RADIUS_BLOCKS
 import dev.loom.body.blocksApart
 import dev.loom.body.completedBodyOperation
@@ -88,7 +88,7 @@ internal class PlayerPerception(
                 requestId = context.infrastructure.requestIds.next("sense"),
                 agentId = runtime.identity.agentId.value,
                 radius = PERCEPTION_RADIUS_BLOCKS.toInt(),
-                limit = PERCEPTION_MAX_OBSERVATIONS,
+                limit = BODY_SENSE_MAX_OFFERS_PER_KIND,
             )
         val capturedTick = context.authority.currentTick()
         val auditSnapshot = context.authority.serverState.captureSenseAudit(runtime.identity)

@@ -29,9 +29,9 @@ use crate::wire::{decode_perception, encode_decision, encode_error, encode_error
 
 /// Longest request line the service will accumulate, in bytes.
 ///
-/// A bounded perception is small - one self-state and at most a couple of dozen
-/// summarized observations - so 256 KiB is generous by a wide margin while still
-/// bounding what one peer can make the mind hold.
+/// A bounded perception is small - one self-state and at most 144 summarized
+/// observations - so 256 KiB remains generous by a wide margin while still bounding
+/// what one peer can make the mind hold.
 const MAX_REQUEST_LINE_BYTES: usize = 256 * 1024;
 
 /// Refusal messages for framing failures, which are not decisions and not

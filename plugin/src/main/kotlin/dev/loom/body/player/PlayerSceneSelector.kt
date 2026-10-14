@@ -3,6 +3,7 @@
  */
 package dev.loom.body.player
 
+import dev.loom.body.BODY_SENSE_MAX_OFFERS_PER_KIND
 import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import dev.loom.body.blocksApart
 import dev.loom.contract.ObservationKind
@@ -28,8 +29,9 @@ internal data class SceneOffer(
 }
 
 /**
- * Keeps one nearest representative of every non-empty category, then spends the
- * remaining capacity on the globally nearest unselected offers.
+ * Applies the body's per-kind envelope first, keeps one nearest representative of every
+ * non-empty category if a future wider kind set can still exceed the combined bound, then
+ * spends the remaining capacity on the globally nearest unselected offers.
  *
  * The returned list is globally distance-ordered. Consequently, filtering it by kind
  * also keeps every category nearest-first. Kind and source ordinal explicitly break
@@ -52,17 +54,28 @@ internal object PlayerSceneSelector {
             "scene offer keys must be unique"
         }
         val ordered = offers.sortedWith(orderFrom(origin))
-        if (ordered.size <= PERCEPTION_MAX_OBSERVATIONS) return ordered
+        val retainedByKind = mutableMapOf<ObservationKind, Int>()
+        val kindBounded =
+            ordered.filter { offer ->
+                val retained = retainedByKind.getOrDefault(offer.kind, 0)
+                if (retained == BODY_SENSE_MAX_OFFERS_PER_KIND) {
+                    false
+                } else {
+                    retainedByKind[offer.kind] = retained + 1
+                    true
+                }
+            }
+        if (kindBounded.size <= PERCEPTION_MAX_OBSERVATIONS) return kindBounded
 
         val selected = mutableSetOf<Pair<ObservationKind, Int>>()
         representedKinds.forEach { kind ->
-            ordered.firstOrNull { it.kind == kind }?.let { selected += it.key }
+            kindBounded.firstOrNull { it.kind == kind }?.let { selected += it.key }
         }
-        for (offer in ordered) {
+        for (offer in kindBounded) {
             if (selected.size == PERCEPTION_MAX_OBSERVATIONS) break
             selected += offer.key
         }
-        return ordered.filter { it.key in selected }
+        return kindBounded.filter { it.key in selected }
     }
 
     private fun orderFrom(origin: List<Double>): Comparator<SceneOffer> =

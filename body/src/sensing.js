@@ -32,6 +32,7 @@ const {
   MAX_FOOD,
   MAX_HEALTH,
   MAX_SENSE_BLOCKS,
+  MAX_SENSE_ENTITIES,
   MAX_SENSE_ITEMS,
   MAX_SLOT_INDEX,
   MAX_STACK_COUNT,
@@ -354,7 +355,7 @@ function nearest (bot, eyes, { radius, limit }) {
   const within = describable(bot, eyes)
     .filter((candidate) => candidate.away <= radius)
     .sort((earlier, later) => earlier.away - later.away)
-  const reported = within.slice(0, limit)
+  const reported = within.slice(0, Math.min(limit, MAX_SENSE_ENTITIES))
   const entities = reported.map((candidate) => ({
     what: candidate.entity.name,
     position: candidate.position,

@@ -29,8 +29,9 @@ const { digOfferedBlock } = require('../src/digging')
 const { equipOfferedStack } = require('../src/equipping')
 const { stackDetail } = require('../src/interaction')
 const { placeHeldBlock } = require('../src/placing')
+const { MAX_SENSE_OFFERS_PER_KIND } = require('../src/protocol')
 const { senseMemory } = require('../src/senses')
-const { senseReading } = require('../src/sensing')
+const { INTERACTION_REACH_BLOCKS, senseReading } = require('../src/sensing')
 const { sleepInOfferedBed } = require('../src/sleeping')
 const {
   eventually,
@@ -312,6 +313,45 @@ test('sense offers blocks and dropped items independently and retains only priva
   assert.equal(sensed.blockOffers[0].type, 1)
   assert.equal(sensed.itemOffers[0].entity, first)
   assert.equal(typeof sensed.itemOffers[0].detail, 'string')
+})
+
+test('sense retains forty-eight entities blocks and items with exact per-kind omissions', () => {
+  const bot = worldBot()
+  const offeredPerKind = MAX_SENSE_OFFERS_PER_KIND + 7
+  const eyes = FEET.offset(0, bot.entity.eyeHeight, 0)
+  const blockPositions = []
+  for (let x = -4; x <= 4 && blockPositions.length < offeredPerKind; x += 1) {
+    for (let y = 61; y <= 67 && blockPositions.length < offeredPerKind; y += 1) {
+      for (let z = -4; z <= 4 && blockPositions.length < offeredPerKind; z += 1) {
+        const position = new Vec3(x, y, z)
+        if (position.offset(0.5, 0.5, 0.5).distanceTo(eyes) <= INTERACTION_REACH_BLOCKS) {
+          blockPositions.push(position)
+        }
+      }
+    }
+  }
+  assert.equal(blockPositions.length, offeredPerKind, 'the bounded scene must contain enough blocks')
+  blockPositions.forEach((position) => bot.putBlock(solidBlock(position)))
+
+  for (let index = 0; index < offeredPerKind; index += 1) {
+    const position = FEET.offset((index % 5) * 0.1, 0, Math.floor(index / 5) * 0.1)
+    const living = livingEntity(1_000 + index, position)
+    const dropped = droppedEntity(2_000 + index, position.offset(0.05, 0, 0.05), itemStack('apple', 1))
+    bot.entities[living.id] = living
+    bot.entities[dropped.id] = dropped
+  }
+
+  // The wire refuses 49, and the collector itself still clamps a direct/future caller
+  // before any response validation has to save it.
+  const sensed = senseReading(bot, { radius: 24, limit: MAX_SENSE_OFFERS_PER_KIND + 1 })
+  assert.notEqual(sensed, undefined)
+  for (const field of ['entities', 'blocks', 'items']) {
+    assert.equal(sensed.reading[field].length, MAX_SENSE_OFFERS_PER_KIND, field)
+    assert.equal(sensed.reading[`${field}Omitted`], 7, `${field} omissions`)
+  }
+  assert.equal(sensed.entityOffers.length, MAX_SENSE_OFFERS_PER_KIND)
+  assert.equal(sensed.blockOffers.length, MAX_SENSE_OFFERS_PER_KIND)
+  assert.equal(sensed.itemOffers.length, MAX_SENSE_OFFERS_PER_KIND)
 })
 
 test('sense memory scopes every offered authority to its connection and bounded lifetime', () => {

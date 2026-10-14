@@ -28,7 +28,7 @@ data class PerceptionKindAudit(
     val jvmCutOmittedCount: Long,
 ) {
     init {
-        require(rawBodyListCount in 0..PERCEPTION_MAX_OBSERVATIONS.toLong()) {
+        require(rawBodyListCount in 0..BODY_SENSE_MAX_OFFERS_PER_KIND.toLong()) {
             "rawBodyListCount must fit the body list bound"
         }
         require(bodyReportedOmittedCount >= 0) {
@@ -36,7 +36,7 @@ data class PerceptionKindAudit(
         }
         require(
             bodyReportedOmittedCount == 0L ||
-                rawBodyListCount == PERCEPTION_MAX_OBSERVATIONS.toLong(),
+                rawBodyListCount == BODY_SENSE_MAX_OFFERS_PER_KIND.toLong(),
         ) {
             "body-reported omissions require a saturated body list"
         }

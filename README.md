@@ -55,9 +55,10 @@ death changes one member and cannot stop or reclassify another.
 
 The Mineflayer process is a mechanics boundary, not a second mind:
 
-- `sense` reports a bounded scene including nearby blocks, dropped items, and
-  currently applicable recipes, plus health, vanilla food and saturation, and
-  the occupied player inventory slots.
+- `sense` reports up to 48 entities, 48 nearby blocks, and 48 dropped items,
+  combined into at most 144 deterministic model-visible observations, plus
+  currently applicable recipes, health, vanilla food and saturation, and the
+  occupied player inventory slots.
 - `eat` consumes the exact request-scoped slot the mind named.
 - `moveTo` and `flee` run the bounded movement policy already implemented in
   `body/src/movement.js`.

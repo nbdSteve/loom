@@ -19,12 +19,12 @@ class PerceptionAuditTest {
     fun `a full selected scene keeps all three category counts separate`() {
         val audit =
             auditOf(
-                kind(raw = 2, selected = 2),
-                kind(raw = 12, selected = 12),
-                kind(raw = 2, selected = 2),
+                kind(raw = 48, selected = 48),
+                kind(raw = 48, selected = 48),
+                kind(raw = 48, selected = 48),
             )
 
-        assertEquals(16, selectedTotal(audit))
+        assertEquals(144, selectedTotal(audit))
         assertEquals(audit, LoomJson.decodeFromString(LoomJson.encodeToString(audit)))
     }
 
@@ -32,17 +32,17 @@ class PerceptionAuditTest {
     fun `body omissions and JVM omissions are not collapsed together`() {
         val audit =
             auditOf(
-                kind(raw = 16, bodyOmitted = 7, selected = 1),
-                kind(raw = 16, bodyOmitted = 40, selected = 14),
-                kind(raw = 16, bodyOmitted = 3, selected = 1),
+                kind(raw = 48, bodyOmitted = 7, selected = 1),
+                kind(raw = 48, bodyOmitted = 40, selected = 46),
+                kind(raw = 48, bodyOmitted = 3, selected = 1),
             )
 
         assertEquals(7, audit.entities.bodyReportedOmittedCount)
-        assertEquals(15, audit.entities.jvmCutOmittedCount)
+        assertEquals(47, audit.entities.jvmCutOmittedCount)
         assertEquals(40, audit.blocks.bodyReportedOmittedCount)
         assertEquals(2, audit.blocks.jvmCutOmittedCount)
         assertEquals(3, audit.droppedItems.bodyReportedOmittedCount)
-        assertEquals(15, audit.droppedItems.jvmCutOmittedCount)
+        assertEquals(47, audit.droppedItems.jvmCutOmittedCount)
     }
 
     @Test
@@ -78,6 +78,9 @@ class PerceptionAuditTest {
         }
         assertFailsWith<IllegalArgumentException> {
             kind(raw = 3, bodyOmitted = 1, selected = 3)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            kind(raw = 49, selected = 49)
         }
     }
 

@@ -13,6 +13,7 @@ const {
   MAX_RESOURCE_NAME_CHARS,
   MAX_WORLD_COORDINATE,
   MAX_SENSE_RADIUS,
+  MAX_SENSE_OFFERS_PER_KIND,
   MAX_SENSE_ENTITIES,
   MAX_SENSE_BLOCKS,
   MAX_SENSE_ITEMS,
@@ -671,10 +672,27 @@ test('a position is three real coordinates inside the world, and never four', ()
 })
 
 test('an observation list is bounded, and every entry is a name, a place and a sight line', () => {
-  const one = { what: 'minecraft:zombie', position: [14.5, 71.5, -40.5], visible: true }
-  const atBound = Array.from({ length: MAX_SENSE_ENTITIES }, () => one)
-  assert.equal(decodeResponse(encodeResponse(senseReport(sensed({ entities: atBound })))).ok, true)
-  assert.throws(() => senseReport(sensed({ entities: [...atBound, one] })), /invalidField$/)
+  assert.equal(MAX_SENSE_ENTITIES, MAX_SENSE_OFFERS_PER_KIND)
+  assert.equal(MAX_SENSE_BLOCKS, MAX_SENSE_OFFERS_PER_KIND)
+  assert.equal(MAX_SENSE_ITEMS, MAX_SENSE_OFFERS_PER_KIND)
+  const entries = {
+    entities: { what: 'minecraft:zombie', position: [14.5, 71.5, -40.5], visible: true },
+    blocks: { what: 'minecraft:stone', position: [14, 71, -40], visible: true },
+    items: { what: 'minecraft:apple', count: 1, position: [14.5, 71.5, -40.5], visible: true }
+  }
+  for (const [field, one] of Object.entries(entries)) {
+    const atBound = Array.from({ length: MAX_SENSE_OFFERS_PER_KIND }, () => one)
+    assert.equal(
+      decodeResponse(encodeResponse(senseReport(sensed({ [field]: atBound })))).ok,
+      true,
+      field
+    )
+    assert.throws(
+      () => senseReport(sensed({ [field]: [...atBound, one] })),
+      /invalidField$/,
+      field
+    )
+  }
 
   for (const entity of [
     { what: 'minecraft:zombie', position: [14.5, 71.5, -40.5] },
@@ -837,7 +855,10 @@ test('a sense or an eat answer may only report a body that is ready to be read',
 })
 
 test('a sense request is asked with a bounded radius and a bounded limit', () => {
-  for (const payload of [{ radius: 1, limit: 1 }, { radius: MAX_SENSE_RADIUS, limit: MAX_SENSE_ENTITIES }]) {
+  for (const payload of [
+    { radius: 1, limit: 1 },
+    { radius: MAX_SENSE_RADIUS, limit: MAX_SENSE_OFFERS_PER_KIND }
+  ]) {
     const decoded = decodeRequest(lineOf(request({ op: 'sense', ...payload })))
     assert.equal(decoded.ok, true, JSON.stringify(payload))
     assert.deepEqual(decoded.request, { op: 'sense', protocol: PROTOCOL_VERSION, requestId: 'req-1', agentId: AGENT, ...payload })
@@ -851,7 +872,7 @@ test('a sense request is asked with a bounded radius and a bounded limit', () =>
     { limit: 0 },
     // A caller allowed to ask for more than an answer can carry would be promised a
     // cut it could not be told about, so the two bounds are the one number.
-    { limit: MAX_SENSE_ENTITIES + 1 },
+    { limit: MAX_SENSE_OFFERS_PER_KIND + 1 },
     { limit: 16.5 },
     { limit: undefined },
     { extra: 1 }
@@ -1264,15 +1285,18 @@ test('the longest frame the contract admits is a sense report, and it still fits
   const sizeOf = (response) => Buffer.byteLength(`${encodeResponse(response)}\n`, 'utf8')
   const bytes = sizeOf(widest(MAX_SENSE_ENTITIES))
   assert.ok(bytes < MAX_FRAME_BYTES, `the longest legal frame is ${bytes} bytes of ${MAX_FRAME_BYTES}`)
+  assert.ok(
+    MAX_FRAME_BYTES - bytes >= 4 * 1024,
+    `${bytes} bytes leaves less than 4 KiB headroom in the ${MAX_FRAME_BYTES}-byte frame`
+  )
 
   // It is the longest, so it is also the one with the least room to spare, and the
   // margin is stated rather than left to be discovered by a refusal in world. What is
-  // left has to be more than one whole repeated description, measured rather than
-  // estimated: a bound sitting inside one of them is a bound that raising a list limit
-  // by one would carry
-  // past the wire. The margin is a twentieth of the bound and no more, because the
-  // list bounds are requirements - a player has the slots a player has - so it is
-  // the byte bound that would have to move, in both runtimes and the schema at once.
+  // left has to include at least 4 KiB and more than one whole repeated description,
+  // measured rather than estimated: a bound sitting inside one of them is a bound that raising a list limit
+  // by one would carry past the wire. The 4 KiB floor is a measured safety margin rather
+  // than an invitation to spend it; a later list or field expansion has to remeasure the
+  // complete legal frame in both runtimes.
   const repeated = Math.max(
     bytes - sizeOf(widest(MAX_SENSE_ENTITIES - 1)),
     bytes - sizeOf(widest(MAX_SENSE_ENTITIES, MAX_SENSE_BLOCKS - 1)),

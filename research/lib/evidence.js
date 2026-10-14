@@ -8,7 +8,8 @@ const { canonicalLine, sortedValue } = require('./util.js')
 const NORMALIZED_EVIDENCE_VERSION = 'loom-normalized-evidence/1'
 const METRICS_VERSION = 'loom-derived-metrics/1'
 const MAX_PUBLIC_STRING = 512
-const MAX_MODEL_VISIBLE_OBSERVATIONS = 16
+const MAX_BODY_OFFERS_PER_KIND = 48
+const MAX_MODEL_VISIBLE_OBSERVATIONS = MAX_BODY_OFFERS_PER_KIND * 3
 const PERCEPTION_AUDIT_KINDS = ['entities', 'blocks', 'droppedItems']
 
 const PUBLIC_SCAN_PATTERNS = [
@@ -179,12 +180,12 @@ function validatePerceptionAudit (audit, label = 'perception audit') {
         throw new Error(`${label} ${kind}.${field} must be a non-negative integer`)
       }
     }
-    if (counts.rawBodyListCount > MAX_MODEL_VISIBLE_OBSERVATIONS) {
+    if (counts.rawBodyListCount > MAX_BODY_OFFERS_PER_KIND) {
       throw new Error(`${label} ${kind}.rawBodyListCount exceeds the body list bound`)
     }
     if (
       counts.bodyReportedOmittedCount > 0 &&
-      counts.rawBodyListCount !== MAX_MODEL_VISIBLE_OBSERVATIONS
+      counts.rawBodyListCount !== MAX_BODY_OFFERS_PER_KIND
     ) {
       throw new Error(`${label} ${kind} body omissions require a saturated body list`)
     }
@@ -192,16 +193,17 @@ function validatePerceptionAudit (audit, label = 'perception audit') {
       throw new Error(`${label} ${kind} selected more than the body returned`)
     }
     if (
-      counts.rawBodyListCount > 0 &&
-      counts.jvmSelectedCount === 0
-    ) {
-      throw new Error(`${label} ${kind} kept no representative from a non-empty body list`)
-    }
-    if (
       counts.jvmCutOmittedCount !==
       counts.rawBodyListCount - counts.jvmSelectedCount
     ) {
       throw new Error(`${label} ${kind} JVM cut arithmetic is inconsistent`)
+    }
+    // Three body lists of at most 48 entries fit exactly inside the shared 144-entry
+    // scene. Any JVM cut in a current-generation audit is therefore a hidden drop,
+    // not ordinary bounded selection. PlayerSceneSelector still handles malformed or
+    // future wider inputs deterministically, but those inputs cannot cross this wire.
+    if (counts.jvmSelectedCount !== counts.rawBodyListCount) {
+      throw new Error(`${label} ${kind} dropped an offer inside the complete 48-per-kind envelope`)
     }
     selectedTotal += counts.jvmSelectedCount
   }

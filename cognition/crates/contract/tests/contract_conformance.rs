@@ -18,7 +18,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use loom_contract::{Decision, Perception, MAX_FOOD_LEVEL};
+use loom_contract::{Decision, Perception, MAX_FOOD_LEVEL, MAX_PERCEPTION_OBSERVATIONS};
 
 /// Absolute path to the repository's `contract/` directory, resolved from this
 /// crate's manifest dir so the test is independent of the working directory.
@@ -219,6 +219,30 @@ fn vanilla_hunger_readings_outside_their_ranges_are_refused_at_decode() {
             .unwrap_or_else(|e| panic!("a food level of {boundary} should decode: {e}"));
         assert_eq!(accepted.self_state.food, boundary);
     }
+}
+
+#[test]
+fn a_perception_carries_at_most_one_hundred_forty_four_observations() {
+    let fullest = fs::read_to_string(
+        contract_dir()
+            .join("fixtures/valid")
+            .join("perception-max-observations.json"),
+    )
+    .unwrap();
+    let accepted: Perception = serde_json::from_str(fullest.trim_end_matches('\n'))
+        .expect("the 144-observation boundary should decode");
+    assert_eq!(accepted.surroundings.len(), MAX_PERCEPTION_OBSERVATIONS);
+
+    let over = fs::read_to_string(
+        contract_dir()
+            .join("fixtures/invalid")
+            .join("perception-too-many-observations.json"),
+    )
+    .unwrap();
+    assert!(
+        serde_json::from_str::<Perception>(over.trim_end_matches('\n')).is_err(),
+        "145 observations decoded into a Perception"
+    );
 }
 
 #[test]

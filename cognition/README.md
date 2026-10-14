@@ -92,6 +92,21 @@ strict response schema. It is both a memory bound and the conservative input
 token ceiling used by the research harness when it proves that the configured
 call budget cannot cross the spend ceiling.
 
+The canonical 48-entity, 48-block, 48-item fixture is 20,166 bytes on the cognition
+socket. With `routine-v12`, it renders to 19,311 bytes of prompt text and a 23,931-byte
+serialized provider request, leaving more than ten times that request size under the
+256 KiB ceiling. Local `o200k_base` tokenization measured 4,842 tokens for the system
+and situation text and 5,895 for the serialized request JSON; those are reproducible
+local tokenizer counts, not a claim about provider-billed chat framing. On an Apple M3
+Pro, Corretto 21 averaged 183 microseconds to decode and 57 microseconds to encode the
+cognition line over 1,000 iterations. Twenty warmed JVM passes through deterministic
+selection, translation, threat-candidate construction, and all 144 request-scoped refs
+averaged 1.29 milliseconds per scene. The Rust release build averaged 50 microseconds to
+decode the perception, 28 microseconds to encode it, and 80 microseconds to render the
+prompt over 1,000 iterations. These are local processing baselines, not provider or
+network latency; remeasure them when the observation envelope, prompt, or response
+schema changes.
+
 `LOOM_OPENAI_USAGE_LOG` is normally absent. The bounded research harness points
 it at a new file inside its disposable run directory. Each successful provider
 response must then carry token usage; the mind appends only agent id, request id,

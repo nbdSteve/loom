@@ -31,11 +31,12 @@ child is still alive can mean another exclusive action owns the player. The coor
 records a refused intent and leaves the process ready; it must not turn expected action
 contention into a disconnect or terminate a healthy child.
 
-The wire is **fifteen operations at protocol generation 4**, and the split between them is
+The wire is **fifteen operations at protocol generation 5**, and the split between them is
 the split this whole package is built on.
-Generation 4 moved because `sense` gained body-chosen recipe offers and the craft, attack,
-and sleep reports introduced new closed outcome sets. Merely adding those three request
-operation names would not have moved it.
+Generation 5 moved because the body-chosen entity, block, and dropped-item response lists
+widened from 24 to 48 entries. Generation 4 moved because `sense` gained body-chosen
+recipe offers and the craft, attack, and sleep reports introduced new closed outcome sets.
+Merely adding those three request operation names would not have moved it.
 An *operation* set may grow: a controller only ever asks for operations it has, and one a peer
 does not have is refused by name.
 A set the *body* answers from may not, because widening it hands a controller that agreed this
@@ -46,6 +47,7 @@ cannot anticipate is exactly what agreeing a generation is for.
 That is why adding `moveTo`, `flee` and `halt` left generation 1 in place, adding
 `searchOverBudget` moved it to 2, block and dropped-item answers moved it to 3, and
 recipe and survival-skill answers moved it to 4.
+Widening the three world-observation lists moved it to 5.
 `contract/body-control.schema.json`'s own `ControlOperation` description is the authority.
 `handshake`, `status` and `shutdown` are the process's own lifecycle.
 `sense` is one bounded reading of a player's scene and vitals, `eat` is one explicit meal,
@@ -143,21 +145,21 @@ Drive it over the control channel, on one connection, since a handshake is per
 connection and each `requestId` may be used once:
 
 ```sh
-{ printf '{"op":"handshake","protocol":4,"requestId":"h1","agentId":"loom.demo.body"}\n'
+{ printf '{"op":"handshake","protocol":5,"requestId":"h1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"status","protocol":4,"requestId":"s1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"status","protocol":5,"requestId":"s1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"sense","protocol":4,"requestId":"n1","agentId":"loom.demo.body","radius":24,"limit":16}\n'
+  printf '{"op":"sense","protocol":5,"requestId":"n1","agentId":"loom.demo.body","radius":24,"limit":48}\n'
   sleep 1
-  printf '{"op":"eat","protocol":4,"requestId":"e1","agentId":"loom.demo.body","senseId":"n1","slot":36}\n'
+  printf '{"op":"eat","protocol":5,"requestId":"e1","agentId":"loom.demo.body","senseId":"n1","slot":36}\n'
   sleep 1
-  printf '{"op":"flee","protocol":4,"requestId":"f1","agentId":"loom.demo.body","senseId":"n1","entity":0,"distance":16,"timeoutMs":10000,"sprint":true}\n'
+  printf '{"op":"flee","protocol":5,"requestId":"f1","agentId":"loom.demo.body","senseId":"n1","entity":0,"distance":16,"timeoutMs":10000,"sprint":true}\n'
   sleep 12
-  printf '{"op":"moveTo","protocol":4,"requestId":"m1","agentId":"loom.demo.body","destination":[12,64,12],"tolerance":0,"timeoutMs":10000,"sprint":false}\n'
+  printf '{"op":"moveTo","protocol":5,"requestId":"m1","agentId":"loom.demo.body","destination":[12,64,12],"tolerance":0,"timeoutMs":10000,"sprint":false}\n'
   sleep 1
-  printf '{"op":"halt","protocol":4,"requestId":"z1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"halt","protocol":5,"requestId":"z1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"shutdown","protocol":4,"requestId":"x1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"shutdown","protocol":5,"requestId":"x1","agentId":"loom.demo.body"}\n'
   sleep 1
 } | nc 127.0.0.1 25585
 ```
@@ -166,7 +168,9 @@ A `status` answer carries the lifecycle state and three counts.
 A `sense` answer carries the body's position, its three vitals, the world's time, the two
 blocks it is standing in and on, bounded independent lists of entities, nearby non-air
 blocks, dropped-item entities, and currently applicable recipes with omission counts,
-plus its whole inventory by slot.
+plus its whole inventory by slot. The request limit is independently applied to the three
+world-observation lists up to 48 entries each. Recipes retain their independent 24-entry
+ceiling and use the smaller of that ceiling and the requested limit.
 It is refused `notReady` unless the body is `ready`.
 An `eat` names a `senseId` - the `requestId` of the `sense` answer that offered the slot -
 so the `e1` frame above eats from the answer `n1` returned, on that same connection.
@@ -1051,8 +1055,16 @@ cognition wire's 256 KiB, which is sized for a whole perception rather than for 
 bounded answer about a body.
 The largest frame the contract admits is a sense report with every entity, block,
 dropped-item and inventory list at its own bound, every string at its limit and every
-number written as long as a formatter writes one. It remains under 15 KiB on both
-runtimes, and both suites construct and measure it rather than trusting this note.
+number written as long as a formatter writes one. At the 48/48/48 limits it is 27,823
+bytes including the newline under Node's formatter and 26,346 bytes before the newline
+under the JVM formatter. The 32 KiB ceiling therefore keeps 4,945 bytes of headroom on
+the wider production encoding; both suites construct and measure the extremal frame and
+also require at least 4 KiB plus one widest repeated offer of spare capacity.
+On an Apple M3 Pro, warmed local loops over that extremal frame averaged 371 microseconds
+to decode and 468 microseconds to encode in Node 25.9 (10,000 iterations), and 673
+microseconds to decode and 76 microseconds to encode on Corretto 21 (1,000 iterations).
+These are local codec-cost baselines, not network timings; remeasure them when a list
+bound or field shape changes.
 A real's contribution is the length of its decimal *text*, which is longest nowhere near
 the world border: the widest legal coordinate is the double just inside the magnitude at
 which `Number.prototype.toString` stops writing plain decimals, and it is six characters

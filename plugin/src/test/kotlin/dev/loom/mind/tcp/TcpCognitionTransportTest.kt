@@ -288,6 +288,56 @@ class TcpCognitionTransportTest {
     }
 
     @Test
+    @DisplayName("all 144 observations cross the cognition request wire with measured headroom")
+    fun theCompleteObservationEnvelopeFitsOneRequestLine() {
+        val sent = LoomJson.decodeFromString<Perception>(fixture("perception-max-observations.json"))
+        val mind =
+            managed(
+                FakeMind { request ->
+                    val asked = LoomJson.decodeFromString<Perception>(request)
+                    LoomJson.encodeToString(decisionFor(asked))
+                },
+            )
+
+        val decision = transportTo(mind).ask(sent)
+        val line = mind.requests.single()
+        val measured = line.toByteArray(Charsets.UTF_8).size
+
+        assertEquals(sent.requestId, decision.requestId)
+        assertEquals(144, LoomJson.decodeFromString<Perception>(line).surroundings.size)
+        assertEquals(LoomJson.encodeToString(sent), line)
+        assertTrue(
+            measured <= MAX_REQUEST_LINE_BYTES / 4,
+            "the 144-observation request is $measured bytes against the " +
+                "$MAX_REQUEST_LINE_BYTES-byte request-line bound",
+        )
+    }
+
+    @Test
+    @DisplayName("an oversized cognition request is refused before any socket write")
+    fun anOversizedRequestIsNeverWritten() {
+        val canonical = fixture("decision-idle.json")
+        val mind = managed(FakeMind { canonical })
+        val ordinary = perception()
+        val oversized =
+            ordinary.copy(
+                trigger =
+                    Trigger.Spoken(
+                        from = "player",
+                        text = "x".repeat(MAX_REQUEST_LINE_BYTES),
+                    ),
+            )
+
+        val thrown = assertThrows<IOException> { transportTo(mind).ask(oversized) }
+
+        assertTrue(
+            thrown.message?.contains("$MAX_REQUEST_LINE_BYTES") == true,
+            "the refusal must name the byte cap: ${thrown.message}",
+        )
+        assertTrue(mind.requests.isEmpty(), "an oversized request must fail before a socket write")
+    }
+
+    @Test
     @DisplayName("every valid decision fixture decodes off the wire")
     fun everyDecisionShapeDecodes() {
         // Every intent shape the contract allows, discovered from the shared decision

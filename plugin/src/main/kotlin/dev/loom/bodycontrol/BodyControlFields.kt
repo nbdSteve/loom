@@ -31,11 +31,11 @@ import kotlin.math.sqrt
  * generation may spell the same field differently, and a value read under the wrong
  * generation is worse than a refusal.
  *
- * It moved from 3 to 4 when sense answers gained recipe offers and the body gained the
- * craft, attack, and sleep closed response sets. Adding request operation names alone
- * would not have moved it; widening a body-chosen answer does.
+ * It moved from 4 to 5 when the body-chosen entity, block, and dropped-item response
+ * lists widened from 24 to 48 entries. Adding request operation names alone would not
+ * have moved it; widening a body-chosen answer does.
  */
-const val BODY_CONTROL_PROTOCOL_VERSION: Int = 4
+const val BODY_CONTROL_PROTOCOL_VERSION: Int = 5
 
 /** The shortest a requestId or agentId may be, mirroring the schema's `minLength`. */
 private const val CONTROL_ID_MIN_CHARS = 1
@@ -169,14 +169,17 @@ internal const val WORLD_POSITION_AXES = 3
 /** The widest a caller may ask a sense to look, in blocks, mirroring the schema. */
 internal const val MAX_SENSE_RADIUS = 48
 
+/** The most world-observation offers of each kind one sense answer may carry. */
+internal const val MAX_SENSE_OFFERS_PER_KIND = 48
+
 /** The most entities a sense answer may carry, mirroring the schema's `maxItems`. */
-internal const val MAX_SENSE_ENTITIES = 24
+internal const val MAX_SENSE_ENTITIES = MAX_SENSE_OFFERS_PER_KIND
 
 /** The most nearby blocks a sense answer may carry. */
-internal const val MAX_SENSE_BLOCKS = 24
+internal const val MAX_SENSE_BLOCKS = MAX_SENSE_OFFERS_PER_KIND
 
 /** The most dropped items a sense answer may carry. */
-internal const val MAX_SENSE_ITEMS = 24
+internal const val MAX_SENSE_ITEMS = MAX_SENSE_OFFERS_PER_KIND
 
 /** The most recipe offers a sense answer may carry. */
 internal const val MAX_SENSE_RECIPES = 24

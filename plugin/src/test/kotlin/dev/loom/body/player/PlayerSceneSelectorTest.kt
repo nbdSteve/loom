@@ -1,5 +1,7 @@
 package dev.loom.body.player
 
+import dev.loom.body.BODY_SENSE_MAX_OFFERS_PER_KIND
+import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import dev.loom.contract.ObservationKind
 import org.junit.jupiter.api.Test
 import kotlin.random.Random
@@ -8,58 +10,74 @@ import kotlin.test.assertTrue
 
 class PlayerSceneSelectorTest {
     @Test
-    fun `sixteen closer blocks keep one entity one item and fourteen blocks`() {
-        val offers =
-            blocks(16) +
-                offer(ObservationKind.ENTITY, 0, 17.0) +
-                offer(ObservationKind.DROPPED_ITEM, 0, 18.0)
+    fun `sixteen or forty-eight closer blocks remove neither entities nor items`() {
+        for (blockCount in listOf(16, BODY_SENSE_MAX_OFFERS_PER_KIND)) {
+            val offers =
+                blocks(blockCount) +
+                    offer(ObservationKind.ENTITY, 0, 100.0) +
+                    offer(ObservationKind.DROPPED_ITEM, 0, 101.0)
 
-        val selected = PlayerSceneSelector.select(ORIGIN, offers)
+            val selected = PlayerSceneSelector.select(ORIGIN, offers)
 
-        assertEquals(16, selected.size)
-        assertEquals(1, selected.count { it.kind == ObservationKind.ENTITY })
-        assertEquals(1, selected.count { it.kind == ObservationKind.DROPPED_ITEM })
-        assertEquals(14, selected.count { it.kind == ObservationKind.BLOCK })
-        assertEquals(
-            (0 until 14).toList(),
-            selected.filter { it.kind == ObservationKind.BLOCK }.map(SceneOffer::sourceIndex),
-        )
+            assertEquals(offers.size, selected.size)
+            assertEquals(blockCount, selected.count { it.kind == ObservationKind.BLOCK })
+            assertEquals(1, selected.count { it.kind == ObservationKind.ENTITY })
+            assertEquals(1, selected.count { it.kind == ObservationKind.DROPPED_ITEM })
+        }
     }
 
     @Test
-    fun `closer blocks cannot reduce a non-empty entity category to zero`() {
+    fun `future oversized block input cannot reduce a non-empty entity category to zero`() {
         val selected =
             PlayerSceneSelector.select(
                 ORIGIN,
-                blocks(16) + offer(ObservationKind.ENTITY, 0, 100.0),
+                blocks(PERCEPTION_MAX_OBSERVATIONS) +
+                    offer(ObservationKind.ENTITY, 0, 1_000.0),
             )
 
+        assertEquals(BODY_SENSE_MAX_OFFERS_PER_KIND + 1, selected.size)
+        assertEquals(
+            BODY_SENSE_MAX_OFFERS_PER_KIND,
+            selected.count { it.kind == ObservationKind.BLOCK },
+        )
         assertTrue(selected.any { it.kind == ObservationKind.ENTITY })
     }
 
     @Test
-    fun `closer blocks cannot reduce a non-empty dropped-item category to zero`() {
+    fun `future oversized block input cannot reduce a non-empty item category to zero`() {
         val selected =
             PlayerSceneSelector.select(
                 ORIGIN,
-                blocks(16) + offer(ObservationKind.DROPPED_ITEM, 0, 100.0),
+                blocks(PERCEPTION_MAX_OBSERVATIONS) +
+                    offer(ObservationKind.DROPPED_ITEM, 0, 1_000.0),
             )
 
+        assertEquals(BODY_SENSE_MAX_OFFERS_PER_KIND + 1, selected.size)
+        assertEquals(
+            BODY_SENSE_MAX_OFFERS_PER_KIND,
+            selected.count { it.kind == ObservationKind.BLOCK },
+        )
         assertTrue(selected.any { it.kind == ObservationKind.DROPPED_ITEM })
     }
 
     @Test
-    fun `entity and item crowds preserve an actionable block representative`() {
+    fun `future entity and item crowds preserve an actionable block representative`() {
         val offers =
-            (0 until 16).map { index ->
+            (0 until PERCEPTION_MAX_OBSERVATIONS).map { index ->
                 offer(ObservationKind.ENTITY, index, index + 1.0)
             } +
-                offer(ObservationKind.BLOCK, 0, 100.0) +
-                offer(ObservationKind.DROPPED_ITEM, 0, 101.0)
+                offer(ObservationKind.BLOCK, 0, 1_000.0) +
+                offer(ObservationKind.DROPPED_ITEM, 0, 1_001.0)
 
         val selected = PlayerSceneSelector.select(ORIGIN, offers)
 
+        assertEquals(BODY_SENSE_MAX_OFFERS_PER_KIND + 2, selected.size)
+        assertEquals(
+            BODY_SENSE_MAX_OFFERS_PER_KIND,
+            selected.count { it.kind == ObservationKind.ENTITY },
+        )
         assertTrue(selected.any { it.kind == ObservationKind.BLOCK })
+        assertTrue(selected.any { it.kind == ObservationKind.DROPPED_ITEM })
     }
 
     @Test
@@ -67,24 +85,28 @@ class PlayerSceneSelectorTest {
         val selected =
             PlayerSceneSelector.select(
                 ORIGIN,
-                blocks(16) + offer(ObservationKind.ENTITY, 0, 100.0),
+                blocks(PERCEPTION_MAX_OBSERVATIONS) +
+                    offer(ObservationKind.ENTITY, 0, 1_000.0),
             )
 
-        assertEquals(15, selected.count { it.kind == ObservationKind.BLOCK })
+        assertEquals(
+            BODY_SENSE_MAX_OFFERS_PER_KIND,
+            selected.count { it.kind == ObservationKind.BLOCK },
+        )
         assertEquals(1, selected.count { it.kind == ObservationKind.ENTITY })
     }
 
     @Test
-    fun `a blocks-only scene keeps the nearest sixteen blocks exactly`() {
+    fun `a blocks-only malformed scene keeps the nearest forty-eight blocks exactly`() {
         val offers =
-            (0 until 20).map { index ->
-                offer(ObservationKind.BLOCK, index, (20 - index).toDouble())
+            (0 until 150).map { index ->
+                offer(ObservationKind.BLOCK, index, (150 - index).toDouble())
             }
 
         val selected = PlayerSceneSelector.select(ORIGIN, offers)
 
         assertEquals(
-            (19 downTo 4).toList(),
+            (149 downTo 102).toList(),
             selected.map(SceneOffer::sourceIndex),
         )
     }
@@ -108,36 +130,40 @@ class PlayerSceneSelectorTest {
     }
 
     @Test
-    fun `multiple entities and items keep their nearest representative then follow global distance`() {
+    fun `forty-eight offers of every kind preserve the complete one hundred forty-four offer envelope`() {
         val offers =
-            blocks(12) +
-                listOf(
-                    offer(ObservationKind.ENTITY, 0, 15.0),
-                    offer(ObservationKind.ENTITY, 1, 13.0),
-                    offer(ObservationKind.ENTITY, 2, 100.0),
-                    offer(ObservationKind.DROPPED_ITEM, 0, 16.0),
-                    offer(ObservationKind.DROPPED_ITEM, 1, 14.0),
-                    offer(ObservationKind.DROPPED_ITEM, 2, 101.0),
-                )
+            ObservationKind.entries.flatMap { kind ->
+                (0 until BODY_SENSE_MAX_OFFERS_PER_KIND).map { index ->
+                    offer(kind, index, index + kind.ordinal / 10.0)
+                }
+            }
 
         val selected = PlayerSceneSelector.select(ORIGIN, offers)
 
-        assertEquals(listOf(1, 0), sourceIndices(selected, ObservationKind.ENTITY))
-        assertEquals(listOf(1, 0), sourceIndices(selected, ObservationKind.DROPPED_ITEM))
-        assertEquals(12, selected.count { it.kind == ObservationKind.BLOCK })
+        assertEquals(PERCEPTION_MAX_OBSERVATIONS, selected.size)
+        for (kind in ObservationKind.entries) {
+            assertEquals(BODY_SENSE_MAX_OFFERS_PER_KIND, selected.count { it.kind == kind })
+            assertEquals(
+                (0 until BODY_SENSE_MAX_OFFERS_PER_KIND).toList(),
+                sourceIndices(selected, kind),
+            )
+        }
     }
 
     @Test
-    fun `equal distances use stable kind and source-index ordering across input orders`() {
+    fun `forty-nine per kind is deterministically bounded with stable tie ordering`() {
         val offers =
             ObservationKind.entries.flatMap { kind ->
-                (0 until 6).map { index -> offer(kind, index, 1.0) }
+                (0 until BODY_SENSE_MAX_OFFERS_PER_KIND + 1).map { index ->
+                    offer(kind, index, 1.0)
+                }
             }
         val expected =
             listOf(
-                ObservationKind.ENTITY to (0 until 6).toList(),
-                ObservationKind.BLOCK to (0 until 6).toList(),
-                ObservationKind.DROPPED_ITEM to (0 until 4).toList(),
+                ObservationKind.ENTITY to (0 until BODY_SENSE_MAX_OFFERS_PER_KIND).toList(),
+                ObservationKind.BLOCK to (0 until BODY_SENSE_MAX_OFFERS_PER_KIND).toList(),
+                ObservationKind.DROPPED_ITEM to
+                    (0 until BODY_SENSE_MAX_OFFERS_PER_KIND).toList(),
             )
 
         repeat(20) { seed ->
@@ -146,6 +172,7 @@ class PlayerSceneSelectorTest {
                     ORIGIN,
                     offers.shuffled(Random(seed)),
                 )
+            assertEquals(PERCEPTION_MAX_OBSERVATIONS, selected.size)
             assertEquals(
                 expected,
                 ObservationKind.entries.map { kind -> kind to sourceIndices(selected, kind) },

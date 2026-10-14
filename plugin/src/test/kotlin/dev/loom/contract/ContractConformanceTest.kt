@@ -246,6 +246,27 @@ class ContractConformanceTest {
         )
     }
 
+    /**
+     * The shared scene cap is enforced by the binding as well as by the schema.
+     *
+     * The JVM is the writer in production, but it also decodes the shared fixtures;
+     * pinning both edges here keeps 144 legal and 145 fail-closed in the handwritten
+     * type rather than relying on a schema that no runtime evaluates on the socket.
+     */
+    @Test
+    fun aPerceptionCarriesAtMostOneHundredFortyFourObservations() {
+        val fullest = fixtureText("valid", "perception-max-observations.json")
+        assertEquals(
+            MAX_PERCEPTION_OBSERVATIONS,
+            LoomJson.decodeFromString<Perception>(fullest).surroundings.size,
+        )
+
+        val over = fixtureText("invalid", "perception-too-many-observations.json")
+        assertThrows<IllegalArgumentException>("145 observations decoded into a Perception") {
+            LoomJson.decodeFromString<Perception>(over)
+        }
+    }
+
     private fun fixtureText(
         subdir: String,
         name: String,

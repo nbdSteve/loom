@@ -40,11 +40,11 @@
 /**
  * The current protocol generation. A frame naming any other is refused, not interpreted.
  *
- * It moved from 3 to 4 when sense answers gained recipe offers and the body gained the
- * craft, attack, and sleep closed response sets. Adding operation names alone would not
- * have moved it; widening a body-chosen answer does.
+ * It moved from 4 to 5 when the body-chosen entity, block, and dropped-item response
+ * lists widened from 24 to 48 entries. Adding operation names alone would not have
+ * moved it; widening a body-chosen answer does.
  */
-const PROTOCOL_VERSION = 4
+const PROTOCOL_VERSION = 5
 
 /**
  * Longest frame this protocol will carry, in bytes.
@@ -235,21 +235,24 @@ const WORLD_POSITION_AXES = 3
 const MAX_SENSE_RADIUS = 48
 
 /**
- * Most entities one sense answer may carry.
+ * Most world-observation offers of each kind one sense answer may carry.
  *
- * One number rather than two equal ones: it bounds what a caller may ask for and what
- * an answer may hold, because those are the same bound seen from the two ends - a
- * caller allowed to ask for more than an answer can carry would be promised a cut it
- * could not be told about. What fixes it is [MAX_FRAME_BYTES]: this many entities
- * beside a full inventory is the widest answer that fits.
+ * One number rather than three equal ones: it bounds what a caller may ask for and what
+ * each entity, block, or dropped-item list may hold. Those are the same bound seen from
+ * the two ends - a caller allowed to ask for more than an answer can carry would be
+ * promised a cut it could not be told about. What fixes it is [MAX_FRAME_BYTES]: all
+ * three lists at this bound beside a full inventory are the widest answer that fits.
  */
-const MAX_SENSE_ENTITIES = 24
+const MAX_SENSE_OFFERS_PER_KIND = 48
+
+/** Most entity offers one sense answer may carry. */
+const MAX_SENSE_ENTITIES = MAX_SENSE_OFFERS_PER_KIND
 
 /** Most nearby block offers one sense answer may carry. */
-const MAX_SENSE_BLOCKS = 24
+const MAX_SENSE_BLOCKS = MAX_SENSE_OFFERS_PER_KIND
 
 /** Most dropped-item offers one sense answer may carry. */
-const MAX_SENSE_ITEMS = 24
+const MAX_SENSE_ITEMS = MAX_SENSE_OFFERS_PER_KIND
 
 /** Most recipe offers one sense answer may carry. */
 const MAX_SENSE_RECIPES = 24
@@ -1458,7 +1461,7 @@ function requestPayload (raw, literals) {
   if (raw.op === 'sense') {
     const bounded = isBoundedInteger(raw.radius, 1, MAX_SENSE_RADIUS) &&
       spellsWholeNumber(literals, 'radius') &&
-      isBoundedInteger(raw.limit, 1, MAX_SENSE_ENTITIES) &&
+      isBoundedInteger(raw.limit, 1, MAX_SENSE_OFFERS_PER_KIND) &&
       spellsWholeNumber(literals, 'limit')
     return bounded ? { radius: raw.radius, limit: raw.limit } : undefined
   }
@@ -2553,6 +2556,7 @@ module.exports = {
   MAX_RESOURCE_NAME_CHARS,
   MAX_WORLD_COORDINATE,
   MAX_SENSE_RADIUS,
+  MAX_SENSE_OFFERS_PER_KIND,
   MAX_SENSE_ENTITIES,
   MAX_SENSE_BLOCKS,
   MAX_SENSE_ITEMS,

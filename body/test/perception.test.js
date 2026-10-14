@@ -35,7 +35,7 @@ const { MAX_REFUSALS_PER_CONNECTION } = require('../src/body')
 const {
   MAX_FOOD,
   MAX_FRAME_BYTES,
-  MAX_SENSE_ENTITIES,
+  MAX_SENSE_OFFERS_PER_KIND,
   MAX_SENSE_RADIUS,
   MAX_SENSE_STACKS,
   MAX_SLOT_INDEX,
@@ -578,26 +578,26 @@ test('a whole sense answer for a crowded scene fits one frame', async () => {
   // encoder's own widest frame is pinned in `protocol.test.js`; what is proven here is
   // that the answer this body produces for a crowded scene stays inside the bound.
   stocked(client, Array.from({ length: MAX_SENSE_STACKS }, (_, slot) => [slot, LONGEST_ITEM, 1]))
-  for (let at = 0; at < MAX_SENSE_ENTITIES + 6; at += 1) {
+  for (let at = 0; at < MAX_SENSE_OFFERS_PER_KIND + 6; at += 1) {
     spotted(client, {
       id: 100 + at,
       what: LONGEST_ENTITY,
-      x: FEET.x + (at % 4) - 2,
+      x: FEET.x + ((at % 6) - 2.5) * 0.2,
       y: FEET.y,
-      z: FEET.z + Math.floor(at / 4) - 3
+      z: FEET.z + (Math.floor(at / 6) - 4) * 0.2
     })
   }
   await settled()
   const peer = await handshaken(port)
   const line = await promptly(
-    peer.answer(request('sense', 's1', { radius: RADIUS, limit: MAX_SENSE_ENTITIES }))
+    peer.answer(request('sense', 's1', { radius: RADIUS, limit: MAX_SENSE_OFFERS_PER_KIND }))
       .then((frame) => ({ frame, bytes: Buffer.byteLength(JSON.stringify(frame), 'utf8') })),
     'the crowded sense answer'
   )
   const { frame, bytes } = line
   assert.equal(frame.op, 'sense')
   assert.equal(frame.inventory.length, MAX_SENSE_STACKS)
-  assert.equal(frame.entities.length, MAX_SENSE_ENTITIES)
+  assert.equal(frame.entities.length, MAX_SENSE_OFFERS_PER_KIND)
   // Crowded *and* trimmed, so the answer states both bounds it met at once.
   assert.equal(frame.entitiesOmitted, 6)
   assert.ok(bytes < MAX_FRAME_BYTES, `${bytes} bytes of ${MAX_FRAME_BYTES}`)

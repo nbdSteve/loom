@@ -1125,9 +1125,37 @@ class BodyControlFrameBoundTest {
             )
         val measured = encodeBodyResponse(widest).toByteArray(Charsets.UTF_8).size
         assertTrue(
-            measured <= MAX_BODY_CONTROL_FRAME_BYTES,
-            "the largest sense answer the bounds admit is $measured bytes, over the " +
-                "$MAX_BODY_CONTROL_FRAME_BYTES-byte frame bound",
+            MAX_BODY_CONTROL_FRAME_BYTES - measured >= 4 * 1024,
+            "the largest sense answer is $measured bytes and leaves less than 4 KiB " +
+                "under the $MAX_BODY_CONTROL_FRAME_BYTES-byte frame bound",
+        )
+        val repeatedOfferBytes =
+            maxOf(
+                measured -
+                    encodeBodyResponse(widest.copy(entities = widest.entities.dropLast(1)))
+                        .toByteArray(Charsets.UTF_8)
+                        .size,
+                measured -
+                    encodeBodyResponse(widest.copy(blocks = widest.blocks.dropLast(1)))
+                        .toByteArray(Charsets.UTF_8)
+                        .size,
+                measured -
+                    encodeBodyResponse(widest.copy(items = widest.items.dropLast(1)))
+                        .toByteArray(Charsets.UTF_8)
+                        .size,
+                measured -
+                    encodeBodyResponse(widest.copy(inventory = widest.inventory.dropLast(1)))
+                        .toByteArray(Charsets.UTF_8)
+                        .size,
+                measured -
+                    encodeBodyResponse(widest.copy(recipes = widest.recipes.dropLast(1)))
+                        .toByteArray(Charsets.UTF_8)
+                        .size,
+            )
+        assertTrue(
+            MAX_BODY_CONTROL_FRAME_BYTES - measured > repeatedOfferBytes,
+            "the largest sense answer leaves ${MAX_BODY_CONTROL_FRAME_BYTES - measured} bytes, " +
+                "not even one widest repeated offer of $repeatedOfferBytes bytes",
         )
     }
 }

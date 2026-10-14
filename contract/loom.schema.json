@@ -352,10 +352,10 @@
         },
         "selfState": { "$ref": "#/$defs/SelfState" },
         "surroundings": {
-          "description": "The summarized observations the body chose to reveal.",
+          "description": "The summarized observations the body chose to reveal, bounded to 48 entities, 48 blocks, and 48 dropped items before they are combined into this one deterministic list.",
           "type": "array",
           "items": { "$ref": "#/$defs/Observation" },
-          "maxItems": 16
+          "maxItems": 144
         },
         "surroundingsOmitted": {
           "description": "How many otherwise eligible observations the body's own count bound dropped before this perception was serialized: things that were in range, alive and would have been described, and are not in surroundings. Required and never negative, so a mind cannot read the absence of the field as a complete view of the scene. Zero is the ordinary case and says the list is everything the body had. Out-of-range and ineligible things are not omissions - they were never observations.",

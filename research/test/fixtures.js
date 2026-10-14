@@ -170,22 +170,22 @@ function perceptionAuditFixture (kind = 'empty', worldClock = {
     return {
       worldClock,
       entities: {
-        rawBodyListCount: 16,
+        rawBodyListCount: 48,
         bodyReportedOmittedCount: 3,
-        jvmSelectedCount: 1,
-        jvmCutOmittedCount: 15
+        jvmSelectedCount: 48,
+        jvmCutOmittedCount: 0
       },
       blocks: {
-        rawBodyListCount: 16,
+        rawBodyListCount: 48,
         bodyReportedOmittedCount: 120,
-        jvmSelectedCount: 14,
-        jvmCutOmittedCount: 2
+        jvmSelectedCount: 48,
+        jvmCutOmittedCount: 0
       },
       droppedItems: {
-        rawBodyListCount: 16,
+        rawBodyListCount: 48,
         bodyReportedOmittedCount: 1,
-        jvmSelectedCount: 1,
-        jvmCutOmittedCount: 15
+        jvmSelectedCount: 48,
+        jvmCutOmittedCount: 0
       }
     }
   }

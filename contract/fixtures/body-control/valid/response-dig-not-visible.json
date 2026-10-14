@@ -1,1 +1,1 @@
-{"op":"dig","protocol":4,"requestId":"req-59","agentId":"agent-alpha","state":"ready","outcome":"notVisible","elapsedMs":2,"attempted":false}
+{"op":"dig","protocol":5,"requestId":"req-59","agentId":"agent-alpha","state":"ready","outcome":"notVisible","elapsedMs":2,"attempted":false}

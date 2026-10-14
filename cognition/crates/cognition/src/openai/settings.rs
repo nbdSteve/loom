@@ -93,9 +93,9 @@ pub const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 2_048;
 
 /// Default byte bound on one serialized provider request.
 ///
-/// The perception wire is bounded to the same order. Keeping a separate bound
-/// here covers the instructions and strict response schema too, and refuses a
-/// future renderer that grows without making a provider call first.
+/// The 144-observation perception wire remains far below this measured ceiling.
+/// Keeping a separate bound here covers the instructions and strict response schema
+/// too, and refuses a future renderer that grows without making a provider call first.
 pub const DEFAULT_MAX_REQUEST_BYTES: u32 = 256 * 1024;
 
 /// The `OpenAI` credential.

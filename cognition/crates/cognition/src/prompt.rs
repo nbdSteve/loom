@@ -28,7 +28,7 @@
 
 use loom_contract::{
     Bearing, CraftingOption, DayPhase, DecisionImportance, InventoryStack, Observation,
-    ObservationKind, Perception, SelfState, Trigger, WorldState,
+    ObservationKind, Perception, SelfState, Trigger, WorldState, MAX_PERCEPTION_OBSERVATIONS,
 };
 
 use crate::config::bounded_to;
@@ -45,10 +45,9 @@ pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v12";
 
 /// How many surroundings entries reach the prompt.
 ///
-/// The perception bound already keeps this small in practice; the cap is here
-/// because "in practice" is a property of the body, and this side pays for the
-/// tokens either way.
-const MAX_OBSERVATIONS: usize = 16;
+/// Kept equal to the contract decoder's hard limit, so every legal observation reaches
+/// the model and the renderer still has an explicit finite token-work bound.
+const MAX_OBSERVATIONS: usize = MAX_PERCEPTION_OBSERVATIONS;
 
 /// How many inventory lines reach the prompt.
 const MAX_INVENTORY_LINES: usize = 24;
@@ -561,13 +560,13 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        render, MAX_FIELD_CHARS, MAX_INVENTORY_LINES, MAX_OBSERVATIONS, NOTABLE_PROMPT_VERSION,
-        PIVOTAL_PROMPT_VERSION, ROUTINE_PROMPT_VERSION,
+        render, MAX_CRAFTING_LINES, MAX_FIELD_CHARS, MAX_INVENTORY_LINES, MAX_OBSERVATIONS,
+        NOTABLE_PROMPT_VERSION, PIVOTAL_PROMPT_VERSION, ROUTINE_PROMPT_VERSION,
     };
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
-        Bearing, DayPhase, DecisionImportance, InventoryStack, Observation, ObservationKind,
-        Perception, SelfState, Trigger, WorldState,
+        Bearing, CraftingOption, DayPhase, DecisionImportance, InventoryStack, Observation,
+        ObservationKind, Perception, SelfState, Trigger, WorldState,
     };
 
     fn router() -> Router {
@@ -733,6 +732,70 @@ mod tests {
                 "the goal-review path must not retain {old_wording:?}, got {rendered}"
             );
         }
+    }
+
+    #[test]
+    fn the_widest_complete_observation_envelope_reaches_the_prompt_with_headroom() {
+        let mut seen: Perception = serde_json::from_str(include_str!(
+            "../../../../contract/fixtures/valid/perception-max-observations.json"
+        ))
+        .unwrap();
+        assert_eq!(seen.surroundings.len(), MAX_OBSERVATIONS);
+
+        // Exercise every renderer bound at once. Body resource descriptions are ASCII
+        // and shorter than this; doubling the prompt's own field limit proves that each
+        // one is truncated before 144 of them are joined. The full 46-slot inventory
+        // also proves its existing 24-line prompt cap and omission text, while every
+        // legal recipe line is rendered.
+        let overlong = "x".repeat(MAX_FIELD_CHARS * 2);
+        seen.trigger = Trigger::Spoken {
+            from: overlong.clone(),
+            text: overlong.clone(),
+        };
+        for observation in &mut seen.surroundings {
+            observation.what.clone_from(&overlong);
+            observation.distance = 48.0;
+            observation.vertical_offset = 384.0;
+            if observation.kind == ObservationKind::DroppedItem {
+                observation.count = Some(64);
+            }
+        }
+        seen.self_state.inventory_summary = (0..46)
+            .map(|index| InventoryStack {
+                slot_ref: format!("i{index:07}"),
+                what: overlong.clone(),
+                count: 64,
+            })
+            .collect();
+        seen.self_state.crafting_options = (0..MAX_CRAFTING_LINES)
+            .map(|index| CraftingOption {
+                recipe_ref: format!("c{index:07}"),
+                what: overlong.clone(),
+                result_count: 64,
+                max_crafts: 8,
+                requires_table: true,
+            })
+            .collect();
+
+        let prompt = render(&router().route(seen.importance), &seen);
+        let rendered = format!("{}\n{}", prompt.system, prompt.situation);
+
+        assert_eq!(
+            prompt.situation.matches("(ref ").count(),
+            MAX_OBSERVATIONS + MAX_INVENTORY_LINES + MAX_CRAFTING_LINES,
+            "every observation and every shown inventory and recipe offer must render once"
+        );
+        for last_in_kind in ["e1b", "b1b", "d1b"] {
+            assert!(
+                prompt.situation.contains(&format!("(ref {last_in_kind})")),
+                "the last offer in each 48-entry category must reach the prompt"
+            );
+        }
+        assert!(
+            rendered.len() <= 64 * 1024,
+            "the complete rendered prompt is {} bytes",
+            rendered.len()
+        );
     }
 
     #[test]
@@ -1187,7 +1250,9 @@ mod tests {
         );
         // MAX_OBSERVATIONS is still the final bound on what a model is shown; the
         // count only says what it is not being shown.
-        assert!(!prompt.situation.contains("thing-24"));
+        assert!(!prompt
+            .situation
+            .contains(&format!("thing-{MAX_OBSERVATIONS}")));
     }
 
     #[test]
@@ -1297,7 +1362,9 @@ mod tests {
             situation = prompt.situation
         );
         assert!(
-            !prompt.situation.contains("thing-25"),
+            !prompt
+                .situation
+                .contains(&format!("thing-{MAX_OBSERVATIONS}")),
             "the cap must actually cap"
         );
     }

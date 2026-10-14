@@ -6,8 +6,8 @@
 
   "$defs": {
     "ProtocolVersion": {
-      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted. Generation 4 is current. It moved from 3 because sense gained body-chosen recipe offers and craft, attack, and sleep introduced new closed outcome sets; adding the three operation names alone would not have moved it. The const is a numeric value rather than a spelling, so 4, 4.0 and 4e0 all name this generation.",
-      "const": 4
+      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted. Generation 5 is current. It moved from 4 because the body-chosen entity, block, and dropped-item response lists widened from 24 to 48 entries; widening a body-chosen answer can hand an older controller a frame it never agreed to read. The const is a numeric value rather than a spelling, so 5, 5.0 and 5e0 all name this generation.",
+      "const": 5
     },
 
     "ControlId": {
@@ -61,10 +61,10 @@
     },
 
     "SenseLimit": {
-      "description": "How many entries each bounded offered list may carry, as the caller states it. The same limit is independently applied to living entities, nearby blocks, dropped items, and craftable recipes, and each list carries its own omission count. It is a wire and frame bound rather than a choice of what matters.",
+      "description": "How many entries each bounded world-observation list may carry, as the caller states it. The same limit is independently applied to entities, nearby blocks, and dropped items, and each list carries its own omission count. Craftable recipes retain their independent 24-entry ceiling and use the smaller of this requested limit and that ceiling. This is a wire and frame bound rather than a choice of what matters.",
       "type": "integer",
       "minimum": 1,
-      "maximum": 24
+      "maximum": 48
     },
 
     "SlotIndex": {
@@ -106,21 +106,21 @@
       "description": "One entity of a named sense answer's own list, by its position in it, counting from zero. An index rather than a handle because a sense answer deliberately carries no handle, and rather than a position or a kind because a position is not an identity and a kind is not one either - two zombies at one distance are two threats, and a flight names one of them. The maximum is one below SenseLimit's own maximum, so every index this schema admits could name an entity of some legal answer; an index past the end of the answer actually named is refused with threatUnnamed rather than by shape, which is the same division of labour a slot index and slotUnnamed already have.",
       "type": "integer",
       "minimum": 0,
-      "maximum": 23
+      "maximum": 47
     },
 
     "BlockIndex": {
       "description": "One block of a named sense answer's own blocks list, by zero-based position. An index past the actual list is blockUnnamed rather than a malformed frame.",
       "type": "integer",
       "minimum": 0,
-      "maximum": 23
+      "maximum": 47
     },
 
     "ItemIndex": {
       "description": "One dropped item of a named sense answer's own items list, by zero-based position. An index past the actual list is itemUnnamed rather than a malformed frame.",
       "type": "integer",
       "minimum": 0,
-      "maximum": 23
+      "maximum": 47
     },
 
     "RecipeIndex": {
@@ -555,7 +555,7 @@
     },
 
     "ControlOperation": {
-      "description": "What a controller may ask for. The operation set is the one part of a generation that may grow without moving the generation: an older body refuses an operation it does not know as unknownOperation, while a body-chosen response field or enum value can surprise a controller after an operation it did know and therefore requires a new generation. Generation 4 adds craft, attack, and sleep, but moved because sense and response value sets widened, not merely because these request names exist.",
+      "description": "What a controller may ask for. The operation set is the one part of a generation that may grow without moving the generation: an older body refuses an operation it does not know as unknownOperation, while a body-chosen response field or enum value can surprise a controller after an operation it did know and therefore requires a new generation. Generation 4 added craft, attack, and sleep, but moved because sense and response value sets widened, not merely because those request names existed. Generation 5 widens only the body-chosen world-observation lists.",
       "type": "string",
       "enum": [
         "handshake",
@@ -968,7 +968,7 @@
             "entities": {
               "description": "The entities the client library was tracking within the radius, nearest first, cut to the limit the request named. Nearest first because that is the order a cut has to be made in for the survivors to be the ones worth keeping, and because a caller applying a tighter bound of its own can then take a prefix. Neither codec checks the order, and that is deliberate rather than an omission: the body sorts by the distance from its eyes, which is not the position this list carries, so a check at either end would be a second and disagreeing measurement of the same scene. It is pinned where it is decided, in the body's own tests.",
               "type": "array",
-              "maxItems": 24,
+              "maxItems": 48,
               "items": { "$ref": "#/$defs/SensedEntity" }
             },
             "entitiesOmitted": {
@@ -980,7 +980,7 @@
             "blocks": {
               "description": "Nearby non-air blocks inside the body's fixed native interaction reach, nearest first, cut independently to the request limit.",
               "type": "array",
-              "maxItems": 24,
+              "maxItems": 48,
               "items": { "$ref": "#/$defs/SensedBlock" }
             },
             "blocksOmitted": {
@@ -992,7 +992,7 @@
             "items": {
               "description": "Dropped-item entities inside the request radius, nearest first, cut independently to the request limit.",
               "type": "array",
-              "maxItems": 24,
+              "maxItems": 48,
               "items": { "$ref": "#/$defs/SensedItem" }
             },
             "itemsOmitted": {

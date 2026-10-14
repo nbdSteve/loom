@@ -1,1 +1,1 @@
-{"op":"craft","protocol":4,"requestId":"res-craft-crafted","agentId":"agent-alpha","state":"ready","outcome":"crafted","elapsedMs":125,"attempted":true,"what":"minecraft:oak_planks","count":8,"crafts":2}
+{"op":"craft","protocol":5,"requestId":"res-craft-crafted","agentId":"agent-alpha","state":"ready","outcome":"crafted","elapsedMs":125,"attempted":true,"what":"minecraft:oak_planks","count":8,"crafts":2}

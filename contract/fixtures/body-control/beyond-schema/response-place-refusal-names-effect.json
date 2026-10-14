@@ -1,1 +1,1 @@
-{"op":"place","protocol":4,"requestId":"req-52","agentId":"agent-alpha","state":"ready","outcome":"destinationBlocked","elapsedMs":3,"what":"minecraft:cobblestone","position":[12,72,-40],"remaining":15}
+{"op":"place","protocol":5,"requestId":"req-52","agentId":"agent-alpha","state":"ready","outcome":"destinationBlocked","elapsedMs":3,"what":"minecraft:cobblestone","position":[12,72,-40],"remaining":15}

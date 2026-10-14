@@ -10,6 +10,7 @@
 package dev.loom.body.player
 
 import dev.loom.body.AgentId
+import dev.loom.body.BODY_SENSE_MAX_OFFERS_PER_KIND
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
@@ -17,6 +18,7 @@ import dev.loom.body.BodyLifecycle
 import dev.loom.body.BodySpawnResult
 import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
+import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
 import dev.loom.bodycontrol.CollectOutcome
@@ -960,13 +962,20 @@ class PlayerSceneSelectionIntegrationTest {
         harness.port.spawn(agent).await()
 
         val first = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
-        val entity = first.surroundings.single { it.kind == ObservationKind.ENTITY }
-        val item = first.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }
+        val entity = first.surroundings.first { it.kind == ObservationKind.ENTITY }
+        val item = first.surroundings.first { it.kind == ObservationKind.DROPPED_ITEM }
         assertCrowdedAudit(harness, first.requestId)
-        assertEquals(16, first.surroundings.size)
-        assertEquals(14, first.surroundings.count { it.kind == ObservationKind.BLOCK })
-        assertEquals(16, first.surroundings.map { it.ref }.distinct().size)
-        assertEquals(2, first.surroundingsOmitted)
+        assertEquals(PERCEPTION_MAX_OBSERVATIONS, first.surroundings.size)
+        for (kind in ObservationKind.entries) {
+            assertEquals(
+                BODY_SENSE_MAX_OFFERS_PER_KIND,
+                first.surroundings.count { it.kind == kind },
+            )
+        }
+        assertEquals(PERCEPTION_MAX_OBSERVATIONS, first.surroundings.map { it.ref }.distinct().size)
+        assertEquals(9, first.surroundingsOmitted)
+        val senseRequest = harness.connector.requests.filterIsInstance<BodyRequest.Sense>().first()
+        assertEquals(BODY_SENSE_MAX_OFFERS_PER_KIND, senseRequest.limit)
 
         val second = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
         val wrongRequest =
@@ -989,19 +998,29 @@ class PlayerSceneSelectionIntegrationTest {
     }
 
     @Test
-    fun `threat scanning sees the selected hostile behind sixteen closer blocks`() {
+    fun `threat scanning sees a hostile behind forty-eight closer blocks`() {
         val agent = AgentId("agent-crowded-threat")
         val harness = crowdedHarness(agent)
         harness.port.spawn(agent).await()
 
         val perception = requireNotNull(harness.port.senseThreat(agent).await())
         val trigger = perception.trigger as Trigger.ThreatSighted
-        val entity = perception.surroundings.single { it.kind == ObservationKind.ENTITY }
+        val entity = perception.surroundings.single { it.ref == trigger.ref }
 
         assertEquals("entity.minecraft.zombie", trigger.threat)
         assertEquals(entity.ref, trigger.ref)
-        assertEquals(14, perception.surroundings.count { it.kind == ObservationKind.BLOCK })
-        assertTrue(perception.surroundings.any { it.kind == ObservationKind.DROPPED_ITEM })
+        assertEquals(
+            BODY_SENSE_MAX_OFFERS_PER_KIND,
+            perception.surroundings.count { it.kind == ObservationKind.BLOCK },
+        )
+        assertEquals(
+            BODY_SENSE_MAX_OFFERS_PER_KIND,
+            perception.surroundings.count { it.kind == ObservationKind.ENTITY },
+        )
+        assertEquals(
+            BODY_SENSE_MAX_OFFERS_PER_KIND,
+            perception.surroundings.count { it.kind == ObservationKind.DROPPED_ITEM },
+        )
         assertTrue(
             harness.port
                 .apply(agent, Intent.Flee(trigger.ref), perception.requestId)
@@ -1010,6 +1029,111 @@ class PlayerSceneSelectionIntegrationTest {
         val flee = harness.connector.requests.filterIsInstance<BodyRequest.Flee>().single()
         assertEquals(perception.requestId, flee.senseId)
         assertEquals(0, flee.entity)
+    }
+
+    @Test
+    @Suppress("LongMethod")
+    fun `dense translation mints every ref builds every hostile candidate and stays tick bounded`() {
+        val agent = AgentId("agent-dense-translation")
+        val identity = playerIdentityOf(agent)
+        val endpoint = BodyControlEndpoint("127.0.0.1", 25_586)
+        val io = Executors.newSingleThreadExecutor()
+        val scheduler = Executors.newSingleThreadScheduledExecutor()
+        val server = FakePlayerServerState()
+        try {
+            val context =
+                PlayerBodyContext(
+                    infrastructure =
+                        PlayerBodyInfrastructure(
+                            identity = identity,
+                            settings =
+                                PlayerBodySettings(
+                                    bodyDirectory = temporary.toAbsolutePath(),
+                                    processDirectory = temporary.resolve(identity.username).toAbsolutePath(),
+                                    controlEndpoint = endpoint,
+                                    connectTimeout = Duration.ofMillis(100),
+                                    requestTimeout = Duration.ofMillis(100),
+                                    movementTimeout = Duration.ofMillis(200),
+                                    startupTimeout = Duration.ofSeconds(1),
+                                    shutdownTimeout = Duration.ofMillis(200),
+                                ),
+                            supervisor = FakeBodySupervisor(endpoint),
+                            connector = FakeControlConnector(),
+                            requestIds = BodyControlRequestIds(scope = identity.username),
+                            io = io,
+                            scheduler = scheduler,
+                        ),
+                    authority =
+                        PlayerBodyAuthority(
+                            main = { task -> task.run() },
+                            registerIdentity = {},
+                            serverState = server,
+                            eventLog = BodyEventLog {},
+                            currentTick = tick::get,
+                        ),
+                )
+            val translator = PlayerSceneTranslator(context)
+
+            fun raw(requestId: String): RawSense {
+                val request =
+                    BodyRequest.Sense(
+                        protocol = dev.loom.bodycontrol.BODY_CONTROL_PROTOCOL_VERSION,
+                        requestId = requestId,
+                        agentId = agent.value,
+                        radius = 24,
+                        limit = BODY_SENSE_MAX_OFFERS_PER_KIND,
+                    )
+                return RawSense(
+                    identity = identity,
+                    capturedTick = tick.get(),
+                    auditSnapshot = server.captureSenseAudit(identity),
+                    connection = FakeControlConnection(identity) { null },
+                    report = crowdedSense(request),
+                )
+            }
+
+            repeat(5) { translator.sceneOf(raw("warm-$it")) }
+            var scene = translator.sceneOf(raw("dense-initial"))
+            val samples = 20
+            var slowestNanos = 0L
+            val started = System.nanoTime()
+            repeat(samples) { sample ->
+                val sampleStarted = System.nanoTime()
+                scene = translator.sceneOf(raw("dense-$sample"))
+                slowestNanos = maxOf(slowestNanos, System.nanoTime() - sampleStarted)
+            }
+            val elapsedNanos = System.nanoTime() - started
+
+            assertTrue(
+                slowestNanos < Duration.ofMillis(50).toNanos(),
+                "the slowest dense translation and ref-minting pass took " +
+                    "${slowestNanos / 1_000_000.0} ms and occupied a whole server tick",
+            )
+            assertTrue(
+                elapsedNanos < Duration.ofMillis(250).toNanos(),
+                "$samples dense translations and ref-minting passes took " +
+                    "${elapsedNanos / 1_000_000.0} ms",
+            )
+            assertEquals(PERCEPTION_MAX_OBSERVATIONS, scene.surroundings.size)
+            assertEquals(BODY_SENSE_MAX_OFFERS_PER_KIND, scene.creatureBindings.size)
+            assertEquals(BODY_SENSE_MAX_OFFERS_PER_KIND, scene.blockBindings.size)
+            assertEquals(BODY_SENSE_MAX_OFFERS_PER_KIND, scene.droppedItemBindings.size)
+            assertEquals(BODY_SENSE_MAX_OFFERS_PER_KIND, scene.candidates.size)
+            assertTrue(scene.candidates.all { it.what == "entity.minecraft.zombie" })
+            assertEquals(
+                scene.surroundings
+                    .filter { it.kind == ObservationKind.ENTITY }
+                    .map { it.ref },
+                scene.candidates.map { it.ref },
+            )
+            assertEquals(
+                PERCEPTION_MAX_OBSERVATIONS,
+                scene.surroundings.map { it.ref }.distinct().size,
+            )
+        } finally {
+            io.shutdownNow()
+            scheduler.shutdownNow()
+        }
     }
 
     private fun crowdedHarness(agent: AgentId): PortHarness =
@@ -1036,11 +1160,17 @@ class PlayerSceneSelectionIntegrationTest {
                             it.requestId == requestId
                     }.perceptionAudit,
             )
-        assertEquals(1, audit.entities.jvmSelectedCount)
+        assertEquals(48, audit.entities.rawBodyListCount)
+        assertEquals(2, audit.entities.bodyReportedOmittedCount)
+        assertEquals(48, audit.entities.jvmSelectedCount)
         assertEquals(0, audit.entities.jvmCutOmittedCount)
-        assertEquals(14, audit.blocks.jvmSelectedCount)
-        assertEquals(2, audit.blocks.jvmCutOmittedCount)
-        assertEquals(1, audit.droppedItems.jvmSelectedCount)
+        assertEquals(48, audit.blocks.rawBodyListCount)
+        assertEquals(3, audit.blocks.bodyReportedOmittedCount)
+        assertEquals(48, audit.blocks.jvmSelectedCount)
+        assertEquals(0, audit.blocks.jvmCutOmittedCount)
+        assertEquals(48, audit.droppedItems.rawBodyListCount)
+        assertEquals(4, audit.droppedItems.bodyReportedOmittedCount)
+        assertEquals(48, audit.droppedItems.jvmSelectedCount)
         assertEquals(0, audit.droppedItems.jvmCutOmittedCount)
     }
 }
@@ -1703,32 +1833,43 @@ private fun fakeSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
 private fun crowdedSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
     fakeSense(request).copy(
         entities =
-            listOf(
+            (0 until BODY_SENSE_MAX_OFFERS_PER_KIND).map { index ->
                 SensedEntity(
                     what = "minecraft:zombie",
-                    position = listOf(5.5, 64.0, 2.5),
-                    visible = true,
-                ),
-            ),
-        blocks =
-            (0 until 16).map { index ->
-                val deltaX = index % 4 - 1
-                val deltaZ = index / 4 - 1
-                SensedBlock(
-                    what = "minecraft:stone",
-                    position = listOf(1 + deltaX, 63, 2 + deltaZ),
+                    position =
+                        listOf(
+                            10.5 + (index % 4) * 0.1,
+                            64.0,
+                            2.5 + (index / 4) * 0.05,
+                        ),
                     visible = true,
                 )
             },
+        entitiesOmitted = 2,
+        blocks =
+            (0 until BODY_SENSE_MAX_OFFERS_PER_KIND).map {
+                SensedBlock(
+                    what = "minecraft:stone",
+                    position = listOf(1, 63, 2),
+                    visible = true,
+                )
+            },
+        blocksOmitted = 3,
         items =
-            listOf(
+            (0 until BODY_SENSE_MAX_OFFERS_PER_KIND).map { index ->
                 SensedItem(
                     what = "minecraft:apple",
                     count = 1,
-                    position = listOf(6.5, 64.0, 2.5),
+                    position =
+                        listOf(
+                            12.5 + (index % 4) * 0.1,
+                            64.0,
+                            2.5 + (index / 4) * 0.05,
+                        ),
                     visible = true,
-                ),
-            ),
+                )
+            },
+        itemsOmitted = 4,
     )
 
 @Suppress("LongMethod")
