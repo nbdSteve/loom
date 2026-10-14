@@ -12,6 +12,7 @@ import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
+import dev.loom.body.GoalEvidence
 import dev.loom.body.describe
 import dev.loom.body.tagOf
 import dev.loom.contract.Decision
@@ -30,12 +31,13 @@ class DecisionJournal(
     private val eventLog: BodyEventLog,
     private val currentTick: () -> Long,
 ) {
-    /** Records that the mind decided, and what it decided with. */
+    /** Records that the mind decided, what it decided with, and what became of its goal choice. */
     fun decided(
         agentId: AgentId,
         decision: Decision,
+        goal: GoalEvidence? = null,
     ) {
-        append(agentId, decision, BodyEvent.DECIDED, "${describe(decision.intent)}: ${decision.reasoning}")
+        append(agentId, decision, BodyEvent.DECIDED, "${describe(decision.intent)}: ${decision.reasoning}", goal)
     }
 
     /**
@@ -95,6 +97,7 @@ class DecisionJournal(
         decision: Decision,
         event: BodyEvent,
         detail: String,
+        goal: GoalEvidence? = null,
     ) {
         eventLog.append(
             BodyEventRecord(
@@ -108,6 +111,7 @@ class DecisionJournal(
                 provenance = decision.provenance,
                 intent = tagOf(decision.intent),
                 decision = decision,
+                goal = goal,
             ),
         )
     }

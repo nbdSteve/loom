@@ -18,7 +18,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use loom_contract::{Decision, Perception, MAX_FOOD_LEVEL, MAX_PERCEPTION_OBSERVATIONS};
+use loom_contract::{
+    Decision, GoalDisposition, Perception, MAX_FOOD_LEVEL, MAX_GOAL_STATEMENT_CHARS,
+    MAX_PERCEPTION_OBSERVATIONS,
+};
 
 /// Absolute path to the repository's `contract/` directory, resolved from this
 /// crate's manifest dir so the test is independent of the working directory.
@@ -391,6 +394,43 @@ fn a_ref_outside_its_length_is_refused_at_decode() {
     let accepted: Perception = serde_json::from_str(&longest)
         .unwrap_or_else(|e| panic!("an eight-character ref should decode: {e}"));
     assert_eq!(accepted.surroundings[0].target_ref, "entity-4");
+}
+
+#[test]
+fn a_goal_statement_outside_its_length_is_refused_at_decode() {
+    // A carried goal is the only state one review hands the next, so its bound is a
+    // type rule rather than a schema note a socket could walk past.
+    let over_long = fs::read_to_string(
+        contract_dir()
+            .join("fixtures/invalid")
+            .join("perception-goal-statement-too-long.json"),
+    )
+    .unwrap();
+    assert!(
+        serde_json::from_str::<Perception>(&over_long).is_err(),
+        "an over-long goal statement decoded into a Perception"
+    );
+    let longest = over_long.replace(
+        &"a".repeat(MAX_GOAL_STATEMENT_CHARS + 1),
+        &"a".repeat(MAX_GOAL_STATEMENT_CHARS),
+    );
+    let accepted: Perception = serde_json::from_str(&longest)
+        .unwrap_or_else(|e| panic!("a goal of exactly the bound should decode: {e}"));
+    assert_eq!(accepted.goal.unwrap().revision, 0);
+
+    let blank = r#"{"requestId":"r","agentId":"a","intent":{"action":"idle"},"reasoning":"x","provenance":{"tier":"ROUTINE","model":"m","promptVersion":"p"},"goal":{"disposition":"revise","statement":""}}"#;
+    assert!(serde_json::from_str::<Decision>(blank).is_err());
+
+    let unknown = fs::read_to_string(
+        contract_dir()
+            .join("fixtures/invalid")
+            .join("decision-goal-unknown-disposition.json"),
+    )
+    .unwrap();
+    assert!(serde_json::from_str::<Decision>(&unknown).is_err());
+    let continued = unknown.replace("pursue", "continue");
+    let decoded: Decision = serde_json::from_str(&continued).unwrap();
+    assert_eq!(decoded.goal.unwrap().disposition, GoalDisposition::Continue);
 }
 
 /// Produce a self-contained schema rooted at the named `$defs` entry, carrying

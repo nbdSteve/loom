@@ -66,6 +66,8 @@ impl<B: ModelBackend> Mind<B> {
                 model: routed.model().to_owned(),
                 prompt_version: routed.prompt_version().to_owned(),
             },
+            // The mind does not yet choose a goal disposition; a carried goal stays unchanged.
+            goal: None,
         })
     }
 }
@@ -147,6 +149,7 @@ mod tests {
             },
             surroundings: vec![],
             surroundings_omitted: 0,
+            goal: None,
         }
     }
 

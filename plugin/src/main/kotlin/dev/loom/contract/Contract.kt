@@ -516,6 +516,8 @@ data class Perception(
      * never observations.
      */
     val surroundingsOmitted: Long,
+    /** The agent's held short-term goal, carried into a goal review only. */
+    val goal: GoalSummary? = null,
 ) {
     init {
         require(surroundings.size <= MAX_PERCEPTION_OBSERVATIONS) {
@@ -525,6 +527,95 @@ data class Perception(
         require(surroundingsOmitted >= 0) {
             "surroundingsOmitted must not be negative, got $surroundingsOmitted"
         }
+    }
+}
+
+/** Longest a goal statement may be, in code points, mirroring the schema. */
+const val MAX_GOAL_STATEMENT_CHARS: Int = 160
+
+/** Longest a goal id or step request id/outcome may be, mirroring the schema. */
+const val MAX_GOAL_ID_CHARS: Int = 64
+
+/** Longest a step's action name may be, mirroring the schema. */
+private const val MAX_GOAL_ACTION_CHARS = 32
+
+private fun requireBoundedText(
+    field: String,
+    text: String,
+    max: Int,
+) {
+    val characters = text.codePointCount(0, text.length)
+    require(characters in 1..max) { "$field must be 1..$max characters, got $characters" }
+}
+
+/** The last step taken under a held goal and the body's outcome tag for it. */
+@Serializable
+data class GoalStep(
+    /** The request id of the decision that took the step. */
+    val requestId: String,
+    /** The [Intent] action that decision chose. */
+    val action: String,
+    /** The body's countable outcome tag for that intent. */
+    val outcome: String,
+) {
+    init {
+        requireBoundedText("goal step requestId", requestId, MAX_GOAL_ID_CHARS)
+        requireBoundedText("goal step action", action, MAX_GOAL_ACTION_CHARS)
+        requireBoundedText("goal step outcome", outcome, MAX_GOAL_ID_CHARS)
+    }
+}
+
+/** The one short-term goal the agent's previous goal review left held. */
+@Serializable
+data class GoalSummary(
+    /** The request id of the decision that adopted the goal. */
+    val goalId: String,
+    /** The goal in the agent's own words. */
+    val statement: String,
+    /** How many times the goal has been revised since it was adopted. */
+    val revision: Long,
+    /** The server tick on which the goal was adopted. */
+    val adoptedTick: Long,
+    /** The last step taken under the goal, once the body has answered it. */
+    val lastStep: GoalStep? = null,
+) {
+    init {
+        requireBoundedText("goalId", goalId, MAX_GOAL_ID_CHARS)
+        requireBoundedText("goal statement", statement, MAX_GOAL_STATEMENT_CHARS)
+        require(revision >= 0) { "goal revision must not be negative, got $revision" }
+        require(adoptedTick >= 0) { "goal adoptedTick must not be negative, got $adoptedTick" }
+    }
+}
+
+/** What a decision does with the agent's short-term goal. */
+@Serializable
+enum class GoalDisposition {
+    @SerialName("adopt")
+    ADOPT,
+
+    @SerialName("continue")
+    CONTINUE,
+
+    @SerialName("revise")
+    REVISE,
+
+    @SerialName("complete")
+    COMPLETE,
+
+    @SerialName("abandon")
+    ABANDON,
+}
+
+/** A decision's explicit choice about the agent's short-term goal. */
+@Serializable
+data class GoalChoice(
+    /** What the decision does with the goal. */
+    val disposition: GoalDisposition,
+    /** The goal's wording, for adopt and revise. */
+    val statement: String? = null,
+) {
+    init {
+        statement?.let { requireBoundedText("goal statement", it, MAX_GOAL_STATEMENT_CHARS) }
     }
 }
 
@@ -747,4 +838,6 @@ data class Decision(
     val reasoning: String,
     /** Reproducibility stamp for the decision log. */
     val provenance: Provenance,
+    /** The decision's explicit goal choice; absent leaves any held goal unchanged. */
+    val goal: GoalChoice? = null,
 )

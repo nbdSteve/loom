@@ -645,6 +645,147 @@ pub struct Perception {
     /// of what the body had; out-of-range and ineligible things are not
     /// omissions, because they were never observations.
     pub surroundings_omitted: i64,
+    /// The agent's held short-term goal, carried into a goal review only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<GoalSummary>,
+}
+
+/// Longest a goal statement may be, in characters, mirroring the schema.
+pub const MAX_GOAL_STATEMENT_CHARS: usize = 160;
+
+/// Longest a goal id or step request id may be, mirroring the schema.
+pub const MAX_GOAL_ID_CHARS: usize = 64;
+
+/// Longest a step's action name may be, mirroring the schema.
+const MAX_GOAL_ACTION_CHARS: usize = 32;
+
+fn refuse_unbounded_text<E>(text: &str, max: usize) -> Result<(), E>
+where
+    E: de::Error,
+{
+    let chars = text.chars().count();
+    if !(1..=max).contains(&chars) {
+        return Err(E::invalid_length(chars, &"a bounded non-empty goal field"));
+    }
+    Ok(())
+}
+
+fn bounded_goal_statement<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let text = String::deserialize(deserializer)?;
+    refuse_unbounded_text(&text, MAX_GOAL_STATEMENT_CHARS)?;
+    Ok(text)
+}
+
+fn bounded_optional_goal_statement<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let text = Option::<String>::deserialize(deserializer)?;
+    if let Some(text) = &text {
+        refuse_unbounded_text(text, MAX_GOAL_STATEMENT_CHARS)?;
+    }
+    Ok(text)
+}
+
+fn bounded_goal_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let text = String::deserialize(deserializer)?;
+    refuse_unbounded_text(&text, MAX_GOAL_ID_CHARS)?;
+    Ok(text)
+}
+
+fn bounded_goal_action<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let text = String::deserialize(deserializer)?;
+    refuse_unbounded_text(&text, MAX_GOAL_ACTION_CHARS)?;
+    Ok(text)
+}
+
+fn nonnegative_goal_count<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = i64::deserialize(deserializer)?;
+    if value < 0 {
+        return Err(de::Error::invalid_value(
+            de::Unexpected::Signed(value),
+            &"a non-negative integer",
+        ));
+    }
+    Ok(value)
+}
+
+/// The last step taken under a held goal and the body's outcome tag for it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GoalStep {
+    /// The request id of the decision that took the step.
+    #[serde(deserialize_with = "bounded_goal_id")]
+    pub request_id: String,
+    /// The `Intent` action that decision chose.
+    #[serde(deserialize_with = "bounded_goal_action")]
+    pub action: String,
+    /// The body's countable outcome tag for that intent.
+    #[serde(deserialize_with = "bounded_goal_id")]
+    pub outcome: String,
+}
+
+/// The one short-term goal the agent's previous goal review left held.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GoalSummary {
+    /// The request id of the decision that adopted the goal.
+    #[serde(deserialize_with = "bounded_goal_id")]
+    pub goal_id: String,
+    /// The goal in the agent's own words.
+    #[serde(deserialize_with = "bounded_goal_statement")]
+    pub statement: String,
+    /// How many times the goal has been revised since it was adopted.
+    #[serde(deserialize_with = "nonnegative_goal_count")]
+    pub revision: i64,
+    /// The server tick on which the goal was adopted.
+    #[serde(deserialize_with = "nonnegative_goal_count")]
+    pub adopted_tick: i64,
+    /// The last step taken under the goal, once the body has answered it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_step: Option<GoalStep>,
+}
+
+/// What a decision does with the agent's short-term goal.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GoalDisposition {
+    #[serde(rename = "adopt")]
+    Adopt,
+    #[serde(rename = "continue")]
+    Continue,
+    #[serde(rename = "revise")]
+    Revise,
+    #[serde(rename = "complete")]
+    Complete,
+    #[serde(rename = "abandon")]
+    Abandon,
+}
+
+/// A decision's explicit choice about the agent's short-term goal.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GoalChoice {
+    /// What the decision does with the goal.
+    pub disposition: GoalDisposition,
+    /// The goal's wording, for adopt and revise.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_goal_statement"
+    )]
+    pub statement: Option<String>,
 }
 
 /// A named intent the mind returns. The body validates and applies it; the mind
@@ -786,4 +927,7 @@ pub struct Decision {
     pub reasoning: String,
     /// Reproducibility stamp for the decision log.
     pub provenance: Provenance,
+    /// The decision's explicit goal choice; absent leaves any held goal unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<GoalChoice>,
 }

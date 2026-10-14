@@ -143,6 +143,8 @@ data class BodyEventRecord(
      * experiment does not have to recover either one from [detail].
      */
     val decision: Decision? = null,
+    /** How [decision]'s goal choice was resolved. Present on [BodyEvent.DECIDED] for goal reviews. */
+    val goal: GoalEvidence? = null,
 )
 
 /**

@@ -11,6 +11,23 @@ const MAX_PUBLIC_STRING = 512
 const MAX_BODY_OFFERS_PER_KIND = 48
 const MAX_MODEL_VISIBLE_OBSERVATIONS = MAX_BODY_OFFERS_PER_KIND * 3
 const PERCEPTION_AUDIT_KINDS = ['entities', 'blocks', 'droppedItems']
+const MAX_GOAL_ID_CHARS = 64
+const GOAL_DISPOSITIONS = ['adopt', 'continue', 'revise', 'complete', 'abandon']
+const GOAL_OUTCOMES = [
+  'goalAdopted',
+  'goalContinued',
+  'goalRevised',
+  'goalCompleted',
+  'goalAbandoned',
+  'goalUnaddressed',
+  'goalStale',
+  'goalNotHeld',
+  'goalAlreadyHeld',
+  'goalStatementMissing',
+  'goalNotReviewed'
+]
+// Outcomes that act on the very goal the answered review was handed.
+const GOAL_CONTINUING_OUTCOMES = ['goalContinued', 'goalRevised', 'goalCompleted']
 
 const PUBLIC_SCAN_PATTERNS = [
   {
@@ -213,6 +230,35 @@ function validatePerceptionAudit (audit, label = 'perception audit') {
   return audit
 }
 
+function validGoalId (value) {
+  return value === undefined ||
+    (typeof value === 'string' && value.length > 0 && value.length <= MAX_GOAL_ID_CHARS)
+}
+
+function validateGoalEvidence (goal, event, label) {
+  if (goal === null || typeof goal !== 'object' || Array.isArray(goal)) {
+    throw new Error(`${label} goal evidence is not an object`)
+  }
+  if (event !== 'decided') throw new Error(`${label} carries goal evidence outside a decided record`)
+  if (!GOAL_OUTCOMES.includes(goal.outcome)) throw new Error(`${label} has an unknown goal outcome`)
+  if (goal.disposition !== undefined && !GOAL_DISPOSITIONS.includes(goal.disposition)) {
+    throw new Error(`${label} has an unknown goal disposition`)
+  }
+  for (const field of ['presentedGoalId', 'goalId', 'expiredGoalId']) {
+    if (!validGoalId(goal[field])) throw new Error(`${label} goal ${field} is not a bounded id`)
+  }
+  for (const field of ['presentedRevision', 'revision']) {
+    if (goal[field] !== undefined && (!Number.isSafeInteger(goal[field]) || goal[field] < 0)) {
+      throw new Error(`${label} goal ${field} must be a non-negative integer`)
+    }
+  }
+  if ((goal.presentedGoalId === undefined) !== (goal.presentedRevision === undefined) ||
+    (goal.goalId === undefined) !== (goal.revision === undefined)) {
+    throw new Error(`${label} goal ids and revisions must be stated together`)
+  }
+  return goal
+}
+
 function selectedPerceptionAuditCount (audit) {
   return PERCEPTION_AUDIT_KINDS.reduce(
     (sum, kind) => sum + audit[kind].jvmSelectedCount,
@@ -270,6 +316,10 @@ function normalizeBodyRecord (
     }
   }
 
+  if (record.goal !== undefined && record.goal !== null) {
+    validateGoalEvidence(record.goal, record.event, `body evidence line ${index + 1}`)
+  }
+
   const requestId = record.requestId ?? record.perception?.requestId ?? record.decision?.requestId
   const summary = record.event === 'cognitionUnavailable'
     ? `cognition unavailable: ${record.outcome ?? 'unclassified'}`
@@ -299,7 +349,8 @@ function normalizeBodyRecord (
     'witness',
     'perception',
     'perceptionAudit',
-    'decision'
+    'decision',
+    'goal'
   ]) {
     if (record[field] !== undefined && record[field] !== null) {
       normalized[field] = sanitizeValue(record[field], state)
@@ -683,6 +734,8 @@ function deriveMetrics (records, configuredAgents = []) {
       ]
     }
   }
+  const goalRecords = bodyRecords.filter((record) => record.goal !== undefined)
+  if (goalRecords.length > 0) result.goalContinuity = goalContinuityMetrics(goalRecords)
   if (perceptionAudits.length > 0) {
     result.perceptionAudit = perceptionAuditMetrics(perceptionAudits, byEvent.perceived ?? 0)
   }
@@ -693,6 +746,42 @@ function deriveMetrics (records, configuredAgents = []) {
     result.primaryBehavior = primaryBehaviorMetrics(harnessRecords, stimulusRecords)
   }
   return sortedValue(result)
+}
+
+// Continuity is a join of typed fields: a review continued a goal only when the body
+// resolved its choice against the exact goal that review's perception carried.
+function goalContinuityMetrics (records) {
+  const byOutcome = {}
+  const agents = new Map()
+  for (const record of records) {
+    validateGoalEvidence(record.goal, record.event, record.recordId)
+    const goal = record.goal
+    increment(byOutcome, goal.outcome)
+    const agent = agents.get(record.agentId) ?? {
+      agentId: record.agentId,
+      byOutcome: {},
+      goalsAdopted: 0,
+      continuingReviews: 0
+    }
+    increment(agent.byOutcome, goal.outcome)
+    if (goal.outcome === 'goalAdopted') agent.goalsAdopted += 1
+    const actedOnCarriedGoal =
+      GOAL_CONTINUING_OUTCOMES.includes(goal.outcome) &&
+      goal.presentedGoalId !== undefined &&
+      (goal.outcome === 'goalCompleted' || goal.goalId === goal.presentedGoalId)
+    if (actedOnCarriedGoal) agent.continuingReviews += 1
+    agents.set(record.agentId, agent)
+  }
+  const sortedAgents = [...agents.values()]
+    .sort((first, second) => first.agentId.localeCompare(second.agentId))
+    .map((agent) => ({ ...agent, byOutcome: sortedValue(agent.byOutcome) }))
+  return {
+    byOutcome: sortedValue(byOutcome),
+    agents: sortedAgents,
+    agentsWithContinuity: sortedAgents
+      .filter((agent) => agent.continuingReviews > 0)
+      .map((agent) => agent.agentId)
+  }
 }
 
 function perceptionAuditMetrics (records, perceivedCount) {

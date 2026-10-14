@@ -361,6 +361,10 @@
           "description": "How many otherwise eligible observations the body's own count bound dropped before this perception was serialized: things that were in range, alive and would have been described, and are not in surroundings. Required and never negative, so a mind cannot read the absence of the field as a complete view of the scene. Zero is the ordinary case and says the list is everything the body had. Out-of-range and ineligible things are not omissions - they were never observations.",
           "type": "integer",
           "minimum": 0
+        },
+        "goal": {
+          "description": "The agent's held short-term goal, present only on a goalReview perception and only while one is held.",
+          "$ref": "#/$defs/GoalSummary"
         }
       }
     },
@@ -533,6 +537,84 @@
       ]
     },
 
+    "GoalStatement": {
+      "description": "One short-term goal in the agent's own words. Bounded so a carried goal can never grow a perception: it is the whole of what one review hands the next.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+
+    "GoalDisposition": {
+      "description": "What a goal review's decision does with the agent's short-term goal. adopt starts one where none is held; continue keeps the held goal; revise rewords the held goal under the same goalId; complete and abandon end it. Choosing any of them is independent of the intent, so continuing a goal while idling is legal.",
+      "type": "string",
+      "enum": ["adopt", "continue", "revise", "complete", "abandon"]
+    },
+
+    "GoalChoice": {
+      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. statement is the goal's wording for adopt and revise; the body refuses an adopt or revise without one, and ignores it on the other dispositions.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["disposition"],
+      "properties": {
+        "disposition": { "$ref": "#/$defs/GoalDisposition" },
+        "statement": { "$ref": "#/$defs/GoalStatement" }
+      }
+    },
+
+    "GoalStep": {
+      "description": "The last step taken under a held goal: the decision that most recently adopted, continued, or revised it, the intent it chose, and the body's own outcome tag for that intent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "action", "outcome"],
+      "properties": {
+        "requestId": {
+          "description": "The request id of that decision, so the step joins to its decided and intentApplied records.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "action": {
+          "description": "The Intent.action that decision chose.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "outcome": {
+          "description": "The body's countable outcome tag for that intent, the same tag its intentApplied record carries.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      }
+    },
+
+    "GoalSummary": {
+      "description": "The one short-term goal the agent's previous goal review left held, carried into this goal review and no other trigger. Body-owned state, isolated per agent and bounded in size and lifetime.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goalId", "statement", "revision", "adoptedTick"],
+      "properties": {
+        "goalId": {
+          "description": "Stable for the goal's whole life: the request id of the decision that adopted it.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "statement": { "$ref": "#/$defs/GoalStatement" },
+        "revision": {
+          "description": "How many times the goal has been revised since it was adopted.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "adoptedTick": {
+          "description": "The server tick on which the goal was adopted.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastStep": { "$ref": "#/$defs/GoalStep" }
+      }
+    },
+
     "Provenance": {
       "description": "Reproducibility stamp attached to every decision and written to the append-only decision log, so each decision's perception -> reasoning -> action -> result chain can be replayed and audited.",
       "type": "object",
@@ -570,7 +652,11 @@
           "description": "The mind's natural-language justification, logged for research.",
           "type": "string"
         },
-        "provenance": { "$ref": "#/$defs/Provenance" }
+        "provenance": { "$ref": "#/$defs/Provenance" },
+        "goal": {
+          "description": "The decision's explicit choice about the agent's short-term goal. Absent means no choice, which leaves any held goal unchanged.",
+          "$ref": "#/$defs/GoalChoice"
+        }
       }
     }
   }

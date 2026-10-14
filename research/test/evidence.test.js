@@ -367,3 +367,85 @@ test('malformed partial oversized and excessive evidence is refused', () => {
     maxRecords: 2
   }), /record bound/)
 })
+
+function normalizedWithGoals (decorate) {
+  const directory = temporaryDirectory()
+  const bodyFile = path.join(directory, 'body.jsonl')
+  const harnessFile = path.join(directory, 'harness.jsonl')
+  const raw = fixedRawRecords()
+  for (const record of raw.body) decorate(record)
+  writeJsonLines(bodyFile, raw.body)
+  writeJsonLines(harnessFile, raw.harness)
+  return normalizeEvidence({
+    experimentId: '2026-10-12-scripted-tribe-crash-proof',
+    bodyFile,
+    harnessFile,
+    outputFile: path.join(directory, 'evidence.jsonl'),
+    maxInputBytes: 1024 * 1024,
+    maxOutputBytes: 1024 * 1024,
+    maxRecords: 1000
+  })
+}
+
+test('goal continuity is derived from typed goal evidence rather than prose', () => {
+  const goals = {
+    'tribe-alpha:sense-1': { outcome: 'goalStale', disposition: 'adopt' },
+    'tribe-beta:sense-1': { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'sense-1', revision: 0 },
+    'tribe-beta:sense-2': {
+      outcome: 'goalContinued',
+      disposition: 'continue',
+      presentedGoalId: 'sense-1',
+      presentedRevision: 0,
+      goalId: 'sense-1',
+      revision: 0
+    },
+    'tribe-gamma:sense-1': { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'sense-1', revision: 0 },
+    'tribe-gamma:sense-2': {
+      outcome: 'goalUnaddressed',
+      presentedGoalId: 'sense-1',
+      presentedRevision: 0,
+      goalId: 'sense-1',
+      revision: 0
+    }
+  }
+  const normalized = normalizedWithGoals((record) => {
+    const goal = goals[`${record.agentId}:${record.requestId}`]
+    if (record.event === 'decided' && goal !== undefined) record.goal = goal
+  })
+  const continued = normalized.records.find((record) => record.requestKey === 'tribe-beta:sense-2' && record.event === 'decided')
+  assert.deepEqual(continued.goal, goals['tribe-beta:sense-2'])
+
+  const metrics = deriveMetrics(normalized.records)
+  assert.deepEqual(metrics.goalContinuity.agentsWithContinuity, ['tribe-beta'])
+  assert.equal(metrics.goalContinuity.byOutcome.goalAdopted, 2)
+  const gamma = metrics.goalContinuity.agents.find((agent) => agent.agentId === 'tribe-gamma')
+  assert.equal(gamma.continuingReviews, 0, 'holding a goal without choosing to continue it is not continuity')
+
+  // A continue recorded against a goal other than the one carried proves nothing.
+  const elsewhere = normalizedWithGoals((record) => {
+    if (record.event === 'decided' && record.agentId === 'tribe-beta' && record.requestId === 'sense-2') {
+      record.goal = { ...goals['tribe-beta:sense-2'], goalId: 'sense-9' }
+    }
+  })
+  assert.deepEqual(deriveMetrics(elsewhere.records).goalContinuity.agentsWithContinuity, [])
+})
+
+test('evidence without goal records derives no goal continuity section', () => {
+  const metrics = deriveMetrics(normalizedWithGoals(() => {}).records)
+  assert.equal(metrics.goalContinuity, undefined)
+})
+
+test('malformed goal evidence is refused at normalization', () => {
+  const cases = [
+    [{ event: 'decided' }, { outcome: 'goalPursued' }],
+    [{ event: 'perceived' }, { outcome: 'goalAdopted' }],
+    [{ event: 'decided' }, { outcome: 'goalAdopted', goalId: 'sense-1' }],
+    [{ event: 'decided' }, { outcome: 'goalAdopted', goalId: 'x'.repeat(65), revision: 0 }],
+    [{ event: 'decided' }, { outcome: 'goalRevised', disposition: 'pursue' }]
+  ]
+  for (const [{ event }, goal] of cases) {
+    assert.throws(() => normalizedWithGoals((record) => {
+      if (record.event === event && record.agentId === 'tribe-beta') record.goal = goal
+    }), /goal/)
+  }
+})

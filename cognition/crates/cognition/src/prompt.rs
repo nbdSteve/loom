@@ -615,6 +615,7 @@ mod tests {
                 count: None,
             }],
             surroundings_omitted: 0,
+            goal: None,
         }
     }
 

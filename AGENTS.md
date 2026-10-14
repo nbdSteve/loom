@@ -274,6 +274,10 @@ Three subtleties are load-bearing:
 
 `PerAgentCognitionBridge` sits in front of that globally bounded bridge and caps outstanding requests by `perception.agentId`. Its budget is admission fairness, not another worker pool: exhausting one agent's `LOOM_COGNITION_PENDING_PER_AGENT` slots yields `agentBudgetExhausted` for that agent while another can still use the shared workers and queue. The slot is released on every future ending.
 
+**Short-term goal continuity is JVM state, not mind memory.**
+`GoalLedger` (`dev.loom.mind`) holds at most one goal per agent: `EmbodiedCognition.submit` attaches it as `Perception.goal` to goal reviews only, `actOn` resolves the decision's optional `Decision.goal` choice against the exact goal that perception carried, and the body's outcome tag for the affirming decision becomes the next review's `lastStep`.
+The ledger file's header owns the rules (agent keying, stale-basis refusal for concurrent reviews, server-tick lifetime, and clearing on `spawned`/`bodyDisconnected`/`despawned`/`died`/`witnessRevived` via `GoalLedger.watching` on the log); `GoalEvidence` on the `decided` record is the typed result, and `research/lib/evidence.js` derives `goalContinuity` from it only when present so committed metrics stay re-derivable.
+
 Importance is classified above the body port by `importanceOf` (`Importance.kt`), not by the body and not by the mind: the body reports what happened, and what that costs is this side's call.
 `EmbodiedCognition` is the only place the two ports meet - perceive on the main thread, decide off it, apply back on it through the `MainThread` port.
 `BodyPort.tick` still never invokes cognition; the contract has no per-tick `Trigger`, and `BodyBoundaryTest` forbids `dev.loom.body..` from depending on `dev.loom.mind..` at all, so the tick path cannot reach a mind even by accident.

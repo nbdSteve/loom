@@ -267,6 +267,24 @@ class ContractConformanceTest {
         }
     }
 
+    /** A carried goal is bounded by the binding, so no review can hand the next an unbounded one. */
+    @Test
+    fun aGoalStatementOutsideItsLengthIsRefusedAtDecode() {
+        val over = fixtureText("invalid", "perception-goal-statement-too-long.json")
+        assertThrows<IllegalArgumentException>("an over-long goal decoded into a Perception") {
+            LoomJson.decodeFromString<Perception>(over)
+        }
+        val longest = over.replace("a".repeat(MAX_GOAL_STATEMENT_CHARS + 1), "a".repeat(MAX_GOAL_STATEMENT_CHARS))
+        assertEquals(0L, LoomJson.decodeFromString<Perception>(longest).goal?.revision)
+
+        val unknown = fixtureText("invalid", "decision-goal-unknown-disposition.json")
+        assertThrows<IllegalArgumentException> { LoomJson.decodeFromString<Decision>(unknown) }
+        assertEquals(
+            GoalDisposition.CONTINUE,
+            LoomJson.decodeFromString<Decision>(unknown.replace("pursue", "continue")).goal?.disposition,
+        )
+    }
+
     private fun fixtureText(
         subdir: String,
         name: String,

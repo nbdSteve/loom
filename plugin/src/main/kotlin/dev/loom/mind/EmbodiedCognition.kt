@@ -20,6 +20,7 @@ package dev.loom.mind
 import dev.loom.body.AgentId
 import dev.loom.body.BodyPort
 import dev.loom.body.IntentOutcome
+import dev.loom.body.tagOf
 import dev.loom.contract.Decision
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
@@ -58,6 +59,8 @@ data class CognitionCallbacks(
  * @param journal where every decision is durably recorded. Not optional and not a
  *   callback: a decision that reached a body without reaching the record would
  *   leave a run unable to say why an agent acted.
+ * @param goals each agent's short-term goal, carried into its goal reviews and
+ *   resolved against the decisions that answer them.
  * @param callbacks operator reporting for applied, unanswered and unavailable
  *   body work. Every callback runs on the main thread.
  *   A lost decision is visible rather than silent. Called on the main thread,
@@ -71,6 +74,7 @@ class EmbodiedCognition(
     private val mainThread: MainThread,
     private val journal: DecisionJournal,
     private val callbacks: CognitionCallbacks = CognitionCallbacks(),
+    private val goals: GoalLedger = GoalLedger(),
 ) {
     /**
      * Captures [agentId]'s perception of [trigger] and sets cognition going.
@@ -118,12 +122,18 @@ class EmbodiedCognition(
         agentId: AgentId,
         perception: Perception,
     ) {
-        mind.submit(perception).whenComplete { decision, failure ->
+        val carried =
+            if (perception.trigger == Trigger.GoalReview) {
+                perception.copy(goal = goals.present(agentId, perception.requestId, perception.capturedTick))
+            } else {
+                perception
+            }
+        mind.submit(carried).whenComplete { decision, failure ->
             // This runs on a bridge thread. Everything past here touches the body,
             // so it goes through the main thread or not at all.
             mainThread.execute {
                 if (decision == null) {
-                    lost(agentId, perception, failure ?: missingBoth(perception))
+                    lost(agentId, carried, failure ?: missingBoth(carried))
                 } else {
                     actOn(agentId, decision)
                 }
@@ -170,6 +180,7 @@ class EmbodiedCognition(
         perception: Perception,
         failure: Throwable,
     ) {
+        goals.forget(agentId, perception.requestId)
         val classified = failureOf(failure)
         journal.unavailable(agentId, perception, classified.tag, failure.message ?: classified.toString())
         callbacks.onUnavailable(perception, failure)
@@ -188,7 +199,7 @@ class EmbodiedCognition(
         agentId: AgentId,
         decision: Decision,
     ) {
-        journal.decided(agentId, decision)
+        journal.decided(agentId, decision, goals.resolve(agentId, decision))
         bodies.apply(agentId, decision.intent, decision.requestId).whenComplete { outcome, failure ->
             mainThread.execute {
                 val applied =
@@ -201,6 +212,7 @@ class EmbodiedCognition(
                 // Cognition is asynchronous, so an agent can die or disconnect between
                 // perceiving and acting. The body records nothing for a decision it never
                 // received, so the loss is recorded here or nowhere.
+                goals.stepped(agentId, decision.requestId, tagOf(decision.intent), tagOf(applied))
                 if (applied == IntentOutcome.NoSuchBody) {
                     journal.discarded(agentId, decision)
                 }

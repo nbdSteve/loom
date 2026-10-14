@@ -22,6 +22,7 @@ import dev.loom.mind.CognitionCallbacks
 import dev.loom.mind.CognitionSettings
 import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
+import dev.loom.mind.GoalLedger
 import dev.loom.mind.GoalReviewSchedule
 import dev.loom.mind.PerAgentCognitionBridge
 import dev.loom.mind.THREAT_SCAN_CADENCE
@@ -98,8 +99,9 @@ class LoomPlugin : JavaPlugin() {
 
         val watched = Observatory()
         observatory = watched
+        val goals = GoalLedger()
         val log =
-            ObservedEventLog(file, watched::saw) { failure ->
+            ObservedEventLog(goals.watching(file), watched::saw) { failure ->
                 logger.warning("observer display failed: ${failure.message}")
             }
 
@@ -110,7 +112,7 @@ class LoomPlugin : JavaPlugin() {
         val port = createPlayerBody(log, witness)
         bodyPort = port
 
-        val mind = connectMind(port, log)
+        val mind = connectMind(port, log, goals)
         bind(
             BODY_COMMAND,
             BodyCommand(port, mind) { message -> logger.info(message) },
@@ -247,6 +249,7 @@ class LoomPlugin : JavaPlugin() {
     private fun connectMind(
         bodies: BodyPort,
         eventLog: BodyEventLog,
+        goals: GoalLedger,
     ): EmbodiedCognition {
         val settings = CognitionSettings.fromEnvironment()
         val wire =
@@ -289,6 +292,7 @@ class LoomPlugin : JavaPlugin() {
             mind = fair,
             mainThread = BukkitMainThread(this),
             journal = DecisionJournal(eventLog, currentTick = { server.currentTick.toLong() }),
+            goals = goals,
             callbacks =
                 CognitionCallbacks(
                     onApplied = ::reportApplied,
