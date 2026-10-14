@@ -279,6 +279,14 @@ test('primary behavior preflight refuses native review plans outside per-agent o
     validateRunConfig(global)
       .includes('planned native reviews exceed the global cognition call ceiling')
   )
+
+  const workers = goalContinuityConfig()
+  assert.deepEqual(validateRunConfig(workers), [])
+  workers.runtime.cognitionBridge.workers = workers.cognition.globalOutstandingCeiling + 1
+  assert.ok(
+    validateRunConfig(workers)
+      .includes('primary behavior bridge workers must not exceed the global outstanding ceiling')
+  )
 })
 
 test('preflight refuses unsafe public fields before launch', () => {

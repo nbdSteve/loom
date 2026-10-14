@@ -147,7 +147,10 @@ planned native schedule is six calls: two reviews for each of three agents. Its
 preflight rejects a configuration unless those calls fit both the per-agent and
 global ceilings. The pilot proposal permits four calls per agent, twelve
 globally, and three outstanding, leaving bounded room for native event-triggered
-cognition. Every forwarded or refused cognition record carries either
+cognition. Preflight also refuses more cognition bridge workers than outstanding
+slots, because the bridge would then send a fourth concurrent request that the
+proxy can only refuse; with three workers that request waits in the bridge's
+bounded queue instead. Every forwarded or refused cognition record carries either
 `nativeGoalReviewSchedule` or `nativeEventDriver` as its origin. Publication
 also requires the one run-level attestation that the harness issued zero think
 commands and that native schedulers were the only cognition source.

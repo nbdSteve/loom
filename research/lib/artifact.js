@@ -231,6 +231,13 @@ function primaryBehaviorErrors (config) {
   ) {
     errors.push('the primary behavior mode must retain the 4/12/3 cognition ceilings')
   }
+  // More bridge workers than outstanding slots turns ordinary concurrency into refusals.
+  if (
+    !Number.isInteger(config.runtime?.cognitionBridge?.workers) ||
+    config.runtime.cognitionBridge.workers > config.cognition?.globalOutstandingCeiling
+  ) {
+    errors.push('primary behavior bridge workers must not exceed the global outstanding ceiling')
+  }
   if (
     config.cognition?.providerTimeoutMillis !== 12_000 ||
     config.cognition?.maxRequestBytes !== 65_536 ||
