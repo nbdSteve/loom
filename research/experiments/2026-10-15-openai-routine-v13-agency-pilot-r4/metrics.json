@@ -1,0 +1,513 @@
+{
+  "behavior": {
+    "attackIntents": 0,
+    "byIntent": {
+      "dig": 1,
+      "flee": 5,
+      "idle": 2,
+      "moveTo": 1
+    },
+    "byOutcome": {
+      "accepted": 9,
+      "failed": 1,
+      "retreatSafe": 5,
+      "serverEffectConfirmed": 1,
+      "threatDebounced": 8,
+      "threatUnchanged": 15
+    },
+    "deaths": 0,
+    "decisionsByIntent": {
+      "dig": 1,
+      "flee": 5,
+      "idle": 2,
+      "moveTo": 1
+    },
+    "disconnects": 0,
+    "movementRecords": 5,
+    "sleepIntents": 0,
+    "speechIntents": 0,
+    "witnessDisputeRecords": 0,
+    "witnessDisputesByOutcome": {},
+    "worldInteractionRecords": 1
+  },
+  "behaviorGate": {
+    "calls": {
+      "forwardedByAgent": {
+        "tribe-alpha": 4,
+        "tribe-beta": 4,
+        "tribe-gamma": 1
+      },
+      "forwardedPerThousandTicks": 3.62757,
+      "peakOutstanding": 2
+    },
+    "cleanupVerified": true,
+    "externalSpendNanoUsd": 5577980,
+    "goalContinuityAgents": [],
+    "goalReviewActions": {
+      "accepted": 2,
+      "acceptedAndConfirmedRate": 1,
+      "byConfirmation": {
+        "movement": 1,
+        "serverEffect": 1
+      },
+      "confirmed": 2,
+      "nonIdle": 2
+    },
+    "manualCriteria": [
+      "each counted meaningful behavior has an evidence-grounded aim",
+      "no counted action is justified only by being active",
+      "no cross-agent goal leakage in the typed fields"
+    ],
+    "meaningfulBehaviorByAgent": {
+      "tribe-beta": 1,
+      "tribe-gamma": 1
+    },
+    "nightPerceptionsByAgent": {},
+    "omissionsByKind": {
+      "blocks": {
+        "bodyReportedOmissionShare": 0.632184,
+        "bodyReportedOmittedCount": 825,
+        "jvmCutOmittedCount": 0,
+        "rawBodyListCount": 480
+      },
+      "droppedItems": {
+        "bodyReportedOmissionShare": 0,
+        "bodyReportedOmittedCount": 0,
+        "jvmCutOmittedCount": 0,
+        "rawBodyListCount": 0
+      },
+      "entities": {
+        "bodyReportedOmissionShare": 0,
+        "bodyReportedOmittedCount": 0,
+        "jvmCutOmittedCount": 0,
+        "rawBodyListCount": 26
+      }
+    },
+    "pilotCriteria": {
+      "completeNativeReviews": false,
+      "meaningfulBehaviorAgents": true,
+      "noFailureEvidence": false,
+      "noJvmCut": true,
+      "typedGoalContinuity": false
+    },
+    "pilotVerdict": "no-go",
+    "version": "loom-primary-behavior-gate/1"
+  },
+  "cognition": {
+    "decisionsByStamp": [
+      {
+        "decisions": 6,
+        "model": "gpt-5.4-nano",
+        "promptVersion": "notable-v13",
+        "tier": "NOTABLE"
+      },
+      {
+        "decisions": 3,
+        "model": "gpt-5.4-nano",
+        "promptVersion": "routine-v13",
+        "tier": "ROUTINE"
+      }
+    ],
+    "externalSpendNanoUsd": 5577980,
+    "externalSpendUsd": 0.00557798,
+    "forwardedCalls": 9,
+    "providerUsageCalls": 9,
+    "refusedCalls": 1,
+    "usageByModel": {
+      "gpt-5.4-nano": {
+        "cachedPromptTokens": 12544,
+        "calls": 9,
+        "completionTokens": 730,
+        "costNanoUsd": 5577980,
+        "promptTokens": 34617,
+        "totalTokens": 35347
+      }
+    }
+  },
+  "controlledStop": {
+    "admissionClosures": 1,
+    "behavioralVerdict": "no-go",
+    "chains": {
+      "complete": 9,
+      "refused": 1
+    },
+    "forwardedAfterClose": 0,
+    "forwardedAtClose": 9,
+    "kind": "cognitionBudgetExhausted",
+    "nativeReviews": {
+      "attemptedBeforeStop": 4,
+      "byAgent": {
+        "tribe-alpha": {
+          "attempted": 2,
+          "completed": 1,
+          "maximum": 2,
+          "minimum": 1
+        },
+        "tribe-beta": {
+          "attempted": 1,
+          "completed": 1,
+          "maximum": 2,
+          "minimum": 1
+        },
+        "tribe-gamma": {
+          "attempted": 1,
+          "completed": 1,
+          "maximum": 2,
+          "minimum": 1
+        }
+      },
+      "completed": 3,
+      "planned": 6,
+      "plannedPerAgent": 2
+    },
+    "outstandingAtClose": 0,
+    "reason": "controlledStop",
+    "refusal": {
+      "bound": "perAgentCall",
+      "ceiling": 4,
+      "observed": 4,
+      "unit": "calls"
+    },
+    "refusedAfterClose": 0,
+    "stopTick": 2500,
+    "trigger": {
+      "agentId": "tribe-alpha",
+      "importance": "ROUTINE",
+      "origin": "nativeGoalReviewSchedule",
+      "requestKey": "tribe-alpha:loomaa88da42d7-sense-8y",
+      "trigger": "goalReview"
+    },
+    "usage": {
+      "cachedPromptTokens": 12544,
+      "completionTokens": 730,
+      "costNanoUsd": 5577980,
+      "costUsd": 0.00557798,
+      "promptTokens": 34617,
+      "providerCalls": 9,
+      "totalTokens": 35347
+    },
+    "windowTicks": 2480
+  },
+  "crashContainment": {
+    "cleanupVerified": true,
+    "controlledCrashes": [],
+    "peerDecisionsAfterCrash": {}
+  },
+  "cycles": {
+    "applied": 9,
+    "decided": 9,
+    "discarded": 0,
+    "incomplete": [],
+    "perceived": 10,
+    "unavailable": 1
+  },
+  "findings": {
+    "counterevidence": [
+      "No agent produced a speech intent.",
+      "No attack intent was applied."
+    ],
+    "interpretations": [
+      "Counts describe recorded behavior only; they do not establish motive, cooperation, specialization, hierarchy, or emergence."
+    ],
+    "limitations": [
+      "Perception positions are samples rather than continuous trajectories.",
+      "One bounded live-model run cannot establish that an observed pattern is stable or emergent.",
+      "The run ended in a controlled cognitionBudgetExhausted stop after 3 of 6 planned native reviews; its behavioral verdict is no-go."
+    ],
+    "observations": [
+      "2 bounded co-location sample(s) placed two agents within eight blocks"
+    ]
+  },
+  "goalContinuity": {
+    "agents": [
+      {
+        "agentId": "tribe-alpha",
+        "byOutcome": {
+          "goalAdopted": 1
+        },
+        "continuingReviews": 0,
+        "goalsAdopted": 1
+      },
+      {
+        "agentId": "tribe-beta",
+        "byOutcome": {
+          "goalAdopted": 1
+        },
+        "continuingReviews": 0,
+        "goalsAdopted": 1
+      },
+      {
+        "agentId": "tribe-gamma",
+        "byOutcome": {
+          "goalAdopted": 1
+        },
+        "continuingReviews": 0,
+        "goalsAdopted": 1
+      }
+    ],
+    "agentsWithContinuity": [],
+    "byOutcome": {
+      "goalAdopted": 3
+    }
+  },
+  "perceptionAudit": {
+    "byKind": {
+      "blocks": {
+        "bodyReportedOmittedCount": 825,
+        "jvmCutOmittedCount": 0,
+        "jvmSelectedCount": 480,
+        "rawBodyListCount": 480,
+        "samples": 10
+      },
+      "droppedItems": {
+        "bodyReportedOmittedCount": 0,
+        "jvmCutOmittedCount": 0,
+        "jvmSelectedCount": 0,
+        "rawBodyListCount": 0,
+        "samples": 10
+      },
+      "entities": {
+        "bodyReportedOmittedCount": 0,
+        "jvmCutOmittedCount": 0,
+        "jvmSelectedCount": 26,
+        "rawBodyListCount": 26,
+        "samples": 10
+      }
+    },
+    "complete": true,
+    "initialByAgent": [
+      {
+        "agentId": "tribe-alpha",
+        "capturedTick": 99,
+        "inventoryStacks": 0,
+        "position": [
+          10.5,
+          68,
+          3.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 67
+        }
+      },
+      {
+        "agentId": "tribe-beta",
+        "capturedTick": 199,
+        "inventoryStacks": 0,
+        "position": [
+          1.5,
+          68,
+          1.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 168
+        }
+      },
+      {
+        "agentId": "tribe-gamma",
+        "capturedTick": 299,
+        "inventoryStacks": 0,
+        "position": [
+          -9.5,
+          68,
+          -7.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 265
+        }
+      }
+    ],
+    "samples": 10
+  },
+  "primaryBehavior": {
+    "configuredInitialPositions": {
+      "tribe-alpha": [
+        10.5,
+        68,
+        3.5
+      ],
+      "tribe-beta": [
+        1.5,
+        68,
+        1.5
+      ],
+      "tribe-gamma": [
+        -9.5,
+        68,
+        -7.5
+      ]
+    },
+    "configuredInitialWorldClock": {
+      "day": 0,
+      "isDay": true,
+      "timeOfDay": 0
+    },
+    "externalCognitionStimuli": "none",
+    "harnessThinkCommandsIssued": 0,
+    "initialConditionAttestations": 1,
+    "nativeGoalReviewSchedule": {
+      "cadenceTicks": 2400,
+      "expectedReviewsPerAgent": 2,
+      "sliceTicks": 100
+    },
+    "nativeGoalReviewsByAgent": {
+      "tribe-alpha": 1,
+      "tribe-beta": 1,
+      "tribe-gamma": 1
+    },
+    "nativeSchedulersOnly": true,
+    "requestsByOrigin": {
+      "nativeEventDriver": 6,
+      "nativeGoalReviewSchedule": 4
+    },
+    "startingInventories": "empty",
+    "stimulusAttestations": 1
+  },
+  "records": {
+    "agents": [
+      {
+        "actions": 4,
+        "agentId": "tribe-alpha",
+        "appliedByIntent": {
+          "flee": 3,
+          "idle": 1
+        },
+        "byEvent": {
+          "cognitionUnavailable": 1,
+          "decided": 4,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 4,
+          "moved": 2,
+          "perceived": 5,
+          "retreating": 3,
+          "spawned": 1,
+          "threatSuppressed": 2,
+          "witnessJoined": 1
+        },
+        "byOutcome": {
+          "accepted": 4,
+          "failed": 1,
+          "retreatSafe": 3,
+          "threatDebounced": 2
+        },
+        "decisions": 4,
+        "decisionsByIntent": {
+          "flee": 3,
+          "idle": 1
+        },
+        "records": 25
+      },
+      {
+        "actions": 4,
+        "agentId": "tribe-beta",
+        "appliedByIntent": {
+          "flee": 2,
+          "idle": 1,
+          "moveTo": 1
+        },
+        "byEvent": {
+          "decided": 4,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 4,
+          "moved": 3,
+          "perceived": 4,
+          "retreating": 2,
+          "spawned": 1,
+          "threatSuppressed": 21,
+          "witnessJoined": 1
+        },
+        "byOutcome": {
+          "accepted": 4,
+          "retreatSafe": 2,
+          "threatDebounced": 6,
+          "threatUnchanged": 15
+        },
+        "decisions": 4,
+        "decisionsByIntent": {
+          "flee": 2,
+          "idle": 1,
+          "moveTo": 1
+        },
+        "records": 42
+      },
+      {
+        "actions": 1,
+        "agentId": "tribe-gamma",
+        "appliedByIntent": {
+          "dig": 1
+        },
+        "byEvent": {
+          "decided": 1,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 1,
+          "perceived": 1,
+          "spawned": 1,
+          "witnessJoined": 1,
+          "worldInteraction": 1
+        },
+        "byOutcome": {
+          "accepted": 1,
+          "serverEffectConfirmed": 1
+        },
+        "decisions": 1,
+        "decisionsByIntent": {
+          "dig": 1
+        },
+        "records": 8
+      }
+    ],
+    "body": 75,
+    "byEvent": {
+      "cognitionUnavailable": 1,
+      "decided": 9,
+      "despawned": 3,
+      "healthChanged": 3,
+      "intentApplied": 9,
+      "moved": 5,
+      "perceived": 10,
+      "retreating": 5,
+      "spawned": 3,
+      "threatSuppressed": 23,
+      "witnessJoined": 3,
+      "worldInteraction": 1
+    },
+    "harness": 32,
+    "total": 107
+  },
+  "schemaVersion": "loom-derived-metrics/1",
+  "spatial": {
+    "coLocationSamples": [
+      {
+        "agents": [
+          "tribe-alpha",
+          "tribe-beta"
+        ],
+        "distanceBlocks": 2,
+        "tick": 460
+      },
+      {
+        "agents": [
+          "tribe-alpha",
+          "tribe-beta"
+        ],
+        "distanceBlocks": 1.2276271552838702,
+        "tick": 1460
+      }
+    ],
+    "coLocationThresholdBlocks": 8,
+    "maximumTickSeparation": 20
+  },
+  "timing": {
+    "firstTick": 20,
+    "lastTick": 2501,
+    "tickSpan": 2481
+  }
+}
