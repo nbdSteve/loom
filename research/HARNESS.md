@@ -183,6 +183,15 @@ The publisher derives a `witnessedDeaths` section, present only when a death occ
 Survivors still owe the full configured plan.
 `research/lib/witnessed-death.js` owns the rule.
 
+## Behavioral gate
+
+Every primary behavior publication derives a `behaviorGate` section in `metrics.json`, copied into the manifest and summarized in the README.
+`research/lib/behavior-gate.js` owns it.
+It measures meaningful behavior per agent (a non-idle native goal-review action the body accepted and later evidence confirmed: its own server-confirmed interaction, a movement report, or a food change for an eat), typed goal continuity, accepted and confirmed action counts, per-kind omissions, night perceptions by world-clock day, calls by agent, peak outstanding, spend, and cleanup.
+The mechanical pilot verdict is `pass` only when at least two agents show meaningful behavior, at least one carries a typed goal forward, every agent completed the configured reviews, no failure evidence exists, and no JVM cut occurred.
+A controlled stop is always `no-go`.
+A mechanical `pass` still names the criteria only a reader can judge, so it is necessary for the pre-registered gate and not sufficient.
+
 ## Lifecycle and cleanup
 
 The harness starts cognition, the bounded proxy, and Paper in that order. Paper

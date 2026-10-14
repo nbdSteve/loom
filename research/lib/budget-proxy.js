@@ -296,6 +296,7 @@ class CognitionBudgetProxy {
 
     this.total += 1
     this.outstanding += 1
+    const outstandingAtAdmission = this.outstanding
     this.perAgent.set(agentId, agentCalls + 1)
     this.consumePostCrashReserve(agentId)
     try {
@@ -320,6 +321,7 @@ class CognitionBudgetProxy {
         importance: perception.importance ?? null,
         outcome: cognitionFailed ? 'cognitionFailure' : 'decision',
         provenance: parsed?.provenance ?? null,
+        outstandingAtAdmission,
         ...originField,
         ...(failure === null ? {} : { failure })
       })
@@ -341,6 +343,7 @@ class CognitionBudgetProxy {
         trigger: perception.trigger?.event ?? null,
         importance: perception.importance ?? null,
         outcome: 'upstreamUnavailable',
+        outstandingAtAdmission,
         ...originField
       })
       this.onUnavailable({ agentId, requestId })

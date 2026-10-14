@@ -3,6 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
+const { behaviorGateMetrics } = require('./behavior-gate.js')
 const { controlledStopMetrics } = require('./controlled-stop.js')
 const { maximumOf, minimumOf } = require('./log-tail.js')
 const { deathMetrics } = require('./witnessed-death.js')
@@ -763,6 +764,8 @@ function deriveMetrics (records, configuredAgents = []) {
     harnessRecords.some((record) => record.origin !== undefined)
   ) {
     result.primaryBehavior = primaryBehaviorMetrics(harnessRecords, stimulusRecords)
+    const gate = behaviorGateMetrics({ bodyRecords, harnessRecords, metrics: result })
+    if (gate !== undefined) result.behaviorGate = gate
   }
   return sortedValue(result)
 }

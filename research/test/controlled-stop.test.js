@@ -646,3 +646,50 @@ test('a death does not excuse a survivor\'s missing review or a revived chain', 
   stranger.body.push(bodyRecord(2900, 'tribe-gamma', 'bodyDisconnected', 'gone'))
   rejects(stranger, /bodyDisconnected without a witnessed death/)
 })
+
+function actingRaw (agents = ['tribe-alpha', 'tribe-beta']) {
+  const raw = primaryBehaviorRawRecords(goalContinuityConfig())
+  for (const agentId of agents) {
+    const decided = raw.body.find((record) =>
+      record.agentId === agentId && record.requestId === 'native-1' && record.event === 'decided'
+    )
+    decided.intent = 'moveTo'
+    decided.decision.intent = { action: 'moveTo', target: [1, 64, 1] }
+    const applied = raw.body.find((record) =>
+      record.agentId === agentId && record.requestId === 'native-1' && record.event === 'intentApplied'
+    )
+    applied.intent = 'moveTo'
+    raw.body.splice(raw.body.indexOf(applied) + 1, 0, bodyRecord(applied.tick + 5, agentId, 'moved', 'from a to b'))
+  }
+  return raw
+}
+
+test('the mechanical pilot gate passes only with confirmed behavior and typed continuity', () => {
+  const published = publish({ raw: actingRaw(), stopReason: 'durationElapsed' })
+  const gate = published.metrics.behaviorGate
+  assert.equal(gate.pilotVerdict, 'pass')
+  assert.deepEqual(gate.meaningfulBehaviorByAgent, { 'tribe-alpha': 1, 'tribe-beta': 1 })
+  assert.deepEqual(gate.goalReviewActions, {
+    nonIdle: 2, accepted: 2, confirmed: 2, byConfirmation: { movement: 2 }, acceptedAndConfirmedRate: 1
+  })
+  assert.deepEqual(published.manifest.behaviorGate, gate)
+  assert.match(readme(published), /Mechanical pilot verdict: \*\*pass\*\*/)
+  assert.match(readme(published), /A pass still needs a reader to confirm/)
+  const one = publish({ raw: actingRaw(['tribe-alpha']), stopReason: 'durationElapsed' })
+  assert.equal(one.metrics.behaviorGate.pilotCriteria.meaningfulBehaviorAgents, false)
+  assert.equal(one.metrics.behaviorGate.pilotVerdict, 'no-go')
+  const unconfirmed = actingRaw()
+  unconfirmed.body = unconfirmed.body.filter((record) => record.event !== 'moved')
+  const idleOnly = publish({ raw: unconfirmed, stopReason: 'durationElapsed' }).metrics.behaviorGate
+  assert.equal(idleOnly.goalReviewActions.confirmed, 0)
+  assert.equal(idleOnly.pilotVerdict, 'no-go')
+  const dead = publish({ raw: deathRaw(), stopReason: 'durationElapsed' }).metrics.behaviorGate
+  assert.equal(dead.pilotCriteria.noFailureEvidence, false)
+})
+
+test('a controlled stop is always a no-go gate', () => {
+  const published = publish({ raw: controlledStopRawRecords({ inFlight: 3 }) })
+  assert.equal(published.metrics.behaviorGate.pilotVerdict, 'no-go')
+  assert.equal(published.metrics.behaviorGate.pilotCriteria.noFailureEvidence, false)
+  assert.equal(published.metrics.behaviorGate.pilotCriteria.completeNativeReviews, false)
+})

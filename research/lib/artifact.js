@@ -6,6 +6,7 @@ const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 
 const { currentSchemaVersion, validateManifest, versionTag } = require('../schema/manifest-schema.js')
+const { GATE_VERSION } = require('./behavior-gate.js')
 const {
   ADMISSION_CLOSED_BOUND,
   ADMISSION_CLOSED_EVENT,
@@ -1017,7 +1018,10 @@ function buildManifest ({
       : { controlledStop: structuredClone(metricValue.controlledStop) }),
     ...(metricValue.witnessedDeaths === undefined
       ? {}
-      : { witnessedDeaths: structuredClone(metricValue.witnessedDeaths) })
+      : { witnessedDeaths: structuredClone(metricValue.witnessedDeaths) }),
+    ...(metricValue.behaviorGate === undefined
+      ? {}
+      : { behaviorGate: structuredClone(metricValue.behaviorGate) })
   }
 }
 
@@ -1121,6 +1125,12 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
     if (!sameJson(manifest.witnessedDeaths, deaths)) {
       errors.push('manifest witnessed deaths do not match metrics.json')
     }
+  }
+  if (!sameJson(manifest.behaviorGate, metrics.behaviorGate)) {
+    errors.push('manifest behavioral gate does not match metrics.json')
+  }
+  if (stopped && metrics.behaviorGate?.pilotVerdict !== 'no-go') {
+    errors.push('a controlled stop cannot carry a passing behavioral gate')
   }
   if (deaths === undefined && manifest.witnessedDeaths !== undefined) {
     errors.push('manifest claims witnessed deaths the evidence does not hold')
@@ -1815,6 +1825,19 @@ ${metrics.witnessedDeaths === undefined
   const interpretation = primaryBehavior
     ? '- The run supports the narrower claim that the bounded fleet, native scheduler, cognition bridge, per-kind evidence chain,\n  publication, and cleanup worked together under the declared conditions.'
     : '- The run supports the narrower claim that the bounded fleet, cognition bridge, evidence chain, crash isolation,\n  publication, and cleanup worked together under the declared conditions.'
+  const gate = metrics.behaviorGate
+  const gateSection = gate === undefined
+    ? ''
+    : `
+## Behavioral gate
+
+- Mechanical pilot verdict: **${gate.pilotVerdict}** (${GATE_VERSION}).
+- Criteria: ${Object.entries(gate.pilotCriteria).map(([name, passed]) => `${name} ${passed ? 'held' : 'failed'}`).join('; ')}.
+- Meaningful behaviors by agent: ${JSON.stringify(gate.meaningfulBehaviorByAgent)}; typed goal continuity: ${JSON.stringify(gate.goalContinuityAgents)}.
+- Non-idle goal-review actions: ${gate.goalReviewActions.nonIdle}, accepted ${gate.goalReviewActions.accepted}, confirmed ${gate.goalReviewActions.confirmed}.
+- Calls by agent: ${JSON.stringify(gate.calls.forwardedByAgent)}; peak outstanding ${gate.calls.peakOutstanding ?? 'unrecorded'}.
+- A pass still needs a reader to confirm: ${gate.manualCriteria.join('; ')}.
+`
   const stop = metrics.controlledStop
   const stopSection = stop === undefined
     ? ''
@@ -1868,7 +1891,7 @@ ${primaryBehavior
 ${observationLines.map((line) => `- ${line}`).join('\n')}
 - ${metrics.cycles.perceived} perceptions produced ${metrics.cycles.decided} decisions and ${metrics.cycles.applied} applied intents.
 ${protocolObservations}
-${stopSection}
+${stopSection}${gateSection}
 ## Interpretations
 
 ${interpretation}
