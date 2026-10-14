@@ -170,15 +170,36 @@ function inSight (bot, eyes, aim) {
   return bot.world.raycast(eyes, delta.scaled(1 / range), range) === null
 }
 
-/** Whether the ray from the body's eyes reaches `block` before any other block. */
+/** How far inside a face a sight ray is aimed, so it ends in the block rather than on it. */
+const FACE_INSET = 0.001
+
+/**
+ * Where a sight ray to `block` may be aimed: its centre, then the centre of every face
+ * turned toward the eyes. A centre ray alone meets a nearer floor block before it reaches
+ * any floor block more than about two blocks away, which would call open ground unseen.
+ */
+function blockAims (eyes, block) {
+  const { x, y, z } = block.position
+  const aims = [block.position.offset(0.5, 0.5, 0.5)]
+  if (eyes.x < x) aims.push(block.position.offset(FACE_INSET, 0.5, 0.5))
+  if (eyes.x > x + 1) aims.push(block.position.offset(1 - FACE_INSET, 0.5, 0.5))
+  if (eyes.y < y) aims.push(block.position.offset(0.5, FACE_INSET, 0.5))
+  if (eyes.y > y + 1) aims.push(block.position.offset(0.5, 1 - FACE_INSET, 0.5))
+  if (eyes.z < z) aims.push(block.position.offset(0.5, 0.5, FACE_INSET))
+  if (eyes.z > z + 1) aims.push(block.position.offset(0.5, 0.5, 1 - FACE_INSET))
+  return aims
+}
+
+/** Whether a ray from the body's eyes reaches `block`, through some face, before any other block. */
 function blockInSight (bot, eyes, block) {
-  const aim = block.position.offset(0.5, 0.5, 0.5)
-  const delta = aim.minus(eyes)
-  const range = delta.norm()
-  if (range === 0) return true
-  const struck = bot.world.raycast(eyes, delta.scaled(1 / range), range)
-  if (struck === null || struck === undefined) return true
-  return struck.position?.equals(block.position) === true
+  return blockAims(eyes, block).some((aim) => {
+    const delta = aim.minus(eyes)
+    const range = delta.norm()
+    if (range === 0) return true
+    const struck = bot.world.raycast(eyes, delta.scaled(1 / range), range)
+    if (struck === null || struck === undefined) return true
+    return struck.position?.equals(block.position) === true
+  })
 }
 
 /** Whether an entity is the dropped-item shape Mineflayer exposes. */
@@ -222,7 +243,11 @@ function describable (bot, eyes) {
 }
 
 /**
- * Nearby non-air blocks, bounded independently from the general entity list.
+ * Nearby non-air blocks the body can see, bounded independently from the general entity list.
+ *
+ * Only a block in sight is listed, because every listed block is a handle a `dig` or
+ * `place` may name and both refuse a block the body cannot see. An unseen block is
+ * skipped rather than counted as omitted, for the reason dropped items are.
  *
  * The scan is capped at Mineflayer's own direct interaction reach even when the caller asks
  * for a wider scene. It does not form a map: at most [MAX_SENSE_BLOCKS] nearest candidates
@@ -243,6 +268,7 @@ function nearestBlocks (bot, eyes, standing, { radius, limit }) {
         if (!Number.isInteger(block.type) || !Number.isInteger(block.stateId)) continue
         const away = block.position.offset(0.5, 0.5, 0.5).distanceTo(eyes)
         if (!realWithin(away, 0, reach)) continue
+        if (!blockInSight(bot, eyes, block)) continue
         within.push({ block, away })
       }
     }
@@ -258,7 +284,7 @@ function nearestBlocks (bot, eyes, standing, { radius, limit }) {
     blocks: reported.map(({ block }) => ({
       what: block.name,
       position: [block.position.x, block.position.y, block.position.z],
-      visible: blockInSight(bot, eyes, block)
+      visible: true
     })),
     blocksOmitted: within.length - reported.length,
     blockOffers: reported.map(({ block }) => ({
@@ -266,7 +292,7 @@ function nearestBlocks (bot, eyes, standing, { radius, limit }) {
       position: [block.position.x, block.position.y, block.position.z],
       type: block.type,
       stateId: block.stateId,
-      visible: blockInSight(bot, eyes, block)
+      visible: true
     }))
   }
 }

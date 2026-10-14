@@ -302,6 +302,22 @@ test('a dropped item on open ground is offered and one behind a wall is not offe
   assert.deepEqual(hidden.itemOffers, [])
 })
 
+test('open floor blocks are seen through their top faces and a buried block is not listed', async () => {
+  const { bot } = await standing({ walls: [{ x: 12, y: GROUND_LEVEL + 1, z: 8 }] })
+  const sensed = senseReading(bot, { radius: RADIUS, limit: 48 })
+  const listed = sensed.reading.blocks.map((block) => block.position.join(','))
+  // Four blocks out on flat ground: a ray to the centre meets a nearer floor block first,
+  // and the top face is still in plain view.
+  assert.ok(listed.includes(`11,${GROUND_LEVEL},8`))
+  assert.ok(sensed.reading.blocks.every((block) => block.visible === true))
+  assert.equal(sensed.reading.blocks.length, sensed.blockOffers.length)
+  // Under the extra block, the floor's top face is covered and every other face is buried.
+  assert.equal(listed.includes(`12,${GROUND_LEVEL},8`), false)
+  assert.ok(listed.includes(`12,${GROUND_LEVEL + 1},8`))
+  // Nothing below the floor surface can be seen from above it.
+  assert.equal(sensed.reading.blocks.some((block) => block.position[1] < GROUND_LEVEL), false)
+})
+
 test('the nearest entities fill the limit and the rest are counted as omitted', async () => {
   const { bot, client } = await standing()
   // Deliberately spawned furthest first, so the order below is the sense answer's own
