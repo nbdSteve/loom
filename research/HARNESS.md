@@ -198,6 +198,9 @@ A mechanical `pass` still names the criteria only a reader can judge, so it is n
 
 ## Lifecycle and cleanup
 
+Before it creates the disposable server or reads a credential, the harness refuses to start unless the run volume has at least 2 GiB free, or more when the configured log and artifact bounds need it.
+Paper, its world, the JVM, the bounded logs, and publication all write there, and a volume that fills mid-run loses the run.
+
 The harness starts cognition, the bounded proxy, and Paper in that order. Paper
 then starts the canonical fleet through Loom's existing bounded startup gate.
 A shared startup deadline covers the service, server, and all bodies. Any

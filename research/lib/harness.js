@@ -488,6 +488,29 @@ async function verifyNoListeners (config, phase = 'cleanup') {
   }
 }
 
+// Paper, its world, the JVM, every bounded log, and publication all write to this
+// volume; running out mid-run loses the run, so refuse to start without headroom.
+const MIN_FREE_DISK_BYTES = 2 * 1024 * 1024 * 1024
+
+function requiredFreeDiskBytes (config) {
+  const logs = config.bounds.logBytes * (configuredAgents(config).length + 3)
+  return Math.max(MIN_FREE_DISK_BYTES, 4 * logs + 2 * config.bounds.artifactBytes)
+}
+
+function verifyFreeDisk (directory, config, statfs = fs.statfsSync) {
+  const stats = statfs(directory)
+  const available = Number(stats.bavail) * Number(stats.bsize)
+  const required = requiredFreeDiskBytes(config)
+  if (!(available >= required)) {
+    throw new RunFailure(
+      'diskFailure',
+      `only ${Math.floor(available / 1024 / 1024)} MiB is free on the run volume; ` +
+        `${Math.ceil(required / 1024 / 1024)} MiB is required before startup`
+    )
+  }
+  return { available, required }
+}
+
 function runtimeEnvironment () {
   return Object.fromEntries(
     RUNTIME_ENVIRONMENT_KEYS
@@ -732,6 +755,7 @@ async function runExperiment ({
 
   const scratchRoot = path.join(absoluteRoot, '.scratch', 'tribe-runs')
   fs.mkdirSync(scratchRoot, { recursive: true })
+  verifyFreeDisk(scratchRoot, config)
   const runDirectory = fs.mkdtempSync(path.join(scratchRoot, `${config.experimentId}-`))
   const rawHarnessEvidence = path.join(runDirectory, 'harness-events.jsonl')
   const rawBodyEvidence = path.join(runDirectory, 'plugins', 'Loom', 'body-events.jsonl')
@@ -1266,6 +1290,7 @@ module.exports = {
   runExperiment,
   sourceIdentity,
   toolVersions,
+  verifyFreeDisk,
   verifyNoListeners,
   writeServerFiles
 }

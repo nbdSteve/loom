@@ -15,6 +15,7 @@ const {
   importProviderUsage,
   keychainCredentialProvider,
   primaryBehaviorRunFailure,
+  verifyFreeDisk,
   verifyNoListeners
 } = require('../lib/harness.js')
 const {
@@ -262,4 +263,18 @@ test('an occupied configured port is refused before startup', async () => {
   } finally {
     await new Promise((resolve) => server.close(resolve))
   }
+})
+
+test('a run refuses to start without free disk headroom on the run volume', () => {
+  const config = primaryBehaviorConfig()
+  const statfs = (free) => () => ({ bavail: free / 4096, bsize: 4096 })
+  const gib = 1024 * 1024 * 1024
+  assert.deepEqual(verifyFreeDisk('/run', config, statfs(3 * gib)), { available: 3 * gib, required: 2 * gib })
+  assert.throws(
+    () => verifyFreeDisk('/run', config, statfs(1.2 * gib)),
+    (cause) => cause.stopReason === 'diskFailure' && /1228 MiB is free on the run volume; 2048 MiB is required/.test(cause.message)
+  )
+  const large = primaryBehaviorConfig()
+  large.bounds.logBytes = 256 * 1024 * 1024
+  assert.throws(() => verifyFreeDisk('/run', large, statfs(3 * gib)), /is required before startup/)
 })
