@@ -15,10 +15,13 @@ const {
   reviewWindowBounds
 } = require('../lib/controlled-stop.js')
 const {
+  PrimaryBehaviorGuard,
+  RequestSettlement,
   authenticationFailure,
   drainControlledStop,
   primaryBehaviorRunFailure
 } = require('../lib/harness.js')
+const { JsonLinesTail, maximumOf, minimumOf } = require('../lib/log-tail.js')
 const { readJson } = require('../lib/util.js')
 const {
   LIVE_MODEL,
@@ -544,24 +547,59 @@ test('a classified provider failure closes admission after its forwarded record'
   }
 })
 
-test('the controlled-stop drain waits for settled chains and is bounded', async () => {
+test('the controlled-stop drain waits for settled chains, is bounded, and stops on fatal evidence', async () => {
+  const config = goalContinuityConfig()
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-drain-'))
   const file = path.join(temporary, 'body.jsonl')
-  writeJsonLines(file, [bodyRecord(1, 'a', 'perceived', 'x', { requestId: 'one' })])
+  const drainer = () => {
+    const tail = new JsonLinesTail(file)
+    const guard = new PrimaryBehaviorGuard(config)
+    const settlement = new RequestSettlement()
+    guard.observeHarness([{ event: 'cognitionAdmissionClosed', kind: 'cognitionBudgetExhausted' }])
+    const poll = () => {
+      const records = tail.poll()
+      settlement.observe(records)
+      return guard.observeBody(records)
+    }
+    return { poll, settlement }
+  }
+  fs.writeFileSync(file, `${JSON.stringify(bodyRecord(1, 'a', 'perceived', 'x', { requestId: 'one' }))}\n`)
   let outstanding = 1
   const proxy = { snapshot: () => ({ outstandingCalls: outstanding }) }
   await assert.rejects(
-    drainControlledStop({ proxy, rawBodyEvidence: file, timeoutMilliseconds: 250 }),
+    drainControlledStop({ proxy, ...drainer(), timeoutMilliseconds: 250 }),
     (cause) => cause.code === 'controlledStopDrainTimedOut'
   )
+  const settling = drainer()
   setTimeout(() => {
     outstanding = 0
-    writeJsonLines(file, [
-      bodyRecord(1, 'a', 'perceived', 'x', { requestId: 'one' }),
-      bodyRecord(2, 'a', 'cognitionUnavailable', 'x', { requestId: 'one' })
-    ])
+    fs.appendFileSync(file, `${JSON.stringify(bodyRecord(2, 'a', 'intentApplied', 'x', { requestId: 'one' }))}\n`)
   }, 150)
-  await drainControlledStop({ proxy, rawBodyEvidence: file, timeoutMilliseconds: 2000 })
+  await drainControlledStop({ proxy, ...settling, timeoutMilliseconds: 2000 })
+  fs.appendFileSync(file, `${JSON.stringify(bodyRecord(3, 'a', 'witnessDisputed', 'x'))}\n`)
+  await assert.rejects(
+    drainControlledStop({ proxy, ...drainer(), timeoutMilliseconds: 2000 }),
+    /witness disputed body evidence/
+  )
+})
+
+test('the incremental tail reads only appended complete lines across multi-byte splits', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-tail-'))
+  const file = path.join(temporary, 'log.jsonl')
+  const tail = new JsonLinesTail(file)
+  assert.deepEqual(tail.poll(), [])
+  const line = JSON.stringify({ tick: 7, detail: 'caf\u00e9 \u2603' })
+  const bytes = Buffer.from(`${line}\n`)
+  fs.writeFileSync(file, bytes.subarray(0, bytes.length - 4))
+  assert.deepEqual(tail.poll(), [])
+  fs.appendFileSync(file, bytes.subarray(bytes.length - 4))
+  assert.deepEqual(tail.poll(), [{ tick: 7, detail: 'caf\u00e9 \u2603' }])
+  fs.appendFileSync(file, `${JSON.stringify({ tick: 3 })}\n${JSON.stringify({ tick: 9 })}\n`)
+  assert.deepEqual(tail.poll().map((record) => record.tick), [3, 9])
+  assert.equal(tail.maxTick, 9)
+  assert.deepEqual(tail.poll(), [])
+  assert.equal(maximumOf(Array.from({ length: 300_000 }, (_, index) => index)), 299_999)
+  assert.equal(minimumOf([]), 0)
 })
 
 function deathRaw ({ agentId = 'tribe-alpha', tick = 1000, after = ['bodyDisconnected'] } = {}) {

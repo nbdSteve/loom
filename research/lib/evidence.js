@@ -4,6 +4,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const { controlledStopMetrics } = require('./controlled-stop.js')
+const { maximumOf, minimumOf } = require('./log-tail.js')
 const { deathMetrics } = require('./witnessed-death.js')
 const { canonicalLine, sortedValue } = require('./util.js')
 
@@ -570,8 +571,8 @@ function deriveMetrics (records, configuredAgents = []) {
     if (perceived && !terminal) incomplete.push({ requestKey, events: chain })
   }
   const ticks = bodyRecords.map((record) => record.tick)
-  const observedFirstTick = ticks.length === 0 ? 0 : Math.min(...ticks)
-  const observedLastTick = ticks.length === 0 ? 0 : Math.max(...ticks)
+  const observedFirstTick = minimumOf(ticks)
+  const observedLastTick = maximumOf(ticks)
   const startTick = harnessRecords.find((record) => record.event === 'experimentStarted')?.startTick
   const endTick = harnessRecords.findLast((record) => record.event === 'experimentEnded')?.endTick
   const firstTick = Number.isInteger(startTick) ? startTick : observedFirstTick
