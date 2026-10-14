@@ -152,6 +152,24 @@ cognition. Every forwarded or refused cognition record carries either
 also requires the one run-level attestation that the harness issued zero think
 commands and that native schedulers were the only cognition source.
 
+## Controlled stops
+
+In primary behavior mode two outcomes end a run without making it an integrity failure.
+A typed `perAgentCall`, `globalCall`, `globalOutstanding`, or `spend` refusal is a `cognitionBudgetExhausted` stop.
+A provider failure that cognition classified as `providerTimeout`, `providerConnection`, `providerResponseRead`, `providerTransport`, `providerRateLimit`, or `providerServer` is a `providerUnavailable` stop.
+An HTTP 401 or 403 still stops the run immediately as a failure, and every other cognition failure is still fatal.
+`research/lib/controlled-stop.js` owns these closed sets.
+
+On a stop the proxy journals one `cognitionAdmissionClosed` record before it answers, and refuses every later request under the `admissionClosed` bound.
+The harness then waits, inside an explicit bounded drain, until no forwarded call is outstanding and every perception has a terminal body record.
+A drain that does not settle is the fatal `controlledStopDrainTimedOut`.
+Cleanup and usage import then run as for any completed run, and the publisher writes an artifact with stop reason `controlledStop`.
+
+Its manifest, metrics, and README carry a `controlledStop` section: the stop kind, the exact refusal or provider classification, the calls forwarded and outstanding at the closure, planned versus completed native reviews, complete and refused chain counts, provider usage and spend, and behavioral verdict `no-go`.
+Validation derives the owed reviews from the stop window: review k of each agent may be due from k cadences after the start, and must be due one population stagger plus one slice after that.
+It refuses a stop with no matching refusal or classification, an untyped refusal, an impossible count, any refusal that is not the first before the closure, a missing earlier chain, provider usage that does not reconcile, a dirty shutdown, and a killed process.
+A normal duration or tick-ceiling completion still requires the exact configured review plan, and crash-containment evidence can never claim a controlled stop.
+
 ## Lifecycle and cleanup
 
 The harness starts cognition, the bounded proxy, and Paper in that order. Paper

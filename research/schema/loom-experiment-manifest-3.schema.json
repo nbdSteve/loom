@@ -811,6 +811,7 @@
             "durationElapsed",
             "simulationTickCeiling",
             "proofComplete",
+            "controlledStop",
             "cancelled",
             "paperFailed",
             "cognitionFailed",

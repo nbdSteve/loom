@@ -3,6 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
+const { controlledStopMetrics } = require('./controlled-stop.js')
 const { canonicalLine, sortedValue } = require('./util.js')
 
 const NORMALIZED_EVIDENCE_VERSION = 'loom-normalized-evidence/1'
@@ -733,6 +734,15 @@ function deriveMetrics (records, configuredAgents = []) {
           : 'One bounded live-model run cannot establish that an observed pattern is stable or emergent.'
       ]
     }
+  }
+  const controlledStop = controlledStopMetrics(bodyRecords, harnessRecords, firstTick)
+  if (controlledStop !== undefined) {
+    result.controlledStop = controlledStop
+    result.findings.limitations.push(
+      `The run ended in a controlled ${controlledStop.kind ?? 'unclassified'} stop after ` +
+        `${controlledStop.nativeReviews.completed} of ${controlledStop.nativeReviews.planned ?? 'unattested'} ` +
+        'planned native reviews; its behavioral verdict is no-go.'
+    )
   }
   const goalRecords = bodyRecords.filter((record) => record.goal !== undefined)
   if (goalRecords.length > 0) result.goalContinuity = goalContinuityMetrics(goalRecords)

@@ -15,6 +15,15 @@ const {
   worstCaseCallNanoUsd
 } = require('./artifact.js')
 const { CognitionBudgetProxy } = require('./budget-proxy.js')
+const {
+  ADMISSION_CLOSED_BOUND,
+  ADMISSION_CLOSED_EVENT,
+  BUDGET_STOP_BOUNDS,
+  CONTROLLED_STOP_DRAIN_MILLIS,
+  CONTROLLED_STOP_REASON,
+  budgetStopFor,
+  providerStopFor
+} = require('./controlled-stop.js')
 const { readJsonLines } = require('./evidence.js')
 const {
   createInterventionSchedule,
@@ -287,8 +296,28 @@ function applyPrimaryBehaviorInitialConditions (paper, config, journal) {
   })
 }
 
-function primaryBehaviorRunFailure (config, records) {
+// A body `cognitionUnavailable` is a controlled-stop refusal only when the harness
+// journal holds a typed record for that exact request and admission has closed.
+function typedUnavailableKeys (harnessRecords) {
+  const keys = new Set()
+  const closure = harnessRecords.find((record) => record.event === ADMISSION_CLOSED_EVENT)
+  if (closure === undefined) return keys
+  for (const record of harnessRecords) {
+    if (
+      record.event === 'cognitionRefused' &&
+      [...BUDGET_STOP_BOUNDS, ADMISSION_CLOSED_BOUND].includes(record.bound) &&
+      record.forwarded === false
+    ) {
+      keys.add(`${record.agentId}:${record.requestId}`)
+    }
+  }
+  if (closure.kind === 'providerUnavailable') keys.add(`${closure.agentId}:${closure.requestId}`)
+  return keys
+}
+
+function primaryBehaviorRunFailure (config, records, harnessRecords = []) {
   if (!isPrimaryBehaviorMode(config)) return null
+  const typedUnavailable = typedUnavailableKeys(harnessRecords)
   const fatalEvents = new Map([
     ['bodyDisconnected', 'a body disconnected'],
     ['cognitionUnavailable', 'a cognition request became unavailable'],
@@ -302,6 +331,10 @@ function primaryBehaviorRunFailure (config, records) {
     ['witnessRevived', 'the player witness observed a permadeath breach']
   ])
   for (const record of records) {
+    if (
+      record.event === 'cognitionUnavailable' &&
+      typedUnavailable.has(`${record.agentId}:${record.requestId}`)
+    ) continue
     const detail = fatalEvents.get(record.event)
     if (detail !== undefined) {
       return new RunFailure('startupFailed', `primary behavior run stopped because ${detail}`)
@@ -663,6 +696,16 @@ async function runExperiment ({
   let published
   let clean = false
   let failure
+  let controlledStop
+  const stopAdmission = (stop) => {
+    try {
+      if (proxy.closeAdmission(stop)) controlledStop = stop
+    } catch (cause) {
+      abort(cause instanceof RunFailure
+        ? cause
+        : new RunFailure('diskFailure', 'the controlled stop could not be journalled'))
+    }
+  }
   const throwRetainedFailure = (runFailure) => {
     let retained
     let retentionFailed = false
@@ -763,10 +806,15 @@ async function runExperiment ({
         worstCaseCallNanoUsd: worstCaseCallNanoUsd(config)
       },
       journal,
-      onCognitionFailure: (message, classified) => {
+      onCognitionFailure: (message, classified, request) => {
         const failure = authenticationFailure(message, classified)
+        const providerStop = isPrimaryBehaviorMode(config) && request !== undefined
+          ? providerStopFor(request, classified)
+          : null
         if (failure !== null) {
           abort(failure)
+        } else if (providerStop !== null) {
+          stopAdmission(providerStop)
         } else if (isPrimaryBehaviorMode(config)) {
           abort(new RunFailure(
             'cognitionFailed',
@@ -776,7 +824,13 @@ async function runExperiment ({
         }
       },
       onRefusal: (refusal) => {
-        if (isPrimaryBehaviorMode(config)) abort(budgetRefusalFailure(refusal))
+        if (!isPrimaryBehaviorMode(config) || refusal.bound === ADMISSION_CLOSED_BOUND) return
+        const budgetStop = budgetStopFor(refusal)
+        if (budgetStop === null) {
+          abort(budgetRefusalFailure(refusal))
+        } else {
+          stopAdmission(budgetStop)
+        }
       },
       onUnavailable: () => {
         if (isPrimaryBehaviorMode(config)) {
@@ -888,8 +942,16 @@ async function runExperiment ({
         throw new RunFailure('logLimit', 'body evidence exceeded the configured log byte bound')
       }
       const currentBodyEvents = bodyEvents(rawBodyEvidence)
-      const invalidPrimaryBehavior = primaryBehaviorRunFailure(config, currentBodyEvents)
+      const invalidPrimaryBehavior = primaryBehaviorRunFailure(
+        config,
+        currentBodyEvents,
+        bodyEvents(rawHarnessEvidence)
+      )
       if (invalidPrimaryBehavior !== null) throw invalidPrimaryBehavior
+      if (controlledStop !== undefined) {
+        stopReason = CONTROLLED_STOP_REASON
+        break
+      }
       const currentTick = currentBodyEvents.length === 0
         ? 0
         : Math.max(...currentBodyEvents.map((record) => record.tick))
@@ -935,10 +997,19 @@ async function runExperiment ({
       }
       await delay(Math.min(250, Math.max(1, deadline - Date.now())), controller.signal)
     }
+    if (controlledStop !== undefined) {
+      stopReason = CONTROLLED_STOP_REASON
+      await drainControlledStop({
+        proxy,
+        rawBodyEvidence,
+        signal: controller.signal
+      })
+    }
     endedAt = new Date().toISOString()
     const invalidPrimaryBehavior = primaryBehaviorRunFailure(
       config,
-      bodyEvents(rawBodyEvidence)
+      bodyEvents(rawBodyEvidence),
+      bodyEvents(rawHarnessEvidence)
     )
     if (invalidPrimaryBehavior !== null) throw invalidPrimaryBehavior
 
@@ -952,7 +1023,8 @@ async function runExperiment ({
         )
       const expected =
         config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent
-      for (const agentId of config.agents) {
+      // A controlled stop's review window is validated by the publisher.
+      for (const agentId of controlledStop === undefined ? config.agents : []) {
         if (forwarded.filter((record) => record.agentId === agentId).length !== expected) {
           throw new RunFailure(
             'startupFailed',
@@ -1061,6 +1133,46 @@ async function runExperiment ({
   }
 }
 
+function unsettledRequests (records) {
+  const settled = new Set()
+  const perceived = new Set()
+  for (const record of records) {
+    if (record.requestId === undefined || record.requestId === null) continue
+    const key = `${record.agentId}:${record.requestId}`
+    if (record.event === 'perceived') perceived.add(key)
+    if (['intentApplied', 'decisionDiscarded', 'cognitionUnavailable'].includes(record.event)) {
+      settled.add(key)
+    }
+  }
+  return [...perceived].filter((key) => !settled.has(key))
+}
+
+// Lets already-forwarded work settle, inside one explicit bound, before shutdown.
+async function drainControlledStop ({
+  proxy,
+  rawBodyEvidence,
+  signal,
+  timeoutMilliseconds = CONTROLLED_STOP_DRAIN_MILLIS
+}) {
+  try {
+    await waitForCondition({
+      description: 'controlled-stop cognition to settle',
+      timeoutMilliseconds,
+      signal,
+      poll: async () =>
+        proxy.snapshot().outstandingCalls === 0 &&
+        unsettledRequests(bodyEvents(rawBodyEvidence)).length === 0
+    })
+  } catch (cause) {
+    if (signal?.aborted) throw cause
+    throw new RunFailure(
+      'cognitionFailed',
+      'already-forwarded cognition did not settle within the controlled-stop drain bound',
+      'controlledStopDrainTimedOut'
+    )
+  }
+}
+
 function paperWarnings (logFile) {
   if (!fs.existsSync(logFile)) return ['Paper log was unavailable to the harness warning scan.']
   const text = fs.readFileSync(logFile, 'utf8')
@@ -1076,6 +1188,7 @@ module.exports = {
   budgetRefusalFailure,
   buildComponents,
   conciseJavaVersion,
+  drainControlledStop,
   ensurePaper,
   findJava21,
   importProviderUsage,
