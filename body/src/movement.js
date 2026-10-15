@@ -54,7 +54,9 @@
  *
  * The consequence is deliberate rather than a gap: a body the server left in mid-air stays
  * there until a request owns it, which is the state this process was in before it could walk
- * at all. Falling is simulation, and simulation is a request's.
+ * at all. Falling is simulation, and simulation is a request's. The one holder that is not a
+ * route is a dig by a body standing on support, which [holdSimulation] scopes to establishing
+ * the ground state a dig is timed by.
  *
  * **Every movement-policy field is set explicitly, because the library's defaults are
  * permissive.** `new Movements(bot)` arrives willing to dig, pillar, scaffold, parkour,
@@ -348,6 +350,14 @@ function scopedSimulation (bot) {
       draining = false
       bot.physicsEnabled = true
     },
+    /** Takes the gate for `token` only when nothing owns it; answers whether it did. */
+    takeIfFree (token) {
+      if (owner !== undefined) return false
+      owner = token
+      draining = false
+      bot.physicsEnabled = true
+      return true
+    },
     /**
      * Holds the current frame open only for its final report and control deactivation.
      *
@@ -386,7 +396,7 @@ function scopedSimulation (bot) {
 
 /** A gate for a bot with nothing to gate: every call is a no-op. */
 function inertSimulation () {
-  return { take () {}, drain () {}, release () {}, permitOnce () { return () => {} } }
+  return { take () {}, takeIfFree () { return false }, drain () {}, release () {}, permitOnce () { return () => {} } }
 }
 
 /** Each installed bot's gate, for operations that need one scoped packet permit. */
@@ -403,6 +413,43 @@ function isLeaveBed (name, parameters) {
  */
 function permitLeaveBed (bot) {
   return simulations.get(bot)?.permitOnce(isLeaveBed) ?? (() => {})
+}
+
+/**
+ * Runs the client simulation for one explicit operation that moves nothing, and answers the
+ * release, or undefined when another owner holds the gate or the bot has none.
+ *
+ * Only for a body standing on support, so the simulation can establish its true ground state
+ * and nothing else: with no route and no control state, a supported body does not move. The
+ * reason is a dig. Mineflayer answers every server teleport with `onGround: false`, and with
+ * the simulation shut nothing ever corrects it - so both Mineflayer's dig time and the
+ * server's destroy progress ran at vanilla's five-times-slower airborne rate for a body
+ * standing on the ground, which put every bare-hand terracotta dig past its deadline.
+ */
+function holdSimulation (bot) {
+  const simulation = simulations.get(bot)
+  if (simulation === undefined) return undefined
+  const token = Symbol('held')
+  if (!simulation.takeIfFree(token)) return undefined
+  return () => simulation.release(token)
+}
+
+/** Whether a collision box of the block under the feet has its top exactly at the feet. */
+function standsOnSupport (bot) {
+  const feet = bot.entity?.position
+  if (feet === undefined || feet === null) return false
+  let below
+  try {
+    below = bot.blockAt(feet.offset(0, -1e-3, 0))
+  } catch {
+    return false
+  }
+  if (!Array.isArray(below?.shapes)) return false
+  return below.shapes.some((shape) =>
+    Math.abs(below.position.y + shape[4] - feet.y) < 1e-6 &&
+    feet.x >= below.position.x + shape[0] - 0.3 && feet.x <= below.position.x + shape[3] + 0.3 &&
+    feet.z >= below.position.z + shape[2] - 0.3 && feet.z <= below.position.z + shape[5] + 0.3
+  )
 }
 
 /** Straight-line distance between two positions, in blocks. */
@@ -1047,7 +1094,9 @@ function installMovement (bot, options) {
 }
 
 module.exports = {
+  holdSimulation,
   permitLeaveBed,
+  standsOnSupport,
   MAX_DROP_BLOCKS,
   MAX_STALL_RETRIES,
   MAX_TRAVEL_BLOCKS,

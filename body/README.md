@@ -432,6 +432,17 @@ The settle checks that teardown once more before the answer is delivered, so an 
 Each half is needed and neither is enough: a dropped deactivation leaves the server sprinting, a dropped final position leaves it one tick behind the report, and an open activation path lets the library move after its terminal event.
 The consequence is deliberate: a body the server left in mid-air stays there until a request
 owns it. Falling is simulation, and simulation is a request's.
+**A dig by a body standing on support also holds the simulation, for its ground state alone.**
+Mineflayer answers every server teleport with `onGround: false`, and with the simulation shut
+nothing corrects it, so both Mineflayer's dig time and the server's destroy progress ran at
+vanilla's five-times-slower airborne rate: bare-hand terracotta took 31.25 s against the 20 s
+interaction deadline, and every such dig in the first ten-agent live run timed out.
+`holdSimulation` in `src/movement.js` takes the gate only when nothing owns it, and `digging.js`
+asks for it only when the client is not already grounded and a collision box under the feet
+tops out exactly at the feet, so the step it permits establishes the ground state and moves
+nothing. A body in mid-air is not simulated by a dig and digs at the airborne rate it has.
+`test/native-dig-terminal.test.js` proves both against a server model that judges a finish by
+the last ground state the client wrote.
 
 **None of the six plugins loaded beside the reporting table decides anything, and the line is drawn per
 plugin rather than per method.**
@@ -646,8 +657,8 @@ It cannot be left out, because a player's movement in Minecraft is *client*-simu
 is no "server, please walk me there" packet - so a body that can be asked to walk has to
 simulate and report its own position, and that plugin is where all of it is.
 So it is loaded by the module that scopes it: both halves of it are held shut unless one
-accepted `moveTo`, `flee`, or explicitly approaching `collect` or `attack` owns the path,
-and the timer paragraph above is the whole of what that does and does not cover.
+accepted `moveTo`, `flee`, or explicitly approaching `collect` or `attack` owns the path, or
+a dig by a supported body holds it for its ground state, and the timer paragraph above is the whole of what that does and does not cover.
 Mineflayer's `digging` plugin is loaded by `digging.js`, and `generic_place` by
 `placing.js`. Loading them defines `bot.dig`, `bot.stopDigging` and `_genericPlace`; it
 does not call one. The surrounding module supplies the retained offer, revalidation,

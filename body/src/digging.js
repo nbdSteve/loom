@@ -7,6 +7,11 @@
  * place, and the report records that actual item separately from the block choice.
  * Every mutable fact is re-read before the first dig packet, and every ending clears
  * Mineflayer's one digging task before releasing ownership.
+ *
+ * A body standing on support holds the client simulation for the dig, and starts it only once
+ * the simulation has established the ground state, because both Mineflayer's dig time and the
+ * server's destroy progress are five times slower for a player who is not on the ground and a
+ * teleport leaves the client reporting exactly that. See `holdSimulation` in `movement.js`.
  */
 
 const { performance } = require('node:perf_hooks')
@@ -20,6 +25,14 @@ const {
   offeredBlock,
   visibleBlock
 } = require('./interaction')
+const { holdSimulation, standsOnSupport } = require('./movement')
+
+/**
+ * How many simulation steps a standing body is given to establish its ground state before the
+ * dig starts. One supported step is enough; the bound only stops a body the simulation never
+ * puts on the ground from holding the dig back, and that body digs at the airborne rate it has.
+ */
+const GROUND_SETTLE_TICKS = 4
 
 /** The one installation each player gets; a second would install a second dig task. */
 const installations = new WeakSet()
@@ -99,6 +112,12 @@ function digOfferedBlock (bot, {
   let timedOut = false
   let cancelled = false
   let finish
+  let settling
+  // A body standing on support holds the simulation for the whole dig, so the client and the
+  // server both have its true ground state; see [holdSimulation] for why nothing else does.
+  const release = bot.entity?.onGround !== true && standsOnSupport(bot)
+    ? holdSimulation(bot)
+    : undefined
   const promise = new Promise((resolve) => {
     const timer = setTimeout(() => {
       timedOut = true
@@ -118,6 +137,8 @@ function digOfferedBlock (bot, {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (settling !== undefined) bot.off('physicsTick', settling)
+      release?.()
       resolve({
         outcome,
         elapsedMs: elapsedSince(startedAt, now),
@@ -134,19 +155,38 @@ function digOfferedBlock (bot, {
       return true
     }
 
-    try {
-      Promise.resolve(bot.dig(resolved.block, 'raycast')).then(
-        () => complete('dug'),
-        () => {
-          if (removed(bot, resolved.offered)) complete('dug')
-          else if (timedOut) complete('timedOut')
-          else if (cancelled) complete('cancelled')
-          else complete('libraryFailure')
-        }
-      )
-    } catch {
-      complete('libraryFailure')
+    function start () {
+      if (settled) return
+      try {
+        Promise.resolve(bot.dig(resolved.block, 'raycast')).then(
+          () => complete('dug'),
+          () => {
+            if (removed(bot, resolved.offered)) complete('dug')
+            else if (timedOut) complete('timedOut')
+            else if (cancelled) complete('cancelled')
+            else complete('libraryFailure')
+          }
+        )
+      } catch {
+        complete('libraryFailure')
+      }
     }
+
+    if (release === undefined) {
+      start()
+      return
+    }
+    // The dig time is read when the dig starts and the ground state is reported after every
+    // `physicsTick` listener returns, so the dig starts on the turn after the settling step.
+    let ticks = 0
+    settling = () => {
+      ticks += 1
+      if (bot.entity?.onGround !== true && ticks < GROUND_SETTLE_TICKS) return
+      bot.off('physicsTick', settling)
+      settling = undefined
+      setImmediate(start)
+    }
+    bot.on('physicsTick', settling)
   })
 
   const cancel = () => finish?.() ?? false
@@ -154,6 +194,7 @@ function digOfferedBlock (bot, {
 }
 
 module.exports = {
+  GROUND_SETTLE_TICKS,
   digOfferedBlock,
   installDigging
 }
