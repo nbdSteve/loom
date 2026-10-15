@@ -1,5 +1,5 @@
 {
-  "experimentId": "2026-10-16-openai-10-agent-10m-r3",
+  "experimentId": "2026-10-16-openai-10-agent-10m-r4",
   "title": "10-agent ten-minute live shakedown",
   "mode": "routine-v13-goal-continuity",
   "agents": [
