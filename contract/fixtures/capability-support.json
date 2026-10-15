@@ -189,6 +189,12 @@
     },
     "tribe-two-cycle-10-structure.json": {
       "status": "runnable"
+    },
+    "tribe-shakedown-10m-10.json": {
+      "status": "runnable"
+    },
+    "tribe-shakedown-10m-10-scripted.json": {
+      "status": "runnable"
     }
   }
 }

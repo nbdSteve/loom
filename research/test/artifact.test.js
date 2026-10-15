@@ -577,3 +577,111 @@ test('two-cycle profiles pin the surveyed ring, the population and the envelope'
   // A death at tick 13,000 owes the reviews of that life span alone.
   assert.deepEqual(reviewWindowBounds(schedule, 10, 13_000), { minimum: 5, maximum: 6 })
 })
+
+test('the ten-minute shakedown is the ten-agent two-cycle profile with only its pinned differences', () => {
+  const { AGENT_ORDER, PROFILES, SCENES, placementOf } = require('../lib/profiles.js')
+  const { reviewWindowBounds } = require('../lib/controlled-stop.js')
+  const shakedown = PROFILES['shakedown-10m-10']
+  const differences = {
+    runDurationSeconds: 600,
+    simulationTickCeiling: 12_000,
+    expectedReviewsPerAgent: 6,
+    callCeilings: { perAgent: 24, global: 150, outstanding: 6 },
+    maxExternalSpendUsd: 29.19,
+    bounds: { logBytes: 16 * 1024 * 1024, evidenceRecords: 8000, artifactBytes: 16 * 1024 * 1024 }
+  }
+  assert.ok(Object.isFrozen(shakedown))
+  assert.deepEqual({ ...shakedown }, { ...PROFILES['two-cycle-10'], ...differences })
+  assert.equal(shakedown.ticksPerSecond, undefined)
+  assert.equal(shakedown.world, undefined)
+  assert.equal(shakedown.scriptedOnly, undefined)
+
+  const read = (file) => readJson(path.join(__dirname, '..', 'config', file))
+  const live = read('tribe-shakedown-10m-10.json')
+  const scripted = read('tribe-shakedown-10m-10-scripted.json')
+  const base = read('tribe-two-cycle-10.json')
+  assert.equal(live.experimentId, '2026-10-16-openai-10-agent-10m-r1')
+  for (const config of [live, scripted]) {
+    assert.deepEqual(validateRunConfig(config), [], config.experimentId)
+    assert.equal(config.primaryBehavior.profile, 'shakedown-10m-10')
+    assert.deepEqual(config.agents, [...AGENT_ORDER])
+    assert.equal(config.primaryBehavior.scene, 's2-ring')
+    assert.equal(config.world.seed, SCENES['s2-ring'].seed)
+    assert.deepEqual(config.primaryBehavior.initialPositions, placementOf(shakedown).positions)
+    assert.deepEqual(config.primaryBehavior.initialWorldClock, { timeOfDay: 0, day: 0, isDay: true })
+    assert.equal(config.primaryBehavior.startingInventories, 'empty')
+    assert.equal(config.primaryBehavior.externalCognitionStimuli, 'none')
+    assert.equal(config.proof, undefined)
+    assert.deepEqual(config.world, base.world)
+    assert.deepEqual(config.featureFlags, base.featureFlags)
+    assert.deepEqual(config.cognition.prompts, { ...SERVED_PROMPTS })
+    assert.equal(config.cognition.eventDrivenOnly, true)
+    assert.equal(config.cognition.socialRolesInjected, false)
+    assert.equal(config.runtime.paperMemoryMiB, 2048)
+    assert.equal(config.bounds.startupConcurrency, 2)
+    assert.equal(config.cognition.maxRequestBytes, 65_536)
+    assert.equal(config.cognition.maxOutputTokens, 2048)
+  }
+  // Against the merged ten-agent configuration only the pinned differences move.
+  const pinned = (config) => {
+    const copy = structuredClone(config)
+    delete copy.experimentId
+    delete copy.title
+    Object.assign(copy.bounds, { runDurationSeconds: 0, simulationTickCeiling: 0, logBytes: 0, artifactBytes: 0, evidenceRecords: 0 })
+    Object.assign(copy.cognition, { perAgentCallCeiling: 0, globalCallCeiling: 0, globalOutstandingCeiling: 0, maxExternalSpendUsd: 0 })
+    copy.primaryBehavior.profile = null
+    copy.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 0
+    return copy
+  }
+  assert.deepEqual(pinned(live), pinned(base))
+  assert.deepEqual(pinned(scripted), pinned(read('tribe-two-cycle-10-scripted.json')))
+  assert.deepEqual(live.cognition.models, { ordinary: 'gpt-5.4-nano', pivotal: 'gpt-5.4' })
+  assert.equal(live.cognition.backend, 'openai')
+  assert.equal(scripted.cognition.backend, 'scripted')
+  const manifest = validateProspectiveManifest(live, SOURCE)
+  assert.equal(manifest.protocol.profile, 'shakedown-10m-10')
+  assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 29.184)
+
+  const drifts = [
+    (config) => { config.agents.pop() },
+    (config) => { config.primaryBehavior.initialPositions['tribe-alpha'] = [12.5, 104, 0.5] },
+    (config) => { config.primaryBehavior.scene = 'r5-neutral' },
+    (config) => { config.world.seed = '76192346017' },
+    (config) => { config.world.difficulty = 'peaceful' },
+    (config) => { config.world.mobSpawning = false },
+    (config) => { config.world.worldBorderDiameterBlocks = 256 },
+    (config) => { config.world.viewDistanceChunks = 5 },
+    (config) => { config.primaryBehavior.initialWorldClock.timeOfDay = 6000 },
+    (config) => { config.primaryBehavior.startingInventories = 'kit' },
+    (config) => { config.primaryBehavior.injectedDirectives.roles = true },
+    (config) => { config.primaryBehavior.externalCognitionStimuli = 'operatorThink' },
+    (config) => { config.bounds.runDurationSeconds = 601 },
+    (config) => { config.bounds.simulationTickCeiling = 12_001 },
+    (config) => { config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 5 },
+    (config) => { config.cognition.perAgentCallCeiling = 25 },
+    (config) => { config.cognition.globalCallCeiling = 151 },
+    (config) => { config.cognition.globalOutstandingCeiling = 7 },
+    (config) => { config.cognition.maxExternalSpendUsd = 29.2 },
+    (config) => { config.cognition.maxExternalSpendUsd = 29.18 },
+    (config) => { config.cognition.models.ordinary = 'gpt-5.4' },
+    (config) => { config.cognition.models.pivotal = 'gpt-5.4-nano' },
+    (config) => { config.cognition.prompts.routine = 'routine-v12' },
+    (config) => { config.cognition.maxOutputTokens = 4096 },
+    (config) => { config.cognition.maxRequestBytes = 131_072 },
+    (config) => { config.featureFlags.speech = false },
+    (config) => { config.bounds.evidenceRecords = 20_000 },
+    (config) => { config.bounds.logBytes *= 2 },
+    (config) => { config.bounds.artifactBytes *= 2 },
+    (config) => { config.runtime.paperMemoryMiB = 1024 },
+    (config) => { config.primaryBehavior.profile = 'two-cycle-10' }
+  ]
+  for (const drift of drifts) {
+    const config = read('tribe-shakedown-10m-10.json')
+    drift(config)
+    assert.notDeepEqual(validateRunConfig(config), [], drift.toString())
+  }
+  // Review 6 is due at tick 12,000 itself; a ten-minute window ending just short owes five.
+  const schedule = { cadenceTicks: 2400, sliceTicks: 100, expectedReviewsPerAgent: 6 }
+  assert.deepEqual(reviewWindowBounds(schedule, 10, 12_000), { minimum: 5, maximum: 6 })
+  assert.deepEqual(reviewWindowBounds(schedule, 10, 11_999), { minimum: 5, maximum: 5 })
+})

@@ -31,7 +31,13 @@ a collision-free, non-fluid cover block in the feet cell counts as passable, and
 nothing is cleared or placed; the manifest states that rule. Their configurations
 are `research/config/tribe-two-cycle-3*.json` and `tribe-two-cycle-10*.json`; the
 live ones carry proposal ids and need their own explicit approval before any paid
-run. Outside the pilot profile the mechanical pilot verdict is `notApplicable`.
+run. `shakedown-10m-10` is `two-cycle-10` with only its window and envelope
+changed: 600 seconds or 12,000 ticks, six reviews each, 24/150/6 calls, $29.19,
+and 16 MiB log and publication bounds with 8,000 evidence records, about eight
+times the 12,000-tick share of the ten-agent normal sample. Its configurations
+are `research/config/tribe-shakedown-10m-10*.json`; the live one carries the
+approved id `2026-10-16-openai-10-agent-10m-r1` and was consumed by its one attempt.
+Outside the pilot profile the mechanical pilot verdict is `notApplicable`.
 
 The other committed configurations are historical:
 `first-tribe-scripted-proof.json` and `first-tribe-openai.json` (the
@@ -376,7 +382,8 @@ the configured spend ceiling is $2.34.
 
 The paid two-cycle profiles use the same routing and bounds. Three agents at
 56/150/3 calls make the worst case $29.184 against a $29.19 ceiling; ten agents
-at 56/400/6 make it $77.824 against $77.83. Each needs its own exact approval.
+at 56/400/6 make it $77.824 against $77.83. The ten-minute shakedown at 24/150/6 makes it $29.184 against $29.19.
+Each needs its own exact approval.
 
 After explicit approval, replace the proposal placeholder with the approved
 fresh experiment id and run the bounded live configuration once. The earlier

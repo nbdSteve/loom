@@ -101,6 +101,20 @@ for (const agents of [3, 10]) {
     scriptedOnly: true
   })
 }
+// The ten-agent ten-minute live shakedown: the two-cycle-10 scene, population, world, models,
+// prompts and request/output bounds over a real-clock window of 600 seconds or 12,000 ticks.
+// Review 6 is due at tick 12,000 itself, so the plan names six and the window rule owes only
+// the ones the ending made due. 150 calls at the worst-case price are $29.184. The bounds are
+// about eight times the 12,000-tick share of the ten-agent normal-difficulty sample.
+PROFILES['shakedown-10m-10'] = Object.freeze({
+  ...PROFILES['two-cycle-10'],
+  runDurationSeconds: 600,
+  simulationTickCeiling: 12_000,
+  expectedReviewsPerAgent: 6,
+  callCeilings: Object.freeze({ perAgent: 24, global: 150, outstanding: 6 }),
+  maxExternalSpendUsd: 29.19,
+  bounds: Object.freeze({ logBytes: 16 * 1024 * 1024, evidenceRecords: 8000, artifactBytes: 16 * 1024 * 1024 })
+})
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */
