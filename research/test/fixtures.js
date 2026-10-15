@@ -3,50 +3,26 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
+const { SERVED_PROMPTS } = require('../lib/experiment-mode.js')
 const { readJson } = require('../lib/util.js')
 
+// The committed proof config is historical (it pins unserved prompts); tests exercise the
+// same crash-containment conditions under the prompts the mind serves today.
 function proofConfig () {
   const config = structuredClone(
     readJson(path.join(__dirname, '..', 'config', 'first-tribe-scripted-proof.json'))
   )
   config.configFile = path.join(__dirname, '..', 'config', 'first-tribe-scripted-proof.json')
+  config.cognition.prompts = { ...SERVED_PROMPTS }
   return config
 }
 
 function primaryBehaviorConfig () {
-  const config = structuredClone(
-    readJson(path.join(
-      __dirname,
-      '..',
-      'config',
-      'first-tribe-routine-v12-agency-pilot-scripted.json'
-    ))
-  )
-  config.configFile = path.join(
-    __dirname,
-    '..',
-    'config',
-    'first-tribe-routine-v12-agency-pilot-scripted.json'
-  )
-  return config
+  return goalContinuityConfig()
 }
 
 function openAiPrimaryBehaviorConfig () {
-  const config = structuredClone(
-    readJson(path.join(
-      __dirname,
-      '..',
-      'config',
-      'first-tribe-routine-v12-agency-pilot.json'
-    ))
-  )
-  config.configFile = path.join(
-    __dirname,
-    '..',
-    'config',
-    'first-tribe-routine-v12-agency-pilot.json'
-  )
-  return config
+  return openAiGoalContinuityConfig()
 }
 
 function configNamed (name) {
@@ -124,7 +100,7 @@ function decision (
   agentId,
   requestId,
   reasoning = 'No bounded survival action is needed.',
-  promptVersion = 'routine-v11'
+  promptVersion = SERVED_PROMPTS.routine
 ) {
   return {
     requestId,
@@ -484,6 +460,7 @@ function primaryBehaviorRawRecords (config = primaryBehaviorConfig()) {
     externalCognitionStimuli: 'none',
     harnessThinkCommandsIssued: 0,
     nativeSchedulersOnly: true,
+    behaviorGateGeneration: 2,
     nativeGoalReviewSchedule: config.primaryBehavior.nativeGoalReviewSchedule
   })
   harness.push({

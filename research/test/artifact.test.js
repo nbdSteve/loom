@@ -13,6 +13,7 @@ const {
   validateProspectiveManifest,
   validateRunConfig
 } = require('../lib/artifact.js')
+const { SERVED_PROMPTS } = require('../lib/experiment-mode.js')
 const { readJson } = require('../lib/util.js')
 const {
   fixedRawRecords,
@@ -120,50 +121,30 @@ test('a prospective generation-3 manifest is validated before launch', () => {
   assert.equal(manifest.publication.manifestValidatedBeforeLaunch, true)
 })
 
-test('the committed live template preflights at its bounded spend envelope', () => {
-  const config = liveApprovalConfig()
-  assert.deepEqual(validateRunConfig(config), [])
-  const manifest = validateProspectiveManifest(config, SOURCE)
-  assert.equal(manifest.provenance.backend, 'openai')
-  assert.deepEqual(manifest.provenance.models, {
-    ordinary: 'gpt-5.4-nano',
-    pivotal: 'gpt-5.4'
-  })
-  assert.equal(manifest.agents.length, 3)
-  assert.equal(manifest.bounds.runDurationSeconds, 180)
-  assert.equal(manifest.bounds.simulationTickCeiling, 4000)
-  assert.equal(manifest.cognition.globalCallCeiling, 24)
-  assert.equal(manifest.protocol.controlledBodyCrash.reservedCallsPerPeer, 1)
+test('historical configurations are refused before startup and only v13 pilots are runnable', () => {
+  const support = readJson(path.join(__dirname, '..', '..', 'contract', 'fixtures', 'capability-support.json'))
+  for (const [name, entry] of Object.entries(support.researchConfigs)) {
+    const errors = validateRunConfig(readJson(path.join(__dirname, '..', 'config', name)))
+    if (entry.status === 'runnable') {
+      assert.deepEqual(errors, [], name)
+    } else {
+      assert.ok(errors.some((error) => error.includes('historical')), `${name}: ${errors.join('; ')}`)
+    }
+  }
+  const live = liveApprovalConfig()
+  live.cognition.prompts = { ...SERVED_PROMPTS }
+  const manifest = validateProspectiveManifest(live, SOURCE)
   assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 4.66944)
-  assert.equal(manifest.cognition.maxExternalSpendUsd, 4.67)
+  assert.equal(manifest.protocol.controlledBodyCrash.reservedCallsPerPeer, 1)
 })
 
-test('the routine-v12 primary behavior pilot preflights with native calls inside every ceiling', () => {
-  const config = openAiPrimaryBehaviorConfig()
-  assert.deepEqual(validateRunConfig(config), [])
-  const manifest = validateProspectiveManifest(config, SOURCE)
-  assert.equal(manifest.protocol.mode, 'routine-v12-primary-behavior')
-  assert.equal(manifest.protocol.controlledBodyCrashPlanned, false)
-  assert.equal(Object.hasOwn(manifest.protocol, 'controlledBodyCrash'), false)
-  assert.deepEqual(manifest.protocol.nativeGoalReviewSchedule, {
-    cadenceTicks: 2400,
-    expectedReviewsPerAgent: 2,
-    sliceTicks: 100
-  })
-  assert.deepEqual(manifest.provenance.models, {
-    ordinary: 'gpt-5.4-nano',
-    pivotal: 'gpt-5.4'
-  })
-  assert.deepEqual(manifest.provenance.prompts, {
-    routine: 'routine-v12',
-    notable: 'notable-v12',
-    pivotal: 'pivotal-v12'
-  })
-  assert.equal(manifest.cognition.perAgentCallCeiling, 4)
-  assert.equal(manifest.cognition.globalCallCeiling, 12)
-  assert.equal(manifest.cognition.globalOutstandingCeiling, 3)
-  assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 2.33472)
-  assert.equal(manifest.cognition.maxExternalSpendUsd, 2.34)
+test('every feature flag must be true because no runtime route reads one', () => {
+  const config = goalContinuityConfig()
+  for (const flag of Object.keys(config.featureFlags)) {
+    const disabled = goalContinuityConfig()
+    disabled.featureFlags[flag] = false
+    assert.ok(validateRunConfig(disabled).includes(`featureFlags.${flag} must be true: no runtime route can switch it off`))
+  }
 })
 
 test('the routine-v13 goal-continuity pilot preflights under the v12 treatment plus v13 prompts and category fairness', () => {
@@ -188,7 +169,7 @@ test('the routine-v13 goal-continuity pilot preflights under the v12 treatment p
 
   // Everything but the mode, title, prompts, fairness attestation and per-agent call share
   // is the v12 pilot.
-  const v12 = openAiPrimaryBehaviorConfig()
+  const v12 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v12-agency-pilot.json'))
   for (const drop of [v12, config]) {
     for (const key of ['experimentId', 'title', 'mode', 'configFile']) delete drop[key]
     delete drop.cognition.prompts
@@ -204,16 +185,11 @@ test('each native-scheduler pilot refuses the other pilot prompts or fairness at
   assert.ok(validateRunConfig(v13).some((error) => error.includes('categoryFairSelection must be true')))
 
   const v13OldPrompts = goalContinuityConfig()
-  v13OldPrompts.cognition.prompts = primaryBehaviorConfig().cognition.prompts
+  v13OldPrompts.cognition.prompts = { routine: 'routine-v12', notable: 'notable-v12', pivotal: 'pivotal-v12' }
   assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v13')))
 
-  const v12 = primaryBehaviorConfig()
-  v12.primaryBehavior.categoryFairSelection = true
-  assert.ok(validateRunConfig(v12).some((error) => error.includes('categoryFairSelection must be false')))
-
-  const v12NewPrompts = primaryBehaviorConfig()
-  v12NewPrompts.cognition.prompts = goalContinuityConfig().cognition.prompts
-  assert.ok(validateRunConfig(v12NewPrompts).some((error) => error.includes('routine-v12')))
+  const v12 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v12-agency-pilot-scripted.json'))
+  assert.ok(validateRunConfig(v12).some((error) => error.includes('mode routine-v12-primary-behavior is historical')))
 
   const drifted = [
     (config) => { config.world.seed = '1' },

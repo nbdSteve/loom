@@ -617,7 +617,10 @@ function deriveMetrics (records, configuredAgents = []) {
     usageByModel[record.model] = model
   }
 
-  const socialSpeech = appliedByIntent.say ?? 0
+  // Only speech the body accepted counts; an applied record may carry a refusal outcome.
+  const socialSpeech = bodyRecords.filter((record) =>
+    record.event === 'intentApplied' && record.intent === 'say' && record.outcome === 'accepted'
+  ).length
   const attacks = appliedByIntent.attack ?? 0
   const witnessDisputes = bodyRecords.filter((record) => record.event === 'witnessDisputed')
   const witnessDisputesByOutcome = {}
@@ -634,7 +637,7 @@ function deriveMetrics (records, configuredAgents = []) {
   if (coLocations.length > 0) {
     observations.push(`${coLocations.length} bounded co-location sample(s) placed two agents within eight blocks`)
   }
-  if (socialSpeech > 0) observations.push(`${socialSpeech} speech intent(s) were applied`)
+  if (socialSpeech > 0) observations.push(`${socialSpeech} speech intent(s) were accepted by the body`)
   if (attacks > 0) observations.push(`${attacks} attack intent(s) were applied`)
 
   const counterevidence = []

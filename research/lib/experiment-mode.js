@@ -1,17 +1,25 @@
 'use strict'
 
+const { GATE_GENERATION } = require('./behavior-gate.js')
+
 const CRASH_CONTAINMENT_MODE = 'crash-containment'
 const ROUTINE_V12_PRIMARY_BEHAVIOR_MODE = 'routine-v12-primary-behavior'
 const ROUTINE_V13_GOAL_CONTINUITY_MODE = 'routine-v13-goal-continuity'
 // The two native-scheduler pilots share every condition except what each mode pins here.
 // Category fairness is a fact about the JVM selector a run used, so v12 stays false for
 // its committed evidence and v13, which runs on the 48-per-kind selector, attests true.
-const PRIMARY_BEHAVIOR_MODES = Object.freeze({
+// The prompt versions the mind serves today (`cognition/crates/cognition/src/prompt.rs`).
+// A configuration pinning any other version can only fail after it has run.
+const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v13', notable: 'notable-v13', pivotal: 'pivotal-v13' })
+// Modes kept only so artifacts committed under them still validate; no run may select one.
+const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V12_PRIMARY_BEHAVIOR_MODE]: Object.freeze({
     prompts: Object.freeze({ routine: 'routine-v12', notable: 'notable-v12', pivotal: 'pivotal-v12' }),
     categoryFairSelection: false,
     callCeilings: Object.freeze({ perAgent: 4, global: 12, outstanding: 3 })
-  }),
+  })
+})
+const PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V13_GOAL_CONTINUITY_MODE]: Object.freeze({
     prompts: Object.freeze({ routine: 'routine-v13', notable: 'notable-v13', pivotal: 'pivotal-v13' }),
     categoryFairSelection: true,
@@ -33,7 +41,13 @@ function configuredMode (config) {
 }
 
 function primaryBehaviorModeOf (mode) {
-  return Object.hasOwn(PRIMARY_BEHAVIOR_MODES, mode) ? PRIMARY_BEHAVIOR_MODES[mode] : undefined
+  if (Object.hasOwn(PRIMARY_BEHAVIOR_MODES, mode)) return PRIMARY_BEHAVIOR_MODES[mode]
+  if (Object.hasOwn(HISTORICAL_PRIMARY_BEHAVIOR_MODES, mode)) return HISTORICAL_PRIMARY_BEHAVIOR_MODES[mode]
+  return undefined
+}
+
+function isHistoricalMode (mode) {
+  return Object.hasOwn(HISTORICAL_PRIMARY_BEHAVIOR_MODES, mode)
 }
 
 function isPrimaryBehaviorMode (config) {
@@ -105,6 +119,7 @@ function primaryBehaviorStimulusRecord (config, thinkCommandsIssued) {
     externalCognitionStimuli: 'none',
     harnessThinkCommandsIssued: thinkCommandsIssued,
     nativeSchedulersOnly: thinkCommandsIssued === 0,
+    behaviorGateGeneration: GATE_GENERATION,
     nativeGoalReviewSchedule: structuredClone(
       config.primaryBehavior.nativeGoalReviewSchedule
     )
@@ -113,13 +128,16 @@ function primaryBehaviorStimulusRecord (config, thinkCommandsIssued) {
 
 module.exports = {
   CRASH_CONTAINMENT_MODE,
+  HISTORICAL_PRIMARY_BEHAVIOR_MODES,
   PRIMARY_BEHAVIOR_AGENTS,
   PRIMARY_BEHAVIOR_INITIAL_POSITIONS,
   PRIMARY_BEHAVIOR_MODES,
   ROUTINE_V12_PRIMARY_BEHAVIOR_MODE,
   ROUTINE_V13_GOAL_CONTINUITY_MODE,
+  SERVED_PROMPTS,
   configuredMode,
   createInterventionSchedule,
+  isHistoricalMode,
   isPrimaryBehaviorMode,
   postCrashReserveFor,
   primaryBehaviorModeOf,

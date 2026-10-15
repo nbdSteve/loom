@@ -6,7 +6,6 @@ const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 
 const { currentSchemaVersion, validateManifest, versionTag } = require('../schema/manifest-schema.js')
-const { GATE_VERSION } = require('./behavior-gate.js')
 const {
   ADMISSION_CLOSED_BOUND,
   ADMISSION_CLOSED_EVENT,
@@ -31,6 +30,8 @@ const {
   PRIMARY_BEHAVIOR_AGENTS,
   PRIMARY_BEHAVIOR_INITIAL_POSITIONS,
   PRIMARY_BEHAVIOR_MODES,
+  SERVED_PROMPTS,
+  isHistoricalMode,
   primaryBehaviorModeOf,
   configuredMode,
   isPrimaryBehaviorMode
@@ -275,8 +276,17 @@ function validateRunConfig (config) {
     errors.push('experimentId must be a dated lowercase slug')
   }
   const modes = [CRASH_CONTAINMENT_MODE, ...Object.keys(PRIMARY_BEHAVIOR_MODES)]
-  if (!modes.includes(configuredMode(config))) {
+  if (isHistoricalMode(configuredMode(config))) {
+    errors.push(`mode ${configuredMode(config)} is historical; its artifacts still validate but no run may select it`)
+  } else if (!modes.includes(configuredMode(config))) {
     errors.push(`mode must be one of ${modes.join(', ')}`)
+  }
+  if (!sameJson(config.cognition?.prompts, { ...SERVED_PROMPTS })) {
+    errors.push(`cognition.prompts must be the served ${Object.values(SERVED_PROMPTS).join(', ')}; this configuration is historical`)
+  }
+  // No runtime route reads a flag, so a flag set false would be a false manifest claim.
+  for (const [flag, value] of Object.entries(config.featureFlags ?? {})) {
+    if (value !== true) errors.push(`featureFlags.${flag} must be true: no runtime route can switch it off`)
   }
   if (!Array.isArray(config.agents) || config.agents.length < 3 || config.agents.length > 16) {
     errors.push('agents must contain 3..16 agent ids')
@@ -1901,7 +1911,7 @@ ${metrics.witnessedDeaths === undefined
     : `
 ## Behavioral gate
 
-- Mechanical pilot verdict: **${gate.pilotVerdict}** (${GATE_VERSION}).
+- Mechanical pilot verdict: **${gate.pilotVerdict}** (${gate.version}).
 - Criteria: ${Object.entries(gate.pilotCriteria).map(([name, passed]) => `${name} ${passed ? 'held' : 'failed'}`).join('; ')}.
 - Meaningful behaviors by agent: ${JSON.stringify(gate.meaningfulBehaviorByAgent)}; typed goal continuity: ${JSON.stringify(gate.goalContinuityAgents)}.
 - Non-idle goal-review actions: ${gate.goalReviewActions.nonIdle}, accepted ${gate.goalReviewActions.accepted}, confirmed ${gate.goalReviewActions.confirmed}.

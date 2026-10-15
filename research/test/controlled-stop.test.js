@@ -7,7 +7,8 @@ const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
 
-const { publishArtifact, validateArtifact } = require('../lib/artifact.js')
+const { configuredAgents, publishArtifact, validateArtifact } = require('../lib/artifact.js')
+const { deriveMetrics, normalizeEvidence } = require('../lib/evidence.js')
 const { CognitionBudgetProxy } = require('../lib/budget-proxy.js')
 const {
   budgetStopFor,
@@ -78,6 +79,24 @@ function publish ({ config = goalContinuityConfig(), raw, stopReason = 'controll
     artifactDirectory
   })
   return { ...result, artifactDirectory }
+}
+
+function behaviorGateOf (raw) {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-gate-'))
+  writeJsonLines(path.join(temporary, 'body.jsonl'), raw.body)
+  writeJsonLines(path.join(temporary, 'harness.jsonl'), raw.harness)
+  const config = goalContinuityConfig()
+  const normalized = normalizeEvidence({
+    experimentId: config.experimentId,
+    bodyFile: path.join(temporary, 'body.jsonl'),
+    harnessFile: path.join(temporary, 'harness.jsonl'),
+    outputFile: path.join(temporary, 'evidence.jsonl'),
+    maxInputBytes: config.bounds.logBytes,
+    maxOutputBytes: config.bounds.artifactBytes,
+    maxRecords: config.bounds.evidenceRecords,
+    requirePerceptionAudit: true
+  })
+  return deriveMetrics(normalized.records, configuredAgents(config)).behaviorGate
 }
 
 function readme (published) {
@@ -675,6 +694,7 @@ test('the mechanical pilot gate passes only with confirmed behavior and typed co
     nonIdle: 2, accepted: 2, confirmed: 2, byConfirmation: { movement: 2 }, acceptedAndConfirmedRate: 1
   })
   assert.deepEqual(published.manifest.behaviorGate, gate)
+  assert.deepEqual(gate.interactionsByOperation, {})
   assert.match(readme(published), /Mechanical pilot verdict: \*\*pass\*\*/)
   assert.match(readme(published), /A pass still needs a reader to confirm/)
   const one = publish({ raw: actingRaw(['tribe-alpha']), stopReason: 'durationElapsed' })
@@ -778,4 +798,20 @@ test('a normal ending refuses refusals before the end, untyped late refusals and
   untyped.harness.find((record) => record.event === 'cognitionRefused').bound = 'globalCall'
   assert.throws(() => publish({ raw: untyped, stopReason: 'durationElapsed' }), /not a typed admission refusal/)
   assert.throws(() => publish({ raw: endedRaw(), stopReason: 'simulationTickCeiling' }), /does not name the run stop reason/)
+})
+
+test('server-witnessed interactions are broken down by operation and verdict', () => {
+  const raw = actingRaw()
+  const gamma = raw.body.find((record) =>
+    record.agentId === 'tribe-gamma' && record.requestId === 'native-1' && record.event === 'decided'
+  )
+  gamma.intent = 'dig'
+  gamma.decision.intent = { action: 'dig', block: 'b1' }
+  const index = raw.body.indexOf(gamma)
+  raw.body.splice(index + 1, 0,
+    bodyRecord(gamma.tick, 'tribe-gamma', 'worldInteraction', 'dig b1', { requestId: 'native-1', outcome: 'serverEffectConfirmed' }),
+    bodyRecord(gamma.tick, 'tribe-gamma', 'worldInteraction', 'dig b1', { requestId: 'native-1', outcome: 'disputedWorldInteraction' })
+  )
+  const gate = behaviorGateOf(raw)
+  assert.deepEqual(gate.interactionsByOperation, { dig: { confirmed: 1, disputed: 1 } })
 })

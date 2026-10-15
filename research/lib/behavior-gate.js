@@ -4,7 +4,10 @@
 // that need a reader (an evidence-grounded aim, no action justified only by being
 // active, no cross-agent goal leakage) are named, never scored here.
 
-const GATE_VERSION = 'loom-primary-behavior-gate/1'
+// Committed evidence derives the gate generation it was published under: the stimulus
+// attestation names it, and evidence that names none is generation 1.
+const GATE_GENERATION = 2
+const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`
 const PASSIVE_INTENTS = Object.freeze(['idle', 'rest'])
 const MOVEMENT_INTENTS = Object.freeze(['moveTo', 'flee'])
 const NIGHT_START = 13_000
@@ -44,10 +47,10 @@ function confirmationOf (decision, decisionIndex, bodyRecords, nextDecisionIndex
 }
 
 function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
-  const schedule = harnessRecords
-    .find((record) => record.event === 'cognitionStimulusAttested')
-    ?.nativeGoalReviewSchedule
+  const stimulus = harnessRecords.find((record) => record.event === 'cognitionStimulusAttested')
+  const schedule = stimulus?.nativeGoalReviewSchedule
   if (schedule === undefined) return undefined
+  const generation = Number.isInteger(stimulus.behaviorGateGeneration) ? stimulus.behaviorGateGeneration : 1
   const nativeReviewKeys = new Set(
     harnessRecords
       .filter((record) => record.event === 'cognitionForwarded' && isNativeReviewRecord(record))
@@ -83,6 +86,20 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
     ? null
     : Number((actions.confirmed / actions.nonIdle).toFixed(6))
 
+  // Server-witnessed native interactions by operation, so a claim about one operation
+  // can be checked against the server's verdict for that operation alone.
+  const intentByRequest = new Map(
+    bodyRecords.filter((record) => record.event === 'decided').map((record) => [record.requestKey, record.intent])
+  )
+  const interactionsByOperation = {}
+  for (const record of bodyRecords) {
+    if (record.event !== 'worldInteraction') continue
+    const operation = intentByRequest.get(record.requestKey) ?? 'unattributed'
+    const entry = interactionsByOperation[operation] ?? { confirmed: 0, disputed: 0 }
+    if (record.outcome === 'serverEffectConfirmed') entry.confirmed += 1
+    else entry.disputed += 1
+    interactionsByOperation[operation] = entry
+  }
   const omissions = {}
   for (const [kind, counts] of Object.entries(metrics.perceptionAudit?.byKind ?? {})) {
     omissions[kind] = {
@@ -136,10 +153,13 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
     noJvmCut: jvmCut === 0
   }
   return {
-    version: GATE_VERSION,
+    version: `loom-primary-behavior-gate/${generation}`,
     meaningfulBehaviorByAgent: Object.fromEntries(Object.entries(meaningful).sort()),
     goalContinuityAgents: goalAgents,
     goalReviewActions: actions,
+    ...(generation >= 2
+      ? { interactionsByOperation: Object.fromEntries(Object.entries(interactionsByOperation).sort()) }
+      : {}),
     omissionsByKind: omissions,
     nightPerceptionsByAgent: Object.fromEntries(Object.entries(nightPerceptionsByAgent).sort()),
     calls: {
@@ -158,6 +178,7 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
 }
 
 module.exports = {
+  GATE_GENERATION,
   GATE_VERSION,
   MANUAL_CRITERIA,
   behaviorGateMetrics
