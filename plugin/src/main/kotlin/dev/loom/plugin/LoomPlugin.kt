@@ -17,18 +17,12 @@ import dev.loom.body.player.ProcessBodySupervisor
 import dev.loom.body.player.SocketBodyControlConnector
 import dev.loom.mind.AppliedDecision
 import dev.loom.mind.AsyncCognitionBridge
-import dev.loom.mind.AutonomousDriver
 import dev.loom.mind.CognitionCallbacks
 import dev.loom.mind.CognitionSettings
-import dev.loom.mind.DAMAGE_EPISODE_TICKS
-import dev.loom.mind.DamageDriver
 import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.GoalLedger
-import dev.loom.mind.GoalReviewSchedule
 import dev.loom.mind.PerAgentCognitionBridge
-import dev.loom.mind.THREAT_SCAN_CADENCE
-import dev.loom.mind.ThreatDriver
 import dev.loom.mind.tcp.TcpCognitionTransport
 import dev.loom.observe.Observatory
 import dev.loom.observe.ObservedEventLog
@@ -53,16 +47,14 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.logging.Logger
-import kotlin.time.Duration
 
 private const val EVENT_LOG_FILE = "body-events.jsonl"
 private const val DEATH_LEDGER_FILE = "player-deaths.jsonl"
 private const val BODY_COMMAND = "loombody"
 private const val WATCH_COMMAND = "loomwatch"
 private const val OBSERVER_REFRESH_TICKS = 5L
-private const val MILLIS_PER_TICK = 50L
 
-private data class WitnessRuntime(
+internal data class WitnessRuntime(
     val permadeath: DurablePermadeath,
     val claimAudit: ClaimAudit,
     val speech: SpeechWitness,
@@ -79,9 +71,7 @@ class LoomPlugin : JavaPlugin() {
     private var bridge: AsyncCognitionBridge? = null
     private var transport: TcpCognitionTransport? = null
     private var bodyTicks: BukkitTask? = null
-    private var autonomy: BukkitTask? = null
-    private var vigilance: BukkitTask? = null
-    private var damage: AutoCloseable? = null
+    private var nativeSources: AutoCloseable? = null
     private var observatory: Observatory? = null
     private var display: BukkitTask? = null
     private var hearer: ((Heard) -> Unit)? = null
@@ -129,9 +119,11 @@ class LoomPlugin : JavaPlugin() {
         val mind = connectMind(port, witnessed, goals)
         cognition = mind
         hearer = hearerOf(port, mind)
+        val native =
+            NativeCognitionStart.fromEnvironment { nativeSources = startNativeSources(port, mind, witnessed, witness) }
         bind(
             BODY_COMMAND,
-            BodyCommand(port, mind) { message -> logger.info(message) },
+            BodyCommand(port, mind, { message -> logger.info(message) }, native::begin),
             "the body port has no driver",
         )
         bind(WATCH_COMMAND, WatchCommand(watched), "a run cannot be watched")
@@ -154,9 +146,7 @@ class LoomPlugin : JavaPlugin() {
                 OBSERVER_REFRESH_TICKS,
                 OBSERVER_REFRESH_TICKS,
             )
-        driveAgents(port, mind)
-        watchForThreats(port, mind)
-        damage = witnessDamage(port, mind, witnessed, witness.permadeath)
+        native.enable()
         port.reportConfiguredStartup(logger)
 
         logger.info("Loom observation ready: /loomwatch <agentId> follows one agent, read-only")
@@ -164,13 +154,9 @@ class LoomPlugin : JavaPlugin() {
 
     override fun onDisable() {
         // Stop every source of new body or cognition work first.
-        autonomy?.cancel()
-        autonomy = null
+        nativeSources?.close()
+        nativeSources = null
         hearer = null
-        vigilance?.cancel()
-        vigilance = null
-        damage?.close()
-        damage = null
         bodyTicks?.cancel()
         bodyTicks = null
 
@@ -377,60 +363,6 @@ class LoomPlugin : JavaPlugin() {
         return WitnessRuntime(permadeath, claims, speech)
     }
 
-    /**
-     * Schedules goal reviews by authoritative simulation ticks.
-     *
-     * Both the timer period and the elapsed reading are server ticks, so a paused
-     * server advances no review and a tick sprint advances the same sequence with
-     * no dependence on how much wall time it consumed.
-     */
-    private fun driveAgents(
-        bodies: BodyPort,
-        mind: EmbodiedCognition,
-    ) {
-        val schedule = GoalReviewSchedule()
-        val driver =
-            AutonomousDriver(
-                bodies = bodies,
-                mind = mind,
-                schedule = schedule,
-                currentTick = { server.currentTick.toLong() },
-            )
-        val period = schedule.sliceTicks
-        autonomy =
-            server.scheduler.runTaskTimer(
-                this,
-                Runnable { driver.sweep() },
-                period,
-                period,
-            )
-        logger.info(
-            "Loom autonomy running: each agent reviews its goals every " +
-                "${schedule.cadenceTicks} server ticks",
-        )
-    }
-
-    private fun watchForThreats(
-        bodies: BodyPort,
-        mind: EmbodiedCognition,
-    ) {
-        val driver = ThreatDriver(bodies, mind)
-        val period = ticks(THREAT_SCAN_CADENCE)
-        vigilance =
-            server.scheduler.runTaskTimer(
-                this,
-                Runnable { driver.sweep() },
-                period,
-                period,
-            )
-        logger.info("Loom vigilance running: each agent looks for a threat every $THREAT_SCAN_CADENCE")
-    }
-
-    private fun ticks(duration: Duration): Long {
-        val whole = (duration.inWholeMilliseconds + MILLIS_PER_TICK - 1) / MILLIS_PER_TICK
-        return maxOf(1L, whole)
-    }
-
     private fun reportApplied(applied: AppliedDecision) {
         val decision = applied.decision
         logger.info(
@@ -438,41 +370,6 @@ class LoomPlugin : JavaPlugin() {
                 "(${decision.provenance.model}/${decision.provenance.promptVersion} " +
                 "at ${decision.provenance.tier}) -> ${applied.outcome}",
         )
-    }
-}
-
-/**
- * Registers the server-authoritative `damaged` producer after the witness.
- *
- * The returned handle unregisters the listener, then stops the driver.
- */
-private fun LoomPlugin.witnessDamage(
-    bodies: BodyPort,
-    mind: EmbodiedCognition,
-    eventLog: BodyEventLog,
-    permadeath: DurablePermadeath,
-): AutoCloseable {
-    val currentTick = { server.currentTick.toLong() }
-    val driver =
-        DamageDriver(
-            bodies = bodies,
-            mind = mind,
-            mainThread = BukkitMainThread(this),
-            isDead = permadeath::isDead,
-            eventLog = eventLog,
-            currentTick = currentTick,
-        )
-    val listener =
-        BukkitDamageEvents(
-            agentOf = { uuid -> managedPlayers.byUuid(uuid)?.agentId },
-            currentTick = currentTick,
-            sink = driver::witnessed,
-        )
-    server.pluginManager.registerEvents(listener, this)
-    logger.info("Loom damage witness running: one pivotal review per agent per $DAMAGE_EPISODE_TICKS-tick episode")
-    return AutoCloseable {
-        listener.close()
-        driver.close()
     }
 }
 

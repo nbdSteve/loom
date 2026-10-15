@@ -297,6 +297,7 @@ The one knob is `DEFAULT_GOAL_REVIEW_CADENCE_TICKS`, and the sweep period is *de
 Both the schedule reading and Bukkit timer are authoritative server ticks. A pause advances nothing and `/tick sprint` advances the same deterministic sequence; wall time must never re-enter this path.
 A never-reviewed agent is due at once, which keeps every freshly started configured agent observable at a conservative cadence.
 The driver is cancelled explicitly in `onDisable`, before the bridge it feeds closes.
+The schedule, threat scan and damage witness start and stop together (`NativeCognitionSources.kt`); `LOOM_NATIVE_COGNITION=held` keeps all three off until `/loombody begin`, which the research harness sends after its initial conditions because the first agent's first review otherwise raced the rest of the fleet's startup.
 **`Trigger.Damaged` has one producer: `BukkitDamageEvents` at `MONITOR` with `ignoreCancelled`, feeding the engine-free `DamageDriver`.**
 The agent is resolved by server uuid through the witness registry; the source is the vanilla attacker key (projectile shooter first) or the `DamageCause` token, never a name.
 One `damageWitnessed` record per witnessed event classifies it by its `DAMAGE_` outcome tag, and `damageSubmitted` carries the `damaged` perception's `requestId`.

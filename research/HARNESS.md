@@ -254,6 +254,11 @@ Paper, its world, the JVM, the bounded logs, and publication all write there, an
 
 The harness starts cognition, the bounded proxy, and Paper in that order. Paper
 then starts the canonical fleet through Loom's existing bounded startup gate.
+In primary behavior mode Paper starts with `LOOM_NATIVE_COGNITION=held`, so no
+scheduled review, threat scan or damage witness runs until the harness has
+applied the initial conditions and sent `loombody begin` after them. Without the
+hold, the first agent's first review could arrive while later agents were still
+starting, before the conditions existed; the `-r2` shakedown failed that way.
 A shared startup deadline covers the service, server, and all bodies. Any
 partial startup enters the same cleanup path as cancellation, timeout, disk
 failure, cognition failure, or Paper failure.

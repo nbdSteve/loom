@@ -124,9 +124,22 @@ class BodyCommandTest {
         assertEquals(null, command.reply(arrayOf("move")))
     }
 
+    @Test
+    @DisplayName("begin starts held native cognition once and reports a repeat")
+    fun beginStartsHeldNativeCognition() {
+        var starts = 0
+        val native = NativeCognitionStart(held = true) { starts += 1 }
+        val command = commandFor(SpyBody(), begin = native::begin)
+
+        assertEquals("native cognition started", command.reply(arrayOf("begin")))
+        assertEquals("native cognition was already running", command.reply(arrayOf("begin")))
+        assertEquals(1, starts)
+    }
+
     private fun commandFor(
         body: SpyBody,
         report: (String) -> Unit = {},
+        begin: () -> Boolean = { false },
     ): BodyCommand {
         val cognition =
             EmbodiedCognition(
@@ -150,7 +163,7 @@ class BodyCommandTest {
                 mainThread = main,
                 journal = silentJournal(),
             )
-        return BodyCommand(body, cognition, report)
+        return BodyCommand(body, cognition, report, begin)
     }
 
     private class SpyBody : BodyPort {

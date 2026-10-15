@@ -20,7 +20,8 @@ private const val ARG_AGENT = 1
 private const val MAX_FAILURE_NAME_CHARS = 48
 
 /**
- * Creates, inspects, thinks for and stops the player identity behind [bodies].
+ * Creates, inspects, thinks for and stops the player identity behind [bodies], and begins
+ * native cognition when the plugin was started with it held; see [NativeCognitionStart].
  *
  * Typed only as [BodyPort], so the command remains an operator surface over the
  * lifecycle seam rather than another route into the Mineflayer implementation.
@@ -29,6 +30,7 @@ class BodyCommand(
     private val bodies: BodyPort,
     private val mind: EmbodiedCognition,
     private val report: (String) -> Unit,
+    private val begin: () -> Boolean = { false },
 ) : CommandExecutor {
     override fun onCommand(
         sender: CommandSender,
@@ -51,6 +53,12 @@ class BodyCommand(
             "inspect" -> inspect(args)
             "think" -> think(args)
             "stop" -> stop(args)
+            "begin" ->
+                if (begin()) {
+                    "native cognition started"
+                } else {
+                    "native cognition was already running"
+                }
             else -> null
         }
 

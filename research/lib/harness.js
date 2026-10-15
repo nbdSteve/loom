@@ -307,6 +307,17 @@ function applyPrimaryBehaviorInitialConditions (paper, config, journal) {
     worldClock: config.primaryBehavior.initialWorldClock,
     startingInventories: config.primaryBehavior.startingInventories
   })
+  // Paper runs console commands in order, so every condition above is in place first.
+  paperCommand(paper, 'loombody begin')
+}
+
+/**
+ * When the plugin's native cognition sources begin. A primary behavior run holds them until
+ * its initial conditions are applied: the fleet starts two bodies at a time, so the first
+ * agent's first scheduled review could otherwise arrive before the last agent had spawned.
+ */
+function nativeCognitionStartOf (config) {
+  return isPrimaryBehaviorMode(config) ? 'held' : 'immediate'
 }
 
 const PRIMARY_BEHAVIOR_FATAL_EVENTS = new Map([
@@ -993,7 +1004,8 @@ async function runExperiment ({
         LOOM_COGNITION_CONNECT_TIMEOUT_MS: String(config.runtime.cognitionBridge.connectTimeoutMillis),
         LOOM_COGNITION_WORKERS: String(config.runtime.cognitionBridge.workers),
         LOOM_COGNITION_QUEUE_DEPTH: String(config.runtime.cognitionBridge.queueDepth),
-        LOOM_COGNITION_PENDING_PER_AGENT: String(config.runtime.cognitionBridge.perAgentPending)
+        LOOM_COGNITION_PENDING_PER_AGENT: String(config.runtime.cognitionBridge.perAgentPending),
+        LOOM_NATIVE_COGNITION: nativeCognitionStartOf(config)
       },
       logFile: path.join(runDirectory, 'paper.log'),
       stdin: true
@@ -1298,6 +1310,7 @@ function paperWarnings (logFile) {
 }
 
 module.exports = {
+  applyPrimaryBehaviorInitialConditions,
   authenticationFailure,
   bodyEvents,
   budgetRefusalFailure,
@@ -1310,6 +1323,7 @@ module.exports = {
   findJava21,
   importProviderUsage,
   keychainCredentialProvider,
+  nativeCognitionStartOf,
   primaryBehaviorRunFailure,
   runExperiment,
   sourceIdentity,

@@ -420,3 +420,24 @@ test('a host suspension mid-run is named from the measured clock gap, not blamed
   assert.equal(failure.stopReason, 'startupFailed')
   assert.match(failure.message, /suspended for 422 s/)
 })
+
+test('a primary behavior run holds native cognition until its initial conditions are applied', () => {
+  const { applyPrimaryBehaviorInitialConditions, nativeCognitionStartOf } = require('../lib/harness.js')
+  const { readJson } = require('../lib/util.js')
+  const live = readJson(path.join(__dirname, '..', 'config', 'tribe-shakedown-10m-10.json'))
+  const crashProof = readJson(path.join(__dirname, '..', 'config', 'first-tribe-scripted-proof.json'))
+  assert.equal(nativeCognitionStartOf(live), 'held')
+  assert.equal(nativeCognitionStartOf(crashProof), 'immediate')
+
+  const written = []
+  const paper = { child: { stdin: { writable: true, write: (line) => written.push(line.trim()) } } }
+  const journalled = []
+  applyPrimaryBehaviorInitialConditions(paper, live, { append: (event) => journalled.push(event) })
+  // Begin is the last console command, after every position, inventory and clock condition.
+  assert.equal(written.at(-1), 'loombody begin')
+  assert.equal(written.filter((line) => line === 'loombody begin').length, 1)
+  assert.ok(written.indexOf('time set 0') < written.length - 1)
+  assert.equal(written.filter((line) => line.startsWith('tp ')).length, 10)
+  assert.ok(written.findLastIndex((line) => line.startsWith('tp ')) < written.length - 1)
+  assert.deepEqual(journalled, ['initialConditionsAttested'])
+})
