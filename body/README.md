@@ -453,6 +453,12 @@ tops out exactly at the feet, so the step it permits establishes the ground stat
 nothing. A body in mid-air is not simulated by a dig and digs at the airborne rate it has.
 `test/native-dig-terminal.test.js` proves both against a server model that judges a finish by
 the last ground state the client wrote.
+**`dug` is the server's answer, not Mineflayer's prediction.** Mineflayer sets the block to air
+locally as it writes the finish and resolves `bot.dig` on that local update, before the server
+has judged the dig. `digging.js` therefore answers `dug` only once a server `block_change` or
+`multi_block_change` at the offered position has left it empty; a server that put the block back,
+or no server answer inside the deadline, is `libraryFailure`, which the contract reserves for a
+result Mineflayer could not confirm.
 
 **None of the six plugins loaded beside the reporting table decides anything, and the line is drawn per
 plugin rather than per method.**

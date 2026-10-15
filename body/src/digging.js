@@ -12,6 +12,9 @@
  * the simulation has established the ground state, because both Mineflayer's dig time and the
  * server's destroy progress are five times slower for a player who is not on the ground and a
  * teleport leaves the client reporting exactly that. See `holdSimulation` in `movement.js`.
+ *
+ * `dug` waits for the server's own update at the offered position; see [serverUpdates] for why
+ * Mineflayer's resolved dig is only a prediction.
  */
 
 const { performance } = require('node:perf_hooks')
@@ -59,6 +62,65 @@ function refused (outcome, startedAt, now) {
     }),
     cancel: () => false
   }
+}
+
+/**
+ * Watches the server's own block updates for one position, from the moment a dig starts.
+ *
+ * Mineflayer predicts a finished dig: it sets the block to air locally as it writes the finish
+ * packet and resolves `bot.dig` on that local update, before the server has judged the dig.
+ * A server that refuses the finish answers with the block's real state, and one that accepts
+ * broadcasts the change to every player tracking the chunk, the digger included. So only a
+ * server update at the offered position says what became of it. Answers `seen()` - whether
+ * one has arrived - `next(listener)` to hear the next one, and `close()`.
+ */
+function serverUpdates (bot, position) {
+  const client = bot._client
+  if (client === null || client === undefined || typeof client.on !== 'function') return undefined
+  const [x, y, z] = position
+  let seen = false
+  let waiting
+  const heard = () => {
+    seen = true
+    const listener = waiting
+    waiting = undefined
+    listener?.()
+  }
+  const single = (packet) => {
+    const at = packet?.location
+    if (at?.x === x && at?.y === y && at?.z === z) heard()
+  }
+  const multiple = (packet) => {
+    if (multiBlockPositions(bot, packet).some((at) => at[0] === x && at[1] === y && at[2] === z)) heard()
+  }
+  client.on('block_change', single)
+  client.on('multi_block_change', multiple)
+  return {
+    seen: () => seen,
+    next (listener) {
+      waiting = listener
+    },
+    close () {
+      waiting = undefined
+      client.off('block_change', single)
+      client.off('multi_block_change', multiple)
+    }
+  }
+}
+
+/** The positions one `multi_block_change` names, decoded the way Mineflayer decodes them. */
+function multiBlockPositions (bot, packet) {
+  if (typeof bot.supportFeature !== 'function' || !Array.isArray(packet?.records)) return []
+  const single = bot.supportFeature('usesMultiblockSingleLong')
+  const section = bot.supportFeature('usesMultiblock3DChunkCoords')
+    ? [packet.chunkCoordinates?.x, packet.chunkCoordinates?.y, packet.chunkCoordinates?.z]
+    : [packet.chunkX, 0, packet.chunkZ]
+  return packet.records.map((record) => {
+    const offset = single
+      ? [(record >> 8) & 0x0f, record & 0x0f, (record >> 4) & 0x0f]
+      : [(record.horizontalPos >> 4) & 0x0f, record.y, record.horizontalPos & 0x0f]
+    return [section[0] * 16 + offset[0], section[1] * 16 + offset[1], section[2] * 16 + offset[2]]
+  })
 }
 
 /** Whether the offered position now contains empty space. */
@@ -118,11 +180,17 @@ function digOfferedBlock (bot, {
   const release = bot.entity?.onGround !== true && standsOnSupport(bot)
     ? holdSimulation(bot)
     : undefined
+  // Undefined only for a bot with no client, which has no server to predict ahead of.
+  const server = serverUpdates(bot, resolved.offered.position)
+  let predicted = false
+  /** Whether the server itself has said the offered block is gone. */
+  const serverRemoved = () => (server === undefined || server.seen()) && removed(bot, resolved.offered)
   const promise = new Promise((resolve) => {
     const timer = setTimeout(() => {
       timedOut = true
       stopDigging()
-      complete(removed(bot, resolved.offered) ? 'dug' : 'timedOut')
+      // A predicted finish the server has not answered by the deadline is unconfirmed.
+      complete(serverRemoved() ? 'dug' : predicted ? 'libraryFailure' : 'timedOut')
     }, timeoutMs)
 
     function stopDigging () {
@@ -138,6 +206,7 @@ function digOfferedBlock (bot, {
       settled = true
       clearTimeout(timer)
       if (settling !== undefined) bot.off('physicsTick', settling)
+      server?.close()
       release?.()
       resolve({
         outcome,
@@ -151,7 +220,7 @@ function digOfferedBlock (bot, {
       if (settled) return false
       cancelled = true
       stopDigging()
-      complete(removed(bot, resolved.offered) ? 'dug' : 'cancelled')
+      complete(serverRemoved() ? 'dug' : 'cancelled')
       return true
     }
 
@@ -159,9 +228,9 @@ function digOfferedBlock (bot, {
       if (settled) return
       try {
         Promise.resolve(bot.dig(resolved.block, 'raycast')).then(
-          () => complete('dug'),
+          confirmed,
           () => {
-            if (removed(bot, resolved.offered)) complete('dug')
+            if (serverRemoved()) complete('dug')
             else if (timedOut) complete('timedOut')
             else if (cancelled) complete('cancelled')
             else complete('libraryFailure')
@@ -170,6 +239,23 @@ function digOfferedBlock (bot, {
       } catch {
         complete('libraryFailure')
       }
+    }
+
+    /**
+     * Mineflayer's own finish, which may be only its prediction: the answer waits, inside the
+     * deadline, for the server's update at the offered position. `dug` is a vanilla-confirmed
+     * break; a server that put the block back is the residual Mineflayer could not confirm.
+     */
+    function confirmed () {
+      if (settled) return
+      if (server === undefined || server.seen()) {
+        complete(removed(bot, resolved.offered) ? 'dug' : 'libraryFailure')
+        return
+      }
+      predicted = true
+      server.next(() => {
+        if (!settled) complete(removed(bot, resolved.offered) ? 'dug' : 'libraryFailure')
+      })
     }
 
     if (release === undefined) {

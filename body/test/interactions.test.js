@@ -157,6 +157,12 @@ function worldBot (bot = new EventEmitter()) {
   return bot
 }
 
+/** A dig the server accepted: the block goes, and the server says so at that position. */
+function serverBroke (bot, position) {
+  bot.removeBlock(position)
+  bot._client.emit('block_change', { location: { x: position.x, y: position.y, z: position.z }, type: 0 })
+}
+
 function blockOffer (block) {
   return {
     what: block.name,
@@ -396,7 +402,7 @@ test('dig revalidates the exact block, reach, sight, and tool before one attempt
   let dug
   bot.dig = async (block, face) => {
     dug = { block, face }
-    bot.removeBlock(block.position)
+    serverBroke(bot, block.position)
   }
   bot.stopDigging = () => {}
 
@@ -441,6 +447,38 @@ test('dig revalidates the exact block, reach, sight, and tool before one attempt
     block: 0,
     timeoutMs: 100
   }))).outcome, 'notVisible')
+})
+
+test('a dig is dug only once the server itself has removed the block', async () => {
+  const bot = worldBot()
+  const target = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))
+  const offered = [blockOffer(target)]
+  bot.digTime = () => 25
+  bot.stopDigging = () => {}
+
+  // Mineflayer's prediction alone: the block is air locally and nothing from the server.
+  bot.dig = async (block) => { bot.removeBlock(block.position) }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 100 }))).outcome,
+    'libraryFailure')
+
+  // The server refused the finish and put the block back.
+  bot.putBlock(target)
+  bot.dig = async (block) => {
+    bot.removeBlock(block.position)
+    setImmediate(() => {
+      bot.putBlock(target)
+      bot._client.emit('block_change', { location: { x: 1, y: 64, z: 0 }, type: target.stateId })
+    })
+  }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome,
+    'libraryFailure')
+
+  // The server's own answer arrives after the prediction and confirms it.
+  bot.dig = async (block) => {
+    bot.removeBlock(block.position)
+    setImmediate(() => bot._client.emit('block_change', { location: { x: 1, y: 64, z: 0 }, type: 0 }))
+  }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome, 'dug')
 })
 
 test('dig timeout, halt, and teardown all stop the same bounded task', async () => {
@@ -1564,7 +1602,7 @@ test('all four original operations cross the wire using only one connection own 
   bot.digTime = () => 1
   bot.stopDigging = () => {}
   bot.dig = async (block) => {
-    bot.removeBlock(block.position)
+    serverBroke(bot, block.position)
   }
   bot.equip = async (stack, destination) => {
     const to = bot.getEquipmentDestSlot(destination)
