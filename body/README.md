@@ -56,6 +56,9 @@ flight from one creature a `sense` answer showed it, and `halt` cancels whicheve
 or interaction is cancellable.
 `dig`, `collect`, `place` and `equip` are one-shot native interactions against exact block,
 dropped-item and inventory offers from one retained `sense` answer.
+An `equip` is `equipped` only after a bounded settle window in which the server did not
+restate the window to undo it, because Mineflayer moves the stack locally before the server
+answers and a vanilla server answers a refused click only with that restatement.
 `craft`, `attack` and `sleep` likewise name one offered recipe, one offered living target
 and weapon, or one offered bed, with bounded quantity, swings, pursuit and wait.
 None decides anything: a body acts only because the controller named the destination,

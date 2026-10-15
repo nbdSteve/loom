@@ -7,6 +7,11 @@
  * only its mechanical hand-slot choice; the report records the actual slot it selected.
  * A failed armour move is `incompatible` only when the live destination confirms the
  * offered stack was not accepted, never because Loom keeps a second armour table.
+ *
+ * Mineflayer moves the stack in its local window before the server has answered, and a
+ * vanilla server stays silent about a click it accepts but restates the window for one it
+ * refuses. So `equipped` waits, after the library settles, one bounded window for that
+ * restatement, and is reported only if the destination still holds the offered stack.
  */
 
 const { performance } = require('node:perf_hooks')
@@ -15,6 +20,12 @@ const {
   offeredStack,
   stackMatchesOffer
 } = require('./interaction')
+
+/**
+ * How long, after Mineflayer's clicks settle, a server has to refuse them by restating the
+ * window. The same five-tick allowance the eat path gives the server's slot account.
+ */
+const EQUIP_SETTLE_MS = 250
 
 const MINEFLAYER_DESTINATIONS = Object.freeze({
   hand: 'hand',
@@ -54,6 +65,15 @@ function equipOfferedStack (bot, {
   let abort
   const promise = new Promise((resolve) => {
     const timer = setTimeout(() => finish('timedOut'), timeoutMs)
+    let settleTimer
+    const client = bot._client
+    // Any restatement of the player's own window after the click is the server's answer.
+    const restated = (packet) => {
+      if (packet?.windowId !== 0 || !librarySettled) return
+      if (equippedEffect() === undefined) finish('libraryFailure')
+    }
+    client?.on?.('set_slot', restated)
+    client?.on?.('window_items', restated)
 
     function equippedEffect () {
       let toSlot
@@ -77,6 +97,9 @@ function equipOfferedStack (bot, {
       const effect = equippedEffect()
       settled = true
       clearTimeout(timer)
+      clearTimeout(settleTimer)
+      client?.off?.('set_slot', restated)
+      client?.off?.('window_items', restated)
       if (effect !== undefined) {
         resolve({
           outcome: 'equipped',
@@ -99,7 +122,11 @@ function equipOfferedStack (bot, {
       Promise.resolve(bot.equip(resolved.stack, mineflayerDestination)).then(
         () => {
           librarySettled = true
-          finish('libraryFailure')
+          if (equippedEffect() === undefined) {
+            finish('libraryFailure')
+            return
+          }
+          settleTimer = setTimeout(() => finish('libraryFailure'), EQUIP_SETTLE_MS)
         },
         () => {
           librarySettled = true
@@ -120,6 +147,7 @@ function equipOfferedStack (bot, {
 }
 
 module.exports = {
+  EQUIP_SETTLE_MS,
   MINEFLAYER_DESTINATIONS,
   equipOfferedStack
 }
