@@ -278,3 +278,44 @@ test('a run refuses to start without free disk headroom on the run volume', () =
   large.bounds.logBytes = 256 * 1024 * 1024
   assert.throws(() => verifyFreeDisk('/run', large, statfs(3 * gib)), /is required before startup/)
 })
+
+test('a full run refuses low disk before any build, listener, Paper start or credential read', async () => {
+  const { execFileSync } = require('node:child_process')
+  const { runExperiment } = require('../lib/harness.js')
+  const repository = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-disk-'))
+  const git = (...args) => execFileSync('git', args, { cwd: repository, stdio: 'ignore' })
+  git('init', '-q')
+  git('config', 'user.email', 'test@example.invalid')
+  git('config', 'user.name', 'test')
+  fs.writeFileSync(path.join(repository, '.gitignore'), '.scratch/\n')
+  git('add', '.gitignore')
+  git('commit', '-q', '-m', 'init')
+  git('remote', 'add', 'origin', 'https://github.com/nbdSteve/loom.git')
+  let credentialReads = 0
+  for (const config of [goalContinuityConfigFile(), openAiGoalContinuityConfigFile()]) {
+    await assert.rejects(
+      runExperiment({
+        repositoryRoot: repository,
+        configFile: config,
+        artifactRoot: path.join(repository, 'artifacts'),
+        credentialProvider: () => {
+          credentialReads += 1
+          return 'never'
+        },
+        statfs: () => ({ bavail: 1024, bsize: 4096 })
+      }),
+      (cause) => cause.stopReason === 'diskFailure' && /MiB is required before startup/.test(cause.message)
+    )
+  }
+  assert.equal(credentialReads, 0)
+  assert.equal(fs.existsSync(path.join(repository, 'artifacts')), false)
+  assert.deepEqual(fs.readdirSync(path.join(repository, '.scratch', 'tribe-runs')), [])
+})
+
+function goalContinuityConfigFile () {
+  return path.join(__dirname, '..', 'config', 'first-tribe-routine-v13-agency-pilot-scripted.json')
+}
+
+function openAiGoalContinuityConfigFile () {
+  return path.join(__dirname, '..', 'config', 'first-tribe-routine-v13-agency-pilot.json')
+}

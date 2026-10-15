@@ -740,7 +740,8 @@ async function runExperiment ({
   skipBuild = false,
   credentialProvider,
   failureDiagnosticRoot,
-  signal
+  signal,
+  statfs = fs.statfsSync
 }) {
   const absoluteRoot = path.resolve(repositoryRoot)
   const config = readJson(path.resolve(configFile))
@@ -748,14 +749,16 @@ async function runExperiment ({
   config.configFile = path.resolve(configFile)
   const source = sourceIdentity(absoluteRoot)
   validateProspectiveManifest(config, source)
+  const scratchRoot = path.join(absoluteRoot, '.scratch', 'tribe-runs')
+  fs.mkdirSync(scratchRoot, { recursive: true })
+  // Before any build, Paper, listener or credential: nothing has been spent yet.
+  verifyFreeDisk(scratchRoot, config, statfs)
   const java = findJava21()
   const components = buildComponents(absoluteRoot, java, skipBuild)
   const paperFile = await ensurePaper(absoluteRoot, config, paperJar)
   await verifyNoListeners(config, 'startup')
 
-  const scratchRoot = path.join(absoluteRoot, '.scratch', 'tribe-runs')
-  fs.mkdirSync(scratchRoot, { recursive: true })
-  verifyFreeDisk(scratchRoot, config)
+  verifyFreeDisk(scratchRoot, config, statfs)
   const runDirectory = fs.mkdtempSync(path.join(scratchRoot, `${config.experimentId}-`))
   const rawHarnessEvidence = path.join(runDirectory, 'harness-events.jsonl')
   const rawBodyEvidence = path.join(runDirectory, 'plugins', 'Loom', 'body-events.jsonl')

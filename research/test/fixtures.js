@@ -732,6 +732,7 @@ function writeJsonLines (file, records, trailingNewline = true) {
 module.exports = {
   LIVE_MODEL,
   bodyRecord,
+  configNamed,
   controlledStopRawRecords,
   decision,
   fixedRawRecords,
