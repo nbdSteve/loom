@@ -29,6 +29,7 @@ import dev.loom.bodycontrol.ErrorCode
 import dev.loom.bodycontrol.LifecycleState
 import dev.loom.bodycontrol.MoveOutcome
 import dev.loom.bodycontrol.PlaceOutcome
+import dev.loom.bodycontrol.SayOutcome
 import dev.loom.bodycontrol.SensedBlock
 import dev.loom.bodycontrol.SensedEntity
 import dev.loom.bodycontrol.SensedGround
@@ -75,6 +76,116 @@ import java.util.concurrent.atomic.AtomicLong
 
 private val PORT_TEST_TIMEOUT: Duration = Duration.ofSeconds(3)
 private val SENSE_POSITION = listOf(1.5, 64.0, 2.5)
+
+/** Bounded one-shot speech through the same fake fleet harness. */
+class PlayerSpeechPortTest {
+    @TempDir
+    lateinit var temporary: Path
+
+    private val harnesses = mutableListOf<PortHarness>()
+    private val tick = AtomicLong(500)
+
+    @AfterEach
+    fun cleanUp() {
+        harnesses.forEach { runCatching(it.port::close) }
+    }
+
+    private fun harness(
+        agent: AgentId,
+        options: HarnessOptions = HarnessOptions(),
+    ): PortHarness = buildPortHarness(temporary, tick, agent, options).also(harnesses::add)
+
+    @Test
+    fun `a say sends exactly one bounded chat request with the exact text`() {
+        val agent = AgentId("agent-speaker")
+        val harness = harness(agent)
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+
+        val said = harness.port.apply(agent, Intent.Say("h\u00e9llo river"), perception.requestId).await()
+
+        assertEquals(IntentOutcome.Accepted("said"), said)
+        val says = harness.connector.requests.filterIsInstance<BodyRequest.Say>()
+        assertEquals(listOf("h\u00e9llo river"), says.map { it.text })
+        assertEquals(agent.value, says.single().agentId)
+    }
+
+    @Test
+    fun `an unsendable line is refused before any chat request`() {
+        val agent = AgentId("agent-mute")
+        val harness = harness(agent)
+        harness.port.spawn(agent).await()
+        val lines =
+            listOf("", "   ", "a".repeat(129), "hi\u0007", "\u00a7cred", "\u001b[31m", "a\u202eb", "/kill", "a  b")
+        for (line in lines) {
+            assertEquals(
+                IntentOutcome.Rejected("the line is not sendable chat", EventTag.SAY_TEXT_REFUSED),
+                harness.port.apply(agent, Intent.Say(line)).await(),
+            )
+        }
+        assertTrue(harness.connector.requests.none { it is BodyRequest.Say })
+    }
+
+    @Test
+    fun `a full speech window is a typed refusal`() {
+        val agent = AgentId("agent-chatty")
+        val harness =
+            harness(
+                agent = agent,
+                options =
+                    HarnessOptions(intercept = { request ->
+                        (request as? BodyRequest.Say)?.let { fakeSay(it, SayOutcome.RATE_LIMITED) }
+                    }),
+            )
+        harness.port.spawn(agent).await()
+
+        assertEquals(
+            IntentOutcome.Rejected("the body's speech window was full", EventTag.SAY_RATE_LIMITED),
+            harness.port.apply(agent, Intent.Say("again")).await(),
+        )
+    }
+
+    @Test
+    fun `one say is outstanding per agent and the bound is released on every ending`() {
+        val agent = AgentId("agent-waiting")
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        var fail = false
+        val harness =
+            harness(
+                agent = agent,
+                options =
+                    HarnessOptions(intercept = { request ->
+                        if (request is BodyRequest.Say) {
+                            entered.countDown()
+                            release.await(PORT_TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
+                            if (fail) throw BodyControlFailure.Unavailable()
+                        }
+                        null
+                    }),
+            )
+        harness.port.spawn(agent).await()
+
+        val first = harness.port.apply(agent, Intent.Say("first"))
+        assertTrue(entered.await(PORT_TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS))
+        assertEquals(
+            IntentOutcome.Rejected("this agent is already speaking", EventTag.SAY_OUTSTANDING),
+            harness.port.apply(agent, Intent.Say("second")).await(),
+        )
+        fail = true
+        release.countDown()
+        assertEquals(
+            IntentOutcome.Rejected("the body-control request was unavailable", EventTag.CONTROL_UNAVAILABLE),
+            first.await(),
+        )
+        fail = false
+        assertEquals(IntentOutcome.Accepted("said"), harness.port.apply(agent, Intent.Say("third")).await())
+        assertEquals(
+            listOf("first", "third"),
+            harness.connector.requests.filterIsInstance<BodyRequest.Say>().map { it.text },
+        )
+    }
+}
 
 private class FakeBodyProcess(
     override val identity: PlayerIdentity,
@@ -1768,6 +1879,7 @@ private fun fakeResponse(
         is BodyRequest.Eat -> fakeEat(request)
         is BodyRequest.Status -> fakeStatus(request, handled)
         is BodyRequest.Halt -> fakeHalt(request)
+        is BodyRequest.Say -> fakeSay(request)
         else -> fakeInteractionResponse(request)
     }
 
@@ -1788,6 +1900,7 @@ private fun fakeInteractionResponse(request: BodyRequest): BodyResponse =
         is BodyRequest.Eat,
         is BodyRequest.Status,
         is BodyRequest.Halt,
+        is BodyRequest.Say,
         -> error("the fake connector already represents a handshaken gameplay connection")
     }
 
@@ -2068,6 +2181,18 @@ private fun fakeEat(request: BodyRequest.Eat): BodyResponse.EatReport =
         vitals = SensedVitals(health = 18.0, food = 11, saturation = 6.0),
         what = "minecraft:bread",
         remaining = 2,
+    )
+
+private fun fakeSay(
+    request: BodyRequest.Say,
+    outcome: SayOutcome = SayOutcome.SENT,
+): BodyResponse.SayReport =
+    BodyResponse.SayReport(
+        protocol = request.protocol,
+        requestId = request.requestId,
+        agentId = request.agentId,
+        state = LifecycleState.READY,
+        outcome = outcome,
     )
 
 private fun fakeHalt(request: BodyRequest.Halt): BodyResponse.HaltReport =

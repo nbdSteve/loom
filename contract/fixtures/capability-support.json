@@ -2,8 +2,9 @@
   "description": "The one machine-readable support classification every capability-completeness test reads. A capability is 'supported' only when every layer serves it; 'dormant' is a contract variant deliberately not served, which must then be hidden from every model-facing and operator-facing surface. 'historical' marks a research config retained only to re-derive committed evidence. Nothing else may exempt a capability.",
   "intents": {
     "say": {
-      "status": "dormant",
-      "reason": "PlayerActuation answers IntentOutcome.Unsupported(\"say\") unconditionally; there is no body-control speech operation."
+      "status": "supported",
+      "bodyOperation": "say",
+      "serverEvidence": "speech"
     },
     "moveTo": {
       "status": "supported",
@@ -68,8 +69,7 @@
   },
   "triggers": {
     "spoken": {
-      "status": "dormant",
-      "reason": "No production code constructs Trigger.Spoken; there is no speech perception source."
+      "status": "supported"
     },
     "damaged": {
       "status": "supported"
@@ -100,7 +100,8 @@
     "equip": "action",
     "craft": "action",
     "attack": "action",
-    "sleep": "action"
+    "sleep": "action",
+    "say": "action"
   },
   "featureFlags": {
     "movement": [
@@ -131,7 +132,10 @@
     "sleep": [
       "sleep"
     ],
-    "permadeath": []
+    "permadeath": [],
+    "speech": [
+      "say"
+    ]
   },
   "researchConfigs": {
     "first-tribe-openai.json": {

@@ -346,6 +346,15 @@ class ObserverView(
                         "reported a movement the server disagrees with and which contradicts itself",
                         ObserverLevel.CONCERN,
                     )
+                EventTag.DISPUTED_SPEECH_TEXT,
+                EventTag.DISPUTED_SPEECH_SENDER,
+                EventTag.UNCLAIMED_SPEECH,
+                EventTag.UNOBSERVED_SPEECH,
+                ->
+                    Note(
+                        "spoke in a way the server did not attribute as claimed",
+                        ObserverLevel.CONCERN,
+                    )
                 else -> Note("reported something the server disagrees with", ObserverLevel.CONCERN)
             }
 

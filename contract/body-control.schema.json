@@ -515,6 +515,20 @@
       ]
     },
 
+    "SayText": {
+      "description": "One line of player chat the controller chose verbatim. Nothing is normalised: the accepted text is the exact text sent. At most 128 code points, and both codecs also refuse more than 256 UTF-8 bytes or any unpaired surrogate, which JSON Schema cannot state. Words are separated by exactly one U+0020 and the line may not begin or end with whitespace, because vanilla normalises chat whitespace and the server-observed text must equal the sent text. It may not begin with '/', which Mineflayer would send as a command. C0/C1 controls, DEL, the section-sign formatting escape, other Unicode spaces, zero-width and bidirectional controls, line separators, the BOM and interlinear annotation characters are refused.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^(?!/)[^\\u0000-\\u0020\\u007f-\\u00a0\\u00a7\\u061c\\u1680\\u2000-\\u200f\\u2028-\\u202f\\u205f-\\u206f\\u3000\\ufeff\\ufff9-\\ufffb]+( [^\\u0000-\\u0020\\u007f-\\u00a0\\u00a7\\u061c\\u1680\\u2000-\\u200f\\u2028-\\u202f\\u205f-\\u206f\\u3000\\ufeff\\ufff9-\\ufffb]+)*$"
+    },
+
+    "SayOutcome": {
+      "description": "Every terminal answer to one say. sent means Mineflayer's player chat primitive wrote exactly one chat packet with the exact text; it is a client acknowledgement and not proof the server attributed the message. rateLimited means the body's bounded per-agent window was full and nothing was sent.",
+      "type": "string",
+      "enum": ["sent", "rateLimited"]
+    },
+
     "SleepOutcome": {
       "description": "Every terminal answer to one sleep at one exact retained bed. woke means vanilla accepted the sleep and later woke this body; a timeout or cancellation may occur either before or after entry and the report states that separately.",
       "type": "string",
@@ -555,7 +569,7 @@
     },
 
     "ControlOperation": {
-      "description": "What a controller may ask for. The operation set is the one part of a generation that may grow without moving the generation: an older body refuses an operation it does not know as unknownOperation, while a body-chosen response field or enum value can surprise a controller after an operation it did know and therefore requires a new generation. Generation 4 added craft, attack, and sleep, but moved because sense and response value sets widened, not merely because those request names existed. Generation 5 widens only the body-chosen world-observation lists.",
+      "description": "What a controller may ask for. The operation set is the one part of a generation that may grow without moving the generation: an older body refuses an operation it does not know as unknownOperation, while a body-chosen response field or enum value can surprise a controller after an operation it did know and therefore requires a new generation. Generation 4 added craft, attack, and sleep, but moved because sense and response value sets widened, not merely because those request names existed. Generation 5 widens only the body-chosen world-observation lists. say was added within generation 5: its closed outcome set answers only a controller that sent say, so no agreed frame widened.",
       "type": "string",
       "enum": [
         "handshake",
@@ -572,7 +586,8 @@
         "equip",
         "craft",
         "attack",
-        "sleep"
+        "sleep",
+        "say"
       ]
     },
 
@@ -836,6 +851,20 @@
             "minHealth": { "$ref": "#/$defs/CombatHealthFloor" },
             "timeoutMs": { "$ref": "#/$defs/ActionDeadline" },
             "sprint": { "type": "boolean" }
+          }
+        },
+        {
+          "title": "Say",
+          "description": "Send one bounded line through this agent's own Mineflayer player chat, never a server console broadcast. One-shot: the body sends at most one chat packet, chooses no text, and starts no follow-on action or reply.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "text"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "say" },
+            "text": { "$ref": "#/$defs/SayText" }
           }
         },
         {
@@ -1299,6 +1328,21 @@
             "outcome": { "$ref": "#/$defs/SleepOutcome" },
             "elapsedMs": { "$ref": "#/$defs/StatusCount" },
             "entered": { "type": "boolean" }
+          }
+        },
+        {
+          "title": "SayReport",
+          "description": "What became of one say. It echoes no text: the controller holds what it asked for, and the server's own chat event is the attribution evidence.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "requestId", "agentId", "op", "state", "outcome"],
+          "properties": {
+            "protocol": { "$ref": "#/$defs/ProtocolVersion" },
+            "requestId": { "$ref": "#/$defs/ControlId" },
+            "agentId": { "$ref": "#/$defs/ControlId" },
+            "op": { "const": "say" },
+            "state": { "const": "ready" },
+            "outcome": { "$ref": "#/$defs/SayOutcome" }
           }
         },
         {

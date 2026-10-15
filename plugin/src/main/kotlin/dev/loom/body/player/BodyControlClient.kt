@@ -245,6 +245,7 @@ private val RESPONSE_TYPES: Map<KClass<out BodyRequest>, KClass<out BodyResponse
         BodyRequest.Attack::class to BodyResponse.AttackReport::class,
         BodyRequest.Sleep::class to BodyResponse.SleepReport::class,
         BodyRequest.Halt::class to BodyResponse.HaltReport::class,
+        BodyRequest.Say::class to BodyResponse.SayReport::class,
     )
 
 private fun BodyResponse.matchesOperation(request: BodyRequest): Boolean =

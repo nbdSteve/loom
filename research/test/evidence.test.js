@@ -449,3 +449,42 @@ test('malformed goal evidence is refused at normalization', () => {
     }), /goal/)
   }
 })
+
+test('speech metrics count only server-attributed lines, disputes, and nearby hearing', () => {
+  const directory = temporaryDirectory()
+  const bodyFile = path.join(directory, 'body.jsonl')
+  const harnessFile = path.join(directory, 'harness.jsonl')
+  const outputFile = path.join(directory, 'evidence.jsonl')
+  const raw = fixedRawRecords()
+  const before = deriveMetrics(normalizeEvidence({
+    experimentId: '2026-10-12-scripted-tribe-crash-proof',
+    bodyFile: (writeJsonLines(bodyFile, raw.body), bodyFile),
+    harnessFile: (writeJsonLines(harnessFile, raw.harness), harnessFile),
+    outputFile,
+    maxInputBytes: 1024 * 1024,
+    maxOutputBytes: 1024 * 1024,
+    maxRecords: 1000
+  }).records)
+  assert.equal(before.speech, undefined)
+  raw.body.push(
+    { tick: 50, agentId: 'tribe-alpha', event: 'worldInteraction', requestId: 'req-say-1', intent: 'say', outcome: 'serverEffectConfirmed', detail: 'said 5 chars; control say-1; server attributed' },
+    { tick: 50, agentId: 'tribe-beta', event: 'perceived', requestId: 'req-heard-1', trigger: 'spoken', detail: 'heard' },
+    { tick: 60, agentId: 'tribe-beta', event: 'witnessDisputed', requestId: 'req-say-2', intent: 'say', outcome: 'unobservedSpeech', detail: 'claimed 3 chars; no server chat attributed' }
+  )
+  writeJsonLines(bodyFile, raw.body)
+  const metrics = deriveMetrics(normalizeEvidence({
+    experimentId: '2026-10-12-scripted-tribe-crash-proof',
+    bodyFile,
+    harnessFile,
+    outputFile: path.join(directory, 'evidence-2.jsonl'),
+    maxInputBytes: 1024 * 1024,
+    maxOutputBytes: 1024 * 1024,
+    maxRecords: 1000
+  }).records)
+  assert.equal(metrics.speech.confirmed, 1)
+  assert.deepEqual(metrics.speech.confirmedByAgent, { 'tribe-alpha': 1 })
+  assert.equal(metrics.speech.disputed, 1)
+  assert.deepEqual(metrics.speech.disputedByOutcome, { unobservedSpeech: 1 })
+  assert.equal(metrics.speech.heard, 1)
+  assert.deepEqual(metrics.speech.heardByAgent, { 'tribe-beta': 1 })
+})

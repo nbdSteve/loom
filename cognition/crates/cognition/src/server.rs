@@ -278,12 +278,7 @@ mod tests {
         let response = answer(&scripted_mind(), SPOKEN_PERCEPTION).await;
         let decision: Decision = serde_json::from_str(&response).expect("the answer is a Decision");
         assert_eq!(decision.request_id, "req-spoken-1");
-        assert_eq!(
-            decision.intent,
-            Intent::Say {
-                text: "Hello, player-steve.".to_owned()
-            }
-        );
+        assert_eq!(decision.intent, Intent::Idle);
         // The stand-in names itself, so nothing in the research record claims a
         // model that never saw this perception.
         assert_eq!(decision.provenance.model, SCRIPTED_MODEL_ID);

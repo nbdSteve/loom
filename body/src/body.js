@@ -72,6 +72,7 @@ const {
   equipReport,
   fleeReport,
   haltReport,
+  sayReport,
   handshakeAccepted,
   isControlId,
   isUsername,
@@ -100,6 +101,7 @@ const { equipOfferedStack } = require('./equipping')
 const { installMovement } = require('./movement')
 const { installPlacing, placeHeldBlock } = require('./placing')
 const { senseMemory } = require('./senses')
+const { createSpeech } = require('./speaking')
 const { senseReading, vitalsOf } = require('./sensing')
 const { installSleeping, sleepInOfferedBed } = require('./sleeping')
 
@@ -482,6 +484,7 @@ function createBody (options) {
   const environment = options.environment ?? process.env
 
   const startedAt = now()
+  const speech = createSpeech({ now })
   let state = 'connecting'
   let stateSince = startedAt
   let requestsHandled = 0
@@ -901,7 +904,7 @@ function createBody (options) {
   }
 
   /**
-   * The fifteen operations of this generation.
+   * The sixteen operations of this generation.
    *
    * A handshake is answered first, and refused while stopping: a process that has
    * begun leaving has nothing true to say about the generation it is agreeing to.
@@ -955,6 +958,7 @@ function createBody (options) {
       return interact(socket, session, request, requestId)
     }
     if (op === 'halt') return halt(socket, requestId)
+    if (op === 'say') return say(socket, session, request, requestId)
     const { stateMs, uptimeMs } = snapshot()
     return write(socket, statusReport({
       requestId,
@@ -1416,6 +1420,24 @@ function createBody (options) {
    * a controller may rely on: this answer is written synchronously and the mover's resolves a
    * microtask later, but both go out.
    */
+  /**
+   * Sends one line of player chat, or refuses it as `notReady`.
+   *
+   * Synchronous, so it takes no exclusive owner and leaves none outstanding: it neither
+   * waits on nor blocks a movement or interaction. A send that throws is `notReady`
+   * rather than `sent`, because nothing proves the line left.
+   */
+  function say (socket, session, request, requestId) {
+    if (state !== 'ready') return refuse(socket, session, { code: 'notReady', requestId })
+    let outcome
+    try {
+      outcome = speech.say(bot, request.text)
+    } catch {
+      return refuse(socket, session, { code: 'notReady', requestId })
+    }
+    return write(socket, sayReport({ requestId, agentId, outcome }))
+  }
+
   function halt (socket, requestId) {
     const owned = actionOwner
     const stopped = owned?.cancel() ?? false

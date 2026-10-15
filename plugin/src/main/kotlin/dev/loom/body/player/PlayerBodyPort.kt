@@ -137,7 +137,7 @@ private class PlayerBodyInstance(
             registry,
             sessions,
             transitions,
-            PlayerActionPreparer(context),
+            PlayerActionPreparer(context, speech = PlayerSpeech(context, authority.speechClaims)),
             PlayerEvidenceRecorder(context),
         )
 

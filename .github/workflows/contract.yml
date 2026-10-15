@@ -114,10 +114,25 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-${{ runner.os }}-${{ hashFiles('plugin/build.gradle.kts', 'plugin/settings.gradle.kts', 'plugin/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
+      - name: Set up Node 22 for the speech acceptance peers
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install body dependencies
+        working-directory: body
+        run: npm ci
       - name: gate suite, conformance and architecture tests
         # `check` runs detekt, ktlint, ArchUnit, warnings-as-errors compile, and
         # the tests; all are configured to fail the build.
         run: ./gradlew check --no-daemon --console=plain
+      - name: Fail if the offline speech acceptance was skipped
+        # It runs only where node and body deps exist, so a skip here proves nothing.
+        run: |
+          report=build/test-results/test/TEST-dev.loom.plugin.SpeechEndToEndTest.xml
+          grep -q 'skipped="0"' "$report" || {
+            echo "the offline speech acceptance did not run: $report" >&2
+            exit 1
+          }
       - name: assemble the plugin jar
         # Proves the shipped artifact still builds, not just that sources compile.
         run: ./gradlew shadowJar --no-daemon --console=plain

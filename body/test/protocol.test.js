@@ -112,7 +112,8 @@ const PAYLOAD = {
     sprint: false
   },
   sleep: { senseId: 'sense-1', block: 0, timeoutMs: 8000 },
-  halt: {}
+  halt: {},
+  say: { text: 'hello there' }
 }
 
 /** A request with everything the contract requires, so a test can spoil one field. */

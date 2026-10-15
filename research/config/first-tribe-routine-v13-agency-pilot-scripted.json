@@ -143,6 +143,7 @@
     "crafting": true,
     "combat": true,
     "sleep": true,
-    "permadeath": true
+    "permadeath": true,
+    "speech": true
   }
 }

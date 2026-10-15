@@ -58,6 +58,7 @@ const {
   attackReport,
   sleepReport,
   haltReport,
+  sayReport,
   shutdownAccepted,
   refusal,
   EAT_OUTCOMES,
@@ -69,6 +70,7 @@ const {
   CRAFT_OUTCOMES,
   ATTACK_OUTCOMES,
   SLEEP_OUTCOMES,
+  SAY_OUTCOMES,
   THREAT_REFUSALS
 } = require('../src/protocol')
 
@@ -129,6 +131,7 @@ function rebuild (frame) {
   if (frame.op === 'attack') return attackReport(frame)
   if (frame.op === 'sleep') return sleepReport(frame)
   if (frame.op === 'halt') return haltReport(frame)
+  if (frame.op === 'say') return sayReport(frame)
   return shutdownAccepted(frame)
 }
 
@@ -246,6 +249,28 @@ test('a refused fixture is refused for the reason its name gives', () => {
     'response-moveTo-missing-elapsed.json': 'invalidField',
     'response-flee-negative-separation.json': 'invalidField',
     'response-halt-missing-stopped.json': 'invalidField',
+    'request-say-ansi-escape.json': 'invalidField',
+    'request-say-bidi-isolate.json': 'invalidField',
+    'request-say-bidi.json': 'invalidField',
+    'request-say-blank.json': 'invalidField',
+    'request-say-bom.json': 'invalidField',
+    'request-say-command.json': 'invalidField',
+    'request-say-control.json': 'invalidField',
+    'request-say-double-space.json': 'invalidField',
+    'request-say-escape.json': 'invalidField',
+    'request-say-extra-field.json': 'invalidField',
+    'request-say-leading-space.json': 'invalidField',
+    'request-say-line-separator.json': 'invalidField',
+    'request-say-missing-text.json': 'invalidField',
+    'request-say-nbsp.json': 'invalidField',
+    'request-say-newline.json': 'invalidField',
+    'request-say-non-string-text.json': 'invalidField',
+    'request-say-too-many-chars.json': 'invalidField',
+    'request-say-trailing-space.json': 'invalidField',
+    'request-say-whitespace-only.json': 'invalidField',
+    'request-say-zero-width.json': 'invalidField',
+    'response-say-echoes-text.json': 'invalidField',
+    'response-say-unknown-outcome.json': 'invalidField',
     'error-unknown-code.json': 'invalidField',
     'error-free-text-code.json': 'invalidField',
     'error-missing-agent-id.json': 'invalidField',
@@ -291,7 +316,9 @@ test('a frame the schema cannot refuse is still refused by the codec', () => {
     'response-attack-attacked-with-zero-attacks.json': 'combat claims success without an attack packet',
     'response-attack-target-died-with-zero-attacks.json': 'combat credits an unrelated pre-strike death',
     'response-sleep-woke-without-entry.json': 'a sleep claims wake without ever entering',
-    'response-sense-recipes-omitted-with-no-recipes.json': 'recipes were omitted from an empty list'
+    'response-sense-recipes-omitted-with-no-recipes.json': 'recipes were omitted from an empty list',
+    'request-say-too-many-bytes.json': 'say text is within its code points but over its UTF-8 bytes',
+    'request-say-lone-surrogate.json': 'say text carries an unpaired surrogate'
   }
   const present = fixtures('beyond-schema').map(({ name }) => name)
   assert.deepEqual(Object.keys(relations).sort(), present, 'a beyond-schema fixture has no stated relation here')
@@ -352,6 +379,7 @@ test('the corpus covers every operation and both directions of each', () => {
     'attack',
     'sleep',
     'halt',
+    'say',
     'shutdown'
   ]) {
     assert.ok(valid.includes(`request-${op}.json`), `no valid request fixture for ${op}`)
@@ -374,7 +402,8 @@ test('the corpus states every native interaction outcome', () => {
     ['equip', EQUIP_OUTCOMES],
     ['craft', CRAFT_OUTCOMES],
     ['attack', ATTACK_OUTCOMES],
-    ['sleep', SLEEP_OUTCOMES]
+    ['sleep', SLEEP_OUTCOMES],
+    ['say', SAY_OUTCOMES]
   ]) {
     const stated = outcomesOf(op)
     for (const outcome of outcomes) {

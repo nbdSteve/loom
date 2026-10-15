@@ -491,7 +491,7 @@ fn build_decision_schema() -> Value {
                     intent_variant("say", &json!({
                         "text": {
                             "type": "string",
-                            "description": "What to say out loud."
+                            "description": "One line of player chat heard by agents nearby: at most 128 characters and 256 UTF-8 bytes, words separated by single spaces, no leading or trailing space, no leading '/', and no control, formatting or bidirectional characters. Text outside these bounds is refused and never sent."
                         }
                     })),
                     intent_variant("moveTo", &json!({

@@ -167,14 +167,16 @@ test('the routine-v13 goal-continuity pilot preflights under the v12 treatment p
   assert.equal(manifest.cognition.perAgentCallCeiling, 6)
   assert.equal(manifest.cognition.globalCallCeiling, 12)
 
-  // Everything but the mode, title, prompts, fairness attestation and per-agent call share
-  // is the v12 pilot.
+  // Everything but the mode, title, prompts, fairness attestation, per-agent call share and
+  // speech is the v12 pilot.
   const v12 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v12-agency-pilot.json'))
   for (const drop of [v12, config]) {
     for (const key of ['experimentId', 'title', 'mode', 'configFile']) delete drop[key]
     delete drop.cognition.prompts
     delete drop.cognition.perAgentCallCeiling
     delete drop.primaryBehavior.categoryFairSelection
+    // Speech became a body capability after the v12 pilot; v13 attests it.
+    delete drop.featureFlags.speech
   }
   assert.deepEqual(config, v12)
 })

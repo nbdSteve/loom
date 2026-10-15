@@ -246,6 +246,7 @@ private class ScenePeer(
             is BodyRequest.Status -> stamped("response-status", request)
             is BodyRequest.Shutdown -> stamped("response-shutdown", request)
             is BodyRequest.Halt -> stamped("response-halt", request)
+            is BodyRequest.Say -> stamped("response-say", request)
             is BodyRequest.MoveTo -> stamped("response-moveTo", request)
             is BodyRequest.Sense -> {
                 val version = sceneVersion.get()

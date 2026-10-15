@@ -124,6 +124,7 @@ internal class PlayerActionPreparer(
     private val context: PlayerBodyContext,
     private val interactions: PlayerInteractionPreparer = PlayerInteractionPreparer(context),
     private val survival: PlayerSurvivalPreparer = PlayerSurvivalPreparer(context),
+    private val speech: PlayerSpeech = PlayerSpeech(context),
 ) {
     fun prepare(
         runtime: PlayerRuntime,
@@ -132,9 +133,12 @@ internal class PlayerActionPreparer(
         sense: HeldSense?,
     ): () -> ActionExecution =
         when (intent) {
-            is Intent.Say -> {
-                { ActionExecution(IntentOutcome.Unsupported("say")) }
-            }
+            is Intent.Say ->
+                speech.prepare(runtime, intent.text, requestId) { request ->
+                    withControl(runtime, null) { connection ->
+                        connection.request(request, context.infrastructure.settings.requestTimeout)
+                    }
+                }
             is Intent.Idle -> {
                 { halt(runtime, "standing still") }
             }

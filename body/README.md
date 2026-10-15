@@ -31,7 +31,7 @@ child is still alive can mean another exclusive action owns the player. The coor
 records a refused intent and leaves the process ready; it must not turn expected action
 contention into a disconnect or terminate a healthy child.
 
-The wire is **fifteen operations at protocol generation 5**, and the split between them is
+The wire is **sixteen operations at protocol generation 5**, and the split between them is
 the split this whole package is built on.
 Generation 5 moved because the body-chosen entity, block, and dropped-item response lists
 widened from 24 to 48 entries. Generation 4 moved because `sense` gained body-chosen
@@ -48,6 +48,7 @@ That is why adding `moveTo`, `flee` and `halt` left generation 1 in place, addin
 `searchOverBudget` moved it to 2, block and dropped-item answers moved it to 3, and
 recipe and survival-skill answers moved it to 4.
 Widening the three world-observation lists moved it to 5.
+Adding `say` did not move it: its closed outcome set answers only a controller that sent `say`.
 `contract/body-control.schema.json`'s own `ControlOperation` description is the authority.
 `handshake`, `status` and `shutdown` are the process's own lifecycle.
 `sense` is one bounded reading of a player's scene and vitals, `eat` is one explicit meal,
@@ -61,6 +62,19 @@ restate the window to undo it, because Mineflayer moves the stack locally before
 answers and a vanilla server answers a refused click only with that restatement.
 `craft`, `attack` and `sleep` likewise name one offered recipe, one offered living target
 and weapon, or one offered bed, with bounded quantity, swings, pursuit and wait.
+`say` sends one line the controller chose through this player's own chat; `src/speaking.js`
+owns it.
+Its text is refused unless it is 1 to 128 code points and at most 256 UTF-8 bytes, carries no
+unpaired surrogate, control, DEL, C1, section-sign escape, non-U+0020 space, zero-width,
+bidi, line-separator, BOM or annotation character, separates words by exactly one space with
+none leading or trailing, and does not begin with `/`.
+Nothing is normalised, so the accepted text is the sent text and the server-observed text.
+At most 2 lines are sent per sliding 10 s window per process, answered `rateLimited` beyond
+that; one accepted `say` writes exactly one `chat_message` packet.
+Mineflayer's `chat` plugin stays unloaded (it brings `whisper`, `tabComplete` and chat-pattern
+listeners); `say` calls minecraft-protocol's `_client.chat` once, which is all `bot.chat` does
+for such a line. Nothing listens for chat, so a heard line can never cause a reply.
+`say` is synchronous and takes no exclusive owner.
 None decides anything: a body acts only because the controller named the destination,
 creature, block, dropped item, slot, recipe, bed, face or equipment destination, and it
 does nothing at all in between.
@@ -986,7 +1000,7 @@ a controller sent that could not be read as a request at all.
 
 `../contract/body-control.schema.json` is the single source of truth, and it is a
 **separate document from `../contract/loom.schema.json`**: that one carries what an
-agent perceives and decides, this one carries this process's own fifteen operations -
+agent perceives and decides, this one carries this process's own sixteen operations -
 lifecycle and shutdown, one bounded raw reading, one named meal, one walk, one flight,
 seven request-scoped native interactions, and one cancellation of the exclusive work
 that can still be stopped. The contracts

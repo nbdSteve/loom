@@ -44,6 +44,9 @@ identity, removes unsafe provider/process/path material, and then derives
 `metrics.json`. Primary behavior artifacts additionally retain the native
 cognition origin, exact initial-condition attestations, and research-only
 per-kind perception audit counts without changing the model-visible contract.
+A run holding speech evidence also derives `speech`: applied says, server-attributed
+(`confirmed`), disputed by tag, and nearby `heard` triggers. A client `sent` alone is
+never counted as spoken.
 The raw server directory and its logs remain disposable. `research/HARNESS.md`
 is the operator contract for that path.
 

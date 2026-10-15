@@ -759,6 +759,8 @@ function deriveMetrics (records, configuredAgents = []) {
       `${deaths.deaths} agent(s) died under the server witness: ${Object.keys(deaths.byAgent).join(', ')}.`
     )
   }
+  const speech = speechMetrics(bodyRecords, socialSpeech)
+  if (speech !== undefined) result.speech = speech
   const goalRecords = bodyRecords.filter((record) => record.goal !== undefined)
   if (goalRecords.length > 0) result.goalContinuity = goalContinuityMetrics(goalRecords)
   if (perceptionAudits.length > 0) {
@@ -773,6 +775,31 @@ function deriveMetrics (records, configuredAgents = []) {
     if (gate !== undefined) result.behaviorGate = gate
   }
   return sortedValue(result)
+}
+
+// Speech counts only server-attributed lines as spoken; a client `sent` alone is a claim.
+// Absent unless the run holds speech evidence, so earlier committed metrics re-derive unchanged.
+function speechMetrics (records, applied) {
+  const confirmed = records.filter((record) =>
+    record.event === 'worldInteraction' && record.intent === 'say' && record.outcome === 'serverEffectConfirmed')
+  const disputed = records.filter((record) => record.event === 'witnessDisputed' && record.intent === 'say')
+  const heard = records.filter((record) => record.event === 'perceived' && record.trigger === 'spoken')
+  if (confirmed.length + disputed.length + heard.length === 0) return undefined
+  const disputedByOutcome = {}
+  for (const record of disputed) increment(disputedByOutcome, record.outcome ?? 'unclassified')
+  const confirmedByAgent = {}
+  for (const record of confirmed) increment(confirmedByAgent, record.agentId)
+  const heardByAgent = {}
+  for (const record of heard) increment(heardByAgent, record.agentId)
+  return {
+    applied,
+    confirmed: confirmed.length,
+    confirmedByAgent: sortedValue(confirmedByAgent),
+    disputed: disputed.length,
+    disputedByOutcome: sortedValue(disputedByOutcome),
+    heard: heard.length,
+    heardByAgent: sortedValue(heardByAgent)
+  }
 }
 
 // Continuity is a join of typed fields: a review continued a goal only when the body
