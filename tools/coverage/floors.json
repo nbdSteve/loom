@@ -1,0 +1,149 @@
+{
+  "runtimes": {
+    "jvm": {
+      "format": "jacoco",
+      "report": "plugin/build/reports/jacoco/test/jacocoTestReport.xml",
+      "total": {
+        "lines": 82,
+        "branches": 66,
+        "methods": 84
+      },
+      "seams": {
+        "codecs": {
+          "paths": [
+            "dev/loom/bodycontrol/",
+            "dev/loom/contract/"
+          ],
+          "floors": {
+            "lines": 94,
+            "branches": 70,
+            "methods": 88
+          }
+        },
+        "request-refs": {
+          "paths": [
+            "dev/loom/body/RequestRefs.kt",
+            "dev/loom/body/EntityRefs.kt",
+            "dev/loom/body/InventoryRefs.kt",
+            "dev/loom/body/WorldTargetRefs.kt",
+            "dev/loom/body/RequestWindow.kt"
+          ],
+          "floors": {
+            "lines": 96,
+            "branches": 88,
+            "methods": 95
+          }
+        },
+        "witness-permadeath": {
+          "paths": [
+            "dev/loom/witness/",
+            "dev/loom/body/Mortality.kt"
+          ],
+          "floors": {
+            "lines": 90,
+            "branches": 83,
+            "methods": 90
+          }
+        },
+        "cognition-budget": {
+          "paths": [
+            "dev/loom/mind/AsyncCognitionBridge.kt",
+            "dev/loom/mind/PerAgentCognitionBridge.kt",
+            "dev/loom/mind/CognitionSettings.kt",
+            "dev/loom/body/PerceptionBound.kt"
+          ],
+          "floors": {
+            "lines": 94,
+            "branches": 83,
+            "methods": 94
+          }
+        }
+      }
+    },
+    "rust": {
+      "format": "llvm-cov",
+      "report": "cognition/target/llvm-cov/summary.json",
+      "total": {
+        "lines": 91,
+        "functions": 94,
+        "regions": 91
+      },
+      "seams": {
+        "codecs": {
+          "paths": [
+            "cognition/crates/contract/src/",
+            "cognition/crates/cognition/src/wire.rs",
+            "cognition/crates/cognition/src/openai/wire.rs"
+          ],
+          "floors": {
+            "lines": 93,
+            "functions": 98,
+            "regions": 93
+          }
+        }
+      }
+    },
+    "body": {
+      "format": "istanbul",
+      "report": "body/coverage/coverage-summary.json",
+      "total": {
+        "lines": 97,
+        "branches": 84,
+        "functions": 96
+      },
+      "seams": {
+        "protocol-codec": {
+          "paths": [
+            "body/src/protocol.js"
+          ],
+          "floors": {
+            "lines": 99,
+            "branches": 89,
+            "functions": 99
+          }
+        }
+      }
+    },
+    "research": {
+      "format": "istanbul",
+      "report": "research/coverage/coverage-summary.json",
+      "total": {
+        "lines": 81,
+        "branches": 80,
+        "functions": 80
+      },
+      "seams": {
+        "evidence": {
+          "paths": [
+            "research/lib/evidence.js"
+          ],
+          "floors": {
+            "lines": 94,
+            "branches": 82,
+            "functions": 99
+          }
+        },
+        "budget-cleanup": {
+          "paths": [
+            "research/lib/budget-proxy.js",
+            "research/lib/controlled-stop.js",
+            "research/lib/lifecycle.js"
+          ],
+          "floors": {
+            "lines": 89,
+            "functions": 88
+          }
+        },
+        "publication": {
+          "paths": [
+            "research/lib/artifact.js"
+          ],
+          "floors": {
+            "lines": 90,
+            "functions": 99
+          }
+        }
+      }
+    }
+  }
+}

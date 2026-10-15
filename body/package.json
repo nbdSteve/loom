@@ -14,6 +14,7 @@
   "scripts": {
     "start": "node bin/loom-body.js",
     "test": "node --test \"test/*.test.js\"",
+    "coverage": "c8 node --test \"test/*.test.js\"",
     "lint": "standard",
     "format": "standard --fix",
     "check": "npm run lint && npm test"
@@ -23,6 +24,7 @@
     "mineflayer-pathfinder": "2.4.5"
   },
   "devDependencies": {
+    "c8": "12.0.0",
     "standard": "17.1.2"
   },
   "standard": {
