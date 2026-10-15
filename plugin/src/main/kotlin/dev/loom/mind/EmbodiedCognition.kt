@@ -19,6 +19,7 @@ package dev.loom.mind
 
 import dev.loom.body.AgentId
 import dev.loom.body.BodyPort
+import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.tagOf
 import dev.loom.contract.Decision
@@ -76,6 +77,13 @@ class EmbodiedCognition(
     private val callbacks: CognitionCallbacks = CognitionCallbacks(),
     private val goals: GoalLedger = GoalLedger(),
 ) {
+    private val danger = DangerEpisodes(journal::tick)
+
+    // Perceptions sent to the mind whose decision has not yet been recorded or lost, so a
+    // plugin shutdown can end each chain rather than leave it open.
+    private val inFlight = linkedMapOf<String, Pair<AgentId, Perception>>()
+    private var shutDown = false
+
     /**
      * Captures [agentId]'s perception of [trigger] and sets cognition going.
      *
@@ -122,22 +130,59 @@ class EmbodiedCognition(
         agentId: AgentId,
         perception: Perception,
     ) {
+        if (shutDown) return
+        if (!danger.admit(agentId, perception)) {
+            // The agent is already answering this threat; the perception still ends its chain.
+            journal.unavailable(
+                agentId,
+                perception,
+                EventTag.DANGER_COALESCED,
+                "coalesced into the active danger episode for this threat",
+            )
+            return
+        }
         val carried =
             if (perception.trigger == Trigger.GoalReview) {
                 perception.copy(goal = goals.present(agentId, perception.requestId, perception.capturedTick))
             } else {
                 perception
             }
+        inFlight[carried.requestId] = agentId to carried
         mind.submit(carried).whenComplete { decision, failure ->
             // This runs on a bridge thread. Everything past here touches the body,
             // so it goes through the main thread or not at all.
             mainThread.execute {
+                // A shutdown already ended this chain; nothing may be recorded twice.
+                if (inFlight.remove(carried.requestId) == null) return@execute
                 if (decision == null) {
                     lost(agentId, carried, failure ?: missingBoth(carried))
                 } else {
                     actOn(agentId, decision)
                 }
             }
+        }
+    }
+
+    /**
+     * Ends every chain still waiting for the mind, for a plugin shutdown.
+     *
+     * Must be called on the main thread before the bridge closes. A perception the mind has
+     * not answered, or whose answer has not reached the main thread, is journalled as
+     * unavailable with [EventTag.COGNITION_SHUTDOWN], and any later answer is ignored, so the
+     * record never holds a perception with no ending.
+     */
+    fun shutDown() {
+        shutDown = true
+        val pending = inFlight.values.toList()
+        inFlight.clear()
+        for ((agentId, perception) in pending) {
+            goals.forget(agentId, perception.requestId)
+            journal.unavailable(
+                agentId,
+                perception,
+                EventTag.COGNITION_SHUTDOWN,
+                "the plugin shut down before the mind answered",
+            )
         }
     }
 
@@ -181,6 +226,7 @@ class EmbodiedCognition(
         failure: Throwable,
     ) {
         goals.forget(agentId, perception.requestId)
+        danger.settled(agentId, perception.requestId)
         val classified = failureOf(failure)
         journal.unavailable(agentId, perception, classified.tag, failure.message ?: classified.toString())
         callbacks.onUnavailable(perception, failure)
@@ -213,6 +259,8 @@ class EmbodiedCognition(
                 // perceiving and acting. The body records nothing for a decision it never
                 // received, so the loss is recorded here or nowhere.
                 goals.stepped(agentId, decision.requestId, tagOf(decision.intent), tagOf(applied))
+                danger.settled(agentId, decision.requestId)
+                if (applied == IntentOutcome.NoSuchBody) danger.forget(agentId)
                 if (applied == IntentOutcome.NoSuchBody) {
                     journal.discarded(agentId, decision)
                 }

@@ -125,6 +125,38 @@ class CorroborationTest {
     }
 
     @Test
+    fun aVitalThatMovedDuringTheRoundTripIsCheckedAgainstTheWholeSpan() {
+        // A live run at night: the client said 13 while the server read 17 before the sense,
+        // because a hit landed inside the round trip; the server read 12 when it was audited.
+        val claimed = SensedVitals(health = 13.0, food = 20, saturation = 5.0)
+        val before = ObservedVitals(health = 17.0, food = 20, saturation = 5.0)
+        val after = ObservedVitals(health = 12.0, food = 20, saturation = 5.0)
+        assertIs<Corroboration.Disputed>(corroborate(claimed, emptyList(), before, emptyList()))
+        assertEquals(Corroboration.Agreed, corroborate(claimed, emptyList(), before, emptyList(), after))
+        // Outside the whole span, plus the tolerance, is still a body contradicting the server.
+        val invented = SensedVitals(health = 8.0, food = 20, saturation = 5.0)
+        assertIs<Corroboration.Disputed>(corroborate(invented, emptyList(), before, emptyList(), after))
+    }
+
+    @Test
+    fun saturationFollowsVanillasResendRule() {
+        // A live run: both clients still held their starting 5.0 while exhaustion had drained
+        // the server to 3.0, because vanilla resends saturation only beside a health or food
+        // change or a zero crossing.
+        val stale = SensedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val drained = ObservedVitals(health = 20.0, food = 20, saturation = 3.0)
+        assertEquals(Corroboration.Agreed, corroborate(stale, emptyList(), drained, emptyList(), drained))
+        // A peaceful world raised the server to 7.0 with no resend either.
+        val raised = ObservedVitals(health = 20.0, food = 20, saturation = 7.0)
+        assertEquals(Corroboration.Agreed, corroborate(stale, emptyList(), raised, emptyList(), raised))
+        // Zero-ness is what vanilla keeps in step, so disagreeing about it is a contradiction.
+        val empty = ObservedVitals(health = 20.0, food = 20, saturation = 0.0)
+        assertIs<Corroboration.Disputed>(corroborate(stale, emptyList(), empty, emptyList(), empty))
+        val starved = SensedVitals(health = 20.0, food = 20, saturation = 0.0)
+        assertIs<Corroboration.Disputed>(corroborate(starved, emptyList(), drained, emptyList(), drained))
+    }
+
+    @Test
     fun anItemCountIsExactBecauseNothingAboutItDrifts() {
         // The opposite rule from a vital's, and the reason the two are stated separately: a stack
         // of three does not become a stack of two while a frame is in flight. One off is a body
@@ -352,7 +384,8 @@ class CorroborationTest {
             )
 
         val dispute = assertIs<Corroboration.Disputed>(found)
-        assertEquals(listOf(Vital.HEALTH, Vital.FOOD, Vital.SATURATION), dispute.vitals.map { it.vital })
+        // Saturation is compared only by whether it is zero, which is all vanilla keeps in step.
+        assertEquals(listOf(Vital.HEALTH, Vital.FOOD), dispute.vitals.map { it.vital })
     }
 
     @Test

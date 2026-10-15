@@ -13,6 +13,7 @@ const {
   validateProspectiveManifest,
   validateRunConfig
 } = require('../lib/artifact.js')
+const { SERVED_PROMPTS } = require('../lib/experiment-mode.js')
 const { readJson } = require('../lib/util.js')
 const {
   fixedRawRecords,
@@ -120,50 +121,30 @@ test('a prospective generation-3 manifest is validated before launch', () => {
   assert.equal(manifest.publication.manifestValidatedBeforeLaunch, true)
 })
 
-test('the committed live template preflights at its bounded spend envelope', () => {
-  const config = liveApprovalConfig()
-  assert.deepEqual(validateRunConfig(config), [])
-  const manifest = validateProspectiveManifest(config, SOURCE)
-  assert.equal(manifest.provenance.backend, 'openai')
-  assert.deepEqual(manifest.provenance.models, {
-    ordinary: 'gpt-5.4-nano',
-    pivotal: 'gpt-5.4'
-  })
-  assert.equal(manifest.agents.length, 3)
-  assert.equal(manifest.bounds.runDurationSeconds, 180)
-  assert.equal(manifest.bounds.simulationTickCeiling, 4000)
-  assert.equal(manifest.cognition.globalCallCeiling, 24)
-  assert.equal(manifest.protocol.controlledBodyCrash.reservedCallsPerPeer, 1)
+test('historical configurations are refused before startup and only v13 pilots are runnable', () => {
+  const support = readJson(path.join(__dirname, '..', '..', 'contract', 'fixtures', 'capability-support.json'))
+  for (const [name, entry] of Object.entries(support.researchConfigs)) {
+    const errors = validateRunConfig(readJson(path.join(__dirname, '..', 'config', name)))
+    if (entry.status === 'runnable') {
+      assert.deepEqual(errors, [], name)
+    } else {
+      assert.ok(errors.some((error) => error.includes('historical')), `${name}: ${errors.join('; ')}`)
+    }
+  }
+  const live = liveApprovalConfig()
+  live.cognition.prompts = { ...SERVED_PROMPTS }
+  const manifest = validateProspectiveManifest(live, SOURCE)
   assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 4.66944)
-  assert.equal(manifest.cognition.maxExternalSpendUsd, 4.67)
+  assert.equal(manifest.protocol.controlledBodyCrash.reservedCallsPerPeer, 1)
 })
 
-test('the routine-v12 primary behavior pilot preflights with native calls inside every ceiling', () => {
-  const config = openAiPrimaryBehaviorConfig()
-  assert.deepEqual(validateRunConfig(config), [])
-  const manifest = validateProspectiveManifest(config, SOURCE)
-  assert.equal(manifest.protocol.mode, 'routine-v12-primary-behavior')
-  assert.equal(manifest.protocol.controlledBodyCrashPlanned, false)
-  assert.equal(Object.hasOwn(manifest.protocol, 'controlledBodyCrash'), false)
-  assert.deepEqual(manifest.protocol.nativeGoalReviewSchedule, {
-    cadenceTicks: 2400,
-    expectedReviewsPerAgent: 2,
-    sliceTicks: 100
-  })
-  assert.deepEqual(manifest.provenance.models, {
-    ordinary: 'gpt-5.4-nano',
-    pivotal: 'gpt-5.4'
-  })
-  assert.deepEqual(manifest.provenance.prompts, {
-    routine: 'routine-v12',
-    notable: 'notable-v12',
-    pivotal: 'pivotal-v12'
-  })
-  assert.equal(manifest.cognition.perAgentCallCeiling, 4)
-  assert.equal(manifest.cognition.globalCallCeiling, 12)
-  assert.equal(manifest.cognition.globalOutstandingCeiling, 3)
-  assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 2.33472)
-  assert.equal(manifest.cognition.maxExternalSpendUsd, 2.34)
+test('every feature flag must be true because no runtime route reads one', () => {
+  const config = goalContinuityConfig()
+  for (const flag of Object.keys(config.featureFlags)) {
+    const disabled = goalContinuityConfig()
+    disabled.featureFlags[flag] = false
+    assert.ok(validateRunConfig(disabled).includes(`featureFlags.${flag} must be true: no runtime route can switch it off`))
+  }
 })
 
 test('the routine-v13 goal-continuity pilot preflights under the v12 treatment plus v13 prompts and category fairness', () => {
@@ -183,12 +164,20 @@ test('the routine-v13 goal-continuity pilot preflights under the v12 treatment p
   assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 2.33472)
   assert.equal(manifest.cognition.maxExternalSpendUsd, 2.34)
 
-  // Everything but the mode, title, prompts and the fairness attestation is the v12 pilot.
-  const v12 = openAiPrimaryBehaviorConfig()
+  assert.equal(manifest.cognition.perAgentCallCeiling, 6)
+  assert.equal(manifest.cognition.globalCallCeiling, 12)
+
+  // Everything but the mode, title, prompts, fairness attestation, per-agent call share and
+  // speech is the v12 pilot.
+  const v12 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v12-agency-pilot.json'))
   for (const drop of [v12, config]) {
     for (const key of ['experimentId', 'title', 'mode', 'configFile']) delete drop[key]
     delete drop.cognition.prompts
+    delete drop.cognition.perAgentCallCeiling
     delete drop.primaryBehavior.categoryFairSelection
+    // Speech became a body capability after the v12 pilot; v13 attests it and names its profile.
+    delete drop.featureFlags.speech
+    delete drop.primaryBehavior.profile
   }
   assert.deepEqual(config, v12)
 })
@@ -199,16 +188,11 @@ test('each native-scheduler pilot refuses the other pilot prompts or fairness at
   assert.ok(validateRunConfig(v13).some((error) => error.includes('categoryFairSelection must be true')))
 
   const v13OldPrompts = goalContinuityConfig()
-  v13OldPrompts.cognition.prompts = primaryBehaviorConfig().cognition.prompts
+  v13OldPrompts.cognition.prompts = { routine: 'routine-v12', notable: 'notable-v12', pivotal: 'pivotal-v12' }
   assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v13')))
 
-  const v12 = primaryBehaviorConfig()
-  v12.primaryBehavior.categoryFairSelection = true
-  assert.ok(validateRunConfig(v12).some((error) => error.includes('categoryFairSelection must be false')))
-
-  const v12NewPrompts = primaryBehaviorConfig()
-  v12NewPrompts.cognition.prompts = goalContinuityConfig().cognition.prompts
-  assert.ok(validateRunConfig(v12NewPrompts).some((error) => error.includes('routine-v12')))
+  const v12 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v12-agency-pilot-scripted.json'))
+  assert.ok(validateRunConfig(v12).some((error) => error.includes('mode routine-v12-primary-behavior is historical')))
 
   const drifted = [
     (config) => { config.world.seed = '1' },
@@ -278,6 +262,14 @@ test('primary behavior preflight refuses native review plans outside per-agent o
   assert.ok(
     validateRunConfig(global)
       .includes('planned native reviews exceed the global cognition call ceiling')
+  )
+
+  const workers = goalContinuityConfig()
+  assert.deepEqual(validateRunConfig(workers), [])
+  workers.runtime.cognitionBridge.workers = workers.cognition.globalOutstandingCeiling + 1
+  assert.ok(
+    validateRunConfig(workers)
+      .includes('primary behavior bridge workers must not exceed the global outstanding ceiling')
   )
 })
 
@@ -530,4 +522,58 @@ test('publication renames a validated directory into place and leaves nothing pa
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
   }
+})
+
+test('two-cycle profiles pin the surveyed ring, the population and the envelope', () => {
+  const { PROFILES, SCENES, placementOf } = require('../lib/profiles.js')
+  const { reviewWindowBounds } = require('../lib/controlled-stop.js')
+  for (const [file, profile, agents] of [
+    ['tribe-two-cycle-3-scripted.json', 'two-cycle-3', 3],
+    ['tribe-two-cycle-3.json', 'two-cycle-3', 3],
+    ['tribe-two-cycle-10-scripted.json', 'two-cycle-10', 10],
+    ['tribe-two-cycle-10.json', 'two-cycle-10', 10]
+  ]) {
+    const config = readJson(path.join(__dirname, '..', 'config', file))
+    assert.deepEqual(validateRunConfig(config), [], file)
+    assert.equal(config.primaryBehavior.profile, profile)
+    assert.equal(config.agents.length, agents)
+    assert.equal(config.world.seed, SCENES['s2-ring'].seed)
+    assert.deepEqual(config.primaryBehavior.initialPositions, placementOf(PROFILES[profile]).positions)
+    const manifest = validateProspectiveManifest(config, SOURCE)
+    assert.equal(manifest.protocol.profile, profile)
+    assert.match(manifest.protocol.sceneCoverRule, /dead_bush/)
+    if (config.cognition.backend === 'openai') {
+      assert.ok(manifest.cognition.worstCaseConfiguredSpendUsd <= PROFILES[profile].maxExternalSpendUsd)
+    }
+  }
+  // The three-agent profile is the first three ring slots of the ten-agent one.
+  assert.deepEqual(
+    placementOf(PROFILES['two-cycle-3']).positions,
+    Object.fromEntries(Object.entries(placementOf(PROFILES['two-cycle-10']).positions).slice(0, 3))
+  )
+  const drifts = [
+    (config) => { config.world.seed = '76192346017' },
+    (config) => { config.primaryBehavior.initialPositions['tribe-kappa'] = [10.5, 107, -6.5] },
+    (config) => { config.agents.pop() },
+    (config) => { config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 20 },
+    (config) => { config.cognition.globalCallCeiling = 401 },
+    (config) => { config.bounds.simulationTickCeiling = 24_000 },
+    (config) => { config.primaryBehavior.scene = 'r5-neutral' },
+    (config) => { config.runtime.cognitionBridge.workers = 7 },
+    (config) => { config.bounds.evidenceRecords = 400_000 },
+    (config) => { config.bounds.artifactBytes *= 2 },
+    (config) => { config.runtime.paperMemoryMiB = 1024 }
+  ]
+  for (const drift of drifts) {
+    const config = readJson(path.join(__dirname, '..', 'config', 'tribe-two-cycle-10-scripted.json'))
+    drift(config)
+    assert.notDeepEqual(validateRunConfig(config), [], drift.toString())
+  }
+  // A full two-cycle window owes 20 or 21 reviews per agent and never more than 21.
+  const schedule = { cadenceTicks: 2400, sliceTicks: 100, expectedReviewsPerAgent: 21 }
+  assert.deepEqual(reviewWindowBounds(schedule, 10, 48_000), { minimum: 20, maximum: 21 })
+  assert.deepEqual(reviewWindowBounds(schedule, 3, 48_000), { minimum: 20, maximum: 21 })
+  assert.deepEqual(reviewWindowBounds(schedule, 10, 47_999), { minimum: 20, maximum: 20 })
+  // A death at tick 13,000 owes the reviews of that life span alone.
+  assert.deepEqual(reviewWindowBounds(schedule, 10, 13_000), { minimum: 5, maximum: 6 })
 })

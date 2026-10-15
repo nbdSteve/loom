@@ -3,9 +3,11 @@
 const net = require('node:net')
 
 const { validatedCognitionFailure } = require('./cognition-failure.js')
+const { ADMISSION_CLOSED_EVENT, PROXY_REQUEST_TIMEOUT_MILLIS } = require('./controlled-stop.js')
 
 const MAX_FRAME_BYTES = 256 * 1024
 const REFUSAL_BOUNDS = Object.freeze([
+  'admissionClosed',
   'globalOutstanding',
   'globalCall',
   'perAgentCall',
@@ -31,7 +33,7 @@ class CognitionBudgetProxy {
     onRefusal = () => {},
     onUnavailable = () => {},
     spend,
-    requestTimeoutMilliseconds = 20_000
+    requestTimeoutMilliseconds = PROXY_REQUEST_TIMEOUT_MILLIS
   }) {
     this.listen = listen
     this.upstream = upstream
@@ -54,6 +56,7 @@ class CognitionBudgetProxy {
     this.requestTimeoutMilliseconds = requestTimeoutMilliseconds
     this.spend = this.checkedSpend(spend)
     this.total = 0
+    this.admissionClosed = null
     this.refusedByBound = {}
     this.outstanding = 0
     this.perAgent = new Map()
@@ -120,6 +123,9 @@ class CognitionBudgetProxy {
   crossedBound (agentId, agentCalls) {
     const calls = (bound, reason, ceiling, observed) =>
       ({ bound, reason, unit: 'calls', ceiling, observed })
+    if (this.admissionClosed !== null) {
+      return calls('admissionClosed', this.admissionClosed.reason, 0, 0)
+    }
     if (this.outstanding >= this.budget.globalOutstandingCeiling) {
       return calls(
         'globalOutstanding',
@@ -174,11 +180,25 @@ class CognitionBudgetProxy {
     })
   }
 
+  // Refuses every later request. Journalled synchronously so evidence order separates
+  // work admitted before the stop from work refused after it.
+  closeAdmission (stop, event = ADMISSION_CLOSED_EVENT) {
+    if (this.admissionClosed !== null) return false
+    this.admissionClosed = { reason: 'admissionClosed' }
+    this.journal.append(event, {
+      ...stop,
+      outstandingCalls: this.outstanding,
+      forwardedCalls: this.total
+    })
+    return true
+  }
+
   snapshot () {
     const reserve = this.postCrashReserve
     return {
       forwardedCalls: this.total,
       outstandingCalls: this.outstanding,
+      admissionClosed: this.admissionClosed !== null,
       refusedByBound: { ...this.refusedByBound },
       callsByAgent: Object.fromEntries(
         [...this.agents]
@@ -276,6 +296,7 @@ class CognitionBudgetProxy {
 
     this.total += 1
     this.outstanding += 1
+    const outstandingAtAdmission = this.outstanding
     this.perAgent.set(agentId, agentCalls + 1)
     this.consumePostCrashReserve(agentId)
     try {
@@ -300,10 +321,19 @@ class CognitionBudgetProxy {
         importance: perception.importance ?? null,
         outcome: cognitionFailed ? 'cognitionFailure' : 'decision',
         provenance: parsed?.provenance ?? null,
+        outstandingAtAdmission,
         ...originField,
         ...(failure === null ? {} : { failure })
       })
-      if (cognitionFailed) this.onCognitionFailure(parsed.error, failure)
+      if (cognitionFailed) {
+        this.onCognitionFailure(parsed.error, failure, {
+          agentId,
+          requestId,
+          trigger: perception.trigger?.event ?? null,
+          importance: perception.importance ?? null,
+          ...originField
+        })
+      }
       downstream.write(response)
       downstream.write('\n')
     } catch {
@@ -313,6 +343,7 @@ class CognitionBudgetProxy {
         trigger: perception.trigger?.event ?? null,
         importance: perception.importance ?? null,
         outcome: 'upstreamUnavailable',
+        outstandingAtAdmission,
         ...originField
       })
       this.onUnavailable({ agentId, requestId })

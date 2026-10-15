@@ -40,7 +40,7 @@
     "cognitionBridge": {
       "timeoutMillis": 30000,
       "connectTimeoutMillis": 500,
-      "workers": 4,
+      "workers": 3,
       "queueDepth": 16,
       "perAgentPending": 2
     }
@@ -62,7 +62,7 @@
     "providerEndpoint": null,
     "providerTimeoutMillis": 12000,
     "maxRequestBytes": 65536,
-    "perAgentCallCeiling": 4,
+    "perAgentCallCeiling": 6,
     "globalCallCeiling": 12,
     "globalOutstandingCeiling": 3,
     "maxOutputTokens": 2048,
@@ -92,6 +92,7 @@
     "evidenceRecords": 20000
   },
   "primaryBehavior": {
+    "profile": "pilot-180s",
     "initialPositions": {
       "tribe-alpha": [
         10.5,
@@ -143,6 +144,7 @@
     "crafting": true,
     "combat": true,
     "sleep": true,
-    "permadeath": true
+    "permadeath": true,
+    "speech": true
   }
 }

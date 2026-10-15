@@ -400,13 +400,12 @@ impl ScriptedBackend {
     /// The per-trigger action rule, before any goal choice is attached.
     fn step_now(route: &ModelRoute, perception: &Perception) -> Draft {
         match &perception.trigger {
+            // Never a reply: two stand-ins answering speech with speech would be a chat loop.
             Trigger::Spoken { from, text } => Draft {
                 goal: None,
-                intent: Intent::Say {
-                    text: format!("Hello, {from}."),
-                },
+                intent: Intent::Idle,
                 reasoning: format!(
-                    "{from} said {text:?}; a greeting is the expected social response"
+                    "{from} said {text:?}; the scripted stand-in never speaks, so it does not reply"
                 ),
             },
             // The health is rounded for the same reason the reserve below is: this
@@ -737,6 +736,20 @@ mod tests {
         assert_eq!(continued.disposition, GoalDisposition::Continue);
         assert_eq!(continued.statement, None);
         assert!(SCRIPTED_GOAL_STATEMENT.starts_with("scripted stand-in"));
+    }
+
+    #[test]
+    fn the_stand_in_never_answers_speech_with_speech() {
+        let spoken = Trigger::Spoken {
+            from: "LoomAlpha".to_owned(),
+            text: "hello there".to_owned(),
+        };
+        let route = router().route(DecisionImportance::Notable);
+        let seen = perception(spoken, DecisionImportance::Notable);
+        assert_eq!(
+            ScriptedBackend::draft_now(&route, &seen).intent,
+            Intent::Idle
+        );
     }
 
     #[test]

@@ -234,13 +234,22 @@ internal class PlayerPerception(
     }
 }
 
-private fun matchesSenseRequest(
+/**
+ * The tallest a player's eyes stand above its feet.
+ *
+ * The body admits a creature or item by its distance from the eyes, while the reported
+ * position is the feet, so a thing up a slope at the radius from the eyes can lie up to
+ * this much further from the feet. A check measured from the feet must allow it.
+ */
+internal const val MAX_PLAYER_EYE_HEIGHT_BLOCKS: Double = 1.62
+
+internal fun matchesSenseRequest(
     request: BodyRequest.Sense,
     report: BodyResponse.SenseReport,
 ): Boolean {
     val listsFit =
         maxOf(report.entities.size, report.blocks.size, report.items.size) <= request.limit
-    val radius = request.radius.toDouble()
+    val radius = request.radius.toDouble() + MAX_PLAYER_EYE_HEIGHT_BLOCKS
     val entitiesFit =
         report.entities.none { blocksApart(report.position, it.position) > radius }
     val blocksFit =

@@ -541,3 +541,62 @@ test('a budget refusal failure states the bound in its message and a closed code
     'cognitionProcessOrProviderFailure'
   )
 })
+
+test('every configuration mode and terminal fault enters the diagnostic path with its usage', () => {
+  const { RunFailure: Failure } = require('../lib/lifecycle.js')
+  const { configNamed } = require('./fixtures.js')
+  const configs = fs.readdirSync(path.join(__dirname, '..', 'config'))
+    .filter((name) => name.endsWith('.json'))
+    .map(configNamed)
+  assert.ok(configs.some((config) => config.mode === 'routine-v12-primary-behavior'))
+  assert.ok(configs.some((config) => config.mode === 'routine-v13-goal-continuity'))
+  const faults = [
+    [new Failure('cognitionFailed', 'drain', 'cognitionDrainTimedOut'), 'cognitionDrainTimedOut'],
+    [new Failure('cognitionFailed', 'auth', 'providerAuthenticationRejected'), 'providerAuthenticationRejected'],
+    [new Failure('cognitionFailed', 'upstream', 'cognitionUpstreamUnavailable'), 'cognitionUpstreamUnavailable'],
+    [new Failure('diskFailure', 'published artifact is invalid'), 'boundedJournalFailure'],
+    [new Failure('cancelled', 'run cancelled'), 'runCancelled'],
+    [new Failure('startupFailed', 'the host was suspended for 422 s', 'hostSuspended'), 'hostSuspended'],
+    [new Failure('startupFailed', 'listeners remained after cleanup'), 'startupOrAcceptanceFailure']
+  ]
+  for (const config of configs) {
+    for (const [failure, code] of faults) {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-mode-diagnostic-'))
+      try {
+        const retained = retain(directory, { config: structuredClone(config), failure })
+        const label = `${config.mode ?? 'crash-containment'} ${code}`
+        assert.equal(retained.fallback, false, label)
+        assertPrivate(retained.file)
+        assert.equal(retained.diagnostic.failure.code, code, label)
+        assert.equal(retained.diagnostic.failure.stopReason, failure.stopReason, label)
+        assert.equal(retained.diagnostic.configuredConditions.mode, config.mode ?? 'crash-containment', label)
+        assert.equal(retained.diagnostic.cleanup.verifiedByListenerProbe, true, label)
+        assert.equal(typeof retained.diagnostic.cognition.providerUsage.externalSpendNanoUsd, 'number', label)
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true })
+      }
+    }
+  }
+})
+
+test('a failed run keeps the closed outcome tags of its failure records', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-outcome-diagnostic-'))
+  try {
+    fs.mkdirSync(path.join(directory, 'own'))
+    const files = rawFiles(path.join(directory, 'own'))
+    writeJsonLines(files.bodyFile, [
+      { tick: 1, agentId: 'tribe-alpha', event: 'spawned', detail: 'ready' },
+      { tick: 2, agentId: 'tribe-alpha', event: 'witnessDisputed', outcome: 'disputedPosition', detail: 'claimed 1,2,3' },
+      { tick: 3, agentId: 'tribe-beta', event: 'witnessDisputed', outcome: 'has spaces /Users/x', detail: 'x' }
+    ])
+    writeJsonLines(files.harnessFile, [])
+    writeJsonLines(files.providerUsageFile, [])
+    const retained = retain(directory, { ...files })
+    assertPrivate(retained.file)
+    assert.deepEqual(retained.diagnostic.body.outcomesByEvent, {
+      witnessDisputed: { disputedPosition: 1, unclassified: 1 }
+    })
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})

@@ -6,39 +6,44 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The original containment configuration is
-`research/config/first-tribe-scripted-proof.json`. It uses three independently
-supervised Mineflayer bodies and the shipped credential-free scripted cognition
-backend. Its deliberate body crash is an acceptance intervention, not behavior
-and not evidence of emergence. Its approval-gated OpenAI counterpart is
-`research/config/first-tribe-openai.json`; the committed `-r3` id was consumed
-by its failed shakedown and must not be run again.
+The runnable configurations are the routine-v13 goal-continuity pilot,
+`research/config/first-tribe-routine-v13-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v13-agency-pilot-scripted.json`.
+This primary behavior mode has no controlled crash and sends no `/loombody think`
+command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
+native event drivers. It uses the v13 prompts, which show each agent its own
+carried goal and let the model return an optional typed goal choice, and it
+attests `categoryFairSelection: true` because the 48-per-kind selector it runs on
+is category-fair. `research/lib/experiment-mode.js` owns the pins. In the
+scripted twin the stand-in adopts one fixed placeholder goal at each agent's
+first review and continues it at the second; that exercises the goal round
+trip and is not evidence of agency.
 
-The research-only primary behavior mode is pinned in
-`research/config/first-tribe-routine-v12-agency-pilot.json`, with a
-provider-free rehearsal in
-`research/config/first-tribe-routine-v12-agency-pilot-scripted.json`. This mode
-has no controlled crash and sends no `/loombody think` command. Its only
-cognition sources are Loom's native `GoalReviewSchedule` and native event
-drivers. The OpenAI experiment id is an unconsumed proposal placeholder, not
-authorization to run; a paid run still requires a fresh approved id and the
-separate decision described below.
+Each primary-behavior configuration names a frozen profile, which
+`research/lib/profiles.js` owns: `pilot-180s` (the r5 scene, three agents, 180
+seconds or 4,000 ticks, two reviews each, 6/12/3 calls, $2.34),
+`two-cycle-3` and `two-cycle-10` (the `s2-ring` scene on seed
+`27183455263279`, the first three or all ten surveyed ring slots, 3,600 seconds or
+48,000 ticks, up to 21 reviews each, 56/150/3 or 56/400/6 calls, $29.19 or
+$77.83, and the measured log, evidence and publication bounds below). Preflight refuses any drift from the named profile. The `s2-ring`
+positions are the survey's marker-confirmed slots, under its disclosed cover rule:
+a collision-free, non-fluid cover block in the feet cell counts as passable, and
+nothing is cleared or placed; the manifest states that rule. Their configurations
+are `research/config/tribe-two-cycle-3*.json` and `tribe-two-cycle-10*.json`; the
+live ones carry proposal ids and need their own explicit approval before any paid
+run. Outside the pilot profile the mechanical pilot verdict is `notApplicable`.
 
-The routine-v13 goal-continuity pilot is pinned in
-`research/config/first-tribe-routine-v13-agency-pilot.json`, with its
-provider-free twin in
-`research/config/first-tribe-routine-v13-agency-pilot-scripted.json`.
-Its treatment is the routine-v12 pilot's, unchanged, except for three pins
-that `research/lib/experiment-mode.js` owns per mode.
-It uses the v13 prompts, which show each agent its own carried goal and let the
-model return an optional typed goal choice.
-It attests `categoryFairSelection: true`, because the 48-per-kind selector it
-runs on is category-fair, while the v12 pilot keeps `false` for its evidence.
-Preflight and artifact validation refuse either mode with the other's prompts
-or attestation.
-In the scripted twin the stand-in adopts one fixed placeholder goal at each
-agent's first review and continues it at the second.
-That exercises the goal round trip; it is not evidence of agency.
+The other committed configurations are historical:
+`first-tribe-scripted-proof.json` and `first-tribe-openai.json` (the
+crash-containment proof, routine-v11 prompts) and the two
+`first-tribe-routine-v12-agency-pilot*.json` files (the routine-v12
+primary-behavior mode). They pin prompts the current mind no longer serves, so
+preflight refuses them before anything is built, started or read; the artifacts
+committed under them still validate. `contract/fixtures/capability-support.json`
+is the one classification of which configurations, modes, intents, triggers and
+feature flags are runnable, supported, dormant or historical. Every feature flag
+must be `true`, because no runtime route reads one and a `false` would be a false
+manifest claim.
 
 ## Reproduce from a clean checkout
 
@@ -51,7 +56,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v12-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v13-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -70,8 +75,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v12-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v12-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v13-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v13-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -145,14 +150,100 @@ driver's threat and scheduled-review triggers remain unchanged.
 Primary behavior mode does not use that proof intervention or reserve. Its
 planned native schedule is six calls: two reviews for each of three agents. Its
 preflight rejects a configuration unless those calls fit both the per-agent and
-global ceilings. The pilot proposal permits four calls per agent, twelve
-globally, and three outstanding, leaving bounded room for native event-triggered
-cognition. Every forwarded or refused cognition record carries either
+global ceilings. The historical routine-v12 pilot permitted four calls per agent,
+twelve globally, and three outstanding. The routine-v13 pilot permits six per agent under the same twelve
+global and three outstanding, because a live run saw daytime threat sightings
+draw three flight calls from one agent before its second review; the global
+ceiling, and so the worst-case spend, is unchanged. Preflight also refuses more cognition bridge workers than outstanding
+slots, because the bridge would then send a fourth concurrent request that the
+proxy can only refuse; with three workers that request waits in the bridge's
+bounded queue instead. Every forwarded or refused cognition record carries either
 `nativeGoalReviewSchedule` or `nativeEventDriver` as its origin. Publication
 also requires the one run-level attestation that the harness issued zero think
 commands and that native schedulers were the only cognition source.
 
+## Measured two-cycle budgets
+
+The two-cycle profiles' ceilings come from four provider-free rehearsals on the
+`s2-ring` scene at 40 ticks per second, not from estimates. The structure runs
+are peaceful, so every agent lives the whole 48,000 ticks; the normal-difficulty
+samples are where calls, deaths and danger episodes are measured.
+
+| Run | Ended | Calls | Records | Evidence | Body log | Paper RSS | Startup |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 3 agents, peaceful | tick 48,061 | 60 | 266 | 0.61 MB | 0.53 MB | 1.43 GB | 14.2 s |
+| 3 agents, normal | all died, tick 17,313 | 41 | 368 | 0.74 MB | 0.65 MB | 1.28 GB | 22.2 s |
+| 10 agents, peaceful | tick 48,015 | 201 | 858 | 2.29 MB | 2.03 MB | 1.31 GB | 18.2 s |
+| 10 agents, normal | all died, tick 16,734 | 125 | 1,343 | 2.85 MB | 2.54 MB | 1.41 GB | 16.8 s |
+
+Graceful shutdown took 2.2 to 3.1 seconds. The normal runs coalesced 15 and 53
+repeated danger perceptions; the ten-agent run peaked at four outstanding calls
+against its six.
+
+The per-agent ceiling is the part a run is most likely to meet. The busiest
+agent forwarded 11 danger calls and 7 reviews in its one night, so an agent that
+lives through two nights and all 21 reviews needs about 43; 56 is that with a
+quarter of headroom. The global ceilings are about one and a half times (three
+agents) and one and a quarter times (ten agents) the extrapolated mean of 34
+and 32 calls per agent. The log, evidence-record and publication bounds are at
+least four times the need extrapolated to 48,000 ticks with every agent alive.
+Paper's 1 GiB heap held three agents; ten use 2 GiB. A real-clock sample ran at
+19.9 ticks per second, so 48,000 ticks fit the 3,600-second wall bound. Any
+refusal under these ceilings is a typed controlled stop, never a silent loss.
+
+## Controlled stops
+
+In primary behavior mode two outcomes end a run without making it an integrity failure.
+A typed `perAgentCall`, `globalCall`, `globalOutstanding`, or `spend` refusal is a `cognitionBudgetExhausted` stop.
+A provider failure that cognition classified as `providerTimeout`, `providerConnection`, `providerResponseRead`, `providerTransport`, `providerRateLimit`, or `providerServer` is a `providerUnavailable` stop.
+An HTTP 401 or 403 still stops the run immediately as a failure, and every other cognition failure is still fatal.
+`research/lib/controlled-stop.js` owns these closed sets.
+
+On a stop the proxy journals one `cognitionAdmissionClosed` record before it answers, and refuses every later request under the `admissionClosed` bound.
+The harness then waits, inside an explicit bounded drain, until no forwarded call is outstanding and every perception has a terminal body record.
+A drain that does not settle is the fatal `cognitionDrainTimedOut`.
+Cleanup and usage import then run as for any completed run, and the publisher writes an artifact with stop reason `controlledStop`.
+
+Its manifest, metrics, and README carry a `controlledStop` section: the stop kind, the exact refusal or provider classification, the calls forwarded and outstanding at the closure, planned versus completed native reviews, complete and refused chain counts, provider usage and spend, and behavioral verdict `no-go`.
+Validation derives the owed reviews from the stop window: review k of each agent may be due from k cadences after the start, and must be due one population stagger plus one slice after that.
+It refuses a stop with no matching refusal or classification, an untyped refusal, an impossible count, any refusal that is not the first before the closure, a missing earlier chain, provider usage that does not reconcile, a dirty shutdown, and a killed process.
+Crash-containment evidence can never claim a controlled stop.
+
+A normal duration or tick-ceiling ending in primary behavior mode closes admission the same way, with one `cognitionAdmissionEnded` record, and drains inside the same bound before shutdown, so a decision in flight at the deadline completes instead of becoming an incomplete chain.
+Requests refused after that record are typed `admissionClosed` refusals and are not owed an answer.
+Validation then owes each agent the scheduled reviews the window up to the ending made due, so a slow host that ends before a second review is due still publishes; the behavioral gate still requires the full configured plan.
+
+## Danger episodes
+
+A threat or damage perception the JVM coalesced into the agent's active danger episode ends its chain as `cognitionUnavailable` with outcome `dangerCoalesced`; the mind was deliberately not asked, so it is neither a failure nor a call. Metrics derive a `dangerEpisodes` section counting them by agent and trigger, present only when one occurred. `research/lib/danger.js` owns the rule.
+
+## Witnessed deaths
+
+In primary behavior mode a server-witnessed `died` record is an experiment outcome, not a failure.
+That agent's chain ends there and its peers continue under the same deadline.
+After its death only that agent's own `bodyDisconnected` (at most once), `decisionDiscarded`, and a `damageWitnessed` that asked no cognition (`damageDiedBeforeCognition` or `damageAgentDead`, such as the killing blow), and the typed settlement of a request decided before the death (its one `intentApplied` or `decisionDiscarded`, and at most one `moved` and one `retreating` report for it) may follow; a settled request is listed in `witnessedDeaths` as `settledAfterDeath` and never counts as behavior, and a `worldInteraction` or anything new after the death is fatal; anything else for it, a second death, or a disconnect or discard of an agent that did not die, stays fatal.
+Witness disputes, revivals, denials, quits, and an unsafe ledger stay fatal as well.
+The publisher derives a `witnessedDeaths` section, present only when a death occurred, and owes a dead agent only the scheduled reviews its life window made due, by the same rule as a controlled stop.
+Survivors still owe the full configured plan. When every agent has died there is nothing left to observe, so the run stops with `allAgentsDied` and publishes; validation requires every agent's death on record.
+`research/lib/witnessed-death.js` owns the rule.
+
+## Behavioral gate
+
+Every primary behavior publication derives a `behaviorGate` section in `metrics.json`, copied into the manifest and summarized in the README.
+`research/lib/behavior-gate.js` owns it.
+It measures meaningful behavior per agent (a non-idle native goal-review action the body accepted and later evidence confirmed: its own server-confirmed interaction, a movement report, or a food change for an eat), typed goal continuity, accepted and confirmed action counts, per-kind omissions, night perceptions by world-clock day, calls by agent, peak outstanding, spend, and cleanup.
+The mechanical pilot verdict is `pass` only when at least two agents show meaningful behavior, at least one carries a typed goal forward, every agent completed the configured reviews, no failure evidence exists, and no JVM cut occurred.
+A controlled stop is always `no-go`.
+Generation 2 of the gate, named in the stimulus attestation, also breaks server-witnessed native interactions down by operation into confirmed and disputed counts; evidence published before it names no generation and derives generation 1, so committed metrics stay re-derivable.
+A mechanical `pass` still names the criteria only a reader can judge, so it is necessary for the pre-registered gate and not sufficient.
+
 ## Lifecycle and cleanup
+
+Before it creates the disposable server or reads a credential, the harness refuses to start unless the run volume has at least 2 GiB free, or more when the configured log and artifact bounds need it.
+It then waits at most 180 seconds for the one-minute load average to fall to 0.5 per CPU and refuses to start a run on a busier host, because Paper's tick rate and the bodies' path-search budgets are wall-clock bounded.
+Runs are allowed on battery. If the host is suspended mid-run (a closed laptop lid enters clamshell sleep, which no assertion prevents), the primary-behavior poll loop sees a wall-clock gap of more than ten seconds between its 250 ms polls and fails the run as `hostSuspended`, with the usual cleanup and retained diagnostic, rather than as a body failure: a rehearsal that slept for 422 seconds was cut when every Mineflayer client timed out on wake.
+Each run directory is seeded from a verified Paper runtime cache under `.scratch/paper/runtime-*` (the Mojang server jar, libraries, patched server and remap cache, each file checked against the cache's own manifest), built once by a bare loopback Paper start, so startup no longer downloads and remaps on every run.
+Paper, its world, the JVM, the bounded logs, and publication all write there, and a volume that fills mid-run loses the run.
 
 The harness starts cognition, the bounded proxy, and Paper in that order. Paper
 then starts the canonical fleet through Loom's existing bounded startup gate.
@@ -275,13 +366,17 @@ An empty value or lookup failure stops before cognition starts. An HTTP 401 or
 403 from the provider stops the whole run after that refusal, with no retry and
 only a stable provider-safe error.
 
-The routine-v12 pilot proposal routes routine and notable decisions to
+The routine-v13 pilot routes routine and notable decisions to
 `gpt-5.4-nano` and only the existing pivotal tier to `gpt-5.4`. It runs three
 agents for at most 180 wall-clock seconds or 4,000 server ticks, whichever
-comes first, and permits at most four calls per agent, twelve calls globally,
+comes first, and permits at most six calls per agent, twelve calls globally,
 and three calls outstanding. Its 65,536-byte request and 2,048-output-token
 bounds make the estimate-independent worst case $2.33472 at the pinned rates;
 the configured spend ceiling is $2.34.
+
+The paid two-cycle profiles use the same routing and bounds. Three agents at
+56/150/3 calls make the worst case $29.184 against a $29.19 ceiling; ten agents
+at 56/400/6 make it $77.824 against $77.83. Each needs its own exact approval.
 
 After explicit approval, replace the proposal placeholder with the approved
 fresh experiment id and run the bounded live configuration once. The earlier

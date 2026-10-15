@@ -131,6 +131,9 @@ class BukkitPlayerServerState(
             username = captured.username,
             claim = BodyClaim(report.vitals, report.inventory),
             reading = captured.reading,
+            // Inventory stays compared with the reading from before the request; vitals are
+            // compared with the span up to this one, taken when the answer is audited.
+            later = server.getPlayer(identity.uuid)?.let(::serverReadingOf),
         )
     }
 

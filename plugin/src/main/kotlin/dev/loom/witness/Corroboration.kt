@@ -22,7 +22,9 @@
  * **A continuous vital drifts and an item does not.** The server snapshot is taken
  * immediately before the body sense request, and the client report returns after that
  * socket round trip, so health and saturation can cross one ordinary update between the
- * two readings and need a stated tolerance; an item's name and its count do not drift,
+ * two readings and need a stated tolerance around the span of the server's readings from
+ * before the request to when its answer is audited, and saturation is compared under
+ * vanilla's own resend rule; an item's name and its count do not drift,
  * so they are compared exactly. Reading either rule as the other's gives a check that is
  * useless in one direction and a false alarm in the other. Exactly, but not as *written*:
  * the contract makes an item's namespace optional and the two sides reach the comparison
@@ -235,8 +237,9 @@ fun corroborate(
     claimedInventory: List<SensedStack>,
     observed: ObservedVitals,
     observedInventory: List<ObservedStack>,
+    observedAfter: ObservedVitals? = null,
 ): Corroboration {
-    val vitals = vitalFaults(claimed, observed)
+    val vitals = vitalFaults(claimed, observed, observedAfter ?: observed)
     val checkable = claimedInventory.filter { isCorroborableSlot(it.slot) }
     val inventory = inventoryFaults(checkable, observedInventory.filter { isCorroborableSlot(it.slot) })
     val outside = claimedInventory.size - checkable.size
@@ -245,28 +248,6 @@ fun corroborate(
     }
     return Corroboration.Disputed(vitals = vitals, inventory = inventory, outsideComparison = outside)
 }
-
-private fun vitalFaults(
-    claimed: SensedVitals,
-    observed: ObservedVitals,
-): List<VitalFault> =
-    buildList {
-        if (drifted(claimed.health, observed.health, VITAL_DRIFT_TOLERANCE)) {
-            add(VitalFault(Vital.HEALTH, claimed.health, observed.health))
-        }
-        if (Math.abs(claimed.food - observed.food) > FOOD_DRIFT_TOLERANCE) {
-            add(VitalFault(Vital.FOOD, claimed.food.toDouble(), observed.food.toDouble()))
-        }
-        if (drifted(claimed.saturation, observed.saturation, VITAL_DRIFT_TOLERANCE)) {
-            add(VitalFault(Vital.SATURATION, claimed.saturation, observed.saturation))
-        }
-    }
-
-private fun drifted(
-    claimed: Double,
-    observed: Double,
-    tolerance: Double,
-): Boolean = Math.abs(claimed - observed) > tolerance
 
 /**
  * The per-slot comparison, over the union of the two accounts.

@@ -90,6 +90,8 @@ const FAILURE_CODES = new Set([
   'cognitionDecisionFailed',
   'cognitionProcessOrProviderFailure',
   'cognitionUpstreamUnavailable',
+  'hostSuspended',
+  'cognitionDrainTimedOut',
   'logByteLimitReached',
   'paperProcessFailure',
   'postCrashPeerDecisionRequirement',
@@ -183,7 +185,20 @@ function emptyAgentSummary (agentId) {
   }
 }
 
+// Events whose closed outcome tag says why a run failed; only a camelCase tag is kept.
+const OUTCOME_EVENTS = new Set([
+  'bodyDisconnected',
+  'cognitionUnavailable',
+  'decisionDiscarded',
+  'spawnRejected',
+  'witnessDenied',
+  'witnessDisputed',
+  'worldInteraction'
+])
+const OUTCOME_TAG = /^[a-z][A-Za-z]{0,63}$/
+
 function bodySummary (records, configuredAgentIds, crashAfterTick) {
+  const outcomes = {}
   const agents = new Map(
     configuredAgentIds.map((agentId) => [agentId, emptyAgentSummary(agentId)])
   )
@@ -208,6 +223,13 @@ function bodySummary (records, configuredAgentIds, crashAfterTick) {
     lastTick = lastTick === undefined ? record.tick : Math.max(lastTick, record.tick)
     if (BODY_EVENTS.has(record.event)) increment(events, record.event)
     else unclassifiedEvents += 1
+    if (OUTCOME_EVENTS.has(record.event)) {
+      const tag = typeof record.outcome === 'string' && OUTCOME_TAG.test(record.outcome)
+        ? record.outcome
+        : 'unclassified'
+      outcomes[record.event] ??= {}
+      increment(outcomes[record.event], tag)
+    }
     if (record.agentId === 'loom:world') {
       worldRecords += 1
       continue
@@ -229,6 +251,7 @@ function bodySummary (records, configuredAgentIds, crashAfterTick) {
     firstTick: firstTick ?? null,
     lastTick: lastTick ?? null,
     events,
+    outcomesByEvent: outcomes,
     agents: [...agents.values()],
     worldRecords,
     unknownAgentRecords,

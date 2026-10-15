@@ -16,6 +16,8 @@ import dev.loom.body.BodyPort
 import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.describe
+import dev.loom.contract.Bearing
+import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
@@ -148,6 +150,67 @@ class EmbodiedCognitionTest {
     /** The typed failure a handler was given, or a test failure if it was not one. */
     private fun typedFailure(thrown: Throwable): CognitionFailure =
         (thrown as? CognitionUnavailableException)?.failure ?: fail("expected a typed cognition failure, got $thrown")
+
+    @Test
+    @DisplayName("a shutdown ends every chain still waiting for the mind, and a late answer is ignored")
+    fun aShutdownEndsEveryWaitingChain() {
+        val records = mutableListOf<BodyEventRecord>()
+        val body = perceivingBody()
+        val pending = CompletableFuture<Decision>()
+        val cognition =
+            EmbodiedCognition(body, mind = { pending }, mainThread = main, journal = journalInto(records))
+        val waiting = perception(requestId = "review-1", agentId = agent.value)
+        cognition.submit(agent, waiting)
+        cognition.shutDown()
+        val ended = records.single { it.event == BodyEvent.COGNITION_UNAVAILABLE }
+        assertEquals("review-1", ended.requestId)
+        assertEquals(EventTag.COGNITION_SHUTDOWN, ended.outcome)
+        pending.complete(decisionFor(waiting, Intent.Idle))
+        main.drain()
+        assertTrue(body.applied.isEmpty(), "an answer after the shutdown reaches no body")
+        assertEquals(1, records.size, "and records nothing more")
+        cognition.submit(agent, perception(requestId = "review-2", agentId = agent.value))
+        main.drain()
+        assertEquals(1, records.size, "nothing new is sent after the shutdown")
+    }
+
+    @Test
+    @DisplayName("a repeat about the threat an agent is already answering is coalesced, not sent")
+    fun aDangerRepeatIsCoalescedIntoTheActiveEpisode() {
+        val records = mutableListOf<BodyEventRecord>()
+        val asked = mutableListOf<String>()
+        val decisions = mutableMapOf<String, CompletableFuture<Decision>>()
+        val cognition =
+            EmbodiedCognition(
+                perceivingBody(),
+                mind = { p ->
+                    asked.add(p.requestId)
+                    CompletableFuture<Decision>().also { decisions[p.requestId] = it }
+                },
+                mainThread = main,
+                journal = journalInto(records),
+            )
+        val zombie = Trigger.ThreatSighted("entity.minecraft.zombie", "e1", 6.0, Bearing.NORTH, true, true)
+        val first = perception(requestId = "danger-1", agentId = agent.value, trigger = zombie)
+        val repeat = perception(requestId = "danger-2", agentId = agent.value, trigger = Trigger.Damaged(3, "zombie"))
+        cognition.submit(agent, first)
+        cognition.submit(agent, repeat)
+        main.drain()
+        assertEquals(listOf("danger-1"), asked, "the mind is asked once about one threat")
+        val coalesced = records.single { it.event == BodyEvent.COGNITION_UNAVAILABLE }
+        assertEquals("danger-2", coalesced.requestId)
+        assertEquals(EventTag.DANGER_COALESCED, coalesced.outcome)
+
+        // Once the decision is applied, the cooldown holds, then a new engagement is asked.
+        decisions.getValue("danger-1").complete(decisionFor(first, Intent.Flee("e1")))
+        main.drain()
+        tick += DANGER_EPISODE_COOLDOWN_TICKS
+        cognition.submit(agent, perception(requestId = "danger-3", agentId = agent.value, trigger = zombie))
+        tick += 1
+        cognition.submit(agent, perception(requestId = "danger-4", agentId = agent.value, trigger = zombie))
+        main.drain()
+        assertEquals(listOf("danger-1", "danger-4"), asked)
+    }
 
     @Test
     @DisplayName("a perception becomes a decision and the decision becomes an action on the body")

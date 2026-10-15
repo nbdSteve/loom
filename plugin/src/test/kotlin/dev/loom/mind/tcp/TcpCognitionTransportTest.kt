@@ -30,12 +30,14 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.file.Paths
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 import kotlin.io.path.readText
@@ -56,7 +58,21 @@ private const val POLL_MILLIS = 5L
  * Bound and released rather than picked at random, so the number is one the OS was
  * willing to hand out and the test is not racing whatever happens to run locally.
  */
-private fun unusedPort(): Int = ServerSocket(0).use { it.localPort }
+private const val OPEN_MIND_REPETITIONS = 20
+
+private fun unusedPort(): Int = loopbackServer().use { it.localPort }
+
+/**
+ * A listener on the loopback address the transport connects to, never the wildcard.
+ *
+ * A wildcard listener can share its ephemeral port with another socket bound to
+ * 127.0.0.1 on that port, and the more specific binding then receives the transport's
+ * connection: under CPU stress about one fixture loop in eight met a peer that closed at
+ * once, which read as the mind closing the connection without answering.
+ */
+private fun loopbackServer(): ServerSocket = ServerSocket(0, BACKLOG, InetAddress.getLoopbackAddress())
+
+private const val BACKLOG = 16
 
 /**
  * A line-oriented stand-in for the cognition service.
@@ -67,7 +83,7 @@ private fun unusedPort(): Int = ServerSocket(0).use { it.localPort }
 private class FakeMind(
     private val answer: (String) -> String?,
 ) : AutoCloseable {
-    private val server = ServerSocket(0)
+    private val server = loopbackServer()
     private val threads = CopyOnWriteArrayList<Thread>()
     val requests = CopyOnWriteArrayList<String>()
 
@@ -165,7 +181,7 @@ private class FakeMind(
 private class DrippingMind(
     private val interval: Duration,
 ) : AutoCloseable {
-    private val server = ServerSocket(0)
+    private val server = loopbackServer()
     private val threads = CopyOnWriteArrayList<Thread>()
 
     /** Bytes the fake actually managed to send, so the test can prove it dripped. */
@@ -335,6 +351,48 @@ class TcpCognitionTransportTest {
             "the refusal must name the byte cap: ${thrown.message}",
         )
         assertTrue(mind.requests.isEmpty(), "an oversized request must fail before a socket write")
+    }
+
+    @Test
+    @DisplayName("many minds open at once each answer exactly their own connection")
+    fun manyOpenMindsNeverHandAConnectionToAnotherListener() {
+        // The fixture sweep's shape, repeated: every mind stays listening while the next one
+        // binds a fresh ephemeral port. Bound to the wildcard, one of them could share its
+        // port with another loopback listener that took the connection and closed it.
+        val fixtures =
+            contractDir.resolve("fixtures/valid")
+                .listDirectoryEntries("decision-*.json")
+                .map { it.name }
+                .sorted()
+        // The race only showed on a loaded host, so the sweep runs beside busy threads.
+        val busy = AtomicBoolean(true)
+        val load =
+            List(Runtime.getRuntime().availableProcessors()) {
+                Thread { while (busy.get()) Thread.onSpinWait() }.apply {
+                    isDaemon = true
+                    start()
+                }
+            }
+        try {
+            sweepEveryFixture(fixtures)
+        } finally {
+            busy.set(false)
+            load.forEach { it.join(PATIENCE.inWholeMilliseconds) }
+        }
+    }
+
+    private fun sweepEveryFixture(fixtures: List<String>) {
+        repeat(OPEN_MIND_REPETITIONS) { sweep ->
+            for (name in fixtures) {
+                val canonical = fixture(name)
+                val mind = managed(FakeMind { canonical })
+                assertEquals(
+                    LoomJson.decodeFromString<Decision>(canonical),
+                    transportTo(mind).ask(asking(canonical)),
+                    "sweep $sweep, fixture $name",
+                )
+            }
+        }
     }
 
     @Test

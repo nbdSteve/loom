@@ -31,6 +31,9 @@ class DecisionJournal(
     private val eventLog: BodyEventLog,
     private val currentTick: () -> Long,
 ) {
+    /** The authoritative server tick the journal stamps its records with. */
+    fun tick(): Long = currentTick()
+
     /** Records that the mind decided, what it decided with, and what became of its goal choice. */
     fun decided(
         agentId: AgentId,

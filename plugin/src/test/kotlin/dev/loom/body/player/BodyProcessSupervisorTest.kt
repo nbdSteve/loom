@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.nio.file.Files
 import java.nio.file.Path
@@ -372,7 +373,7 @@ class BodyProcessSupervisorTest {
     )
 }
 
-private fun unusedPort(): Int = ServerSocket(0).use { it.localPort }
+private fun unusedPort(): Int = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
 
 private fun <T> CompletionStage<T>.await(): T =
     toCompletableFuture().get(SUPERVISOR_TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)

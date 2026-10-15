@@ -18,7 +18,8 @@ The fixtures are also the wire: the mind's integration test replays every `perce
 
 **`contract/body-control.schema.json` is a second, sibling contract, not part of this one.**
 It is the Mineflayer player body's own wire, and it shares no binding types or dependencies with the perception/decision contract.
-Fifteen operations at protocol generation 5: `handshake`, `status` and `shutdown` for lifecycle; `sense` for one bounded reading; `eat`, `moveTo` and `flee` for the existing explicit survival actions; `dig`, `collect`, `place`, `equip`, `craft`, `attack` and `sleep` for request-scoped one-shot native interaction; and `halt` for cancellable exclusive work.
+Sixteen operations at protocol generation 5: `handshake`, `status` and `shutdown` for lifecycle; `sense` for one bounded reading; `eat`, `moveTo` and `flee` for the existing explicit survival actions; `dig`, `collect`, `place`, `equip`, `craft`, `attack` and `sleep` for request-scoped one-shot native interaction; `say` for one bounded line of player chat; and `halt` for cancellable exclusive work.
+`say` did not move generation 5: its closed `SayOutcome` answers only a controller that sent `say`, so no frame an agreed controller can meet widened.
 Generation 5 moved because the body-chosen entity, block and dropped-item lists widened from 24 to 48 entries. Generation 4 moved because `sense` gained body-chosen recipe values and the craft, attack and sleep reports added closed outcome sets. Adding those operation names alone would not have moved either generation.
 **Adding `moveTo`, `flee` and `halt` did not move generation 1 while adding one `MoveOutcome` value moved generation 2, and the asymmetry is the rule rather than an inconsistency.**
 The schema's own `ControlOperation` description is the authority: an *operation* is something a controller asks for, so a controller never meets one it does not have, and one a peer lacks is refused with `unknownOperation`; a value the *body* answers from is the body's to choose, so widening it hands a controller that agreed this generation a frame it cannot read, for a request it made in good faith and without having asked for anything new.
@@ -105,6 +106,13 @@ The capacity proof lives in `response-sense-max-observations.json`, `perception-
 The engine-free body domain retains only policy shared by the player path: bounded perception, request windows, threat debounce, evidence types, geometry, world-clock translation, and terminal mortality. Movement, eating and native-interaction mechanics live in `body/`; `body/README.md` is authoritative for their bounds and ordering. Player survival state is vanilla health, food, and saturation. Loom has no synthetic metabolism, hunger timer, rest recovery, or auto-eat loop; `Rest` and `Idle` remain distinct decisions, but neither changes player vitals by itself.
 
 `BodyPort.tick` drives body bookkeeping only and never invokes cognition. Cognition is event-driven by construction; the contract has no per-tick trigger, and `BodyBoundaryTest` forbids the body side from reaching `dev.loom.mind`.
+
+## Player speech
+
+`Intent.Say` is the only source of chat. `SayText` (`dev.loom.bodycontrol.BodyControlSpeech`, mirrored in `body/src/protocol.js`) is the one text rule: 1..128 code points, at most 256 UTF-8 bytes, single U+0020 separators, no leading `/`, no controls, `§`, other spaces, zero-width or bidi characters, no lone surrogates. Nothing is normalised, because vanilla rewrites chat whitespace and the server-observed text must equal the sent text.
+The body owns the per-process rate window; `PlayerSpeech` owns one in-flight say per agent. A `sent` report is a client claim only: `SpeechWitness` corroborates it against Paper's `AsyncChatEvent` by uuid and exact text, files `disputedSpeech*`/`unclaimedSpeech`/`unobservedSpeech` otherwise, and only a corroborated line becomes `Trigger.Spoken` for other live managed agents within `PERCEPTION_RADIUS_BLOCKS`. The speaker never hears itself and nothing replies automatically. `dev.loom.plugin.SpeechRelay` is the bridge because `dev.loom.body` may not see `dev.loom.witness`.
+The async chat handler reads only the event's sender and text; the speaker's place, listeners and every witness mutation run on the main thread. The scripted stand-in answers `spoken` with `idle`, because two stand-ins answering speech with speech is a chat loop.
+`SpeechEndToEndTest` is the offline acceptance: a strict decision through the real JVM actuation and socket to two real Node bodies (`body/test/fixtures/speech-peers.js`), their `chat_message` packets back through `SpeechListener`, attribution, one nearby `Trigger.Spoken`, the journal and `research/lib/evidence.js`'s `speech` metrics. It runs wherever `node` and `body/node_modules` exist, and CI's plugin job fails if it skipped.
 
 ## The player witness
 
@@ -289,6 +297,13 @@ The one knob is `DEFAULT_GOAL_REVIEW_CADENCE_TICKS`, and the sweep period is *de
 Both the schedule reading and Bukkit timer are authoritative server ticks. A pause advances nothing and `/tick sprint` advances the same deterministic sequence; wall time must never re-enter this path.
 A never-reviewed agent is due at once, which keeps every freshly started configured agent observable at a conservative cadence.
 The driver is cancelled explicitly in `onDisable`, before the bridge it feeds closes.
+**`Trigger.Damaged` has one producer: `BukkitDamageEvents` at `MONITOR` with `ignoreCancelled`, feeding the engine-free `DamageDriver`.**
+The agent is resolved by server uuid through the witness registry; the source is the vanilla attacker key (projectile shooter first) or the `DamageCause` token, never a name.
+One `damageWitnessed` record per witnessed event classifies it by its `DAMAGE_` outcome tag, and `damageSubmitted` carries the `damaged` perception's `requestId`.
+Permadeath is consulted when the damage arrives and again when its perception returns, so lethal damage loses to the death the witness records in the same tick; `DAMAGE_EPISODE_TICKS` (20) coalesces one agent's damage per episode and never another agent's.
+
+**Danger cognition is coalesced per agent and threat.**
+`DangerEpisodes` (`dev.loom.mind`, owned by `EmbodiedCognition`) opens an episode when a `threatSighted` or `damaged` perception is sent, keyed by the creature or damage cause; until that decision is applied or lost, and for `DANGER_EPISODE_COOLDOWN_TICKS` (100, measured from a normal-difficulty rehearsal) after, a repeat about the same threat for the same agent is journalled as `cognitionUnavailable` with outcome `dangerCoalesced` instead of being sent. A different threat is always sent, and goal reviews are never coalesced.
 
 **A decision enters the research record from the applied path, and only from there.**
 `EmbodiedCognition.actOn` is the one place that holds the decision, the mind's stamp on it, and what the body did about it at the same time, so `DecisionJournal` writes `decided` there - before `apply`, so a run reads perception -> decision -> action - and `decisionDiscarded` when the body has gone in between.

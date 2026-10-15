@@ -207,6 +207,7 @@ test('the proxy preserves one sanitized cognition classification for the diagnos
         importance: 'ROUTINE',
         outcome: 'cognitionFailure',
         provenance: null,
+        outstandingAtAdmission: 1,
         failure
       }
     )

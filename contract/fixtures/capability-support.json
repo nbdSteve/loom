@@ -1,0 +1,194 @@
+{
+  "description": "The one machine-readable support classification every capability-completeness test reads. A capability is 'supported' only when every layer serves it; 'dormant' is a contract variant deliberately not served, which must then be hidden from every model-facing and operator-facing surface. 'historical' marks a research config retained only to re-derive committed evidence. Nothing else may exempt a capability.",
+  "intents": {
+    "say": {
+      "status": "supported",
+      "bodyOperation": "say",
+      "serverEvidence": "speech"
+    },
+    "moveTo": {
+      "status": "supported",
+      "bodyOperation": "moveTo",
+      "serverEvidence": "movement"
+    },
+    "flee": {
+      "status": "supported",
+      "bodyOperation": "flee",
+      "serverEvidence": "movement"
+    },
+    "eat": {
+      "status": "supported",
+      "bodyOperation": "eat",
+      "serverEvidence": "sense"
+    },
+    "dig": {
+      "status": "supported",
+      "bodyOperation": "dig",
+      "serverEvidence": "interaction"
+    },
+    "collect": {
+      "status": "supported",
+      "bodyOperation": "collect",
+      "serverEvidence": "interaction"
+    },
+    "place": {
+      "status": "supported",
+      "bodyOperation": "place",
+      "serverEvidence": "interaction"
+    },
+    "equip": {
+      "status": "supported",
+      "bodyOperation": "equip",
+      "serverEvidence": "interaction"
+    },
+    "craft": {
+      "status": "supported",
+      "bodyOperation": "craft",
+      "serverEvidence": "interaction"
+    },
+    "attack": {
+      "status": "supported",
+      "bodyOperation": "attack",
+      "serverEvidence": "interaction"
+    },
+    "sleep": {
+      "status": "supported",
+      "bodyOperation": "sleep",
+      "serverEvidence": "interaction"
+    },
+    "rest": {
+      "status": "supported",
+      "bodyOperation": "halt",
+      "serverEvidence": "none"
+    },
+    "idle": {
+      "status": "supported",
+      "bodyOperation": "halt",
+      "serverEvidence": "none"
+    }
+  },
+  "triggers": {
+    "spoken": {
+      "status": "supported"
+    },
+    "damaged": {
+      "status": "supported"
+    },
+    "threatSighted": {
+      "status": "supported"
+    },
+    "blockSighted": {
+      "status": "dormant",
+      "reason": "No production code constructs Trigger.BlockSighted; the mind can render one, but no body or server event produces it."
+    },
+    "goalReview": {
+      "status": "supported"
+    }
+  },
+  "bodyOperations": {
+    "handshake": "lifecycle",
+    "status": "lifecycle",
+    "shutdown": "lifecycle",
+    "sense": "perception",
+    "eat": "action",
+    "moveTo": "action",
+    "flee": "action",
+    "halt": "action",
+    "dig": "action",
+    "collect": "action",
+    "place": "action",
+    "equip": "action",
+    "craft": "action",
+    "attack": "action",
+    "sleep": "action",
+    "say": "action"
+  },
+  "featureFlags": {
+    "movement": [
+      "moveTo",
+      "flee"
+    ],
+    "eating": [
+      "eat"
+    ],
+    "digging": [
+      "dig"
+    ],
+    "collection": [
+      "collect"
+    ],
+    "placement": [
+      "place"
+    ],
+    "equipping": [
+      "equip"
+    ],
+    "crafting": [
+      "craft"
+    ],
+    "combat": [
+      "attack"
+    ],
+    "sleep": [
+      "sleep"
+    ],
+    "permadeath": [],
+    "speech": [
+      "say"
+    ]
+  },
+  "researchConfigs": {
+    "first-tribe-openai.json": {
+      "status": "historical",
+      "reason": "Pins routine-v11 prompts the current mind no longer serves."
+    },
+    "first-tribe-scripted-proof.json": {
+      "status": "historical",
+      "reason": "Pins routine-v11 prompts the current mind no longer serves."
+    },
+    "first-tribe-routine-v12-agency-pilot.json": {
+      "status": "historical",
+      "reason": "Pins routine-v12 prompts the current mind no longer serves."
+    },
+    "first-tribe-routine-v12-agency-pilot-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v12 prompts the current mind no longer serves."
+    },
+    "first-tribe-routine-v13-agency-pilot.json": {
+      "status": "runnable"
+    },
+    "first-tribe-routine-v13-agency-pilot-scripted.json": {
+      "status": "runnable"
+    },
+    "tribe-two-cycle-3.json": {
+      "status": "runnable"
+    },
+    "tribe-two-cycle-3-scripted.json": {
+      "status": "runnable"
+    },
+    "tribe-two-cycle-10.json": {
+      "status": "runnable"
+    },
+    "tribe-two-cycle-10-scripted.json": {
+      "status": "runnable"
+    },
+    "tribe-two-cycle-3-accelerated.json": {
+      "status": "runnable"
+    },
+    "tribe-two-cycle-3-sample.json": {
+      "status": "runnable"
+    },
+    "tribe-two-cycle-10-accelerated.json": {
+      "status": "runnable"
+    },
+    "tribe-two-cycle-10-sample.json": {
+      "status": "runnable"
+    },
+    "tribe-two-cycle-3-structure.json": {
+      "status": "runnable"
+    },
+    "tribe-two-cycle-10-structure.json": {
+      "status": "runnable"
+    }
+  }
+}

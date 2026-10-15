@@ -156,6 +156,36 @@ object EventTag {
      */
     const val THREAT_OVER_NIGHTLY_CAP: String = "threatOverNightlyCap"
 
+    /** A witnessed server damage event reached cognition as one `damaged` trigger. */
+    const val DAMAGE_SUBMITTED: String = "damageSubmitted"
+
+    /**
+     * A threat or damage perception the mind was not asked about, because the agent is
+     * already deciding or acting on the same threat, or did so moments ago.
+     */
+    const val DANGER_COALESCED: String = "dangerCoalesced"
+
+    /** A perception still waiting for the mind when the plugin shut down; it was never answered. */
+    const val COGNITION_SHUTDOWN: String = "cognitionShutdown"
+
+    /** Damage inside an agent's open damage episode; the episode's trigger already stands. */
+    const val DAMAGE_COALESCED: String = "damageCoalesced"
+
+    /** Damage to an agent whose body was not live: starting, stopping or disconnected. */
+    const val DAMAGE_BODY_UNAVAILABLE: String = "damageBodyUnavailable"
+
+    /** Damage to an agent already dead, including a witnessed breach. */
+    const val DAMAGE_AGENT_DEAD: String = "damageAgentDead"
+
+    /** The agent died between the damage and its perception; death takes precedence. */
+    const val DAMAGE_DIED_BEFORE_COGNITION: String = "damageDiedBeforeCognition"
+
+    /** The body could not capture a perception for the damage. */
+    const val DAMAGE_NOT_PERCEIVED: String = "damageNotPerceived"
+
+    /** Damage witnessed while Loom was shutting down. */
+    const val DAMAGE_SHUTDOWN: String = "damageShutdown"
+
     /** The agent got beyond what it can perceive of the threat. It ran away. */
     const val RETREAT_SAFE: String = "retreatSafe"
 
@@ -239,6 +269,15 @@ object EventTag {
     const val DIG_NOT_DIGGABLE: String = "digNotDiggable"
     const val DIG_TIMED_OUT: String = "digTimedOut"
     const val DIG_CANCELLED: String = "digCancelled"
+
+    /** A say line failed the shared text bound before anything was sent. */
+    const val SAY_TEXT_REFUSED: String = "sayTextRefused"
+
+    /** The body's per-agent speech window was full, so nothing was sent. */
+    const val SAY_RATE_LIMITED: String = "sayRateLimited"
+
+    /** This agent already had one say in flight. */
+    const val SAY_OUTSTANDING: String = "sayOutstanding"
     const val DIG_LIBRARY_FAILURE: String = "digLibraryFailure"
 
     const val COLLECT_SENSE_FORGOTTEN: String = "collectSenseForgotten"
@@ -413,6 +452,18 @@ object EventTag {
      */
     const val DISPUTED_POSITION: String = "disputedPosition"
 
+    /** A server-observed line and the speaker's claim for it differ in text. */
+    const val DISPUTED_SPEECH_TEXT: String = "disputedSpeechText"
+
+    /** A claimed line was observed from another managed sender. */
+    const val DISPUTED_SPEECH_SENDER: String = "disputedSpeechSender"
+
+    /** A managed player chatted with no Loom say claim behind it. */
+    const val UNCLAIMED_SPEECH: String = "unclaimedSpeech"
+
+    /** A body reported a line sent that the server never attributed to it. */
+    const val UNOBSERVED_SPEECH: String = "unobservedSpeech"
+
     /** A movement report that contradicts its own arithmetic, whatever the server reads. */
     const val DISPUTED_JOURNEY: String = "disputedJourney"
 
@@ -478,6 +529,9 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.DIG_NOT_DIGGABLE,
         EventTag.DIG_TIMED_OUT,
         EventTag.DIG_CANCELLED,
+        EventTag.SAY_TEXT_REFUSED,
+        EventTag.SAY_RATE_LIMITED,
+        EventTag.SAY_OUTSTANDING,
         EventTag.DIG_LIBRARY_FAILURE,
         EventTag.COLLECT_SENSE_FORGOTTEN,
         EventTag.COLLECT_ITEM_UNNAMED,

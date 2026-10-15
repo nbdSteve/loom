@@ -7,6 +7,16 @@ const { execFileSync } = require('node:child_process')
 
 const { currentSchemaVersion, validateManifest, versionTag } = require('../schema/manifest-schema.js')
 const {
+  ADMISSION_CLOSED_BOUND,
+  ADMISSION_CLOSED_EVENT,
+  ADMISSION_ENDED_EVENT,
+  BUDGET_STOP_BOUNDS,
+  CONTROLLED_STOP_DRAIN_MILLIS,
+  CONTROLLED_STOP_REASON,
+  PROVIDER_UNAVAILABLE_MAPPINGS,
+  STOP_KINDS
+} = require('./controlled-stop.js')
+const {
   METRICS_VERSION,
   NORMALIZED_EVIDENCE_VERSION,
   PUBLIC_SCAN_PATTERNS,
@@ -15,11 +25,13 @@ const {
   readJsonLines,
   scanText
 } = require('./evidence.js')
+const { isCoalesced, isShutdownEnding, unansweredAccountedFor } = require('./danger.js')
+const { CADENCE, PROFILES, SCENES, placementOf, profileOf, ticksPerSecondOf } = require('./profiles.js')
 const {
   CRASH_CONTAINMENT_MODE,
-  PRIMARY_BEHAVIOR_AGENTS,
-  PRIMARY_BEHAVIOR_INITIAL_POSITIONS,
   PRIMARY_BEHAVIOR_MODES,
+  SERVED_PROMPTS,
+  isHistoricalMode,
   primaryBehaviorModeOf,
   configuredMode,
   isPrimaryBehaviorMode
@@ -142,11 +154,23 @@ function primaryBehaviorErrors (config) {
   if (behavior === null || typeof behavior !== 'object' || Array.isArray(behavior)) {
     return ['primaryBehavior must configure the research-only behavior mode']
   }
-  if (!sameJson(config.agents, PRIMARY_BEHAVIOR_AGENTS)) {
-    errors.push('the primary behavior mode must use tribe-alpha, tribe-beta, and tribe-gamma')
+  const profile = profileOf(behavior.profile)
+  if (profile === undefined) {
+    return [`primaryBehavior.profile must be one of ${Object.keys(PROFILES).join(', ')}`]
   }
-  if (!sameJson(behavior.initialPositions, PRIMARY_BEHAVIOR_INITIAL_POSITIONS)) {
-    errors.push('primaryBehavior.initialPositions must pin the r5 neutral coordinates')
+  const scene = SCENES[profile.scene]
+  const placement = placementOf(profile)
+  if (profile.scriptedOnly === true && config.cognition?.backend !== 'scripted') {
+    errors.push(`profile ${behavior.profile} is provider-free only`)
+  }
+  if (!sameJson([...(config.agents ?? [])].sort(), [...placement.agents].sort())) {
+    errors.push(`profile ${behavior.profile} must use ${placement.agents.join(', ')}`)
+  }
+  if (!sameJson(behavior.initialPositions, placement.positions)) {
+    errors.push(`primaryBehavior.initialPositions must pin the ${profile.scene} slots for ${behavior.profile}`)
+  }
+  if (behavior.scene !== profile.scene) {
+    errors.push(`primaryBehavior.scene must be ${profile.scene} for ${behavior.profile}`)
   }
   const clock = behavior.initialWorldClock
   if (
@@ -158,11 +182,14 @@ function primaryBehaviorErrors (config) {
   }
   const schedule = behavior.nativeGoalReviewSchedule
   if (
-    schedule?.cadenceTicks !== 2400 ||
-    schedule?.sliceTicks !== 100 ||
-    schedule?.expectedReviewsPerAgent !== 2
+    schedule?.cadenceTicks !== CADENCE.cadenceTicks ||
+    schedule?.sliceTicks !== CADENCE.sliceTicks ||
+    schedule?.expectedReviewsPerAgent !== profile.expectedReviewsPerAgent
   ) {
-    errors.push('primaryBehavior.nativeGoalReviewSchedule must pin 2400/100 ticks and two reviews per agent')
+    errors.push(
+      `primaryBehavior.nativeGoalReviewSchedule must pin ${CADENCE.cadenceTicks}/${CADENCE.sliceTicks} ticks and ` +
+        `${profile.expectedReviewsPerAgent} reviews per agent for ${behavior.profile}`
+    )
   }
   if (
     Number.isInteger(schedule?.expectedReviewsPerAgent) &&
@@ -189,9 +216,6 @@ function primaryBehaviorErrors (config) {
       errors.push(`primaryBehavior.injectedDirectives.${directive} must be false`)
     }
   }
-  if (behavior.scene !== 'r5-neutral') {
-    errors.push('primaryBehavior.scene must be r5-neutral')
-  }
   const pinned = primaryBehaviorModeOf(configuredMode(config))
   if (behavior.categoryFairSelection !== pinned.categoryFairSelection) {
     errors.push(`primaryBehavior.categoryFairSelection must be ${pinned.categoryFairSelection} for ${configuredMode(config)}`)
@@ -200,27 +224,47 @@ function primaryBehaviorErrors (config) {
     errors.push('the primary behavior mode cannot configure crash or operator-think proof traffic')
   }
   if (
-    config.world?.seed !== '76192346017' ||
-    config.world?.difficulty !== 'normal' ||
-    config.world?.mobSpawning !== true ||
+    config.world?.seed !== scene.seed ||
+    config.world?.difficulty !== (profile.world?.difficulty ?? 'normal') ||
+    config.world?.mobSpawning !== (profile.world?.mobSpawning ?? true) ||
     config.world?.worldBorderDiameterBlocks !== 128 ||
     config.world?.viewDistanceChunks !== 4 ||
     config.world?.simulationDistanceChunks !== 4
   ) {
-    errors.push('the primary behavior mode must retain the r5 seed, normal world, 128-block border, and 4-chunk distances')
+    errors.push(`profile ${behavior.profile} must use the ${profile.scene} seed, its pinned difficulty and mob rule, 128-block border, and 4-chunk distances`)
   }
   if (
-    config.bounds?.runDurationSeconds !== 180 ||
-    config.bounds?.simulationTickCeiling !== 4000
+    config.bounds?.runDurationSeconds !== profile.runDurationSeconds ||
+    config.bounds?.simulationTickCeiling !== profile.simulationTickCeiling
   ) {
-    errors.push('the primary behavior mode must run for 180 seconds or 4000 simulation ticks')
+    errors.push(
+      `profile ${behavior.profile} must run for ${profile.runDurationSeconds} seconds or ${profile.simulationTickCeiling} simulation ticks`
+    )
   }
+  if (profile.bounds !== undefined) {
+    for (const [name, value] of Object.entries(profile.bounds)) {
+      if (config.bounds?.[name] !== value) errors.push(`profile ${behavior.profile} must use bounds.${name} ${value}`)
+    }
+  }
+  if (profile.paperMemoryMiB !== undefined && config.runtime?.paperMemoryMiB !== profile.paperMemoryMiB) {
+    errors.push(`profile ${behavior.profile} must use runtime.paperMemoryMiB ${profile.paperMemoryMiB}`)
+  }
+  const ceilings = profile.callCeilings
   if (
-    config.cognition?.perAgentCallCeiling !== 4 ||
-    config.cognition?.globalCallCeiling !== 12 ||
-    config.cognition?.globalOutstandingCeiling !== 3
+    config.cognition?.perAgentCallCeiling !== ceilings.perAgent ||
+    config.cognition?.globalCallCeiling !== ceilings.global ||
+    config.cognition?.globalOutstandingCeiling !== ceilings.outstanding
   ) {
-    errors.push('the primary behavior mode must retain the 4/12/3 cognition ceilings')
+    errors.push(
+      `profile ${behavior.profile} must use the ${ceilings.perAgent}/${ceilings.global}/${ceilings.outstanding} cognition ceilings`
+    )
+  }
+  // More bridge workers than outstanding slots turns ordinary concurrency into refusals.
+  if (
+    !Number.isInteger(config.runtime?.cognitionBridge?.workers) ||
+    config.runtime.cognitionBridge.workers > config.cognition?.globalOutstandingCeiling
+  ) {
+    errors.push('primary behavior bridge workers must not exceed the global outstanding ceiling')
   }
   if (
     config.cognition?.providerTimeoutMillis !== 12_000 ||
@@ -237,10 +281,10 @@ function primaryBehaviorErrors (config) {
     (
       config.cognition.models?.ordinary !== 'gpt-5.4-nano' ||
       config.cognition.models?.pivotal !== 'gpt-5.4' ||
-      config.cognition.maxExternalSpendUsd !== 2.34
+      config.cognition.maxExternalSpendUsd !== profile.maxExternalSpendUsd
     )
   ) {
-    errors.push('the live primary behavior mode must retain gpt-5.4-nano/gpt-5.4 and the $2.34 ceiling')
+    errors.push(`the live ${behavior.profile} profile must retain gpt-5.4-nano/gpt-5.4 and the $${profile.maxExternalSpendUsd} ceiling`)
   }
   return errors
 }
@@ -254,8 +298,17 @@ function validateRunConfig (config) {
     errors.push('experimentId must be a dated lowercase slug')
   }
   const modes = [CRASH_CONTAINMENT_MODE, ...Object.keys(PRIMARY_BEHAVIOR_MODES)]
-  if (!modes.includes(configuredMode(config))) {
+  if (isHistoricalMode(configuredMode(config))) {
+    errors.push(`mode ${configuredMode(config)} is historical; its artifacts still validate but no run may select it`)
+  } else if (!modes.includes(configuredMode(config))) {
     errors.push(`mode must be one of ${modes.join(', ')}`)
+  }
+  if (!sameJson(config.cognition?.prompts, { ...SERVED_PROMPTS })) {
+    errors.push(`cognition.prompts must be the served ${Object.values(SERVED_PROMPTS).join(', ')}; this configuration is historical`)
+  }
+  // No runtime route reads a flag, so a flag set false would be a false manifest claim.
+  for (const [flag, value] of Object.entries(config.featureFlags ?? {})) {
+    if (value !== true) errors.push(`featureFlags.${flag} must be true: no runtime route can switch it off`)
   }
   if (!Array.isArray(config.agents) || config.agents.length < 3 || config.agents.length > 16) {
     errors.push('agents must contain 3..16 agent ids')
@@ -657,8 +710,31 @@ function initialConditionsMatch (config, metrics) {
 
 function expectedNativeReviewsObserved (config, metrics) {
   const expected = config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent
-  const observed = metrics.primaryBehavior?.nativeGoalReviewsByAgent ?? {}
-  return config.agents.every((agentId) => observed[agentId] === expected)
+  return config.agents.every((agentId) => agentReviewsObserved(agentId, metrics, expected))
+}
+
+function windowEntryHolds (entry) {
+  return entry !== undefined &&
+    Number.isInteger(entry.minimum) &&
+    Number.isInteger(entry.maximum) &&
+    entry.attempted >= entry.minimum &&
+    entry.attempted <= entry.maximum &&
+    entry.completed <= entry.attempted
+}
+
+// A run owes each agent's full plan, unless a death or a controlled stop ended that
+// agent's window first; then it owes only the reviews that window made due.
+function agentReviewsObserved (agentId, metrics, expected) {
+  const death = metrics.witnessedDeaths?.byAgent?.[agentId]
+  const stop = metrics.controlledStop
+  if (death !== undefined && (stop === undefined || stop.stopTick === null || death.tick <= stop.stopTick)) {
+    return windowEntryHolds(death)
+  }
+  if (stop !== undefined) return windowEntryHolds(stop.nativeReviews?.byAgent?.[agentId])
+  if (metrics.admissionEnd !== undefined) {
+    return windowEntryHolds(metrics.admissionEnd.nativeReviews?.byAgent?.[agentId])
+  }
+  return metrics.primaryBehavior?.nativeGoalReviewsByAgent?.[agentId] === expected
 }
 
 function protocolFor (config, metrics) {
@@ -705,6 +781,13 @@ function protocolFor (config, metrics) {
       }
     },
     injectedDirectives: structuredClone(config.primaryBehavior.injectedDirectives),
+    ...(config.primaryBehavior.profile === undefined
+      ? {}
+      : {
+          profile: config.primaryBehavior.profile,
+          serverTicksPerSecond: ticksPerSecondOf(profileOf(config.primaryBehavior.profile) ?? {}),
+          sceneCoverRule: SCENES[config.primaryBehavior.scene]?.coverRule ?? null
+        }),
     scene: config.primaryBehavior.scene,
     categoryFairSelection: config.primaryBehavior.categoryFairSelection
   }
@@ -779,6 +862,26 @@ function integrityChecksFor (config, metrics, agents, warnings) {
         metrics.perceptionAudit.samples === metrics.cycles.perceived,
       derivedFrom: EVIDENCE_FILE
     },
+    ...(metrics.witnessedDeaths === undefined
+      ? {}
+      : {
+          witnessedDeathsAccounted: {
+            passed: metrics.witnessedDeaths.violation === null,
+            derivedFrom: EVIDENCE_FILE
+          }
+        }),
+    ...(metrics.controlledStop === undefined
+      ? {}
+      : {
+          controlledStopAccounted: {
+            passed:
+              metrics.controlledStop.admissionClosures === 1 &&
+              STOP_KINDS.includes(metrics.controlledStop.kind) &&
+              metrics.controlledStop.stopTick !== null &&
+              metrics.controlledStop.behavioralVerdict === 'no-go',
+            derivedFrom: EVIDENCE_FILE
+          }
+        }),
     plannedNativeCallsFitCeilings: {
       passed:
         config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent <=
@@ -955,7 +1058,16 @@ function buildManifest ({
     },
     ...(isPrimaryBehaviorMode(config)
       ? { perceptionAudit: structuredClone(metricValue.perceptionAudit ?? null) }
-      : {})
+      : {}),
+    ...(metricValue.controlledStop === undefined
+      ? {}
+      : { controlledStop: structuredClone(metricValue.controlledStop) }),
+    ...(metricValue.witnessedDeaths === undefined
+      ? {}
+      : { witnessedDeaths: structuredClone(metricValue.witnessedDeaths) }),
+    ...(metricValue.behaviorGate === undefined
+      ? {}
+      : { behaviorGate: structuredClone(metricValue.behaviorGate) })
   }
 }
 
@@ -978,6 +1090,12 @@ function scientificOutOfScope (config) {
 }
 
 function outcomeStatement (config, metrics) {
+  const stop = metrics.controlledStop
+  if (stop !== undefined) {
+    return `Controlled ${stop.kind} stop; behavioral verdict no-go. ` +
+      `${stop.chains.complete} complete decision chain(s) and ${stop.chains.refused} typed refusal chain(s) were preserved; ` +
+      `${stop.nativeReviews.completed} of ${stop.nativeReviews.planned} planned native reviews completed.`
+  }
   if (isPrimaryBehaviorMode(config)) {
     const nativeReviews = Object.values(
       metrics.primaryBehavior?.nativeGoalReviewsByAgent ?? {}
@@ -1032,15 +1150,47 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
   ) {
     errors.push('primary behavior evidence contains a process terminated by SIGKILL')
   }
+  const stopped = manifest.timing.stopReason === CONTROLLED_STOP_REASON
+  const deaths = metrics.witnessedDeaths
+  const ended = metrics.admissionEnd
+  if (ended !== undefined) errors.push(...admissionEndErrors(manifest, metrics, records))
+  const refusedAfterEnd = ended?.refusedAfterEnd ?? 0
+  const refusedKeys = new Set(
+    records.filter((record) => record.source === 'harness' && record.event === 'cognitionRefused')
+      .map((record) => record.requestKey)
+  )
+  const bodyOnly = records.filter((record) => record.source === 'body')
   if (
-    metrics.cognition.refusedCalls !== 0 ||
-    metrics.cycles.unavailable !== 0 ||
-    metrics.cycles.discarded !== 0
+    (!stopped && (
+      metrics.cognition.refusedCalls !== refusedAfterEnd ||
+      !unansweredAccountedFor(bodyOnly, { admissionEnded: ended !== undefined, refusedKeys })
+    )) ||
+    (deaths === undefined && metrics.cycles.discarded !== 0)
   ) {
     errors.push('primary behavior evidence contains a cognition refusal, unavailable decision, or discarded decision')
   }
-  if (metrics.behavior.deaths !== 0 || metrics.behavior.disconnects !== 0) {
-    errors.push('primary behavior evidence contains a death or unmanaged body disconnect')
+  if (stopped || metrics.controlledStop !== undefined || manifest.controlledStop !== undefined) {
+    errors.push(...controlledStopErrors(manifest, metrics, records))
+  }
+  if (deaths === undefined) {
+    if (metrics.behavior.deaths !== 0 || metrics.behavior.disconnects !== 0) {
+      errors.push('primary behavior evidence contains a death or unmanaged body disconnect')
+    }
+  } else {
+    if (deaths.violation !== null) errors.push(`primary behavior death evidence is inconsistent: ${deaths.violation}`)
+    if (deaths.deaths !== metrics.behavior.deaths) errors.push('witnessed deaths do not match the death count')
+    if (!sameJson(manifest.witnessedDeaths, deaths)) {
+      errors.push('manifest witnessed deaths do not match metrics.json')
+    }
+  }
+  if (!sameJson(manifest.behaviorGate, metrics.behaviorGate)) {
+    errors.push('manifest behavioral gate does not match metrics.json')
+  }
+  if (stopped && metrics.behaviorGate?.pilotVerdict === 'pass') {
+    errors.push('a controlled stop cannot carry a passing behavioral gate')
+  }
+  if (deaths === undefined && manifest.witnessedDeaths !== undefined) {
+    errors.push('manifest claims witnessed deaths the evidence does not hold')
   }
   if (!sameJson(manifest.perceptionAudit, metrics.perceptionAudit)) {
     errors.push('manifest per-kind perception audit does not match metrics.json')
@@ -1092,7 +1242,7 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
   }
   const expectedReviews = protocol.nativeGoalReviewSchedule?.expectedReviewsPerAgent
   for (const agent of manifest.agents) {
-    if (primary?.nativeGoalReviewsByAgent?.[agent.agentId] !== expectedReviews) {
+    if (!agentReviewsObserved(agent.agentId, metrics, expectedReviews)) {
       errors.push(`${agent.agentId} did not record the expected native scheduled reviews`)
     }
   }
@@ -1123,13 +1273,263 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
     'perKindPerceptionAuditComplete',
     'plannedNativeCallsFitCeilings',
     'noDroppedEvidenceWarning',
-    'serverEvidenceUncontested'
+    'serverEvidenceUncontested',
+    ...(stopped ? ['controlledStopAccounted'] : []),
+    ...(deaths === undefined ? [] : ['witnessedDeathsAccounted'])
   ]) {
     if (manifest.integrityChecks[name]?.passed !== true) {
       errors.push(`primary behavior integrity check ${name} did not pass`)
     }
   }
   return errors
+}
+
+function worstCaseManifestCallNanoUsd (manifest) {
+  let perCall = 0
+  for (const model of new Set(Object.values(manifest.provenance.models))) {
+    const rates = manifest.cognition.pricing.models[model]
+    if (rates === undefined) continue
+    perCall = Math.max(
+      perCall,
+      (manifest.cognition.maxRequestBytes *
+        Math.max(rates.inputNanoUsdPerToken, rates.cachedInputNanoUsdPerToken)) +
+        (manifest.cognition.maxOutputTokens * rates.outputNanoUsdPerToken)
+    )
+  }
+  return perCall
+}
+
+function typedRefusal (record) {
+  return [...BUDGET_STOP_BOUNDS, ADMISSION_CLOSED_BOUND].includes(record.bound) &&
+    ['calls', 'nanoUsd'].includes(record.unit) &&
+    Number.isSafeInteger(record.ceiling) &&
+    Number.isSafeInteger(record.observed) &&
+    record.forwarded === false
+}
+
+// A normal ending closes admission once; only typed admission refusals may follow it.
+function admissionEndErrors (manifest, metrics, records) {
+  const errors = []
+  const ended = metrics.admissionEnd
+  const harness = records.filter((record) => record.source === 'harness')
+  const body = records.filter((record) => record.source === 'body')
+  const endIndex = harness.findIndex((record) => record.event === ADMISSION_ENDED_EVENT)
+  if (ended.closures !== 1) errors.push('a run must end admission at most once')
+  if (manifest.timing.stopReason === CONTROLLED_STOP_REASON) {
+    errors.push('a controlled stop cannot also end admission normally')
+  }
+  if (!['durationElapsed', 'simulationTickCeiling', 'allAgentsDied'].includes(ended.reason) || ended.reason !== manifest.timing.stopReason) {
+    errors.push('admission end does not name the run stop reason')
+  }
+  if (ended.reason === 'allAgentsDied' && metrics.witnessedDeaths?.deaths !== manifest.agents.length) {
+    errors.push('a run that stopped because every agent died must record every agent dying')
+  }
+  if (
+    ended.endTick === null ||
+    ended.endTick > metrics.timing.lastTick ||
+    ended.windowTicks < 0
+  ) {
+    errors.push('admission end is not bounded by the run ticks')
+  }
+  const before = harness.slice(0, endIndex)
+  const after = harness.slice(endIndex + 1)
+  if (
+    !Number.isInteger(ended.outstandingAtEnd) ||
+    ended.outstandingAtEnd > manifest.cognition.globalOutstandingCeiling ||
+    ended.forwardedAfterEnd !== ended.outstandingAtEnd ||
+    ended.forwardedAtEnd !==
+      before.filter((record) => record.event === 'cognitionForwarded').length + ended.forwardedAfterEnd
+  ) {
+    errors.push('admission end in-flight accounting is impossible')
+  }
+  const refusedKeys = new Set()
+  for (const record of after) {
+    if (record.event !== 'cognitionRefused') continue
+    refusedKeys.add(record.requestKey)
+    if (record.bound !== ADMISSION_CLOSED_BOUND || !typedRefusal(record)) {
+      errors.push(`refusal ${record.requestKey} after the run ended is not a typed admission refusal`)
+    }
+    const chain = new Set(body.filter((entry) => entry.requestKey === record.requestKey).map((entry) => entry.event))
+    if (!chain.has('perceived') || !chain.has('cognitionUnavailable') || chain.has('decided')) {
+      errors.push(`refusal ${record.requestKey} after the run ended has no matching refused chain`)
+    }
+  }
+  for (const record of body) {
+    if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) && !refusedKeys.has(record.requestKey)) {
+      errors.push(`unavailable decision ${record.requestKey} has no typed refusal`)
+    }
+  }
+  for (const record of harness) {
+    if (record.event === 'providerUsage' && refusedKeys.has(record.requestKey)) {
+      errors.push(`refused request ${record.requestKey} carries provider usage`)
+    }
+  }
+  return [...new Set(errors)]
+}
+
+// Every claim a controlled stop makes must be re-derivable from the evidence it names.
+function controlledStopErrors (manifest, metrics, records) {
+  const errors = []
+  const stop = metrics.controlledStop
+  if (manifest.timing.stopReason !== CONTROLLED_STOP_REASON || stop === undefined) {
+    return ['a controlled stop must carry both its stop reason and its admission closure']
+  }
+  if (!sameJson(manifest.controlledStop, stop)) {
+    errors.push('manifest controlled stop does not match metrics.json')
+  }
+  const harness = records.filter((record) => record.source === 'harness')
+  const body = records.filter((record) => record.source === 'body')
+  const closureIndex = harness.findIndex((record) => record.event === ADMISSION_CLOSED_EVENT)
+  if (stop.admissionClosures !== 1) errors.push('a controlled stop must close admission exactly once')
+  if (!STOP_KINDS.includes(stop.kind)) errors.push('controlled stop names no closed stop kind')
+  if (stop.behavioralVerdict !== 'no-go') errors.push('a controlled stop must state behavioral verdict no-go')
+  const triggerKey = stop.trigger.requestKey
+  const chainEvents = (key) => new Set(
+    body.filter((record) => record.requestKey === key).map((record) => record.event)
+  )
+  const triggerChain = chainEvents(triggerKey)
+  if (!triggerChain.has('perceived') || !triggerChain.has('cognitionUnavailable')) {
+    errors.push('controlled stop names a request with no matching perception and refusal evidence')
+  }
+  const before = harness.slice(0, closureIndex)
+  const after = harness.slice(closureIndex + 1)
+  const beforeForwarded = before.filter((record) => record.event === 'cognitionForwarded')
+  if (stop.kind === 'cognitionBudgetExhausted') {
+    const refusal = before.findLast((record) => record.event === 'cognitionRefused')
+    const ceilings = {
+      perAgentCall: manifest.cognition.perAgentCallCeiling,
+      globalCall: manifest.cognition.globalCallCeiling,
+      globalOutstanding: manifest.cognition.globalOutstandingCeiling,
+      spend: Math.round(manifest.cognition.maxExternalSpendUsd * NANO_USD_PER_USD)
+    }
+    const bound = stop.refusal?.bound
+    if (
+      refusal === undefined ||
+      refusal.requestKey !== triggerKey ||
+      !typedRefusal(refusal) ||
+      refusal.bound !== bound ||
+      refusal.ceiling !== stop.refusal.ceiling ||
+      refusal.observed !== stop.refusal.observed
+    ) {
+      errors.push('controlled budget stop has no matching typed refusal')
+    } else if (!BUDGET_STOP_BOUNDS.includes(bound) || stop.refusal.ceiling !== ceilings[bound]) {
+      errors.push('controlled budget stop names a bound that does not match its configured ceiling')
+    } else {
+      // Forwards journalled after the closure were admitted before it.
+      const agentCalls = harness.filter((record) =>
+        record.event === 'cognitionForwarded' && record.agentId === stop.trigger.agentId
+      ).length
+      const worstCase = worstCaseManifestCallNanoUsd(manifest)
+      const possible = {
+        perAgentCall: stop.refusal.observed === stop.refusal.ceiling && agentCalls === stop.refusal.ceiling,
+        globalCall: stop.refusal.observed === stop.refusal.ceiling && stop.forwardedAtClose === stop.refusal.ceiling,
+        globalOutstanding:
+          stop.refusal.observed === stop.refusal.ceiling &&
+          stop.outstandingAtClose === stop.refusal.ceiling,
+        spend:
+          stop.refusal.observed === stop.forwardedAtClose * worstCase &&
+          stop.refusal.observed + worstCase > stop.refusal.ceiling
+      }[bound]
+      if (!possible || stop.forwardedAtClose > manifest.cognition.globalCallCeiling) {
+        errors.push('controlled budget stop states an impossible count')
+      }
+    }
+    if (before.filter((record) => record.event === 'cognitionRefused').length !== 1) {
+      errors.push('controlled budget stop must be the first refusal of the run')
+    }
+  } else if (stop.kind === 'providerUnavailable') {
+    const forwarded = before.findLast((record) => record.event === 'cognitionForwarded')
+    const classification = stop.providerClassification
+    if (
+      forwarded === undefined ||
+      forwarded.requestKey !== triggerKey ||
+      forwarded.outcome !== 'cognitionFailure' ||
+      classification === null ||
+      typeof classification !== 'object' ||
+      !PROVIDER_UNAVAILABLE_MAPPINGS.includes(classification.mapping) ||
+      [401, 403].includes(classification.httpStatus) ||
+      ![manifest.provenance.models.ordinary, manifest.provenance.models.pivotal]
+        .includes(classification.model)
+    ) {
+      errors.push('controlled provider stop has no matching classified provider unavailability')
+    }
+    if (before.some((record) => record.event === 'cognitionRefused')) {
+      errors.push('controlled provider stop follows an earlier refusal')
+    }
+  }
+  if (
+    beforeForwarded.filter((record) => record.outcome !== 'decision').length !==
+    (stop.kind === 'providerUnavailable' ? 1 : 0)
+  ) {
+    errors.push('controlled stop evidence contains an unclassified cognition failure')
+  }
+  if (
+    !Number.isInteger(stop.forwardedAtClose) ||
+    !Number.isInteger(stop.outstandingAtClose) ||
+    stop.outstandingAtClose > manifest.cognition.globalOutstandingCeiling ||
+    stop.forwardedAfterClose !== stop.outstandingAtClose - (stop.kind === 'providerUnavailable' ? 1 : 0) ||
+    stop.forwardedAtClose !== beforeForwarded.length + stop.forwardedAfterClose
+  ) {
+    errors.push('controlled stop in-flight accounting is impossible')
+  }
+  for (const record of after) {
+    if (record.event === 'cognitionRefused' && record.bound !== ADMISSION_CLOSED_BOUND) {
+      errors.push(`refusal ${record.requestKey} after the controlled stop is not an admission refusal`)
+    }
+  }
+  const typedKeys = new Set([
+    ...harness.filter((record) => record.event === 'cognitionRefused').map((record) => record.requestKey),
+    ...(stop.kind === 'providerUnavailable' ? [triggerKey] : [])
+  ])
+  for (const record of harness) {
+    if (record.event === 'cognitionRefused') {
+      if (!typedRefusal(record)) errors.push(`refusal ${record.requestKey} is untyped`)
+      const chain = chainEvents(record.requestKey)
+      if (!chain.has('perceived') || !chain.has('cognitionUnavailable')) {
+        errors.push(`refusal ${record.requestKey} has no matching perception and unavailable record`)
+      }
+      if (chain.has('decided')) errors.push(`refused request ${record.requestKey} carries a decision`)
+    }
+    if (record.event === 'cognitionForwarded' && !chainEvents(record.requestKey).has('perceived')) {
+      errors.push(`forwarded request ${record.requestKey} has no earlier perception chain`)
+    }
+  }
+  for (const record of body) {
+    if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) && !typedKeys.has(record.requestKey)) {
+      errors.push(`unavailable decision ${record.requestKey} has no typed refusal`)
+    }
+    if (
+      record.event === 'decided' &&
+      !harness.some((entry) =>
+        entry.event === 'cognitionForwarded' &&
+        entry.outcome === 'decision' &&
+        entry.requestKey === record.requestKey
+      )
+    ) {
+      errors.push(`decision ${record.requestKey} has no forwarded cognition request`)
+    }
+  }
+  const refusedKeys = new Set(harness.filter((record) => record.event === 'cognitionRefused').map((record) => record.requestKey))
+  for (const record of harness) {
+    if (record.event === 'providerUsage' && refusedKeys.has(record.requestKey)) {
+      errors.push(`refused request ${record.requestKey} carries provider usage`)
+    }
+  }
+  if (stop.usage.providerCalls !== metrics.cognition.providerUsageCalls ||
+    stop.usage.costNanoUsd !== metrics.cognition.externalSpendNanoUsd) {
+    errors.push('controlled stop usage does not reconcile with provider usage evidence')
+  }
+  const lastTick = metrics.timing.firstTick + (stop.windowTicks ?? 0)
+  if (
+    stop.stopTick === null ||
+    stop.windowTicks === null ||
+    stop.windowTicks < 0 ||
+    stop.stopTick !== lastTick ||
+    stop.stopTick > metrics.timing.lastTick
+  ) {
+    errors.push('controlled stop window is not bounded by the run ticks')
+  }
+  return [...new Set(errors)]
 }
 
 function semanticErrors (artifactDirectory, manifest) {
@@ -1361,11 +1761,33 @@ function semanticErrors (artifactDirectory, manifest) {
       errors.push(`${agentId} exceeded the per-agent cognition call ceiling`)
     }
   }
-  if (manifest.timing.wallDurationMillis > manifest.bounds.runDurationSeconds * 1000 + 10_000) {
+  if (
+    manifest.timing.stopReason === CONTROLLED_STOP_REASON &&
+    primaryBehaviorModeOf(manifest.protocol.mode) === undefined
+  ) {
+    errors.push('only a primary behavior run may end in a controlled stop')
+  }
+  const drainAllowance =
+    manifest.timing.stopReason === CONTROLLED_STOP_REASON ? CONTROLLED_STOP_DRAIN_MILLIS : 0
+  if (manifest.timing.wallDurationMillis > manifest.bounds.runDurationSeconds * 1000 + 10_000 + drainAllowance) {
     errors.push('wall duration exceeded the run ceiling plus bounded shutdown allowance')
   }
-  if (manifest.timing.tickSpan > manifest.bounds.simulationTickCeiling) {
-    errors.push('simulation tick span exceeded its ceiling')
+  // A run that closed admission is measured to that closure, and the bounded drain after it
+  // adds ticks that admitted no new work.
+  const ticksPerSecond = manifest.protocol.serverTicksPerSecond ?? 20
+  const ended = metrics.admissionEnd
+  if (ended === undefined) {
+    if (manifest.timing.tickSpan > manifest.bounds.simulationTickCeiling) {
+      errors.push('simulation tick span exceeded its ceiling')
+    }
+  } else {
+    // The game clock is asked every two seconds, so the ceiling is noticed within three.
+    if (ended.windowTicks > manifest.bounds.simulationTickCeiling + 3 * ticksPerSecond) {
+      errors.push('simulation tick span to the admission end exceeded its ceiling')
+    }
+    if (metrics.timing.lastTick - ended.endTick > Math.ceil(CONTROLLED_STOP_DRAIN_MILLIS / 1000) * ticksPerSecond) {
+      errors.push('the drain after the admission end exceeded its bound')
+    }
   }
   if (manifest.environment.world.worldBorderDiameterBlocks > manifest.environment.world.maxWorldSizeBlocks) {
     errors.push('world border diameter exceeds max world size')
@@ -1523,6 +1945,9 @@ function renderReadme (config, manifest, metrics) {
   const protocolObservations = primaryBehavior
     ? `- No body process was deliberately crashed and no harness \`/loombody think\` command was issued.
 - Native scheduled reviews by agent: ${JSON.stringify(metrics.primaryBehavior?.nativeGoalReviewsByAgent ?? {})}.
+${metrics.witnessedDeaths === undefined
+  ? '- No agent died.'
+  : `- Server-witnessed deaths: ${JSON.stringify(metrics.witnessedDeaths.byAgent)}; surviving agents continued.`}
 - Per-kind audit samples: ${metrics.perceptionAudit?.samples ?? 0}; complete: ${metrics.perceptionAudit?.complete ?? false}.
 - Cleanup verification recorded: ${metrics.crashContainment.cleanupVerified}.`
     : `- ${metrics.crashContainment.controlledCrashes.length} body process was deliberately crashed; peer decisions after it:
@@ -1531,6 +1956,38 @@ function renderReadme (config, manifest, metrics) {
   const interpretation = primaryBehavior
     ? '- The run supports the narrower claim that the bounded fleet, native scheduler, cognition bridge, per-kind evidence chain,\n  publication, and cleanup worked together under the declared conditions.'
     : '- The run supports the narrower claim that the bounded fleet, cognition bridge, evidence chain, crash isolation,\n  publication, and cleanup worked together under the declared conditions.'
+  const gate = metrics.behaviorGate
+  const gateSection = gate === undefined
+    ? ''
+    : `
+## Behavioral gate
+
+- Mechanical pilot verdict: **${gate.pilotVerdict}** (${gate.version}).
+- Criteria: ${gate.pilotCriteria === null
+  ? 'not applicable outside the 180-second pilot profile'
+  : Object.entries(gate.pilotCriteria).map(([name, passed]) => `${name} ${passed ? 'held' : 'failed'}`).join('; ')}.
+- Meaningful behaviors by agent: ${JSON.stringify(gate.meaningfulBehaviorByAgent)}; typed goal continuity: ${JSON.stringify(gate.goalContinuityAgents)}.
+- Non-idle goal-review actions: ${gate.goalReviewActions.nonIdle}, accepted ${gate.goalReviewActions.accepted}, confirmed ${gate.goalReviewActions.confirmed}.
+- Calls by agent: ${JSON.stringify(gate.calls.forwardedByAgent)}; peak outstanding ${gate.calls.peakOutstanding ?? 'unrecorded'}.
+- A pass still needs a reader to confirm: ${gate.manualCriteria.join('; ')}.
+`
+  const stop = metrics.controlledStop
+  const stopSection = stop === undefined
+    ? ''
+    : `
+## Controlled stop
+
+- Stop: \`${stop.kind}\` for \`${stop.trigger.requestKey}\` (${stop.trigger.trigger ?? 'unattested'}, ${stop.trigger.origin ?? 'unattested'}).
+${stop.refusal === undefined
+  ? `- Provider classification: ${JSON.stringify(stop.providerClassification)}.`
+  : `- Refusal: \`${stop.refusal.bound}\` at ${stop.refusal.observed} of ${stop.refusal.ceiling} ${stop.refusal.unit}; the call was not forwarded.`}
+- Admission closed with ${stop.forwardedAtClose} call(s) forwarded and ${stop.outstandingAtClose} outstanding; ${stop.refusedAfterClose} later request(s) were refused.
+- Stop tick ${stop.stopTick}, ${stop.windowTicks} ticks after the start.
+- Native reviews: ${stop.nativeReviews.completed} completed of ${stop.nativeReviews.planned} planned; by agent ${JSON.stringify(stop.nativeReviews.byAgent)}.
+- Chains: ${stop.chains.complete} complete decision chain(s), ${stop.chains.refused} typed refusal chain(s).
+- Provider usage: ${stop.usage.providerCalls} call(s), ${stop.usage.totalTokens} tokens, $${stop.usage.costUsd.toFixed(9)}.
+- Behavioral verdict: **${stop.behavioralVerdict}**. A stopped run is a partial record, not a pass.
+`
   return `# ${config.title}
 
 This directory is the sanitized, bounded publication from \`${config.experimentId}\`.
@@ -1567,7 +2024,7 @@ ${primaryBehavior
 ${observationLines.map((line) => `- ${line}`).join('\n')}
 - ${metrics.cycles.perceived} perceptions produced ${metrics.cycles.decided} decisions and ${metrics.cycles.applied} applied intents.
 ${protocolObservations}
-
+${stopSection}${gateSection}
 ## Interpretations
 
 ${interpretation}

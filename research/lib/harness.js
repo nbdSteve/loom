@@ -15,6 +15,16 @@ const {
   worstCaseCallNanoUsd
 } = require('./artifact.js')
 const { CognitionBudgetProxy } = require('./budget-proxy.js')
+const {
+  ADMISSION_CLOSED_BOUND,
+  ADMISSION_CLOSED_EVENT,
+  ADMISSION_ENDED_EVENT,
+  BUDGET_STOP_BOUNDS,
+  CONTROLLED_STOP_DRAIN_MILLIS,
+  CONTROLLED_STOP_REASON,
+  budgetStopFor,
+  providerStopFor
+} = require('./controlled-stop.js')
 const { readJsonLines } = require('./evidence.js')
 const {
   createInterventionSchedule,
@@ -24,6 +34,11 @@ const {
   requestOriginFor
 } = require('./experiment-mode.js')
 const { writeFailureDiagnostic } = require('./failure-diagnostic.js')
+const { JsonLinesTail, maximumOf } = require('./log-tail.js')
+const { PaperClock } = require('./paper-clock.js')
+const { SuspensionWatch, awaitQuietHost, seedPaperRuntime } = require('./paper-runtime.js')
+const { profileOf, ticksPerSecondOf } = require('./profiles.js')
+const { DeathSettlement } = require('./witnessed-death.js')
 const {
   BoundedJournal,
   ProcessSupervisor,
@@ -40,6 +55,8 @@ const {
 } = require('./util.js')
 
 const STARTUP_EVENT = 'spawned'
+const ALL_AGENTS_DIED = 'allAgentsDied'
+const { DANGER_COALESCED } = require('./danger.js')
 const PROVIDER_USAGE_SCHEMA_VERSION = 'loom-provider-usage/1'
 const PAPER_DOWNLOAD_BYTES = 64 * 1024 * 1024
 const PAPER_USER_AGENT = 'loom-experiment-harness/0.1.0 (https://github.com/nbdSteve/loom)'
@@ -261,7 +278,7 @@ function bodyEvents (file) {
 
 function latestBodyTick (file) {
   const records = bodyEvents(file)
-  return records.length === 0 ? 0 : Math.max(...records.map((record) => record.tick))
+  return maximumOf(records.map((record) => record.tick))
 }
 
 function paperCommand (paper, command) {
@@ -280,6 +297,11 @@ function applyPrimaryBehaviorInitialConditions (paper, config, journal) {
     paperCommand(paper, `clear ${agent.username}`)
     paperCommand(paper, `tp ${agent.username} ${position.join(' ')}`)
   }
+  const ticksPerSecond = ticksPerSecondOf(profileOf(config.primaryBehavior.profile) ?? {})
+  if (ticksPerSecond !== 20) {
+    paperCommand(paper, `tick rate ${ticksPerSecond}`)
+    journal.append('serverTickRateAttested', { ticksPerSecond })
+  }
   journal.append('initialConditionsAttested', {
     positions,
     worldClock: config.primaryBehavior.initialWorldClock,
@@ -287,42 +309,102 @@ function applyPrimaryBehaviorInitialConditions (paper, config, journal) {
   })
 }
 
-function primaryBehaviorRunFailure (config, records) {
-  if (!isPrimaryBehaviorMode(config)) return null
-  const fatalEvents = new Map([
-    ['bodyDisconnected', 'a body disconnected'],
-    ['cognitionUnavailable', 'a cognition request became unavailable'],
-    ['decisionDiscarded', 'a cognition decision was discarded'],
-    ['despawned', 'a body despawned during the run'],
-    ['died', 'an agent died'],
-    ['spawnRejected', 'a configured body spawn was rejected'],
-    ['witnessDenied', 'the player witness denied a managed login'],
-    ['witnessDisputed', 'the player witness disputed body evidence'],
-    ['witnessQuit', 'a managed player left the server during the run'],
-    ['witnessRevived', 'the player witness observed a permadeath breach']
-  ])
-  for (const record of records) {
-    const detail = fatalEvents.get(record.event)
-    if (detail !== undefined) {
-      return new RunFailure('startupFailed', `primary behavior run stopped because ${detail}`)
+const PRIMARY_BEHAVIOR_FATAL_EVENTS = new Map([
+  ['bodyDisconnected', 'a body disconnected'],
+  ['cognitionUnavailable', 'a cognition request became unavailable'],
+  ['decisionDiscarded', 'a cognition decision was discarded'],
+  ['despawned', 'a body despawned during the run'],
+  ['spawnRejected', 'a configured body spawn was rejected'],
+  ['witnessDenied', 'the player witness denied a managed login'],
+  ['witnessDisputed', 'the player witness disputed body evidence'],
+  ['witnessQuit', 'a managed player left the server during the run'],
+  ['witnessRevived', 'the player witness observed a permadeath breach']
+])
+
+// Checks primary-behavior evidence incrementally, so each poll costs only the records
+// appended since the last one. Feed harness records before the body records read in
+// the same poll: the proxy journals a refusal before the body can record it.
+class PrimaryBehaviorGuard {
+  constructor (config) {
+    this.config = config
+    this.active = isPrimaryBehaviorMode(config)
+    this.dead = new Set()
+    this.settlement = new DeathSettlement()
+    this.typed = new Set()
+    this.closed = false
+    this.firstPerceptionChecked = new Set()
+    this.failure = null
+  }
+
+  observeHarness (records) {
+    if (!this.active) return
+    for (const record of records) {
+      if (record.event === ADMISSION_ENDED_EVENT) this.closed = true
+      if (record.event === ADMISSION_CLOSED_EVENT && !this.closed) {
+        this.closed = true
+        if (record.kind === 'providerUnavailable') this.typed.add(`${record.agentId}:${record.requestId}`)
+      }
+      if (
+        record.event === 'cognitionRefused' &&
+        [...BUDGET_STOP_BOUNDS, ADMISSION_CLOSED_BOUND].includes(record.bound) &&
+        record.forwarded === false
+      ) {
+        this.typed.add(`${record.agentId}:${record.requestId}`)
+      }
     }
+  }
+
+  observeBody (records) {
+    if (!this.active || this.failure !== null) return this.failure
+    for (const record of records) {
+      this.failure = this.check(record)
+      if (this.failure !== null) return this.failure
+    }
+    return null
+  }
+
+  check (record) {
+    const dead = this.dead.has(record.agentId)
+    const refusedAfterDeath = this.settlement.observe(record, dead)
+    if (dead) {
+      if (refusedAfterDeath === null) return null
+      return new RunFailure('startupFailed', `primary behavior run stopped because ${refusedAfterDeath}`)
+    }
+    if (record.event === 'died') {
+      this.dead.add(record.agentId)
+      return null
+    }
+    // A danger repeat the JVM coalesced into the agent's active episode was never sent.
+    if (record.event === 'cognitionUnavailable' && record.outcome === DANGER_COALESCED) return null
     if (
-      record.event === 'worldInteraction' &&
-      record.outcome === 'disputedWorldInteraction'
-    ) {
+      record.event === 'cognitionUnavailable' &&
+      this.closed &&
+      this.typed.has(`${record.agentId}:${record.requestId}`)
+    ) return null
+    const detail = PRIMARY_BEHAVIOR_FATAL_EVENTS.get(record.event)
+    if (detail !== undefined) {
+      // A closed camelCase outcome tag says which kind; free text never reaches the message.
+      const tag = typeof record.outcome === 'string' && /^[a-z][A-Za-z]{0,63}$/.test(record.outcome)
+        ? ` (${record.outcome} at tick ${record.tick})`
+        : ''
+      return new RunFailure('startupFailed', `primary behavior run stopped because ${detail}${tag}`)
+    }
+    if (record.event === 'worldInteraction' && record.outcome === 'disputedWorldInteraction') {
       return new RunFailure(
         'startupFailed',
         'primary behavior run stopped because a world interaction was disputed'
       )
     }
+    if (record.event === 'perceived' && !this.firstPerceptionChecked.has(record.agentId)) {
+      this.firstPerceptionChecked.add(record.agentId)
+      return this.firstPerceptionFailure(record)
+    }
+    return null
   }
 
-  for (const agentId of config.agents) {
-    const first = records.find(
-      (record) => record.agentId === agentId && record.event === 'perceived'
-    )
-    if (first === undefined) continue
-    const expected = config.primaryBehavior.initialPositions[agentId]
+  firstPerceptionFailure (first) {
+    const expected = this.config.primaryBehavior.initialPositions[first.agentId]
+    if (expected === undefined) return null
     const position = first.perception?.selfState?.position
     const inventory = first.perception?.selfState?.inventorySummary
     const worldClock = first.perceptionAudit?.worldClock
@@ -337,11 +419,37 @@ function primaryBehaviorRunFailure (config, records) {
     ) {
       return new RunFailure(
         'startupFailed',
-        `${agentId} lost a pinned initial condition before its first perception`
+        `${first.agentId} lost a pinned initial condition before its first perception`
       )
     }
+    return null
   }
-  return null
+}
+
+function primaryBehaviorRunFailure (config, records, harnessRecords = []) {
+  const guard = new PrimaryBehaviorGuard(config)
+  guard.observeHarness(harnessRecords)
+  return guard.observeBody(records)
+}
+
+// Tracks which perceived requests still lack a terminal body record.
+class RequestSettlement {
+  constructor () {
+    this.unsettled = new Set()
+    this.settled = new Set()
+  }
+
+  observe (records) {
+    for (const record of records) {
+      if (record.requestId === undefined || record.requestId === null) continue
+      const key = `${record.agentId}:${record.requestId}`
+      if (record.event === 'perceived' && !this.settled.has(key)) this.unsettled.add(key)
+      if (['intentApplied', 'decisionDiscarded', 'cognitionUnavailable'].includes(record.event)) {
+        this.settled.add(key)
+        this.unsettled.delete(key)
+      }
+    }
+  }
 }
 
 function bodyPidForPort (port) {
@@ -394,6 +502,29 @@ async function verifyNoListeners (config, phase = 'cleanup') {
       : 'listeners remained after cleanup'
     throw new RunFailure('startupFailed', `${detail} on ${stillOpen.join(',')}`)
   }
+}
+
+// Paper, its world, the JVM, every bounded log, and publication all write to this
+// volume; running out mid-run loses the run, so refuse to start without headroom.
+const MIN_FREE_DISK_BYTES = 2 * 1024 * 1024 * 1024
+
+function requiredFreeDiskBytes (config) {
+  const logs = config.bounds.logBytes * (configuredAgents(config).length + 3)
+  return Math.max(MIN_FREE_DISK_BYTES, 4 * logs + 2 * config.bounds.artifactBytes)
+}
+
+function verifyFreeDisk (directory, config, statfs = fs.statfsSync) {
+  const stats = statfs(directory)
+  const available = Number(stats.bavail) * Number(stats.bsize)
+  const required = requiredFreeDiskBytes(config)
+  if (!(available >= required)) {
+    throw new RunFailure(
+      'diskFailure',
+      `only ${Math.floor(available / 1024 / 1024)} MiB is free on the run volume; ` +
+        `${Math.ceil(required / 1024 / 1024)} MiB is required before startup`
+    )
+  }
+  return { available, required }
 }
 
 function runtimeEnvironment () {
@@ -625,7 +756,9 @@ async function runExperiment ({
   skipBuild = false,
   credentialProvider,
   failureDiagnosticRoot,
-  signal
+  signal,
+  statfs = fs.statfsSync,
+  hostLoad
 }) {
   const absoluteRoot = path.resolve(repositoryRoot)
   const config = readJson(path.resolve(configFile))
@@ -633,13 +766,16 @@ async function runExperiment ({
   config.configFile = path.resolve(configFile)
   const source = sourceIdentity(absoluteRoot)
   validateProspectiveManifest(config, source)
+  const scratchRoot = path.join(absoluteRoot, '.scratch', 'tribe-runs')
+  fs.mkdirSync(scratchRoot, { recursive: true })
+  // Before any build, Paper, listener or credential: nothing has been spent yet.
+  verifyFreeDisk(scratchRoot, config, statfs)
   const java = findJava21()
   const components = buildComponents(absoluteRoot, java, skipBuild)
   const paperFile = await ensurePaper(absoluteRoot, config, paperJar)
   await verifyNoListeners(config, 'startup')
 
-  const scratchRoot = path.join(absoluteRoot, '.scratch', 'tribe-runs')
-  fs.mkdirSync(scratchRoot, { recursive: true })
+  verifyFreeDisk(scratchRoot, config, statfs)
   const runDirectory = fs.mkdtempSync(path.join(scratchRoot, `${config.experimentId}-`))
   const rawHarnessEvidence = path.join(runDirectory, 'harness-events.jsonl')
   const rawBodyEvidence = path.join(runDirectory, 'plugins', 'Loom', 'body-events.jsonl')
@@ -663,6 +799,16 @@ async function runExperiment ({
   let published
   let clean = false
   let failure
+  let controlledStop
+  const stopAdmission = (stop) => {
+    try {
+      if (proxy.closeAdmission(stop)) controlledStop = stop
+    } catch (cause) {
+      abort(cause instanceof RunFailure
+        ? cause
+        : new RunFailure('diskFailure', 'the controlled stop could not be journalled'))
+    }
+  }
   const throwRetainedFailure = (runFailure) => {
     let retained
     let retentionFailed = false
@@ -709,12 +855,16 @@ async function runExperiment ({
     )
   }
   try {
+    // Before anything is started or read: a busy host is refused, and Paper starts from the
+    // verified runtime cache rather than downloading and remapping.
+    await awaitQuietHost({ ...(hostLoad ?? {}) })
     writeServerFiles({
       runDirectory,
       paperFile,
       pluginJar: components.files.pluginJar,
       config
     })
+    await seedPaperRuntime({ repositoryRoot: absoluteRoot, paperFile, config, java, runDirectory })
     journal = new BoundedJournal(rawHarnessEvidence, config.bounds.logBytes)
     supervisor = new ProcessSupervisor({
       logBytes: config.bounds.logBytes,
@@ -763,10 +913,15 @@ async function runExperiment ({
         worstCaseCallNanoUsd: worstCaseCallNanoUsd(config)
       },
       journal,
-      onCognitionFailure: (message, classified) => {
+      onCognitionFailure: (message, classified, request) => {
         const failure = authenticationFailure(message, classified)
+        const providerStop = isPrimaryBehaviorMode(config) && request !== undefined
+          ? providerStopFor(request, classified)
+          : null
         if (failure !== null) {
           abort(failure)
+        } else if (providerStop !== null) {
+          stopAdmission(providerStop)
         } else if (isPrimaryBehaviorMode(config)) {
           abort(new RunFailure(
             'cognitionFailed',
@@ -776,7 +931,13 @@ async function runExperiment ({
         }
       },
       onRefusal: (refusal) => {
-        if (isPrimaryBehaviorMode(config)) abort(budgetRefusalFailure(refusal))
+        if (!isPrimaryBehaviorMode(config) || refusal.bound === ADMISSION_CLOSED_BOUND) return
+        const budgetStop = budgetStopFor(refusal)
+        if (budgetStop === null) {
+          abort(budgetRefusalFailure(refusal))
+        } else {
+          stopAdmission(budgetStop)
+        }
       },
       onUnavailable: () => {
         if (isPrimaryBehaviorMode(config)) {
@@ -882,18 +1043,49 @@ async function runExperiment ({
     const deadline = startedMillis + config.bounds.runDurationSeconds * 1000
     const interventions = createInterventionSchedule(config, startedMillis)
     let thinkCommandsIssued = 0
+    const clock = isPrimaryBehaviorMode(config)
+      ? new PaperClock({
+        write: (command) => paperCommand(paper, command),
+        logFile: path.join(runDirectory, 'paper.log')
+      })
+      : { poll: () => null }
+    let gameStart = null
+    let serverTick = startTick
+    const bodyTail = new JsonLinesTail(rawBodyEvidence)
+    const harnessTail = new JsonLinesTail(rawHarnessEvidence)
+    const guard = new PrimaryBehaviorGuard(config)
+    const settlement = new RequestSettlement()
+    const pollEvidence = () => {
+      const body = bodyTail.poll()
+      guard.observeHarness(harnessTail.poll())
+      settlement.observe(body)
+      return guard.observeBody(body)
+    }
+    const suspension = new SuspensionWatch()
     while (Date.now() < deadline) {
       if (controller.signal.aborted) throw controller.signal.reason
-      if (fs.existsSync(rawBodyEvidence) && fs.statSync(rawBodyEvidence).size > config.bounds.logBytes) {
+      // Primary-behavior polls never wait inside the loop, so a long gap is the host itself.
+      const suspended = isPrimaryBehaviorMode(config) ? suspension.check() : null
+      if (suspended !== null) throw suspended
+      if (bodyTail.offset > config.bounds.logBytes) {
         throw new RunFailure('logLimit', 'body evidence exceeded the configured log byte bound')
       }
-      const currentBodyEvents = bodyEvents(rawBodyEvidence)
-      const invalidPrimaryBehavior = primaryBehaviorRunFailure(config, currentBodyEvents)
+      const invalidPrimaryBehavior = pollEvidence()
       if (invalidPrimaryBehavior !== null) throw invalidPrimaryBehavior
-      const currentTick = currentBodyEvents.length === 0
-        ? 0
-        : Math.max(...currentBodyEvents.map((record) => record.tick))
-      if (currentTick - startTick >= config.bounds.simulationTickCeiling) {
+      if (controlledStop !== undefined) {
+        stopReason = CONTROLLED_STOP_REASON
+        break
+      }
+      // Nothing is left to observe once every agent has died; the run ends and publishes.
+      if (isPrimaryBehaviorMode(config) && config.agents.every((agentId) => guard.dead.has(agentId))) {
+        stopReason = ALL_AGENTS_DIED
+        break
+      }
+      const gameTime = clock.poll()
+      if (gameTime !== null) gameStart ??= gameTime
+      const elapsedTicks = gameTime === null ? 0 : gameTime - gameStart
+      serverTick = Math.max(bodyTail.maxTick, startTick + elapsedTicks)
+      if (Math.max(bodyTail.maxTick - startTick, elapsedTicks) >= config.bounds.simulationTickCeiling) {
         stopReason = 'simulationTickCeiling'
         break
       }
@@ -909,10 +1101,8 @@ async function runExperiment ({
         if (crashAgent === undefined) {
           throw new RunFailure('startupFailed', 'configured crash agent is absent')
         }
-        const before = bodyEvents(rawBodyEvidence)
-        const afterTick = before.length === 0
-          ? 0
-          : Math.max(...before.map((record) => record.tick))
+        pollEvidence()
+        const afterTick = bodyTail.maxTick
         const pid = bodyPidForPort(crashAgent.controlPort)
         process.kill(pid, intervention.signal)
         journal.append('controlledBodyCrash', {
@@ -935,31 +1125,36 @@ async function runExperiment ({
       }
       await delay(Math.min(250, Math.max(1, deadline - Date.now())), controller.signal)
     }
+    if (controlledStop === undefined && isPrimaryBehaviorMode(config)) {
+      pollEvidence()
+      proxy.closeAdmission({
+        kind: 'runEnded',
+        reason: stopReason,
+        endTick: Math.max(bodyTail.maxTick, serverTick)
+      }, ADMISSION_ENDED_EVENT)
+    }
+    if (controlledStop !== undefined || isPrimaryBehaviorMode(config)) {
+      if (controlledStop !== undefined) stopReason = CONTROLLED_STOP_REASON
+      await drainControlledStop({
+        proxy,
+        poll: pollEvidence,
+        settlement,
+        signal: controller.signal
+      })
+    }
     endedAt = new Date().toISOString()
     const invalidPrimaryBehavior = primaryBehaviorRunFailure(
       config,
-      bodyEvents(rawBodyEvidence)
+      bodyEvents(rawBodyEvidence),
+      bodyEvents(rawHarnessEvidence)
     )
     if (invalidPrimaryBehavior !== null) throw invalidPrimaryBehavior
 
     const stimulus = primaryBehaviorStimulusRecord(config, thinkCommandsIssued)
     if (stimulus !== undefined) {
       journal.append('cognitionStimulusAttested', stimulus)
-      const forwarded = bodyEvents(rawHarnessEvidence)
-        .filter((record) =>
-          record.event === 'cognitionForwarded' &&
-          record.origin === 'nativeGoalReviewSchedule'
-        )
-      const expected =
-        config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent
-      for (const agentId of config.agents) {
-        if (forwarded.filter((record) => record.agentId === agentId).length !== expected) {
-          throw new RunFailure(
-            'startupFailed',
-            `${agentId} did not complete the expected native scheduled reviews`
-          )
-        }
-      }
+      // The owed reviews depend on the ending, each agent's life span and the cadence, so the
+      // publisher derives and validates them from the evidence rather than a fixed count here.
     } else {
       const crashAgent = config.proof.crashAgent
       const crashEvent = bodyEvents(rawHarnessEvidence)
@@ -976,7 +1171,7 @@ async function runExperiment ({
     }
     journal.append('experimentEnded', {
       stopReason,
-      endTick: latestBodyTick(rawBodyEvidence)
+      endTick: Math.max(latestBodyTick(rawBodyEvidence), serverTick)
     })
     if (cognition.child.exitCode !== null) throw new RunFailure('cognitionFailed', 'cognition exited during the run')
   } catch (cause) {
@@ -1061,6 +1256,38 @@ async function runExperiment ({
   }
 }
 
+// Lets already-forwarded work settle, inside one explicit bound, before shutdown, after
+// a controlled stop or a normal primary-behavior ending closed admission.
+async function drainControlledStop ({
+  proxy,
+  poll,
+  settlement,
+  signal,
+  timeoutMilliseconds = CONTROLLED_STOP_DRAIN_MILLIS
+}) {
+  let invalid = null
+  try {
+    await waitForCondition({
+      description: 'admitted cognition to settle',
+      timeoutMilliseconds,
+      signal,
+      poll: async () => {
+        invalid = poll()
+        return invalid !== null ||
+          (proxy.snapshot().outstandingCalls === 0 && settlement.unsettled.size === 0)
+      }
+    })
+  } catch (cause) {
+    if (signal?.aborted) throw cause
+    throw new RunFailure(
+      'cognitionFailed',
+      'already-forwarded cognition did not settle within the drain bound',
+      'cognitionDrainTimedOut'
+    )
+  }
+  if (invalid !== null) throw invalid
+}
+
 function paperWarnings (logFile) {
   if (!fs.existsSync(logFile)) return ['Paper log was unavailable to the harness warning scan.']
   const text = fs.readFileSync(logFile, 'utf8')
@@ -1076,6 +1303,9 @@ module.exports = {
   budgetRefusalFailure,
   buildComponents,
   conciseJavaVersion,
+  PrimaryBehaviorGuard,
+  RequestSettlement,
+  drainControlledStop,
   ensurePaper,
   findJava21,
   importProviderUsage,
@@ -1084,6 +1314,7 @@ module.exports = {
   runExperiment,
   sourceIdentity,
   toolVersions,
+  verifyFreeDisk,
   verifyNoListeners,
   writeServerFiles
 }

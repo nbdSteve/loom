@@ -54,6 +54,7 @@ class ClaimAudit(
         username: String,
         claim: BodyClaim,
         reading: ServerReading,
+        later: ServerReading? = null,
     ): Corroboration {
         val identity = registry.byUuid(uuid) ?: return Corroboration.NotManaged
         val found =
@@ -62,6 +63,7 @@ class ClaimAudit(
                 claimedInventory = claim.inventory,
                 observed = reading.vitals,
                 observedInventory = reading.inventory,
+                observedAfter = later?.vitals,
             )
         if (found is Corroboration.Disputed) {
             journal.disputed(subjectOf(identity.agentId, uuid, username), found, currentTick())

@@ -474,6 +474,26 @@ const SLEEP_FIELDS = ['outcome', 'elapsedMs', 'entered']
 /** What a halt answer carries beyond the envelope, in declaration order. */
 const HALT_FIELDS = ['stopped']
 
+/** What a say answer carries beyond the envelope, in declaration order. */
+const SAY_FIELDS = ['outcome']
+
+/** The most code points one say may carry; vanilla's chat limit is 256 UTF-16 units. */
+const MAX_SAY_CHARS = 128
+
+/** The most UTF-8 bytes one say may carry, which JSON Schema cannot state. */
+const MAX_SAY_BYTES = 256
+
+/**
+ * One word of say text: no control, DEL, C1, section-sign escape, Unicode space,
+ * zero-width, bidi, line-separator, BOM or interlinear annotation character.
+ * Mirrors the schema's SayText pattern exactly.
+ */
+// eslint-disable-next-line no-control-regex -- refusing controls is the point
+const SAY_TEXT_PATTERN = /^(?!\/)[^\u0000-\u0020\u007f-\u00a0\u00a7\u061c\u1680\u2000-\u200f\u2028-\u202f\u205f-\u206f\u3000\ufeff\ufff9-\ufffb]+( [^\u0000-\u0020\u007f-\u00a0\u00a7\u061c\u1680\u2000-\u200f\u2028-\u202f\u205f-\u206f\u3000\ufeff\ufff9-\ufffb]+)*$/u
+
+/** An unpaired UTF-16 surrogate, which has no UTF-8 spelling. */
+const LONE_SURROGATE = /[\ud800-\udfff]/u
+
 /** The envelope every request shares, before its own payload. */
 const REQUEST_ENVELOPE = ['protocol', 'requestId', 'agentId', 'op']
 
@@ -525,7 +545,8 @@ const OPERATIONS = Object.freeze([
   'craft',
   'attack',
   'sleep',
-  'halt'
+  'halt',
+  'say'
 ])
 
 /** Every refusal, as a closed set. */
@@ -725,6 +746,23 @@ const SLEEP_OUTCOMES = Object.freeze([
   'disconnected',
   'libraryFailure'
 ])
+
+/** Every terminal answer to one say. */
+const SAY_OUTCOMES = Object.freeze(['sent', 'rateLimited'])
+
+/**
+ * Whether `text` is exactly one sendable say line.
+ *
+ * Nothing is normalised: text that would need trimming, collapsing or escaping is refused,
+ * so the accepted text is the text Mineflayer sends and the server observes.
+ */
+function isSayText (text) {
+  if (typeof text !== 'string') return false
+  if (LONE_SURROGATE.test(text)) return false
+  if ([...text].length > MAX_SAY_CHARS) return false
+  if (Buffer.byteLength(text, 'utf8') > MAX_SAY_BYTES) return false
+  return SAY_TEXT_PATTERN.test(text)
+}
 
 /** Faces a placement request can name. */
 const BLOCK_FACES = Object.freeze(['down', 'up', 'north', 'south', 'west', 'east'])
@@ -1417,6 +1455,11 @@ function isHaltReport (raw) {
   return typeof raw.stopped === 'boolean'
 }
 
+/** Whether `raw` is a whole say answer. */
+function isSayReport (raw) {
+  return SAY_OUTCOMES.includes(raw.outcome)
+}
+
 /**
  * Every answer a `ready` body gives, as its shape check beside the fields it may carry.
  *
@@ -1438,7 +1481,8 @@ const REPORT_SHAPES = Object.freeze({
   craft: { holds: isCraftReport, fields: CRAFT_FIELDS },
   attack: { holds: isAttackReport, fields: ATTACK_FIELDS },
   sleep: { holds: isSleepReport, fields: SLEEP_FIELDS },
-  halt: { holds: isHaltReport, fields: HALT_FIELDS }
+  halt: { holds: isHaltReport, fields: HALT_FIELDS },
+  say: { holds: isSayReport, fields: SAY_FIELDS }
 })
 
 /**
@@ -1606,6 +1650,7 @@ function requestPayload (raw, literals) {
     if (!bounded) return undefined
     return { senseId: raw.senseId, block: raw.block, timeoutMs: raw.timeoutMs }
   }
+  if (raw.op === 'say') return isSayText(raw.text) ? { text: raw.text } : undefined
   return {}
 }
 
@@ -2109,6 +2154,7 @@ function canonicalResponse (frame) {
     canonical.entered = frame.entered
   }
   if (frame.op === 'halt') canonical.stopped = frame.stopped
+  if (frame.op === 'say') canonical.outcome = frame.outcome
   return canonical
 }
 
@@ -2509,6 +2555,18 @@ function haltReport ({ requestId, agentId, stopped }) {
   })
 }
 
+/** The answer to one say; it echoes no text. */
+function sayReport ({ requestId, agentId, outcome }) {
+  return checkedResponse({
+    op: 'say',
+    protocol: PROTOCOL_VERSION,
+    requestId,
+    agentId,
+    state: READY,
+    outcome
+  })
+}
+
 /** The answer to a shutdown, written before anything is closed. */
 function shutdownAccepted ({ requestId, agentId }) {
   return checkedResponse({
@@ -2596,6 +2654,10 @@ module.exports = {
   CRAFT_OUTCOMES,
   ATTACK_OUTCOMES,
   SLEEP_OUTCOMES,
+  SAY_OUTCOMES,
+  MAX_SAY_CHARS,
+  MAX_SAY_BYTES,
+  isSayText,
   BLOCK_FACES,
   EQUIPMENT_DESTINATIONS,
   THREAT_REFUSALS,
@@ -2620,6 +2682,7 @@ module.exports = {
   attackReport,
   sleepReport,
   haltReport,
+  sayReport,
   shutdownAccepted,
   refusal
 }

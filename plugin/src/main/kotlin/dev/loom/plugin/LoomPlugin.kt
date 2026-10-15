@@ -20,6 +20,8 @@ import dev.loom.mind.AsyncCognitionBridge
 import dev.loom.mind.AutonomousDriver
 import dev.loom.mind.CognitionCallbacks
 import dev.loom.mind.CognitionSettings
+import dev.loom.mind.DAMAGE_EPISODE_TICKS
+import dev.loom.mind.DamageDriver
 import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.GoalLedger
@@ -33,11 +35,16 @@ import dev.loom.observe.ObservedEventLog
 import dev.loom.witness.ClaimAudit
 import dev.loom.witness.DurablePermadeath
 import dev.loom.witness.FileDeathLedger
+import dev.loom.witness.Heard
 import dev.loom.witness.ManagedIdentity
 import dev.loom.witness.PlayerWitness
+import dev.loom.witness.SpeechJournal
+import dev.loom.witness.SpeechWitness
 import dev.loom.witness.WitnessJournal
 import dev.loom.witness.WitnessRegistry
+import dev.loom.witness.bukkit.livePlaceOf
 import dev.loom.witness.bukkit.playerWitnessSeam
+import dev.loom.witness.bukkit.speechWitnessSeam
 import org.bukkit.command.CommandExecutor
 import org.bukkit.plugin.java.JavaPlugin
 import org.bukkit.scheduler.BukkitTask
@@ -58,6 +65,7 @@ private const val MILLIS_PER_TICK = 50L
 private data class WitnessRuntime(
     val permadeath: DurablePermadeath,
     val claimAudit: ClaimAudit,
+    val speech: SpeechWitness,
 )
 
 /**
@@ -73,8 +81,11 @@ class LoomPlugin : JavaPlugin() {
     private var bodyTicks: BukkitTask? = null
     private var autonomy: BukkitTask? = null
     private var vigilance: BukkitTask? = null
+    private var damage: AutoCloseable? = null
     private var observatory: Observatory? = null
     private var display: BukkitTask? = null
+    private var hearer: ((Heard) -> Unit)? = null
+    private var cognition: EmbodiedCognition? = null
 
     /**
      * Exact player identities Loom is authorised to witness.
@@ -107,12 +118,17 @@ class LoomPlugin : JavaPlugin() {
 
         // Replay durable death state and register the login/death listener before
         // any command can launch a managed player.
-        val witness = witnessPlayers(log)
+        val speechEndings = SpeechEndings(this)
+        val witnessed = speechEndings.watching(log)
+        val witness = witnessPlayers(witnessed)
+        speechEndings.witness = witness.speech
 
-        val port = createPlayerBody(log, witness)
+        val port = createPlayerBody(witnessed, witness)
         bodyPort = port
 
-        val mind = connectMind(port, log, goals)
+        val mind = connectMind(port, witnessed, goals)
+        cognition = mind
+        hearer = hearerOf(port, mind)
         bind(
             BODY_COMMAND,
             BodyCommand(port, mind) { message -> logger.info(message) },
@@ -123,7 +139,11 @@ class LoomPlugin : JavaPlugin() {
         bodyTicks =
             server.scheduler.runTaskTimer(
                 this,
-                Runnable { port.tick(server.currentTick.toLong()) },
+                Runnable {
+                    val now = server.currentTick.toLong()
+                    port.tick(now)
+                    witness.speech.tick(now)
+                },
                 1L,
                 1L,
             )
@@ -136,6 +156,7 @@ class LoomPlugin : JavaPlugin() {
             )
         driveAgents(port, mind)
         watchForThreats(port, mind)
+        damage = witnessDamage(port, mind, witnessed, witness.permadeath)
         port.reportConfiguredStartup(logger)
 
         logger.info("Loom observation ready: /loomwatch <agentId> follows one agent, read-only")
@@ -145,8 +166,11 @@ class LoomPlugin : JavaPlugin() {
         // Stop every source of new body or cognition work first.
         autonomy?.cancel()
         autonomy = null
+        hearer = null
         vigilance?.cancel()
         vigilance = null
+        damage?.close()
+        damage = null
         bodyTicks?.cancel()
         bodyTicks = null
 
@@ -155,8 +179,11 @@ class LoomPlugin : JavaPlugin() {
         observatory?.shutDown()
         observatory = null
 
-        // Release cognition reads before waiting for player shutdown. No decision
-        // can arrive after the body boundary has been torn down.
+        // End every chain still waiting for the mind, then release cognition reads before
+        // waiting for player shutdown. No decision can arrive after the body boundary has
+        // been torn down.
+        cognition?.shutDown()
+        cognition = null
         transport?.close()
         transport = null
         bridge?.close()
@@ -220,6 +247,7 @@ class LoomPlugin : JavaPlugin() {
                     ),
                 eventLog = eventLog,
                 currentTick = { server.currentTick.toLong() },
+                speechClaims = sentSpeechOf(witness.speech, bukkitMain) { server.currentTick.toLong() },
             )
         val infrastructures =
             fleet.deployments.map { deployment ->
@@ -337,7 +365,16 @@ class LoomPlugin : JavaPlugin() {
         logger.info(
             "Loom player witness ready: ${managedPlayers.size} managed identities, permadeath is durable",
         )
-        return WitnessRuntime(permadeath, claims)
+        val speech =
+            SpeechWitness(
+                registry = managedPlayers,
+                journal = SpeechJournal(eventLog),
+                placeOf = { identity -> livePlaceOf(server.getPlayer(identity.uuid)) },
+                isDead = permadeath::isDead,
+                hear = { heard -> hearer?.invoke(heard) },
+            )
+        server.pluginManager.registerEvents(speechWitnessSeam(managedPlayers, speech, this), this)
+        return WitnessRuntime(permadeath, claims, speech)
     }
 
     /**
@@ -401,6 +438,41 @@ class LoomPlugin : JavaPlugin() {
                 "(${decision.provenance.model}/${decision.provenance.promptVersion} " +
                 "at ${decision.provenance.tier}) -> ${applied.outcome}",
         )
+    }
+}
+
+/**
+ * Registers the server-authoritative `damaged` producer after the witness.
+ *
+ * The returned handle unregisters the listener, then stops the driver.
+ */
+private fun LoomPlugin.witnessDamage(
+    bodies: BodyPort,
+    mind: EmbodiedCognition,
+    eventLog: BodyEventLog,
+    permadeath: DurablePermadeath,
+): AutoCloseable {
+    val currentTick = { server.currentTick.toLong() }
+    val driver =
+        DamageDriver(
+            bodies = bodies,
+            mind = mind,
+            mainThread = BukkitMainThread(this),
+            isDead = permadeath::isDead,
+            eventLog = eventLog,
+            currentTick = currentTick,
+        )
+    val listener =
+        BukkitDamageEvents(
+            agentOf = { uuid -> managedPlayers.byUuid(uuid)?.agentId },
+            currentTick = currentTick,
+            sink = driver::witnessed,
+        )
+    server.pluginManager.registerEvents(listener, this)
+    logger.info("Loom damage witness running: one pivotal review per agent per $DAMAGE_EPISODE_TICKS-tick episode")
+    return AutoCloseable {
+        listener.close()
+        driver.close()
     }
 }
 

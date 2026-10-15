@@ -1209,6 +1209,21 @@ sealed interface BodyRequest {
             requireEnvelope(protocol, requestId, agentId)
         }
     }
+
+    /** Send one bounded line through this agent's own Mineflayer player chat; never a console broadcast. */
+    @Serializable
+    @SerialName("say")
+    data class Say(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        val text: String,
+    ) : BodyRequest {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireSayText(text)
+        }
+    }
 }
 
 /**
@@ -1836,6 +1851,22 @@ sealed interface BodyResponse {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireReady(state, "a halt")
+        }
+    }
+
+    /** What became of one say; it echoes no text, since the server's chat event is the evidence. */
+    @Serializable
+    @SerialName("say")
+    data class SayReport(
+        override val protocol: Int,
+        override val requestId: String,
+        override val agentId: String,
+        override val state: LifecycleState,
+        val outcome: SayOutcome,
+    ) : BodyResponse {
+        init {
+            requireEnvelope(protocol, requestId, agentId)
+            requireReady(state, "a say")
         }
     }
 }

@@ -14,6 +14,7 @@ import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
 import dev.loom.bodycontrol.ErrorCode
 import dev.loom.bodycontrol.LifecycleState
+import dev.loom.bodycontrol.SayOutcome
 import dev.loom.bodycontrol.decodeBodyRequest
 import dev.loom.bodycontrol.encodeBodyError
 import dev.loom.bodycontrol.encodeBodyResponse
@@ -155,6 +156,38 @@ class BodyControlClientTest {
                 assertTrue(response is BodyResponse.StatusReport)
                 assertEquals("status-1", response.requestId)
                 assertEquals(LifecycleState.READY, response.state)
+            }
+        }
+    }
+
+    @Test
+    fun `a say report over a real socket is the answer to its say`() {
+        val identity = clientIdentity()
+        ControlPeer { input, output ->
+            handshake(input, output)
+            val say = input.request() as BodyRequest.Say
+            assertEquals("h\u00e9llo river", say.text)
+            output.answer(
+                BodyResponse.SayReport(
+                    protocol = say.protocol,
+                    requestId = say.requestId,
+                    agentId = say.agentId,
+                    state = LifecycleState.READY,
+                    outcome = SayOutcome.SENT,
+                ),
+            )
+        }.use { peer ->
+            connector.connect(peer.endpoint, identity).use { connection ->
+                val request =
+                    BodyRequest.Say(
+                        BODY_CONTROL_PROTOCOL_VERSION,
+                        "say-1",
+                        identity.agentId.value,
+                        "h\u00e9llo river",
+                    )
+                val response = connection.request(request, CLIENT_TEST_TIMEOUT)
+
+                assertEquals(SayOutcome.SENT, (response as BodyResponse.SayReport).outcome)
             }
         }
     }

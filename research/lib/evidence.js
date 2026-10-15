@@ -3,6 +3,11 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
+const { behaviorGateMetrics } = require('./behavior-gate.js')
+const { admissionEndMetrics, controlledStopMetrics } = require('./controlled-stop.js')
+const { dangerEpisodeMetrics } = require('./danger.js')
+const { maximumOf, minimumOf } = require('./log-tail.js')
+const { deathMetrics } = require('./witnessed-death.js')
 const { canonicalLine, sortedValue } = require('./util.js')
 
 const NORMALIZED_EVIDENCE_VERSION = 'loom-normalized-evidence/1'
@@ -568,8 +573,8 @@ function deriveMetrics (records, configuredAgents = []) {
     if (perceived && !terminal) incomplete.push({ requestKey, events: chain })
   }
   const ticks = bodyRecords.map((record) => record.tick)
-  const observedFirstTick = ticks.length === 0 ? 0 : Math.min(...ticks)
-  const observedLastTick = ticks.length === 0 ? 0 : Math.max(...ticks)
+  const observedFirstTick = minimumOf(ticks)
+  const observedLastTick = maximumOf(ticks)
   const startTick = harnessRecords.find((record) => record.event === 'experimentStarted')?.startTick
   const endTick = harnessRecords.findLast((record) => record.event === 'experimentEnded')?.endTick
   const firstTick = Number.isInteger(startTick) ? startTick : observedFirstTick
@@ -613,7 +618,10 @@ function deriveMetrics (records, configuredAgents = []) {
     usageByModel[record.model] = model
   }
 
-  const socialSpeech = appliedByIntent.say ?? 0
+  // Only speech the body accepted counts; an applied record may carry a refusal outcome.
+  const socialSpeech = bodyRecords.filter((record) =>
+    record.event === 'intentApplied' && record.intent === 'say' && record.outcome === 'accepted'
+  ).length
   const attacks = appliedByIntent.attack ?? 0
   const witnessDisputes = bodyRecords.filter((record) => record.event === 'witnessDisputed')
   const witnessDisputesByOutcome = {}
@@ -630,7 +638,7 @@ function deriveMetrics (records, configuredAgents = []) {
   if (coLocations.length > 0) {
     observations.push(`${coLocations.length} bounded co-location sample(s) placed two agents within eight blocks`)
   }
-  if (socialSpeech > 0) observations.push(`${socialSpeech} speech intent(s) were applied`)
+  if (socialSpeech > 0) observations.push(`${socialSpeech} speech intent(s) were accepted by the body`)
   if (attacks > 0) observations.push(`${attacks} attack intent(s) were applied`)
 
   const counterevidence = []
@@ -734,6 +742,28 @@ function deriveMetrics (records, configuredAgents = []) {
       ]
     }
   }
+  const controlledStop = controlledStopMetrics(bodyRecords, harnessRecords, firstTick)
+  if (controlledStop !== undefined) {
+    result.controlledStop = controlledStop
+    result.findings.limitations.push(
+      `The run ended in a controlled ${controlledStop.kind ?? 'unclassified'} stop after ` +
+        `${controlledStop.nativeReviews.completed} of ${controlledStop.nativeReviews.planned ?? 'unattested'} ` +
+        'planned native reviews; its behavioral verdict is no-go.'
+    )
+  }
+  const danger = dangerEpisodeMetrics(bodyRecords)
+  if (danger !== undefined) result.dangerEpisodes = danger
+  const admissionEnd = admissionEndMetrics(bodyRecords, harnessRecords, firstTick)
+  if (admissionEnd !== undefined) result.admissionEnd = admissionEnd
+  const deaths = deathMetrics(bodyRecords, harnessRecords, firstTick)
+  if (deaths !== undefined) {
+    result.witnessedDeaths = deaths
+    result.findings.observations.push(
+      `${deaths.deaths} agent(s) died under the server witness: ${Object.keys(deaths.byAgent).join(', ')}.`
+    )
+  }
+  const speech = speechMetrics(bodyRecords, socialSpeech)
+  if (speech !== undefined) result.speech = speech
   const goalRecords = bodyRecords.filter((record) => record.goal !== undefined)
   if (goalRecords.length > 0) result.goalContinuity = goalContinuityMetrics(goalRecords)
   if (perceptionAudits.length > 0) {
@@ -744,8 +774,35 @@ function deriveMetrics (records, configuredAgents = []) {
     harnessRecords.some((record) => record.origin !== undefined)
   ) {
     result.primaryBehavior = primaryBehaviorMetrics(harnessRecords, stimulusRecords)
+    const gate = behaviorGateMetrics({ bodyRecords, harnessRecords, metrics: result })
+    if (gate !== undefined) result.behaviorGate = gate
   }
   return sortedValue(result)
+}
+
+// Speech counts only server-attributed lines as spoken; a client `sent` alone is a claim.
+// Absent unless the run holds speech evidence, so earlier committed metrics re-derive unchanged.
+function speechMetrics (records, applied) {
+  const confirmed = records.filter((record) =>
+    record.event === 'worldInteraction' && record.intent === 'say' && record.outcome === 'serverEffectConfirmed')
+  const disputed = records.filter((record) => record.event === 'witnessDisputed' && record.intent === 'say')
+  const heard = records.filter((record) => record.event === 'perceived' && record.trigger === 'spoken')
+  if (confirmed.length + disputed.length + heard.length === 0) return undefined
+  const disputedByOutcome = {}
+  for (const record of disputed) increment(disputedByOutcome, record.outcome ?? 'unclassified')
+  const confirmedByAgent = {}
+  for (const record of confirmed) increment(confirmedByAgent, record.agentId)
+  const heardByAgent = {}
+  for (const record of heard) increment(heardByAgent, record.agentId)
+  return {
+    applied,
+    confirmed: confirmed.length,
+    confirmedByAgent: sortedValue(confirmedByAgent),
+    disputed: disputed.length,
+    disputedByOutcome: sortedValue(disputedByOutcome),
+    heard: heard.length,
+    heardByAgent: sortedValue(heardByAgent)
+  }
 }
 
 // Continuity is a join of typed fields: a review continued a goal only when the body
