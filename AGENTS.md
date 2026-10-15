@@ -289,6 +289,10 @@ The one knob is `DEFAULT_GOAL_REVIEW_CADENCE_TICKS`, and the sweep period is *de
 Both the schedule reading and Bukkit timer are authoritative server ticks. A pause advances nothing and `/tick sprint` advances the same deterministic sequence; wall time must never re-enter this path.
 A never-reviewed agent is due at once, which keeps every freshly started configured agent observable at a conservative cadence.
 The driver is cancelled explicitly in `onDisable`, before the bridge it feeds closes.
+**`Trigger.Damaged` has one producer: `BukkitDamageEvents` at `MONITOR` with `ignoreCancelled`, feeding the engine-free `DamageDriver`.**
+The agent is resolved by server uuid through the witness registry; the source is the vanilla attacker key (projectile shooter first) or the `DamageCause` token, never a name.
+One `damageWitnessed` record per witnessed event classifies it by its `DAMAGE_` outcome tag, and `damageSubmitted` carries the `damaged` perception's `requestId`.
+Permadeath is consulted when the damage arrives and again when its perception returns, so lethal damage loses to the death the witness records in the same tick; `DAMAGE_EPISODE_TICKS` (20) coalesces one agent's damage per episode and never another agent's.
 
 **A decision enters the research record from the applied path, and only from there.**
 `EmbodiedCognition.actOn` is the one place that holds the decision, the mind's stamp on it, and what the body did about it at the same time, so `DecisionJournal` writes `decided` there - before `apply`, so a run reads perception -> decision -> action - and `decisionDiscarded` when the body has gone in between.

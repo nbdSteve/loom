@@ -118,6 +118,8 @@ class ObserverView(
             // with the one thing that did *not* happen. What an operator needs to see is
             // the sighting that fired, which arrives as the `perceived` note above.
             BodyEvent.THREAT_SUPPRESSED -> null
+            // Evidence only; health and the `perceived` note already say it.
+            BodyEvent.DAMAGE_WITNESSED -> null
         }
 
     /**
@@ -148,6 +150,7 @@ class ObserverView(
             // is a secret, and neither is a line: the bound that refused it is the whole
             // meaning, and that is a countable tag rather than prose.
             BodyEvent.THREAT_SUPPRESSED,
+            BodyEvent.DAMAGE_WITNESSED,
             // The five witness events carry the one kind of detail in Loom that was written
             // by neither Loom nor a model: a server death message names the weapon that did
             // it, and a weapon can be renamed on an anvil to anything at all. It is bounded

@@ -156,6 +156,27 @@ object EventTag {
      */
     const val THREAT_OVER_NIGHTLY_CAP: String = "threatOverNightlyCap"
 
+    /** A witnessed server damage event reached cognition as one `damaged` trigger. */
+    const val DAMAGE_SUBMITTED: String = "damageSubmitted"
+
+    /** Damage inside an agent's open damage episode; the episode's trigger already stands. */
+    const val DAMAGE_COALESCED: String = "damageCoalesced"
+
+    /** Damage to an agent whose body was not live: starting, stopping or disconnected. */
+    const val DAMAGE_BODY_UNAVAILABLE: String = "damageBodyUnavailable"
+
+    /** Damage to an agent already dead, including a witnessed breach. */
+    const val DAMAGE_AGENT_DEAD: String = "damageAgentDead"
+
+    /** The agent died between the damage and its perception; death takes precedence. */
+    const val DAMAGE_DIED_BEFORE_COGNITION: String = "damageDiedBeforeCognition"
+
+    /** The body could not capture a perception for the damage. */
+    const val DAMAGE_NOT_PERCEIVED: String = "damageNotPerceived"
+
+    /** Damage witnessed while Loom was shutting down. */
+    const val DAMAGE_SHUTDOWN: String = "damageShutdown"
+
     /** The agent got beyond what it can perceive of the threat. It ran away. */
     const val RETREAT_SAFE: String = "retreatSafe"
 

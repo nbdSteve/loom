@@ -20,6 +20,8 @@ import dev.loom.mind.AsyncCognitionBridge
 import dev.loom.mind.AutonomousDriver
 import dev.loom.mind.CognitionCallbacks
 import dev.loom.mind.CognitionSettings
+import dev.loom.mind.DAMAGE_EPISODE_TICKS
+import dev.loom.mind.DamageDriver
 import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.GoalLedger
@@ -73,6 +75,7 @@ class LoomPlugin : JavaPlugin() {
     private var bodyTicks: BukkitTask? = null
     private var autonomy: BukkitTask? = null
     private var vigilance: BukkitTask? = null
+    private var damage: AutoCloseable? = null
     private var observatory: Observatory? = null
     private var display: BukkitTask? = null
 
@@ -136,6 +139,7 @@ class LoomPlugin : JavaPlugin() {
             )
         driveAgents(port, mind)
         watchForThreats(port, mind)
+        damage = witnessDamage(port, mind, log, witness.permadeath)
         port.reportConfiguredStartup(logger)
 
         logger.info("Loom observation ready: /loomwatch <agentId> follows one agent, read-only")
@@ -147,6 +151,8 @@ class LoomPlugin : JavaPlugin() {
         autonomy = null
         vigilance?.cancel()
         vigilance = null
+        damage?.close()
+        damage = null
         bodyTicks?.cancel()
         bodyTicks = null
 
@@ -401,6 +407,41 @@ class LoomPlugin : JavaPlugin() {
                 "(${decision.provenance.model}/${decision.provenance.promptVersion} " +
                 "at ${decision.provenance.tier}) -> ${applied.outcome}",
         )
+    }
+}
+
+/**
+ * Registers the server-authoritative `damaged` producer after the witness.
+ *
+ * The returned handle unregisters the listener, then stops the driver.
+ */
+private fun LoomPlugin.witnessDamage(
+    bodies: BodyPort,
+    mind: EmbodiedCognition,
+    eventLog: BodyEventLog,
+    permadeath: DurablePermadeath,
+): AutoCloseable {
+    val currentTick = { server.currentTick.toLong() }
+    val driver =
+        DamageDriver(
+            bodies = bodies,
+            mind = mind,
+            mainThread = BukkitMainThread(this),
+            isDead = permadeath::isDead,
+            eventLog = eventLog,
+            currentTick = currentTick,
+        )
+    val listener =
+        BukkitDamageEvents(
+            agentOf = { uuid -> managedPlayers.byUuid(uuid)?.agentId },
+            currentTick = currentTick,
+            sink = driver::witnessed,
+        )
+    server.pluginManager.registerEvents(listener, this)
+    logger.info("Loom damage witness running: one pivotal review per agent per $DAMAGE_EPISODE_TICKS-tick episode")
+    return AutoCloseable {
+        listener.close()
+        driver.close()
     }
 }
 

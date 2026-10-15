@@ -216,6 +216,15 @@ enum class BodyEvent {
     THREAT_SUPPRESSED,
 
     /**
+     * The server witnessed positive damage to a managed agent's player.
+     *
+     * One record per witnessed event. `outcome` is one of `EventTag`'s `DAMAGE_` tags;
+     * `damageSubmitted` carries the `requestId` of the `damaged` perception it produced.
+     */
+    @SerialName("damageWitnessed")
+    DAMAGE_WITNESSED,
+
+    /**
      * A state change in an agent's flight from a threat.
      *
      * The Mineflayer body reports one bounded flight. This record states how that flight
