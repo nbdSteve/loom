@@ -377,6 +377,16 @@ reported, and a second `halt` after it answers `stopped` false.
   real routes over real ground with no server, no network and no account; only `stalled` and
   `overTravelled` use a recorder, because each needs minutes of wall clock. Cancellation is
   proven by counting live timers and live listeners rather than by reading the source.
+- `test/native-move-terminal.test.js` and `test/native-dig-terminal.test.js` - a walk's
+  arrival and a dig, through the real body process, bot, pathfinder and physics.
+  **`arrived` means landed, not near.** The pathfinder emits `goal_reached` once the last node
+  is within 0.35 blocks horizontally and less than one block vertically, so a walk ending in a
+  step down reached its goal mid-fall, and answering then shut the simulation with the body in
+  the air - which the first ten-agent live run did, after which that agent's every walk was
+  `noRoute`. A reached goal now holds the drained gate until the body has stood still on the
+  ground for `ARRIVAL_SETTLE_TICKS` steps with that same grounded position already written to
+  the server, then re-checks the goal where it came to rest and re-plans under the stall bound
+  if it no longer holds.
 - `test/libraries.test.js` - the two claims neither the lockfile nor the policy can make
   alone: that every pinned version is the version actually **installed**, and that the
   policy covers every field the library has. Each permissive default is shown to *be*

@@ -161,6 +161,20 @@ const MAX_TRAVEL_BLOCKS = MOVE_REACH_BLOCKS * TRAVEL_ALLOWANCE
 const MAX_STALL_RETRIES = 2
 
 /**
+ * How many consecutive simulation steps a body must stand still on the ground, with that
+ * same grounded position already reported to the server, before a reached goal is an arrival.
+ *
+ * The pathfinder emits `goal_reached` once the last node is within 0.35 blocks horizontally
+ * and less than one block vertically, so a walk that ends in a step down reaches its goal
+ * while the body is still falling onto it. Answering then shut the simulation with the body
+ * in mid-air: the first live ten-agent run left one agent hanging 0.85 blocks above its
+ * destination, and every later walk it was asked for was refused as `noRoute`. Two steps are
+ * the fewest that show both a landed position and the report of it: Mineflayer writes a
+ * step's report only after every `physicsTick` listener has run.
+ */
+const ARRIVAL_SETTLE_TICKS = 2
+
+/**
  * How long one search may run, in milliseconds, and so how long the process may stall.
  *
  * **This is a control-plane latency figure and not a search-generosity one.** A search runs to
@@ -333,18 +347,33 @@ function scopedSimulation (bot) {
   let owner
   let draining = false
   let permitted
+  // What the server was last told about where the body stands, from the reports that passed.
+  const standing = { position: undefined, onGround: undefined }
+  const passed = (name, parameters) => {
+    if (MOVEMENT_REPORT_PACKETS.includes(name)) {
+      if (typeof parameters?.onGround === 'boolean') standing.onGround = parameters.onGround
+      if (Number.isFinite(parameters?.x) && Number.isFinite(parameters?.y) && Number.isFinite(parameters?.z)) {
+        standing.position = [parameters.x, parameters.y, parameters.z]
+      }
+    }
+    return reported(name, parameters)
+  }
   client.write = (name, parameters) => {
     if (!SCOPED_MOVEMENT_PACKETS.includes(name)) return reported(name, parameters)
     if (owner === undefined && permitted?.(name, parameters) === true) {
       permitted = undefined
-      return reported(name, parameters)
+      return passed(name, parameters)
     }
     if (owner === undefined) return undefined
     if (draining && MOVEMENT_CONTROL_PACKETS.includes(name) &&
       !isControlDeactivation(name, parameters)) return undefined
-    return reported(name, parameters)
+    return passed(name, parameters)
   }
   return {
+    /** The last position and ground state a report that reached the server stated. */
+    reportedStanding () {
+      return { position: standing.position, onGround: standing.onGround }
+    },
     take (token) {
       owner = token
       draining = false
@@ -396,7 +425,15 @@ function scopedSimulation (bot) {
 
 /** A gate for a bot with nothing to gate: every call is a no-op. */
 function inertSimulation () {
-  return { take () {}, takeIfFree () { return false }, drain () {}, release () {}, permitOnce () { return () => {} } }
+  return {
+    take () {},
+    takeIfFree () { return false },
+    drain () {},
+    release () {},
+    permitOnce () { return () => {} },
+    // No wire, so nothing was reported that an arrival could be checked against.
+    reportedStanding () { return undefined }
+  }
 }
 
 /** Each installed bot's gate, for operations that need one scoped packet permit. */
@@ -692,6 +729,7 @@ function createMovement (bot, {
       pending: undefined,
       draining: false,
       terminalFacing: undefined,
+      landing: undefined,
       settled: false
     }
     let movements
@@ -904,11 +942,78 @@ function createMovement (bot, {
         const requested = state.pending
         state.pending = undefined
         const outcome = selectedOutcome(requested, sample())
-        if (outcome !== undefined) settle(outcome)
+        if (outcome !== undefined) {
+          settle(outcome)
+          return
+        }
+        if (state.landing !== undefined) landing()
       }
 
+      /**
+       * A reached goal, held open until the body has landed; see [ARRIVAL_SETTLE_TICKS].
+       *
+       * The library clears its goal and stops the controls as it emits this, so the simulation
+       * carries on only to let the body come to rest. The gate drains exactly as for a terminal
+       * event - reports and deactivations pass, a new activation does not, and no later request
+       * may take the path - and the facing held here is the one the answer restores. Nothing
+       * else is asked of the library unless the landed position no longer satisfies the goal.
+       */
       function reached () {
-        terminal('arrived')
+        if (state.settled || state.pending !== undefined || state.landing !== undefined) return
+        state.landing = { stable: 0, last: undefined }
+        if (Number.isFinite(bot.entity?.yaw) && Number.isFinite(bot.entity?.pitch)) {
+          state.terminalFacing = { yaw: bot.entity.yaw, pitch: bot.entity.pitch }
+        }
+        simulation.drain(owner)
+      }
+
+      /** Whether the server was last told this exact grounded position, where there is a wire. */
+      function reportedGrounded (here) {
+        const wire = simulation.reportedStanding?.()
+        if (wire === undefined) return true
+        return wire.onGround === true && wire.position !== undefined && blocksApart(wire.position, here) === 0
+      }
+
+      function landing () {
+        const here = standing()
+        const still = here !== undefined && state.landing.last !== undefined &&
+          blocksApart(here, state.landing.last) === 0
+        state.landing.last = here
+        state.landing.stable = still && bot.entity?.onGround === true && reportedGrounded(here)
+          ? state.landing.stable + 1
+          : 0
+        if (state.landing.stable < ARRIVAL_SETTLE_TICKS) return
+        state.landing = undefined
+        if (goalHolds()) {
+          settle('arrived')
+          return
+        }
+        // Landed somewhere the goal does not hold: the route is asked for again from the
+        // ground, under the stall bound, rather than reported as an arrival it is not.
+        state.stalls += 1
+        if (state.stalls > MAX_STALL_RETRIES) {
+          settle('stalled')
+          return
+        }
+        state.terminalFacing = undefined
+        try {
+          simulation.take(owner)
+          finder.setGoal(goal)
+        } catch {
+          settle('stalled')
+        }
+      }
+
+      /** The library's own arrival test, applied to where the body came to rest. */
+      function goalHolds () {
+        const position = bot.entity?.position
+        if (position === undefined || position === null) return false
+        try {
+          const floored = position.floored()
+          return goal.isEnd(floored) || goal.isEnd(floored.offset(0, 1, 0))
+        } catch {
+          return false
+        }
       }
 
       /**
@@ -1094,6 +1199,7 @@ function installMovement (bot, options) {
 }
 
 module.exports = {
+  ARRIVAL_SETTLE_TICKS,
   holdSimulation,
   permitLeaveBed,
   standsOnSupport,

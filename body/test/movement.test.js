@@ -35,6 +35,7 @@ const { goals: libraryGoals } = require('mineflayer-pathfinder')
 const { Vec3 } = require('vec3')
 
 const {
+  ARRIVAL_SETTLE_TICKS,
   MAX_STALL_RETRIES,
   MAX_TRAVEL_BLOCKS,
   MOVEMENT_CONTROL_PACKETS,
@@ -1267,6 +1268,10 @@ test('a terminal drain keeps a later request from taking ownership early', async
     destination: [4, 64, 0], tolerance: 0, timeoutMs: AMPLE_MS, sprint: false
   }), undefined)
 
+  // The arrival is answered once the body has come to rest on the goal.
+  bot.entity.position = new Vec3(8.5, 64, 0.5)
+  bot.entity.onGround = true
+  for (let tick = 0; tick <= ARRIVAL_SETTLE_TICKS; tick += 1) bot.emit('physicsTick')
   assert.equal((await H.promptly(first, 'the drained request')).outcome, 'arrived')
   assert.equal(bot.entity.yaw, 0)
   assert.equal(bot.entity.pitch, 0)
@@ -1559,4 +1564,40 @@ test('a halt pipelined before its replacement leaves the replacement owned by it
   // replacement's ownership and this close stopped nothing at all.
   peer.stop()
   await droppedShortOfFar(bot, measured, 'a lost connection after a pipelined replacement')
+})
+
+test('a reached goal is an arrival only once the server was told the same grounded rest', async () => {
+  const bot = drivable()
+  const gate = countedGate()
+  let wire = { position: [0, 64.6, 0], onGround: false }
+  gate.reportedStanding = () => wire
+  const movement = createMovement(bot, { simulation: gate })
+  let answered
+  const walking = movement.moveTo({
+    destination: [0, 64, 0], tolerance: 0, timeoutMs: AMPLE_MS, sprint: false
+  }).then((report) => { answered = report })
+
+  // Reached while still falling onto the goal: nothing is answered.
+  bot.entity.position = new Vec3(0.5, 64.6, 0.5)
+  bot.entity.onGround = false
+  bot.emit('goal_reached')
+  for (let tick = 0; tick < 4; tick += 1) bot.emit('physicsTick')
+  await H.settled(10)
+  assert.equal(answered, undefined)
+
+  // Landed and still, but the server has not been told so: still nothing.
+  bot.entity.position = new Vec3(0.5, 64, 0.5)
+  bot.entity.onGround = true
+  for (let tick = 0; tick < 4; tick += 1) bot.emit('physicsTick')
+  await H.settled(10)
+  assert.equal(answered, undefined)
+  assert.equal(gate.open, true)
+
+  // Once the grounded report has been written, the rest is the arrival.
+  wire = { position: [0.5, 64, 0.5], onGround: true }
+  for (let tick = 0; tick <= ARRIVAL_SETTLE_TICKS; tick += 1) bot.emit('physicsTick')
+  await H.promptly(walking, 'the landed walk')
+  assert.equal(answered.outcome, 'arrived')
+  assert.deepEqual(answered.position, [0.5, 64, 0.5])
+  assert.equal(gate.open, false)
 })
