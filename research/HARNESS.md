@@ -289,6 +289,7 @@ Before removal, the harness writes one mode-0600 operator diagnostic under `.scr
 That file is capped at 64 KiB and contains only allow-listed event counts, per-agent cycle counts, call-budget state, aggregate provider token/cost totals, crash-reserve state (crash-containment mode only), input completeness flags, a stable failure code, aggregate cognition-failure classifications, and up to 32 typed budget refusals.
 Each classified tuple contains only the routed model, numeric HTTP status, allow-listed provider type/code, structural response shape, Loom mapping, and count.
 A missing or route-inconsistent classification stays explicitly unclassified; the harness never guesses it from a zero-byte usage journal.
+Each disputed world interaction, up to 32, keeps only its agent, tick, operation, the body's own outcome token, and whether vanilla recorded a matching effect at all; the r3 shakedown failed on one dispute that the earlier aggregate counts could not attribute.
 Each typed refusal names the agent, the bound (`perAgentCall`, `globalCall`, `globalOutstanding`, `postCrashReserve`, or `spend`), its unit, the configured ceiling, the observed count, that the call was not forwarded, and the trigger, importance, and native origin.
 The diagnostic never copies prompts, reasoning, credentials, provider/request/thread ids, process ids, local paths, raw provider messages, or raw evidence, and it is explicitly not a publishable research artifact.
 

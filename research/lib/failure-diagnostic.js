@@ -197,8 +197,28 @@ const OUTCOME_EVENTS = new Set([
 ])
 const OUTCOME_TAG = /^[a-z][A-Za-z]{0,63}$/
 
+// A disputed world interaction keeps only closed facts read from its detail: which operation,
+// the body's own outcome token, and whether vanilla recorded a matching effect at all.
+const INTERACTION_OPERATIONS = new Set(['dig', 'collect', 'place', 'equip', 'craft', 'attack', 'sleep'])
+const BODY_OUTCOME = /(?:^|; )body ([a-z][a-z_]{0,31})(?:;|$)/
+const MAX_INTERACTION_DISPUTES = 32
+
+function interactionDispute (record) {
+  const detail = typeof record.detail === 'string' ? record.detail : ''
+  const operation = detail.split(' ', 1)[0]
+  const vanilla = detail.match(/(?:^|; )vanilla (no )?/)
+  return {
+    agentId: record.agentId,
+    tick: record.tick,
+    operation: INTERACTION_OPERATIONS.has(operation) ? operation : 'unclassified',
+    bodyOutcome: detail.match(BODY_OUTCOME)?.[1] ?? 'unclassified',
+    vanillaEffect: vanilla === null ? 'unclassified' : vanilla[1] === undefined ? 'found' : 'absent'
+  }
+}
+
 function bodySummary (records, configuredAgentIds, crashAfterTick) {
   const outcomes = {}
+  const interactionDisputes = []
   const agents = new Map(
     configuredAgentIds.map((agentId) => [agentId, emptyAgentSummary(agentId)])
   )
@@ -229,6 +249,10 @@ function bodySummary (records, configuredAgentIds, crashAfterTick) {
         : 'unclassified'
       outcomes[record.event] ??= {}
       increment(outcomes[record.event], tag)
+      if (
+        record.event === 'worldInteraction' && tag.startsWith('disputed') &&
+        agents.has(record.agentId) && interactionDisputes.length < MAX_INTERACTION_DISPUTES
+      ) interactionDisputes.push(interactionDispute(record))
     }
     if (record.agentId === 'loom:world') {
       worldRecords += 1
@@ -252,6 +276,7 @@ function bodySummary (records, configuredAgentIds, crashAfterTick) {
     lastTick: lastTick ?? null,
     events,
     outcomesByEvent: outcomes,
+    interactionDisputes,
     agents: [...agents.values()],
     worldRecords,
     unknownAgentRecords,

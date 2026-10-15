@@ -596,6 +596,43 @@ test('a failed run keeps the closed outcome tags of its failure records', () => 
     assert.deepEqual(retained.diagnostic.body.outcomesByEvent, {
       witnessDisputed: { disputedPosition: 1, unclassified: 1 }
     })
+    assert.deepEqual(retained.diagnostic.body.interactionDisputes, [])
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a disputed world interaction keeps its operation, body outcome and vanilla effect only', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-dispute-diagnostic-'))
+  try {
+    fs.mkdirSync(path.join(directory, 'own'))
+    const files = rawFiles(path.join(directory, 'own'))
+    writeJsonLines(files.bodyFile, [
+      {
+        tick: 640,
+        agentId: 'tribe-alpha',
+        event: 'worldInteraction',
+        outcome: 'disputedWorldInteraction',
+        detail: 'dig bc0; sense s-1p; control c-1x; body dug; vanilla no matching blockBreak event'
+      },
+      {
+        tick: 700,
+        agentId: 'tribe-beta',
+        event: 'worldInteraction',
+        outcome: 'disputedWorldInteraction',
+        detail: 'collect d3; sense /Users/secret; body collected; vanilla entityPickupItem 3daa 1/1 stick'
+      },
+      { tick: 701, agentId: 'tribe-beta', event: 'worldInteraction', outcome: 'disputedWorldInteraction', detail: 'sk-x' }
+    ])
+    writeJsonLines(files.harnessFile, [])
+    writeJsonLines(files.providerUsageFile, [])
+    const retained = retain(directory, { ...files })
+    assert.deepEqual(retained.diagnostic.body.interactionDisputes, [
+      { agentId: 'tribe-alpha', tick: 640, operation: 'dig', bodyOutcome: 'dug', vanillaEffect: 'absent' },
+      { agentId: 'tribe-beta', tick: 700, operation: 'collect', bodyOutcome: 'collected', vanillaEffect: 'found' },
+      { agentId: 'tribe-beta', tick: 701, operation: 'unclassified', bodyOutcome: 'unclassified', vanillaEffect: 'unclassified' }
+    ])
+    assert.doesNotMatch(fs.readFileSync(retained.file, 'utf8'), /Users|sk-x|bc0|3daa/)
   } finally {
     fs.rmSync(directory, { recursive: true, force: true })
   }
