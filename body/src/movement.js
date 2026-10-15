@@ -330,8 +330,13 @@ function scopedSimulation (bot) {
   const reported = client.write.bind(client)
   let owner
   let draining = false
+  let permitted
   client.write = (name, parameters) => {
     if (!SCOPED_MOVEMENT_PACKETS.includes(name)) return reported(name, parameters)
+    if (owner === undefined && permitted?.(name, parameters) === true) {
+      permitted = undefined
+      return reported(name, parameters)
+    }
     if (owner === undefined) return undefined
     if (draining && MOVEMENT_CONTROL_PACKETS.includes(name) &&
       !isControlDeactivation(name, parameters)) return undefined
@@ -354,6 +359,16 @@ function scopedSimulation (bot) {
       if (owner === token) draining = true
     },
     /**
+     * Lets exactly one packet `matches` accepts through while nothing owns the path, for an
+     * explicit operation that must write a control packet of its own. Answers the revoke.
+     */
+    permitOnce (matches) {
+      permitted = matches
+      return () => {
+        if (permitted === matches) permitted = undefined
+      }
+    },
+    /**
      * Closes the gate, if `token` is still what opened it.
      *
      * Keyed on the token for the reason the module header gives, and idempotent in both
@@ -371,7 +386,23 @@ function scopedSimulation (bot) {
 
 /** A gate for a bot with nothing to gate: every call is a no-op. */
 function inertSimulation () {
-  return { take () {}, drain () {}, release () {} }
+  return { take () {}, drain () {}, release () {}, permitOnce () { return () => {} } }
+}
+
+/** Each installed bot's gate, for operations that need one scoped packet permit. */
+const simulations = new WeakMap()
+
+/** Vanilla's leave-bed request, which a sleep's wake writes as a control packet. */
+function isLeaveBed (name, parameters) {
+  return name === 'entity_action' && [2, 'leave_bed'].includes(parameters?.actionId)
+}
+
+/**
+ * Lets one leave-bed request through the movement gate for a sleep that is waking, while no
+ * movement owns the path. Answers the revoke; a bot without the gate gets a no-op.
+ */
+function permitLeaveBed (bot) {
+  return simulations.get(bot)?.permitOnce(isLeaveBed) ?? (() => {})
 }
 
 /** Straight-line distance between two positions, in blocks. */
@@ -1008,12 +1039,15 @@ function installMovement (bot, options) {
   if (installed !== undefined) return installed
   bot.loadPlugin(physics)
   bot.loadPlugin(pathfinder)
-  const movement = createMovement(bot, { simulation: scopedSimulation(bot), ...options })
+  const simulation = scopedSimulation(bot)
+  simulations.set(bot, simulation)
+  const movement = createMovement(bot, { simulation, ...options })
   installations.set(bot, movement)
   return movement
 }
 
 module.exports = {
+  permitLeaveBed,
   MAX_DROP_BLOCKS,
   MAX_STALL_RETRIES,
   MAX_TRAVEL_BLOCKS,

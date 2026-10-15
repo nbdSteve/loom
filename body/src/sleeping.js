@@ -10,6 +10,7 @@
 
 const { performance } = require('node:perf_hooks')
 const bed = require('mineflayer/lib/plugins/bed')
+const { permitLeaveBed } = require('./movement')
 const {
   blockWithinReach,
   elapsedSince,
@@ -17,7 +18,10 @@ const {
   visibleBlock
 } = require('./interaction')
 
-/** How long cancellation waits for vanilla's wake event before releasing ownership. */
+/**
+ * How long cancellation waits for vanilla's wake event. Past it the body may still be in bed
+ * on the server, so the client is ended rather than released to a later request.
+ */
 const WAKE_GRACE_MS = 1000
 
 /**
@@ -35,6 +39,19 @@ function installSleeping (bot) {
   if (installations.has(bot)) return
   bot.loadPlugin(bed)
   installations.add(bot)
+}
+
+/** Ends a client whose wake the server never confirmed. */
+function disconnectUnwoken (bot) {
+  try {
+    if (typeof bot._client?.end === 'function') {
+      bot._client.end()
+      return
+    }
+    bot._client?.socket?.destroy?.()
+  } catch {
+    // Ownership has already been answered; nothing further may be attempted.
+  }
 }
 
 function bedOutcome (outcome) {
@@ -112,7 +129,11 @@ function sleepInOfferedBed (bot, {
   let wakeTimer
   let entryDrainTimer
   let wakeRequested = false
+  let revokeLeaveBed = () => {}
   let abort
+  // Mineflayer's own wait adds a 'sleep' listener it never removes when vanilla refuses;
+  // every listener this request's attempt added is removed when it settles.
+  const listenersBefore = new Set(bot.listeners('sleep'))
   const promise = new Promise((resolve) => {
     const timer = setTimeout(() => requestTerminal('timedOut'), timeoutMs)
 
@@ -120,8 +141,12 @@ function sleepInOfferedBed (bot, {
       clearTimeout(timer)
       clearTimeout(wakeTimer)
       clearTimeout(entryDrainTimer)
+      revokeLeaveBed()
       bot.off('sleep', sawSleep)
       bot.off('wake', sawWake)
+      for (const listener of bot.listeners('sleep')) {
+        if (!listenersBefore.has(listener)) bot.off('sleep', listener)
+      }
     }
 
     function finish (outcome) {
@@ -138,11 +163,17 @@ function sleepInOfferedBed (bot, {
     function requestWake () {
       if (wakeRequested || settled) return
       wakeRequested = true
-      wakeTimer = setTimeout(() => finish(terminal ?? 'libraryFailure'), WAKE_GRACE_MS)
+      wakeTimer = setTimeout(() => {
+        // No confirmed wake: the server may still hold the player in bed, so end the client
+        // instead of releasing a sleeping body to the next request.
+        finish(terminal ?? 'libraryFailure')
+        queueMicrotask(() => disconnectUnwoken(bot))
+      }, WAKE_GRACE_MS)
+      revokeLeaveBed = permitLeaveBed(bot)
       try {
         Promise.resolve(bot.wake()).catch(() => {})
       } catch {
-        // The grace below still bounds ownership when the library cannot write wake.
+        // The grace above still bounds ownership when the library cannot write wake.
       }
     }
 

@@ -78,7 +78,8 @@
       "status": "supported"
     },
     "blockSighted": {
-      "status": "supported"
+      "status": "dormant",
+      "reason": "No production code constructs Trigger.BlockSighted; the mind can render one, but no body or server event produces it."
     },
     "goalReview": {
       "status": "supported"
