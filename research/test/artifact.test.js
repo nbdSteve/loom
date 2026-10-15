@@ -9,6 +9,7 @@ const path = require('node:path')
 const {
   componentSourceHashes,
   publishArtifact,
+  readmeQuestion,
   validateArtifact,
   validateProspectiveManifest,
   validateRunConfig
@@ -684,4 +685,18 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   const schedule = { cadenceTicks: 2400, sliceTicks: 100, expectedReviewsPerAgent: 6 }
   assert.deepEqual(reviewWindowBounds(schedule, 10, 12_000), { minimum: 5, maximum: 6 })
   assert.deepEqual(reviewWindowBounds(schedule, 10, 11_999), { minimum: 5, maximum: 5 })
+})
+
+test('the README question names the configured population and profile', () => {
+  const read = (file) => readJson(path.join(__dirname, '..', 'config', file))
+  // The pilot wording every committed pilot README carries is unchanged.
+  assert.match(
+    readmeQuestion(read('first-tribe-routine-v13-agency-pilot.json')),
+    /^Can three independently embodied Loom agents complete the bounded routine-v13 pilot using/
+  )
+  // A ten-agent shakedown was once described as the three-agent pilot.
+  const shakedown = readmeQuestion(read('tribe-shakedown-10m-10.json'))
+  assert.match(shakedown, /^Can ten independently embodied Loom agents complete the bounded routine-v13 shakedown-10m-10 profile using/)
+  assert.doesNotMatch(shakedown, /three|pilot/)
+  assert.match(readmeQuestion(read('tribe-two-cycle-3.json')), /^Can three .* two-cycle-3 profile using/)
 })

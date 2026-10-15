@@ -1925,6 +1925,20 @@ function publishArtifact ({
   }
 }
 
+const POPULATION_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+
+/** The README's question names the configured population, not the three-agent pilot's. */
+function populationWord (count) {
+  return POPULATION_WORDS[count] ?? String(count)
+}
+
+/** The README question for a configuration, naming its own population and profile. */
+function readmeQuestion (config) {
+  return isPrimaryBehaviorMode(config)
+    ? `Can ${populationWord(config.agents.length)} independently embodied Loom agents complete the bounded ${config.cognition.prompts.routine} ${config.primaryBehavior.profile === 'pilot-180s' ? 'pilot' : `${config.primaryBehavior.profile} profile`} using only native event-driven cognition, while preserving complete per-kind perception and lifecycle evidence?`
+    : 'Can three independently embodied Loom agents continue repeated perceive/decide/act cycles in one bounded world, while one body process fails, without corrupting peer evidence or leaving processes behind?'
+}
+
 function renderReadme (config, manifest, metrics) {
   const observationLines = metrics.findings.observations.length > 0
     ? metrics.findings.observations
@@ -1939,9 +1953,7 @@ function renderReadme (config, manifest, metrics) {
   const interpretationQualification = scripted
     ? '- Scripted decisions are acceptance traffic. They are not evidence of cooperation, specialization, avoidance,\n  conflict, settlement, or any other emergent social outcome.'
     : '- Model-driven actions are observations, not proof of motive or emergence. Any social or spatial interpretation is limited to the recorded evidence and counterevidence.'
-  const question = primaryBehavior
-    ? `Can three independently embodied Loom agents complete the bounded ${config.cognition.prompts.routine} pilot using only native event-driven cognition, while preserving complete per-kind perception and lifecycle evidence?`
-    : 'Can three independently embodied Loom agents continue repeated perceive/decide/act cycles in one bounded world, while one body process fails, without corrupting peer evidence or leaving processes behind?'
+  const question = readmeQuestion(config)
   const protocolObservations = primaryBehavior
     ? `- No body process was deliberately crashed and no harness \`/loombody think\` command was issued.
 - Native scheduled reviews by agent: ${JSON.stringify(metrics.primaryBehavior?.nativeGoalReviewsByAgent ?? {})}.
@@ -2092,6 +2104,7 @@ module.exports = {
   configuredAgents,
   prospectiveManifest,
   publishArtifact,
+  readmeQuestion,
   semanticErrors,
   validateArtifact,
   validateProspectiveManifest,
