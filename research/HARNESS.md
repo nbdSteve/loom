@@ -36,7 +36,8 @@ changed: 600 seconds or 12,000 ticks, six reviews each, 24/150/6 calls, $29.19,
 and 16 MiB log and publication bounds with 8,000 evidence records, about eight
 times the 12,000-tick share of the ten-agent normal sample. Its configurations
 are `research/config/tribe-shakedown-10m-10*.json`; the live one carries the
-approved id `2026-10-16-openai-10-agent-10m-r1` and was consumed by its one attempt.
+next fresh `2026-10-16-openai-10-agent-10m-r<n>` id. Each id is consumed by its one
+attempt and its published artifact names the commit it ran from.
 Outside the pilot profile the mechanical pilot verdict is `notApplicable`.
 
 The other committed configurations are historical:

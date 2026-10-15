@@ -601,7 +601,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   const live = read('tribe-shakedown-10m-10.json')
   const scripted = read('tribe-shakedown-10m-10-scripted.json')
   const base = read('tribe-two-cycle-10.json')
-  assert.equal(live.experimentId, '2026-10-16-openai-10-agent-10m-r1')
+  assert.match(live.experimentId, /^2026-10-16-openai-10-agent-10m-r[0-9]+$/)
   for (const config of [live, scripted]) {
     assert.deepEqual(validateRunConfig(config), [], config.experimentId)
     assert.equal(config.primaryBehavior.profile, 'shakedown-10m-10')
