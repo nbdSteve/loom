@@ -1,5 +1,5 @@
 {
-  "experimentId": "2026-10-15-openai-routine-v13-agency-pilot-r5",
+  "experimentId": "2026-10-15-openai-routine-v13-agency-pilot-r6",
   "title": "Routine-v13 three-agent goal-continuity pilot",
   "mode": "routine-v13-goal-continuity",
   "agents": [
