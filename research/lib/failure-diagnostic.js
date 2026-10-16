@@ -30,7 +30,8 @@ const MODES = new Set([
   'routine-v15-grounded-walk',
   'routine-v16-grounded-walk',
   'routine-v17-working-goal',
-  'routine-v18-offered-refs'
+  'routine-v18-offered-refs',
+  'routine-v19-actionable-refs'
 ])
 const MAX_INPUT_LINE_BYTES = 256 * 1024
 const BODY_EVENTS = new Set([

@@ -461,24 +461,30 @@ fn intent_variant(action: &str, fields: Vec<(&str, Option<Value>)>) -> Option<Va
     }))
 }
 
-/// One request namespace: the handles one store offers, defined once under `$defs` so a
-/// block offered to three actions costs one enum and not three.
+/// One request namespace: the handles one action may name in one mode, defined once under
+/// `$defs` so a block offered to three actions costs one enum and not three.
 #[derive(Clone, Copy)]
 enum Namespace {
     Block,
     WalkTarget,
     Creature,
-    DroppedItem,
+    StrikeTarget,
+    PursuitTarget,
+    PickupItem,
+    RouteItem,
     Stack,
     Recipe,
 }
 
 impl Namespace {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 9] = [
         Self::Block,
         Self::WalkTarget,
         Self::Creature,
-        Self::DroppedItem,
+        Self::StrikeTarget,
+        Self::PursuitTarget,
+        Self::PickupItem,
+        Self::RouteItem,
         Self::Stack,
         Self::Recipe,
     ];
@@ -488,7 +494,10 @@ impl Namespace {
             Self::Block => "blockRef",
             Self::WalkTarget => "walkTargetRef",
             Self::Creature => "creatureRef",
-            Self::DroppedItem => "droppedItemRef",
+            Self::StrikeTarget => "strikeTargetRef",
+            Self::PursuitTarget => "pursuitTargetRef",
+            Self::PickupItem => "pickupItemRef",
+            Self::RouteItem => "routeItemRef",
             Self::Stack => "stackRef",
             Self::Recipe => "recipeRef",
         }
@@ -496,10 +505,19 @@ impl Namespace {
 
     const fn description(self) -> &'static str {
         match self {
-            Self::Block => "A block ref offered in this message.",
-            Self::WalkTarget => "A block ref offered in this message outside your own spot.",
+            Self::Block => "A block ref offered in this message that is in sight and within reach.",
+            Self::WalkTarget => {
+                "A block ref offered in this message that you can stand at, outside your own spot."
+            }
             Self::Creature => "A living-thing ref offered in this message.",
-            Self::DroppedItem => "A dropped-item ref offered in this message.",
+            Self::StrikeTarget => {
+                "A living-thing ref offered in this message within striking reach."
+            }
+            Self::PursuitTarget => {
+                "A living-thing ref offered in this message within pursuit reach."
+            }
+            Self::PickupItem => "A dropped-item ref offered in this message within pickup reach.",
+            Self::RouteItem => "A dropped-item ref offered in this message within walking reach.",
             Self::Stack => "An inventory-stack ref offered in this message.",
             Self::Recipe => "A recipe ref offered in this message.",
         }
@@ -510,7 +528,10 @@ impl Namespace {
             Self::Block => &offered.blocks,
             Self::WalkTarget => &offered.walk_targets,
             Self::Creature => &offered.creatures,
-            Self::DroppedItem => &offered.dropped_items,
+            Self::StrikeTarget => &offered.strike_targets,
+            Self::PursuitTarget => &offered.pursuit_targets,
+            Self::PickupItem => &offered.pickup_items,
+            Self::RouteItem => &offered.route_items,
             Self::Stack => &offered.stacks,
             Self::Recipe => &offered.recipes,
         }
@@ -557,6 +578,100 @@ fn namespace_defs(offered: &OfferedRefs) -> Value {
 #[allow(clippy::unnecessary_wraps)]
 fn plain(schema: Value) -> Option<Value> {
     Some(schema)
+}
+
+/// An `approach` field: either boolean in the reference shape, or the one value a request's
+/// variant is for, since what an action may reach depends on whether it may move.
+#[allow(clippy::unnecessary_wraps)]
+fn approach_field(description: &str, only: Option<bool>) -> Option<Value> {
+    Some(match only {
+        None => json!({ "type": "boolean", "description": description }),
+        Some(value) => json!({ "type": "boolean", "enum": [value], "description": description }),
+    })
+}
+
+/// The approach modes a schema offers: one boolean field in the reference shape, or one closed
+/// variant per mode in a request, each naming only what that mode can reach.
+fn modes(offered: Option<&OfferedRefs>) -> Vec<Option<bool>> {
+    if offered.is_some() {
+        vec![Some(false), Some(true)]
+    } else {
+        vec![None]
+    }
+}
+
+const COLLECT_APPROACH: &str = "Whether to permit one bounded walk toward that item. False permits no movement, and only an item already within pickup reach can then be collected.";
+const ATTACK_APPROACH: &str = "Whether to permit one bounded approach to the target's sensed position. False permits no movement, and only a target already within striking reach can then be hit.";
+
+fn collect_variants(offered: Option<&OfferedRefs>) -> Vec<Option<Value>> {
+    modes(offered)
+        .into_iter()
+        .map(|mode| {
+            let items = if mode == Some(true) {
+                Namespace::RouteItem
+            } else {
+                Namespace::PickupItem
+            };
+            intent_variant(
+                "collect",
+                vec![
+                    (
+                        "item",
+                        ref_field(
+                            "The ref of the exact dropped-item entity to collect.",
+                            items,
+                            offered,
+                        ),
+                    ),
+                    ("approach", approach_field(COLLECT_APPROACH, mode)),
+                ],
+            )
+        })
+        .collect()
+}
+
+fn attack_variants(offered: Option<&OfferedRefs>) -> Vec<Option<Value>> {
+    modes(offered)
+        .into_iter()
+        .map(|mode| {
+            let targets = if mode == Some(true) {
+                Namespace::PursuitTarget
+            } else {
+                Namespace::StrikeTarget
+            };
+            intent_variant(
+                "attack",
+                vec![
+                    (
+                        "target",
+                        ref_field(
+                            "The ref of the exact offered living target.",
+                            targets,
+                            offered,
+                        ),
+                    ),
+                    (
+                        "weapon",
+                        ref_field(
+                            "The ref of the exact offered inventory stack to use as the weapon.",
+                            Namespace::Stack,
+                            offered,
+                        ),
+                    ),
+                    (
+                        "attacks",
+                        plain(json!({
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 4,
+                            "description": "The maximum number of bounded attack swings."
+                        })),
+                    ),
+                    ("approach", approach_field(ATTACK_APPROACH, mode)),
+                ],
+            )
+        })
+        .collect()
 }
 
 /// One goal disposition, as a closed object carrying exactly the fields it requires.
@@ -637,10 +752,9 @@ fn build_decision_schema(offered: Option<&OfferedRefs>) -> Value {
     let blocks = |description: &str| ref_field(description, Namespace::Block, offered);
     let walk_targets = |description: &str| ref_field(description, Namespace::WalkTarget, offered);
     let creatures = |description: &str| ref_field(description, Namespace::Creature, offered);
-    let dropped_items = |description: &str| ref_field(description, Namespace::DroppedItem, offered);
     let stacks = |description: &str| ref_field(description, Namespace::Stack, offered);
     let recipes = |description: &str| ref_field(description, Namespace::Recipe, offered);
-    let variants: Vec<Value> = [
+    let mut variants: Vec<Option<Value>> = vec![
         intent_variant("say", vec![("text", plain(json!({
             "type": "string",
             "description": "One line of player chat heard by agents nearby: at most 128 characters and 256 UTF-8 bytes, words separated by single spaces, no leading or trailing space, no leading '/', and no control, formatting or bidirectional characters. Text outside these bounds is refused and never sent."
@@ -649,13 +763,9 @@ fn build_decision_schema(offered: Option<&OfferedRefs>) -> Value {
         intent_variant("flee", vec![("from", creatures("The ref of the one living thing to move away from. A creature ref given in this message, never a name, a type, or an invented one."))]),
         intent_variant("eat", vec![("ref", stacks("The ref of the one stack in your own inventory to eat one item from. A stack ref given in this message, never an item name or an invented one."))]),
         intent_variant("dig", vec![("block", blocks("The ref of the exact nearby block to dig once. A block ref from this message, never coordinates or an item name."))]),
-        intent_variant("collect", vec![
-            ("item", dropped_items("The ref of the exact dropped-item entity to collect.")),
-            ("approach", plain(json!({
-                "type": "boolean",
-                "description": "Whether to permit one bounded walk toward that item. False permits no movement."
-            }))),
-        ]),
+    ];
+    variants.extend(collect_variants(offered));
+    variants.extend([
         intent_variant("place", vec![
             ("block", blocks("The ref of the exact sensed support block.")),
             ("item", stacks("The ref of the offered inventory stack already held in the main hand.")),
@@ -682,27 +792,20 @@ fn build_decision_schema(offered: Option<&OfferedRefs>) -> Value {
                 "description": "How many bounded applications of that offered recipe to request."
             }))),
         ]),
-        intent_variant("attack", vec![
-            ("target", creatures("The ref of the exact offered living target.")),
-            ("weapon", stacks("The ref of the exact offered inventory stack to use as the weapon.")),
-            ("attacks", plain(json!({
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 4,
-                "description": "The maximum number of bounded attack swings."
-            }))),
-            ("approach", plain(json!({
-                "type": "boolean",
-                "description": "Whether to permit one bounded approach to the target's sensed position."
-            }))),
-        ]),
-        intent_variant("sleep", vec![("bed", blocks("The ref of the exact offered bed to use once."))]),
+    ]);
+    variants.extend(attack_variants(offered));
+    variants.extend([
+        intent_variant(
+            "sleep",
+            vec![(
+                "bed",
+                blocks("The ref of the exact offered bed to use once."),
+            )],
+        ),
         intent_variant("rest", vec![]),
         intent_variant("idle", vec![]),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    ]);
+    let variants: Vec<Value> = variants.into_iter().flatten().collect();
     let mut schema = json!({
         "type": "object",
         "properties": {

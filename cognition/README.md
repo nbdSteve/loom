@@ -92,15 +92,16 @@ strict response schema. It is both a memory bound and the conservative input
 token ceiling used by the research harness when it proves that the configured
 call budget cannot cross the spend ceiling.
 
-The canonical 48-entity, 48-block, 48-item fixture is 20,166 bytes on the cognition
-socket. With `routine-v18`, it renders to 22,283 bytes of prompt text and a 30,123-byte
+The canonical 48-entity, 48-block, 48-item fixture is 20,982 bytes on the cognition
+socket, 816 of them each block's `standable`. With `routine-v19`, it renders to 22,736 bytes of prompt text and a 31,324-byte
 serialized provider request; the strict response schema's goal choice is most of the
 growth since `routine-v12` (23,931 bytes), and v17's working-goal fields (success condition,
 step, step verdict) are most of the 3,566 bytes added to v13's 26,500. v18's per-request
 schema adds each offered namespace once as an enum and drops every action with nothing to
-name, which on this fixture almost exactly offsets the 144 enum values. The same envelope at
+name, which on this fixture almost exactly offsets the 144 enum values; v19 splits collect and
+attack into one closed variant per approach mode, each naming only what that mode can reach. The same envelope at
 a goal review carrying the widest legal goal (160-character statement, success condition and
-step, 64-character ids, a 32-character step action) renders a 31,015-byte request, 34,521
+step, 64-character ids, a 32-character step action) renders a 32,216-byte request, 33,320
 bytes inside the 65,536-byte quarter of the
 256 KiB ceiling that `openai::wire` tests pin. At `routine-v12`, local `o200k_base`
 tokenization measured 4,842 tokens for the system and situation text and 5,895 for the

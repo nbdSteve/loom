@@ -79,7 +79,6 @@ fn enum_values(schema: &Value, count: &mut usize, characters: &mut usize) {
 fn a_ref_of_the_wrong_namespace_is_refused_by_the_schema_itself() {
     let schema = decision_schema_for(&OfferedRefs::of(&fixture("perception-threat-sighted")));
     assert!(accepts(&schema, &json!({ "action": "flee", "from": "e1" })));
-    assert!(accepts(&schema, &json!({ "action": "dig", "block": "b1" })));
     assert!(accepts(
         &schema,
         &json!({ "action": "moveTo", "onto": "b1" })
@@ -90,6 +89,8 @@ fn a_ref_of_the_wrong_namespace_is_refused_by_the_schema_itself() {
         json!({ "action": "moveTo", "onto": "e2" }),
         json!({ "action": "sleep", "bed": "e1" }),
         json!({ "action": "dig", "block": "b2" }),
+        // The oak log is nine blocks off: a walk target, but past reach to dig.
+        json!({ "action": "dig", "block": "b1" }),
     ] {
         assert!(!accepts(&schema, &wrong), "{wrong}");
     }
@@ -147,11 +148,14 @@ fn every_offered_ref_is_one_enum_once_whichever_actions_spend_it() {
         offered.blocks.len()
             + offered.walk_targets.len()
             + offered.creatures.len()
-            + offered.dropped_items.len()
+            + offered.strike_targets.len()
+            + offered.pursuit_targets.len()
+            + offered.pickup_items.len()
+            + offered.route_items.len()
     );
     for variant in schema["properties"]["intent"]["anyOf"].as_array().unwrap() {
         for (name, field) in variant["properties"].as_object().unwrap() {
-            if ["action", "face", "destination"].contains(&name.as_str()) {
+            if ["action", "face", "destination", "approach"].contains(&name.as_str()) {
                 continue;
             }
             assert!(
@@ -176,6 +180,7 @@ fn the_widest_request_schema_stays_inside_the_providers_enum_limits() {
         visible: true,
         target_ref: String::new(),
         count: None,
+        standable: Some(true),
     };
     seen.surroundings = (0..MAX_PERCEPTION_OBSERVATIONS)
         .map(|index| Observation {
@@ -205,4 +210,33 @@ fn the_widest_request_schema_stays_inside_the_providers_enum_limits() {
     // single enum of more than 250 values at most 7,500 characters.
     assert!(count <= 500, "{count} enum values");
     assert!(characters <= 7_500, "{characters} enum characters");
+}
+
+#[test]
+fn a_collect_or_attack_names_only_what_its_own_mode_can_reach() {
+    let mut seen = fixture("perception-max-observations");
+    // r10: a stick 18 blocks off was asked for without moving, past the 2-block pickup reach.
+    let stick = seen
+        .surroundings
+        .iter()
+        .position(|observed| observed.kind == ObservationKind::DroppedItem)
+        .unwrap();
+    seen.surroundings[stick].distance = 18.17;
+    let far = seen.surroundings[stick].target_ref.clone();
+    let near = seen
+        .surroundings
+        .iter()
+        .find(|observed| observed.kind == ObservationKind::DroppedItem && observed.distance <= 2.0);
+    let schema = decision_schema_for(&OfferedRefs::of(&seen));
+    let collect = |item: &str, approach: bool| json!({ "action": "collect", "item": item, "approach": approach });
+    assert!(!accepts(&schema, &collect(&far, false)));
+    assert!(accepts(&schema, &collect(&far, true)));
+    if let Some(near) = near {
+        assert!(accepts(&schema, &collect(&near.target_ref, false)));
+    }
+    let collects = actions(&schema)
+        .iter()
+        .filter(|action| *action == "collect")
+        .count();
+    assert_eq!(collects, 2, "one closed variant per approach mode");
 }

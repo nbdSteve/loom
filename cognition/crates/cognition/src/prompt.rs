@@ -36,13 +36,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v18";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v19";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v18";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v19";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v18";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v19";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -147,6 +147,12 @@ dropped-item ref for collect; a stack ref for eat, equip, the item of place and 
 weapon of attack; and a recipe ref for craft. Your answer can name only the refs \
 this message offers to that action, and an action with nothing to name is not \
 offered.
+- Each action is offered only what your body can reach with it. You dig, place \
+against or sleep in a block only when it is in sight and close enough to touch; you \
+walk only to a block you can stand at; you collect without moving only an item \
+right beside you, and with a walk one further off; you strike without moving only \
+a target within arm's reach, and with an approach one a few blocks off. A block \
+described as covered has no room to stand on it.
 - Being in sight means only that nothing solid stands in the straight line \
 between you and it. It is not a field of view and it has nothing to do with which \
 way your body happens to be facing: everything in your surroundings list is \
@@ -594,7 +600,7 @@ fn own_column_phrase(vertical_offset: f64) -> String {
 /// about the rest as their absence, which is the opposite of what the body meant.
 fn observation_phrase(seen: &Observation) -> String {
     format!(
-        "{count}{kind} {what} (ref {handle}) {place}, {sight}",
+        "{count}{kind} {what} (ref {handle}) {place}, {sight}{cover}",
         count = seen
             .count
             .map_or_else(String::new, |count| format!("{count} ")),
@@ -606,6 +612,12 @@ fn observation_phrase(seen: &Observation) -> String {
             "in sight"
         } else {
             "out of sight behind something"
+        },
+        // The server's word on a block's top: a face in sight can still be covered.
+        cover = if seen.standable == Some(false) {
+            ", covered with no room to stand on it"
+        } else {
+            ""
         }
     )
 }
@@ -754,6 +766,7 @@ mod tests {
                 visible: true,
                 target_ref: "e1".to_owned(),
                 count: None,
+                standable: None,
             }],
             surroundings_omitted: 0,
             goal: None,
@@ -781,6 +794,7 @@ mod tests {
                 visible: true,
                 target_ref: "b0".to_owned(),
                 count: None,
+                standable: Some(true),
             },
             Observation {
                 kind: ObservationKind::Block,
@@ -791,6 +805,7 @@ mod tests {
                 visible: true,
                 target_ref: "b1".to_owned(),
                 count: None,
+                standable: Some(true),
             },
         ];
         seen.surroundings_omitted = 117;
@@ -908,6 +923,23 @@ mod tests {
             ),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn a_covered_block_says_it_has_no_room_to_stand_on_it() {
+        let mut seen: Perception = serde_json::from_str(include_str!(
+            "../../../../contract/fixtures/valid/perception-standing-on.json"
+        ))
+        .unwrap();
+        seen.surroundings[2].standable = Some(false);
+        let rendered = situation(&seen);
+        assert_eq!(
+            rendered
+                .matches("covered with no room to stand on it")
+                .count(),
+            1
+        );
+        assert!(rendered.contains("(ref b3)"));
     }
 
     #[test]
@@ -1583,6 +1615,7 @@ mod tests {
                 visible: true,
                 target_ref: format!("e{i}"),
                 count: None,
+                standable: None,
             })
             .collect();
         seen.surroundings_omitted = 7;
@@ -1615,6 +1648,7 @@ mod tests {
                 visible: true,
                 target_ref: format!("e{i}"),
                 count: None,
+                standable: None,
             })
             .collect();
         seen.surroundings_omitted = -1_000;
@@ -1697,6 +1731,7 @@ mod tests {
                 visible: true,
                 target_ref: format!("e{i}"),
                 count: None,
+                standable: None,
             })
             .collect();
         let prompt = render(&router().route(seen.importance), &seen);

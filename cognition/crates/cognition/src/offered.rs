@@ -1,4 +1,4 @@
-//! The refs one perception offers, by the namespace each action may name.
+//! The refs one perception offers, by what each action can actually do with them.
 //!
 //! A ref is a request-scoped handle, and the body keeps one store per kind of thing it
 //! names: creatures, blocks, dropped items, inventory stacks and recipes. An action can
@@ -10,25 +10,61 @@
 //! The set is exactly what the prompt shows, cut by the same bounds as
 //! [`crate::prompt`], because a handle the mind was never shown is not one it was offered.
 //!
-//! A walk is narrower than a dig. A block in the agent's own column - the one under its
-//! feet, or a plant it stands in - is a block it can dig or place against, and a walk to
-//! it goes nowhere, so it is not offered to `moveTo` at all.
+//! A handle of the right kind is still one the body must refuse when the action cannot reach
+//! it, so each action is offered only what its own body bound admits, measured the way the body
+//! measures it:
+//! - a block is dug, placed against or slept in only when it is in sight and its centre is
+//!   within the body's interaction reach of the eyes;
+//! - a walk ends only at a block the server says a body can stand at, and never at one in the
+//!   agent's own column - the block under its feet or a plant it stands in - which goes nowhere;
+//! - a dropped item is collected without moving only within passive pickup reach, and with an
+//!   approach only within movement reach;
+//! - a creature is struck without moving only within attack reach, and with an approach only
+//!   within the pursuit bound the JVM sends.
+//!
+//! r10 asked to collect a stick 18 blocks away without moving, and to walk onto a terracotta
+//! whose top was covered; both were refused by the body, correctly, and neither should have been
+//! offered. `tests/offered_reach_parity.rs` reads every bound below from the body and JVM source.
 
-use loom_contract::{Bearing, Intent, ObservationKind, Perception, Trigger};
+use loom_contract::{Bearing, Intent, Observation, ObservationKind, Perception, Trigger};
 
 use crate::prompt::{MAX_CRAFTING_LINES, MAX_INVENTORY_LINES, MAX_OBSERVATIONS};
+
+/// `INTERACTION_REACH_BLOCKS` in `body/src/sensing.js`: eyes to a block's centre.
+pub const INTERACTION_REACH_BLOCKS: f64 = 5.1;
+
+/// Mineflayer's player eye height, from which interaction reach is measured.
+pub const EYE_HEIGHT_BLOCKS: f64 = 1.62;
+
+/// `PASSIVE_PICKUP_REACH_BLOCKS` in `body/src/collecting.js`.
+pub const PASSIVE_PICKUP_REACH_BLOCKS: f64 = 2.0;
+
+/// `MOVE_REACH_BLOCKS` in `body/src/movement.js`: how far an approach may route.
+pub const MOVE_REACH_BLOCKS: f64 = 32.0;
+
+/// `ATTACK_REACH_BLOCKS` in `body/src/combat.js`.
+pub const ATTACK_REACH_BLOCKS: f64 = 3.1;
+
+/// `COMBAT_MAX_PURSUIT_DISTANCE` in `PlayerSurvivalPreparer.kt`.
+pub const MAX_PURSUIT_BLOCKS: f64 = 7.5;
 
 /// The handles one perception offers, each list in the order the prompt shows it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OfferedRefs {
-    /// Every shown block: what `dig` and `place` may name.
+    /// Visible blocks within interaction reach: what `dig`, `place` and `sleep` may name.
     pub blocks: Vec<String>,
-    /// Shown blocks outside the agent's own column: what `moveTo` may name.
+    /// Standable blocks outside the agent's own column: what `moveTo` may name.
     pub walk_targets: Vec<String>,
-    /// Shown living things, and a sighted threat: what `flee` and `attack` may name.
+    /// Shown living things, and a sighted threat: what `flee` may name.
     pub creatures: Vec<String>,
-    /// Shown dropped-item entities: what `collect` may name.
-    pub dropped_items: Vec<String>,
+    /// Creatures within attack reach: what an `attack` without approach may name.
+    pub strike_targets: Vec<String>,
+    /// Creatures within the pursuit bound: what an approaching `attack` may name.
+    pub pursuit_targets: Vec<String>,
+    /// Dropped items within passive pickup reach: what a `collect` without approach may name.
+    pub pickup_items: Vec<String>,
+    /// Dropped items within movement reach: what an approaching `collect` may name.
+    pub route_items: Vec<String>,
     /// Shown inventory stacks: what `eat`, `equip`, `place` and an attack's weapon may name.
     pub stacks: Vec<String>,
     /// Shown craftable recipes: what `craft` may name.
@@ -42,6 +78,12 @@ fn offer(list: &mut Vec<String>, handle: &str) {
     }
 }
 
+/// The distance from the agent's eyes to the observed point, from its feet-relative reading.
+fn from_eyes(seen: &Observation) -> f64 {
+    let horizontal = (seen.distance.powi(2) - seen.vertical_offset.powi(2)).max(0.0);
+    (horizontal + (seen.vertical_offset - EYE_HEIGHT_BLOCKS).powi(2)).sqrt()
+}
+
 impl OfferedRefs {
     /// The handles `perception` offers.
     #[must_use]
@@ -51,18 +93,32 @@ impl OfferedRefs {
             let handle = seen.target_ref.as_str();
             match seen.kind {
                 ObservationKind::Block => {
-                    offer(&mut offered.blocks, handle);
-                    if seen.direction != Bearing::Here {
+                    if seen.visible && from_eyes(seen) <= INTERACTION_REACH_BLOCKS {
+                        offer(&mut offered.blocks, handle);
+                    }
+                    if seen.direction != Bearing::Here && seen.standable == Some(true) {
                         offer(&mut offered.walk_targets, handle);
                     }
                 }
-                ObservationKind::Entity => offer(&mut offered.creatures, handle),
-                ObservationKind::DroppedItem => offer(&mut offered.dropped_items, handle),
+                ObservationKind::Entity => offered.creature(handle, seen.distance),
+                ObservationKind::DroppedItem => {
+                    if seen.distance <= PASSIVE_PICKUP_REACH_BLOCKS {
+                        offer(&mut offered.pickup_items, handle);
+                    }
+                    if seen.distance <= MOVE_REACH_BLOCKS {
+                        offer(&mut offered.route_items, handle);
+                    }
+                }
             }
         }
         // The sighted threat's handle travels with the trigger and names a creature.
-        if let Trigger::ThreatSighted { entity_ref, .. } = &perception.trigger {
-            offer(&mut offered.creatures, entity_ref);
+        if let Trigger::ThreatSighted {
+            entity_ref,
+            distance,
+            ..
+        } = &perception.trigger
+        {
+            offered.creature(entity_ref, *distance);
         }
         let state = &perception.self_state;
         for stack in state.inventory_summary.iter().take(MAX_INVENTORY_LINES) {
@@ -74,7 +130,18 @@ impl OfferedRefs {
         offered
     }
 
-    /// Whether every ref `intent` names is offered in the namespace its action spends.
+    /// Offers one creature to flight, and to each attack mode whose bound it is within.
+    fn creature(&mut self, handle: &str, distance: f64) {
+        offer(&mut self.creatures, handle);
+        if distance <= ATTACK_REACH_BLOCKS {
+            offer(&mut self.strike_targets, handle);
+        }
+        if distance <= MAX_PURSUIT_BLOCKS {
+            offer(&mut self.pursuit_targets, handle);
+        }
+    }
+
+    /// Whether every ref `intent` names is offered to that action in that mode.
     #[must_use]
     pub fn admits(&self, intent: &Intent) -> bool {
         let held = |list: &[String], handle: &str| list.iter().any(|offered| offered == handle);
@@ -83,14 +150,31 @@ impl OfferedRefs {
             Intent::Flee { from } => held(&self.creatures, from),
             Intent::Eat { slot_ref } => held(&self.stacks, slot_ref),
             Intent::Dig { block } => held(&self.blocks, block),
-            Intent::Collect { item, .. } => held(&self.dropped_items, item),
+            Intent::Collect { item, approach } => held(
+                if *approach {
+                    &self.route_items
+                } else {
+                    &self.pickup_items
+                },
+                item,
+            ),
             Intent::Place { block, item, .. } => {
                 held(&self.blocks, block) && held(&self.stacks, item)
             }
             Intent::Equip { item, .. } => held(&self.stacks, item),
             Intent::Craft { recipe, .. } => held(&self.recipes, recipe),
-            Intent::Attack { target, weapon, .. } => {
-                held(&self.creatures, target) && held(&self.stacks, weapon)
+            Intent::Attack {
+                target,
+                weapon,
+                approach,
+                ..
+            } => {
+                let targets = if *approach {
+                    &self.pursuit_targets
+                } else {
+                    &self.strike_targets
+                };
+                held(targets, target) && held(&self.stacks, weapon)
             }
             Intent::Sleep { bed } => held(&self.blocks, bed),
             Intent::Say { .. } | Intent::Rest | Intent::Idle => true,
@@ -102,10 +186,14 @@ impl OfferedRefs {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::OfferedRefs;
+    use super::{
+        OfferedRefs, ATTACK_REACH_BLOCKS, INTERACTION_REACH_BLOCKS, MAX_PURSUIT_BLOCKS,
+        PASSIVE_PICKUP_REACH_BLOCKS,
+    };
     use crate::prompt::{MAX_CRAFTING_LINES, MAX_INVENTORY_LINES};
     use loom_contract::{
-        BlockFace, CraftingOption, EquipmentDestination, Intent, InventoryStack, Perception,
+        Bearing, BlockFace, CraftingOption, EquipmentDestination, Intent, InventoryStack,
+        Observation, ObservationKind, Perception,
     };
 
     fn fixture(name: &str) -> Perception {
@@ -120,13 +208,50 @@ mod tests {
         list.iter().map(|&handle| handle.to_owned()).collect()
     }
 
+    fn seen(kind: ObservationKind, handle: &str, distance: f64, vertical: f64) -> Observation {
+        Observation {
+            kind,
+            what: "something".to_owned(),
+            distance,
+            direction: Bearing::North,
+            vertical_offset: vertical,
+            visible: true,
+            target_ref: handle.to_owned(),
+            count: (kind == ObservationKind::DroppedItem).then_some(1),
+            standable: (kind == ObservationKind::Block).then_some(true),
+        }
+    }
+
+    /// The threat fixture, with `surroundings` and one stack and one recipe to spend.
+    fn scene(surroundings: Vec<Observation>) -> Perception {
+        let mut perception = fixture("perception-threat-sighted");
+        perception.surroundings = surroundings;
+        perception
+            .self_state
+            .inventory_summary
+            .push(InventoryStack {
+                slot_ref: "i1".to_owned(),
+                what: "item.minecraft.stone_sword".to_owned(),
+                count: 1,
+            });
+        perception.self_state.crafting_options.push(CraftingOption {
+            recipe_ref: "r1".to_owned(),
+            what: "item.minecraft.stick".to_owned(),
+            result_count: 4,
+            max_crafts: 1,
+            requires_table: false,
+        });
+        perception
+    }
+
     #[test]
     fn each_kind_of_thing_is_offered_only_to_its_own_namespace() {
         let offered = OfferedRefs::of(&fixture("perception-threat-sighted"));
         assert_eq!(offered.creatures, handles(&["e1", "e2"]));
-        assert_eq!(offered.blocks, handles(&["b1"]));
+        // The oak log is nine blocks off: a walk target, but out of reach to dig.
+        assert!(offered.blocks.is_empty());
         assert_eq!(offered.walk_targets, handles(&["b1"]));
-        assert!(offered.dropped_items.is_empty());
+        assert!(offered.route_items.is_empty() && offered.pickup_items.is_empty());
         assert!(offered.stacks.is_empty());
         assert!(offered.recipes.is_empty());
 
@@ -148,8 +273,67 @@ mod tests {
                 onto: here.to_owned()
             }));
         }
-        assert!(offered.admits(&Intent::MoveTo {
-            onto: "b3".to_owned()
+    }
+
+    #[test]
+    fn a_covered_block_is_no_walk_target_and_an_unseen_or_distant_one_is_not_dug() {
+        let mut covered = seen(ObservationKind::Block, "covered", 2.06, -1.5);
+        covered.standable = Some(false);
+        let mut hidden = seen(ObservationKind::Block, "hidden", 2.0, 0.0);
+        hidden.visible = false;
+        // Five blocks off on the level is 5.25 from the eyes, past the 5.1 reach.
+        let far = seen(ObservationKind::Block, "far", 5.0, 0.0);
+        let near = seen(ObservationKind::Block, "near", 4.9, 0.5);
+        let offered = OfferedRefs::of(&scene(vec![covered, hidden, far, near]));
+        // r10's covered terracotta can still be dug, but a walk onto it ends nowhere.
+        assert_eq!(offered.blocks, handles(&["covered", "near"]));
+        assert_eq!(offered.walk_targets, handles(&["hidden", "far", "near"]));
+        assert!(INTERACTION_REACH_BLOCKS < (5.0_f64.powi(2) + 1.62_f64.powi(2)).sqrt());
+    }
+
+    #[test]
+    fn an_item_or_creature_is_offered_to_each_mode_whose_reach_it_is_within() {
+        let offered = OfferedRefs::of(&scene(vec![
+            seen(
+                ObservationKind::DroppedItem,
+                "close",
+                PASSIVE_PICKUP_REACH_BLOCKS,
+                -0.5,
+            ),
+            // r10's stick, 18 blocks off: collected only by walking to it.
+            seen(ObservationKind::DroppedItem, "stick", 18.17, -2.0),
+            seen(ObservationKind::Entity, "beside", ATTACK_REACH_BLOCKS, 0.0),
+            seen(ObservationKind::Entity, "chase", MAX_PURSUIT_BLOCKS, 0.0),
+            seen(ObservationKind::Entity, "afar", 12.0, 0.0),
+        ]));
+        assert_eq!(offered.pickup_items, handles(&["close"]));
+        assert_eq!(offered.route_items, handles(&["close", "stick"]));
+        let collect = |item: &str, approach| Intent::Collect {
+            item: item.to_owned(),
+            approach,
+        };
+        assert!(!offered.admits(&collect("stick", false)));
+        assert!(offered.admits(&collect("stick", true)));
+        assert!(offered.admits(&collect("close", false)));
+        assert_eq!(offered.strike_targets, handles(&["beside"]));
+        // The fixture's own sighted threat travels with the trigger, 6 blocks off.
+        assert_eq!(offered.pursuit_targets, handles(&["beside", "chase", "e1"]));
+        assert_eq!(
+            offered.creatures,
+            handles(&["beside", "chase", "afar", "e1"])
+        );
+        let attack = |target: &str, approach| Intent::Attack {
+            target: target.to_owned(),
+            weapon: "i1".to_owned(),
+            attacks: 1,
+            approach,
+        };
+        assert!(offered.admits(&attack("beside", false)));
+        assert!(!offered.admits(&attack("chase", false)));
+        assert!(offered.admits(&attack("chase", true)));
+        assert!(!offered.admits(&attack("afar", true)));
+        assert!(offered.admits(&Intent::Flee {
+            from: "afar".to_owned()
         }));
     }
 
@@ -166,26 +350,21 @@ mod tests {
 
     #[test]
     fn a_handle_of_the_wrong_kind_or_never_offered_is_refused_for_every_action() {
-        let mut seen = fixture("perception-threat-sighted");
-        seen.self_state.inventory_summary.push(InventoryStack {
-            slot_ref: "i1".to_owned(),
-            what: "item.minecraft.bread".to_owned(),
-            count: 1,
-        });
-        seen.self_state.crafting_options.push(CraftingOption {
-            recipe_ref: "r1".to_owned(),
-            what: "item.minecraft.stick".to_owned(),
-            result_count: 4,
-            max_crafts: 1,
-            requires_table: false,
-        });
-        let offered = OfferedRefs::of(&seen);
+        let offered = OfferedRefs::of(&scene(vec![
+            seen(ObservationKind::Block, "b1", 2.0, -0.5),
+            seen(ObservationKind::Entity, "e1", 2.0, 0.0),
+            seen(ObservationKind::DroppedItem, "d1", 1.0, -0.5),
+        ]));
         let s = |handle: &str| handle.to_owned();
         let admitted = [
             Intent::MoveTo { onto: s("b1") },
             Intent::Flee { from: s("e1") },
             Intent::Eat { slot_ref: s("i1") },
             Intent::Dig { block: s("b1") },
+            Intent::Collect {
+                item: s("d1"),
+                approach: false,
+            },
             Intent::Place {
                 block: s("b1"),
                 item: s("i1"),
@@ -217,7 +396,7 @@ mod tests {
             Intent::MoveTo { onto: s("e1") },
             Intent::Flee { from: s("b1") },
             Intent::Eat { slot_ref: s("r1") },
-            Intent::Dig { block: s("e2") },
+            Intent::Dig { block: s("e1") },
             Intent::Collect {
                 item: s("b1"),
                 approach: true,
@@ -248,7 +427,7 @@ mod tests {
             },
             Intent::Attack {
                 target: s("e1"),
-                weapon: s("e2"),
+                weapon: s("d1"),
                 attacks: 1,
                 approach: false,
             },

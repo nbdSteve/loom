@@ -511,6 +511,11 @@ pub struct Observation {
     /// [`ObservationKind::DroppedItem`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<i64>,
+    /// Whether a body can stand at this block, as the server's ground says. Present
+    /// exactly for [`ObservationKind::Block`]: a block whose face is in sight can still be
+    /// covered, and a walk to a covered block has nowhere to end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standable: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -526,6 +531,8 @@ struct ObservationWire {
     target_ref: String,
     #[serde(default)]
     count: Option<i64>,
+    #[serde(default)]
+    standable: Option<bool>,
 }
 
 impl<'de> Deserialize<'de> for Observation {
@@ -537,6 +544,11 @@ impl<'de> Deserialize<'de> for Observation {
         if raw.count.is_some() != (raw.kind == ObservationKind::DroppedItem) {
             return Err(de::Error::custom(
                 "count is present exactly for a dropped-item observation",
+            ));
+        }
+        if raw.standable.is_some() != (raw.kind == ObservationKind::Block) {
+            return Err(de::Error::custom(
+                "standable is present exactly for a block observation",
             ));
         }
         if raw.count.is_some_and(|count| count < 1) {
@@ -553,6 +565,7 @@ impl<'de> Deserialize<'de> for Observation {
             visible: raw.visible,
             target_ref: raw.target_ref,
             count: raw.count,
+            standable: raw.standable,
         })
     }
 }

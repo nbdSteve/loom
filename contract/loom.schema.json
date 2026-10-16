@@ -209,6 +209,15 @@
           },
           "then": { "required": ["count"] },
           "else": { "not": { "required": ["count"] } }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "block" }
+            }
+          },
+          "then": { "required": ["standable"] },
+          "else": { "not": { "required": ["standable"] } }
         }
       ],
       "properties": {
@@ -238,6 +247,10 @@
           "description": "How many items the dropped-item entity currently represents. Present only when kind is droppedItem; absent for entities and blocks. The bindings enforce that relation.",
           "type": "integer",
           "minimum": 1
+        },
+        "standable": {
+          "description": "Whether a body can stand at this block: on top of a solid block with two open cells above it, or in the own cell of a block the server gives no collision, with solid ground below and an open cell above. Read from the server's ground rather than from sight, because a block whose face is visible can still be covered. Present only when kind is block; absent for entities and dropped items. The bindings enforce that relation.",
+          "type": "boolean"
         }
       }
     },

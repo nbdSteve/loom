@@ -20,12 +20,17 @@ const ROUTINE_V17_WORKING_GOAL_MODE = 'routine-v17-working-goal'
 // action's own namespace, by a per-request strict schema rather than prose. A block in the
 // agent's own column is no walk target. A revise keeps the run of steps that changed nothing.
 const ROUTINE_V18_OFFERED_REFS_MODE = 'routine-v18-offered-refs'
+// v19 keeps v18 and offers each action only what the body can reach with it - a block in sight
+// and within interaction reach, a walk only to a block the server says a body can stand at, an
+// item or creature only within the reach of the collect or attack mode that names it - because
+// r10's two refusals were a covered walk target and a collect without moving 18 blocks off.
+const ROUTINE_V19_ACTIONABLE_REFS_MODE = 'routine-v19-actionable-refs'
 // The two native-scheduler pilots share every condition except what each mode pins here.
 // Category fairness is a fact about the JVM selector a run used, so v12 stays false for
 // its committed evidence and v13, which runs on the 48-per-kind selector, attests true.
 // The prompt versions the mind serves today (`cognition/crates/cognition/src/prompt.rs`).
 // A configuration pinning any other version can only fail after it has run.
-const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v18', notable: 'notable-v18', pivotal: 'pivotal-v18' })
+const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v19', notable: 'notable-v19', pivotal: 'pivotal-v19' })
 // Modes kept only so artifacts committed under them still validate; no run may select one.
 const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V12_PRIMARY_BEHAVIOR_MODE]: Object.freeze({
@@ -48,11 +53,15 @@ const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V17_WORKING_GOAL_MODE]: Object.freeze({
     prompts: Object.freeze({ routine: 'routine-v17', notable: 'notable-v17', pivotal: 'pivotal-v17' }),
     categoryFairSelection: true
+  }),
+  [ROUTINE_V18_OFFERED_REFS_MODE]: Object.freeze({
+    prompts: Object.freeze({ routine: 'routine-v18', notable: 'notable-v18', pivotal: 'pivotal-v18' }),
+    categoryFairSelection: true
   })
 })
 const PRIMARY_BEHAVIOR_MODES = Object.freeze({
-  [ROUTINE_V18_OFFERED_REFS_MODE]: Object.freeze({
-    prompts: Object.freeze({ routine: 'routine-v18', notable: 'notable-v18', pivotal: 'pivotal-v18' }),
+  [ROUTINE_V19_ACTIONABLE_REFS_MODE]: Object.freeze({
+    prompts: Object.freeze({ routine: 'routine-v19', notable: 'notable-v19', pivotal: 'pivotal-v19' }),
     categoryFairSelection: true
   })
 })
@@ -157,6 +166,7 @@ module.exports = {
   ROUTINE_V15_GROUNDED_WALK_MODE,
   ROUTINE_V17_WORKING_GOAL_MODE,
   ROUTINE_V18_OFFERED_REFS_MODE,
+  ROUTINE_V19_ACTIONABLE_REFS_MODE,
   SERVED_PROMPTS,
   configuredMode,
   createInterventionSchedule,

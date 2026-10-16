@@ -6,12 +6,12 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v18 offered-refs pilot,
-`research/config/first-tribe-routine-v18-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v18-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v19 actionable-refs pilot,
+`research/config/first-tribe-routine-v19-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v19-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
-native event drivers. It uses the v18 prompts, which show each agent its own
+native event drivers. It uses the v19 prompts, which show each agent its own
 carried goal and let the model return an optional typed goal choice, and it
 attests `categoryFairSelection: true` because the 48-per-kind selector it runs on
 is category-fair. Since v14 a `moveTo` names an observed block by ref rather than
@@ -34,7 +34,12 @@ published, so its configurations were replaced rather than kept historical. v18 
 and holds every action's refs to the handles that perception offered in the action's own
 namespace by a per-request strict schema, never offers a block in the agent's own column
 as a walk target, and carries the no-progress count through a `revise`, because r9 had five
-wrong-kind refs, five walks that moved nothing, and goals reworded instead of advanced. `research/lib/experiment-mode.js` owns the pins. In the
+wrong-kind refs, five walks that moved nothing, and goals reworded instead of advanced.
+v19 keeps v18 and offers each action only what the body can reach with it: blocks in sight
+within interaction reach to dig, place or sleep, walks only to blocks the server says a body can
+stand at (a perception's block now states `standable`), and collect and attack refs within the
+reach of the approach mode that names them, because r10's two refusals were a covered walk
+target and a collect without moving 18 blocks off. `research/lib/experiment-mode.js` owns the pins. In the
 scripted twin the stand-in adopts one fixed placeholder goal at each agent's
 first review and continues it at the second; that exercises the goal round
 trip and is not evidence of agency.
@@ -59,8 +64,9 @@ configurations that ran `-r1` to `-r4` are `research/config/tribe-shakedown-10m-
 and are historical, as are the v14 `research/config/tribe-grounded-walk-10m-10*.json`
 that ran `-r5` and the v15 `research/config/tribe-grounded-walk-v15-10m-10*.json` that
 ran `-r6` and the v17 `research/config/tribe-working-goal-10m-10*.json` that ran `-r8` and
-`-r9`; `offered-refs-10m-10` is the same profile under the v18 mode, configured by
-`research/config/tribe-offered-refs-10m-10*.json`. The live one
+`-r9`, and the v18 `research/config/tribe-offered-refs-10m-10*.json` that ran `-r10`;
+`actionable-refs-10m-10` is the same profile under the v19 mode, configured by
+`research/config/tribe-actionable-refs-10m-10*.json`. The live one
 carries the next fresh `2026-10-16-openai-10-agent-10m-r<n>` id. Each id is consumed
 by its one attempt and its published artifact names the commit it ran from.
 Outside the pilot profile the mechanical pilot verdict is `notApplicable`.
@@ -73,7 +79,8 @@ primary-behavior mode), and the `first-tribe-routine-v13-agency-pilot*.json` and
 `tribe-shakedown-10m-10*.json` files (the routine-v13 goal-continuity mode), and the
 `tribe-grounded-walk-10m-10*.json` and `tribe-grounded-walk-v15-10m-10*.json` files (the
 routine-v14 and routine-v15 grounded-walk modes), and the `tribe-working-goal-10m-10*.json`
-files (the routine-v17 working-goal mode). They pin prompts the current mind no longer serves, so
+files (the routine-v17 working-goal mode), and the `tribe-offered-refs-10m-10*.json` files (the
+routine-v18 offered-refs mode). They pin prompts the current mind no longer serves, so
 preflight refuses them before anything is built, started or read; the artifacts
 committed under them still validate. `contract/fixtures/capability-support.json`
 is the one classification of which configurations, modes, intents, triggers and
@@ -92,7 +99,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v18-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v19-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -111,8 +118,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v18-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v18-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v19-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v19-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -424,7 +431,7 @@ An empty value or lookup failure stops before cognition starts. An HTTP 401 or
 403 from the provider stops the whole run after that refusal, with no retry and
 only a stable provider-safe error.
 
-The routine-v18 pilot routes routine and notable decisions to
+The routine-v19 pilot routes routine and notable decisions to
 `gpt-5.4-nano` and only the existing pivotal tier to `gpt-5.4`. It runs three
 agents for at most 180 wall-clock seconds or 4,000 server ticks, whichever
 comes first, and permits at most six calls per agent, twelve calls globally,

@@ -644,6 +644,7 @@ mod tests {
             visible: true,
             target_ref: handle.to_owned(),
             count: None,
+            standable: None,
         });
         seen
     }
@@ -970,6 +971,7 @@ mod tests {
                 visible: true,
                 target_ref: handle.to_owned(),
                 count: None,
+                standable: Some(true),
             });
         }
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);

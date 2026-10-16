@@ -217,11 +217,16 @@ internal class PlayerActionPreparer(
             ownColumn(block.position, sense) ->
                 rejectedAction("the block is in the agent's own spot, so a walk goes nowhere", EventTag.MOVE_OWN_SPOT)
             else -> {
-                val (x, y, z) = block.position
                 // A block with no collision is stood in, so its own cell is the place; any
-                // other is stood on, so the cell above it is. The server says which.
-                val standY = if (context.authority.ground.standsIn(block.position)) y else y + 1
-                val destination = listOf(x.toDouble(), standY.toDouble(), z.toDouble())
+                // other is stood on, so the cell above it is. The server says which, and says
+                // when a covered block leaves nowhere to stand at all.
+                val cell =
+                    context.authority.ground.standCell(block.position)
+                        ?: return rejectedAction(
+                            "no body can stand at that block; it is covered",
+                            EventTag.MOVE_NOT_STANDABLE,
+                        )
+                val destination = cell.map(Int::toDouble)
                 val operation: () -> ActionExecution = { move(runtime, destination, sense) }
                 operation
             }

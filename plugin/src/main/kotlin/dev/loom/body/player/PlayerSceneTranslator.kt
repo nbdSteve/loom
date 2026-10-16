@@ -187,6 +187,7 @@ internal class PlayerSceneTranslator(
                     what = blockDescriptionId(block.what),
                     position = block.position.map { it + BLOCK_CENTER_OFFSET },
                     visible = block.visible,
+                    standable = context.authority.ground.standCell(block.position) != null,
                 )
             }
         val items =
@@ -220,6 +221,7 @@ internal class PlayerSceneTranslator(
             visible = offer.visible,
             ref = ref,
             count = offer.count,
+            standable = offer.standable,
         )
     }
 

@@ -24,6 +24,7 @@ internal data class SceneOffer(
     val visible: Boolean,
     val subject: UUID? = null,
     val count: Long? = null,
+    val standable: Boolean? = null,
 ) {
     val key: Pair<ObservationKind, Int> = kind to sourceIndex
 }

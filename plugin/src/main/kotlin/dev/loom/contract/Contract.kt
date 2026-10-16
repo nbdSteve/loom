@@ -398,11 +398,21 @@ data class Observation(
      * count to report.
      */
     val count: Long? = null,
+    /**
+     * Whether a body can stand at this block, as the server's ground says.
+     *
+     * Present exactly for [ObservationKind.BLOCK]: a block whose face is in sight can still be
+     * covered, and a walk to a covered block has nowhere to end.
+     */
+    val standable: Boolean? = null,
 ) {
     init {
         requireBoundedRef(ref)
         require((count != null) == (kind == ObservationKind.DROPPED_ITEM)) {
             "count is present exactly for a dropped-item observation"
+        }
+        require((standable != null) == (kind == ObservationKind.BLOCK)) {
+            "standable is present exactly for a block observation"
         }
         count?.let { require(it >= 1) { "a dropped-item observation must hold at least one item" } }
     }

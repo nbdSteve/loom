@@ -283,3 +283,9 @@ test('the step simulation compares a face exactly, which vanilla does not, until
   // And the installed class is the one the physics plugin steps through.
   assert.equal(physicsAabb(), require(path.join(path.dirname(require.resolve('prismarine-physics')), 'lib', 'aabb')))
 })
+
+test('the pinned client puts a player eye at the height the mind measures interaction reach from', () => {
+  // `cognition/crates/cognition/src/offered.rs` EYE_HEIGHT_BLOCKS is 1.62.
+  const entities = readFileSync(path.join(path.dirname(require.resolve('mineflayer')), 'lib', 'plugins', 'entities.js'), 'utf8')
+  assert.match(entities, /const PLAYER_EYEHEIGHT = 1\.62\b/)
+})

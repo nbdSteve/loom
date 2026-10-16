@@ -244,6 +244,12 @@ object EventTag {
      */
     const val MOVE_OWN_SPOT: String = "moveOwnSpot"
 
+    /**
+     * A walk named a block no body can stand at - a solid block with a solid cell over it, or a
+     * plant with nothing under it - so the ground could only refuse it. Never offered to a walk.
+     */
+    const val MOVE_NOT_STANDABLE: String = "moveNotStandable"
+
     /** A walk whose destination lies beyond the body's movement reach. */
     const val MOVE_OUT_OF_RANGE: String = "moveOutOfRange"
 
@@ -586,6 +592,7 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.MOVE_SENSE_FORGOTTEN,
         EventTag.MOVE_BLOCK_UNNAMED,
         EventTag.MOVE_OWN_SPOT,
+        EventTag.MOVE_NOT_STANDABLE,
         EventTag.MOVE_OUT_OF_RANGE,
         EventTag.MOVE_NO_ROUTE,
         EventTag.MOVE_SEARCH_OVER_BUDGET,

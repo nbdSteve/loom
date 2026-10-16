@@ -39,7 +39,7 @@ const UNTYPED_CLASSES = Object.freeze(['unconfirmed', 'untypedTerminal', 'unexpl
 // matched by a rule below is an unexplained refusal.
 const INAPPLICABLE_TAGS = new Set([
   'eatNotFood', 'eatReserveFull', 'eatSlotInaccessible',
-  'moveOutOfRange', 'moveNoRoute', 'moveSearchOverBudget',
+  'moveNotStandable', 'moveOutOfRange', 'moveNoRoute', 'moveSearchOverBudget',
   'retreatOutOfRange', 'retreatNoRoute', 'retreatSearchOverBudget',
   'digOutOfReach', 'digNotVisible', 'digNotDiggable',
   'collectOutOfRange', 'collectNoRoute', 'collectSearchOverBudget', 'collectStalled', 'collectOverTravelled',

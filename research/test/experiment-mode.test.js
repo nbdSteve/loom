@@ -79,7 +79,7 @@ test('the primary behavior harness issues no loombody think command', () => {
     []
   )
   assert.deepEqual(primaryBehaviorStimulusRecord(config, 0), {
-    mode: 'routine-v18-offered-refs',
+    mode: 'routine-v19-actionable-refs',
     externalCognitionStimuli: 'none',
     harnessThinkCommandsIssued: 0,
     nativeSchedulersOnly: true,

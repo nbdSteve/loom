@@ -252,6 +252,23 @@ private class FakeBodySupervisor(
     }
 }
 
+/**
+ * The fake server's ground: open everywhere it was not told otherwise, so a sensed block is stood
+ * on top of unless it is listed as passable, and stood at nowhere if it is listed as buried.
+ */
+private class FakeGround(
+    private val server: FakePlayerServerState,
+) : BlockGround {
+    override fun standsIn(position: List<Int>): Boolean = position in server.passable
+
+    override fun standCell(position: List<Int>): List<Int>? =
+        when {
+            position in server.buried -> null
+            standsIn(position) -> position
+            else -> listOf(position[0], position[1] + 1, position[2])
+        }
+}
+
 private class FakePlayerServerState : PlayerServerState {
     @Volatile
     var connected = true
@@ -264,6 +281,9 @@ private class FakePlayerServerState : PlayerServerState {
     val interactionAudits = CopyOnWriteArrayList<Pair<PlayerIdentity, BodyRequest>>()
     var senseAuditVersion: Long = 0
     val passable = CopyOnWriteArrayList<List<Int>>()
+
+    /** Sensed blocks the fake server says no body can stand at. */
+    val buried = CopyOnWriteArrayList<List<Int>>()
 
     override fun connected(identity: PlayerIdentity): Boolean = connected
 
@@ -1848,7 +1868,7 @@ private fun buildPortHarness(
                     serverState = options.server,
                     eventLog = BodyEventLog(records::add),
                     currentTick = tick::get,
-                    ground = BlockGround { position -> position in options.server.passable },
+                    ground = FakeGround(options.server),
                 ),
             startupConcurrency = 1,
         )
@@ -2456,6 +2476,22 @@ class PlayerWalkResolutionTest {
         val beside = seen.surroundings.first { it.direction == Bearing.NORTH }
         val walked = harness.port.apply(agent, Intent.MoveTo(beside.ref), seen.requestId).await()
         assertTrue(walked is IntentOutcome.Accepted, walked.toString())
+    }
+
+    @Test
+    fun `a covered block is offered as not standable and a walk onto it is refused before the body`() {
+        val agent = AgentId("agent-walk-covered")
+        val server = FakePlayerServerState().apply { buried += listOf(4, 63, 2) }
+        val harness = harness(agent, HarnessOptions(server = server))
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val block = perception.surroundings.single { it.kind == ObservationKind.BLOCK }
+        assertEquals(false, block.standable)
+
+        val refused = harness.port.apply(agent, walkOnto(perception), perception.requestId).await()
+
+        assertEquals(EventTag.MOVE_NOT_STANDABLE, (refused as IntentOutcome.Rejected).tag)
+        assertTrue(harness.connector.requests.none { it is BodyRequest.MoveTo })
     }
 
     @Test
