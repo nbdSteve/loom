@@ -450,6 +450,12 @@ The settle checks that teardown once more before the answer is delivered, so an 
 Each half is needed and neither is enough: a dropped deactivation leaves the server sprinting, a dropped final position leaves it one tick behind the report, and an open activation path lets the library move after its terminal event.
 The consequence is deliberate: a body the server left in mid-air stays there until a request
 owns it. Falling is simulation, and simulation is a request's.
+
+**The client's collision must be the server's.**
+Prismarine's physics compares a body's face with a block's face exactly, and vanilla compares them with a 1e-7 tolerance.
+A body clamped flush against a face at a negative coordinate (x = -2.3) has its box face at -1.9999999999999998, 2e-16 inside the block, so the exact comparison misses the collision and the client steps into it.
+The server refuses that move and puts the player back every tick until the stall bound ends the walk or flight.
+`src/collision.js` gives the library's AABB vanilla's tolerance once, from `installMovement`; `test/libraries.test.js` pins the pinned library's own exact comparison, and `test/native-flee-terrain.test.js` replays the two stalled flights on the real s2-ring ground against a server that refuses colliding moves.
 **A dig by a body standing on support also holds the simulation, for its ground state alone.**
 Mineflayer answers every server teleport with `onGround: false`, and with the simulation shut
 nothing corrects it, so both Mineflayer's dig time and the server's destroy progress ran at

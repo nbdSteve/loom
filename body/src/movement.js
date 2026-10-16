@@ -108,6 +108,7 @@
 const { performance } = require('node:perf_hooks')
 const physics = require('mineflayer/lib/plugins/physics')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
+const { installVanillaCollision } = require('./collision')
 const { positionOf } = require('./sensing')
 
 /**
@@ -1267,6 +1268,7 @@ const installations = new WeakMap()
 function installMovement (bot, options) {
   const installed = installations.get(bot)
   if (installed !== undefined) return installed
+  installVanillaCollision()
   bot.loadPlugin(physics)
   bot.loadPlugin(pathfinder)
   const simulation = scopedSimulation(bot)

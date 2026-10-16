@@ -250,3 +250,36 @@ test('the registry vocabularies stay the library own', () => {
     assert.equal(library[vocabulary], kept, vocabulary)
   }
 })
+
+test('the step simulation compares a face exactly, which vanilla does not, until Loom gives it the tolerance', () => {
+  const { COLLISION_EPSILON, installVanillaCollision, physicsAabb } = require('../src/collision')
+  // A fresh copy of the pinned class, so the library's own behaviour is read unpatched.
+  const file = require.resolve(path.join(path.dirname(require.resolve('prismarine-physics')), 'lib', 'aabb'))
+  const loaded = require.cache[file]
+  delete require.cache[file]
+  const Own = require(file)
+  if (loaded === undefined) delete require.cache[file]
+  else require.cache[file] = loaded
+  const block = new Own(-2, 109, -11, -1, 110, -10)
+  // A body clamped flush at x = -2.3 has its east face 2e-16 inside the block.
+  const flush = new Own(-2.3 - 0.3, 109, -10.59, -2.3 + 0.3, 110.8, -9.99)
+  assert.ok(flush.maxX > block.minX)
+  assert.equal(block.computeOffsetX(flush, 0.07), 0.07, 'the pinned library lets the body step into the block')
+
+  const Patched = installVanillaCollision(Own)
+  assert.equal(installVanillaCollision(Own), Patched)
+  assert.ok(Math.abs(block.computeOffsetX(flush, 0.07)) < COLLISION_EPSILON, 'vanilla stops it at the face')
+  // Flush against the east face 1e-12 inside it, moving west, is stopped at the face too.
+  assert.ok(Math.abs(block.computeOffsetX(new Own(-1 - 1e-12, 109, -10.59, -0.4, 110.8, -9.99), -0.07)) < COLLISION_EPSILON)
+  // And a body clear of the block keeps its whole move.
+  assert.equal(block.computeOffsetX(new Own(-0.5, 109, -10.59, 0.1, 110.8, -9.99), -0.07), -0.07)
+  // A box beside the block on a cross axis, within the tolerance, is not over it.
+  const beside = new Own(-2.6, 110 - 1e-9, -10.59, -2.0, 111.8, -9.99)
+  assert.equal(block.computeOffsetX(beside, 0.07), 0.07)
+  assert.equal(block.computeOffsetY(new Own(-1.5, 110.5, -10.5, -1.2, 112.3, -10.2), -1), -0.5)
+  assert.equal(block.computeOffsetZ(new Own(-1.5, 109.5, -9.5, -1.2, 111.3, -9.2), -1), -0.5)
+  // Approaching from the north, a face 1e-12 short of the block is already touching it.
+  assert.ok(Math.abs(block.computeOffsetZ(new Own(-1.5, 109.5, -12.3, -1.2, 111.3, -11.0 - 1e-12), 1)) < COLLISION_EPSILON)
+  // And the installed class is the one the physics plugin steps through.
+  assert.equal(physicsAabb(), require(path.join(path.dirname(require.resolve('prismarine-physics')), 'lib', 'aabb')))
+})
