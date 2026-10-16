@@ -126,7 +126,15 @@ function equipOfferedStack (bot, {
             finish('libraryFailure')
             return
           }
-          settleTimer = setTimeout(() => finish('libraryFailure'), EQUIP_SETTLE_MS)
+          // A Node timer can fire a fraction of a millisecond early against the monotonic
+          // clock, so the window is re-armed for whatever of it is left rather than trusted.
+          const armedAt = now()
+          const settle = () => {
+            const left = EQUIP_SETTLE_MS - (now() - armedAt)
+            if (left > 0) settleTimer = setTimeout(settle, Math.ceil(left))
+            else finish('libraryFailure')
+          }
+          settleTimer = setTimeout(settle, EQUIP_SETTLE_MS)
         },
         () => {
           librarySettled = true

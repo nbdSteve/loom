@@ -481,6 +481,47 @@ test('a dig is dug only once the server itself has removed the block', async () 
   assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome, 'dug')
 })
 
+test('a server multi-block change at the offered position confirms a dig, and one elsewhere does not', async () => {
+  const bot = worldBot()
+  bot.supportFeature = (feature) => ['usesMultiblockSingleLong', 'usesMultiblock3DChunkCoords'].includes(feature)
+  const target = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))
+  const offered = [blockOffer(target)]
+  bot.digTime = () => 25
+  bot.stopDigging = () => {}
+  // One record packs a section-local position as x << 8 | z << 4 | y and the state above it.
+  const record = (x, y, z, state) => (state << 12) | (x << 8) | (z << 4) | y
+  const section = { x: 0, y: 4, z: 0 }
+  bot.dig = async (block) => {
+    bot.removeBlock(block.position)
+    setImmediate(() => {
+      // A neighbour's change first, which says nothing about the offered block.
+      bot._client.emit('multi_block_change', { chunkCoordinates: section, records: [record(2, 0, 0, 0)] })
+      setImmediate(() => bot._client.emit('multi_block_change', {
+        chunkCoordinates: section,
+        records: [record(5, 0, 5, 1), record(1, 0, 0, 0)]
+      }))
+    })
+  }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome, 'dug')
+  // A neighbour's change alone leaves the prediction unconfirmed.
+  bot.putBlock(target)
+  bot.dig = async (block) => {
+    bot.removeBlock(block.position)
+    setImmediate(() => bot._client.emit('multi_block_change', { chunkCoordinates: section, records: [record(2, 0, 0, 0)] }))
+  }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 200 }))).outcome, 'libraryFailure')
+  // A body on an older wire, whose records spell the position as fields.
+  bot.putBlock(target)
+  bot.supportFeature = () => false
+  bot.dig = async (block) => {
+    bot.removeBlock(block.position)
+    setImmediate(() => bot._client.emit('multi_block_change', {
+      chunkX: 0, chunkZ: 0, records: [{ horizontalPos: (1 << 4) | 0, y: 64, blockId: 0 }]
+    }))
+  }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome, 'dug')
+})
+
 test('dig timeout, halt, and teardown all stop the same bounded task', async () => {
   const bot = worldBot()
   const target = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))

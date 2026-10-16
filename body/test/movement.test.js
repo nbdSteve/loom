@@ -1601,3 +1601,38 @@ test('a reached goal is an arrival only once the server was told the same ground
   assert.deepEqual(answered.position, [0.5, 64, 0.5])
   assert.equal(gate.open, false)
 })
+
+test('a reached goal on a bot with no wire is an arrival once it rests on the ground', async () => {
+  // The inert gate has no wire, so there is no report to wait for: rest alone settles it.
+  const bot = drivable()
+  const movement = createMovement(bot)
+  const walking = movement.moveTo({
+    destination: [0, 64, 0], tolerance: 0, timeoutMs: AMPLE_MS, sprint: false
+  })
+  bot.entity.position = new Vec3(0.5, 64, 0.5)
+  bot.entity.onGround = true
+  bot.emit('goal_reached')
+  for (let tick = 0; tick <= ARRIVAL_SETTLE_TICKS; tick += 1) bot.emit('physicsTick')
+  assert.equal((await H.promptly(walking, 'the resting walk')).outcome, 'arrived')
+})
+
+test('a held simulation is granted only to a bot with a wire and a free gate', async () => {
+  const { holdSimulation } = require('../src/movement')
+  const unwired = drivable()
+  unwired.loadPlugin = () => {}
+  installMovement(unwired)
+  assert.equal(holdSimulation(unwired), undefined)
+  assert.equal(holdSimulation(drivable()), undefined)
+
+  const { bot } = await H.realBot()
+  const release = holdSimulation(bot)
+  assert.equal(typeof release, 'function')
+  assert.equal(bot.physicsEnabled, true)
+  // One owner at a time: a second hold, or a walk, cannot take the gate while it is held.
+  assert.equal(holdSimulation(bot), undefined)
+  release()
+  assert.equal(bot.physicsEnabled, false)
+  const again = holdSimulation(bot)
+  assert.equal(typeof again, 'function')
+  again()
+})
