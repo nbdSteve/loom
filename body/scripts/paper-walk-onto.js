@@ -6,10 +6,12 @@
  *
  * Starts the disposable Paper server in `<server-dir>` (loopback, offline, provider-free),
  * drives the real body process over a real control socket from the s2-ring slot tribe-alpha
- * stood on, and walks onto sensed blocks exactly as Loom's JVM resolves a `moveTo` ref: to the
- * cell directly above the block one `sense` answer reported. It walks once onto each block it
- * can see open air above and once onto one block with a block above it, and prints each
- * body report beside the position Paper itself states afterwards.
+ * stood on, and walks to sensed blocks exactly as Loom's JVM resolves a `moveTo` ref: to the
+ * cell directly above a solid block, or into the own cell of a block a body walks through.
+ * Passability here is Mineflayer's collision box for the block, standing in for the Paper
+ * verdict the JVM reads. It walks onto solid blocks with open air above, onto one solid block
+ * with a block above it, into dead bushes, and - as the v14 resolution did - to the air above
+ * one dead bush, and prints each body report beside the position Paper itself states.
  *
  *   node body/scripts/paper-walk-onto.js <server-dir> <java> [port]
  *
@@ -19,6 +21,9 @@
 
 const path = require('node:path')
 const { spawn } = require('node:child_process')
+
+const mineflayer = require('mineflayer')
+const { Vec3 } = require('vec3')
 
 const H = require('../test/harness')
 const { createBody } = require('../src/body')
@@ -56,11 +61,16 @@ async function main () {
   }
   try {
     await until(() => log.includes('Done ('), 240_000, 'Paper')
+    let bot
     const body = createBody({
       agentId: H.AGENT,
       username: USERNAME,
       minecraft: { host: '127.0.0.1', port, version: '1.21.1' },
-      control: { host: '127.0.0.1', port: await H.freePort() }
+      control: { host: '127.0.0.1', port: await H.freePort() },
+      createBot: (options) => {
+        bot = mineflayer.createBot(options)
+        return bot
+      }
     })
     const { control } = await body.start()
     await until(() => log.includes(`${USERNAME} joined the game`), 60_000, 'join')
@@ -78,18 +88,27 @@ async function main () {
     const first = await sensed()
     const occupied = new Set(first.blocks.map((block) => block.position.join(',')))
     const above = (block, dy) => [block.position[0], block.position[1] + dy, block.position[2]].join(',')
-    const open = first.blocks.filter((block) => !occupied.has(above(block, 1)) && !occupied.has(above(block, 2)) &&
-      block.what !== 'dead_bush')
-    const covered = first.blocks.find((block) => occupied.has(above(block, 1)) && block.what !== 'dead_bush')
-    const chosen = [...open.slice(0, 4).map((block) => ({ block, kind: 'openAbove' })), { block: covered, kind: 'covered' }]
+    const passable = (block) => bot.blockAt(new Vec3(...block.position))?.boundingBox === 'empty' ||
+      block.what === 'dead_bush'
+    const open = first.blocks.filter((block) => !passable(block) && !occupied.has(above(block, 1)) &&
+      !occupied.has(above(block, 2)))
+    const covered = first.blocks.find((block) => !passable(block) && occupied.has(above(block, 1)) &&
+      !passable({ position: above(block, 1).split(',').map(Number), what: '' }))
+    const bushes = first.blocks.filter((block) => block.what === 'dead_bush')
+    const chosen = [
+      ...open.slice(0, 3).map((block) => ({ block, kind: 'solidOpenAbove', rise: 1 })),
+      { block: covered, kind: 'solidCovered', rise: 1 },
+      ...bushes.slice(0, 2).map((block) => ({ block, kind: 'passableOwnCell', rise: 0 })),
+      ...bushes.slice(0, 1).map((block) => ({ block, kind: 'passableAboveAsV14', rise: 1 }))
+    ].filter(({ block }) => block !== undefined)
     const results = []
-    for (const { block, kind } of chosen) {
+    for (const { block, kind, rise } of chosen) {
       await atSlot()
       const answer = await sensed()
       const index = answer.blocks.findIndex((entry) => entry.position.join(',') === block.position.join(','))
       if (index < 0) continue
       const target = answer.blocks[index].position
-      const destination = [target[0], target[1] + 1, target[2]]
+      const destination = [target[0], target[1] + rise, target[2]]
       sequence += 1
       const report = await peer.answer(H.request('moveTo', `m${sequence}`, {
         destination, tolerance: 0, timeoutMs: 20_000, sprint: false

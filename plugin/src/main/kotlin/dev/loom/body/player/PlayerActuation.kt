@@ -176,10 +176,11 @@ internal class PlayerActionPreparer(
         }
 
     /**
-     * Resolves the block a walk names, on the main thread, to the cell directly above the
-     * exact position that one sense answer reported for it.
+     * Resolves the block a walk names, on the main thread, to where a body stands on it: the
+     * cell directly above the exact position one sense answer reported, or that cell itself
+     * for a block the server gives no collision, such as a dead bush.
      *
-     * Nothing here judges whether that cell can be stood in: the destination is the named
+     * Nothing here judges whether that place can be reached: the destination is the named
      * block's own, and the ground answers for it. A ref this agent no longer holds, or one the
      * request never issued, is refused before anything is asked of the body.
      */
@@ -210,7 +211,10 @@ internal class PlayerActionPreparer(
                 )
             else -> {
                 val (x, y, z) = block.position
-                val destination = listOf(x.toDouble(), (y + 1).toDouble(), z.toDouble())
+                // A block with no collision is stood in, so its own cell is the place; any
+                // other is stood on, so the cell above it is. The server says which.
+                val standY = if (context.authority.ground.standsIn(block.position)) y else y + 1
+                val destination = listOf(x.toDouble(), standY.toDouble(), z.toDouble())
                 val operation: () -> ActionExecution = { move(runtime, destination, sense) }
                 operation
             }

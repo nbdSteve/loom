@@ -495,7 +495,7 @@ fn build_decision_schema() -> Value {
                     intent_variant("moveTo", &json!({
                         "onto": {
                             "type": "string",
-                            "description": "The ref of the one nearby block to walk onto: the body walks to stand in the space directly above that exact block. A block ref from this message, never coordinates or an invented one."
+                            "description": "The ref of the one nearby block to walk to: the body stands on top of a solid block, or in the own space of a block it can walk through such as a dead bush or grass. A block ref from this message, never coordinates or an invented one."
                         }
                     })),
                     intent_variant("flee", &json!({

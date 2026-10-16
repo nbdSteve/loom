@@ -632,13 +632,14 @@ sealed interface Intent {
     data class Say(val text: String) : Intent
 
     /**
-     * Walk to stand on top of one nearby block, named by the [Observation.ref] it carried
-     * in the perception being answered.
+     * Walk to one nearby block, named by the [Observation.ref] it carried in the perception
+     * being answered.
      *
      * A ref rather than coordinates on purpose: a perception states where things are as a
      * bearing, a distance and a vertical offset, never as coordinates, so a coordinate the
      * mind wrote was a guess. The body resolves [onto] against that one request only and
-     * walks to the cell directly above that exact block.
+     * walks to where a body stands on that exact block: the cell above a solid one, or the
+     * block's own cell where the server gives it no collision.
      */
     @Serializable
     @SerialName("moveTo")

@@ -103,3 +103,31 @@ test('the standable cell in the refused column is reached from the slot', async 
   assert.equal(report.position[1], standable[1])
   peer.stop()
 })
+
+// The fifth live run's walks named dead bushes: a cover plant has no collision box, so the
+// cell above it is open air and the place to stand is the plant's own cell.
+const BUSH = Object.freeze([14, 102, 2])
+
+test('the cell above a surveyed dead bush is open air, and the bush cell itself is standable', async () => {
+  assert.equal(TERRAIN.palette[TERRAIN.columns['14,2'].find(([y]) => y === BUSH[1])[1]], 'dead_bush')
+  assert.equal(groundIn(14, 2) + 1, BUSH[1])
+  const above = await (async () => {
+    const { peer } = await standingAtSlot()
+    const report = await H.promptly(peer.answer(H.request('moveTo', 'm1', {
+      destination: [BUSH[0], BUSH[1] + 1, BUSH[2]], tolerance: 0, timeoutMs: AMPLE_MS, sprint: false
+    })), 'the walk', AMPLE_MS + 3000)
+    peer.stop()
+    return report
+  })()
+  assert.equal(above.outcome, 'noRoute', JSON.stringify(above))
+  await openBody.stop()
+  openBody = null
+  H.disconnected()
+  const { peer } = await standingAtSlot()
+  const into = await H.promptly(peer.answer(H.request('moveTo', 'm2', {
+    destination: [...BUSH], tolerance: 0, timeoutMs: AMPLE_MS, sprint: false
+  })), 'the walk', AMPLE_MS + 3000)
+  assert.equal(into.outcome, 'arrived', JSON.stringify(into))
+  assert.equal(into.position[1], BUSH[1])
+  peer.stop()
+})

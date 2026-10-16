@@ -38,6 +38,7 @@ data class PlayerBodyAuthority(
     val eventLog: BodyEventLog,
     val currentTick: () -> Long,
     val speechClaims: SpeechClaims = SpeechClaims.NONE,
+    val ground: BlockGround = BlockGround.UNKNOWN,
 )
 
 internal data class PlayerRuntime(

@@ -385,7 +385,7 @@
         },
         {
           "title": "MoveTo",
-          "description": "Walk to stand on top of one nearby block named by the request-scoped ref it carried in the perception being answered. A ref rather than coordinates on purpose: a perception states where things are as a bearing, a distance and a vertical offset, never as coordinates, so a coordinate the mind wrote was a guess - and in a live run every such guess that failed named open air. The body resolves the ref against that one request only and walks to the cell directly above the exact sensed block; the ground decides whether that cell can be reached and stood in, and nothing below the mind picks another one.",
+          "description": "Walk to stand on top of one nearby block named by the request-scoped ref it carried in the perception being answered. A ref rather than coordinates on purpose: a perception states where things are as a bearing, a distance and a vertical offset, never as coordinates, so a coordinate the mind wrote was a guess - and in a live run every such guess that failed named open air. The body resolves the ref against that one request only and walks to where a body stands on the exact sensed block: the cell directly above a solid block, or the block's own cell where the server gives it no collision (a dead bush, grass, a flower). The ground decides whether that cell can be reached and stood in, and nothing below the mind picks another one.",
           "type": "object",
           "additionalProperties": false,
           "required": ["action", "onto"],

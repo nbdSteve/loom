@@ -262,6 +262,7 @@ private class FakePlayerServerState : PlayerServerState {
     val moveAudits = CopyOnWriteArrayList<Pair<PlayerIdentity, BodyRequest>>()
     val interactionAudits = CopyOnWriteArrayList<Pair<PlayerIdentity, BodyRequest>>()
     var senseAuditVersion: Long = 0
+    val passable = CopyOnWriteArrayList<List<Int>>()
 
     override fun connected(identity: PlayerIdentity): Boolean = connected
 
@@ -874,6 +875,22 @@ class PlayerBodyPortTest {
         // The sensed stone is at [4, 63, 2], so the walk is to stand on it: nothing else chosen.
         assertEquals(listOf(4.0, 64.0, 2.0), move.destination)
         assertEquals(0, move.tolerance)
+    }
+
+    @Test
+    fun `a walk onto a block the server gives no collision ends in that block's own cell`() {
+        val agent = AgentId("agent-walk-into")
+        val server = FakePlayerServerState().apply { passable += listOf(4, 63, 2) }
+        val harness = harness(agent, HarnessOptions(server = server))
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+
+        val accepted = harness.port.apply(agent, walkOnto(perception), perception.requestId).await()
+
+        assertTrue(accepted is IntentOutcome.Accepted, accepted.toString())
+        val move = harness.connector.requests.filterIsInstance<BodyRequest.MoveTo>().single()
+        // The sensed block at [4, 63, 2] is one a body stands in, so the walk ends there.
+        assertEquals(listOf(4.0, 63.0, 2.0), move.destination)
     }
 
     @Test
@@ -1883,6 +1900,7 @@ private fun buildPortHarness(
                     serverState = options.server,
                     eventLog = BodyEventLog(records::add),
                     currentTick = tick::get,
+                    ground = BlockGround { position -> position in options.server.passable },
                 ),
             startupConcurrency = 1,
         )

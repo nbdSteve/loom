@@ -36,13 +36,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v14";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v15";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v14";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v15";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v14";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v15";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -86,11 +86,12 @@ answer with one action for it to take and your reasoning for taking it.
 
 Your body accepts exactly thirteen actions:
 - say: speak a line of text out loud.
-- moveTo: walk onto one nearby block, named by its ref: the body walks to stand in \
-the space directly above that exact block. Choose a block whose top you could \
-stand on - one with open space above it - because the body walks only to that \
-spot and the ground refuses a walk with no route or no room to stand there. Your \
-surroundings never give coordinates, so a walk is always named by a block ref.
+- moveTo: walk to one nearby block, named by its ref. For a solid block the body \
+walks to stand on top of it, in the space directly above; for a block you can walk \
+through, such as a dead bush, grass or a flower, it walks to stand in that block's \
+own space. The body walks only to that one spot, and the ground refuses a walk \
+with no route or no room to stand there. Your surroundings never give \
+coordinates, so a walk is always named by a block ref.
 - eat: eat one item from one stack you are carrying, named by the ref that stack \
 carries. It asks vanilla to consume exactly that item, and it can be refused: the \
 stack may no longer be food, or your food bar may already be full.

@@ -796,13 +796,15 @@ pub enum Intent {
     /// Speak a line of text.
     #[serde(rename = "say")]
     Say { text: String },
-    /// Walk to stand on top of one nearby block, named by the `ref` it carried in
-    /// the perception being answered.
+    /// Walk to one nearby block, named by the `ref` it carried in the perception
+    /// being answered.
     ///
     /// A ref rather than coordinates on purpose: a perception states where things
     /// are as a bearing, a distance and a vertical offset, never as coordinates, so
     /// a coordinate the mind wrote was a guess. The body resolves the ref against
-    /// that one request only and walks to the cell directly above that exact block.
+    /// that one request only and walks to where a body stands on that exact block:
+    /// the cell above a solid one, or the block's own cell where the server gives it
+    /// no collision.
     #[serde(rename = "moveTo")]
     MoveTo {
         #[serde(deserialize_with = "bounded_ref")]

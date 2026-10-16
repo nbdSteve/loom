@@ -119,6 +119,8 @@ PROFILES['shakedown-10m-10'] = Object.freeze({
 // shakedown's own; it is a separate name so the v13 shakedown's committed evidence keeps
 // naming the profile it ran under.
 PROFILES['grounded-walk-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] })
+// And again under routine-v15, for the same reason: r5 ran under the v14 name.
+PROFILES['grounded-walk-v15-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] })
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */
