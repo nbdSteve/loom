@@ -724,7 +724,7 @@ class TcpCognitionTransportTest {
             bridge.submit(asking(canonical).copy(trigger = Trigger.BlockSighted("diamond_ore")))
                 .get(PATIENCE.inWholeMilliseconds, TimeUnit.MILLISECONDS)
 
-        assertEquals(Intent.MoveTo(listOf(128L, 11L, -64L)), decision.intent)
+        assertEquals(Intent.MoveTo("b5"), decision.intent)
         assertEquals(DecisionImportance.ROUTINE, decision.provenance.tier)
     }
 }

@@ -257,7 +257,8 @@ OpenAI failures also carry the versioned bounded classification defined in `mode
 **The answer's shape is enforced by a strict `json_schema`, and that schema is the one thing here that can silently fall behind the contract.**
 It mirrors the contract's `Intent` union by hand, so a new variant would compile everywhere and simply never be chosen - the provider would refuse to emit an action the schema does not list.
 `tests/openai_request_schema.rs` therefore pins it against `contract/fixtures/valid/decision-*.json` in both directions, and adding a contract case (which already means adding a fixture) fails it until the request schema follows.
-Strict mode also forbids `minItems`/`maxItems`/`oneOf`, so `moveTo`'s three coordinates are enforced by the contract type instead and arrive as a bounded malformed-answer error.
+Strict mode also forbids `minItems`/`maxItems`/`oneOf`, so a ref's length bound is enforced by the contract type instead and arrives as a bounded malformed-answer error.
+**`moveTo` names an observed block (`onto`), never coordinates, from `routine-v14` on.** A perception states where things are as a bearing, distance and vertical offset only, so every coordinate a v13 mind wrote for a refused walk named open air (`body/test/native-move-terrain.test.js` replays them on the real terrain). The JVM resolves the block ref against that one request and sends the body the cell directly above the exact sensed block; nothing below the mind picks another destination, and the ground answers for the cell.
 
 Three more sharp edges in `openai`, none of them guessable from the code:
 

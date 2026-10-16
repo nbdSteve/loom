@@ -93,11 +93,12 @@ token ceiling used by the research harness when it proves that the configured
 call budget cannot cross the spend ceiling.
 
 The canonical 48-entity, 48-block, 48-item fixture is 20,166 bytes on the cognition
-socket. With `routine-v13`, it renders to 20,439 bytes of prompt text and a 26,500-byte
+socket. With `routine-v14`, it renders to 20,763 bytes of prompt text and a 27,169-byte
 serialized provider request; the strict response schema's optional goal choice is most of
-the growth since `routine-v12` (23,931 bytes). The same envelope at a goal review carrying
+the growth since `routine-v12` (23,931 bytes), and v14's ref-named walk adds 669 bytes to
+v13's 26,500. The same envelope at a goal review carrying
 the widest legal goal (a 160-character statement, 64-character ids, a 32-character step
-action) renders a 26,855-byte request, 38,681 bytes inside the 65,536-byte quarter of the
+action) renders a 27,524-byte request, 38,012 bytes inside the 65,536-byte quarter of the
 256 KiB ceiling that `openai::wire` tests pin. At `routine-v12`, local `o200k_base`
 tokenization measured 4,842 tokens for the system and situation text and 5,895 for the
 serialized request JSON; those are reproducible local tokenizer counts, not a claim about provider-billed chat framing. On an Apple M3

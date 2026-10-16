@@ -104,7 +104,7 @@ class AutonomousDriverTest {
     /** A cooperative mind: records what it was asked and answers at once. */
     private fun answer(perception: Perception): CompletableFuture<Decision> {
         asked.add(perception)
-        return CompletableFuture.completedFuture(decisionFor(perception, Intent.MoveTo(listOf(1L, 64L, 2L))))
+        return CompletableFuture.completedFuture(decisionFor(perception, Intent.MoveTo("b1")))
     }
 
     @Test

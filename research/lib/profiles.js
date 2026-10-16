@@ -115,6 +115,10 @@ PROFILES['shakedown-10m-10'] = Object.freeze({
   maxExternalSpendUsd: 29.19,
   bounds: Object.freeze({ logBytes: 16 * 1024 * 1024, evidenceRecords: 8000, artifactBytes: 16 * 1024 * 1024 })
 })
+// The same ten-minute shakedown under the routine-v14 grounded-walk mode. Every pin is the
+// shakedown's own; it is a separate name so the v13 shakedown's committed evidence keeps
+// naming the profile it ran under.
+PROFILES['grounded-walk-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] })
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

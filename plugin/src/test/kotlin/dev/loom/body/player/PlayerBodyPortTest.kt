@@ -42,6 +42,7 @@ import dev.loom.contract.BlockFace
 import dev.loom.contract.EquipmentDestination
 import dev.loom.contract.Intent
 import dev.loom.contract.ObservationKind
+import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 import dev.loom.mind.CognitionBridge
 import dev.loom.mind.CognitionCallbacks
@@ -532,7 +533,10 @@ class PlayerBodyPortTest {
         assertEquals(18.0, movementPerception.selfState.health)
         assertEquals(6, movementPerception.selfState.food)
         assertEquals(1.5, movementPerception.selfState.saturation)
-        assertEquals("entity.minecraft.zombie", movementPerception.surroundings.single().what)
+        assertEquals(
+            "entity.minecraft.zombie",
+            movementPerception.surroundings.single { it.kind == ObservationKind.ENTITY }.what,
+        )
         assertEquals("item.minecraft.bread", movementPerception.selfState.inventorySummary.single().what)
         val perceptionAudit =
             requireNotNull(
@@ -547,14 +551,14 @@ class PlayerBodyPortTest {
         assertEquals(1, perceptionAudit.entities.rawBodyListCount)
         assertEquals(1, perceptionAudit.entities.jvmSelectedCount)
         assertEquals(0, perceptionAudit.entities.jvmCutOmittedCount)
-        assertEquals(0, perceptionAudit.blocks.rawBodyListCount)
+        assertEquals(1, perceptionAudit.blocks.rawBodyListCount)
         assertEquals(0, perceptionAudit.droppedItems.rawBodyListCount)
 
         val moveOutcome =
             harness.port
                 .apply(
                     agent,
-                    Intent.MoveTo(listOf(4L, 64L, 2L)),
+                    walkOnto(movementPerception),
                     movementPerception.requestId,
                 ).await()
         assertTrue(moveOutcome is IntentOutcome.Accepted)
@@ -736,7 +740,7 @@ class PlayerBodyPortTest {
                     CognitionBridge { perception ->
                         val intent =
                             when (perception.agentId) {
-                                "proof-alpha" -> Intent.MoveTo(listOf(4L, 64L, 2L))
+                                "proof-alpha" -> walkOnto(perception)
                                 "proof-beta" ->
                                     Intent.Eat(
                                         perception.selfState.inventorySummary.single().ref,
@@ -830,6 +834,49 @@ class PlayerBodyPortTest {
     }
 
     @Test
+    fun `a walk goes to the cell above the exact block its own request offered`() {
+        val agent = AgentId("agent-walk")
+        val harness = harness(agent)
+        harness.port.spawn(agent).await()
+
+        fun sensed() = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+
+        // A creature's ref names no block, and a ref nothing issued names nothing: refused
+        // before the body is asked for anything.
+        for (named in listOf<
+            (
+                Perception,
+            ) -> String,
+            >({ seen -> seen.surroundings.single { it.kind == ObservationKind.ENTITY }.ref }, { "zz9" })) {
+            val seen = sensed()
+            val refused =
+                harness.port.apply(
+                    agent,
+                    Intent.MoveTo(named(seen)),
+                    seen.requestId,
+                ).await() as IntentOutcome.Rejected
+            assertEquals(EventTag.MOVE_BLOCK_UNNAMED, refused.tag)
+        }
+        // A block offered by an earlier request is not a later request's to spend, and a walk
+        // no request asked for has no sense answer to resolve against.
+        val earlier = sensed()
+        val later = sensed()
+        val stale = harness.port.apply(agent, walkOnto(earlier), later.requestId).await() as IntentOutcome.Rejected
+        assertEquals(EventTag.MOVE_BLOCK_UNNAMED, stale.tag)
+        val unasked = harness.port.apply(agent, walkOnto(sensed())).await() as IntentOutcome.Rejected
+        assertEquals(EventTag.MOVE_SENSE_FORGOTTEN, unasked.tag)
+        assertTrue(harness.connector.requests.none { it is BodyRequest.MoveTo })
+
+        val current = sensed()
+        val accepted = harness.port.apply(agent, walkOnto(current), current.requestId).await()
+        assertTrue(accepted is IntentOutcome.Accepted, accepted.toString())
+        val move = harness.connector.requests.filterIsInstance<BodyRequest.MoveTo>().single()
+        // The sensed stone is at [4, 63, 2], so the walk is to stand on it: nothing else chosen.
+        assertEquals(listOf(4.0, 64.0, 2.0), move.destination)
+        assertEquals(0, move.tolerance)
+    }
+
+    @Test
     fun `a busy movement refusal leaves the healthy player process ready`() {
         var refuseMovement = true
         val agent = AgentId("agent-busy")
@@ -853,7 +900,7 @@ class PlayerBodyPortTest {
             harness.port
                 .apply(
                     agent,
-                    Intent.MoveTo(listOf(4L, 64L, 2L)),
+                    walkOnto(perception),
                     perception.requestId,
                 ).await()
 
@@ -869,9 +916,10 @@ class PlayerBodyPortTest {
         assertTrue(harness.supervisor.stopped.isEmpty())
 
         refuseMovement = false
+        val again = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
         assertTrue(
             harness.port
-                .apply(agent, Intent.MoveTo(listOf(4L, 64L, 2L)))
+                .apply(agent, walkOnto(again), again.requestId)
                 .await() is IntentOutcome.Accepted,
         )
     }
@@ -1927,7 +1975,8 @@ private fun fakeSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
                 ),
             ),
         entitiesOmitted = 0,
-        blocks = emptyList(),
+        // The one block a walk can name: standing on it is [4, 64, 2].
+        blocks = listOf(SensedBlock(what = "minecraft:stone", position = listOf(4, 63, 2), visible = true)),
         blocksOmitted = 0,
         items = emptyList(),
         itemsOmitted = 0,
@@ -1984,6 +2033,10 @@ private fun crowdedSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
             },
         itemsOmitted = 4,
     )
+
+/** A walk onto the one block [perception] offered. */
+private fun walkOnto(perception: Perception): Intent.MoveTo =
+    Intent.MoveTo(perception.surroundings.first { it.kind == ObservationKind.BLOCK }.ref)
 
 @Suppress("LongMethod")
 private fun interactionSense(request: BodyRequest.Sense): BodyResponse.SenseReport =

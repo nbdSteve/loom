@@ -631,14 +631,20 @@ sealed interface Intent {
     @SerialName("say")
     data class Say(val text: String) : Intent
 
-    /** Move toward a target block position `[x, y, z]`. */
+    /**
+     * Walk to stand on top of one nearby block, named by the [Observation.ref] it carried
+     * in the perception being answered.
+     *
+     * A ref rather than coordinates on purpose: a perception states where things are as a
+     * bearing, a distance and a vertical offset, never as coordinates, so a coordinate the
+     * mind wrote was a guess. The body resolves [onto] against that one request only and
+     * walks to the cell directly above that exact block.
+     */
     @Serializable
     @SerialName("moveTo")
-    data class MoveTo(val target: List<Long>) : Intent {
+    data class MoveTo(val onto: String) : Intent {
         init {
-            require(target.size == COORDINATE_DIMENSIONS) {
-                "target must have exactly $COORDINATE_DIMENSIONS components [x, y, z], got ${target.size}"
-            }
+            requireBoundedRef(onto)
         }
     }
 

@@ -256,7 +256,7 @@ class EmbodiedCognitionTest {
         val body = bodyWith(captured)
         val bridge =
             AsyncCognitionBridge(
-                transport = { p -> decisionFor(p, Intent.MoveTo(listOf(1L, 2L, 3L))) },
+                transport = { p -> decisionFor(p, Intent.MoveTo("b1")) },
                 timeout = PATIENCE,
                 workers = 1,
                 queueDepth = 1,
@@ -268,7 +268,7 @@ class EmbodiedCognitionTest {
             // bridge worker instead.
             main.drainUntil(2)
         }
-        assertEquals(listOf<Intent>(Intent.MoveTo(listOf(1L, 2L, 3L))), body.applied)
+        assertEquals(listOf<Intent>(Intent.MoveTo("b1")), body.applied)
     }
 
     @Test

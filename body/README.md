@@ -217,6 +217,9 @@ That is one rule for both fields, and `src/eating.js`'s header owns it.
 
 A `moveTo` names a destination in world coordinates, how far short of it still counts as
 arriving, how long the request may take, and whether it may sprint.
+The coordinates are the controller's, never the mind's: Loom's JVM derives them as the cell
+directly above one block an earlier `sense` answer of this connection reported, because the
+mind names a walk by that block's ref. The body does not move a destination it was given.
 A `flee` names a creature rather than a place: the `senseId` of the answer that showed it,
 and that creature's own index in the answer's `entities` list.
 Both are answered with one of eleven closed outcomes rather than with an error, for the reason

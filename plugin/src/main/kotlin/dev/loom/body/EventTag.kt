@@ -217,6 +217,18 @@ object EventTag {
      */
     const val RETREAT_THREAT_UNNAMED: String = "retreatThreatUnnamed"
 
+    /**
+     * A walk named the block to stand on through a handle the agent no longer holds bindings
+     * for: the decision arrived after the request that minted it had been evicted.
+     */
+    const val MOVE_SENSE_FORGOTTEN: String = "moveSenseForgotten"
+
+    /**
+     * A walk named a block the request that answered it never issued a handle for, which is a
+     * mind naming something it was never given rather than Loom's latency.
+     */
+    const val MOVE_BLOCK_UNNAMED: String = "moveBlockUnnamed"
+
     /** A later intent that was not a flight took the body over. */
     const val RETREAT_SUPERSEDED: String = "retreatSuperseded"
 
@@ -520,6 +532,8 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.RETREAT_THREAT_FORGOTTEN,
         EventTag.RETREAT_THREAT_UNNAMED,
         EventTag.RETREAT_THREAT_GONE,
+        EventTag.MOVE_SENSE_FORGOTTEN,
+        EventTag.MOVE_BLOCK_UNNAMED,
         EventTag.DIG_SENSE_FORGOTTEN,
         EventTag.DIG_BLOCK_UNNAMED,
         EventTag.DIG_BLOCK_GONE,

@@ -122,7 +122,7 @@ test('a prospective generation-3 manifest is validated before launch', () => {
   assert.equal(manifest.publication.manifestValidatedBeforeLaunch, true)
 })
 
-test('historical configurations are refused before startup and only v13 pilots are runnable', () => {
+test('historical configurations are refused before startup and only served-prompt configurations are runnable', () => {
   const support = readJson(path.join(__dirname, '..', '..', 'contract', 'fixtures', 'capability-support.json'))
   for (const [name, entry] of Object.entries(support.researchConfigs)) {
     const errors = validateRunConfig(readJson(path.join(__dirname, '..', 'config', name)))
@@ -148,19 +148,29 @@ test('every feature flag must be true because no runtime route reads one', () =>
   }
 })
 
-test('the routine-v13 goal-continuity pilot preflights under the v12 treatment plus v13 prompts and category fairness', () => {
+test('the routine-v14 pilot preflights under the v12 treatment plus v14 prompts and category fairness', () => {
   const config = openAiGoalContinuityConfig()
   assert.deepEqual(validateRunConfig(config), [])
   assert.deepEqual(validateRunConfig(goalContinuityConfig()), [])
   const manifest = validateProspectiveManifest(config, SOURCE)
-  assert.equal(manifest.protocol.mode, 'routine-v13-goal-continuity')
+  assert.equal(manifest.protocol.mode, 'routine-v14-grounded-walk')
   assert.equal(manifest.protocol.categoryFairSelection, true)
   assert.equal(manifest.protocol.controlledBodyCrashPlanned, false)
   assert.deepEqual(manifest.provenance.prompts, {
-    routine: 'routine-v13',
-    notable: 'notable-v13',
-    pivotal: 'pivotal-v13'
+    routine: 'routine-v14',
+    notable: 'notable-v14',
+    pivotal: 'pivotal-v14'
   })
+  // The v14 pilot is the v13 pilot with only its mode, prompts and identity moved.
+  for (const suffix of ['', '-scripted']) {
+    const read = (version) => {
+      const pinned = readJson(path.join(__dirname, '..', 'config', `first-tribe-routine-${version}-agency-pilot${suffix}.json`))
+      for (const key of ['experimentId', 'title', 'mode']) delete pinned[key]
+      delete pinned.cognition.prompts
+      return pinned
+    }
+    assert.deepEqual(read('v14'), read('v13'))
+  }
   assert.deepEqual(manifest.provenance.models, { ordinary: 'gpt-5.4-nano', pivotal: 'gpt-5.4' })
   assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 2.33472)
   assert.equal(manifest.cognition.maxExternalSpendUsd, 2.34)
@@ -184,13 +194,15 @@ test('the routine-v13 goal-continuity pilot preflights under the v12 treatment p
 })
 
 test('each native-scheduler pilot refuses the other pilot prompts or fairness attestation', () => {
-  const v13 = goalContinuityConfig()
-  v13.primaryBehavior.categoryFairSelection = false
-  assert.ok(validateRunConfig(v13).some((error) => error.includes('categoryFairSelection must be true')))
+  const unfair = goalContinuityConfig()
+  unfair.primaryBehavior.categoryFairSelection = false
+  assert.ok(validateRunConfig(unfair).some((error) => error.includes('categoryFairSelection must be true')))
 
   const v13OldPrompts = goalContinuityConfig()
-  v13OldPrompts.cognition.prompts = { routine: 'routine-v12', notable: 'notable-v12', pivotal: 'pivotal-v12' }
-  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v13')))
+  v13OldPrompts.cognition.prompts = { routine: 'routine-v13', notable: 'notable-v13', pivotal: 'pivotal-v13' }
+  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v14')))
+  const v13 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v13-agency-pilot-scripted.json'))
+  assert.ok(validateRunConfig(v13).some((error) => error.includes('mode routine-v13-goal-continuity is historical')))
 
   const v12 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v12-agency-pilot-scripted.json'))
   assert.ok(validateRunConfig(v12).some((error) => error.includes('mode routine-v12-primary-behavior is historical')))
@@ -216,12 +228,12 @@ test('each native-scheduler pilot refuses the other pilot prompts or fairness at
   assert.notDeepEqual(validateRunConfig(model), [])
 })
 
-test('the scripted v13 publication carries adoption then continuity without claiming agency', () => {
+test('the scripted v14 publication carries adoption then continuity without claiming agency', () => {
   const config = goalContinuityConfig()
   const published = publishFixture({ config, raw: primaryBehaviorRawRecords(config) })
   const validation = validateArtifact(published.artifactDirectory)
   assert.deepEqual(validation.errors, [])
-  assert.equal(published.manifest.protocol.mode, 'routine-v13-goal-continuity')
+  assert.equal(published.manifest.protocol.mode, 'routine-v14-grounded-walk')
   assert.equal(published.manifest.protocol.categoryFairSelection, true)
   assert.equal(published.manifest.perceptionAudit.byKind.entities.jvmCutOmittedCount, 0)
   assert.equal(published.metrics.goalContinuity.byOutcome.goalAdopted, 3)
@@ -231,7 +243,7 @@ test('the scripted v13 publication carries adoption then continuity without clai
     ['tribe-alpha', 'tribe-beta', 'tribe-gamma']
   )
   const readme = fs.readFileSync(path.join(published.artifactDirectory, 'README.md'), 'utf8')
-  assert.match(readme, /routine-v13 pilot/)
+  assert.match(readme, /routine-v14 pilot/)
   assert.match(readme, /It is not a model-behavior result/)
 })
 
@@ -598,13 +610,28 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   assert.equal(shakedown.scriptedOnly, undefined)
 
   const read = (file) => readJson(path.join(__dirname, '..', 'config', file))
-  const live = read('tribe-shakedown-10m-10.json')
-  const scripted = read('tribe-shakedown-10m-10-scripted.json')
+  // The v13 shakedown ran r1 to r4 and is historical now; the grounded-walk shakedown is the
+  // same profile under the v14 mode and is the one that runs.
+  assert.deepEqual({ ...PROFILES['grounded-walk-10m-10'] }, { ...shakedown })
+  for (const file of ['tribe-shakedown-10m-10.json', 'tribe-shakedown-10m-10-scripted.json']) {
+    assert.ok(validateRunConfig(read(file)).some((error) => error.includes('historical')), file)
+    const v13 = read(file)
+    const v14 = read(file.replace('shakedown', 'grounded-walk'))
+    for (const config of [v13, v14]) {
+      for (const key of ['experimentId', 'title', 'mode']) delete config[key]
+      delete config.cognition.prompts
+      delete config.primaryBehavior.profile
+    }
+    assert.deepEqual(v14, v13, file)
+  }
+  const live = read('tribe-grounded-walk-10m-10.json')
+  const scripted = read('tribe-grounded-walk-10m-10-scripted.json')
   const base = read('tribe-two-cycle-10.json')
   assert.match(live.experimentId, /^2026-10-16-openai-10-agent-10m-r[0-9]+$/)
+  assert.equal(live.mode, 'routine-v14-grounded-walk')
   for (const config of [live, scripted]) {
     assert.deepEqual(validateRunConfig(config), [], config.experimentId)
-    assert.equal(config.primaryBehavior.profile, 'shakedown-10m-10')
+    assert.equal(config.primaryBehavior.profile, 'grounded-walk-10m-10')
     assert.deepEqual(config.agents, [...AGENT_ORDER])
     assert.equal(config.primaryBehavior.scene, 's2-ring')
     assert.equal(config.world.seed, SCENES['s2-ring'].seed)
@@ -640,7 +667,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   assert.equal(live.cognition.backend, 'openai')
   assert.equal(scripted.cognition.backend, 'scripted')
   const manifest = validateProspectiveManifest(live, SOURCE)
-  assert.equal(manifest.protocol.profile, 'shakedown-10m-10')
+  assert.equal(manifest.protocol.profile, 'grounded-walk-10m-10')
   assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 29.184)
 
   const drifts = [
@@ -674,10 +701,11 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
     (config) => { config.bounds.logBytes *= 2 },
     (config) => { config.bounds.artifactBytes *= 2 },
     (config) => { config.runtime.paperMemoryMiB = 1024 },
-    (config) => { config.primaryBehavior.profile = 'two-cycle-10' }
+    (config) => { config.primaryBehavior.profile = 'two-cycle-10' },
+    (config) => { config.mode = 'routine-v13-goal-continuity' }
   ]
   for (const drift of drifts) {
-    const config = read('tribe-shakedown-10m-10.json')
+    const config = read('tribe-grounded-walk-10m-10.json')
     drift(config)
     assert.notDeepEqual(validateRunConfig(config), [], drift.toString())
   }

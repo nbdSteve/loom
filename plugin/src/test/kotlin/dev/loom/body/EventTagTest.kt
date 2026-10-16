@@ -52,7 +52,7 @@ private val EVERY_INTENT =
     listOf(
         Intent.Rest,
         Intent.Idle,
-        Intent.MoveTo(target = listOf(1L, 64L, 2L)),
+        Intent.MoveTo(onto = "b1"),
         Intent.Say(text = "hello"),
         Intent.Flee(from = "zombie"),
         Intent.Eat(ref = "i0"),
@@ -141,7 +141,7 @@ class EventTagTest {
     @Test
     @DisplayName("a tag carries no payload, so two decisions of the same kind count as one kind")
     fun tagsDropThePayload() {
-        assertEquals(tagOf(Intent.MoveTo(listOf(1L, 2L, 3L))), tagOf(Intent.MoveTo(listOf(9L, 9L, 9L))))
+        assertEquals(tagOf(Intent.MoveTo("b1")), tagOf(Intent.MoveTo("b9")))
         assertEquals(tagOf(IntentOutcome.Rejected("too far")), tagOf(IntentOutcome.Rejected("no path")))
     }
 

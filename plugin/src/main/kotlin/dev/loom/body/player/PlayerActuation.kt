@@ -8,6 +8,7 @@ import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.RefResolution
 import dev.loom.body.SlotResolution
+import dev.loom.body.WorldTargetResolution
 import dev.loom.body.completedBodyOperation
 import dev.loom.bodycontrol.BODY_CONTROL_PROTOCOL_VERSION
 import dev.loom.bodycontrol.BodyRequest
@@ -145,9 +146,7 @@ internal class PlayerActionPreparer(
             is Intent.Rest -> {
                 { halt(runtime, "resting") }
             }
-            is Intent.MoveTo -> {
-                { move(runtime, intent, sense) }
-            }
+            is Intent.MoveTo -> prepareMove(runtime, intent, requestId, sense)
             is Intent.Eat -> prepareEat(runtime, intent, requestId, sense)
             is Intent.Flee -> prepareFlee(runtime, intent, requestId, sense)
             is Intent.Dig -> interactions.prepare(runtime, intent, requestId, sense)
@@ -176,9 +175,51 @@ internal class PlayerActionPreparer(
             ActionExecution(IntentOutcome.Accepted(effect))
         }
 
-    private fun move(
+    /**
+     * Resolves the block a walk names, on the main thread, to the cell directly above the
+     * exact position that one sense answer reported for it.
+     *
+     * Nothing here judges whether that cell can be stood in: the destination is the named
+     * block's own, and the ground answers for it. A ref this agent no longer holds, or one the
+     * request never issued, is refused before anything is asked of the body.
+     */
+    private fun prepareMove(
         runtime: PlayerRuntime,
         intent: Intent.MoveTo,
+        requestId: String?,
+        sense: HeldSense?,
+    ): () -> ActionExecution {
+        val resolved =
+            requestId?.let {
+                context.refs.blocks.resolve(
+                    runtime.identity.agentId,
+                    it,
+                    intent.onto,
+                    context.authority.currentTick(),
+                )
+            } ?: WorldTargetResolution.Stale
+        val block =
+            (resolved as? WorldTargetResolution.Bound)?.let { sense?.raw?.report?.blocks?.getOrNull(it.index) }
+        return when {
+            resolved == WorldTargetResolution.Unknown ->
+                rejectedAction("that request never named such a block", EventTag.MOVE_BLOCK_UNNAMED)
+            block == null ->
+                rejectedAction(
+                    "the block was named by a request this agent no longer holds",
+                    EventTag.MOVE_SENSE_FORGOTTEN,
+                )
+            else -> {
+                val (x, y, z) = block.position
+                val destination = listOf(x.toDouble(), (y + 1).toDouble(), z.toDouble())
+                val operation: () -> ActionExecution = { move(runtime, destination, sense) }
+                operation
+            }
+        }
+    }
+
+    private fun move(
+        runtime: PlayerRuntime,
+        destination: List<Double>,
         sense: HeldSense?,
     ): ActionExecution {
         val request =
@@ -186,7 +227,7 @@ internal class PlayerActionPreparer(
                 protocol = BODY_CONTROL_PROTOCOL_VERSION,
                 requestId = context.infrastructure.requestIds.next("move"),
                 agentId = runtime.identity.agentId.value,
-                destination = intent.target.map(Long::toDouble),
+                destination = destination,
                 tolerance = 0,
                 timeoutMs = MOVEMENT_DEADLINE_MS,
                 sprint = false,

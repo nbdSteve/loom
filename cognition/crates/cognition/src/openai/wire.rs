@@ -343,10 +343,8 @@ pub fn describe_json_error(e: &serde_json::Error) -> String {
 /// - Every object must list all its properties as `required` and set
 ///   `additionalProperties: false`. That is why the union is an `anyOf` of four
 ///   closed objects rather than one object with optional fields.
-/// - Array length cannot be expressed - `minItems` and `maxItems` are not
-///   supported - so `moveTo`'s target says its length in words, and the contract
-///   type `[i64; 3]` is what actually enforces it. An answer with the wrong
-///   number of coordinates therefore fails in [`draft_from_answer`], as a bounded
+/// - String length cannot be expressed either, so a ref's bound is the contract
+///   type's: an over-long or blank ref fails in [`draft_from_answer`], as a bounded
 ///   malformed-answer error.
 #[must_use]
 pub fn decision_schema() -> &'static Value {
@@ -495,10 +493,9 @@ fn build_decision_schema() -> Value {
                         }
                     })),
                     intent_variant("moveTo", &json!({
-                        "target": {
-                            "type": "array",
-                            "description": "Exactly three whole numbers: the x, y and z of the block to walk to.",
-                            "items": { "type": "integer" }
+                        "onto": {
+                            "type": "string",
+                            "description": "The ref of the one nearby block to walk onto: the body walks to stand in the space directly above that exact block. A block ref from this message, never coordinates or an invented one."
                         }
                     })),
                     intent_variant("flee", &json!({
@@ -863,11 +860,25 @@ mod tests {
     }
 
     #[test]
-    fn a_target_of_the_wrong_length_is_refused_where_the_schema_could_not_say_so() {
-        let reason =
-            draft_from_answer(r#"{"intent":{"action":"moveTo","target":[1,2]},"reasoning":"go"}"#)
-                .expect_err("a target is exactly three coordinates");
+    fn a_walk_names_a_block_ref_and_never_a_coordinate() {
+        let reason = draft_from_answer(
+            r#"{"intent":{"action":"moveTo","target":[1,2,3]},"reasoning":"go"}"#,
+        )
+        .expect_err("a walk names the block it ends on");
         assert!(reason.contains("wrong shape"), "got {reason}");
+        let reason =
+            draft_from_answer(r#"{"intent":{"action":"moveTo","onto":""},"reasoning":"go"}"#)
+                .expect_err("a blank ref names nothing");
+        assert!(reason.contains("wrong shape"), "got {reason}");
+        let draft =
+            draft_from_answer(r#"{"intent":{"action":"moveTo","onto":"b5"},"reasoning":"go"}"#)
+                .unwrap();
+        assert_eq!(
+            draft.intent,
+            Intent::MoveTo {
+                onto: "b5".to_owned()
+            }
+        );
     }
 
     #[test]

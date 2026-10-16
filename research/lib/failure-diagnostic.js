@@ -25,7 +25,8 @@ const REFUSAL_UNITS = new Set(['calls', 'nanoUsd'])
 const MODES = new Set([
   'crash-containment',
   'routine-v12-primary-behavior',
-  'routine-v13-goal-continuity'
+  'routine-v13-goal-continuity',
+  'routine-v14-grounded-walk'
 ])
 const MAX_INPUT_LINE_BYTES = 256 * 1024
 const BODY_EVENTS = new Set([

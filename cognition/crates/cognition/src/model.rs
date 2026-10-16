@@ -314,15 +314,6 @@ impl BackendChoice {
     }
 }
 
-/// The furthest a world coordinate can be from the origin, in blocks.
-///
-/// Minecraft's world border sits here, so clamping to it makes the float ->
-/// integer conversion below total without discarding any reachable position.
-const WORLD_LIMIT_BLOCKS: f64 = 29_999_984.0;
-
-/// How far the stand-in steps toward something it has sighted, in blocks.
-const SIGHTED_STEP_BLOCKS: i64 = 2;
-
 /// The vanilla food level at or below which the stand-in seeks a meal.
 ///
 /// Well clear of exhaustion, because a goal review is the *only* moment this
@@ -335,23 +326,6 @@ const LOW_FOOD_LEVEL: i64 = 7;
 /// The one goal the stand-in ever adopts, worded as the stand-in's own so no
 /// record reads it as a model's choice.
 pub const SCRIPTED_GOAL_STATEMENT: &str = "scripted stand-in goal: stay fed and unhurt";
-
-/// Converts a continuous world coordinate to the block coordinate an
-/// [`Intent::MoveTo`] target carries.
-///
-/// Clamped and NaN-guarded first: an unbounded float-to-integer cast is exactly
-/// the kind of silent nonsense the workspace's clippy gate denies, and the
-/// clamp is what makes the narrowing well-defined rather than merely quiet.
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "the clamp above bounds the value well inside i64, and floor() removes the fraction"
-)]
-pub(crate) fn block_coord(value: f64) -> i64 {
-    if value.is_nan() {
-        return 0;
-    }
-    value.clamp(-WORLD_LIMIT_BLOCKS, WORLD_LIMIT_BLOCKS).floor() as i64
-}
 
 /// The deterministic stand-in backend: a rule per trigger, no inference.
 ///
@@ -453,26 +427,23 @@ impl ScriptedBackend {
                 },
                 reasoning: format!("{threat} hunts my kind and is in view; retreat from it"),
             },
-            Trigger::BlockSighted { block } => {
-                let [x, y, z] = perception.self_state.position;
-                Draft {
+            // A walk names a block the body observed, so the stand-in walks onto the
+            // nearest observation of the sighted kind. It has no spatial reasoning:
+            // a sighting with no matching observation, or one the trigger names in
+            // words the body did not report, is answered by doing nothing rather than
+            // by a coordinate nothing in the perception grounds.
+            Trigger::BlockSighted { block } => match nearest_block_ref(perception, block) {
+                Some(handle) => Draft {
                     goal: None,
-                    intent: Intent::MoveTo {
-                        // The stand-in has no spatial reasoning. The perception
-                        // now carries a bearing for every observation, but the
-                        // trigger names a block rather than an observation, so
-                        // there is nothing here to read one off; this steps a
-                        // fixed offset rather than inventing a direction.
-                        // A real backend is given, and uses, the whole payload.
-                        target: [
-                            block_coord(x) + SIGHTED_STEP_BLOCKS,
-                            block_coord(y),
-                            block_coord(z),
-                        ],
-                    },
-                    reasoning: format!("{block} sighted nearby; close the distance to reach it"),
-                }
-            }
+                    intent: Intent::MoveTo { onto: handle },
+                    reasoning: format!("{block} sighted nearby; walk onto it to reach it"),
+                },
+                None => Draft {
+                    goal: None,
+                    intent: Intent::Idle,
+                    reasoning: format!("{block} sighted, but no observed block of it can be named"),
+                },
+            },
             // The one survival rule the stand-in has. Vanilla hunger is reported
             // directly, so a low food level outranks every other routine goal.
             //
@@ -541,6 +512,20 @@ impl ModelBackend for ScriptedBackend {
 /// carries `kind = entity`, so the first entity in the list is the nearest thing
 /// that can be fled from. `None` says the scene holds no living target rather
 /// than no actionable blocks or dropped items.
+/// The ref of the nearest observed block of kind `block`, if the scene holds one.
+///
+/// Matched on the last path segment of the body's own description, so `diamond_ore`
+/// names `block.minecraft.diamond_ore` and nothing else.
+fn nearest_block_ref(perception: &Perception, block: &str) -> Option<String> {
+    perception
+        .surroundings
+        .iter()
+        .find(|seen| {
+            seen.kind == ObservationKind::Block && seen.what.rsplit('.').next() == Some(block)
+        })
+        .map(|seen| seen.target_ref.clone())
+}
+
 fn nearest_ref(perception: &Perception) -> Option<String> {
     perception
         .surroundings
@@ -554,8 +539,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        block_coord, BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, LOW_FOOD_LEVEL,
-        SCRIPTED_GOAL_STATEMENT, WORLD_LIMIT_BLOCKS,
+        BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, LOW_FOOD_LEVEL,
+        SCRIPTED_GOAL_STATEMENT,
     };
     use crate::config::{ConfigError, Env};
     use crate::router::{ModelCatalog, Router};
@@ -921,35 +906,38 @@ mod tests {
     }
 
     #[test]
-    fn a_sighting_steps_from_the_body_own_block_position() {
-        let seen = perception(
+    fn a_sighting_walks_onto_the_nearest_observed_block_of_its_kind() {
+        let mut seen = perception(
             Trigger::BlockSighted {
                 block: "diamond_ore".to_owned(),
             },
             DecisionImportance::Routine,
         );
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        assert_eq!(draft.intent, Intent::Idle);
+        for (what, handle) in [
+            ("block.minecraft.stone", "b1"),
+            ("block.minecraft.diamond_ore", "b2"),
+            ("block.minecraft.diamond_ore", "b3"),
+        ] {
+            seen.surroundings.push(Observation {
+                kind: ObservationKind::Block,
+                what: what.to_owned(),
+                distance: 2.0,
+                direction: Bearing::North,
+                vertical_offset: -0.5,
+                visible: true,
+                target_ref: handle.to_owned(),
+                count: None,
+            });
+        }
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
         assert_eq!(
             draft.intent,
             Intent::MoveTo {
-                target: [12, 64, -9]
+                onto: "b2".to_owned()
             }
         );
-    }
-
-    #[test]
-    fn block_coordinates_stay_finite_for_any_float() {
-        assert_eq!(block_coord(f64::NAN), 0);
-        // Stated as "clamps to the limit" rather than as a number, so the
-        // assertion cannot drift from the constant it is about.
-        assert_eq!(block_coord(f64::INFINITY), block_coord(WORLD_LIMIT_BLOCKS));
-        assert_eq!(
-            block_coord(f64::NEG_INFINITY),
-            block_coord(-WORLD_LIMIT_BLOCKS)
-        );
-        assert!(block_coord(f64::INFINITY) > 0);
-        assert!(block_coord(f64::NEG_INFINITY) < 0);
-        assert_eq!(block_coord(-8.25), -9);
     }
 
     #[test]
