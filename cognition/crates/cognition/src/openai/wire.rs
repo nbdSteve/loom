@@ -347,7 +347,10 @@ fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> 
 /// content of a bad answer is not repeated. `serde_json`'s own `Display` is
 /// deliberately not used, because it quotes the offending value.
 pub fn draft_from_answer(content: &str) -> Result<Draft, String> {
-    match serde_json::from_str::<Answer>(content) {
+    let parsed = serde_json::from_str::<Value>(content)
+        .map(bounded_goal_texts)
+        .and_then(serde_json::from_value::<Answer>);
+    match parsed {
         Ok(answer) => Ok(Draft {
             goal: checked_goal(answer.goal)?,
             intent: answer.intent,
@@ -358,6 +361,27 @@ pub fn draft_from_answer(content: &str) -> Result<Draft, String> {
             detail = describe_json_error(&e)
         )),
     }
+}
+
+/// The goal's free-text fields, bounded to the contract's length before they are typed.
+///
+/// Strict mode cannot state a string length, so a model that words a goal, its success
+/// condition or its step at length writes a valid answer the contract would refuse - which
+/// lost the eighth live run in one answer. The text is cut, the way reasoning is, rather than
+/// the whole decision. Nothing else is touched: a blank field, a wrong type and every other
+/// shape fault still fail as a malformed answer.
+fn bounded_goal_texts(mut answer: Value) -> Value {
+    if let Some(goal) = answer.get_mut("goal").and_then(Value::as_object_mut) {
+        for field in ["statement", "successCondition", "step"] {
+            if let Some(Value::String(text)) = goal.get_mut(field) {
+                if text.chars().count() > MAX_GOAL_STATEMENT_CHARS {
+                    let kept: String = text.chars().take(MAX_GOAL_STATEMENT_CHARS - 3).collect();
+                    *text = format!("{kept}...");
+                }
+            }
+        }
+    }
+    answer
 }
 
 /// Describes a JSON failure without repeating the JSON.
@@ -950,17 +974,13 @@ mod tests {
 
     #[test]
     fn a_malformed_goal_choice_is_a_bounded_malformed_answer() {
-        let too_long = format!(
-            r#"{{"disposition":"adopt","statement":"{}"}}"#,
-            "x".repeat(161)
-        );
+        // An over-long text is bounded rather than refused; see the test after this one.
         for bad in [
             r#"{"disposition":"adopt","statement":"go","priority":1}"#,
             r#"{"disposition":"pursue"}"#,
             r#"{"disposition":"adopt","statement":""}"#,
             r#"{"disposition":"adopt","statement":7}"#,
             r#""continue""#,
-            too_long.as_str(),
         ] {
             let reason = goal_of(bad).expect_err(bad);
             assert!(reason.contains("wrong shape"), "{bad}: {reason}");
@@ -1006,6 +1026,25 @@ mod tests {
                 onto: "b5".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn an_over_long_goal_text_is_bounded_rather_than_failing_the_decision() {
+        // The strict provider schema cannot state a length, and the eighth live run lost a
+        // whole run to one answer whose goal text was longer than the contract allows.
+        let long = "w".repeat(MAX_GOAL_STATEMENT_CHARS * 2);
+        let answer = format!(
+            r#"{{"intent":{{"action":"idle"}},"reasoning":"r","goal":{{"disposition":"adopt","statement":"{long}","successCondition":"{long}","step":"{long}"}}}}"#
+        );
+        let goal = draft_from_answer(&answer).unwrap().goal.unwrap();
+        for text in [goal.statement, goal.success_condition, goal.step] {
+            let text = text.unwrap();
+            assert_eq!(text.chars().count(), MAX_GOAL_STATEMENT_CHARS);
+            assert!(text.ends_with("..."));
+        }
+        // A blank goal text is still a malformed answer: there is nothing to keep.
+        let blank = r#"{"intent":{"action":"idle"},"reasoning":"r","goal":{"disposition":"continue","step":"","stepResult":"done"}}"#;
+        assert!(draft_from_answer(blank).is_err());
     }
 
     #[test]
