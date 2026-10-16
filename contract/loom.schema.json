@@ -12,9 +12,9 @@
     },
 
     "Bearing": {
-      "description": "A horizontal compass bearing from the agent to something it can see. Four cardinal points and no finer, because it is the engine's own nearest-axis answer for the delta and a bearing precise enough to look like a heading would be a precision the body did not measure.",
+      "description": "A horizontal compass bearing from the agent to something it can see. Four cardinal points and no finer, because it is the engine's own nearest-axis answer for the delta and a bearing precise enough to look like a heading would be a precision the body did not measure. here is the one value that is not a direction: the thing lies in the agent's own block column, within half a block horizontally - the block it stands on, a plant it stands in, something directly overhead - for which any compass point would be invented.",
       "type": "string",
-      "enum": ["north", "east", "south", "west"]
+      "enum": ["north", "east", "south", "west", "here"]
     },
 
     "ObservationKind": {

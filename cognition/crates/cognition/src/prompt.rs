@@ -36,13 +36,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v15";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v16";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v15";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v16";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v15";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v16";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -90,7 +90,8 @@ Your body accepts exactly thirteen actions:
 walks to stand on top of it, in the space directly above; for a block you can walk \
 through, such as a dead bush, grass or a flower, it walks to stand in that block's \
 own space. The body walks only to that one spot, and the ground refuses a walk \
-with no route or no room to stand there. Your surroundings never give \
+with no route or no room to stand there. Walking to the block under your feet, or \
+a plant you already stand in, goes nowhere. Your surroundings never give \
 coordinates, so a walk is always named by a block ref.
 - eat: eat one item from one stack you are carrying, named by the ref that stack \
 carries. It asks vanilla to consume exactly that item, and it can be refused: the \
@@ -132,7 +133,9 @@ witness can establish that your one life ended.
 - You perceive only what you are told. Each thing in your surroundings list \
 carries how far away it is, which compass direction it lies in, how far above or \
 below you it is, and whether you can actually see it right now - a thing you \
-cannot see is one you know is there through a wall or round a corner.
+cannot see is one you know is there through a wall or round a corner. A thing in \
+your own spot - the block under your feet, a plant you stand in, something straight \
+overhead - is described by where it is relative to you instead of by a direction.
 - Every thing in your surroundings carries its kind and a short ref, and every \
 stack you are carrying carries one. A ref is the handle for that one thing in this one message: \
 it is the only way to name it back to your body, it means nothing in any other \
@@ -253,11 +256,14 @@ fn trigger_line(trigger: &Trigger) -> String {
             reachable,
         } => format!(
             "you caught sight of {threat} (ref {entity_ref}) that hunts your kind, \
-about {distance} blocks away to the {bearing}, {sight}, and {reach}",
+{place}, {sight}, and {reach}",
             threat = field(threat),
             entity_ref = field(entity_ref),
-            distance = number(*distance),
-            bearing = bearing_word(*direction),
+            place = if *direction == Bearing::Here {
+                "right where you are".to_owned()
+            } else {
+                whereabouts(*distance, *direction, 0.0)
+            },
             sight = if *visible {
                 "in sight"
             } else {
@@ -487,14 +493,48 @@ const fn phase_word(phase: DayPhase) -> &'static str {
     }
 }
 
-/// One bearing, as the word the agent reads.
-const fn bearing_word(bearing: Bearing) -> &'static str {
-    match bearing {
+/// Where something lies, as the phrase the agent reads: a distance and a compass point,
+/// or, for something in the agent's own block column, its place relative to the agent.
+///
+/// The second exists because the block an agent stands on is half a block below its feet
+/// and offset by nothing horizontally: phrased as a distance and a compass point it read as
+/// a block beside the agent, and minds walked to the block they were already standing on.
+fn whereabouts(distance: f64, bearing: Bearing, vertical_offset: f64) -> String {
+    let point = match bearing {
         Bearing::North => "north",
         Bearing::East => "east",
         Bearing::South => "south",
         Bearing::West => "west",
+        Bearing::Here => return own_column_phrase(vertical_offset),
+    };
+    format!(
+        "about {distance} blocks away to the {point}{height}",
+        distance = number(distance),
+        height = height_phrase(vertical_offset)
+    )
+}
+
+/// Something in the agent's own block column, by how far above or below its feet it is.
+fn own_column_phrase(vertical_offset: f64) -> String {
+    if !vertical_offset.is_finite() {
+        return "in your own spot at an unknown height".to_owned();
     }
+    if vertical_offset < 0.0 {
+        if vertical_offset > -1.0 {
+            return "directly under your feet: the block you are standing on".to_owned();
+        }
+        return format!(
+            "directly below you, {depth} blocks down",
+            depth = number(-vertical_offset)
+        );
+    }
+    if vertical_offset < 1.0 {
+        return "in the very space you are standing in".to_owned();
+    }
+    format!(
+        "directly above you, {height} blocks up",
+        height = number(vertical_offset)
+    )
 }
 
 /// One observation, as a phrase.
@@ -504,16 +544,14 @@ const fn bearing_word(bearing: Bearing) -> &'static str {
 /// about the rest as their absence, which is the opposite of what the body meant.
 fn observation_phrase(seen: &Observation) -> String {
     format!(
-        "{count}{kind} {what} (ref {handle}) about {distance} blocks away to the {bearing}{height}, {sight}",
+        "{count}{kind} {what} (ref {handle}) {place}, {sight}",
         count = seen
             .count
             .map_or_else(String::new, |count| format!("{count} ")),
         kind = observation_kind_word(seen.kind),
         what = field(&seen.what),
         handle = field(&seen.target_ref),
-        distance = number(seen.distance),
-        bearing = bearing_word(seen.direction),
-        height = height_phrase(seen.vertical_offset),
+        place = whereabouts(seen.distance, seen.direction, seen.vertical_offset),
         sight = if seen.visible {
             "in sight"
         } else {
@@ -613,8 +651,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        render, MAX_CRAFTING_LINES, MAX_FIELD_CHARS, MAX_INVENTORY_LINES, MAX_OBSERVATIONS,
-        NOTABLE_PROMPT_VERSION, PIVOTAL_PROMPT_VERSION, ROUTINE_PROMPT_VERSION,
+        own_column_phrase, render, MAX_CRAFTING_LINES, MAX_FIELD_CHARS, MAX_INVENTORY_LINES,
+        MAX_OBSERVATIONS, NOTABLE_PROMPT_VERSION, PIVOTAL_PROMPT_VERSION, ROUTINE_PROMPT_VERSION,
     };
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
@@ -932,6 +970,37 @@ mod tests {
                 "the goal-review path must not retain {old_wording:?}, got {rendered}"
             );
         }
+    }
+
+    #[test]
+    fn a_block_in_the_agent_own_column_is_placed_relative_to_it_not_by_compass() {
+        // The sixth live run's walks went to the block each body already stood on, which
+        // the prompt had called a block half a block away to the north.
+        let seen: Perception = serde_json::from_str(include_str!(
+            "../../../../contract/fixtures/valid/perception-standing-on.json"
+        ))
+        .unwrap();
+        let router = Router::new(ModelCatalog::new("fast", "deep"));
+        let prompt = render(&router.route(seen.importance), &seen);
+        assert!(prompt.situation.contains(
+            "block block.minecraft.terracotta (ref b1) directly under your feet: the block you are standing on"
+        ), "{}", prompt.situation);
+        assert!(prompt.situation.contains(
+            "block block.minecraft.dead_bush (ref b2) in the very space you are standing in"
+        ));
+        assert!(prompt
+            .situation
+            .contains("(ref b3) about 1.1 blocks away to the north"));
+        assert!(!prompt.situation.contains("to the here"));
+        assert_eq!(
+            own_column_phrase(-2.5),
+            "directly below you, 2.5 blocks down"
+        );
+        assert_eq!(own_column_phrase(1.5), "directly above you, 1.5 blocks up");
+        assert_eq!(
+            own_column_phrase(f64::NAN),
+            "in your own spot at an unknown height"
+        );
     }
 
     #[test]

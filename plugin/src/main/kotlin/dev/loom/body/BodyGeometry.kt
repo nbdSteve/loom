@@ -9,17 +9,25 @@ import kotlin.math.sqrt
 
 private const val WORLD_POSITION_COMPONENTS = 3
 
+/** Within this far on both horizontal axes, a thing is in the agent's own block column. */
+private const val OWN_COLUMN_BLOCKS = 0.5
+
 /**
  * The nearest horizontal axis for a delta in Minecraft coordinates.
  *
- * Positive z is south. A tie belongs to the z axis, matching the engine's
- * nearest-direction order, and a zero delta is north rather than an exception.
+ * Positive z is south. A tie belongs to the z axis, matching the engine's nearest-direction
+ * order. A delta inside the agent's own block column on both axes is [Bearing.HERE]: the
+ * block the agent stands on is straight below it, and naming a compass point for it - the
+ * zero delta once read as north - told a mind that block lay beside it, so a live run's
+ * walks went to the block each body was already standing on.
  */
 fun horizontalBearing(
     deltaX: Double,
     deltaZ: Double,
 ): Bearing =
-    if (abs(deltaZ) >= abs(deltaX)) {
+    if (abs(deltaX) < OWN_COLUMN_BLOCKS && abs(deltaZ) < OWN_COLUMN_BLOCKS) {
+        Bearing.HERE
+    } else if (abs(deltaZ) >= abs(deltaX)) {
         if (deltaZ > 0.0) Bearing.SOUTH else Bearing.NORTH
     } else if (deltaX > 0.0) {
         Bearing.EAST

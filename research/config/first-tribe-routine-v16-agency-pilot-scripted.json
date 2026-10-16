@@ -1,7 +1,7 @@
 {
-  "experimentId": "2026-10-16-scripted-routine-v15-agency-pilot-rehearsal",
-  "title": "Credential-free routine-v15 goal-continuity dry run",
-  "mode": "routine-v15-grounded-walk",
+  "experimentId": "2026-10-16-scripted-routine-v16-agency-pilot-rehearsal",
+  "title": "Credential-free routine-v16 goal-continuity dry run",
+  "mode": "routine-v16-grounded-walk",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -53,9 +53,9 @@
       "pivotal": "scripted-stand-in"
     },
     "prompts": {
-      "routine": "routine-v15",
-      "notable": "notable-v15",
-      "pivotal": "pivotal-v15"
+      "routine": "routine-v16",
+      "notable": "notable-v16",
+      "pivotal": "pivotal-v16"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,

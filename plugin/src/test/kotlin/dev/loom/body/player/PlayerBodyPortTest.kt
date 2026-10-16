@@ -38,6 +38,7 @@ import dev.loom.bodycontrol.SensedRecipe
 import dev.loom.bodycontrol.SensedStack
 import dev.loom.bodycontrol.SensedTime
 import dev.loom.bodycontrol.SensedVitals
+import dev.loom.contract.Bearing
 import dev.loom.contract.BlockFace
 import dev.loom.contract.EquipmentDestination
 import dev.loom.contract.Intent
@@ -832,65 +833,6 @@ class PlayerBodyPortTest {
                 "$agent received another agent's control request",
             )
         }
-    }
-
-    @Test
-    fun `a walk goes to the cell above the exact block its own request offered`() {
-        val agent = AgentId("agent-walk")
-        val harness = harness(agent)
-        harness.port.spawn(agent).await()
-
-        fun sensed() = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
-
-        // A creature's ref names no block, and a ref nothing issued names nothing: refused
-        // before the body is asked for anything.
-        for (named in listOf<
-            (
-                Perception,
-            ) -> String,
-            >({ seen -> seen.surroundings.single { it.kind == ObservationKind.ENTITY }.ref }, { "zz9" })) {
-            val seen = sensed()
-            val refused =
-                harness.port.apply(
-                    agent,
-                    Intent.MoveTo(named(seen)),
-                    seen.requestId,
-                ).await() as IntentOutcome.Rejected
-            assertEquals(EventTag.MOVE_BLOCK_UNNAMED, refused.tag)
-        }
-        // A block offered by an earlier request is not a later request's to spend, and a walk
-        // no request asked for has no sense answer to resolve against.
-        val earlier = sensed()
-        val later = sensed()
-        val stale = harness.port.apply(agent, walkOnto(earlier), later.requestId).await() as IntentOutcome.Rejected
-        assertEquals(EventTag.MOVE_BLOCK_UNNAMED, stale.tag)
-        val unasked = harness.port.apply(agent, walkOnto(sensed())).await() as IntentOutcome.Rejected
-        assertEquals(EventTag.MOVE_SENSE_FORGOTTEN, unasked.tag)
-        assertTrue(harness.connector.requests.none { it is BodyRequest.MoveTo })
-
-        val current = sensed()
-        val accepted = harness.port.apply(agent, walkOnto(current), current.requestId).await()
-        assertTrue(accepted is IntentOutcome.Accepted, accepted.toString())
-        val move = harness.connector.requests.filterIsInstance<BodyRequest.MoveTo>().single()
-        // The sensed stone is at [4, 63, 2], so the walk is to stand on it: nothing else chosen.
-        assertEquals(listOf(4.0, 64.0, 2.0), move.destination)
-        assertEquals(0, move.tolerance)
-    }
-
-    @Test
-    fun `a walk onto a block the server gives no collision ends in that block's own cell`() {
-        val agent = AgentId("agent-walk-into")
-        val server = FakePlayerServerState().apply { passable += listOf(4, 63, 2) }
-        val harness = harness(agent, HarnessOptions(server = server))
-        harness.port.spawn(agent).await()
-        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
-
-        val accepted = harness.port.apply(agent, walkOnto(perception), perception.requestId).await()
-
-        assertTrue(accepted is IntentOutcome.Accepted, accepted.toString())
-        val move = harness.connector.requests.filterIsInstance<BodyRequest.MoveTo>().single()
-        // The sensed block at [4, 63, 2] is one a body stands in, so the walk ends there.
-        assertEquals(listOf(4.0, 63.0, 2.0), move.destination)
     }
 
     @Test
@@ -2363,3 +2305,133 @@ private fun distance(
 
 private fun <T> CompletionStage<T>.await(): T =
     toCompletableFuture().get(PORT_TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
+
+/** How a walk named by a block resolves, and how the blocks it can name are placed. */
+class PlayerWalkResolutionTest {
+    @TempDir
+    lateinit var temporary: Path
+
+    private val harnesses = mutableListOf<PortHarness>()
+    private val tick = AtomicLong(500)
+
+    @AfterEach
+    fun cleanUp() {
+        harnesses.forEach { runCatching(it.port::close) }
+    }
+
+    private fun harness(
+        agent: AgentId,
+        options: HarnessOptions = HarnessOptions(),
+    ): PortHarness = buildPortHarness(temporary, tick, agent, options).also(harnesses::add)
+
+    @Test
+    fun `a walk goes to the cell above the exact block its own request offered`() {
+        val agent = AgentId("agent-walk")
+        val harness = harness(agent)
+        harness.port.spawn(agent).await()
+
+        fun sensed() = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+
+        // A creature's ref names no block, and a ref nothing issued names nothing: refused
+        // before the body is asked for anything.
+        for (named in listOf<
+            (
+                Perception,
+            ) -> String,
+            >({ seen -> seen.surroundings.single { it.kind == ObservationKind.ENTITY }.ref }, { "zz9" })) {
+            val seen = sensed()
+            val refused =
+                harness.port.apply(
+                    agent,
+                    Intent.MoveTo(named(seen)),
+                    seen.requestId,
+                ).await() as IntentOutcome.Rejected
+            assertEquals(EventTag.MOVE_BLOCK_UNNAMED, refused.tag)
+        }
+        // A block offered by an earlier request is not a later request's to spend, and a walk
+        // no request asked for has no sense answer to resolve against.
+        val earlier = sensed()
+        val later = sensed()
+        val stale = harness.port.apply(agent, walkOnto(earlier), later.requestId).await() as IntentOutcome.Rejected
+        assertEquals(EventTag.MOVE_BLOCK_UNNAMED, stale.tag)
+        val unasked = harness.port.apply(agent, walkOnto(sensed())).await() as IntentOutcome.Rejected
+        assertEquals(EventTag.MOVE_SENSE_FORGOTTEN, unasked.tag)
+        assertTrue(harness.connector.requests.none { it is BodyRequest.MoveTo })
+
+        val current = sensed()
+        val accepted = harness.port.apply(agent, walkOnto(current), current.requestId).await()
+        assertTrue(accepted is IntentOutcome.Accepted, accepted.toString())
+        val move = harness.connector.requests.filterIsInstance<BodyRequest.MoveTo>().single()
+        // The sensed stone is at [4, 63, 2], so the walk is to stand on it: nothing else chosen.
+        assertEquals(listOf(4.0, 64.0, 2.0), move.destination)
+        assertEquals(0, move.tolerance)
+    }
+
+    @Test
+    fun `a walk onto a block the server gives no collision ends in that block's own cell`() {
+        val agent = AgentId("agent-walk-into")
+        val server = FakePlayerServerState().apply { passable += listOf(4, 63, 2) }
+        val harness = harness(agent, HarnessOptions(server = server))
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+
+        val accepted = harness.port.apply(agent, walkOnto(perception), perception.requestId).await()
+
+        assertTrue(accepted is IntentOutcome.Accepted, accepted.toString())
+        val move = harness.connector.requests.filterIsInstance<BodyRequest.MoveTo>().single()
+        // The sensed block at [4, 63, 2] is one a body stands in, so the walk ends there.
+        assertEquals(listOf(4.0, 63.0, 2.0), move.destination)
+    }
+
+    @Test
+    fun `the block a body stands on and a plant it stands in are here rather than a compass point`() {
+        val agent = AgentId("agent-standing")
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let {
+                            fakeSense(it).copy(
+                                blocks =
+                                    listOf(
+                                        SensedBlock(
+                                            what = "minecraft:terracotta",
+                                            position = listOf(1, 63, 2),
+                                            visible = true,
+                                        ),
+                                        SensedBlock(
+                                            what = "minecraft:dead_bush",
+                                            position = listOf(1, 64, 2),
+                                            visible = true,
+                                        ),
+                                        SensedBlock(
+                                            what = "minecraft:terracotta",
+                                            position = listOf(1, 63, 1),
+                                            visible = true,
+                                        ),
+                                    ),
+                            )
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val blocks =
+            requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+                .surroundings
+                .filter { it.kind == ObservationKind.BLOCK }
+                .map { Triple(it.what, it.direction, it.verticalOffset) }
+                .toSet()
+        // The body stands at [1.5, 64, 2.5]: on the terracotta at [1, 63, 2], in the bush above
+        // it, beside the terracotta at [1, 63, 1] one block north.
+        assertEquals(
+            setOf(
+                Triple("block.minecraft.terracotta", Bearing.HERE, -0.5),
+                Triple("block.minecraft.dead_bush", Bearing.HERE, 0.5),
+                Triple("block.minecraft.terracotta", Bearing.NORTH, -0.5),
+            ),
+            blocks,
+        )
+    }
+}

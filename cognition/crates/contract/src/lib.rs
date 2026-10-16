@@ -30,7 +30,9 @@ pub enum DecisionImportance {
 ///
 /// Four cardinal points and no finer: it is the engine's own nearest-axis answer
 /// for the delta, and a bearing precise enough to look like a heading would be a
-/// precision the body never measured.
+/// precision the body never measured. [`Bearing::Here`] is the one value that is
+/// not a direction: the thing lies in the agent's own block column, such as the
+/// block it stands on, for which any compass point would be invented.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bearing {
     #[serde(rename = "north")]
@@ -41,6 +43,8 @@ pub enum Bearing {
     South,
     #[serde(rename = "west")]
     West,
+    #[serde(rename = "here")]
+    Here,
 }
 
 /// The vanilla shape one request-scoped world observation describes.

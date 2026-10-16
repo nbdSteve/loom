@@ -122,7 +122,9 @@ enum class DecisionImportance {
  *
  * Four cardinal points and no finer: it is the engine's own nearest-axis answer for
  * the delta, and a bearing precise enough to look like a heading would be a
- * precision the body never measured.
+ * precision the body never measured. [HERE] is the one value that is not a direction:
+ * the thing lies in the agent's own block column, such as the block it stands on, for
+ * which any compass point would be invented.
  */
 @Serializable
 enum class Bearing {
@@ -137,6 +139,9 @@ enum class Bearing {
 
     @SerialName("west")
     WEST,
+
+    @SerialName("here")
+    HERE,
 }
 
 /** The vanilla shape one request-scoped world observation describes. */
