@@ -190,8 +190,23 @@ class BodyEventJournal(
         agentId: AgentId,
         detail: String,
         outcome: String,
+        requestId: String? = null,
     ) {
-        classified(agentId, BodyEvent.RETREATING, detail, outcome)
+        classified(agentId, BodyEvent.RETREATING, detail, outcome, requestId)
+    }
+
+    /**
+     * Records how far one walk or flight moved the body and how it ended, under the request
+     * that asked for it, so a movement's terminal is a typed fact joined by id rather than a
+     * nearby record read out of prose.
+     */
+    fun recordMovement(
+        agentId: AgentId,
+        detail: String,
+        requestId: String?,
+        outcome: String,
+    ) {
+        classified(agentId, BodyEvent.MOVED, detail, outcome, requestId)
     }
 
     /** Appends an [event] whose meaning is carried by a short stable [outcome] tag. */
@@ -200,6 +215,7 @@ class BodyEventJournal(
         event: BodyEvent,
         detail: String,
         outcome: String,
+        requestId: String? = null,
     ) {
         eventLog.append(
             BodyEventRecord(
@@ -207,6 +223,7 @@ class BodyEventJournal(
                 agentId = agentId.value,
                 event = event,
                 detail = detail,
+                requestId = requestId,
                 outcome = outcome,
             ),
         )

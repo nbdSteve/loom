@@ -237,6 +237,49 @@ object EventTag {
      */
     const val MOVE_BLOCK_UNNAMED: String = "moveBlockUnnamed"
 
+    /**
+     * A walk named a block in the agent's own column - the one under its feet, or a plant it
+     * stands in - which goes nowhere: refused rather than answered as an arrival that moved
+     * nothing. Never offered to a walk, so this is a mind that ignored its offer.
+     */
+    const val MOVE_OWN_SPOT: String = "moveOwnSpot"
+
+    /** A walk whose destination lies beyond the body's movement reach. */
+    const val MOVE_OUT_OF_RANGE: String = "moveOutOfRange"
+
+    /** A walk the ground gave no route for. */
+    const val MOVE_NO_ROUTE: String = "moveNoRoute"
+
+    /** A walk whose route search the body's own budget stopped before it learned the ground. */
+    const val MOVE_SEARCH_OVER_BUDGET: String = "moveSearchOverBudget"
+
+    /** A flight from a threat beyond the body's movement reach. */
+    const val RETREAT_OUT_OF_RANGE: String = "retreatOutOfRange"
+
+    /** A flight the ground gave no route for. */
+    const val RETREAT_NO_ROUTE: String = "retreatNoRoute"
+
+    /** A flight whose route search the body's own budget stopped before it learned the ground. */
+    const val RETREAT_SEARCH_OVER_BUDGET: String = "retreatSearchOverBudget"
+
+    /** How a walk or flight that moved the body ended, on its `moved` record. */
+    const val MOVEMENT_ARRIVED: String = "movementArrived"
+
+    /** The movement started and then made no further progress. */
+    const val MOVEMENT_STALLED: String = "movementStalled"
+
+    /** The movement reached its travel bound before arriving. */
+    const val MOVEMENT_OVER_TRAVELLED: String = "movementOverTravelled"
+
+    /** The movement reached its time bound before arriving. */
+    const val MOVEMENT_TIMED_OUT: String = "movementTimedOut"
+
+    /** A halt or a later intent stopped the movement after it had moved the body. */
+    const val MOVEMENT_CANCELLED: String = "movementCancelled"
+
+    /** The movement moved the body and then ended without a route, reach or named threat. */
+    const val MOVEMENT_REFUSED: String = "movementRefused"
+
     /** A later intent that was not a flight took the body over. */
     const val RETREAT_SUPERSEDED: String = "retreatSuperseded"
 
@@ -542,6 +585,13 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.RETREAT_THREAT_GONE,
         EventTag.MOVE_SENSE_FORGOTTEN,
         EventTag.MOVE_BLOCK_UNNAMED,
+        EventTag.MOVE_OWN_SPOT,
+        EventTag.MOVE_OUT_OF_RANGE,
+        EventTag.MOVE_NO_ROUTE,
+        EventTag.MOVE_SEARCH_OVER_BUDGET,
+        EventTag.RETREAT_OUT_OF_RANGE,
+        EventTag.RETREAT_NO_ROUTE,
+        EventTag.RETREAT_SEARCH_OVER_BUDGET,
         EventTag.DIG_SENSE_FORGOTTEN,
         EventTag.DIG_BLOCK_UNNAMED,
         EventTag.DIG_BLOCK_GONE,

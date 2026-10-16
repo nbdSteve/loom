@@ -34,6 +34,7 @@ use serde_json::{json, Value};
 
 use crate::config::bounded_to;
 use crate::model::Draft;
+use crate::offered::OfferedRefs;
 use crate::prompt::Prompt;
 
 /// Name the response schema is registered under in the request.
@@ -91,16 +92,17 @@ pub struct SchemaSpec {
     pub name: &'static str,
     /// Always true. Without it the schema is a suggestion.
     pub strict: bool,
-    /// [`decision_schema`].
-    pub schema: &'static Value,
+    /// [`decision_schema_for`] the perception this request asks about.
+    pub schema: Value,
 }
 
-/// Builds the request for one prompt at one model.
+/// Builds the request for one prompt at one model, answered in `schema`.
 #[must_use]
 pub fn chat_request<'a>(
     model: &'a str,
     prompt: &'a Prompt,
     max_output_tokens: u32,
+    schema: Value,
 ) -> ChatRequest<'a> {
     ChatRequest {
         model,
@@ -120,7 +122,7 @@ pub fn chat_request<'a>(
             json_schema: SchemaSpec {
                 name: SCHEMA_NAME,
                 strict: true,
-                schema: decision_schema(),
+                schema,
             },
         },
     }
@@ -406,95 +408,155 @@ pub fn describe_json_error(e: &serde_json::Error) -> String {
     )
 }
 
-/// The schema every answer must satisfy.
+/// The unconstrained shape every answer has, whatever was offered.
 ///
-/// Built once. Strict structured outputs constrain what a schema may say, and two
-/// of those constraints shape this one:
+/// Built once. This is the schema's reference shape: every variant present, and each
+/// ref a plain string. It is what the fixture pin tests hold against the contract,
+/// since a request never sends it - see [`decision_schema_for`].
+///
+/// Strict structured outputs constrain what a schema may say, and two of those
+/// constraints shape this one:
 ///
 /// - Every object must list all its properties as `required` and set
-///   `additionalProperties: false`. That is why the union is an `anyOf` of four
-///   closed objects rather than one object with optional fields.
+///   `additionalProperties: false`. That is why the union is an `anyOf` of closed
+///   objects rather than one object with optional fields.
 /// - String length cannot be expressed either, so a ref's bound is the contract
 ///   type's: an over-long or blank ref fails in [`draft_from_answer`], as a bounded
 ///   malformed-answer error.
 #[must_use]
 pub fn decision_schema() -> &'static Value {
-    static SCHEMA: LazyLock<Value> = LazyLock::new(build_decision_schema);
+    static SCHEMA: LazyLock<Value> = LazyLock::new(|| build_decision_schema(None));
     &SCHEMA
 }
 
-/// One `Intent` variant, as a closed object tagged with its `action`.
-fn intent_variant(action: &str, fields: &Value) -> Value {
-    let mut properties = json!({ "action": { "type": "string", "enum": [action] } });
+/// The schema one request sends: every ref an `enum` of the handles this perception
+/// offers in that action's own namespace.
+///
+/// A variant whose refs have nothing to name is left out, because an action the body
+/// can only refuse is not one to offer. `say`, `rest` and `idle` name nothing and are
+/// always present, so the union is never empty.
+#[must_use]
+pub fn decision_schema_for(offered: &OfferedRefs) -> Value {
+    build_decision_schema(Some(offered))
+}
+
+/// One `Intent` variant, as a closed object tagged with its `action`, or `None` when a
+/// ref it requires has nothing offered to name.
+fn intent_variant(action: &str, fields: Vec<(&str, Option<Value>)>) -> Option<Value> {
+    let mut properties = serde_json::Map::new();
+    properties.insert(
+        "action".to_owned(),
+        json!({ "type": "string", "enum": [action] }),
+    );
     let mut required = vec![json!("action")];
-    if let (Some(properties), Some(fields)) = (properties.as_object_mut(), fields.as_object()) {
-        for (name, schema) in fields {
-            properties.insert(name.clone(), schema.clone());
-            required.push(json!(name));
-        }
+    for (name, schema) in fields {
+        properties.insert(name.to_owned(), schema?);
+        required.push(json!(name));
     }
-    json!({
+    Some(json!({
         "type": "object",
         "properties": properties,
         "required": required,
         "additionalProperties": false,
-    })
+    }))
 }
 
-fn craft_intent_schema() -> Value {
-    intent_variant(
-        "craft",
-        &json!({
-            "recipe": {
-                "type": "string",
-                "description": "The ref of the exact offered recipe to apply."
-            },
-            "crafts": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 8,
-                "description": "How many bounded applications of that offered recipe to request."
-            }
-        }),
-    )
+/// One request namespace: the handles one store offers, defined once under `$defs` so a
+/// block offered to three actions costs one enum and not three.
+#[derive(Clone, Copy)]
+enum Namespace {
+    Block,
+    WalkTarget,
+    Creature,
+    DroppedItem,
+    Stack,
+    Recipe,
 }
 
-fn attack_intent_schema() -> Value {
-    intent_variant(
-        "attack",
-        &json!({
-            "target": {
-                "type": "string",
-                "description": "The ref of the exact offered living target."
-            },
-            "weapon": {
-                "type": "string",
-                "description": "The ref of the exact offered inventory stack to use as the weapon."
-            },
-            "attacks": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 4,
-                "description": "The maximum number of bounded attack swings."
-            },
-            "approach": {
-                "type": "boolean",
-                "description": "Whether to permit one bounded approach to the target's sensed position."
-            }
-        }),
-    )
+impl Namespace {
+    const ALL: [Self; 6] = [
+        Self::Block,
+        Self::WalkTarget,
+        Self::Creature,
+        Self::DroppedItem,
+        Self::Stack,
+        Self::Recipe,
+    ];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Block => "blockRef",
+            Self::WalkTarget => "walkTargetRef",
+            Self::Creature => "creatureRef",
+            Self::DroppedItem => "droppedItemRef",
+            Self::Stack => "stackRef",
+            Self::Recipe => "recipeRef",
+        }
+    }
+
+    const fn description(self) -> &'static str {
+        match self {
+            Self::Block => "A block ref offered in this message.",
+            Self::WalkTarget => "A block ref offered in this message outside your own spot.",
+            Self::Creature => "A living-thing ref offered in this message.",
+            Self::DroppedItem => "A dropped-item ref offered in this message.",
+            Self::Stack => "An inventory-stack ref offered in this message.",
+            Self::Recipe => "A recipe ref offered in this message.",
+        }
+    }
+
+    fn of(self, offered: &OfferedRefs) -> &[String] {
+        match self {
+            Self::Block => &offered.blocks,
+            Self::WalkTarget => &offered.walk_targets,
+            Self::Creature => &offered.creatures,
+            Self::DroppedItem => &offered.dropped_items,
+            Self::Stack => &offered.stacks,
+            Self::Recipe => &offered.recipes,
+        }
+    }
 }
 
-fn sleep_intent_schema() -> Value {
-    intent_variant(
-        "sleep",
-        &json!({
-            "bed": {
-                "type": "string",
-                "description": "The ref of the exact offered bed to use once."
-            }
-        }),
-    )
+/// One ref field: a plain string in the reference shape, a reference to the offered
+/// namespace in a request, and `None` when a request offers that namespace nothing.
+fn ref_field(
+    description: &str,
+    namespace: Namespace,
+    offered: Option<&OfferedRefs>,
+) -> Option<Value> {
+    match offered {
+        None => Some(json!({ "type": "string", "description": description })),
+        Some(refs) if namespace.of(refs).is_empty() => None,
+        Some(_) => Some(json!({
+            "description": description,
+            "anyOf": [{ "$ref": format!("#/$defs/{}", namespace.name()) }],
+        })),
+    }
+}
+
+/// The `$defs` a request carries: one closed string enum per namespace it offers.
+fn namespace_defs(offered: &OfferedRefs) -> Value {
+    let mut defs = serde_json::Map::new();
+    for namespace in Namespace::ALL {
+        let handles = namespace.of(offered);
+        if !handles.is_empty() {
+            defs.insert(
+                namespace.name().to_owned(),
+                json!({
+                    "type": "string",
+                    "enum": handles,
+                    "description": namespace.description(),
+                }),
+            );
+        }
+    }
+    Value::Object(defs)
+}
+
+/// A field that is not a ref, present whatever was offered.
+#[allow(clippy::unnecessary_wraps)]
+fn plain(schema: Value) -> Option<Value> {
+    Some(schema)
 }
 
 /// One goal disposition, as a closed object carrying exactly the fields it requires.
@@ -571,85 +633,82 @@ fn goal_choice_schema() -> Value {
     })
 }
 
-fn build_decision_schema() -> Value {
-    json!({
+fn build_decision_schema(offered: Option<&OfferedRefs>) -> Value {
+    let blocks = |description: &str| ref_field(description, Namespace::Block, offered);
+    let walk_targets = |description: &str| ref_field(description, Namespace::WalkTarget, offered);
+    let creatures = |description: &str| ref_field(description, Namespace::Creature, offered);
+    let dropped_items = |description: &str| ref_field(description, Namespace::DroppedItem, offered);
+    let stacks = |description: &str| ref_field(description, Namespace::Stack, offered);
+    let recipes = |description: &str| ref_field(description, Namespace::Recipe, offered);
+    let variants: Vec<Value> = [
+        intent_variant("say", vec![("text", plain(json!({
+            "type": "string",
+            "description": "One line of player chat heard by agents nearby: at most 128 characters and 256 UTF-8 bytes, words separated by single spaces, no leading or trailing space, no leading '/', and no control, formatting or bidirectional characters. Text outside these bounds is refused and never sent."
+        })))]),
+        intent_variant("moveTo", vec![("onto", walk_targets("The ref of the one nearby block to walk to: the body stands on top of a solid block, or in the own space of a block it can walk through such as a dead bush or grass. A block ref from this message outside your own spot, never coordinates or an invented one."))]),
+        intent_variant("flee", vec![("from", creatures("The ref of the one living thing to move away from. A creature ref given in this message, never a name, a type, or an invented one."))]),
+        intent_variant("eat", vec![("ref", stacks("The ref of the one stack in your own inventory to eat one item from. A stack ref given in this message, never an item name or an invented one."))]),
+        intent_variant("dig", vec![("block", blocks("The ref of the exact nearby block to dig once. A block ref from this message, never coordinates or an item name."))]),
+        intent_variant("collect", vec![
+            ("item", dropped_items("The ref of the exact dropped-item entity to collect.")),
+            ("approach", plain(json!({
+                "type": "boolean",
+                "description": "Whether to permit one bounded walk toward that item. False permits no movement."
+            }))),
+        ]),
+        intent_variant("place", vec![
+            ("block", blocks("The ref of the exact sensed support block.")),
+            ("item", stacks("The ref of the offered inventory stack already held in the main hand.")),
+            ("face", plain(json!({
+                "type": "string",
+                "enum": ["down", "up", "north", "south", "west", "east"],
+                "description": "The support-block face against which to place once."
+            }))),
+        ]),
+        intent_variant("equip", vec![
+            ("item", stacks("The ref of the exact offered inventory stack to equip.")),
+            ("destination", plain(json!({
+                "type": "string",
+                "enum": ["hand", "offHand", "head", "torso", "legs", "feet"],
+                "description": "The bounded player equipment destination."
+            }))),
+        ]),
+        intent_variant("craft", vec![
+            ("recipe", recipes("The ref of the exact offered recipe to apply.")),
+            ("crafts", plain(json!({
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8,
+                "description": "How many bounded applications of that offered recipe to request."
+            }))),
+        ]),
+        intent_variant("attack", vec![
+            ("target", creatures("The ref of the exact offered living target.")),
+            ("weapon", stacks("The ref of the exact offered inventory stack to use as the weapon.")),
+            ("attacks", plain(json!({
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4,
+                "description": "The maximum number of bounded attack swings."
+            }))),
+            ("approach", plain(json!({
+                "type": "boolean",
+                "description": "Whether to permit one bounded approach to the target's sensed position."
+            }))),
+        ]),
+        intent_variant("sleep", vec![("bed", blocks("The ref of the exact offered bed to use once."))]),
+        intent_variant("rest", vec![]),
+        intent_variant("idle", vec![]),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let mut schema = json!({
         "type": "object",
         "properties": {
             "intent": {
                 "description": "The single action the body should take now.",
-                "anyOf": [
-                    intent_variant("say", &json!({
-                        "text": {
-                            "type": "string",
-                            "description": "One line of player chat heard by agents nearby: at most 128 characters and 256 UTF-8 bytes, words separated by single spaces, no leading or trailing space, no leading '/', and no control, formatting or bidirectional characters. Text outside these bounds is refused and never sent."
-                        }
-                    })),
-                    intent_variant("moveTo", &json!({
-                        "onto": {
-                            "type": "string",
-                            "description": "The ref of the one nearby block to walk to: the body stands on top of a solid block, or in the own space of a block it can walk through such as a dead bush or grass. A block ref from this message, never coordinates or an invented one."
-                        }
-                    })),
-                    intent_variant("flee", &json!({
-                        "from": {
-                            "type": "string",
-                            "description": "The ref of the one living thing in the surroundings to move away from. A ref given in this message, never a name, a type, or an invented one."
-                        }
-                    })),
-                    intent_variant("eat", &json!({
-                        "ref": {
-                            "type": "string",
-                            "description": "The ref of the one stack in your own inventory to eat one item from. A ref given in this message, never an item name or an invented one."
-                        }
-                    })),
-                    intent_variant("dig", &json!({
-                        "block": {
-                            "type": "string",
-                            "description": "The ref of the exact nearby block to dig once. A block ref from this message, never coordinates or an item name."
-                        }
-                    })),
-                    intent_variant("collect", &json!({
-                        "item": {
-                            "type": "string",
-                            "description": "The ref of the exact dropped-item entity to collect."
-                        },
-                        "approach": {
-                            "type": "boolean",
-                            "description": "Whether to permit one bounded walk toward that item. False permits no movement."
-                        }
-                    })),
-                    intent_variant("place", &json!({
-                        "block": {
-                            "type": "string",
-                            "description": "The ref of the exact sensed support block."
-                        },
-                        "item": {
-                            "type": "string",
-                            "description": "The ref of the offered inventory stack already held in the main hand."
-                        },
-                        "face": {
-                            "type": "string",
-                            "enum": ["down", "up", "north", "south", "west", "east"],
-                            "description": "The support-block face against which to place once."
-                        }
-                    })),
-                    intent_variant("equip", &json!({
-                        "item": {
-                            "type": "string",
-                            "description": "The ref of the exact offered inventory stack to equip."
-                        },
-                        "destination": {
-                            "type": "string",
-                            "enum": ["hand", "offHand", "head", "torso", "legs", "feet"],
-                            "description": "The bounded player equipment destination."
-                        }
-                    })),
-                    craft_intent_schema(),
-                    attack_intent_schema(),
-                    sleep_intent_schema(),
-                    intent_variant("rest", &json!({})),
-                    intent_variant("idle", &json!({})),
-                ],
+                "anyOf": variants,
             },
             "reasoning": {
                 "type": "string",
@@ -659,7 +718,11 @@ fn build_decision_schema() -> Value {
         },
         "required": ["intent", "reasoning", "goal"],
         "additionalProperties": false,
-    })
+    });
+    if let (Some(refs), Some(root)) = (offered, schema.as_object_mut()) {
+        root.insert("$defs".to_owned(), namespace_defs(refs));
+    }
+    schema
 }
 
 #[cfg(test)]
@@ -667,9 +730,10 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        chat_request, decision_schema, draft_from_answer, ApiErrorBody, ChatResponse,
-        MAX_REASONING_CHARS, SCHEMA_NAME,
+        chat_request, decision_schema, decision_schema_for, draft_from_answer, ApiErrorBody,
+        ChatResponse, MAX_REASONING_CHARS, SCHEMA_NAME,
     };
+    use crate::offered::OfferedRefs;
     use crate::openai::settings::DEFAULT_MAX_REQUEST_BYTES;
     use crate::prompt::{render, Prompt};
     use crate::router::{ModelCatalog, Router};
@@ -689,7 +753,7 @@ mod tests {
     #[test]
     fn a_request_names_the_routed_model_and_bounds_the_answer() {
         let prompt = prompt();
-        let request = chat_request("some-model", &prompt, 128);
+        let request = chat_request("some-model", &prompt, 128, decision_schema().clone());
         let sent: Value = serde_json::to_value(&request).unwrap();
         assert_eq!(sent["model"], "some-model");
         assert_eq!(sent["max_completion_tokens"], 128);
@@ -710,9 +774,14 @@ mod tests {
         .unwrap();
         let router = Router::new(ModelCatalog::new("fast", "deep"));
         let prompt = render(&router.route(seen.importance), &seen);
-        let measured = serde_json::to_vec(&chat_request("fast", &prompt, 2_048))
-            .unwrap()
-            .len();
+        let measured = serde_json::to_vec(&chat_request(
+            "fast",
+            &prompt,
+            2_048,
+            decision_schema_for(&OfferedRefs::of(&seen)),
+        ))
+        .unwrap()
+        .len();
 
         assert!(
             measured <= usize::try_from(DEFAULT_MAX_REQUEST_BYTES / 4).unwrap(),
@@ -751,9 +820,14 @@ mod tests {
         });
         let router = Router::new(ModelCatalog::new("fast", "deep"));
         let prompt = render(&router.route(seen.importance), &seen);
-        let measured = serde_json::to_vec(&chat_request("fast", &prompt, 2_048))
-            .unwrap()
-            .len();
+        let measured = serde_json::to_vec(&chat_request(
+            "fast",
+            &prompt,
+            2_048,
+            decision_schema_for(&OfferedRefs::of(&seen)),
+        ))
+        .unwrap()
+        .len();
         let bound = usize::try_from(DEFAULT_MAX_REQUEST_BYTES / 4).unwrap();
 
         assert!(prompt
@@ -772,9 +846,14 @@ mod tests {
             system: "\\".repeat(MAX_MEASURED_PROMPT_BYTES / 2),
             situation: "\\".repeat(MAX_MEASURED_PROMPT_BYTES / 2),
         };
-        let measured = serde_json::to_vec(&chat_request("fast", &prompt, 2_048))
-            .unwrap()
-            .len();
+        let measured = serde_json::to_vec(&chat_request(
+            "fast",
+            &prompt,
+            2_048,
+            decision_schema().clone(),
+        ))
+        .unwrap()
+        .len();
         let request_bound = usize::try_from(DEFAULT_MAX_REQUEST_BYTES).unwrap();
 
         assert!(
@@ -787,7 +866,8 @@ mod tests {
     #[test]
     fn a_request_sets_no_sampling_knobs_and_no_superseded_token_field() {
         let prompt = prompt();
-        let sent: Value = serde_json::to_value(chat_request("m", &prompt, 8)).unwrap();
+        let sent: Value =
+            serde_json::to_value(chat_request("m", &prompt, 8, decision_schema().clone())).unwrap();
         let object = sent.as_object().unwrap();
         for absent in ["temperature", "top_p", "max_tokens"] {
             assert!(

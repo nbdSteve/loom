@@ -123,6 +123,8 @@ PROFILES['grounded-walk-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10
 PROFILES['grounded-walk-v15-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] })
 // And under routine-v17's working goal, because r6 ran under the v15 name.
 PROFILES['working-goal-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] })
+// And under routine-v18's offered refs, because r9 ran under the v17 name.
+PROFILES['offered-refs-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] })
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

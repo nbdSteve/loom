@@ -98,7 +98,7 @@ function promptActions () {
 // The intent tags the strict provider schema offers, read from its builder.
 function strictSchemaActions () {
   const source = rust('cognition', 'src', 'openai', 'wire.rs')
-  const builder = blockAfter(source, /fn build_decision_schema\(\) -> Value \{/)
+  const builder = blockAfter(source, /fn build_decision_schema\([^)]*\) -> Value \{/)
   const direct = [...builder.matchAll(/intent_variant\("([A-Za-z]+)"/g)].map((match) => match[1])
   const helpers = [...builder.matchAll(/\b([a-z_]+_variant)\(\)/g)].map((match) => match[1])
   const indirect = helpers.flatMap((helper) =>

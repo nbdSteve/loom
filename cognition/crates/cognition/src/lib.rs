@@ -33,6 +33,7 @@
 pub mod config;
 pub mod mind;
 pub mod model;
+pub mod offered;
 pub mod openai;
 pub mod prompt;
 pub mod router;

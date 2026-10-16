@@ -69,9 +69,10 @@ data class GoalEvidence(
         const val STEP_RESULT_MISSING: String = "goalStepResultMissing"
 
         /**
-         * A continue of a goal whose last [dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS]
-         * affirmed steps changed neither the agent's inventory nor its place: refused, and the
-         * goal ended, so a held goal can never become a no-progress loop.
+         * A continue or revise of a goal whose last
+         * [dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS] affirmed steps changed neither the
+         * agent's inventory nor its place: refused, and the goal ended, so a held goal can never
+         * become a no-progress loop, reworded or not.
          */
         const val STALLED: String = "goalStalled"
 

@@ -1,6 +1,7 @@
 'use strict'
 
 const { unansweredAccountedFor } = require('./danger.js')
+const { readinessMetrics } = require('./readiness.js')
 
 // Mechanical measurements behind the pre-registered primary-behavior gates. Criteria
 // that need a reader (an evidence-grounded aim, no action justified only by being
@@ -8,7 +9,9 @@ const { unansweredAccountedFor } = require('./danger.js')
 
 // Committed evidence derives the gate generation it was published under: the stimulus
 // attestation names it, and evidence that names none is generation 1.
-const GATE_GENERATION = 2
+// Generation 3 adds the readiness gate: every decision valid, every action's terminal typed,
+// and every server-checked claim true, with each non-success listed by its exact record.
+const GATE_GENERATION = 3
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`
 const PASSIVE_INTENTS = Object.freeze(['idle', 'rest'])
 const MOVEMENT_INTENTS = Object.freeze(['moveTo', 'flee'])
@@ -171,6 +174,7 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
     ...(generation >= 2
       ? { interactionsByOperation: Object.fromEntries(Object.entries(interactionsByOperation).sort()) }
       : {}),
+    ...(generation >= 3 ? { readiness: readinessMetrics({ bodyRecords, harnessRecords, metrics }) } : {}),
     omissionsByKind: omissions,
     nightPerceptionsByAgent: Object.fromEntries(Object.entries(nightPerceptionsByAgent).sort()),
     calls: {

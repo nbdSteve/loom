@@ -1816,6 +1816,24 @@ function semanticErrors (artifactDirectory, manifest) {
   return errors
 }
 
+/** The README's statement of the readiness gate: its verdict, rates and every non-success. */
+function readinessLines (readiness) {
+  const nonZero = (counts) => Object.fromEntries(Object.entries(counts).filter(([, count]) => count > 0))
+  const blockers = nonZero(readiness.blockers)
+  const lines = [
+    `- Readiness: **${readiness.verdict}** (${readiness.version}); decision validity ${readiness.rates.decisionValidity ?? 'n/a'}, ` +
+      `typed terminal accounting ${readiness.rates.typedTerminalAccounting ?? 'n/a'}, server truthfulness ${readiness.rates.serverTruthfulness ?? 'n/a'}.`,
+    `- Actions by class: ${JSON.stringify(nonZero(readiness.actions.byClass))}; blockers: ${Object.keys(blockers).length === 0 ? 'none' : JSON.stringify(blockers)}; ` +
+      `legitimate races: ${readiness.races}; cognition failures: ${JSON.stringify(readiness.cognitionFailures)}; server disputes: ${readiness.serverDisputes}.`,
+    `- Goal coherence: ${JSON.stringify(readiness.goalCoherence)}.`
+  ]
+  for (const entry of readiness.actions.nonSuccess) {
+    lines.push(`  - \`${entry.requestKey}\` ${entry.intent}: ${entry.class}${entry.race ? ' (race)' : ''}, ` +
+      `${entry.evidence === null ? 'no terminal record' : `${entry.evidence.event} ${entry.evidence.outcome ?? ''} at tick ${entry.evidence.tick}`.replace(/  +/g, ' ')}.`)
+  }
+  return `${lines.join('\n')}\n`
+}
+
 function validateArtifact (artifactDirectory) {
   const file = path.join(artifactDirectory, MANIFEST_FILE)
   if (!fs.existsSync(file)) {
@@ -1829,6 +1847,11 @@ function validateArtifact (artifactDirectory) {
   }
   const schema = validateManifest(manifest)
   if (!schema.ok) return schema
+  // Generations 1 and 2 predate harness publication: they name no metrics file for this side
+  // to re-derive their evidence against, so the schema is the whole of what can be checked.
+  if (schema.version < 3 && manifest.metrics === undefined) {
+    return { ok: true, version: schema.version, errors: [] }
+  }
   const errors = semanticErrors(artifactDirectory, manifest)
   return { ok: errors.length === 0, version: schema.version, errors }
 }
@@ -1982,7 +2005,7 @@ ${metrics.witnessedDeaths === undefined
 - Non-idle goal-review actions: ${gate.goalReviewActions.nonIdle}, accepted ${gate.goalReviewActions.accepted}, confirmed ${gate.goalReviewActions.confirmed}.
 - Calls by agent: ${JSON.stringify(gate.calls.forwardedByAgent)}; peak outstanding ${gate.calls.peakOutstanding ?? 'unrecorded'}.
 - A pass still needs a reader to confirm: ${gate.manualCriteria.join('; ')}.
-`
+${gate.readiness === undefined ? '' : readinessLines(gate.readiness)}`
   const stop = metrics.controlledStop
   const stopSection = stop === undefined
     ? ''

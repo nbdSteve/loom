@@ -10,16 +10,21 @@ import dev.loom.body.RefResolution
 import dev.loom.body.SlotResolution
 import dev.loom.body.WorldTargetResolution
 import dev.loom.body.completedBodyOperation
+import dev.loom.body.horizontalBearing
 import dev.loom.bodycontrol.BODY_CONTROL_PROTOCOL_VERSION
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
 import dev.loom.bodycontrol.ErrorCode
+import dev.loom.contract.Bearing
 import dev.loom.contract.Intent
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 
 private const val MOVEMENT_DEADLINE_MS = 20_000
 private const val FLEE_DISTANCE_BLOCKS = 24
+
+/** From a block's corner coordinate to its centre on a horizontal axis. */
+private const val BLOCK_CENTER_OFFSET = 0.5
 
 internal data class PendingAction(
     val agentId: AgentId,
@@ -209,6 +214,8 @@ internal class PlayerActionPreparer(
                     "the block was named by a request this agent no longer holds",
                     EventTag.MOVE_SENSE_FORGOTTEN,
                 )
+            ownColumn(block.position, sense) ->
+                rejectedAction("the block is in the agent's own spot, so a walk goes nowhere", EventTag.MOVE_OWN_SPOT)
             else -> {
                 val (x, y, z) = block.position
                 // A block with no collision is stood in, so its own cell is the place; any
@@ -219,6 +226,17 @@ internal class PlayerActionPreparer(
                 operation
             }
         }
+    }
+
+    /** Whether [position] lies in the column the body stood in when [sense] was answered. */
+    private fun ownColumn(
+        position: List<Int>,
+        sense: HeldSense?,
+    ): Boolean {
+        val standing = sense?.raw?.report?.position ?: return false
+        val (x, _, z) = position
+        val bearing = horizontalBearing(x + BLOCK_CENTER_OFFSET - standing[0], z + BLOCK_CENTER_OFFSET - standing[2])
+        return bearing == Bearing.HERE
     }
 
     private fun move(
@@ -244,7 +262,7 @@ internal class PlayerActionPreparer(
                 ) as? BodyResponse.MoveReport
                     ?: throw BodyControlFailure.ProtocolViolation()
             ActionExecution(
-                outcome = movementOutcome(report.outcome, "walk"),
+                outcome = movementOutcome(report.outcome, WALK),
                 moveRequest = request,
                 moveReport = report,
             )

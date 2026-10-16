@@ -5,7 +5,6 @@ package dev.loom.body.player
 
 import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
-import dev.loom.body.BodyEvent
 import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.WitnessedPlayer
@@ -17,7 +16,6 @@ import dev.loom.bodycontrol.CollectOutcome
 import dev.loom.bodycontrol.DigOutcome
 import dev.loom.bodycontrol.EatOutcome
 import dev.loom.bodycontrol.EquipOutcome
-import dev.loom.bodycontrol.MoveOutcome
 import dev.loom.bodycontrol.PlaceOutcome
 import dev.loom.contract.Intent
 
@@ -46,14 +44,15 @@ internal class PlayerEvidenceRecorder(
     ) {
         val agentId = runtime.identity.agentId
         recordAction(agentId, intent, requestId, execution.outcome)
-        recordWalk(runtime, execution)
-        recordFlight(runtime, execution)
+        recordWalk(runtime, requestId, execution)
+        recordFlight(runtime, requestId, execution)
         recordMeal(agentId, execution)
         execution.interaction?.let { recordInteraction(runtime, intent, requestId, it) }
     }
 
     private fun recordWalk(
         runtime: PlayerRuntime,
+        requestId: String?,
         execution: ActionExecution,
     ) {
         val request = execution.moveRequest ?: return
@@ -61,27 +60,31 @@ internal class PlayerEvidenceRecorder(
         context.authority.serverState.auditMovement(runtime.identity, request, report)
         recordMovement(
             runtime.identity.agentId,
-            report.outcome,
-            report.from,
-            report.position,
-            report.travelled,
+            requestId,
+            MovementEnding(report.outcome, report.from, report.position, report.travelled),
         )
     }
 
     private fun recordFlight(
         runtime: PlayerRuntime,
+        requestId: String?,
         execution: ActionExecution,
     ) {
         val request = execution.fleeRequest ?: return
         val report = execution.fleeReport ?: return
         val agentId = runtime.identity.agentId
         context.authority.serverState.auditMovement(runtime.identity, request, report)
-        recordMovement(agentId, report.outcome, report.from, report.position, report.travelled)
+        recordMovement(
+            agentId,
+            requestId,
+            MovementEnding(report.outcome, report.from, report.position, report.travelled),
+        )
         context.journal.recordRetreat(
             agentId,
             "flight ended ${report.outcome.name.lowercase()}, " +
                 "separation ${report.separation ?: "unread"}",
             retreatTag(report.outcome),
+            requestId,
         )
     }
 
@@ -128,7 +131,7 @@ internal class PlayerEvidenceRecorder(
                 ),
             detail =
                 "${describe(intent)}; sense $senseId; control ${controlRequest.requestId}; " +
-                    "body ${claim.bodyOutcome.lowercase()}; vanilla ${audit.detail}",
+                    "body ${claim.bodyOutcome.lowercase()}${journeyOf(claim)}; vanilla ${audit.detail}",
             requestId = requestId,
             confirmed = audit.confirmed,
         )
@@ -151,17 +154,16 @@ internal class PlayerEvidenceRecorder(
 
     private fun recordMovement(
         agentId: AgentId,
-        outcome: MoveOutcome,
-        from: List<Double>,
-        position: List<Double>,
-        travelled: Double,
+        requestId: String?,
+        ending: MovementEnding,
     ) {
-        if (travelled <= 0.0 && from == position) return
-        context.journal.record(
+        if (ending.travelled <= 0.0 && ending.from == ending.position) return
+        context.journal.recordMovement(
             agentId,
-            BodyEvent.MOVED,
-            "from ${from.joinToString(",")} to ${position.joinToString(",")}; " +
-                "travelled $travelled; ${outcome.name.lowercase()}",
+            "from ${ending.from.joinToString(",")} to ${ending.position.joinToString(",")}; " +
+                "travelled ${ending.travelled}; ${ending.outcome.name.lowercase()}",
+            requestId,
+            movementTag(ending.outcome),
         )
     }
 }
@@ -191,39 +193,6 @@ internal fun eatOutcome(report: BodyResponse.EatReport): IntentOutcome =
             IntentOutcome.Rejected(
                 "the game could not equip or consume that stack",
                 EventTag.EAT_SLOT_INACCESSIBLE,
-            )
-    }
-
-internal fun movementOutcome(
-    outcome: MoveOutcome,
-    movement: String,
-): IntentOutcome =
-    when (outcome) {
-        MoveOutcome.ARRIVED -> IntentOutcome.Accepted("$movement arrived")
-        MoveOutcome.CANCELLED -> IntentOutcome.Accepted("$movement was cancelled after moving")
-        MoveOutcome.STALLED -> IntentOutcome.Accepted("$movement stalled after starting")
-        MoveOutcome.OVER_TRAVELLED -> IntentOutcome.Accepted("$movement reached its travel bound")
-        MoveOutcome.TIMED_OUT -> IntentOutcome.Accepted("$movement reached its time bound")
-        MoveOutcome.OUT_OF_RANGE ->
-            IntentOutcome.Rejected("$movement target is outside the body reach")
-        MoveOutcome.NO_ROUTE ->
-            IntentOutcome.Rejected("the ground offered no route for this $movement")
-        MoveOutcome.SEARCH_OVER_BUDGET ->
-            IntentOutcome.Rejected("the body search budget ended before a route was known")
-        MoveOutcome.SENSE_FORGOTTEN ->
-            IntentOutcome.Rejected(
-                "the body no longer remembers the sense that named that threat",
-                EventTag.RETREAT_THREAT_FORGOTTEN,
-            )
-        MoveOutcome.THREAT_UNNAMED ->
-            IntentOutcome.Rejected(
-                "that sense named no such threat",
-                EventTag.RETREAT_THREAT_UNNAMED,
-            )
-        MoveOutcome.THREAT_GONE ->
-            IntentOutcome.Rejected(
-                "the named threat is gone",
-                EventTag.RETREAT_THREAT_GONE,
             )
     }
 
@@ -337,12 +306,24 @@ private val PLACE_REFUSALS: Map<PlaceOutcome, IntentOutcome.Rejected> =
             IntentOutcome.Rejected("place library failure", EventTag.PLACE_LIBRARY_FAILURE),
     )
 
-private fun retreatTag(outcome: MoveOutcome): String =
-    when (outcome) {
-        MoveOutcome.ARRIVED -> EventTag.RETREAT_SAFE
-        MoveOutcome.CANCELLED -> EventTag.RETREAT_SUPERSEDED
-        MoveOutcome.SENSE_FORGOTTEN -> EventTag.RETREAT_THREAT_FORGOTTEN
-        MoveOutcome.THREAT_UNNAMED -> EventTag.RETREAT_THREAT_UNNAMED
-        MoveOutcome.THREAT_GONE -> EventTag.RETREAT_THREAT_GONE
-        else -> EventTag.RETREAT_FAILED
+/**
+ * Where an approaching interaction's body went, against where its offered target was, so an
+ * ending such as a collect that arrived and timed out can be attributed from the record alone.
+ */
+private fun journeyOf(claim: ServerInteractionClaim): String =
+    when (claim) {
+        is ServerInteractionClaim.Collect ->
+            journey(claim.report.from, claim.report.position, claim.report.travelled, claim.offered.position)
+        is ServerInteractionClaim.Attack ->
+            journey(claim.report.from, claim.report.position, claim.report.travelled, claim.offeredTarget.position)
+        else -> ""
     }
+
+private fun journey(
+    from: List<Double>,
+    position: List<Double>,
+    travelled: Double,
+    target: List<Double>,
+): String =
+    "; from ${from.joinToString(",")} to ${position.joinToString(",")} travelled $travelled; " +
+        "target at ${target.joinToString(",")}"

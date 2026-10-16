@@ -3,6 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
+const { GATE_GENERATION } = require('../lib/behavior-gate.js')
 const { SERVED_PROMPTS } = require('../lib/experiment-mode.js')
 const { readJson } = require('../lib/util.js')
 
@@ -33,11 +34,11 @@ function configNamed (name) {
 }
 
 function goalContinuityConfig () {
-  return configNamed('first-tribe-routine-v17-agency-pilot-scripted.json')
+  return configNamed('first-tribe-routine-v18-agency-pilot-scripted.json')
 }
 
 function openAiGoalContinuityConfig () {
-  return configNamed('first-tribe-routine-v17-agency-pilot.json')
+  return configNamed('first-tribe-routine-v18-agency-pilot.json')
 }
 
 function openAiProofConfig () {
@@ -358,7 +359,7 @@ function scriptedGoalStep (review, agentId, tick) {
 }
 
 function primaryBehaviorRawRecords (config = primaryBehaviorConfig()) {
-  const carriesGoals = config.mode === 'routine-v17-working-goal'
+  const carriesGoals = config.mode === 'routine-v18-offered-refs'
   const body = []
   const harness = [
     {
@@ -460,7 +461,7 @@ function primaryBehaviorRawRecords (config = primaryBehaviorConfig()) {
     externalCognitionStimuli: 'none',
     harnessThinkCommandsIssued: 0,
     nativeSchedulersOnly: true,
-    behaviorGateGeneration: 2,
+    behaviorGateGeneration: GATE_GENERATION,
     nativeGoalReviewSchedule: config.primaryBehavior.nativeGoalReviewSchedule
   })
   harness.push({

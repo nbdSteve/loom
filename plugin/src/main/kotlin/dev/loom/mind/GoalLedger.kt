@@ -16,8 +16,10 @@
  *   answer still in flight for it, because a new body session is not the world the
  *   goal was chosen in;
  * - each review measures, from the agent's own perceptions, whether the step the goal's last
- *   affirming review took changed its inventory or its place, and a continue past
- *   [MAX_GOAL_STEPS_WITHOUT_PROGRESS] such steps in a row is refused and ends the goal.
+ *   affirming review took changed its inventory or its place, and a continue or revise past
+ *   [MAX_GOAL_STEPS_WITHOUT_PROGRESS] such steps in a row is refused and ends the goal. The
+ *   count survives a revise, because rewording a goal changes nothing the body can measure;
+ *   only a measured change, completion, abandonment or a newly adopted goal resets it.
  */
 package dev.loom.mind
 
@@ -253,10 +255,10 @@ class GoalLedger(
                     )
                 GoalDisposition.COMPLETE, GoalDisposition.ABANDON -> null
             }
-        // A continue carries the run of steps that changed nothing; a new or revised goal is a
-        // new approach and starts that count again.
+        // A continue or revise carries the run of steps that changed nothing; only an adopted
+        // goal starts it again, since only a measured change is evidence of progress.
         val carriedCount =
-            if (choice.disposition == GoalDisposition.CONTINUE) presented?.progress?.stepsWithoutProgress ?: 0 else 0
+            if (choice.disposition == GoalDisposition.ADOPT) 0 else presented?.progress?.stepsWithoutProgress ?: 0
         goals.held = next?.let { Held(it, basis.capturedTick, requestId, basis.observed, carriedCount) }
         return evidence.copy(
             outcome = acceptedTag(choice.disposition),
@@ -265,6 +267,9 @@ class GoalLedger(
         )
     }
 }
+
+/** The dispositions that keep the held goal, and so the run of steps that changed nothing. */
+private val KEEPING = setOf(GoalDisposition.CONTINUE, GoalDisposition.REVISE)
 
 /** Why [choice] cannot apply to the goal its perception carried, or `null` if it can. */
 private fun refusalOf(
@@ -279,13 +284,13 @@ private fun refusalOf(
     }
 }
 
-/** A continue of a goal at the no-progress bound, which ends it, or `null`. */
+/** A continue or revise of a goal at the no-progress bound, which ends it, or `null`. */
 private fun stalledOf(
     presented: GoalSummary?,
     choice: GoalChoice,
 ): String? =
     GoalEvidence.STALLED.takeIf {
-        choice.disposition == GoalDisposition.CONTINUE &&
+        choice.disposition in KEEPING &&
             (presented?.progress?.stepsWithoutProgress ?: 0) >= MAX_GOAL_STEPS_WITHOUT_PROGRESS
     }
 

@@ -602,7 +602,7 @@ data class GoalSummary(
 
 /**
  * Affirmed steps in a row that may change neither the agent's inventory nor its place before
- * a goal can no longer be continued; mirrors the Rust contract's constant.
+ * a goal can no longer be continued or revised; mirrors the Rust contract's constant.
  */
 const val MAX_GOAL_STEPS_WITHOUT_PROGRESS: Long = 3
 

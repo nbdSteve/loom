@@ -1514,6 +1514,12 @@ private object InteractionPortProof {
             assertTrue(record.detail.contains("sense ${record.requestId}"))
             assertTrue(record.detail.contains("control ${request.requestId}"))
             assertTrue(record.detail.contains("vanilla "))
+            // An approaching interaction states where the body went against its target.
+            val approaches = request is BodyRequest.Collect || request is BodyRequest.Attack
+            assertEquals(
+                approaches,
+                Regex("; from \\S+ to \\S+ travelled \\S+; target at \\S+;").containsMatchIn(record.detail),
+            )
             assertTrue(
                 harness.records.indexOfFirst {
                     it.event == BodyEvent.INTENT_APPLIED &&
@@ -2278,6 +2284,10 @@ private fun assertRoundTripEvidence(
         movementRequestId,
         harness.records.first { it.event == BodyEvent.INTENT_APPLIED }.requestId,
     )
+    // The walk's terminal is joined to its decision by id and typed by how it ended.
+    val moved = harness.records.single { it.event == BodyEvent.MOVED }
+    assertEquals(movementRequestId, moved.requestId)
+    assertEquals(EventTag.MOVEMENT_ARRIVED, moved.outcome)
 }
 
 private fun assertRequestUsesSenseConnection(
@@ -2433,5 +2443,59 @@ class PlayerWalkResolutionTest {
             ),
             blocks,
         )
+        // Neither block in the agent's own spot is a walk, and nothing is asked of the body
+        // for one; the neighbour still is.
+        for (what in listOf("block.minecraft.terracotta", "block.minecraft.dead_bush")) {
+            val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+            val own = seen.surroundings.first { it.what == what && it.direction == Bearing.HERE }
+            val refused = harness.port.apply(agent, Intent.MoveTo(own.ref), seen.requestId).await()
+            assertEquals(EventTag.MOVE_OWN_SPOT, (refused as IntentOutcome.Rejected).tag)
+        }
+        assertTrue(harness.connector.requests.none { it is BodyRequest.MoveTo })
+        val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val beside = seen.surroundings.first { it.direction == Bearing.NORTH }
+        val walked = harness.port.apply(agent, Intent.MoveTo(beside.ref), seen.requestId).await()
+        assertTrue(walked is IntentOutcome.Accepted, walked.toString())
+    }
+
+    @Test
+    fun `a walk the ground refuses and one that stalls each end under their own tag`() {
+        val agent = AgentId("agent-walk-endings")
+        var ending = MoveOutcome.NO_ROUTE
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        (request as? BodyRequest.MoveTo)?.let {
+                            val moved = ending == MoveOutcome.STALLED
+                            BodyResponse.MoveReport(
+                                protocol = it.protocol,
+                                requestId = it.requestId,
+                                agentId = it.agentId,
+                                state = LifecycleState.READY,
+                                outcome = ending,
+                                from = listOf(1.5, 64.0, 2.5),
+                                position = if (moved) listOf(2.5, 64.0, 2.5) else listOf(1.5, 64.0, 2.5),
+                                travelled = if (moved) 1.0 else 0.0,
+                                elapsedMs = 10,
+                            )
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+
+        val refusedOn = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val refused = harness.port.apply(agent, walkOnto(refusedOn), refusedOn.requestId).await()
+        assertEquals(EventTag.MOVE_NO_ROUTE, (refused as IntentOutcome.Rejected).tag)
+        assertTrue(harness.records.none { it.event == BodyEvent.MOVED })
+
+        ending = MoveOutcome.STALLED
+        val stalledOn = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        harness.port.apply(agent, walkOnto(stalledOn), stalledOn.requestId).await()
+        val moved = harness.records.single { it.event == BodyEvent.MOVED }
+        assertEquals(stalledOn.requestId, moved.requestId)
+        assertEquals(EventTag.MOVEMENT_STALLED, moved.outcome)
     }
 }

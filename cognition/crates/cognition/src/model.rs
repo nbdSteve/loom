@@ -24,8 +24,8 @@
 use std::future::Future;
 
 use loom_contract::{
-    GoalChoice, GoalDisposition, GoalStepResult, Intent, ObservationKind, Perception, Trigger,
-    MAX_GOAL_STEPS_WITHOUT_PROGRESS,
+    Bearing, GoalChoice, GoalDisposition, GoalStepResult, Intent, ObservationKind, Perception,
+    Trigger, MAX_GOAL_STEPS_WITHOUT_PROGRESS,
 };
 use serde::Serialize;
 
@@ -548,13 +548,16 @@ impl ModelBackend for ScriptedBackend {
 /// The ref of the nearest observed block of kind `block`, if the scene holds one.
 ///
 /// Matched on the last path segment of the body's own description, so `diamond_ore`
-/// names `block.minecraft.diamond_ore` and nothing else.
+/// names `block.minecraft.diamond_ore` and nothing else. A block in the agent's own
+/// column is skipped, because a walk to it goes nowhere and is not offered.
 fn nearest_block_ref(perception: &Perception, block: &str) -> Option<String> {
     perception
         .surroundings
         .iter()
         .find(|seen| {
-            seen.kind == ObservationKind::Block && seen.what.rsplit('.').next() == Some(block)
+            seen.kind == ObservationKind::Block
+                && seen.direction != Bearing::Here
+                && seen.what.rsplit('.').next() == Some(block)
         })
         .map(|seen| seen.target_ref.clone())
 }
@@ -951,16 +954,18 @@ mod tests {
         );
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
         assert_eq!(draft.intent, Intent::Idle);
-        for (what, handle) in [
-            ("block.minecraft.stone", "b1"),
-            ("block.minecraft.diamond_ore", "b2"),
-            ("block.minecraft.diamond_ore", "b3"),
+        for (what, handle, direction) in [
+            ("block.minecraft.stone", "b1", Bearing::North),
+            // Under the feet: a walk there goes nowhere, so the stand-in looks past it.
+            ("block.minecraft.diamond_ore", "b0", Bearing::Here),
+            ("block.minecraft.diamond_ore", "b2", Bearing::North),
+            ("block.minecraft.diamond_ore", "b3", Bearing::North),
         ] {
             seen.surroundings.push(Observation {
                 kind: ObservationKind::Block,
                 what: what.to_owned(),
                 distance: 2.0,
-                direction: Bearing::North,
+                direction,
                 vertical_offset: -0.5,
                 visible: true,
                 target_ref: handle.to_owned(),

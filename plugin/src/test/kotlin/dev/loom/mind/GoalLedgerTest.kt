@@ -303,12 +303,44 @@ class GoalLedgerTest {
     }
 
     @Test
-    fun aRevisedApproachStartsTheNoProgressCountAgain() {
+    fun aRevisionKeepsTheNoProgressCountAndIsRefusedAtTheBound() {
         affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather wood"))
         affirm("r2", 200, seen(0.0), goalChoice(GoalDisposition.CONTINUE))
         val (stalling, revised) = affirm("r3", 300, seen(0.0), goalChoice(GoalDisposition.REVISE, "collect sticks"))
         assertEquals(2L, stalling?.progress?.stepsWithoutProgress)
         assertEquals(GoalEvidence.REVISED, revised?.outcome)
-        assertEquals(1L, ledger.present(alpha, "r4", 400, seen(0.0))?.progress?.stepsWithoutProgress)
+        // Rewording changed nothing the body measures, so the count goes on from two.
+        val (atBound, refused) = affirm("r4", 400, seen(0.0), goalChoice(GoalDisposition.REVISE, "find sticks"))
+        assertEquals(MAX_GOAL_STEPS_WITHOUT_PROGRESS, atBound?.progress?.stepsWithoutProgress)
+        assertEquals(GoalEvidence.STALLED, refused?.outcome)
+        assertNull(refused?.goalId)
+        assertNull(ledger.present(alpha, "r5", 500, seen(0.0)))
+    }
+
+    @Test
+    fun onlyMeasuredProgressOrANewGoalResetsTheCountARevisionDoesNot() {
+        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather wood"))
+        affirm("r2", 200, seen(0.0), goalChoice(GoalDisposition.REVISE, "gather oak"))
+        affirm("r3", 300, seen(0.0), goalChoice(GoalDisposition.REVISE, "gather birch"))
+        // A step that changed the inventory is evidence, and resets the count under a revise too.
+        val (gained, revised) =
+            affirm(
+                "r4",
+                400,
+                seen(0.0, "item.minecraft.oak_log" to 1L),
+                goalChoice(GoalDisposition.REVISE, "more logs"),
+            )
+        assertEquals(0L, gained?.progress?.stepsWithoutProgress)
+        assertEquals(GoalEvidence.REVISED, revised?.outcome)
+        assertEquals(
+            1L,
+            ledger.present(alpha, "r5", 500, seen(0.0, "item.minecraft.oak_log" to 1L))?.progress?.stepsWithoutProgress,
+        )
+        // Completion ends the run; a newly adopted goal starts with nothing counted against it.
+        ledger.resolve(alpha, answer(alpha, "r5", GoalDisposition.COMPLETE))
+        val (fresh, adopted) = affirm("r6", 600, seen(0.0), goalChoice(GoalDisposition.ADOPT, "build a shelter"))
+        assertNull(fresh)
+        assertEquals(GoalEvidence.ADOPTED, adopted?.outcome)
+        assertEquals(1L, ledger.present(alpha, "r7", 700, seen(0.0))?.progress?.stepsWithoutProgress)
     }
 }

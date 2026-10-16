@@ -36,25 +36,25 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v17";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v18";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v17";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v18";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v17";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v18";
 
 /// How many surroundings entries reach the prompt.
 ///
 /// Kept equal to the contract decoder's hard limit, so every legal observation reaches
 /// the model and the renderer still has an explicit finite token-work bound.
-const MAX_OBSERVATIONS: usize = MAX_PERCEPTION_OBSERVATIONS;
+pub(crate) const MAX_OBSERVATIONS: usize = MAX_PERCEPTION_OBSERVATIONS;
 
 /// How many inventory lines reach the prompt.
-const MAX_INVENTORY_LINES: usize = 24;
+pub(crate) const MAX_INVENTORY_LINES: usize = 24;
 
 /// How many exact recipe offers reach the prompt.
-const MAX_CRAFTING_LINES: usize = 24;
+pub(crate) const MAX_CRAFTING_LINES: usize = 24;
 
 /// Longest a single world-supplied string may be inside a prompt.
 ///
@@ -91,8 +91,8 @@ walks to stand on top of it, in the space directly above; for a block you can wa
 through, such as a dead bush, grass or a flower, it walks to stand in that block's \
 own space. The body walks only to that one spot, and the ground refuses a walk \
 with no route or no room to stand there. Walking to the block under your feet, or \
-a plant you already stand in, goes nowhere. Your surroundings never give \
-coordinates, so a walk is always named by a block ref.
+a plant you already stand in, goes nowhere, so neither is offered as a walk. Your \
+surroundings never give coordinates, so a walk is always named by a block ref.
 - eat: eat one item from one stack you are carrying, named by the ref that stack \
 carries. It asks vanilla to consume exactly that item, and it can be refused: the \
 stack may no longer be food, or your food bar may already be full.
@@ -141,6 +141,12 @@ stack you are carrying carries one. A ref is the handle for that one thing in th
 it is the only way to name it back to your body, it means nothing in any other \
 message, and a thing without one cannot be named at all. Never invent a ref and \
 never reuse one you were given earlier.
+- Each action names only refs of its own kind: a block ref for moveTo, dig, sleep \
+and the support of place; a living-thing ref for flee and the target of attack; a \
+dropped-item ref for collect; a stack ref for eat, equip, the item of place and the \
+weapon of attack; and a recipe ref for craft. Your answer can name only the refs \
+this message offers to that action, and an action with nothing to name is not \
+offered.
 - Being in sight means only that nothing solid stands in the straight line \
 between you and it. It is not a field of view and it has nothing to do with which \
 way your body happens to be facing: everything in your surroundings list is \
@@ -168,13 +174,16 @@ takes toward it. Holding no goal is a legitimate state.
 - continue: keep the held goal, judge the previous step, and name the next step \
 this answer's action takes.
 - revise: change the goal, its success condition and its step when the evidence \
-showed the old approach will not work, and judge the previous step.
+showed the old approach will not work, and judge the previous step. Revising keeps \
+the count of steps that changed nothing.
 - complete: drop the held goal because its success condition is met.
 - abandon: drop the held goal because it is no longer worth pursuing.
 Judge the previous step as done, progressing or noProgress from what your body \
-measured. Repeating a step that changed nothing is not progress: after three \
-steps in a row that changed neither your inventory nor your place, your body \
-refuses continue and ends the goal, so revise or abandon before then. A goal \
+measured. Repeating a step that changed nothing is not progress, and rewording \
+the goal is not progress either: only a step that changes your inventory or your \
+place resets the count. After three steps in a row that changed neither, your body \
+refuses continue and revise and ends the goal, so take a step that changes \
+something before then, or abandon the goal. A goal \
 choice is separate from your action, but a step you name should be what your \
 action does.";
 
@@ -334,7 +343,7 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
     if let Some(progress) = &goal.progress {
         parts.push(format!(
             "Since then your inventory {inventory} and you {moved}; {count} step{plural} in a row \
-             changed neither (continue is refused at {bound}).",
+             changed neither (continue and revise are refused at {bound}).",
             inventory = if progress.inventory_changed {
                 "changed"
             } else {
@@ -895,7 +904,7 @@ mod tests {
         assert!(
             rendered.contains(
                 "Since then your inventory did not change and you did not move; 2 steps in a row \
-             changed neither (continue is refused at 3)."
+             changed neither (continue and revise are refused at 3)."
             ),
             "{rendered}"
         );

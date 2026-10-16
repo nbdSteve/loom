@@ -655,9 +655,10 @@ pub struct Perception {
 }
 
 /// Affirmed steps in a row that may change neither the agent's inventory nor its place
-/// before a goal can no longer be continued: past it the body refuses `continue`, ends the
-/// goal, and the agent must revise, abandon or adopt anew. The bound that keeps a held goal
-/// from becoming a no-progress loop.
+/// before a goal can no longer be continued or revised: past it the body refuses both, ends
+/// the goal, and the agent must adopt anew. A revise carries the count, because rewording a
+/// goal changes nothing in the world. The bound that keeps a held goal from becoming a
+/// no-progress loop.
 pub const MAX_GOAL_STEPS_WITHOUT_PROGRESS: i64 = 3;
 
 /// Longest a goal statement may be, in characters, mirroring the schema.

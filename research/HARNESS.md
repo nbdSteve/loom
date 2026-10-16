@@ -6,12 +6,12 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v17 working-goal pilot,
-`research/config/first-tribe-routine-v17-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v17-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v18 offered-refs pilot,
+`research/config/first-tribe-routine-v18-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v18-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
-native event drivers. It uses the v17 prompts, which show each agent its own
+native event drivers. It uses the v18 prompts, which show each agent its own
 carried goal and let the model return an optional typed goal choice, and it
 attests `categoryFairSelection: true` because the 48-per-kind selector it runs on
 is category-fair. Since v14 a `moveTo` names an observed block by ref rather than
@@ -30,7 +30,11 @@ the one step its action takes, every answer to a carried goal judges the previou
 whether that step changed its inventory or moved it, and a `continue` after three
 affirmed steps in a row that changed neither is refused as `goalStalled` and ends the
 goal. Metrics derive `goalContinuity.workingGoal` from that evidence. v16 never
-published, so its configurations were replaced rather than kept historical. `research/lib/experiment-mode.js` owns the pins. In the
+published, so its configurations were replaced rather than kept historical. v18 keeps v17
+and holds every action's refs to the handles that perception offered in the action's own
+namespace by a per-request strict schema, never offers a block in the agent's own column
+as a walk target, and carries the no-progress count through a `revise`, because r9 had five
+wrong-kind refs, five walks that moved nothing, and goals reworded instead of advanced. `research/lib/experiment-mode.js` owns the pins. In the
 scripted twin the stand-in adopts one fixed placeholder goal at each agent's
 first review and continues it at the second; that exercises the goal round
 trip and is not evidence of agency.
@@ -54,8 +58,9 @@ times the 12,000-tick share of the ten-agent normal sample. The v13
 configurations that ran `-r1` to `-r4` are `research/config/tribe-shakedown-10m-10*.json`
 and are historical, as are the v14 `research/config/tribe-grounded-walk-10m-10*.json`
 that ran `-r5` and the v15 `research/config/tribe-grounded-walk-v15-10m-10*.json` that
-ran `-r6`; `working-goal-10m-10` is the same profile under the v17 mode, configured by
-`research/config/tribe-working-goal-10m-10*.json`. The live one
+ran `-r6` and the v17 `research/config/tribe-working-goal-10m-10*.json` that ran `-r8` and
+`-r9`; `offered-refs-10m-10` is the same profile under the v18 mode, configured by
+`research/config/tribe-offered-refs-10m-10*.json`. The live one
 carries the next fresh `2026-10-16-openai-10-agent-10m-r<n>` id. Each id is consumed
 by its one attempt and its published artifact names the commit it ran from.
 Outside the pilot profile the mechanical pilot verdict is `notApplicable`.
@@ -67,7 +72,8 @@ crash-containment proof, routine-v11 prompts) and the two
 primary-behavior mode), and the `first-tribe-routine-v13-agency-pilot*.json` and
 `tribe-shakedown-10m-10*.json` files (the routine-v13 goal-continuity mode), and the
 `tribe-grounded-walk-10m-10*.json` and `tribe-grounded-walk-v15-10m-10*.json` files (the
-routine-v14 and routine-v15 grounded-walk modes). They pin prompts the current mind no longer serves, so
+routine-v14 and routine-v15 grounded-walk modes), and the `tribe-working-goal-10m-10*.json`
+files (the routine-v17 working-goal mode). They pin prompts the current mind no longer serves, so
 preflight refuses them before anything is built, started or read; the artifacts
 committed under them still validate. `contract/fixtures/capability-support.json`
 is the one classification of which configurations, modes, intents, triggers and
@@ -86,7 +92,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v17-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v18-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -105,8 +111,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v17-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v17-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v18-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v18-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -267,6 +273,14 @@ A controlled stop is always `no-go`.
 Generation 2 of the gate, named in the stimulus attestation, also breaks server-witnessed native interactions down by operation into confirmed and disputed counts; evidence published before it names no generation and derives generation 1, so committed metrics stay re-derivable.
 A mechanical `pass` still names the criteria only a reader can judge, so it is necessary for the pre-registered gate and not sufficient.
 
+Generation 3 adds `behaviorGate.readiness`, owned by `research/lib/readiness.js`, and a rate is not its target.
+A run is `ready` only when decision validity, typed terminal accounting and server truthfulness are each exactly 1 and every blocker count is zero.
+Every non-passive decision ends in one class, joined by request key to the record that ended it: `confirmed`; a legitimate race (`targetRace` for a target that went or changed, `superseded` for one the agent's own later decision cancelled, `concurrent` for `controlNotReady`, `death`); or a blocker (`wrongKindRef`, `noOpTarget`, `inapplicable`, `unknownTimeout`, `incompleteMovement`, `falseSuccess`, `protocolError`, `staleRef`, `unconfirmed`, `untypedTerminal`, `unexplainedRefusal`).
+`actions.nonSuccess` lists every action that did not succeed, races included, with the exact record that ended it.
+A walk or flight's `moved` and `retreating` records carry its request id and a typed ending (`movementArrived`, `movementStalled`, `movementTimedOut` and so on) for this join, and an approaching collect or attack states its journey against its target in the interaction record.
+A test reads the JVM's refusal tags and fails if any would classify as unexplained.
+`readiness.goalCoherence` counts the affirmed steps the body measured as having changed the agent's inventory or place, the goals advanced by two or more such steps, and the goals completed after at least one.
+
 ## Lifecycle and cleanup
 
 Before it creates the disposable server or reads a credential, the harness refuses to start unless the run volume has at least 2 GiB free, or more when the configured log and artifact bounds need it.
@@ -410,7 +424,7 @@ An empty value or lookup failure stops before cognition starts. An HTTP 401 or
 403 from the provider stops the whole run after that refusal, with no retry and
 only a stable provider-safe error.
 
-The routine-v17 pilot routes routine and notable decisions to
+The routine-v18 pilot routes routine and notable decisions to
 `gpt-5.4-nano` and only the existing pivotal tier to `gpt-5.4`. It runs three
 agents for at most 180 wall-clock seconds or 4,000 server ticks, whichever
 comes first, and permits at most six calls per agent, twelve calls globally,

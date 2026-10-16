@@ -428,6 +428,18 @@ async fn a_decision_comes_back_from_the_provider_and_is_stamped_by_loom() {
         sent["response_format"]["json_schema"]["schema"]["required"],
         json!(["intent", "reasoning", "goal"])
     );
+    // The schema sent is this perception's: its one stack is the only stack ref, and
+    // an action naming a namespace it offers nothing in is not offered at all.
+    let schema = &sent["response_format"]["json_schema"]["schema"];
+    assert_eq!(schema["$defs"]["stackRef"]["enum"], json!(["i1"]));
+    assert!(schema["$defs"].get("blockRef").is_none(), "{schema}");
+    let actions: Vec<&str> = schema["properties"]["intent"]["anyOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|variant| variant["properties"]["action"]["enum"][0].as_str())
+        .collect();
+    assert_eq!(actions, ["say", "eat", "equip", "rest", "idle"]);
     assert_eq!(
         decision.goal, None,
         "an answer without a goal choice makes none"
@@ -468,7 +480,7 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
     );
     assert_eq!(decision.intent, Intent::Idle);
     assert_eq!(decision.provenance.model, FAST_MODEL);
-    assert_eq!(decision.provenance.prompt_version, "routine-v17");
+    assert_eq!(decision.provenance.prompt_version, "routine-v18");
 }
 
 #[tokio::test]
