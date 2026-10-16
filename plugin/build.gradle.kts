@@ -6,6 +6,7 @@ plugins {
     id("io.gitlab.arturbosch.detekt") version "1.23.7"
     id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
     id("com.gradleup.shadow") version "8.3.5"
+    jacoco
 }
 
 group = "dev.loom"
@@ -71,6 +72,25 @@ ktlint {
 
 tasks.test {
     useJUnitPlatform()
+    finalizedBy(tasks.jacocoTestReport)
+}
+
+// Coverage. Floors live in tools/coverage/floors.json, checked by tools/coverage/check.js.
+jacoco {
+    toolVersion = "0.8.15"
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    // kotlinx-serialization's compiler-generated `$$serializer` classes, and their
+    // nested annotation impls, are not source.
+    val generated = listOf("**/*\$\$serializer.class", "**/*\$\$serializer\$*.class")
+    classDirectories.setFrom(files(classDirectories.files.map { fileTree(it) { exclude(generated) } }))
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+        csv.required.set(false)
+    }
 }
 
 // The plugin jar must carry the Kotlin stdlib and kotlinx-serialization, which
@@ -89,5 +109,5 @@ tasks.named("build") {
 
 // The `check` task must run every gate so CI fails on any violation.
 tasks.named("check") {
-    dependsOn("detekt", "ktlintCheck")
+    dependsOn("detekt", "ktlintCheck", "jacocoTestReport")
 }

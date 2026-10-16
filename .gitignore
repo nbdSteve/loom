@@ -40,3 +40,7 @@ world_nether/
 world_the_end/
 logs/
 *.log
+
+# Coverage reports (body/, research/). plugin/ and cognition/ write under build/ and target/.
+/body/coverage/
+/research/coverage/
