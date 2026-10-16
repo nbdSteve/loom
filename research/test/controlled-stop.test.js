@@ -886,6 +886,45 @@ test('a danger repeat the JVM coalesced is a typed terminal, not a cognition fai
   assert.match(primaryBehaviorRunFailure(goalContinuityConfig(), raw.body, raw.harness).message, /became unavailable/)
 })
 
+test('an event coalesced into cognition already in flight is a typed terminal, counted on its own', () => {
+  const raw = actingRaw()
+  const seen = perception('tribe-beta', 'dmg-2', 900, goalContinuityConfig().primaryBehavior.initialPositions['tribe-beta'])
+  seen.trigger = { event: 'damaged', amount: 3, source: 'minecraft:zombie' }
+  raw.body.push(bodyRecord(900, 'tribe-beta', 'perceived', 'audited perception', {
+    requestId: 'dmg-2',
+    trigger: 'damaged',
+    perception: seen,
+    perceptionAudit: perceptionAuditFixture('empty', { timeOfDay: 900, day: 0, isDay: true })
+  }))
+  raw.body.push(bodyRecord(900, 'tribe-beta', 'cognitionUnavailable', 'coalesced', {
+    requestId: 'dmg-2', trigger: 'damaged', outcome: 'cognitionCoalesced', perception: seen
+  }))
+  const published = publish({ raw, stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  assert.deepEqual(published.metrics.cognitionCoalescing, { coalesced: 1, byAgent: { 'tribe-beta': 1 }, byTrigger: { damaged: 1 } })
+  assert.equal(published.metrics.dangerEpisodes, undefined)
+  assert.equal(published.metrics.behaviorGate.pilotCriteria.noFailureEvidence, true)
+  assert.equal(primaryBehaviorRunFailure(goalContinuityConfig(), raw.body, raw.harness), null)
+})
+
+test('working-goal evidence derives step verdicts, the no-progress run and the goals the bound ended', () => {
+  const raw = actingRaw()
+  const decided = raw.body.filter((record) => record.event === 'decided' && record.goal !== undefined)
+  const continued = decided.find((record) => record.goal.outcome === 'goalContinued')
+  continued.goal.stepResult = 'noProgress'
+  continued.goal.stepsWithoutProgress = 2
+  const published = publish({ raw, stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  const working = published.metrics.goalContinuity.workingGoal
+  assert.deepEqual(working.stepResults, { noProgress: 1 })
+  assert.equal(working.byAgent[continued.agentId].maxStepsWithoutProgress, 2)
+  assert.equal(working.stalled, 0)
+  // Evidence without working-goal fields derives exactly what it always did.
+  assert.equal(publish({ raw: actingRaw(), stopReason: 'durationElapsed' }).metrics.goalContinuity.workingGoal, undefined)
+  continued.goal.stepResult = 'probably'
+  assert.throws(() => publish({ raw, stopReason: 'durationElapsed' }), /unknown goal step result/)
+})
+
 test('a ceiling ending is measured to its admission end, and the drain is bounded', () => {
   const ceiling = goalContinuityConfig().bounds.simulationTickCeiling
   const within = endedRaw({ endTick: ceiling + 15 + 10 })

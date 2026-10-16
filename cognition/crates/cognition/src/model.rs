@@ -23,7 +23,10 @@
 
 use std::future::Future;
 
-use loom_contract::{GoalChoice, GoalDisposition, Intent, ObservationKind, Perception, Trigger};
+use loom_contract::{
+    GoalChoice, GoalDisposition, GoalStepResult, Intent, ObservationKind, Perception, Trigger,
+    MAX_GOAL_STEPS_WITHOUT_PROGRESS,
+};
 use serde::Serialize;
 
 use crate::config::{bounded, bounded_to, ConfigError, Env};
@@ -327,6 +330,11 @@ const LOW_FOOD_LEVEL: i64 = 7;
 /// record reads it as a model's choice.
 pub const SCRIPTED_GOAL_STATEMENT: &str = "scripted stand-in goal: stay fed and unhurt";
 
+/// The stand-in's success condition and step, worded as its own for the same reason.
+pub const SCRIPTED_SUCCESS_CONDITION: &str =
+    "scripted stand-in condition: health and food stay above half";
+pub const SCRIPTED_STEP: &str = "scripted stand-in step: act on the trigger in front of me";
+
 /// The deterministic stand-in backend: a rule per trigger, no inference.
 ///
 /// It exists so the routing structure and the contract round-trip can be real
@@ -353,21 +361,46 @@ impl ScriptedBackend {
     ///
     /// It exists so the goal round trip - choice, ledger, carried summary, next
     /// choice - is exercised deterministically without credentials. A fixed rule
-    /// that never weighs evidence is not agency, which is why its wording says it
-    /// is the stand-in's and why it never revises, completes or abandons.
+    /// is not agency, which is why its wording says it is the stand-in's. It reads
+    /// the body's progress evidence only as far as the bound requires: a step that
+    /// changed nothing is judged `noProgress`, and a goal at the no-progress bound
+    /// is abandoned rather than continued into the body's refusal.
     fn goal_now(perception: &Perception) -> Option<GoalChoice> {
         if !matches!(perception.trigger, Trigger::GoalReview) {
             return None;
         }
-        Some(match perception.goal {
-            None => GoalChoice {
+        let Some(held) = &perception.goal else {
+            return Some(GoalChoice {
                 disposition: GoalDisposition::Adopt,
                 statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
-            },
-            Some(_) => GoalChoice {
+                success_condition: Some(SCRIPTED_SUCCESS_CONDITION.to_owned()),
+                step: Some(SCRIPTED_STEP.to_owned()),
+                step_result: None,
+            });
+        };
+        let progress = held.progress.as_ref();
+        let step_result = match progress {
+            Some(seen) if !seen.inventory_changed && !seen.moved => GoalStepResult::NoProgress,
+            _ => GoalStepResult::Progressing,
+        };
+        let stalled = progress
+            .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS);
+        Some(if stalled {
+            GoalChoice {
+                disposition: GoalDisposition::Abandon,
+                statement: None,
+                success_condition: None,
+                step: None,
+                step_result: Some(step_result),
+            }
+        } else {
+            GoalChoice {
                 disposition: GoalDisposition::Continue,
                 statement: None,
-            },
+                success_condition: None,
+                step: Some(SCRIPTED_STEP.to_owned()),
+                step_result: Some(step_result),
+            }
         })
     }
 
@@ -540,7 +573,7 @@ mod tests {
 
     use super::{
         BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, LOW_FOOD_LEVEL,
-        SCRIPTED_GOAL_STATEMENT,
+        SCRIPTED_GOAL_STATEMENT, SCRIPTED_STEP, SCRIPTED_SUCCESS_CONDITION,
     };
     use crate::config::{ConfigError, Env};
     use crate::router::{ModelCatalog, Router};
@@ -716,6 +749,9 @@ mod tests {
             revision: 0,
             adopted_tick: 0,
             last_step: None,
+            success_condition: Some(SCRIPTED_SUCCESS_CONDITION.to_owned()),
+            step: Some(SCRIPTED_STEP.to_owned()),
+            progress: None,
         });
         let continued = ScriptedBackend::draft_now(&route, &later).goal.unwrap();
         assert_eq!(continued.disposition, GoalDisposition::Continue);

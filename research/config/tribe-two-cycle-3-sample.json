@@ -1,7 +1,7 @@
 {
   "experimentId": "2026-10-15-scripted-two-cycle-3-agent-sample",
   "title": "Credential-free 3-agent two-cycle real-time calibration sample",
-  "mode": "routine-v16-grounded-walk",
+  "mode": "routine-v17-working-goal",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -53,9 +53,9 @@
       "pivotal": "scripted-stand-in"
     },
     "prompts": {
-      "routine": "routine-v16",
-      "notable": "notable-v16",
-      "pivotal": "pivotal-v16"
+      "routine": "routine-v17",
+      "notable": "notable-v17",
+      "pivotal": "pivotal-v17"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,

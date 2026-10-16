@@ -1,7 +1,7 @@
 {
-  "experimentId": "2026-10-16-scripted-10-agent-10m-grounded-walk-v16-rehearsal",
-  "title": "Credential-free 10-agent ten-minute routine-v16 grounded-walk rehearsal",
-  "mode": "routine-v16-grounded-walk",
+  "experimentId": "2026-10-16-openai-10-agent-10m-r8",
+  "title": "10-agent ten-minute routine-v17 working-goal live shakedown",
+  "mode": "routine-v17-working-goal",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -53,36 +53,41 @@
     }
   },
   "cognition": {
-    "backend": "scripted",
-    "provider": "none-scripted-local",
+    "backend": "openai",
+    "provider": "OpenAI Chat Completions",
     "models": {
-      "ordinary": "scripted-stand-in",
-      "pivotal": "scripted-stand-in"
+      "ordinary": "gpt-5.4-nano",
+      "pivotal": "gpt-5.4"
     },
     "prompts": {
-      "routine": "routine-v16",
-      "notable": "notable-v16",
-      "pivotal": "pivotal-v16"
+      "routine": "routine-v17",
+      "notable": "notable-v17",
+      "pivotal": "pivotal-v17"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,
-    "providerEndpoint": null,
+    "providerEndpoint": "https://api.openai.com/v1",
     "providerTimeoutMillis": 12000,
     "maxRequestBytes": 65536,
     "perAgentCallCeiling": 24,
     "globalCallCeiling": 150,
     "globalOutstandingCeiling": 6,
     "maxOutputTokens": 2048,
-    "maxExternalSpendUsd": 0,
+    "maxExternalSpendUsd": 29.19,
     "pricing": {
       "currency": "USD",
-      "effectiveDate": "2026-10-14",
-      "source": "No external provider; the shipped scripted backend has zero price.",
+      "effectiveDate": "2026-10-12",
+      "source": "OpenAI API Pricing and official GPT-5.4 model pages, accessed 2026-10-12; standard-processing rates.",
       "models": {
-        "scripted-stand-in": {
-          "inputNanoUsdPerToken": 0,
-          "cachedInputNanoUsdPerToken": 0,
-          "outputNanoUsdPerToken": 0
+        "gpt-5.4-nano": {
+          "inputNanoUsdPerToken": 200,
+          "cachedInputNanoUsdPerToken": 20,
+          "outputNanoUsdPerToken": 1250
+        },
+        "gpt-5.4": {
+          "inputNanoUsdPerToken": 2500,
+          "cachedInputNanoUsdPerToken": 250,
+          "outputNanoUsdPerToken": 15000
         }
       }
     }
@@ -99,7 +104,7 @@
     "evidenceRecords": 8000
   },
   "primaryBehavior": {
-    "profile": "grounded-walk-v16-10m-10",
+    "profile": "working-goal-10m-10",
     "initialPositions": {
       "tribe-alpha": [
         12.5,

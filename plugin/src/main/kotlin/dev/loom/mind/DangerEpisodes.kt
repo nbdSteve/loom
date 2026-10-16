@@ -84,6 +84,20 @@ class DangerEpisodes(
         }
     }
 
+    /**
+     * Withdraws the episode [requestId] alone opened, for a perception admitted here but then
+     * not sent at all: a threat the mind was never asked about must not cool down as if it
+     * had been answered.
+     */
+    fun withdraw(
+        agentId: AgentId,
+        requestId: String,
+    ) {
+        episodes[agentId]?.entries?.removeIf { (_, episode) ->
+            episode.settledTick == null && episode.open == setOf(requestId)
+        }
+    }
+
     /** Drops every episode for an agent whose body has gone, so nothing outlives it. */
     fun forget(agentId: AgentId) {
         episodes.remove(agentId)

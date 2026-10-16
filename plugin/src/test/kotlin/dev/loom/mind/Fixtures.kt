@@ -4,6 +4,9 @@ import dev.loom.body.BodyEventLog
 import dev.loom.contract.DayPhase
 import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
+import dev.loom.contract.GoalChoice
+import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalStepResult
 import dev.loom.contract.Intent
 import dev.loom.contract.Observation
 import dev.loom.contract.Perception
@@ -144,3 +147,24 @@ fun decisionFor(
                 promptVersion = "test-v1",
             ),
     )
+
+/**
+ * A goal choice carrying every field [disposition] requires: a statement and success condition
+ * to word a goal, the step an affirming decision takes, and a verdict on the previous step for
+ * every disposition that answers a carried goal.
+ */
+fun goalChoice(
+    disposition: GoalDisposition,
+    statement: String? = null,
+    stepResult: GoalStepResult = GoalStepResult.PROGRESSING,
+): GoalChoice {
+    val worded = disposition == GoalDisposition.ADOPT || disposition == GoalDisposition.REVISE
+    val stepped = worded || disposition == GoalDisposition.CONTINUE
+    return GoalChoice(
+        disposition = disposition,
+        statement = statement,
+        successCondition = if (worded) "the evidence shows it is done" else null,
+        step = if (stepped) "the next concrete step" else null,
+        stepResult = if (disposition == GoalDisposition.ADOPT) null else stepResult,
+    )
+}

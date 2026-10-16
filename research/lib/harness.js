@@ -56,7 +56,7 @@ const {
 
 const STARTUP_EVENT = 'spawned'
 const ALL_AGENTS_DIED = 'allAgentsDied'
-const { DANGER_COALESCED } = require('./danger.js')
+const { isCoalesced } = require('./danger.js')
 const PROVIDER_USAGE_SCHEMA_VERSION = 'loom-provider-usage/1'
 const PAPER_DOWNLOAD_BYTES = 64 * 1024 * 1024
 const PAPER_USER_AGENT = 'loom-experiment-harness/0.1.0 (https://github.com/nbdSteve/loom)'
@@ -385,8 +385,9 @@ class PrimaryBehaviorGuard {
       this.dead.add(record.agentId)
       return null
     }
-    // A danger repeat the JVM coalesced into the agent's active episode was never sent.
-    if (record.event === 'cognitionUnavailable' && record.outcome === DANGER_COALESCED) return null
+    // A perception the JVM coalesced - into a danger episode, or into cognition already in
+    // flight for that agent - was never sent.
+    if (isCoalesced(record)) return null
     if (
       record.event === 'cognitionUnavailable' &&
       this.closed &&

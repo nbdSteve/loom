@@ -83,8 +83,8 @@ mod tests {
     use crate::model::{BackendError, Draft, ModelBackend, ScriptedBackend};
     use crate::router::{ModelCatalog, ModelRoute, Router};
     use loom_contract::{
-        DayPhase, DecisionImportance, GoalChoice, GoalDisposition, Intent, Perception, SelfState,
-        Trigger, WorldState,
+        DayPhase, DecisionImportance, GoalChoice, GoalDisposition, GoalStepResult, Intent,
+        Perception, SelfState, Trigger, WorldState,
     };
 
     const FAST: &str = "a-small-model";
@@ -209,7 +209,7 @@ mod tests {
         assert!(decided.reasoning.contains(DEEP));
         assert_eq!(decided.provenance.model, FAST);
         assert_eq!(decided.provenance.tier, DecisionImportance::Routine);
-        assert_eq!(decided.provenance.prompt_version, "routine-v16");
+        assert_eq!(decided.provenance.prompt_version, "routine-v17");
     }
 
     /// A backend that answers with one fixed goal choice.
@@ -238,13 +238,19 @@ mod tests {
             GoalDisposition::Complete,
             GoalDisposition::Abandon,
         ] {
+            let worded = matches!(
+                disposition,
+                GoalDisposition::Adopt | GoalDisposition::Revise
+            );
             let choice = GoalChoice {
                 disposition,
-                statement: matches!(
-                    disposition,
-                    GoalDisposition::Adopt | GoalDisposition::Revise
-                )
-                .then(|| "keep watch by the trees".to_owned()),
+                statement: worded.then(|| "keep watch by the trees".to_owned()),
+                success_condition: worded.then(|| "the trees are in sight at dusk".to_owned()),
+                step: (disposition != GoalDisposition::Complete
+                    && disposition != GoalDisposition::Abandon)
+                    .then(|| "stand by the nearest tree".to_owned()),
+                step_result: (disposition != GoalDisposition::Adopt)
+                    .then_some(GoalStepResult::Progressing),
             };
             let mind = Mind::new(router(), ChoosingBackend(choice.clone()));
             let decided = mind
@@ -254,7 +260,7 @@ mod tests {
             assert_eq!(decided.goal, Some(choice));
             assert_eq!(decided.intent, Intent::Idle);
             assert_eq!(decided.provenance.model, FAST);
-            assert_eq!(decided.provenance.prompt_version, "routine-v16");
+            assert_eq!(decided.provenance.prompt_version, "routine-v17");
         }
     }
 

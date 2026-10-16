@@ -264,30 +264,77 @@ struct Answer {
     goal: Option<GoalChoice>,
 }
 
+/// Which goal-choice fields one disposition requires; every other field is forbidden.
+///
+/// The working-goal shape: adopt and revise word the goal and its success condition;
+/// adopt, continue and revise name the one step this decision takes toward it; and every
+/// disposition that answers a carried goal judges that goal's previous step.
+const fn goal_fields(disposition: GoalDisposition) -> GoalFields {
+    match disposition {
+        GoalDisposition::Adopt => GoalFields {
+            worded: true,
+            stepped: true,
+            judged: false,
+        },
+        GoalDisposition::Continue => GoalFields {
+            worded: false,
+            stepped: true,
+            judged: true,
+        },
+        GoalDisposition::Revise => GoalFields {
+            worded: true,
+            stepped: true,
+            judged: true,
+        },
+        GoalDisposition::Complete | GoalDisposition::Abandon => GoalFields {
+            worded: false,
+            stepped: false,
+            judged: true,
+        },
+    }
+}
+
+#[derive(Clone, Copy)]
+struct GoalFields {
+    worded: bool,
+    stepped: bool,
+    judged: bool,
+}
+
 /// Refuses a goal choice whose fields do not match its disposition.
 ///
-/// The contract type admits a statement on any disposition and leaves the body to
-/// ignore it, but an answer is held to the closed shapes the strict schema
-/// offers: a statement is required for adopt and revise and forbidden for the
-/// rest, so a statement the agent wrote but the ledger would silently discard
-/// never enters the record as if it meant something.
+/// The contract type admits every field on any disposition and leaves the body to refuse
+/// what is missing, but an answer is held to the closed shapes the strict schema offers,
+/// so a field the agent wrote but the ledger would silently discard never enters the
+/// record as if it meant something, and a field the ledger needs is never missing.
 fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> {
     let Some(choice) = goal else {
         return Ok(None);
     };
-    let worded = matches!(
-        choice.disposition,
-        GoalDisposition::Adopt | GoalDisposition::Revise
-    );
-    match (worded, choice.statement.is_some()) {
-        (true, true) | (false, false) => Ok(Some(choice)),
-        (true, false) => {
-            Err("the model's goal choice needs a statement it did not give".to_owned())
+    let fields = goal_fields(choice.disposition);
+    let present = [
+        ("statement", fields.worded, choice.statement.is_some()),
+        (
+            "success condition",
+            fields.worded,
+            choice.success_condition.is_some(),
+        ),
+        ("step", fields.stepped, choice.step.is_some()),
+        ("step result", fields.judged, choice.step_result.is_some()),
+    ];
+    for (name, required, given) in present {
+        if required && !given {
+            return Err(format!(
+                "the model's goal choice needs a {name} it did not give"
+            ));
         }
-        (false, true) => {
-            Err("the model's goal choice gave a statement its disposition forbids".to_owned())
+        if !required && given {
+            return Err(format!(
+                "the model's goal choice gave a {name} its disposition forbids"
+            ));
         }
     }
+    Ok(Some(choice))
 }
 
 /// Parses the model's answer text into a [`Draft`].
@@ -426,31 +473,52 @@ fn sleep_intent_schema() -> Value {
     )
 }
 
-/// One goal disposition, as a closed object, with or without its statement.
-fn goal_variant(disposition: &str, description: &str, worded: bool) -> Value {
-    let mut properties = json!({
-        "disposition": {
-            "type": "string",
-            "enum": [disposition],
-            "description": description,
-        }
-    });
-    let mut required = vec![json!("disposition")];
-    if worded {
-        if let Some(properties) = properties.as_object_mut() {
-            properties.insert(
-                "statement".to_owned(),
-                json!({
-                    "type": "string",
-                    "description": format!(
-                        "The goal in your own words, one short sentence of at most \
-                         {MAX_GOAL_STATEMENT_CHARS} characters."
-                    ),
-                }),
-            );
-        }
-        required.push(json!("statement"));
+/// One goal disposition, as a closed object carrying exactly the fields it requires.
+fn goal_variant(disposition: GoalDisposition, name: &str, description: &str) -> Value {
+    let fields = goal_fields(disposition);
+    let mut properties = serde_json::Map::new();
+    properties.insert(
+        "disposition".to_owned(),
+        json!({ "type": "string", "enum": [name], "description": description }),
+    );
+    let worded = format!("one short sentence of at most {MAX_GOAL_STATEMENT_CHARS} characters");
+    if fields.worded {
+        properties.insert(
+            "statement".to_owned(),
+            json!({ "type": "string", "description": format!("The goal in your own words, {worded}.") }),
+        );
+        properties.insert(
+            "successCondition".to_owned(),
+            json!({
+                "type": "string",
+                "description": format!(
+                    "What you would observe in your own perception when the goal is achieved, {worded}."
+                ),
+            }),
+        );
     }
+    if fields.stepped {
+        properties.insert(
+            "step".to_owned(),
+            json!({
+                "type": "string",
+                "description": format!(
+                    "The one concrete next step this decision's action takes toward the goal, {worded}."
+                ),
+            }),
+        );
+    }
+    if fields.judged {
+        properties.insert(
+            "stepResult".to_owned(),
+            json!({
+                "type": "string",
+                "enum": ["done", "progressing", "noProgress"],
+                "description": "Your verdict on the previous step, from the progress evidence the carried goal states: done finished it, progressing moved it forward, noProgress did not.",
+            }),
+        );
+    }
+    let required: Vec<Value> = properties.keys().map(|key| json!(key)).collect();
     json!({
         "type": "object",
         "properties": properties,
@@ -470,11 +538,11 @@ fn goal_choice_schema() -> Value {
         "description": "Your choice about your one short-term goal, only at a scheduled goal review; null makes no choice and leaves any held goal as it is.",
         "anyOf": [
             { "type": "null" },
-            goal_variant("adopt", "Take up a new goal when you hold none.", true),
-            goal_variant("continue", "Keep the held goal unchanged.", false),
-            goal_variant("revise", "Keep pursuing the held goal under new wording.", true),
-            goal_variant("complete", "The held goal is achieved; drop it.", false),
-            goal_variant("abandon", "The held goal is no longer worth pursuing; drop it.", false),
+            goal_variant(GoalDisposition::Adopt, "adopt", "Take up a new goal when you hold none."),
+            goal_variant(GoalDisposition::Continue, "continue", "Keep the held goal and take its next step."),
+            goal_variant(GoalDisposition::Revise, "revise", "Keep pursuing the held goal with new wording, success condition and step."),
+            goal_variant(GoalDisposition::Complete, "complete", "The held goal's success condition is met; drop it."),
+            goal_variant(GoalDisposition::Abandon, "abandon", "The held goal is no longer worth pursuing; drop it."),
         ],
     })
 }
@@ -582,8 +650,8 @@ mod tests {
     use crate::prompt::{render, Prompt};
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
-        DecisionImportance, GoalChoice, GoalDisposition, GoalStep, GoalSummary, Intent, Perception,
-        Trigger, MAX_GOAL_ID_CHARS, MAX_GOAL_STATEMENT_CHARS,
+        DecisionImportance, GoalChoice, GoalDisposition, GoalProgress, GoalStep, GoalStepResult,
+        GoalSummary, Intent, Perception, Trigger, MAX_GOAL_ID_CHARS, MAX_GOAL_STATEMENT_CHARS,
     };
     use serde_json::Value;
 
@@ -648,6 +716,13 @@ mod tests {
                 request_id: "r".repeat(MAX_GOAL_ID_CHARS),
                 action: "a".repeat(32),
                 outcome: "o".repeat(MAX_GOAL_ID_CHARS),
+            }),
+            success_condition: Some("c".repeat(MAX_GOAL_STATEMENT_CHARS)),
+            step: Some("t".repeat(MAX_GOAL_STATEMENT_CHARS)),
+            progress: Some(GoalProgress {
+                inventory_changed: false,
+                moved: false,
+                steps_without_progress: i64::MAX,
             }),
         });
         let router = Router::new(ModelCatalog::new("fast", "deep"));
@@ -762,34 +837,59 @@ mod tests {
 
     #[test]
     fn every_disposition_parses_into_the_contract_choice_unchanged() {
-        let worded = |disposition, statement: &str| GoalChoice {
-            disposition,
-            statement: Some(statement.to_owned()),
-        };
-        let bare = |disposition| GoalChoice {
-            disposition,
-            statement: None,
-        };
+        let choice =
+            |disposition, statement: Option<&str>, step: Option<&str>, result| GoalChoice {
+                disposition,
+                statement: statement.map(str::to_owned),
+                success_condition: statement.map(|_| "a roof is overhead".to_owned()),
+                step: step.map(str::to_owned),
+                step_result: result,
+            };
         let cases = [
             (
-                r#"{"disposition":"adopt","statement":"find shelter"}"#,
-                worded(GoalDisposition::Adopt, "find shelter"),
+                r#"{"disposition":"adopt","statement":"find shelter","successCondition":"a roof is overhead","step":"walk to the cliff"}"#,
+                choice(
+                    GoalDisposition::Adopt,
+                    Some("find shelter"),
+                    Some("walk to the cliff"),
+                    None,
+                ),
             ),
             (
-                r#"{"disposition":"continue"}"#,
-                bare(GoalDisposition::Continue),
+                r#"{"disposition":"continue","step":"dig into the cliff","stepResult":"done"}"#,
+                choice(
+                    GoalDisposition::Continue,
+                    None,
+                    Some("dig into the cliff"),
+                    Some(GoalStepResult::Done),
+                ),
             ),
             (
-                r#"{"disposition":"revise","statement":"find shelter north"}"#,
-                worded(GoalDisposition::Revise, "find shelter north"),
+                r#"{"disposition":"revise","statement":"find shelter north","successCondition":"a roof is overhead","step":"walk north","stepResult":"noProgress"}"#,
+                choice(
+                    GoalDisposition::Revise,
+                    Some("find shelter north"),
+                    Some("walk north"),
+                    Some(GoalStepResult::NoProgress),
+                ),
             ),
             (
-                r#"{"disposition":"complete"}"#,
-                bare(GoalDisposition::Complete),
+                r#"{"disposition":"complete","stepResult":"done"}"#,
+                choice(
+                    GoalDisposition::Complete,
+                    None,
+                    None,
+                    Some(GoalStepResult::Done),
+                ),
             ),
             (
-                r#"{"disposition":"abandon"}"#,
-                bare(GoalDisposition::Abandon),
+                r#"{"disposition":"abandon","stepResult":"noProgress"}"#,
+                choice(
+                    GoalDisposition::Abandon,
+                    None,
+                    None,
+                    Some(GoalStepResult::NoProgress),
+                ),
             ),
         ];
         for (text, expected) in cases {
@@ -808,15 +908,42 @@ mod tests {
     }
 
     #[test]
-    fn a_statement_is_required_for_adopt_and_revise_and_forbidden_elsewhere() {
-        for missing in [r#"{"disposition":"adopt"}"#, r#"{"disposition":"revise"}"#] {
+    fn each_disposition_requires_its_working_goal_fields_and_forbids_the_rest() {
+        for (missing, field) in [
+            (
+                r#"{"disposition":"adopt","successCondition":"c","step":"s"}"#,
+                "statement",
+            ),
+            (
+                r#"{"disposition":"adopt","statement":"g","step":"s"}"#,
+                "success condition",
+            ),
+            (
+                r#"{"disposition":"adopt","statement":"g","successCondition":"c"}"#,
+                "step",
+            ),
+            (r#"{"disposition":"continue","stepResult":"done"}"#, "step"),
+            (r#"{"disposition":"continue","step":"s"}"#, "step result"),
+            (
+                r#"{"disposition":"revise","statement":"g","successCondition":"c","step":"s"}"#,
+                "step result",
+            ),
+            (r#"{"disposition":"complete"}"#, "step result"),
+            (r#"{"disposition":"abandon"}"#, "step result"),
+        ] {
             let reason = goal_of(missing).expect_err(missing);
-            assert!(reason.contains("needs a statement"), "{missing}: {reason}");
+            assert!(
+                reason.contains(&format!("needs a {field}")),
+                "{missing}: {reason}"
+            );
         }
-        for disposition in ["continue", "complete", "abandon"] {
-            let text = format!(r#"{{"disposition":"{disposition}","statement":"sk-lookalike"}}"#);
-            let reason = goal_of(&text).expect_err(&text);
-            assert!(reason.contains("forbids"), "{text}: {reason}");
+        for forbidden in [
+            r#"{"disposition":"continue","step":"s","stepResult":"done","statement":"sk-lookalike"}"#,
+            r#"{"disposition":"adopt","statement":"g","successCondition":"c","step":"s","stepResult":"done"}"#,
+            r#"{"disposition":"complete","stepResult":"done","step":"sk-lookalike"}"#,
+        ] {
+            let reason = goal_of(forbidden).expect_err(forbidden);
+            assert!(reason.contains("forbids"), "{forbidden}: {reason}");
             assert!(!reason.contains("sk-lookalike"), "{reason}");
         }
     }

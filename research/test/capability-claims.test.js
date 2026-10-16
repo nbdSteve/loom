@@ -47,7 +47,7 @@ test('every experiment mode the validator offers pins prompts the current mind s
 })
 
 test('the validator refuses a configuration that disables a feature no production route reads', () => {
-  const config = JSON.parse(fs.readFileSync(path.join(CONFIGS, 'first-tribe-routine-v16-agency-pilot-scripted.json'), 'utf8'))
+  const config = JSON.parse(fs.readFileSync(path.join(CONFIGS, 'first-tribe-routine-v17-agency-pilot-scripted.json'), 'utf8'))
   for (const flag of Object.keys(SUPPORT.featureFlags)) {
     const disabled = { ...config, featureFlags: { ...config.featureFlags, [flag]: false } }
     assert.notDeepEqual(validateRunConfig(disabled), [], `featureFlags.${flag}: false is accepted but changes nothing at runtime`)

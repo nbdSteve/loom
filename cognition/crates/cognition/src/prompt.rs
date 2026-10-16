@@ -29,20 +29,20 @@
 use loom_contract::{
     Bearing, CraftingOption, DayPhase, DecisionImportance, GoalSummary, InventoryStack,
     Observation, ObservationKind, Perception, SelfState, Trigger, WorldState,
-    MAX_PERCEPTION_OBSERVATIONS,
+    MAX_GOAL_STEPS_WITHOUT_PROGRESS, MAX_PERCEPTION_OBSERVATIONS,
 };
 
 use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v16";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v17";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v16";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v17";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v16";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v17";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -157,18 +157,26 @@ the choice, briefly and honestly.
 You may hold one short-term goal of your own, and only a scheduled goal review \
 can change it. Every answer also carries a goal choice, and null is always \
 allowed: it makes no choice and leaves any held goal as it is. At a goal review \
-you are shown the goal you hold, if any, with your last step under it and what \
-your body reported about that step. Judge it against the evidence in front of \
-you now, not against a wish to look busy:
-- adopt: take up a new goal in one short sentence, only when you hold none and \
-the evidence gives you one worth having. Holding no goal is a legitimate state.
-- continue: keep the held goal when it is still worthwhile and not yet achieved.
-- revise: reword the held goal when the evidence changed what it should be.
-- complete: drop the held goal because the evidence shows it is achieved.
-- abandon: drop the held goal because it is no longer worth pursuing, for \
-example because steps toward it keep being refused.
-A goal choice is separate from your action: continuing a goal while you idle is \
-legal, and an action is never required to justify a goal.";
+you are shown the goal you hold, if any: its success condition, the step you last \
+chose, what your body reported about that step, and what your body measured since \
+- whether your inventory changed, whether you moved, and how many steps in a row \
+changed neither. Judge it against that evidence, not against a wish to look busy:
+- adopt: take up a new goal when you hold none and the evidence gives you one \
+worth having. Word the goal, the success condition you could observe in your own \
+perception when it is achieved, and the one concrete step this answer's action \
+takes toward it. Holding no goal is a legitimate state.
+- continue: keep the held goal, judge the previous step, and name the next step \
+this answer's action takes.
+- revise: change the goal, its success condition and its step when the evidence \
+showed the old approach will not work, and judge the previous step.
+- complete: drop the held goal because its success condition is met.
+- abandon: drop the held goal because it is no longer worth pursuing.
+Judge the previous step as done, progressing or noProgress from what your body \
+measured. Repeating a step that changed nothing is not progress: after three \
+steps in a row that changed neither your inventory nor your place, your body \
+refuses continue and ends the goal, so revise or abandon before then. A goal \
+choice is separate from your action, but a step you name should be what your \
+action does.";
 
 /// The per-tier closing instruction.
 ///
@@ -308,12 +316,45 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
             )
         },
     );
-    format!(
+    let mut parts = vec![format!(
         "Your goal: \"{statement}\" (revision {revision}, adopted at tick {tick}); {step}.",
         statement = field(&goal.statement),
         revision = goal.revision,
         tick = goal.adopted_tick
-    )
+    )];
+    if let Some(condition) = &goal.success_condition {
+        parts.push(format!("It is achieved when: \"{}\".", field(condition)));
+    }
+    if let Some(chosen) = &goal.step {
+        parts.push(format!(
+            "The step you chose last time: \"{}\".",
+            field(chosen)
+        ));
+    }
+    if let Some(progress) = &goal.progress {
+        parts.push(format!(
+            "Since then your inventory {inventory} and you {moved}; {count} step{plural} in a row \
+             changed neither (continue is refused at {bound}).",
+            inventory = if progress.inventory_changed {
+                "changed"
+            } else {
+                "did not change"
+            },
+            moved = if progress.moved {
+                "moved"
+            } else {
+                "did not move"
+            },
+            count = progress.steps_without_progress,
+            plural = if progress.steps_without_progress == 1 {
+                ""
+            } else {
+                "s"
+            },
+            bound = MAX_GOAL_STEPS_WITHOUT_PROGRESS,
+        ));
+    }
+    parts.join(" ")
 }
 
 /// Health, vanilla hunger, and position.
@@ -758,6 +799,9 @@ mod tests {
                 action: action.to_owned(),
                 outcome: outcome.to_owned(),
             }),
+            success_condition: None,
+            step: None,
+            progress: None,
         }
     }
 
@@ -833,6 +877,28 @@ mod tests {
                 "missing {current:?} in {rendered}"
             );
         }
+    }
+
+    #[test]
+    fn a_working_goal_renders_its_condition_step_and_measured_progress() {
+        let mut goal = held("gather wood", 0, Some(("dig", "digTimedOut")));
+        goal.success_condition = Some("eight logs are in my inventory".to_owned());
+        goal.step = Some("cut the oak log in reach".to_owned());
+        goal.progress = Some(loom_contract::GoalProgress {
+            inventory_changed: false,
+            moved: false,
+            steps_without_progress: 2,
+        });
+        let rendered = situation(&goal_review_holding(Some(goal)));
+        assert!(rendered.contains("It is achieved when: \"eight logs are in my inventory\"."));
+        assert!(rendered.contains("The step you chose last time: \"cut the oak log in reach\"."));
+        assert!(
+            rendered.contains(
+                "Since then your inventory did not change and you did not move; 2 steps in a row \
+             changed neither (continue is refused at 3)."
+            ),
+            "{rendered}"
+        );
     }
 
     #[test]

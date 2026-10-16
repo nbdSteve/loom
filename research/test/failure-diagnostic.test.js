@@ -415,7 +415,7 @@ test('a primary-behavior budget refusal retains the exact typed refusal and usag
     const diagnostic = retained.diagnostic
     assert.equal(diagnostic.schemaVersion, FAILURE_DIAGNOSTIC_VERSION)
     assert.deepEqual(diagnostic.failure, { code: 'cognitionBudgetRefused', stopReason: 'cognitionFailed' })
-    assert.equal(diagnostic.configuredConditions.mode, 'routine-v16-grounded-walk')
+    assert.equal(diagnostic.configuredConditions.mode, 'routine-v17-working-goal')
     assert.equal(diagnostic.configuredConditions.controlledCrash, null)
     assert.equal(diagnostic.crashContainment, null)
     assert.deepEqual(diagnostic.cognition.harness.refusals, [{
@@ -464,7 +464,7 @@ test('every ordinary diagnostic stage failure falls back to the minimal diagnost
       assert.equal(fallback.schemaVersion, FALLBACK_DIAGNOSTIC_VERSION)
       assert.equal(fallback.failedStage, stage)
       assert.deepEqual(fallback.failure, { code: 'cognitionBudgetRefused', stopReason: 'cognitionFailed' })
-      assert.equal(fallback.mode, 'routine-v16-grounded-walk')
+      assert.equal(fallback.mode, 'routine-v17-working-goal')
       assert.equal(fallback.proxy.forwardedCalls, 11)
       assert.deepEqual(fallback.proxy.refusedByBound, { perAgentCall: 1 })
       assert.equal(fallback.providerUsage.status, 'aggregated')
@@ -549,7 +549,7 @@ test('every configuration mode and terminal fault enters the diagnostic path wit
     .filter((name) => name.endsWith('.json'))
     .map(configNamed)
   assert.ok(configs.some((config) => config.mode === 'routine-v12-primary-behavior'))
-  assert.ok(configs.some((config) => config.mode === 'routine-v16-grounded-walk'))
+  assert.ok(configs.some((config) => config.mode === 'routine-v17-working-goal'))
   const faults = [
     [new Failure('cognitionFailed', 'drain', 'cognitionDrainTimedOut'), 'cognitionDrainTimedOut'],
     [new Failure('cognitionFailed', 'auth', 'providerAuthenticationRejected'), 'providerAuthenticationRejected'],
@@ -576,6 +576,54 @@ test('every configuration mode and terminal fault enters the diagnostic path wit
         fs.rmSync(directory, { recursive: true, force: true })
       }
     }
+  }
+})
+
+test('a failed run keeps a bounded cognition timeline of closed facts', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-timeline-diagnostic-'))
+  try {
+    fs.mkdirSync(path.join(directory, 'own'))
+    const files = rawFiles(path.join(directory, 'own'))
+    const body = []
+    const harness = []
+    for (let index = 0; index < 200; index += 1) {
+      body.push({ tick: index, agentId: 'tribe-alpha', event: 'perceived', trigger: 'damaged', detail: '/Users/x' })
+      harness.push({
+        observedAt: '2026-10-16T00:00:00.000Z',
+        event: 'cognitionForwarded',
+        agentId: 'tribe-alpha',
+        requestId: `r-${index}`,
+        trigger: 'damaged',
+        origin: 'nativeEventDriver',
+        outcome: 'decision',
+        outstandingAtAdmission: 2,
+        latencyMs: 31_000 + index,
+        provenance: { model: 'sk-secret' }
+      })
+    }
+    body.push({ tick: 201, agentId: 'tribe-alpha', event: 'cognitionUnavailable', trigger: 'damaged', outcome: 'agentBudgetExhausted', detail: 'x' })
+    writeJsonLines(files.bodyFile, body)
+    writeJsonLines(files.harnessFile, harness)
+    writeJsonLines(files.providerUsageFile, [])
+    const retained = retain(directory, { ...files })
+    const timeline = retained.diagnostic.cognition.timeline
+    assert.equal(timeline.forwarded.length, 128)
+    assert.equal(timeline.forwardedOmitted, 72)
+    assert.deepEqual(timeline.forwarded.at(-1), {
+      agentId: 'tribe-alpha',
+      event: 'cognitionForwarded',
+      trigger: 'damaged',
+      origin: 'nativeEventDriver',
+      outcome: 'decision',
+      outstandingAtAdmission: 2,
+      latencyMs: 31_199
+    })
+    assert.deepEqual(timeline.body.at(-1), {
+      agentId: 'tribe-alpha', tick: 201, event: 'cognitionUnavailable', trigger: 'damaged', outcome: 'agentBudgetExhausted'
+    })
+    assert.doesNotMatch(fs.readFileSync(retained.file, 'utf8'), /Users|sk-secret|r-199/)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
   }
 })
 

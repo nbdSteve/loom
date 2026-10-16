@@ -3,9 +3,13 @@
 // The JVM records a threat or damage perception it coalesced into the agent's active danger
 // episode as cognitionUnavailable with this outcome: the mind was deliberately not asked.
 const DANGER_COALESCED = 'dangerCoalesced'
+// A perception the JVM coalesced because the agent already had cognition in flight for the
+// same kind of trigger - one review and one event at a time. Also deliberately not asked.
+const COGNITION_COALESCED = 'cognitionCoalesced'
 
 function isCoalesced (record) {
-  return record.event === 'cognitionUnavailable' && record.outcome === DANGER_COALESCED
+  return record.event === 'cognitionUnavailable' &&
+    (record.outcome === DANGER_COALESCED || record.outcome === COGNITION_COALESCED)
 }
 
 // A perception still waiting for the mind when the plugin shut down after the run ended.
@@ -28,9 +32,28 @@ function unansweredAccountedFor (bodyRecords, { admissionEnded, refusedKeys }) {
       refusedKeys.has(record.requestKey))
 }
 
-// Derived only when the evidence holds a coalesced perception.
+// Derived only when the evidence holds a perception coalesced into a danger episode.
 function dangerEpisodeMetrics (bodyRecords) {
-  const coalesced = bodyRecords.filter(isCoalesced)
+  const coalesced = bodyRecords.filter((record) =>
+    record.event === 'cognitionUnavailable' && record.outcome === DANGER_COALESCED)
+  if (coalesced.length === 0) return undefined
+  const byAgent = {}
+  const byTrigger = {}
+  for (const record of coalesced) {
+    byAgent[record.agentId] = (byAgent[record.agentId] ?? 0) + 1
+    byTrigger[record.trigger ?? 'unattested'] = (byTrigger[record.trigger ?? 'unattested'] ?? 0) + 1
+  }
+  return {
+    coalesced: coalesced.length,
+    byAgent: Object.fromEntries(Object.entries(byAgent).sort()),
+    byTrigger: Object.fromEntries(Object.entries(byTrigger).sort())
+  }
+}
+
+// Derived only when the evidence holds a perception coalesced into cognition in flight.
+function cognitionCoalescingMetrics (bodyRecords) {
+  const coalesced = bodyRecords.filter((record) =>
+    record.event === 'cognitionUnavailable' && record.outcome === COGNITION_COALESCED)
   if (coalesced.length === 0) return undefined
   const byAgent = {}
   const byTrigger = {}
@@ -46,7 +69,9 @@ function dangerEpisodeMetrics (bodyRecords) {
 }
 
 module.exports = {
+  COGNITION_COALESCED,
   COGNITION_SHUTDOWN,
+  cognitionCoalescingMetrics,
   DANGER_COALESCED,
   dangerEpisodeMetrics,
   isCoalesced,

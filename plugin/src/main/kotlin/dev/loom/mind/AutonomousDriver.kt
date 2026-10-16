@@ -61,5 +61,5 @@ class AutonomousDriver(
      * what a decision is applied to. A dead agent never appears: Loom is
      * permadeath, so it has no body and will never have another one.
      */
-    private fun due(): List<AgentId> = schedule.claim(bodies.liveBodies(), currentTick())
+    private fun due(): List<AgentId> = schedule.claim(bodies.liveBodies(), currentTick(), mind::canReview)
 }

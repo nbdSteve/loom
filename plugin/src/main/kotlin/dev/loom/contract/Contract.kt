@@ -583,13 +583,55 @@ data class GoalSummary(
     val adoptedTick: Long,
     /** The last step taken under the goal, once the body has answered it. */
     val lastStep: GoalStep? = null,
+    /** The observable state that would mean the goal is achieved. */
+    val successCondition: String? = null,
+    /** The step the goal's last affirming review chose to take. */
+    val step: String? = null,
+    /** Body-measured evidence about that step, once a later review can compare. */
+    val progress: GoalProgress? = null,
 ) {
     init {
         requireBoundedText("goalId", goalId, MAX_GOAL_ID_CHARS)
         requireBoundedText("goal statement", statement, MAX_GOAL_STATEMENT_CHARS)
+        successCondition?.let { requireBoundedText("goal success condition", it, MAX_GOAL_STATEMENT_CHARS) }
+        step?.let { requireBoundedText("goal step", it, MAX_GOAL_STATEMENT_CHARS) }
         require(revision >= 0) { "goal revision must not be negative, got $revision" }
         require(adoptedTick >= 0) { "goal adoptedTick must not be negative, got $adoptedTick" }
     }
+}
+
+/**
+ * Affirmed steps in a row that may change neither the agent's inventory nor its place before
+ * a goal can no longer be continued; mirrors the Rust contract's constant.
+ */
+const val MAX_GOAL_STEPS_WITHOUT_PROGRESS: Long = 3
+
+/** Body-measured evidence about the step the goal's last affirming review took. */
+@Serializable
+data class GoalProgress(
+    /** Whether the agent's inventory changed since that review. */
+    val inventoryChanged: Boolean,
+    /** Whether the agent moved at least one block since that review. */
+    val moved: Boolean,
+    /** How many affirmed steps in a row changed neither. */
+    val stepsWithoutProgress: Long,
+) {
+    init {
+        require(stepsWithoutProgress >= 0) { "stepsWithoutProgress must not be negative, got $stepsWithoutProgress" }
+    }
+}
+
+/** The mind's verdict on the step its previous goal review took. */
+@Serializable
+enum class GoalStepResult {
+    @SerialName("done")
+    DONE,
+
+    @SerialName("progressing")
+    PROGRESSING,
+
+    @SerialName("noProgress")
+    NO_PROGRESS,
 }
 
 /** What a decision does with the agent's short-term goal. */
@@ -618,9 +660,17 @@ data class GoalChoice(
     val disposition: GoalDisposition,
     /** The goal's wording, for adopt and revise. */
     val statement: String? = null,
+    /** The observable state that would mean the goal is achieved, for adopt and revise. */
+    val successCondition: String? = null,
+    /** The concrete next step this decision's intent takes, for adopt, continue and revise. */
+    val step: String? = null,
+    /** The verdict on the carried goal's previous step, for every disposition but adopt. */
+    val stepResult: GoalStepResult? = null,
 ) {
     init {
         statement?.let { requireBoundedText("goal statement", it, MAX_GOAL_STATEMENT_CHARS) }
+        successCondition?.let { requireBoundedText("goal success condition", it, MAX_GOAL_STATEMENT_CHARS) }
+        step?.let { requireBoundedText("goal step", it, MAX_GOAL_STATEMENT_CHARS) }
     }
 }
 

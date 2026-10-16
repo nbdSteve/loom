@@ -152,7 +152,10 @@ class DamageDriverTest {
         rig.damage(tick = 100 + DAMAGE_EPISODE_TICKS, source = "skeleton")
         assertEquals(2, rig.bodies.perceived.size)
         assertEquals(Trigger.Damaged(6, "skeleton"), rig.bodies.perceived[1].second)
+        // The first damage is answered before the second is captured; while it was still with
+        // the mind, the second would have been coalesced into that answer instead.
         rig.bodies.capture(0)
+        rig.main.drain()
         rig.bodies.capture(1)
         rig.main.drain()
         assertEquals(
@@ -251,7 +254,7 @@ class DamageDriverTest {
     }
 
     @Test
-    fun `a bridge refusal is recorded as the existing cognition unavailable`() {
+    fun `damage while the agent's event is still with the mind is coalesced before its budget`() {
         val stalled = CompletableFuture<Decision>()
         val rig = DamageRig()
         val fair = PerAgentCognitionBridge(delegate = { stalled }, maxOutstandingPerAgent = 1)
@@ -259,8 +262,8 @@ class DamageDriverTest {
         val driver = DamageDriver(rig.bodies, cognition, rig.main, { false }, rig.log, currentTick = { 0L })
         val witness = WitnessedPlayer("uuid", "alpha")
         driver.witnessed(DamageReport(ALPHA, 6.0, "zombie", 100, witness))
-        // A different attacker, so the danger episode for the zombie does not coalesce it and
-        // the per-agent budget is what refuses it.
+        // A different attacker, so the danger episode for the zombie does not coalesce it: the
+        // agent's one event already with the mind does, before the per-agent budget is spent.
         driver.witnessed(DamageReport(ALPHA, 6.0, "skeleton", 100 + DAMAGE_EPISODE_TICKS, witness))
         driver.witnessed(DamageReport(BETA, 6.0, "zombie", 100 + DAMAGE_EPISODE_TICKS, witness))
         rig.bodies.capture(0)
@@ -271,7 +274,8 @@ class DamageDriverTest {
 
         val unavailable = rig.records.single { it.event == BodyEvent.COGNITION_UNAVAILABLE }
         assertEquals(refused, unavailable.requestId)
-        assertEquals("agentBudgetExhausted", unavailable.outcome)
+        assertEquals(EventTag.COGNITION_COALESCED, unavailable.outcome)
+        assertEquals(1, fair.outstandingFor(ALPHA.value))
         assertEquals(1, fair.outstandingFor(BETA.value), "one agent's budget does not refuse another")
     }
 }

@@ -13,11 +13,13 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 
 use loom_cognition::mind::Mind;
-use loom_cognition::model::{ScriptedBackend, SCRIPTED_GOAL_STATEMENT};
+use loom_cognition::model::{
+    ScriptedBackend, SCRIPTED_GOAL_STATEMENT, SCRIPTED_STEP, SCRIPTED_SUCCESS_CONDITION,
+};
 use loom_cognition::router::{ModelCatalog, Router};
 use loom_cognition::server::serve;
 use loom_contract::{
-    Decision, DecisionImportance, GoalChoice, GoalDisposition, Perception, Trigger,
+    Decision, DecisionImportance, GoalChoice, GoalDisposition, GoalStepResult, Perception, Trigger,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -130,15 +132,31 @@ async fn every_shared_perception_fixture_gets_a_routed_decision_over_a_socket() 
         }
         // The stand-in adopts where nothing is held and continues a carried goal, and
         // that choice must survive the socket exactly as the mind made it.
-        let expected = (sent.trigger == Trigger::GoalReview).then(|| match sent.goal {
+        let expected = (sent.trigger == Trigger::GoalReview).then(|| match &sent.goal {
             None => GoalChoice {
                 disposition: GoalDisposition::Adopt,
                 statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
+                success_condition: Some(SCRIPTED_SUCCESS_CONDITION.to_owned()),
+                step: Some(SCRIPTED_STEP.to_owned()),
+                step_result: None,
             },
-            Some(_) => GoalChoice {
-                disposition: GoalDisposition::Continue,
-                statement: None,
-            },
+            Some(held) => {
+                let unchanged = held
+                    .progress
+                    .as_ref()
+                    .is_some_and(|seen| !seen.inventory_changed && !seen.moved);
+                GoalChoice {
+                    disposition: GoalDisposition::Continue,
+                    statement: None,
+                    success_condition: None,
+                    step: Some(SCRIPTED_STEP.to_owned()),
+                    step_result: Some(if unchanged {
+                        GoalStepResult::NoProgress
+                    } else {
+                        GoalStepResult::Progressing
+                    }),
+                }
+            }
         });
         assert_eq!(decision.goal, expected, "{}", fixture.display());
     }

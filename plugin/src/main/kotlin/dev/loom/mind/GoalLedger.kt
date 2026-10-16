@@ -14,7 +14,10 @@
  *   expires at the next review;
  * - spawn, disconnect, despawn, death and revival clear the agent's goal and every
  *   answer still in flight for it, because a new body session is not the world the
- *   goal was chosen in.
+ *   goal was chosen in;
+ * - each review measures, from the agent's own perceptions, whether the step the goal's last
+ *   affirming review took changed its inventory or its place, and a continue past
+ *   [MAX_GOAL_STEPS_WITHOUT_PROGRESS] such steps in a row is refused and ends the goal.
  */
 package dev.loom.mind
 
@@ -29,6 +32,7 @@ import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalStep
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.MAX_GOAL_ID_CHARS
+import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
 
 /** A held goal survives one unaddressed review and expires at the one after. */
 const val GOAL_LIFETIME_TICKS: Long = 2L * DEFAULT_GOAL_REVIEW_CADENCE_TICKS
@@ -59,6 +63,8 @@ class GoalLedger(
         val summary: GoalSummary,
         val affirmedTick: Long,
         val affirmedBy: String,
+        val observed: GoalObservation?,
+        val stepsWithoutProgress: Long,
     )
 
     private data class Basis(
@@ -66,6 +72,7 @@ class GoalLedger(
         val presented: GoalSummary?,
         val capturedTick: Long,
         val expiredGoalId: String?,
+        val observed: GoalObservation?,
     )
 
     private class AgentGoals(
@@ -89,6 +96,7 @@ class GoalLedger(
         agentId: AgentId,
         requestId: String,
         capturedTick: Long,
+        observed: GoalObservation? = null,
     ): GoalSummary? {
         val goals = trackedFor(agentId, requestId) ?: return null
         val held = goals.held
@@ -97,9 +105,14 @@ class GoalLedger(
             expired = held.summary.goalId
             goals.held = null
         }
-        val presented = goals.held?.summary
+        val presented =
+            goals.held?.let { held ->
+                held.summary.copy(
+                    progress = progressOf(held.observed, observed, held.stepsWithoutProgress) ?: held.summary.progress,
+                )
+            }
         goals.pending.remove(requestId)
-        goals.pending[requestId] = Basis(goals.session, presented, capturedTick, expired)
+        goals.pending[requestId] = Basis(goals.session, presented, capturedTick, expired, observed)
         if (goals.pending.size > MAX_PENDING_GOAL_REVIEWS) {
             goals.pending.remove(goals.pending.keys.first())
         }
@@ -139,6 +152,8 @@ class GoalLedger(
                 goalId = current?.goalId,
                 revision = current?.revision,
                 expiredGoalId = basis.expiredGoalId,
+                stepResult = choice?.stepResult,
+                stepsWithoutProgress = basis.presented?.progress?.stepsWithoutProgress,
             )
         val unchanged =
             basis.session == goals.session &&
@@ -204,23 +219,45 @@ class GoalLedger(
         requestId: String,
         evidence: GoalEvidence,
     ): GoalEvidence {
-        val refusal = refusalOf(basis.presented, choice)
-        if (refusal != null) return evidence.copy(outcome = refusal)
+        val refusal = refusalOf(basis.presented, choice) ?: stalledOf(basis.presented, choice)
+        if (refusal == GoalEvidence.STALLED) goals.held = null
+        if (refusal != null) {
+            return if (refusal == GoalEvidence.STALLED) {
+                evidence.copy(outcome = refusal, goalId = null, revision = null)
+            } else {
+                evidence.copy(outcome = refusal)
+            }
+        }
         val presented = basis.presented
-        val statement = choice.statement
         val next =
             when (choice.disposition) {
                 GoalDisposition.ADOPT ->
-                    GoalSummary(requestId, requireNotNull(statement), revision = 0, adoptedTick = basis.capturedTick)
-                GoalDisposition.CONTINUE -> requireNotNull(presented)
+                    GoalSummary(
+                        goalId = requestId,
+                        statement = requireNotNull(choice.statement),
+                        revision = 0,
+                        adoptedTick = basis.capturedTick,
+                        successCondition = choice.successCondition,
+                        step = choice.step,
+                    )
+                GoalDisposition.CONTINUE ->
+                    requireNotNull(presented).copy(lastStep = null, step = choice.step, progress = null)
                 GoalDisposition.REVISE ->
                     requireNotNull(presented).copy(
-                        statement = requireNotNull(statement),
+                        statement = requireNotNull(choice.statement),
                         revision = presented.revision + 1,
+                        lastStep = null,
+                        successCondition = choice.successCondition,
+                        step = choice.step,
+                        progress = null,
                     )
                 GoalDisposition.COMPLETE, GoalDisposition.ABANDON -> null
             }
-        goals.held = next?.let { Held(it, basis.capturedTick, requestId) }
+        // A continue carries the run of steps that changed nothing; a new or revised goal is a
+        // new approach and starts that count again.
+        val carriedCount =
+            if (choice.disposition == GoalDisposition.CONTINUE) presented?.progress?.stepsWithoutProgress ?: 0 else 0
+        goals.held = next?.let { Held(it, basis.capturedTick, requestId, basis.observed, carriedCount) }
         return evidence.copy(
             outcome = acceptedTag(choice.disposition),
             goalId = next?.goalId,
@@ -235,14 +272,22 @@ private fun refusalOf(
     choice: GoalChoice,
 ): String? {
     val adopting = choice.disposition == GoalDisposition.ADOPT
-    val worded = adopting || choice.disposition == GoalDisposition.REVISE
     return when {
         adopting && presented != null -> GoalEvidence.ALREADY_HELD
         !adopting && presented == null -> GoalEvidence.NOT_HELD
-        worded && choice.statement == null -> GoalEvidence.STATEMENT_MISSING
-        else -> null
+        else -> missingFieldOf(choice)
     }
 }
+
+/** A continue of a goal at the no-progress bound, which ends it, or `null`. */
+private fun stalledOf(
+    presented: GoalSummary?,
+    choice: GoalChoice,
+): String? =
+    GoalEvidence.STALLED.takeIf {
+        choice.disposition == GoalDisposition.CONTINUE &&
+            (presented?.progress?.stepsWithoutProgress ?: 0) >= MAX_GOAL_STEPS_WITHOUT_PROGRESS
+    }
 
 /** The tag an applied [disposition] is recorded under. */
 private fun acceptedTag(disposition: GoalDisposition): String =

@@ -28,7 +28,8 @@ const MODES = new Set([
   'routine-v13-goal-continuity',
   'routine-v14-grounded-walk',
   'routine-v15-grounded-walk',
-  'routine-v16-grounded-walk'
+  'routine-v16-grounded-walk',
+  'routine-v17-working-goal'
 ])
 const MAX_INPUT_LINE_BYTES = 256 * 1024
 const BODY_EVENTS = new Set([
@@ -216,6 +217,51 @@ function interactionDispute (record) {
     operation: INTERACTION_OPERATIONS.has(operation) ? operation : 'unclassified',
     bodyOutcome: detail.match(BODY_OUTCOME)?.[1] ?? 'unclassified',
     vanillaEffect: vanilla === null ? 'unclassified' : vanilla[1] === undefined ? 'found' : 'absent'
+  }
+}
+
+// The most recent cognition traffic, in source order, so a failure can be attributed to
+// provider latency, redundant native events or lost reviews. Closed facts only.
+const MAX_TIMELINE_ENTRIES = 128
+const ORIGIN_TAG = /^native(GoalReviewSchedule|EventDriver)$/
+
+function closedTag (value, pattern) {
+  return typeof value === 'string' && pattern.test(value) ? value : 'unclassified'
+}
+
+function boundedCount (value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+function cognitionTimeline (bodyRecords, harnessRecords, configuredAgentIds) {
+  const configured = new Set(configuredAgentIds)
+  const forwarded = harnessRecords
+    .filter((record) => (record.event === 'cognitionForwarded' || record.event === 'cognitionRefused') &&
+      configured.has(record.agentId))
+    .map((record) => ({
+      agentId: record.agentId,
+      event: record.event,
+      trigger: closedTag(record.trigger, TRIGGER),
+      origin: closedTag(record.origin, ORIGIN_TAG),
+      outcome: closedTag(record.outcome ?? record.bound, OUTCOME_TAG),
+      outstandingAtAdmission: boundedCount(record.outstandingAtAdmission),
+      latencyMs: boundedCount(record.latencyMs)
+    }))
+  const body = bodyRecords
+    .filter((record) => (record.event === 'perceived' || record.event === 'cognitionUnavailable' ||
+      record.event === 'decided') && configured.has(record.agentId) && Number.isInteger(record.tick))
+    .map((record) => ({
+      agentId: record.agentId,
+      tick: record.tick,
+      event: record.event,
+      trigger: closedTag(record.trigger, TRIGGER),
+      ...(record.event === 'cognitionUnavailable' ? { outcome: closedTag(record.outcome, OUTCOME_TAG) } : {})
+    }))
+  return {
+    forwarded: forwarded.slice(-MAX_TIMELINE_ENTRIES),
+    forwardedOmitted: Math.max(0, forwarded.length - MAX_TIMELINE_ENTRIES),
+    body: body.slice(-MAX_TIMELINE_ENTRIES),
+    bodyOmitted: Math.max(0, body.length - MAX_TIMELINE_ENTRIES)
   }
 }
 
@@ -637,7 +683,8 @@ function failureDiagnostic ({
     cognition: {
       harness: harness.summary,
       proxy: safeProxySnapshot(proxySnapshot, config),
-      providerUsage: providerUsageSummary(providerUsageInput.records, config)
+      providerUsage: providerUsageSummary(providerUsageInput.records, config),
+      timeline: cognitionTimeline(bodyInput.records, harnessInput.records, config.agents)
     },
     crashContainment: config.proof === undefined
       ? null

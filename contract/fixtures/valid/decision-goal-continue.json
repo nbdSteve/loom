@@ -1,1 +1,1 @@
-{"requestId":"req-goal-2","agentId":"agent-delta","intent":{"action":"idle"},"reasoning":"still worth doing; nothing to step toward this cycle","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"},"goal":{"disposition":"continue"}}
+{"requestId":"req-goal-2","agentId":"agent-delta","intent":{"action":"dig","block":"b4"},"reasoning":"the walk reached the tree; cut the trunk next","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"},"goal":{"disposition":"continue","step":"cut the oak log in reach","stepResult":"done"}}

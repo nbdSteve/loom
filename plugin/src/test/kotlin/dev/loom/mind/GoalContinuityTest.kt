@@ -84,7 +84,7 @@ class GoalContinuityTest {
         val mind =
             cognition(
                 IntentOutcome.Accepted("standing still"),
-                listOf(GoalChoice(GoalDisposition.ADOPT, "find shelter"), GoalChoice(GoalDisposition.CONTINUE)),
+                listOf(goalChoice(GoalDisposition.ADOPT, "find shelter"), goalChoice(GoalDisposition.CONTINUE)),
             )
         mind.consider(agent, Trigger.GoalReview)
         main.drain()
@@ -108,7 +108,7 @@ class GoalContinuityTest {
         val mind =
             cognition(
                 IntentOutcome.Rejected("busy", EventTag.CONTROL_NOT_READY),
-                listOf(GoalChoice(GoalDisposition.ADOPT, "find shelter"), GoalChoice(GoalDisposition.ABANDON)),
+                listOf(goalChoice(GoalDisposition.ADOPT, "find shelter"), goalChoice(GoalDisposition.ABANDON)),
             )
         repeat(2) {
             mind.consider(agent, Trigger.GoalReview)
@@ -123,7 +123,7 @@ class GoalContinuityTest {
         val mind =
             cognition(
                 IntentOutcome.Accepted("ok"),
-                listOf(GoalChoice(GoalDisposition.ADOPT, "find shelter"), null),
+                listOf(goalChoice(GoalDisposition.ADOPT, "find shelter"), null),
             )
         mind.consider(agent, Trigger.GoalReview)
         main.drain()

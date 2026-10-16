@@ -545,14 +545,35 @@
       "enum": ["adopt", "continue", "revise", "complete", "abandon"]
     },
 
+    "GoalStepResult": {
+      "description": "The mind's verdict on the step its previous goal review took, judged against the progress evidence the carried goal states: done finished that step, progressing moved it forward, noProgress did not.",
+      "type": "string",
+      "enum": ["done", "progressing", "noProgress"]
+    },
+
     "GoalChoice": {
-      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. statement is the goal's wording for adopt and revise; the body refuses an adopt or revise without one, and ignores it on the other dispositions.",
+      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. statement is the goal's wording and successCondition the observable state that would mean it is achieved, both for adopt and revise. step is the one concrete next step this decision's intent takes toward the goal, for adopt, continue and revise. stepResult judges the carried goal's previous step, for every disposition except adopt. The body refuses a choice missing a field its disposition requires, and ignores the rest.",
       "type": "object",
       "additionalProperties": false,
       "required": ["disposition"],
       "properties": {
         "disposition": { "$ref": "#/$defs/GoalDisposition" },
-        "statement": { "$ref": "#/$defs/GoalStatement" }
+        "statement": { "$ref": "#/$defs/GoalStatement" },
+        "successCondition": { "$ref": "#/$defs/GoalStatement" },
+        "step": { "$ref": "#/$defs/GoalStatement" },
+        "stepResult": { "$ref": "#/$defs/GoalStepResult" }
+      }
+    },
+
+    "GoalProgress": {
+      "description": "Body-measured evidence about the step the goal's last affirming review took, between that review and this one: whether the agent's inventory changed, whether it moved at least one block, and how many affirmed steps in a row have changed neither. Measured by the body side from its own perceptions, never claimed by the mind.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inventoryChanged", "moved", "stepsWithoutProgress"],
+      "properties": {
+        "inventoryChanged": { "type": "boolean" },
+        "moved": { "type": "boolean" },
+        "stepsWithoutProgress": { "type": "integer", "minimum": 0 }
       }
     },
 
@@ -606,7 +627,13 @@
           "type": "integer",
           "minimum": 0
         },
-        "lastStep": { "$ref": "#/$defs/GoalStep" }
+        "lastStep": { "$ref": "#/$defs/GoalStep" },
+        "successCondition": { "$ref": "#/$defs/GoalStatement" },
+        "step": {
+          "description": "The step the goal's last affirming review chose to take.",
+          "$ref": "#/$defs/GoalStatement"
+        },
+        "progress": { "$ref": "#/$defs/GoalProgress" }
       }
     },
 

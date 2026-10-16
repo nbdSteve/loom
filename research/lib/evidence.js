@@ -5,7 +5,7 @@ const path = require('node:path')
 
 const { behaviorGateMetrics } = require('./behavior-gate.js')
 const { admissionEndMetrics, controlledStopMetrics } = require('./controlled-stop.js')
-const { dangerEpisodeMetrics } = require('./danger.js')
+const { cognitionCoalescingMetrics, dangerEpisodeMetrics } = require('./danger.js')
 const { maximumOf, minimumOf } = require('./log-tail.js')
 const { deathMetrics } = require('./witnessed-death.js')
 const { canonicalLine, sortedValue } = require('./util.js')
@@ -29,8 +29,13 @@ const GOAL_OUTCOMES = [
   'goalNotHeld',
   'goalAlreadyHeld',
   'goalStatementMissing',
-  'goalNotReviewed'
+  'goalNotReviewed',
+  'goalSuccessConditionMissing',
+  'goalStepMissing',
+  'goalStepResultMissing',
+  'goalStalled'
 ]
+const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // Outcomes that act on the very goal the answered review was handed.
 const GOAL_CONTINUING_OUTCOMES = ['goalContinued', 'goalRevised', 'goalCompleted']
 
@@ -256,6 +261,13 @@ function validateGoalEvidence (goal, event, label) {
     if (goal[field] !== undefined && (!Number.isSafeInteger(goal[field]) || goal[field] < 0)) {
       throw new Error(`${label} goal ${field} must be a non-negative integer`)
     }
+  }
+  if (goal.stepResult !== undefined && !GOAL_STEP_RESULTS.includes(goal.stepResult)) {
+    throw new Error(`${label} has an unknown goal step result`)
+  }
+  if (goal.stepsWithoutProgress !== undefined &&
+    (!Number.isSafeInteger(goal.stepsWithoutProgress) || goal.stepsWithoutProgress < 0)) {
+    throw new Error(`${label} goal stepsWithoutProgress must be a non-negative integer`)
   }
   if ((goal.presentedGoalId === undefined) !== (goal.presentedRevision === undefined) ||
     (goal.goalId === undefined) !== (goal.revision === undefined)) {
@@ -753,6 +765,8 @@ function deriveMetrics (records, configuredAgents = []) {
   }
   const danger = dangerEpisodeMetrics(bodyRecords)
   if (danger !== undefined) result.dangerEpisodes = danger
+  const inFlight = cognitionCoalescingMetrics(bodyRecords)
+  if (inFlight !== undefined) result.cognitionCoalescing = inFlight
   const admissionEnd = admissionEndMetrics(bodyRecords, harnessRecords, firstTick)
   if (admissionEnd !== undefined) result.admissionEnd = admissionEnd
   const deaths = deathMetrics(bodyRecords, harnessRecords, firstTick)
@@ -832,12 +846,52 @@ function goalContinuityMetrics (records) {
   const sortedAgents = [...agents.values()]
     .sort((first, second) => first.agentId.localeCompare(second.agentId))
     .map((agent) => ({ ...agent, byOutcome: sortedValue(agent.byOutcome) }))
-  return {
+  const continuity = {
     byOutcome: sortedValue(byOutcome),
     agents: sortedAgents,
     agentsWithContinuity: sortedAgents
       .filter((agent) => agent.continuingReviews > 0)
       .map((agent) => agent.agentId)
+  }
+  const working = workingGoalMetrics(records)
+  return working === undefined ? continuity : { ...continuity, workingGoal: working }
+}
+
+/**
+ * The working-goal evidence a v17 run carries: the mind's verdict on each previous step, the
+ * body's own count of steps in a row that changed nothing, and the goals the bound ended.
+ * Derived only when a record carries it, so evidence from before it re-derives unchanged.
+ */
+function workingGoalMetrics (records) {
+  const judged = records.filter((record) =>
+    record.goal.stepResult !== undefined || record.goal.stepsWithoutProgress !== undefined)
+  if (judged.length === 0) return undefined
+  const byAgent = {}
+  for (const record of records) {
+    const goal = record.goal
+    const agent = byAgent[record.agentId] ??= {
+      stepResults: {},
+      maxStepsWithoutProgress: 0,
+      stalled: 0,
+      completed: 0
+    }
+    if (goal.stepResult !== undefined) increment(agent.stepResults, goal.stepResult)
+    if (goal.stepsWithoutProgress !== undefined) {
+      agent.maxStepsWithoutProgress = Math.max(agent.maxStepsWithoutProgress, goal.stepsWithoutProgress)
+    }
+    if (goal.outcome === 'goalStalled') agent.stalled += 1
+    if (goal.outcome === 'goalCompleted') agent.completed += 1
+  }
+  const stepResults = {}
+  for (const agent of Object.values(byAgent)) {
+    for (const [result, count] of Object.entries(agent.stepResults)) stepResults[result] = (stepResults[result] ?? 0) + count
+  }
+  return {
+    stepResults: sortedValue(stepResults),
+    stalled: Object.values(byAgent).reduce((sum, agent) => sum + agent.stalled, 0),
+    completed: Object.values(byAgent).reduce((sum, agent) => sum + agent.completed, 0),
+    byAgent: sortedValue(Object.fromEntries(Object.entries(byAgent).map(([agentId, agent]) =>
+      [agentId, { ...agent, stepResults: sortedValue(agent.stepResults) }])))
   }
 }
 

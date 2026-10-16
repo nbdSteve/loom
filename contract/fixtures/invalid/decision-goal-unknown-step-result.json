@@ -1,0 +1,1 @@
+{"requestId":"req-goal-2","agentId":"agent-delta","intent":{"action":"idle"},"reasoning":"an unknown verdict names no judgement","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"},"goal":{"disposition":"continue","step":"wait","stepResult":"maybe"}}

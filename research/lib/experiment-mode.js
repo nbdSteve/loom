@@ -11,15 +11,17 @@ const ROUTINE_V14_GROUNDED_WALK_MODE = 'routine-v14-grounded-walk'
 // v15 keeps v14's ref-named walk and states where it ends for a block a body walks through:
 // that block's own cell rather than the open air above it.
 const ROUTINE_V15_GROUNDED_WALK_MODE = 'routine-v15-grounded-walk'
-// v16 keeps v15's walk and stops naming a compass point for a thing in the agent's own block
-// column: the block it stands on is placed as under its feet, not half a block to the north.
-const ROUTINE_V16_GROUNDED_WALK_MODE = 'routine-v16-grounded-walk'
+// v17 keeps v15's walk and v16's placement of a thing in the agent's own block column (the
+// block it stands on is under its feet, not half a block to the north; v16 never published),
+// and gives the held goal a success condition, a rolling step, the step's body-measured effect
+// and a bound on steps that change nothing.
+const ROUTINE_V17_WORKING_GOAL_MODE = 'routine-v17-working-goal'
 // The two native-scheduler pilots share every condition except what each mode pins here.
 // Category fairness is a fact about the JVM selector a run used, so v12 stays false for
 // its committed evidence and v13, which runs on the 48-per-kind selector, attests true.
 // The prompt versions the mind serves today (`cognition/crates/cognition/src/prompt.rs`).
 // A configuration pinning any other version can only fail after it has run.
-const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v16', notable: 'notable-v16', pivotal: 'pivotal-v16' })
+const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v17', notable: 'notable-v17', pivotal: 'pivotal-v17' })
 // Modes kept only so artifacts committed under them still validate; no run may select one.
 const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V12_PRIMARY_BEHAVIOR_MODE]: Object.freeze({
@@ -41,8 +43,8 @@ const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
   })
 })
 const PRIMARY_BEHAVIOR_MODES = Object.freeze({
-  [ROUTINE_V16_GROUNDED_WALK_MODE]: Object.freeze({
-    prompts: Object.freeze({ routine: 'routine-v16', notable: 'notable-v16', pivotal: 'pivotal-v16' }),
+  [ROUTINE_V17_WORKING_GOAL_MODE]: Object.freeze({
+    prompts: Object.freeze({ routine: 'routine-v17', notable: 'notable-v17', pivotal: 'pivotal-v17' }),
     categoryFairSelection: true
   })
 })
@@ -145,7 +147,7 @@ module.exports = {
   ROUTINE_V13_GOAL_CONTINUITY_MODE,
   ROUTINE_V14_GROUNDED_WALK_MODE,
   ROUTINE_V15_GROUNDED_WALK_MODE,
-  ROUTINE_V16_GROUNDED_WALK_MODE,
+  ROUTINE_V17_WORKING_GOAL_MODE,
   SERVED_PROMPTS,
   configuredMode,
   createInterventionSchedule,

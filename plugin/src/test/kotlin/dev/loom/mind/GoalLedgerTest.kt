@@ -9,7 +9,11 @@ import dev.loom.body.GoalEvidence
 import dev.loom.contract.Decision
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalProgress
 import dev.loom.contract.GoalStep
+import dev.loom.contract.GoalStepResult
+import dev.loom.contract.GoalSummary
+import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
 import dev.loom.contract.Trigger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -27,7 +31,7 @@ class GoalLedgerTest {
         statement: String? = null,
     ): Decision =
         decisionFor(perception(requestId = requestId, agentId = agentId.value))
-            .copy(goal = disposition?.let { GoalChoice(it, statement) })
+            .copy(goal = disposition?.let { goalChoice(it, statement) })
 
     private fun review(
         agentId: AgentId,
@@ -213,8 +217,98 @@ class GoalLedgerTest {
         review(alpha, "r1", 100, GoalDisposition.ADOPT, "gather wood")
         val threat = decisionFor(perception(requestId = "t1", trigger = Trigger.GoalReview))
         assertNull(ledger.resolve(alpha, threat))
-        val choosing = ledger.resolve(alpha, threat.copy(goal = GoalChoice(GoalDisposition.ABANDON)))
+        val choosing = ledger.resolve(alpha, threat.copy(goal = goalChoice(GoalDisposition.ABANDON)))
         assertEquals(GoalEvidence.NOT_REVIEWED, choosing?.outcome)
         assertEquals("r1", ledger.present(alpha, "r2", 200)?.goalId)
+    }
+
+    private fun seen(
+        x: Double,
+        vararg stacks: Pair<String, Long>,
+    ): GoalObservation = GoalObservation(mapOf(*stacks), listOf(x, 64.0, 0.0))
+
+    private fun affirm(
+        requestId: String,
+        tick: Long,
+        observed: GoalObservation,
+        choice: GoalChoice?,
+    ): Pair<GoalSummary?, GoalEvidence?> {
+        val carried = ledger.present(alpha, requestId, tick, observed)
+        val decision = decisionFor(perception(requestId = requestId, agentId = alpha.value)).copy(goal = choice)
+        return carried to ledger.resolve(alpha, decision)
+    }
+
+    @Test
+    fun aWorkingGoalNeedsItsConditionStepAndVerdict() {
+        val adoptBare = GoalChoice(GoalDisposition.ADOPT, statement = "gather wood", step = "walk to the tree")
+        assertEquals(GoalEvidence.SUCCESS_CONDITION_MISSING, affirm("r1", 100, seen(0.0), adoptBare).second?.outcome)
+        val adoptNoStep = GoalChoice(GoalDisposition.ADOPT, statement = "gather wood", successCondition = "8 logs")
+        assertEquals(GoalEvidence.STEP_MISSING, affirm("r2", 100, seen(0.0), adoptNoStep).second?.outcome)
+        affirm("r3", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather wood"))
+        val unjudged = GoalChoice(GoalDisposition.CONTINUE, step = "cut the log")
+        assertEquals(GoalEvidence.STEP_RESULT_MISSING, affirm("r4", 200, seen(0.0), unjudged).second?.outcome)
+        val unstepped = GoalChoice(GoalDisposition.CONTINUE, stepResult = GoalStepResult.DONE)
+        assertEquals(GoalEvidence.STEP_MISSING, affirm("r5", 200, seen(0.0), unstepped).second?.outcome)
+        val carried = ledger.present(alpha, "r6", 300, seen(0.0))
+        assertEquals("the evidence shows it is done", carried?.successCondition)
+        assertEquals("the next concrete step", carried?.step)
+    }
+
+    @Test
+    fun stepsThatChangeNothingEndTheGoalAtTheBoundAndEvidenceResetsTheCount() {
+        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather wood"))
+        // Nothing changed after the adopting step: one step without progress.
+        val (first, continued) = affirm("r2", 200, seen(0.4), goalChoice(GoalDisposition.CONTINUE))
+        assertEquals(GoalProgress(inventoryChanged = false, moved = false, stepsWithoutProgress = 1), first?.progress)
+        assertEquals(GoalEvidence.CONTINUED, continued?.outcome)
+        assertEquals(1L, continued?.stepsWithoutProgress)
+        // A move of a block or more is progress, and resets the count.
+        val (moved, _) = affirm("r3", 300, seen(2.0), goalChoice(GoalDisposition.CONTINUE))
+        assertEquals(GoalProgress(inventoryChanged = false, moved = true, stepsWithoutProgress = 0), moved?.progress)
+        // So is a change of inventory.
+        val (gained, _) =
+            affirm(
+                "r4",
+                400,
+                seen(2.0, "item.minecraft.stick" to 2L),
+                goalChoice(GoalDisposition.CONTINUE),
+            )
+        assertEquals(GoalProgress(inventoryChanged = true, moved = false, stepsWithoutProgress = 0), gained?.progress)
+        // Three affirmed steps in a row that change nothing reach the bound.
+        val still = seen(2.0, "item.minecraft.stick" to 2L)
+        assertEquals(
+            1L,
+            affirm("r5", 500, still, goalChoice(GoalDisposition.CONTINUE)).first?.progress?.stepsWithoutProgress,
+        )
+        assertEquals(
+            2L,
+            affirm("r6", 600, still, goalChoice(GoalDisposition.CONTINUE)).first?.progress?.stepsWithoutProgress,
+        )
+        val (atBound, refused) =
+            affirm(
+                "r7",
+                700,
+                still,
+                goalChoice(GoalDisposition.CONTINUE, stepResult = GoalStepResult.NO_PROGRESS),
+            )
+        assertEquals(MAX_GOAL_STEPS_WITHOUT_PROGRESS, atBound?.progress?.stepsWithoutProgress)
+        assertEquals(GoalEvidence.STALLED, refused?.outcome)
+        assertEquals(GoalStepResult.NO_PROGRESS, refused?.stepResult)
+        // The goal is over: nothing is carried, and a new one may be adopted.
+        assertNull(ledger.present(alpha, "r8", 800, still))
+        assertEquals(
+            GoalEvidence.ADOPTED,
+            affirm("r9", 900, still, goalChoice(GoalDisposition.ADOPT, "collect sticks")).second?.outcome,
+        )
+    }
+
+    @Test
+    fun aRevisedApproachStartsTheNoProgressCountAgain() {
+        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather wood"))
+        affirm("r2", 200, seen(0.0), goalChoice(GoalDisposition.CONTINUE))
+        val (stalling, revised) = affirm("r3", 300, seen(0.0), goalChoice(GoalDisposition.REVISE, "collect sticks"))
+        assertEquals(2L, stalling?.progress?.stepsWithoutProgress)
+        assertEquals(GoalEvidence.REVISED, revised?.outcome)
+        assertEquals(1L, ledger.present(alpha, "r4", 400, seen(0.0))?.progress?.stepsWithoutProgress)
     }
 }

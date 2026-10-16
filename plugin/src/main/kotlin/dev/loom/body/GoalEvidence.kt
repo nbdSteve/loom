@@ -2,6 +2,7 @@
 package dev.loom.body
 
 import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalStepResult
 import kotlinx.serialization.Serializable
 
 /**
@@ -19,6 +20,9 @@ import kotlinx.serialization.Serializable
  * @property revision that goal's revision after resolution.
  * @property expiredGoalId a goal that outlived its lifetime and was cleared before this
  *   perception was taken.
+ * @property stepResult the mind's verdict on the carried goal's previous step, if it gave one.
+ * @property stepsWithoutProgress the body's count, as carried, of affirmed steps in a row that
+ *   changed neither the agent's inventory nor its place.
  */
 @Serializable
 data class GoalEvidence(
@@ -29,6 +33,8 @@ data class GoalEvidence(
     val goalId: String? = null,
     val revision: Long? = null,
     val expiredGoalId: String? = null,
+    val stepResult: GoalStepResult? = null,
+    val stepsWithoutProgress: Long? = null,
 ) {
     /** The tags [outcome] takes. */
     companion object {
@@ -52,6 +58,22 @@ data class GoalEvidence(
 
         /** An adopt or revise without a statement. */
         const val STATEMENT_MISSING: String = "goalStatementMissing"
+
+        /** An adopt or revise without a success condition. */
+        const val SUCCESS_CONDITION_MISSING: String = "goalSuccessConditionMissing"
+
+        /** An adopt, continue or revise without the step its action takes. */
+        const val STEP_MISSING: String = "goalStepMissing"
+
+        /** A continue, revise, complete or abandon without a verdict on the previous step. */
+        const val STEP_RESULT_MISSING: String = "goalStepResultMissing"
+
+        /**
+         * A continue of a goal whose last [dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS]
+         * affirmed steps changed neither the agent's inventory nor its place: refused, and the
+         * goal ended, so a held goal can never become a no-progress loop.
+         */
+        const val STALLED: String = "goalStalled"
 
         /** A goal choice on a decision that did not answer a goal review. */
         const val NOT_REVIEWED: String = "goalNotReviewed"

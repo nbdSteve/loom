@@ -30,10 +30,11 @@ class PerAgentCognitionBridgeTest {
         val betaFirst = bridge.submit(beta)
 
         assertTrue(alphaRefused.isCompletedExceptionally)
-        assertEquals(
-            CognitionFailure.AgentBudgetExhausted(1),
-            failureOf(assertThrows<ExecutionException> { alphaRefused.get(1, TimeUnit.SECONDS) }),
-        )
+        val refusal = failureOf(assertThrows<ExecutionException> { alphaRefused.get(1, TimeUnit.SECONDS) })
+        assertEquals(CognitionFailure.AgentBudgetExhausted(1), refusal)
+        // The tag the journal files a refusal under, and the budget it states.
+        assertEquals("agentBudgetExhausted", refusal.tag)
+        assertEquals(1, (refusal as CognitionFailure.AgentBudgetExhausted).limit)
         assertEquals(1, bridge.outstandingFor("alpha"))
         assertEquals(1, bridge.outstandingFor("beta"))
 

@@ -122,15 +122,20 @@ class GoalReviewSchedule(
      * Agents absent from [living] are forgotten. Loom is permadeath, so for a dead
      * agent that is final; for one whose body was merely despawned it means a fresh
      * body is due at once, which is the same treatment a newly spawned agent gets.
+     *
+     * A due agent [ready] rejects - one whose previous review is still waiting for the
+     * mind - is neither claimed nor recorded, so the review it is owed stays due and is
+     * claimed at the first slice it fits rather than refused and lost.
      */
     fun claim(
         living: Set<AgentId>,
         now: Long,
+        ready: (AgentId) -> Boolean = { true },
     ): List<AgentId> {
         lastReview.keys.retainAll(living)
         val claimed =
             living
-                .filter { isDue(it, now) }
+                .filter { isDue(it, now) && ready(it) }
                 .sortedWith(longestWaitingFirst)
                 .take(perSlice(living.size))
         claimed.forEach { lastReview[it] = now }

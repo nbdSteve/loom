@@ -197,8 +197,12 @@ test('the proxy preserves one sanitized cognition classification for the diagnos
   try {
     assert.equal((await request(proxy.listen.port, 'alpha', 'one')).error, error)
     assert.deepEqual(refusals, [{ message: error, classified: failure }])
+    const forwarded = events.find((event) => event.event === 'cognitionForwarded')
+    // The answer's latency is measured on the proxy's monotonic clock, so only its shape is pinned.
+    assert.ok(Number.isSafeInteger(forwarded.latencyMs) && forwarded.latencyMs >= 0)
+    delete forwarded.latencyMs
     assert.deepEqual(
-      events.find((event) => event.event === 'cognitionForwarded'),
+      forwarded,
       {
         event: 'cognitionForwarded',
         agentId: 'alpha',

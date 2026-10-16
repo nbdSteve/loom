@@ -6,12 +6,12 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v16 grounded-walk pilot,
-`research/config/first-tribe-routine-v16-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v16-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v17 working-goal pilot,
+`research/config/first-tribe-routine-v17-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v17-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
-native event drivers. It uses the v16 prompts, which show each agent its own
+native event drivers. It uses the v17 prompts, which show each agent its own
 carried goal and let the model return an optional typed goal choice, and it
 attests `categoryFairSelection: true` because the 48-per-kind selector it runs on
 is category-fair. Since v14 a `moveTo` names an observed block by ref rather than
@@ -23,7 +23,14 @@ bush and were sent to the open air above it. v16 places a thing in the agent's o
 block column - the block under its feet, a plant it stands in - by where it is
 relative to the agent (bearing `here`) rather than by a compass point, because 16
 of the v15 run's 18 walks went to the block the body already stood on, which the
-prompt had called half a block to the north. `research/lib/experiment-mode.js` owns the pins. In the
+prompt had called half a block to the north. v17 keeps both and makes the held goal a
+working goal: adopt and revise state a success condition, every affirming review names
+the one step its action takes, every answer to a carried goal judges the previous step
+(`done`, `progressing`, `noProgress`), the JVM measures from the agent's own perceptions
+whether that step changed its inventory or moved it, and a `continue` after three
+affirmed steps in a row that changed neither is refused as `goalStalled` and ends the
+goal. Metrics derive `goalContinuity.workingGoal` from that evidence. v16 never
+published, so its configurations were replaced rather than kept historical. `research/lib/experiment-mode.js` owns the pins. In the
 scripted twin the stand-in adopts one fixed placeholder goal at each agent's
 first review and continues it at the second; that exercises the goal round
 trip and is not evidence of agency.
@@ -47,8 +54,8 @@ times the 12,000-tick share of the ten-agent normal sample. The v13
 configurations that ran `-r1` to `-r4` are `research/config/tribe-shakedown-10m-10*.json`
 and are historical, as are the v14 `research/config/tribe-grounded-walk-10m-10*.json`
 that ran `-r5` and the v15 `research/config/tribe-grounded-walk-v15-10m-10*.json` that
-ran `-r6`; `grounded-walk-v16-10m-10` is the same profile under the v16 mode,
-configured by `research/config/tribe-grounded-walk-v16-10m-10*.json`. The live one
+ran `-r6`; `working-goal-10m-10` is the same profile under the v17 mode, configured by
+`research/config/tribe-working-goal-10m-10*.json`. The live one
 carries the next fresh `2026-10-16-openai-10-agent-10m-r<n>` id. Each id is consumed
 by its one attempt and its published artifact names the commit it ran from.
 Outside the pilot profile the mechanical pilot verdict is `notApplicable`.
@@ -79,7 +86,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v16-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v17-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -98,8 +105,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v16-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v16-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v17-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v17-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -275,6 +282,14 @@ scheduled review, threat scan or damage witness runs until the harness has
 applied the initial conditions and sent `loombody begin` after them. Without the
 hold, the first agent's first review could arrive while later agents were still
 starting, before the conditions existed; the `-r2` shakedown failed that way.
+One agent has at most one scheduled review and one event with the mind at a time: a
+further event is ended as `cognitionUnavailable` with outcome `cognitionCoalesced`
+(never sent, not a failure, counted under `cognitionCoalescing`), and a review that falls
+due while the agent's previous review is still unanswered is deferred to the first slice
+it fits rather than claimed into a full per-agent budget. The `-r7` shakedown failed as
+`agentBudgetExhausted` because neither held. The retained failure diagnostic keeps the
+most recent cognition traffic (`cognition.timeline`: per forwarded call its trigger,
+origin, outcome, outstanding count and latency; per body record its tick and outcome).
 A shared startup deadline covers the service, server, and all bodies. Any
 partial startup enters the same cleanup path as cancellation, timeout, disk
 failure, cognition failure, or Paper failure.
@@ -395,7 +410,7 @@ An empty value or lookup failure stops before cognition starts. An HTTP 401 or
 403 from the provider stops the whole run after that refusal, with no retry and
 only a stable provider-safe error.
 
-The routine-v16 pilot routes routine and notable decisions to
+The routine-v17 pilot routes routine and notable decisions to
 `gpt-5.4-nano` and only the existing pivotal tier to `gpt-5.4`. It runs three
 agents for at most 180 wall-clock seconds or 4,000 server ticks, whichever
 comes first, and permits at most six calls per agent, twelve calls globally,

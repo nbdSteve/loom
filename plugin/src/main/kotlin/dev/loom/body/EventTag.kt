@@ -165,6 +165,14 @@ object EventTag {
      */
     const val DANGER_COALESCED: String = "dangerCoalesced"
 
+    /**
+     * A perception the mind was not asked about because the agent already has cognition in
+     * flight for the same kind of trigger: one scheduled goal review, and one event, at a time.
+     * A redundant event folds into the answer already coming instead of spending the agent's
+     * outstanding-request budget, and a review is never refused, only deferred until it fits.
+     */
+    const val COGNITION_COALESCED: String = "cognitionCoalesced"
+
     /** A perception still waiting for the mind when the plugin shut down; it was never answered. */
     const val COGNITION_SHUTDOWN: String = "cognitionShutdown"
 

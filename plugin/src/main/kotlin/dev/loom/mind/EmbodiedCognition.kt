@@ -131,19 +131,35 @@ class EmbodiedCognition(
         perception: Perception,
     ) {
         if (shutDown) return
-        if (!danger.admit(agentId, perception)) {
-            // The agent is already answering this threat; the perception still ends its chain.
-            journal.unavailable(
-                agentId,
-                perception,
-                EventTag.DANGER_COALESCED,
-                "coalesced into the active danger episode for this threat",
-            )
+        val coalesced =
+            when {
+                // The agent is already answering this threat.
+                !danger.admit(agentId, perception) ->
+                    EventTag.DANGER_COALESCED to "coalesced into the active danger episode for this threat"
+                // One review and one event at a time: the answer already coming covers this one.
+                inFlightFor(agentId, review = perception.trigger == Trigger.GoalReview) > 0 -> {
+                    danger.withdraw(agentId, perception.requestId)
+                    EventTag.COGNITION_COALESCED to
+                        "coalesced: the agent already has cognition in flight for this kind of trigger"
+                }
+                else -> null
+            }
+        if (coalesced != null) {
+            // The perception still ends its chain.
+            journal.unavailable(agentId, perception, coalesced.first, coalesced.second)
             return
         }
         val carried =
             if (perception.trigger == Trigger.GoalReview) {
-                perception.copy(goal = goals.present(agentId, perception.requestId, perception.capturedTick))
+                perception.copy(
+                    goal =
+                        goals.present(
+                            agentId,
+                            perception.requestId,
+                            perception.capturedTick,
+                            GoalObservation.of(perception.selfState),
+                        ),
+                )
             } else {
                 perception
             }
@@ -162,6 +178,22 @@ class EmbodiedCognition(
             }
         }
     }
+
+    /**
+     * Whether [agentId] can take a scheduled goal review now: no review of its is still
+     * waiting for the mind. A schedule asks this before claiming, so an owed review that does
+     * not fit is deferred to a later slice rather than refused and lost. Main thread only.
+     */
+    fun canReview(agentId: AgentId): Boolean = !shutDown && inFlightFor(agentId, review = true) == 0
+
+    /** How many of [agentId]'s perceptions of one kind - reviews or events - await the mind. */
+    private fun inFlightFor(
+        agentId: AgentId,
+        review: Boolean,
+    ): Int =
+        inFlight.values.count { (agent, perception) ->
+            agent == agentId && (perception.trigger == Trigger.GoalReview) == review
+        }
 
     /**
      * Ends every chain still waiting for the mind, for a plugin shutdown.

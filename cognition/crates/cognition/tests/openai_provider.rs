@@ -42,8 +42,8 @@ use loom_cognition::openai::settings::{
 use loom_cognition::openai::{OpenAiBackend, OpenAiConfig, MAX_RESPONSE_BYTES};
 use loom_cognition::router::Router;
 use loom_contract::{
-    DayPhase, Decision, DecisionImportance, GoalChoice, GoalDisposition, Intent, InventoryStack,
-    Perception, SelfState, Trigger, WorldState,
+    DayPhase, Decision, DecisionImportance, GoalChoice, GoalDisposition, GoalStepResult, Intent,
+    InventoryStack, Perception, SelfState, Trigger, WorldState,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -445,7 +445,13 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
     let answer = json!({
         "intent": { "action": "idle" },
         "reasoning": "the held goal is still worth it and nothing to step toward",
-        "goal": { "disposition": "revise", "statement": "gather wood nearer the hill" }
+        "goal": {
+            "disposition": "revise",
+            "statement": "gather wood nearer the hill",
+            "successCondition": "eight logs are in my inventory",
+            "step": "walk to the birch on the hill",
+            "stepResult": "noProgress"
+        }
     });
     let (_provider, decided) =
         decide_with(Reply::completion(&answer), DecisionImportance::Routine).await;
@@ -455,11 +461,14 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
         Some(GoalChoice {
             disposition: GoalDisposition::Revise,
             statement: Some("gather wood nearer the hill".to_owned()),
+            success_condition: Some("eight logs are in my inventory".to_owned()),
+            step: Some("walk to the birch on the hill".to_owned()),
+            step_result: Some(GoalStepResult::NoProgress),
         })
     );
     assert_eq!(decision.intent, Intent::Idle);
     assert_eq!(decision.provenance.model, FAST_MODEL);
-    assert_eq!(decision.provenance.prompt_version, "routine-v16");
+    assert_eq!(decision.provenance.prompt_version, "routine-v17");
 }
 
 #[tokio::test]

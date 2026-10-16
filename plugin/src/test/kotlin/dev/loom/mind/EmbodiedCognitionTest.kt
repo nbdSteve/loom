@@ -384,7 +384,10 @@ class EmbodiedCognitionTest {
             )
         bridge.use {
             val cognition = EmbodiedCognition(body, bridge, main, silentJournal())
-            repeat(5) { i -> cognition.submit(agent, perception(requestId = "req-$i", agentId = agent.value)) }
+            // Five agents, because one agent has at most one review in flight at a time.
+            repeat(
+                5,
+            ) { i -> cognition.submit(AgentId("agent-$i"), perception(requestId = "req-$i", agentId = "agent-$i")) }
             main.drainUntil(10)
         }
         assertEquals(5, body.applied.size)

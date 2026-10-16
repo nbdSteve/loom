@@ -297,6 +297,8 @@ class CognitionBudgetProxy {
     this.total += 1
     this.outstanding += 1
     const outstandingAtAdmission = this.outstanding
+    const admittedAt = performance.now()
+    const latencyMs = () => Math.max(0, Math.round(performance.now() - admittedAt))
     this.perAgent.set(agentId, agentCalls + 1)
     this.consumePostCrashReserve(agentId)
     try {
@@ -322,6 +324,7 @@ class CognitionBudgetProxy {
         outcome: cognitionFailed ? 'cognitionFailure' : 'decision',
         provenance: parsed?.provenance ?? null,
         outstandingAtAdmission,
+        latencyMs: latencyMs(),
         ...originField,
         ...(failure === null ? {} : { failure })
       })
@@ -344,6 +347,7 @@ class CognitionBudgetProxy {
         importance: perception.importance ?? null,
         outcome: 'upstreamUnavailable',
         outstandingAtAdmission,
+        latencyMs: latencyMs(),
         ...originField
       })
       this.onUnavailable({ agentId, requestId })

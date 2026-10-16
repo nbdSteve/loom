@@ -654,6 +654,12 @@ pub struct Perception {
     pub goal: Option<GoalSummary>,
 }
 
+/// Affirmed steps in a row that may change neither the agent's inventory nor its place
+/// before a goal can no longer be continued: past it the body refuses `continue`, ends the
+/// goal, and the agent must revise, abandon or adopt anew. The bound that keeps a held goal
+/// from becoming a no-progress loop.
+pub const MAX_GOAL_STEPS_WITHOUT_PROGRESS: i64 = 3;
+
 /// Longest a goal statement may be, in characters, mirroring the schema.
 pub const MAX_GOAL_STATEMENT_CHARS: usize = 160;
 
@@ -760,6 +766,47 @@ pub struct GoalSummary {
     /// The last step taken under the goal, once the body has answered it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_step: Option<GoalStep>,
+    /// The observable state that would mean the goal is achieved.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_goal_statement"
+    )]
+    pub success_condition: Option<String>,
+    /// The step the goal's last affirming review chose to take.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_goal_statement"
+    )]
+    pub step: Option<String>,
+    /// Body-measured evidence about that step, once a later review can compare.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<GoalProgress>,
+}
+
+/// Body-measured evidence about the step the goal's last affirming review took.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GoalProgress {
+    /// Whether the agent's inventory changed since that review.
+    pub inventory_changed: bool,
+    /// Whether the agent moved at least one block since that review.
+    pub moved: bool,
+    /// How many affirmed steps in a row changed neither.
+    #[serde(deserialize_with = "nonnegative_goal_count")]
+    pub steps_without_progress: i64,
+}
+
+/// The mind's verdict on the step its previous goal review took.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GoalStepResult {
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "progressing")]
+    Progressing,
+    #[serde(rename = "noProgress")]
+    NoProgress,
 }
 
 /// What a decision does with the agent's short-term goal.
@@ -790,6 +837,23 @@ pub struct GoalChoice {
         deserialize_with = "bounded_optional_goal_statement"
     )]
     pub statement: Option<String>,
+    /// The observable state that would mean the goal is achieved, for adopt and revise.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_goal_statement"
+    )]
+    pub success_condition: Option<String>,
+    /// The concrete next step this decision's intent takes, for adopt, continue and revise.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_goal_statement"
+    )]
+    pub step: Option<String>,
+    /// The verdict on the carried goal's previous step, for every disposition but adopt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_result: Option<GoalStepResult>,
 }
 
 /// A named intent the mind returns. The body validates and applies it; the mind
