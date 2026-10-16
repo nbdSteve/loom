@@ -386,6 +386,17 @@ test('sense memory scopes every offered authority to its connection and bounded 
   memory.spendItem(first, 'sense-1', 0)
   assert.equal(memory.recall(first, 'sense-1').blockOffers[0], undefined)
   assert.equal(memory.recall(first, 'sense-1').itemOffers[0], undefined)
+  // A spent offer leaves a hole, and Mineflayer's entity_destroy that follows every pickup
+  // reaches these listeners from inside its packet handler: a throw there is the client's
+  // `error`, which failed the whole body and stopped its packets after every collection.
+  const second = droppedEntity(41, new Vec3(2, 64, 1), itemStack('apple', 1))
+  memory.remember(first, 'sense-2', { ...offers, entityOffers: [], itemOffers: [itemOffer(second)] })
+  memory.spendItem(first, 'sense-2', 0)
+  memory.remember(first, 'sense-3', { ...offers, itemOffers: [itemOffer(second)] })
+  assert.doesNotThrow(() => memory.sawEntityGone(item))
+  assert.doesNotThrow(() => memory.sawEntityGone(second))
+  assert.doesNotThrow(() => memory.sawEntityDead(second))
+  assert.equal(memory.recall(first, 'sense-3').itemOffers[0].gone, true)
 
   for (let at = 2; at <= 6; at += 1) {
     memory.remember(first, `sense-${at}`, offers)

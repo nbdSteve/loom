@@ -587,6 +587,7 @@ it.
 `collect` names one exact dropped-item entity and either waits within passive pickup reach or,
 when `approach` is true, gives the existing bounded movement wrapper that entity's sensed
 position as its single fixed destination.
+That destination is the item's own cell with no tolerance, because vanilla picks an item up only inside the player's box grown by one block sideways, and a stop one cell short of an item lying far into its block arrives outside that reach and waits out the deadline.
 `place` names one support block, one offered slot and one face; the exact offered stack must
 already be in the selected main hand, so placement never equips or searches.
 `equip` names one offered slot and one of the closed destinations `hand`, `offHand`, `head`,

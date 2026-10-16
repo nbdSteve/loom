@@ -17,6 +17,9 @@ const { droppedStack, positionOf } = require('./sensing')
 /** How near an item must already be when the request forbids approach movement. */
 const PASSIVE_PICKUP_REACH_BLOCKS = 2
 
+/** An approach ends in the item's own cell; see the approach in [collectOfferedItem]. */
+const ITEM_CELL_TOLERANCE = 0
+
 /** A no-movement journey for an answer settled before pathing. */
 function unmoved (outcome, position, startedAt, now) {
   return {
@@ -187,9 +190,13 @@ function collectOfferedItem (bot, movement, {
     bot._client?.on?.('collect', sawCollectPacket)
 
     if (approach) {
+      // The item's own cell, not a cell beside it: vanilla picks an item up only inside the
+      // player's box grown by one block sideways, and a stop one cell short of an item lying
+      // far into its block leaves it outside that reach, so the walk would arrive and then
+      // wait out the deadline for a pickup the server never makes.
       route = movement?.moveTo({
         destination: resolved.position,
-        tolerance: 1,
+        tolerance: ITEM_CELL_TOLERANCE,
         timeoutMs,
         sprint,
         owner
@@ -223,6 +230,7 @@ function collectOfferedItem (bot, movement, {
 }
 
 module.exports = {
+  ITEM_CELL_TOLERANCE,
   PASSIVE_PICKUP_REACH_BLOCKS,
   collectOfferedItem
 }
