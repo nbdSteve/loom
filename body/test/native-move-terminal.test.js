@@ -77,3 +77,46 @@ test('a walk that ends in a step down arrives only once the body has landed', as
   assert.equal(bot.entity.position.y, 64)
   peer.stop()
 })
+
+test('a walk halted in mid-air is answered only once the body has landed', async () => {
+  const given = await H.embodied()
+  const { body, bot, client, port } = given
+  openBody = body
+  H.spawned(client, FED)
+  H.clockReported(client, { timeOfDay: 6000, day: 2 })
+  client.emit('position', H.positionPacket({ ...FEET, yaw: 0, pitch: 0, teleportId: 1 }))
+  H.ground(bot, { walls: [STEP] })
+  await H.settled(200)
+  const owner = await H.handshaken(port)
+  const other = await H.handshaken(port)
+  await owner.answer(H.request('sense', 's1', { radius: 8, limit: 8 }))
+
+  // Halt the walk on the first step the body is off the ground on its way down.
+  let halted
+  const airborne = () => {
+    if (halted !== undefined || bot.entity.onGround !== false || bot.entity.position.y >= 65) return
+    bot.off('physicsTick', airborne)
+    halted = other.answer(H.request('halt', 'halt-1'))
+  }
+  bot.on('physicsTick', airborne)
+  owner.send(H.request('moveTo', 'm1', {
+    destination: [8, 64, 11], tolerance: 0, timeoutMs: AMPLE_MS, sprint: false
+  }))
+  const report = await H.promptly(owner.read(), 'the halted walk', AMPLE_MS + 3000)
+  const haltAnswer = await halted
+  assert.equal(haltAnswer.stopped, true, JSON.stringify(haltAnswer))
+
+  assert.equal(report.outcome, 'cancelled', JSON.stringify(report))
+  assert.equal(report.position[1], 64, JSON.stringify(report))
+  assert.equal(bot.entity.onGround, true)
+  const reported = lastReported(client)
+  assert.equal(reported.onGround, true)
+  assert.deepEqual(reported.position, report.position)
+  // The journey includes the fall, so it is never shorter than the straight line.
+  const [fx, fy, fz] = report.from
+  const [px, py, pz] = report.position
+  assert.ok(report.travelled >= Math.hypot(px - fx, py - fy, pz - fz) - 1e-9, JSON.stringify(report))
+  assert.equal(bot.physicsEnabled, false)
+  owner.stop()
+  other.stop()
+})

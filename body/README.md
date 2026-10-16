@@ -386,7 +386,11 @@ reported, and a second `halt` after it answers `stopped` false.
   `noRoute`. A reached goal now holds the drained gate until the body has stood still on the
   ground for `ARRIVAL_SETTLE_TICKS` steps with that same grounded position already written to
   the server, then re-checks the goal where it came to rest and re-plans under the stall bound
-  if it no longer holds.
+  if it no longer holds. **No held simulation is released mid-fall either.** A walk that ends
+  any other way with the body in the air - a stall, a deadline, a halt - and a dig that removed
+  the block its body stood on both keep the gate until the body is at rest by the same rule,
+  bounded by `REST_SETTLE_MAX_TICKS`; the fourth ten-agent run left two agents hanging that
+  way, one after digging its own support and one after a stalled flight.
 - `test/libraries.test.js` - the two claims neither the lockfile nor the policy can make
   alone: that every pinned version is the version actually **installed**, and that the
   policy covers every field the library has. Each permissive default is shown to *be*

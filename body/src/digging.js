@@ -28,7 +28,7 @@ const {
   offeredBlock,
   visibleBlock
 } = require('./interaction')
-const { holdSimulation, standsOnSupport } = require('./movement')
+const { holdSimulation, releaseAtRest, standsOnSupport } = require('./movement')
 
 /**
  * How many simulation steps a standing body is given to establish its ground state before the
@@ -176,10 +176,9 @@ function digOfferedBlock (bot, {
   let finish
   let settling
   // A body standing on support holds the simulation for the whole dig, so the client and the
-  // server both have its true ground state; see [holdSimulation] for why nothing else does.
-  const release = bot.entity?.onGround !== true && standsOnSupport(bot)
-    ? holdSimulation(bot)
-    : undefined
+  // server both have its true ground state, and so a dig of the block it stands on ends with
+  // the body landed rather than hanging; see [holdSimulation] and [releaseAtRest].
+  const release = standsOnSupport(bot) ? holdSimulation(bot) : undefined
   // Undefined only for a bot with no client, which has no server to predict ahead of.
   const server = serverUpdates(bot, resolved.offered.position)
   let predicted = false
@@ -207,13 +206,14 @@ function digOfferedBlock (bot, {
       clearTimeout(timer)
       if (settling !== undefined) bot.off('physicsTick', settling)
       server?.close()
-      release?.()
-      resolve({
+      const report = {
         outcome,
         elapsedMs: elapsedSince(startedAt, now),
         attempted: true,
         ...(tool === undefined ? {} : { tool })
-      })
+      }
+      if (release === undefined) resolve(report)
+      else releaseAtRest(bot, release).then(() => resolve(report))
     }
 
     finish = () => {

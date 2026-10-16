@@ -471,6 +471,66 @@ function holdSimulation (bot) {
   return () => simulation.release(token)
 }
 
+/**
+ * The most simulation steps a held operation's ending waits for the body to come to rest.
+ *
+ * Two seconds, which a fall of any height a body can be standing over inside the loaded
+ * distance has finished well inside. A bound rather than a wait, so a lost connection that
+ * stops the physics interval cannot hold an answer: the timer behind it covers that.
+ */
+const REST_SETTLE_MAX_TICKS = 40
+
+/**
+ * Keeps a held simulation running until the body is at rest, then releases it.
+ *
+ * At rest is what an arrival requires ([ARRIVAL_SETTLE_TICKS]): still on the ground for two
+ * steps with that same grounded position already reported to the server. A dig can remove the
+ * block a body stands on, and releasing the moment the server confirmed the break shut the
+ * simulation one step into the fall - which left a live agent hanging 0.08 blocks into the air
+ * for the rest of the run, so every later dig of its ran at the airborne rate and timed out.
+ */
+function releaseAtRest (bot, release, { maxTicks = REST_SETTLE_MAX_TICKS } = {}) {
+  return new Promise((resolve) => {
+    untilAtRest(bot, () => simulations.get(bot)?.reportedStanding?.(), () => {
+      release()
+      resolve()
+    }, maxTicks)
+  })
+}
+
+/**
+ * Calls `done` once, when the body is at rest in the sense [releaseAtRest] states or after
+ * `maxTicks` steps - or, should the physics interval stop, after the timer behind them.
+ * `reportedStanding` answers what the server was last told, or undefined where there is no wire.
+ */
+function untilAtRest (bot, reportedStanding, done, maxTicks = REST_SETTLE_MAX_TICKS) {
+  let ticks = 0
+  let stable = 0
+  let last
+  const finish = () => {
+    bot.off('physicsTick', step)
+    clearTimeout(timer)
+    done()
+  }
+  function step () {
+    ticks += 1
+    const here = bot.entity?.position === undefined || bot.entity?.position === null
+      ? undefined
+      : positionOf(bot.entity.position)
+    const still = here !== undefined && last !== undefined && blocksApart(here, last) === 0
+    last = here
+    const wire = reportedStanding()
+    const reported = wire === undefined || (
+      here !== undefined && wire.onGround === true && wire.position !== undefined &&
+      blocksApart(wire.position, here) === 0
+    )
+    stable = still && bot.entity?.onGround === true && reported ? stable + 1 : 0
+    if (stable >= ARRIVAL_SETTLE_TICKS || ticks >= maxTicks) finish()
+  }
+  bot.on('physicsTick', step)
+  const timer = setTimeout(finish, maxTicks * 50 + 500)
+}
+
 /** Whether a collision box of the block under the feet has its top exactly at the feet. */
 function standsOnSupport (bot) {
   const feet = bot.entity?.position
@@ -922,8 +982,26 @@ function createMovement (bot, {
         // A terminal library event happened inside the physics plugin's call stack. Its final
         // position report is written only after every `physicsTick` listener returns, so the gate
         // and owner stay in their drain state until the first microtask after that frame.
-        if (state.draining) queueMicrotask(complete)
-        else complete()
+        const answer = () => {
+          if (state.draining) queueMicrotask(complete)
+          else complete()
+        }
+        // An ending that leaves the body in the air - a stall, a deadline or a refused route
+        // mid-step - keeps the drained gate until it has landed, so a release never leaves it
+        // hanging: one live agent's stalled flight did, and every later flight of its stalled
+        // from the air. A body whose ground state the client does not state is not waited on.
+        if (bot.entity?.onGround !== false) {
+          answer()
+          return
+        }
+        state.draining = true
+        simulation.drain(owner)
+        untilAtRest(bot, () => simulation.reportedStanding?.(), () => {
+          // The fall is part of the journey: without it the landed position would be further
+          // from the start than the distance the report says was travelled.
+          sample()
+          answer()
+        })
       }
 
       /**
@@ -1200,6 +1278,8 @@ function installMovement (bot, options) {
 
 module.exports = {
   ARRIVAL_SETTLE_TICKS,
+  REST_SETTLE_MAX_TICKS,
+  releaseAtRest,
   holdSimulation,
   permitLeaveBed,
   standsOnSupport,

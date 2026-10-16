@@ -79,7 +79,7 @@ function vanillaDigging (bot, client, grounded, block) {
       const accepted = performance.now() - startedAt >= needed * 0.7
       verdicts.push({ clientGrounded, onGround, accepted })
       setImmediate(() => client.emit('block_change', {
-        location: TARGET,
+        location: { x: block.position.x, y: block.position.y, z: block.position.z },
         type: accepted ? 0 : block.stateId
       }))
     }
@@ -88,8 +88,8 @@ function vanillaDigging (bot, client, grounded, block) {
   return verdicts
 }
 
-/** A body process with a controller, its feet at `feet`, beside a dirt block at [TARGET]. */
-async function scene (feet = FEET) {
+/** A body process with a controller, its feet at `feet`, beside a dirt block at `at`. */
+async function scene (feet = FEET, at = TARGET, below = []) {
   const given = await H.embodied()
   const { body, bot, client, port } = given
   openBody = body
@@ -98,16 +98,16 @@ async function scene (feet = FEET) {
   H.clockReported(client, { timeOfDay: 6000, day: 2 })
   // The join teleport: Mineflayer answers it with `onGround: false`, as a real client does.
   client.emit('position', H.positionPacket({ ...feet, yaw: 0, pitch: 0, teleportId: 1 }))
-  H.ground(bot)
-  bot.world.setBlockStateId(new Vec3(TARGET.x, TARGET.y, TARGET.z), H.registry.blocksByName.dirt.defaultState)
+  H.ground(bot, { walls: below })
+  bot.world.setBlockStateId(new Vec3(at.x, at.y, at.z), H.registry.blocksByName.dirt.defaultState)
   await H.settled(200)
-  const target = bot.blockAt(new Vec3(TARGET.x, TARGET.y, TARGET.z))
+  const target = bot.blockAt(new Vec3(at.x, at.y, at.z))
   assert.equal(target.name, 'dirt')
   const verdicts = vanillaDigging(bot, client, grounded, target)
   const peer = await H.handshaken(port)
   const sensed = await peer.answer(H.request('sense', 's1', { radius: 4, limit: 48 }))
   const block = sensed.blocks.findIndex((entry) =>
-    entry.position[0] === TARGET.x && entry.position[1] === TARGET.y && entry.position[2] === TARGET.z)
+    entry.position[0] === at.x && entry.position[1] === at.y && entry.position[2] === at.z)
   assert.ok(block >= 0, JSON.stringify(sensed.blocks))
   return { ...given, block, peer, verdicts }
 }
@@ -165,5 +165,29 @@ test('a body the server left in mid-air is not simulated by a dig and keeps its 
   const moved = client.writes.slice(written).filter(({ name }) =>
     ['position', 'position_look', 'flying', 'entity_action', 'player_input'].includes(name))
   assert.deepEqual(moved, [])
+  peer.stop()
+})
+
+test('a body that digs the block it stands on lands before the dig is answered', async () => {
+  // The block under the feet, with one more block of floor under that.
+  const support = { x: 8, y: 63, z: 8 }
+  const { bot, client, block, peer, verdicts } = await scene(FEET, support, [{ x: 8, y: 62, z: 8 }])
+
+  const report = await dig(peer, block)
+
+  assert.equal(report.outcome, 'dug', JSON.stringify(report))
+  assert.deepEqual(verdicts, [{ clientGrounded: true, onGround: true, accepted: true }])
+  // Landed on the floor below, not left one step into the fall.
+  assert.equal(bot.entity.position.y, 63)
+  assert.equal(bot.entity.onGround, true)
+  let reported
+  for (const { name, parameters } of client.writes) {
+    if (['position', 'position_look'].includes(name)) reported = parameters
+  }
+  assert.equal(reported.y, 63)
+  assert.equal(reported.onGround, true)
+  assert.equal(bot.physicsEnabled, false)
+  await H.settled(300)
+  assert.equal(bot.entity.position.y, 63)
   peer.stop()
 })
