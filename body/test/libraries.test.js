@@ -184,12 +184,28 @@ test('no ability the pinned library offers by default survives the policy', () =
   // Scaffolding is emptied as well as switched off, which is strictly stronger: a tower
   // needs a block to place, and there is no block a placement could reach for.
   assert.deepEqual(library.scafoldingBlocks, [])
-  // No area is excluded, because nothing here decides where a body may not go - a bound
-  // is a bound on the request, not a region Loom drew.
+  // No area of Loom's is excluded, because nothing here decides where a body may not go - a
+  // bound is a bound on the request, not a region Loom drew. The one step exclusion is the
+  // server's own world border, and with none stated there is none.
   assert.deepEqual(library.exclusionAreasStep, [])
   assert.deepEqual(library.exclusionAreasBreak, [])
   assert.deepEqual(library.exclusionAreasPlace, [])
   assert.deepEqual(library.entityIntersections, {})
+})
+
+test('the server world border is the one step exclusion, and it excludes only what lies past it', () => {
+  const library = movements()
+  // The 128-block border the research runs set, centred on the origin.
+  applyMovementPolicy(library, { sprint: false, border: { x: 0, z: 0, diameter: 128 } })
+  assert.equal(library.exclusionAreasStep.length, 1)
+  const cost = (x, z) => library.exclusionStep({ position: { x, y: 66, z } })
+  // v29 rehearsal theta stood in column (27, -64), its box touching the border at z -64.
+  assert.equal(cost(27, -64), 0)
+  assert.equal(cost(27, -65), Number.POSITIVE_INFINITY)
+  assert.equal(cost(63, 0), 0)
+  assert.equal(cost(64, 0), Number.POSITIVE_INFINITY)
+  assert.equal(cost(-64, 63), 0)
+  assert.equal(cost(-65, 63), Number.POSITIVE_INFINITY)
 })
 
 test('water is a wall, and the library own avoided blocks are kept beside it', () => {

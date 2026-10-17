@@ -109,6 +109,7 @@ const { performance } = require('node:perf_hooks')
 const physics = require('mineflayer/lib/plugins/physics')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const { installVanillaCollision } = require('./collision')
+const { borderExclusion, trackWorldBorder, worldBorderOf } = require('./border')
 const { positionOf } = require('./sensing')
 
 /**
@@ -591,7 +592,7 @@ function blocksApart (one, other) {
  * why that is the mechanism and not a flag. The id is read straight from the registry
  * because the library's own `inject` already requires it to be there.
  */
-function movementPolicyFor (movements, { sprint }) {
+function movementPolicyFor (movements, { sprint, border }) {
   const water = movements.bot.registry.blocksByName.water.id
   return {
     // Abilities. Every one of these is a thing a later explicit skill would own.
@@ -602,7 +603,8 @@ function movementPolicyFor (movements, { sprint }) {
     allowEntityDetection: false,
     canOpenDoors: false,
     scafoldingBlocks: [],
-    exclusionAreasStep: [],
+    // The server's world border and nothing of Loom's: see `border.js`.
+    exclusionAreasStep: border === undefined ? [] : [borderExclusion(border)],
     exclusionAreasBreak: [],
     exclusionAreasPlace: [],
     entityIntersections: {},
@@ -637,8 +639,8 @@ function movementPolicyFor (movements, { sprint }) {
 }
 
 /** Applies [movementPolicyFor] to `movements`, and answers it. */
-function applyMovementPolicy (movements, { sprint }) {
-  return Object.assign(movements, movementPolicyFor(movements, { sprint }))
+function applyMovementPolicy (movements, { sprint, border }) {
+  return Object.assign(movements, movementPolicyFor(movements, { sprint, border }))
 }
 
 /**
@@ -796,7 +798,7 @@ function createMovement (bot, {
     let movements
     try {
       applyPathfinderPolicy(finder)
-      movements = applyMovementPolicy(new Movements(bot), { sprint })
+      movements = applyMovementPolicy(new Movements(bot), { sprint, border: worldBorderOf(bot) })
     } catch {
       return undefined
     }
@@ -1389,6 +1391,7 @@ function installMovement (bot, options) {
   const installed = installations.get(bot)
   if (installed !== undefined) return installed
   installVanillaCollision()
+  trackWorldBorder(bot)
   bot.loadPlugin(physics)
   bot.loadPlugin(pathfinder)
   const simulation = scopedSimulation(bot)

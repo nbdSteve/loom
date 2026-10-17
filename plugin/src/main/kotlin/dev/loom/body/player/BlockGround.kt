@@ -13,6 +13,10 @@ package dev.loom.body.player
  * block whose face is in sight can still be covered, and r10 sent a body to the solid cell on top
  * of a buried terracotta, which the ground correctly refused. These are facts about the blocks,
  * not a choice of destination.
+ *
+ * A cell past the server's world border is never one a body stands in: the border is a wall the
+ * server enforces, and the v29 plains rehearsal offered walks past it to agents standing against
+ * it (see [columnInsideBorder]).
  */
 fun interface BlockGround {
     fun standsIn(position: List<Int>): Boolean
@@ -46,5 +50,36 @@ internal fun standCellOn(
     } else {
         position.offsetY(1).takeIf { ground.standsIn(it) && ground.standsIn(it.offsetY(1)) }
     }
+
+/** Half a player's width: a body's box reaches this far either side of where it stands. */
+const val PLAYER_HALF_WIDTH: Double = 0.3
+
+/**
+ * Whether a body standing in block column ([x], [z]) lies wholly inside a world border centred
+ * on ([centreX], [centreZ]) and [diameter] blocks across - the rule the body process searches
+ * routes under (`body/src/border.js`).
+ */
+fun columnInsideBorder(
+    centreX: Double,
+    centreZ: Double,
+    diameter: Double,
+    x: Int,
+    z: Int,
+): Boolean {
+    val half = diameter / HALVES
+
+    fun inside(
+        cell: Int,
+        centre: Double,
+    ): Boolean {
+        val middle = cell + CELL_CENTRE
+        return middle - PLAYER_HALF_WIDTH >= centre - half && middle + PLAYER_HALF_WIDTH <= centre + half
+    }
+    return inside(x, centreX) && inside(z, centreZ)
+}
+
+private const val HALVES = 2.0
+
+private const val CELL_CENTRE = 0.5
 
 private fun List<Int>.offsetY(by: Int): List<Int> = listOf(this[0], this[1] + by, this[2])
