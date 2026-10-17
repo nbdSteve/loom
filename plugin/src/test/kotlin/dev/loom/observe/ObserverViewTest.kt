@@ -38,6 +38,8 @@ private val DELIBERATELY_SILENT =
             "did not happen",
         BodyEvent.DAMAGE_WITNESSED to
             "server evidence; the cognition it produced arrives as its own perceived note",
+        BodyEvent.PERCEPTION_REFUSED to
+            "evidence of a bound, like a suppression; the review it cost is what the line shows",
         BodyEvent.ENERGY_CHANGED to "several a second while an agent regenerates",
         BodyEvent.HEALTH_CHANGED to "one a half-heart for a body under attack",
     )

@@ -197,6 +197,9 @@ object EventTag {
     /** The body could not capture a perception for the damage. */
     const val DAMAGE_NOT_PERCEIVED: String = "damageNotPerceived"
 
+    /** A perception refused because the body already held as many senses as it keeps. */
+    const val SENSE_AT_CAPACITY: String = "senseAtCapacity"
+
     /** Damage witnessed while Loom was shutting down. */
     const val DAMAGE_SHUTDOWN: String = "damageShutdown"
 

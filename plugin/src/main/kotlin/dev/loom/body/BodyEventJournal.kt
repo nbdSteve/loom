@@ -167,6 +167,7 @@ class BodyEventJournal(
      * would leave a run unable to say whether the cadence, the state comparison or the
      * night's ceiling is what kept an agent from reacting to something hunting it.
      */
+
     fun recordSuppressedThreat(
         agentId: AgentId,
         suppression: ThreatSuppression,
@@ -221,7 +222,7 @@ class BodyEventJournal(
     }
 
     /** Appends an [event] whose meaning is carried by a short stable [outcome] tag. */
-    private fun classified(
+    fun classified(
         agentId: AgentId,
         event: BodyEvent,
         detail: String,

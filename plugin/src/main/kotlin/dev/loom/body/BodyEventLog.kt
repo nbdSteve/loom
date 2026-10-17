@@ -249,6 +249,15 @@ enum class BodyEvent {
     THREAT_SUPPRESSED,
 
     /**
+     * A perception the body could not take because it already held as many sense answers as
+     * it keeps at once. `outcome` is [EventTag.SENSE_AT_CAPACITY] and `detail` names what asked:
+     * a goal review, a threat scan or damage. Without it a review at capacity was lost with no
+     * record at all (r20 beta's third scheduled review).
+     */
+    @SerialName("perceptionRefused")
+    PERCEPTION_REFUSED,
+
+    /**
      * The server witnessed positive damage to a managed agent's player.
      *
      * One record per witnessed event. `outcome` is one of `EventTag`'s `DAMAGE_` tags;

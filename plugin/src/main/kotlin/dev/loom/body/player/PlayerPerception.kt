@@ -6,10 +6,12 @@ package dev.loom.body.player
 import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
 import dev.loom.body.BODY_SENSE_MAX_OFFERS_PER_KIND
+import dev.loom.body.BodyEvent
 import dev.loom.body.EventTag
 import dev.loom.body.PERCEPTION_RADIUS_BLOCKS
 import dev.loom.body.blocksApart
 import dev.loom.body.completedBodyOperation
+import dev.loom.body.tagOf
 import dev.loom.bodycontrol.BODY_CONTROL_PROTOCOL_VERSION
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
@@ -37,12 +39,12 @@ internal class PlayerPerception(
         agentId: AgentId,
         trigger: Trigger,
     ): CompletionStage<Perception?> =
-        capture(agentId).thenApplyOn(context.authority.main) { raw ->
+        capture(agentId, tagOf(trigger)).thenApplyOn(context.authority.main) { raw ->
             raw?.let { sceneFor(agentId, it) }?.let { scene -> commit(scene, trigger) }
         }
 
     fun senseThreat(agentId: AgentId): CompletionStage<Perception?> =
-        capture(agentId).thenApplyOn(context.authority.main) { raw ->
+        capture(agentId, "threat scan").thenApplyOn(context.authority.main) { raw ->
             raw?.let { sceneFor(agentId, it) }?.let { scene ->
                 val outcome = context.threatWatch.consider(agentId, scene.candidates) { false }
                 outcome.suppressed.forEach { context.journal.recordSuppressedThreat(agentId, it) }
@@ -70,11 +72,22 @@ internal class PlayerPerception(
             }
     }
 
-    private fun capture(agentId: AgentId): CompletionStage<RawSense?> {
+    private fun capture(
+        agentId: AgentId,
+        asked: String,
+    ): CompletionStage<RawSense?> {
         val runtime = registry.ready(agentId)
         val atCapacity =
             runtime != null &&
                 sessions.openCount(agentId) + runtime.sensesInFlight >= BODY_SENSE_MEMORY
+        if (atCapacity) {
+            context.journal.classified(
+                agentId,
+                BodyEvent.PERCEPTION_REFUSED,
+                "a $asked perception was not taken: the body already held every sense it keeps",
+                EventTag.SENSE_AT_CAPACITY,
+            )
+        }
         return when {
             runtime == null || atCapacity -> completedBodyOperation(null)
             else -> startCapture(runtime)

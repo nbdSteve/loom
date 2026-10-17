@@ -15,6 +15,7 @@ import dev.loom.body.BodyEventRecord
 import dev.loom.body.BodyPort
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
+import dev.loom.body.HeldPerceptions
 import dev.loom.body.IntentOutcome
 import dev.loom.body.describe
 import dev.loom.contract.Bearing
@@ -58,6 +59,11 @@ private class RecordingBody(
     private val currentTick: () -> Long = { 0L },
 ) : BodyPort {
     val applied = mutableListOf<Intent>()
+
+    /** The perceptions ended without an action, in the order their senses were given back. */
+    val released = mutableListOf<String>()
+
+    override val held = HeldPerceptions { _, requestId -> released.add(requestId) }
 
     override fun spawn(agentId: AgentId) = fail("cognition must not spawn bodies")
 
@@ -182,9 +188,10 @@ class EmbodiedCognitionTest {
         val records = mutableListOf<BodyEventRecord>()
         val asked = mutableListOf<String>()
         val decisions = mutableMapOf<String, CompletableFuture<Decision>>()
+        val body = perceivingBody()
         val cognition =
             EmbodiedCognition(
-                perceivingBody(),
+                body,
                 mind = { p ->
                     asked.add(p.requestId)
                     CompletableFuture<Decision>().also { decisions[p.requestId] = it }
@@ -202,6 +209,9 @@ class EmbodiedCognitionTest {
         val coalesced = records.single { it.event == BodyEvent.COGNITION_UNAVAILABLE }
         assertEquals("danger-2", coalesced.requestId)
         assertEquals(EventTag.DANGER_COALESCED, coalesced.outcome)
+        // A coalesced perception gives its sense back at once (r20: 28 of them held the
+        // body's four senses for 800 ticks each, and 17 hits on dying agents went unperceived).
+        assertEquals(listOf("danger-2"), body.released)
 
         // Once the decision is applied, the cooldown holds, then a new engagement is asked.
         decisions.getValue("danger-1").complete(decisionFor(first, Intent.Flee("e1")))
@@ -212,6 +222,11 @@ class EmbodiedCognitionTest {
         cognition.submit(agent, perception(requestId = "danger-4", agentId = agent.value, trigger = zombie))
         main.drain()
         assertEquals(listOf("danger-1", "danger-4"), asked)
+        assertEquals(listOf("danger-2", "danger-3"), body.released)
+        // A lost decision gives its sense back too.
+        decisions.getValue("danger-4").completeExceptionally(IllegalStateException("the mind went away"))
+        main.drain()
+        assertEquals(listOf("danger-2", "danger-3", "danger-4"), body.released)
     }
 
     @Test

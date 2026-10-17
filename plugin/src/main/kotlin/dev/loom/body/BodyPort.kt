@@ -125,6 +125,9 @@ interface BodyPort : AutoCloseable {
      */
     fun senseThreat(agentId: AgentId): CompletionStage<Perception?>
 
+    /** The perceptions this body holds open until their decisions settle; see [HeldPerceptions]. */
+    val held: HeldPerceptions get() = HeldPerceptions.NONE
+
     /** Identifiers of every body currently present in the world. */
     fun liveBodies(): Set<AgentId>
 
@@ -167,3 +170,25 @@ interface BodyPort : AutoCloseable {
 
 /** A completed body-port operation, mainly for lightweight test doubles. */
 internal fun <T> completedBodyOperation(value: T): CompletionStage<T> = CompletableFuture.completedFuture(value)
+
+/**
+ * Ends a held perception without an action: its chain ended before the body was asked for
+ * anything - coalesced, refused against its goal, or lost by the mind.
+ *
+ * A perception holds what its request minted until its decision settles, and a body holds only
+ * a few at once, so one that is never acted on must still give them back (r20: 28 coalesced
+ * danger perceptions held the body's four senses for 800 ticks each, and 17 hits on the three
+ * agents that died went unperceived). Main thread only; a no-op for a body that holds nothing
+ * under that request.
+ */
+fun interface HeldPerceptions {
+    fun release(
+        agentId: AgentId,
+        requestId: String,
+    )
+
+    companion object {
+        /** A body that holds nothing between a perception and its decision. */
+        val NONE: HeldPerceptions = HeldPerceptions { _, _ -> }
+    }
+}

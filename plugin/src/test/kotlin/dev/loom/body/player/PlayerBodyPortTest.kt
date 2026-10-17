@@ -117,6 +117,22 @@ class PlayerSpeechPortTest {
     }
 
     @Test
+    fun `a full sense memory refuses a perception on the record, and a released one frees it`() {
+        // r20: perceptions coalesced or lost held the body's four senses, the damage that killed
+        // three agents went unperceived, and beta's review at capacity left no record at all.
+        val agent = AgentId("agent-crowded")
+        val harness = harness(agent)
+        harness.port.spawn(agent).await()
+        val held = (1..4).map { requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await()) }
+        assertEquals(null, harness.port.perceive(agent, Trigger.GoalReview).await())
+        val refused = harness.records.single { it.event == BodyEvent.PERCEPTION_REFUSED }
+        assertEquals(EventTag.SENSE_AT_CAPACITY, refused.outcome)
+        assertEquals(agent.value, refused.agentId)
+        harness.port.held.release(agent, held.first().requestId)
+        assertTrue(harness.port.perceive(agent, Trigger.GoalReview).await() != null)
+    }
+
+    @Test
     fun `an unsendable line is refused before any chat request`() {
         val agent = AgentId("agent-mute")
         val harness = harness(agent)

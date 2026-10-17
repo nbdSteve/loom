@@ -9,6 +9,7 @@ import dev.loom.body.BodyInspection
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
 import dev.loom.body.EventTag
+import dev.loom.body.HeldPerceptions
 import dev.loom.body.IntentOutcome
 import dev.loom.body.completedBodyOperation
 import dev.loom.contract.Intent
@@ -86,6 +87,9 @@ class PlayerBodyPort(
     override fun senseThreat(agentId: AgentId): CompletionStage<Perception?> =
         instances[agentId]?.senseThreat(agentId) ?: completedBodyOperation(null)
 
+    override val held: HeldPerceptions =
+        HeldPerceptions { agentId, requestId -> instances[agentId]?.release(agentId, requestId) }
+
     override fun tick(tick: Long) {
         instances.values.forEach { it.tick(tick) }
     }
@@ -159,6 +163,11 @@ private class PlayerBodyInstance(
     ): CompletionStage<Perception?> = perception.perceive(agentId, trigger)
 
     fun senseThreat(agentId: AgentId): CompletionStage<Perception?> = perception.senseThreat(agentId)
+
+    fun release(
+        agentId: AgentId,
+        requestId: String,
+    ) = sessions.settle(agentId, requestId, expected = null)
 
     fun tick(tick: Long) {
         lifecycle.tick(tick)
