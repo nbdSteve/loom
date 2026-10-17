@@ -46,6 +46,8 @@ class R13GoalAuditReplayTest {
                 at,
                 capacity = seen.capacity,
                 visible = seen.visible,
+                // Every block in sight here is a bush, a source of the goal's sticks.
+                gives = seen.visible.associateWith { setOf(STICK) },
             )
         val carried = ledger.present(agent, review, review.substringAfter('-').toLong(), observed)
         val decision = decisionFor(perception(requestId = review, agentId = agent.value), intent).copy(goal = choice)

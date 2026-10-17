@@ -986,6 +986,10 @@ enum class GoalDisposition {
     @SerialName("revise")
     REVISE,
 
+    /** Abandon the held goal and adopt a new one in the same answer, under this decision's id. */
+    @SerialName("replace")
+    REPLACE,
+
     @SerialName("complete")
     COMPLETE,
 

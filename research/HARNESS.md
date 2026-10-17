@@ -6,12 +6,12 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v24 answered-goal pilot,
-`research/config/first-tribe-routine-v24-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v24-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v25 collected-goal pilot,
+`research/config/first-tribe-routine-v25-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v25-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
-native event drivers. It uses the v24 prompts, which show each agent its own
+native event drivers. It uses the v25 prompts, which show each agent its own
 carried goal and let the model return an optional typed goal choice, and it
 attests `categoryFairSelection: true` because the 48-per-kind selector it runs on
 is category-fair. Since v14 a `moveTo` names an observed block by ref rather than
@@ -73,6 +73,14 @@ A drop is the step's evidence but no progress until it is held, and a step is me
 An answer that acts while ignoring a held goal, a dig or collect that cannot give the goal's item, and an answer past the stall bound are refused with their intent.
 The count is the total to hold, and the body words the goal from it.
 The r15 audit found five `noRoute` collects of one stick, eight unobtainable refusals the mind never heard of, and a drop credit loop that kept the stall bound from firing.
+v25 keeps v24 and offers only answers the body accepts.
+A goal review's answer pairs its goal choice with the intents it may travel with, so adopt, continue, revise and replace never travel with idle or rest.
+A goal at the stall bound may only be completed if met, or replaced by a new goal in the same answer.
+While the agent's own drop of its goal's item lies in reach, the step is a collect and dig is withheld.
+A walk is credited only onto a block that is itself a source of the goal's item.
+What sight can be counted on to give is each block's expected yield, and its best case is stated apart.
+Own drops are told until their fate is known, and every review's record states the goal and refusal the mind was shown.
+The r16 audit found that the 9 remaining refusals were answers the schema still offered, and that the agent dug again or idled in 11 of 21 reviews with its own stick on offer.
 `research/lib/experiment-mode.js` owns the pins. In the
 scripted twin the stand-in digs the nearest block in reach that can drop something, adopts one placeholder goal of holding one more of what it drops, continues it while it digs and completes it once met; that exercises the goal round
 trip, the follow-up review and the own-drop evidence, and is not evidence of agency.
@@ -102,9 +110,10 @@ ran `-r6` and the v17 `research/config/tribe-working-goal-10m-10*.json` that ran
 `research/config/tribe-typed-goal-10m-10*.json` that ran `-r12`, and the v21
 `research/config/tribe-grounded-step-10m-10*.json` that ran `-r13`, and the v22
 `research/config/tribe-obtainable-goal-10m-10*.json` that ran `-r14`, and the v23
-`research/config/tribe-own-evidence-10m-10*.json` that ran `-r15`; `answered-goal-10m-10` is the
-same profile under the v24 mode with its plan cut to the five scheduled reviews a run can finish
-(the sixth is due at tick 12,000 itself), configured by `research/config/tribe-answered-goal-10m-10*.json`.
+`research/config/tribe-own-evidence-10m-10*.json` that ran `-r15`, and the v24
+`research/config/tribe-answered-goal-10m-10*.json` that ran `-r16`; `collected-goal-10m-10` is the
+same profile under the v25 mode with its plan cut to the five scheduled reviews a run can finish
+(the sixth is due at tick 12,000 itself), configured by `research/config/tribe-collected-goal-10m-10*.json`.
 The live one
 carries the next fresh `2026-10-16-openai-10-agent-10m-r<n>` id. Each id is consumed
 by its one attempt and its published artifact names the commit it ran from.
@@ -141,7 +150,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v24-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v25-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -160,8 +169,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v24-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v24-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v25-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v25-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -356,6 +365,10 @@ A `moveNoRoute`, `retreatNoRoute`, `collectNoRoute` or `attackNoRoute` refusal i
 A step a review measured is measured once, so a review that took no new step carries no `stepEvidence`, `stepAdvanced` or `stepsWithoutProgress` of its own.
 Generation 6 is frozen, so r15 re-derives exactly as published.
 
+Generation 8 (`loom-readiness-gate/6`) also refuses a continue or revise that does not collect the agent's own lying drop of its goal's item (`goalOwnDropIgnored`, counted in `ignoredOwnDrops`); it is the `goalIncoherent` blocker and an invalid decision, and coherence needs the count at zero.
+A replaced goal (`goalReplaced`) counts its action as a step of the new goal for the behavior gate.
+Generation 7 is frozen, so r16 re-derives exactly as published.
+
 ## Lifecycle and cleanup
 
 Before it creates the disposable server or reads a credential, the harness refuses to start unless the run volume has at least 2 GiB free, or more when the configured log and artifact bounds need it.
@@ -499,7 +512,7 @@ An empty value or lookup failure stops before cognition starts. An HTTP 401 or
 403 from the provider stops the whole run after that refusal, with no retry and
 only a stable provider-safe error.
 
-The routine-v24 pilot routes routine and notable decisions to
+The routine-v25 pilot routes routine and notable decisions to
 `gpt-5.4-nano` and only the existing pivotal tier to `gpt-5.4`. It runs three
 agents for at most 180 wall-clock seconds or 4,000 server ticks, whichever
 comes first, and permits at most six calls per agent, twelve calls globally,

@@ -17,9 +17,11 @@ const { readinessMetrics } = require('./readiness.js')
 // follow-up reviews a settled step owes, and refuses goals already met or pursued by idling.
 // Generation 7 refuses an answer that ignores its held goal, a step that cannot give the goal's
 // item and an answer past the stall bound, and reads a body's noRoute as the ground's answer.
-const GATE_GENERATION = 7
+// Generation 8 refuses a step that leaves the agent's own drop of its goal's item lying, counts a
+// replaced goal's action as a step of its new goal, and credits a walk only onto a goal source.
+const GATE_GENERATION = 8
 // The goal outcomes of a decision whose action was a step of a goal it held or took up.
-const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised'])
+const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised', 'goalReplaced'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`
 const PASSIVE_INTENTS = Object.freeze(['idle', 'rest'])
 const MOVEMENT_INTENTS = Object.freeze(['moveTo', 'flee'])

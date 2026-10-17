@@ -161,3 +161,21 @@ test('goal coherence counts the steps the body measured as progress, per goal', 
     completedAfterProgress: 1
   })
 })
+
+test('from gate generation 7 a body noRoute is the terrain answer and from 8 an ignored own drop is incoherent', () => {
+  // r15: five collects of a stick no cell beside could reach; r16: digs beside the agent's own sticks.
+  const records = [
+    ...action('t', 'collect', applied('collectNoRoute')),
+    ...action('o', 'dig', applied('goalOwnDropIgnored'))
+  ]
+  const at = (generation) => readinessMetrics({ bodyRecords: records, harnessRecords: [], metrics: {}, generation })
+  assert.equal(at(6).actions.byClass.inapplicable, 1)
+  assert.equal(at(6).actions.byClass.terrain, undefined)
+  assert.equal(at(7).actions.byClass.terrain, 1)
+  assert.equal(at(7).actions.byClass.unexplainedRefusal, 1)
+  const eight = at(8)
+  assert.equal(eight.version, 'loom-readiness-gate/6')
+  assert.equal(eight.actions.byClass.terrain, 1)
+  assert.equal(eight.actions.byClass.goalIncoherent, 1)
+  assert.equal(eight.actions.nonSuccess.find((entry) => entry.class === 'terrain').race, true)
+})

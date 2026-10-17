@@ -285,7 +285,7 @@ const fn goal_fields(disposition: GoalDisposition) -> GoalFields {
             stepped: true,
             judged: true,
         },
-        GoalDisposition::Revise => GoalFields {
+        GoalDisposition::Revise | GoalDisposition::Replace => GoalFields {
             targeted: true,
             stepped: true,
             judged: true,
@@ -356,6 +356,7 @@ fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> 
 /// deliberately not used, because it quotes the offending value.
 pub fn draft_from_answer(content: &str) -> Result<Draft, String> {
     let parsed = serde_json::from_str::<Value>(content)
+        .map(lifted_decision)
         .map(bounded_goal_texts)
         .and_then(serde_json::from_value::<Answer>);
     match parsed {
@@ -369,6 +370,19 @@ pub fn draft_from_answer(content: &str) -> Result<Draft, String> {
             detail = describe_json_error(&e)
         )),
     }
+}
+
+/// A goal review's coupled answer, with its `decision`'s intent and goal lifted beside the
+/// reasoning, the shape every other answer already has.
+fn lifted_decision(mut answer: Value) -> Value {
+    if let Some(root) = answer.as_object_mut() {
+        if let Some(Value::Object(decision)) = root.remove("decision") {
+            for (key, value) in decision {
+                root.entry(key).or_insert(value);
+            }
+        }
+    }
+    answer
 }
 
 /// The goal's free-text fields, bounded to the contract's length before they are typed.
@@ -806,6 +820,8 @@ pub enum GoalPhase {
     Held,
     /// A goal review whose held goal's success condition is met: complete it or revise it.
     Met,
+    /// A goal review whose held, unmet goal reached the stall bound: replace it, in one answer.
+    Stalled,
 }
 
 impl GoalPhase {
@@ -825,86 +841,133 @@ impl GoalPhase {
             {
                 Self::Met
             }
+            Some(goal)
+                if goal.progress.as_ref().is_some_and(|seen| {
+                    seen.steps_without_progress >= loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS
+                }) =>
+            {
+                Self::Stalled
+            }
             Some(_) => Self::Held,
         }
     }
+
+    /// Whether a goal review in this phase couples its goal choice to its intent.
+    const fn coupled(self) -> bool {
+        !matches!(self, Self::Any)
+    }
 }
 
-/// The goal choice: `null`, or one closed disposition shape the body would accept now.
+/// The goal choices one phase offers, split by what each may travel with: the ones that take
+/// the decision's intent as the goal's step, which an idle or rest intent cannot be, and the
+/// rest, which travel with any intent.
+struct GoalOffer {
+    stepping: Vec<Value>,
+    any: Vec<Value>,
+}
+
+/// The goal choices one phase offers: `null`, or one closed disposition shape the body would
+/// accept now.
 ///
-/// Strict mode requires the key, so "no choice" is an explicit `null` rather than
-/// an absent field. The statement exists only on the two dispositions that word a
-/// goal, which is what keeps a statement from riding on a disposition that would
-/// discard it. At a review the offer narrows to what the ledger accepts: a met success
-/// condition can only be completed or revised, and an unmet one is never completed.
-fn goal_choice_schema(phase: GoalPhase, offered: Option<&OfferedRefs>) -> Value {
+/// Strict mode requires the key, so "no choice" is an explicit `null` rather than an absent
+/// field, offered only while no goal is held. At a review the offer narrows to what the ledger
+/// accepts: a met success condition can only be completed or revised, an unmet one is never
+/// completed, a goal sight could no longer meet is never continued, and a goal at the stall
+/// bound may only be replaced by a new one in the same answer (r16: four answers past the bound
+/// continued or revised, and two of them lost a review cycle with the right collect refused).
+fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
+    let variants =
+        |disposition, name, description| goal_variants(disposition, name, description, offered);
     let adopt = || {
-        goal_variants(
+        variants(
             GoalDisposition::Adopt,
             "adopt",
             "Take up a new goal when you hold none.",
-            offered,
         )
     };
     let continued = || {
-        goal_variants(
+        variants(
             GoalDisposition::Continue,
             "continue",
             "Keep the held goal and take its next step.",
-            offered,
         )
     };
     let revise = || {
-        goal_variants(
+        variants(
             GoalDisposition::Revise,
             "revise",
             "Keep pursuing the held goal with a new success target and step; when its condition is met, a revise must name a target you do not yet hold.",
-            offered,
+        )
+    };
+    let replace = || {
+        variants(
+            GoalDisposition::Replace,
+            "replace",
+            "Abandon the held goal, which advanced nothing for three steps, and take up a new one in this same answer, whose step is this answer's action.",
         )
     };
     let complete = || {
-        goal_variants(
+        variants(
             GoalDisposition::Complete,
             "complete",
             "The held goal's success condition is met; drop it.",
-            offered,
         )
     };
     let abandon = || {
-        goal_variants(
+        variants(
             GoalDisposition::Abandon,
             "abandon",
             "The held goal is no longer worth pursuing; drop it.",
-            offered,
         )
     };
     let none = || vec![json!({ "type": "null" })];
     // A held goal the body could no longer meet from what is in sight is not offered a continue,
     // by the rule an adopt and a revise are held to.
     let obtainable = offered.is_none_or(|refs| refs.goal_obtainable);
-    let choices: Vec<Vec<Value>> = match phase {
-        GoalPhase::Any => vec![
-            none(),
-            adopt(),
-            continued(),
-            revise(),
-            complete(),
-            abandon(),
-        ],
-        GoalPhase::Unheld => vec![none(), adopt()],
-        // A held goal must be answered: a decision that acts while ignoring its goal is
-        // refused, so null is not offered (r15: actions taken beside a null choice were
-        // measured against the goal they ignored).
-        GoalPhase::Held if obtainable => vec![continued(), revise(), abandon()],
-        GoalPhase::Held => vec![revise(), abandon()],
-        GoalPhase::Met => vec![complete(), revise()],
+    let (stepping, any): (Vec<Vec<Value>>, Vec<Vec<Value>>) = match phase {
+        GoalPhase::Any => (
+            vec![adopt(), continued(), revise(), replace()],
+            vec![none(), complete(), abandon()],
+        ),
+        GoalPhase::Unheld => (vec![adopt()], vec![none()]),
+        // A held goal must be answered: a decision that acts while ignoring its goal is refused,
+        // so null is not offered (r15 kappa).
+        GoalPhase::Held if obtainable => (vec![continued(), revise()], vec![abandon()]),
+        GoalPhase::Held => (vec![revise()], vec![abandon()]),
+        GoalPhase::Met => (vec![revise()], vec![complete()]),
+        // With nothing in sight to give a new goal, the stalled one can only be dropped.
+        GoalPhase::Stalled => {
+            let replacing = replace();
+            if replacing.is_empty() {
+                (vec![], vec![abandon()])
+            } else {
+                (vec![replacing], vec![])
+            }
+        }
     };
-    let choices: Vec<Value> = choices.into_iter().flatten().collect();
+    GoalOffer {
+        stepping: stepping.into_iter().flatten().collect(),
+        any: any.into_iter().flatten().collect(),
+    }
+}
+
+/// The goal choice field over `choices`.
+fn goal_field(choices: &[Value]) -> Value {
     json!({
         "description": "Your choice about your one short-term goal, only at a goal review; null makes no choice, and is offered only when you hold no goal.",
         "anyOf": choices,
     })
 }
+
+/// Whether an intent variant names `action`.
+fn names_action(variant: &Value, actions: &[&str]) -> bool {
+    variant["properties"]["action"]["enum"][0]
+        .as_str()
+        .is_some_and(|action| actions.contains(&action))
+}
+
+/// The intents that take no step, which a goal cannot be pursued by.
+const PASSIVE_ACTIONS: [&str; 2] = ["rest", "idle"];
 
 fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Value {
     let blocks = |description: &str| {
@@ -971,26 +1034,103 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
         intent_variant("idle", vec![]),
     ]);
     let variants: Vec<Value> = variants.into_iter().flatten().collect();
-    let mut schema = json!({
-        "type": "object",
-        "properties": {
-            "intent": {
-                "description": "The single action the body should take now.",
-                "anyOf": variants,
-            },
-            "reasoning": {
-                "type": "string",
-                "description": "One or two sentences on why this action, recorded permanently.",
-            },
-            "goal": goal_choice_schema(phase, offered),
-        },
-        "required": ["intent", "reasoning", "goal"],
-        "additionalProperties": false,
+    let reasoning = json!({
+        "type": "string",
+        "description": "One or two sentences on why this action, recorded permanently.",
     });
-    if let (Some(refs), Some(root)) = (offered, schema.as_object_mut()) {
-        root.insert("$defs".to_owned(), namespace_defs(refs));
+    let offer = goal_offer(phase, offered);
+    let mut defs = offered.map_or_else(|| json!({}), namespace_defs);
+    let mut schema = if phase.coupled() {
+        coupled_schema(variants, offer, offered, &reasoning, &mut defs)
+    } else {
+        let mut choices = offer.stepping;
+        choices.extend(offer.any);
+        json!({
+            "type": "object",
+            "properties": {
+                "intent": { "description": INTENT_DESCRIPTION, "anyOf": variants },
+                "reasoning": reasoning,
+                "goal": goal_field(&choices),
+            },
+            "required": ["intent", "reasoning", "goal"],
+            "additionalProperties": false,
+        })
+    };
+    if let (Some(root), Some(defs)) = (schema.as_object_mut(), defs.as_object()) {
+        if offered.is_some() || !defs.is_empty() {
+            root.insert("$defs".to_owned(), Value::Object(defs.clone()));
+        }
     }
     schema
+}
+
+const INTENT_DESCRIPTION: &str = "The single action the body should take now.";
+
+/// A goal review's answer: one `decision` that pairs an intent with a goal choice it may travel
+/// with. A choice that takes the intent as the goal's step is offered only beside an action, and
+/// beside a collect alone while the agent's own drop of the goal's item lies in reach; the rest
+/// travel with any intent. The intent variants are defined once under `$defs` and referenced by
+/// each pairing (r16: four adopts and revises beside idle were refused, and the schema offered
+/// every one of them).
+fn coupled_schema(
+    variants: Vec<Value>,
+    offer: GoalOffer,
+    offered: Option<&OfferedRefs>,
+    reasoning: &Value,
+    defs: &mut Value,
+) -> Value {
+    let collect_only = offered.is_some_and(|refs| refs.collect_required);
+    let (passive, active): (Vec<Value>, Vec<Value>) = variants
+        .into_iter()
+        .partition(|variant| names_action(variant, &PASSIVE_ACTIONS));
+    let stepping: Vec<Value> = active
+        .iter()
+        .filter(|variant| !collect_only || names_action(variant, &["collect"]))
+        .cloned()
+        .collect();
+    let steps = !stepping.is_empty();
+    let reference = |name: &str| json!({ "$ref": format!("#/$defs/{name}") });
+    let mut pairings = Vec::new();
+    if let Some(table) = defs.as_object_mut() {
+        table.insert("activeIntent".to_owned(), json!({ "anyOf": active }));
+        table.insert("passiveIntent".to_owned(), json!({ "anyOf": passive }));
+        table.insert("steppingIntent".to_owned(), json!({ "anyOf": stepping }));
+    }
+    let pairing = |intent: Value, choices: Vec<Value>| {
+        json!({
+            "type": "object",
+            "properties": {
+                "intent": { "description": INTENT_DESCRIPTION, "anyOf": intent },
+                "goal": goal_field(&choices),
+            },
+            "required": ["intent", "goal"],
+            "additionalProperties": false,
+        })
+    };
+    if steps && !offer.stepping.is_empty() {
+        pairings.push(pairing(
+            json!([reference("steppingIntent")]),
+            offer.stepping,
+        ));
+    }
+    if !offer.any.is_empty() {
+        pairings.push(pairing(
+            json!([reference("activeIntent"), reference("passiveIntent")]),
+            offer.any,
+        ));
+    }
+    json!({
+        "type": "object",
+        "properties": {
+            "decision": {
+                "description": "The action the body should take now, paired with your goal choice.",
+                "anyOf": pairings,
+            },
+            "reasoning": reasoning,
+        },
+        "required": ["decision", "reasoning"],
+        "additionalProperties": false,
+    })
 }
 
 #[cfg(test)]
@@ -1290,6 +1430,30 @@ mod tests {
         for (text, expected) in cases {
             assert_eq!(goal_of(text).unwrap(), Some(expected), "{text}");
         }
+    }
+
+    #[test]
+    fn a_coupled_answer_lifts_its_decision_beside_the_reasoning() {
+        let draft = draft_from_answer(
+            r#"{"decision":{"intent":{"action":"collect","item":"d7","approach":true},"goal":{"disposition":"replace","successItem":"item.minecraft.stick","successCount":2,"step":"collect my stick","stepResult":"noProgress"}},"reasoning":"stalled; my stick lies here"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            draft.intent,
+            Intent::Collect {
+                item: "d7".to_owned(),
+                approach: true
+            }
+        );
+        let goal = draft.goal.unwrap();
+        assert_eq!(goal.disposition, GoalDisposition::Replace);
+        assert_eq!(goal.success_count, Some(2));
+        // A replace sets a new goal and judges the old one's last step, so it needs both.
+        let unjudged = draft_from_answer(
+            r#"{"decision":{"intent":{"action":"idle"},"goal":{"disposition":"replace","successItem":"item.minecraft.stick","successCount":2,"step":"s"}},"reasoning":"r"}"#,
+        )
+        .expect_err("a replace judges the previous step");
+        assert!(unjudged.contains("needs a step result"), "{unjudged}");
     }
 
     #[test]

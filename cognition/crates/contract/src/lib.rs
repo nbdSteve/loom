@@ -1327,6 +1327,9 @@ pub enum GoalDisposition {
     Continue,
     #[serde(rename = "revise")]
     Revise,
+    /// Abandon the held goal and adopt a new one in the same answer, under this decision's id.
+    #[serde(rename = "replace")]
+    Replace,
     #[serde(rename = "complete")]
     Complete,
     #[serde(rename = "abandon")]

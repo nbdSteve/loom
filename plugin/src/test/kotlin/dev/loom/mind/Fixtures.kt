@@ -193,7 +193,7 @@ fun goalChoice(
     stepResult: GoalStepResult = GoalStepResult.PROGRESSING,
     success: Pair<String, Long> = "item.minecraft.stick" to 1L,
 ): GoalChoice {
-    val worded = disposition == GoalDisposition.ADOPT || disposition == GoalDisposition.REVISE
+    val worded = disposition in setOf(GoalDisposition.ADOPT, GoalDisposition.REVISE, GoalDisposition.REPLACE)
     val stepped = worded || disposition == GoalDisposition.CONTINUE
     return GoalChoice(
         disposition = disposition,

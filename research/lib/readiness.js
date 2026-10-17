@@ -30,9 +30,15 @@ const TOLD_GOAL_INCOHERENT_TAGS = new Set([
   ...GROUNDED_GOAL_INCOHERENT_TAGS, 'goalChoiceMissing', 'goalStepUnproductive', 'goalStalled'
 ])
 const TERRAIN_TAGS = new Set(['moveNoRoute', 'retreatNoRoute', 'collectNoRoute', 'attackNoRoute'])
+// Gate generation 8: a continue or revise that does not collect the agent's own lying drop of its
+// goal's item is refused with its intent, and coherence needs no such refusal (r16: in 11 of 21
+// such reviews the agent dug again or idled, and another agent took the drops).
+const COLLECTED_READINESS_VERSION = 'loom-readiness-gate/6'
+const COLLECTED_GOAL_INCOHERENT_TAGS = new Set([...TOLD_GOAL_INCOHERENT_TAGS, 'goalOwnDropIgnored'])
 
 /** The goal ledger refusals gate [generation] counts as incoherent decisions. */
 function goalIncoherentTagsOf (generation) {
+  if (generation >= 8) return COLLECTED_GOAL_INCOHERENT_TAGS
   if (generation >= 7) return TOLD_GOAL_INCOHERENT_TAGS
   if (generation >= 6) return GROUNDED_GOAL_INCOHERENT_TAGS
   return generation >= 5 ? EVIDENCED_GOAL_INCOHERENT_TAGS : GOAL_INCOHERENT_TAGS
@@ -92,7 +98,7 @@ const INAPPLICABLE_TAGS = new Set([
 const PROTOCOL_TAGS = new Set(['rejected', 'controlUnavailable', 'unsupported', 'noSuchBody'])
 
 /** The class a refusal tag ends its action in, under gate [generation] (the current one by default). */
-function refusalClass (tag, generation = 7) {
+function refusalClass (tag, generation = 8) {
   if (goalIncoherentTagsOf(generation).has(tag)) return 'goalIncoherent'
   if (generation >= 7 && TERRAIN_TAGS.has(tag)) return TERRAIN_CLASS
   if (generation >= 5 && tag === 'digWouldTrap') return 'inapplicable'
@@ -220,7 +226,8 @@ function typedGoalCoherenceOf (bodyRecords, generation = 4) {
     stalled: 0,
     ...(evidenced ? { unevidencedCredits: 0, unobtainableConditions: 0 } : {}),
     ...(generation >= 6 ? { alreadyMetConditions: 0, idleSteps: 0 } : {}),
-    ...(generation >= 7 ? { unansweredGoals: 0, unproductiveSteps: 0 } : {})
+    ...(generation >= 7 ? { unansweredGoals: 0, unproductiveSteps: 0 } : {}),
+    ...(generation >= 8 ? { ignoredOwnDrops: 0 } : {})
   }
   for (const record of bodyRecords) {
     const goal = record.goal
@@ -233,6 +240,7 @@ function typedGoalCoherenceOf (bodyRecords, generation = 4) {
     if (generation >= 6 && goal.outcome === 'goalStepIdle') counts.idleSteps += 1
     if (generation >= 7 && goal.outcome === 'goalChoiceMissing') counts.unansweredGoals += 1
     if (generation >= 7 && goal.outcome === 'goalStepUnproductive') counts.unproductiveSteps += 1
+    if (generation >= 8 && goal.outcome === 'goalOwnDropIgnored') counts.ignoredOwnDrops += 1
     if (goal.conditionMet === true) {
       counts.metConditions += 1
       if (goal.outcome === 'goalCompleted') counts.metCompleted += 1
@@ -259,7 +267,8 @@ function typedGoalCoherenceOf (bodyRecords, generation = 4) {
     multiStepGoals >= 1 &&
     (!evidenced || (counts.unevidencedCredits === 0 && counts.unobtainableConditions === 0)) &&
     (generation < 6 || (counts.alreadyMetConditions === 0 && counts.idleSteps === 0)) &&
-    (generation < 7 || (counts.unansweredGoals === 0 && counts.unproductiveSteps === 0))
+    (generation < 7 || (counts.unansweredGoals === 0 && counts.unproductiveSteps === 0)) &&
+    (generation < 8 || counts.ignoredOwnDrops === 0)
   return { ...counts, goalsMeasured: goals.length, multiStepGoals, verdict: coherent ? 'coherent' : 'incoherent' }
 }
 
@@ -366,8 +375,9 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       COHERENT_READINESS_VERSION,
       EVIDENCED_READINESS_VERSION,
       GROUNDED_READINESS_VERSION,
-      TOLD_READINESS_VERSION
-    ][Math.min(Math.max(generation - 3, 0), 4)],
+      TOLD_READINESS_VERSION,
+      COLLECTED_READINESS_VERSION
+    ][Math.min(Math.max(generation - 3, 0), 5)],
     actions: {
       total,
       byClass: Object.fromEntries(Object.entries(byClass).sort()),
@@ -394,6 +404,8 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
 module.exports = {
   BLOCKER_CLASSES,
   COHERENT_READINESS_VERSION,
+  COLLECTED_GOAL_INCOHERENT_TAGS,
+  COLLECTED_READINESS_VERSION,
   EVIDENCED_GOAL_INCOHERENT_TAGS,
   EVIDENCED_READINESS_VERSION,
   GOAL_INCOHERENT_TAGS,

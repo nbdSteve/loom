@@ -681,9 +681,9 @@
     },
 
     "GoalDisposition": {
-      "description": "What a goal review's decision does with the agent's short-term goal. adopt starts one where none is held; continue keeps the held goal; revise rewords the held goal under the same goalId; complete and abandon end it. adopt, continue and revise take the decision's intent as the goal's step, so the body refuses them beside an idle or rest intent, which is no step.",
+      "description": "What a goal review's decision does with the agent's short-term goal. adopt starts one where none is held; continue keeps the held goal; revise changes the held goal's target under the same goalId; replace abandons the held goal and adopts a new one in the same answer, under this decision's own id; complete and abandon end it. adopt, continue, revise and replace take the decision's intent as the goal's step, so the body refuses them beside an idle or rest intent, which is no step.",
       "type": "string",
-      "enum": ["adopt", "continue", "revise", "complete", "abandon"]
+      "enum": ["adopt", "continue", "revise", "replace", "complete", "abandon"]
     },
 
     "GoalStepResult": {
@@ -693,7 +693,7 @@
     },
 
     "GoalChoice": {
-      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. successItem and successCount are the goal and its success condition: holding that many of that item in total, counting what is held now, which the body measures and words itself. Both are for adopt and revise, and the body refuses a count the inventory already holds or one more than it holds plus what is in sight could give, and applies that same bound to a continue. step words the one concrete next step this decision's intent takes toward the goal, for adopt, continue and revise; the body types that step from the intent itself, and refuses one that cannot produce the goal's item. stepResult judges the carried goal's previous step, for every disposition except adopt. The body refuses a choice missing a field its disposition requires, and ignores the rest.",
+      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. successItem and successCount are the goal and its success condition: holding that many of that item in total, counting what is held now, which the body measures and words itself. Both are for adopt, revise and replace, and the body refuses a count the inventory already holds or one more than it holds plus what is in sight could give, and applies that same bound to a continue. step words the one concrete next step this decision's intent takes toward the goal, for adopt, continue, revise and replace; the body types that step from the intent itself, and refuses one that cannot produce the goal's item. stepResult judges the carried goal's previous step, for every disposition except adopt. The body refuses a choice missing a field its disposition requires, and ignores the rest.",
       "type": "object",
       "additionalProperties": false,
       "required": ["disposition"],

@@ -129,6 +129,56 @@ class OwnDropLedgerTest {
         ) { BukkitOwnDrops(server, (0 until 17).map { uuid("p$it") }.toSet()) }
     }
 
+    @Test
+    fun `a drop still lying is told for as long as the server has it, past retention`() {
+        // r16 alpha: its dig at tick 220 dropped a stick that left its own-drop list at 5020 while
+        // it lay until gamma took it at 5570, so alpha was never told.
+        tick = 220
+        val stick = uuid("stick-p")
+        ledger.dropped(alpha, stick, STICK, 1, listOf(16, 104, -2))
+        places[stick] = listOf(17.1, 104.0, -1.5)
+        ledger.attribute(alpha, "alpha-sense-p", listOf(16, 104, -2), sinceTick = 200)
+        tick = 5_065
+        assertEquals(DropFate.LYING, ledger.of(alpha).single().fate)
+        tick = 5_570
+        ledger.pickedUp(stick, gamma)
+        places.remove(stick)
+        // Taken now, and told; retention runs from when its fate became known.
+        assertEquals(DropFate.TAKEN, ledger.of(alpha).single().fate)
+        tick = 5_570 + 4_800
+        assertEquals(DropFate.TAKEN, ledger.of(alpha).single().fate)
+        tick = 5_571 + 4_800
+        assertEquals(emptyList<OwnDropReading>(), ledger.of(alpha))
+        // One the server no longer has, with no event saying where it went, is gone, then forgotten.
+        tick = 10_000
+        val other = uuid("stick-q")
+        ledger.dropped(alpha, other, STICK, 1, listOf(1, 64, 1))
+        places[other] = listOf(1.5, 64.0, 1.5)
+        ledger.attribute(alpha, "alpha-sense-q", listOf(1, 64, 1), sinceTick = 9_990)
+        places.remove(other)
+        tick = 10_500
+        assertEquals(DropFate.GONE, ledger.of(alpha).single().fate)
+        tick = 10_500 + 4_801
+        assertEquals(emptyList<OwnDropReading>(), ledger.of(alpha))
+    }
+
+    @Test
+    fun `a full own-drop list forgets a drop whose fate is known before one still lying`() {
+        val lying = uuid("lying")
+        ledger.dropped(alpha, lying, STICK, 1, listOf(0, 64, 0))
+        places[lying] = listOf(0.5, 64.0, 0.5)
+        ledger.attribute(alpha, "alpha-0", listOf(0, 64, 0), sinceTick = 0)
+        for (index in 1..dev.loom.contract.MAX_OWN_DROPS) {
+            val taken = uuid("taken-$index")
+            ledger.dropped(alpha, taken, STICK, 1, listOf(index, 64, 0))
+            ledger.pickedUp(taken, gamma)
+            ledger.attribute(alpha, "alpha-$index", listOf(index, 64, 0), sinceTick = 0)
+        }
+        val told = ledger.of(alpha)
+        assertEquals(dev.loom.contract.MAX_OWN_DROPS, told.size)
+        assertEquals(1, told.count { it.fate == DropFate.LYING })
+    }
+
     private companion object {
         const val STICK = "item.minecraft.stick"
 

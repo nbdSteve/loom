@@ -142,6 +142,8 @@ PROFILES['own-evidence-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'
 // reviews a run can finish: the sixth is due at tick 12,000 itself, which the window ends on
 // (the r15 audit found every agent reviewed five times against a plan of six).
 PROFILES['answered-goal-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'], expectedReviewsPerAgent: 5 })
+// And under routine-v25, because r16 ran under the v24 name, with the same five-review plan.
+PROFILES['collected-goal-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'], expectedReviewsPerAgent: 5 })
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

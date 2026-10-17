@@ -27,8 +27,8 @@
 //! offered. `tests/offered_reach_parity.rs` reads every bound below from the body and JVM source.
 
 use loom_contract::{
-    is_item_name, Bearing, Intent, Observation, ObservationKind, Perception, Trigger, AIR_ITEM,
-    MAX_SUCCESS_COUNT,
+    is_item_name, Bearing, DropFate, Intent, Observation, ObservationKind, Perception, Trigger,
+    AIR_ITEM, MAX_SUCCESS_COUNT,
 };
 
 use crate::prompt::{MAX_CRAFTING_LINES, MAX_INVENTORY_LINES, MAX_OBSERVATIONS};
@@ -85,9 +85,21 @@ pub struct OfferedRefs {
     /// Every item something in sight could give the agent more of - dropped in sight, craftable,
     /// or yielded by a visible block it may dig - which is what a success condition may name.
     pub obtainable: Vec<String>,
-    /// How many more of each of [`Self::obtainable`] what is in sight could give at most, in the
-    /// same order: the bound a success count may reach beyond what is held.
+    /// How many more of each item what is in sight can be counted on to give: drops and crafts
+    /// exactly, and a block its expected yield, the mean of its random least and most. The bound a
+    /// success count may reach beyond what is held.
     pub capacity: Vec<(String, i64)>,
+    /// How many more of each item what is in sight could give at best, every block at its most.
+    pub best_case: Vec<(String, i64)>,
+    /// The agent's own lying drops a collect can route to, by ref, with the item each holds.
+    pub own_drops: Vec<(String, String)>,
+    /// Whether the held goal must be collected for: an own drop of its item is in route reach, so
+    /// dig is withheld and a step toward the goal is a collect (r16: in 11 of 21 such reviews the
+    /// agent dug again or idled beside its own stick, and another agent took it).
+    pub collect_required: bool,
+    /// Whether the held goal reached the stall bound at this review: it may only be completed if
+    /// met, or replaced by a new goal in the same answer.
+    pub stalled: bool,
     /// For each item a success condition may name now, the fewest and most of it the count may
     /// ask: one more than is held, and what is held plus [`Self::capacity`], never above
     /// [`MAX_SUCCESS_COUNT`]. A count is the total to hold, counting what is held already.
@@ -101,6 +113,55 @@ pub struct OfferedRefs {
     /// count no more than what is held plus what sight could give. A continue is offered only
     /// then, by the same rule the body holds an adopt and a revise to.
     pub goal_obtainable: bool,
+}
+
+/// Every item's whole capacity, uncut, so a held goal is judged by the rule the body uses: in
+/// halves of an item, and at best. Craftable items lead, ahead of what the surroundings would
+/// give. A held item alone is no source: a goal must be more than is held, and something in sight
+/// must give the rest (r14 kappa raised a stick goal with no bush or drop in sight).
+fn totals_of(
+    perception: &Perception,
+    sources: Vec<(&String, i64, i64)>,
+) -> Vec<(String, i64, i64)> {
+    let crafted = perception
+        .self_state
+        .crafting_options
+        .iter()
+        .take(MAX_CRAFTING_LINES)
+        .map(|option| {
+            let count = option.result_count.saturating_mul(option.max_crafts);
+            (&option.what, count.saturating_mul(2), count)
+        });
+    let mut totals: Vec<(String, i64, i64)> = Vec::new();
+    for (item, halves, best) in crafted.chain(sources) {
+        // Only an item name can be held, so anything else in a description is no condition.
+        if !is_item_name(item) || item == AIR_ITEM || best < 1 {
+            continue;
+        }
+        if let Some((_, total, most)) = totals.iter_mut().find(|(name, ..)| name == item) {
+            *total = total.saturating_add(halves);
+            *most = most.saturating_add(best);
+        } else {
+            totals.push((item.clone(), halves, best));
+        }
+    }
+    totals
+}
+
+/// The agent's own lying drops that `route_items` offers to collect, by ref, with their items.
+fn own_drops_of(perception: &Perception, route_items: &[String]) -> Vec<(String, String)> {
+    perception
+        .self_state
+        .own_drops
+        .iter()
+        .filter(|drop| drop.fate == DropFate::Lying)
+        .filter_map(|drop| {
+            let handle = drop.drop_ref.as_ref()?;
+            route_items
+                .contains(handle)
+                .then(|| (handle.clone(), drop.what.clone()))
+        })
+        .collect()
 }
 
 /// How many of `item` the agent's whole inventory holds, as the body counts a success condition.
@@ -133,7 +194,9 @@ impl OfferedRefs {
     #[must_use]
     pub fn of(perception: &Perception) -> Self {
         let mut offered = Self::default();
-        let mut sources: Vec<(&String, i64)> = Vec::new();
+        // Each source of an item with what it gives in halves of an item - a block its expected
+        // yield, the mean of its least and most, and a drop or a craft exactly - and at best.
+        let mut sources: Vec<(&String, i64, i64)> = Vec::new();
         // What each dig and collect handle can give, for a held goal's restriction below.
         let mut gives: Vec<(&str, &String)> = Vec::new();
         for seen in perception.surroundings.iter().take(MAX_OBSERVATIONS) {
@@ -151,7 +214,11 @@ impl OfferedRefs {
                     }
                     if seen.visible && dig_safe {
                         for item in seen.yields.iter().flatten() {
-                            sources.push((&item.what, item.most));
+                            sources.push((
+                                &item.what,
+                                item.least.saturating_add(item.most),
+                                item.most,
+                            ));
                             gives.push((handle, &item.what));
                         }
                     }
@@ -168,7 +235,8 @@ impl OfferedRefs {
                     }
                     if seen.distance <= MOVE_REACH_BLOCKS {
                         offer(&mut offered.route_items, handle);
-                        sources.push((&seen.what, seen.count.unwrap_or(1)));
+                        let count = seen.count.unwrap_or(1);
+                        sources.push((&seen.what, count.saturating_mul(2), count));
                         gives.push((handle, &seen.what));
                     }
                 }
@@ -191,29 +259,25 @@ impl OfferedRefs {
         for option in state.crafting_options.iter().take(MAX_CRAFTING_LINES) {
             offer(&mut offered.recipes, &option.recipe_ref);
         }
-        // Craftable items lead, ahead of what the surroundings would give. A held item alone is
-        // no source: a goal must be more than is held, and something in sight must give the rest
-        // (r14 kappa raised a stick goal with no bush or drop in sight).
-        let crafted = state
-            .crafting_options
+        let totals = totals_of(perception, sources);
+        // What sight can be counted on for is the expected yield, whole items only: a block's best
+        // case is luck (r16: four goals sized to every bush's most, three of them failed).
+        let calibrated: Vec<(String, i64)> = totals
             .iter()
-            .take(MAX_CRAFTING_LINES)
-            .map(|option| (&option.what, option.result_count * option.max_crafts));
-        // Every item's whole capacity, uncut, so a held goal is judged by the rule the body uses.
-        let mut totals: Vec<(String, i64)> = Vec::new();
-        for (item, count) in crafted.chain(sources) {
-            // Only an item name can be held, so anything else in a description is no condition.
-            if !is_item_name(item) || item == AIR_ITEM || count < 1 {
-                continue;
-            }
-            if let Some((_, total)) = totals.iter_mut().find(|(name, _)| name == item) {
-                *total = total.saturating_add(count);
-            } else {
-                totals.push((item.clone(), count));
-            }
-        }
-        offered.pursue(perception, &totals, &gives);
-        offered.capacity = totals.into_iter().take(MAX_OBTAINABLE_ITEMS).collect();
+            .map(|(item, halves, _)| (item.clone(), halves / 2))
+            .collect();
+        offered.own_drops = own_drops_of(perception, &offered.route_items);
+        offered.pursue(perception, &calibrated, &gives);
+        offered.best_case = totals
+            .into_iter()
+            .take(MAX_OBTAINABLE_ITEMS)
+            .map(|(item, _, best)| (item, best))
+            .collect();
+        offered.capacity = calibrated
+            .into_iter()
+            .filter(|(_, count)| *count >= 1)
+            .take(MAX_OBTAINABLE_ITEMS)
+            .collect();
         let pursued = offered.pursued.clone();
         offered.count_bounds = offered
             .capacity
@@ -257,7 +321,18 @@ impl OfferedRefs {
             .find(|(name, _)| name == item)
             .map_or(0, |(_, total)| *total);
         self.goal_obtainable = count <= held.saturating_add(capacity);
-        if held >= count || !self.goal_obtainable {
+        let at_bound = goal.progress.as_ref().is_some_and(|seen| {
+            seen.steps_without_progress >= loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS
+        });
+        if held >= count {
+            return;
+        }
+        // At the bound the goal can only be replaced, by a goal of any item sight offers.
+        if at_bound {
+            self.stalled = true;
+            return;
+        }
+        if !self.goal_obtainable {
             return;
         }
         let gives_goal = |handle: &String| {
@@ -269,6 +344,10 @@ impl OfferedRefs {
         self.pickup_items.retain(gives_goal);
         self.route_items.retain(gives_goal);
         self.pursued = Some(item.clone());
+        if self.own_drops.iter().any(|(_, what)| what == item) {
+            self.collect_required = true;
+            self.dig_blocks.clear();
+        }
     }
 
     /// How many more of `item` what is in sight could give at most.
@@ -679,8 +758,12 @@ mod tests {
             offered.obtainable,
             handles(&["item.minecraft.stick", "item.minecraft.wheat_seeds"])
         );
-        // The recipe's four sticks and the bush's two at most.
-        assert_eq!(offered.capacity_of("item.minecraft.stick"), 6);
+        // The recipe's four sticks and the bush's expected one; its two are only the best case
+        // (r16: goals sized to every bush's most failed three times of four).
+        assert_eq!(offered.capacity_of("item.minecraft.stick"), 5);
+        assert!(offered
+            .best_case
+            .contains(&("item.minecraft.stick".to_owned(), 6)));
         assert_eq!(offered.capacity_of("item.minecraft.wheat_seeds"), 1);
         assert_eq!(offered.capacity_of("item.minecraft.stone_sword"), 0);
     }

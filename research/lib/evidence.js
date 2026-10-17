@@ -17,7 +17,7 @@ const MAX_BODY_OFFERS_PER_KIND = 48
 const MAX_MODEL_VISIBLE_OBSERVATIONS = MAX_BODY_OFFERS_PER_KIND * 3
 const PERCEPTION_AUDIT_KINDS = ['entities', 'blocks', 'droppedItems']
 const MAX_GOAL_ID_CHARS = 64
-const GOAL_DISPOSITIONS = ['adopt', 'continue', 'revise', 'complete', 'abandon']
+const GOAL_DISPOSITIONS = ['adopt', 'continue', 'revise', 'replace', 'complete', 'abandon']
 const GOAL_OUTCOMES = [
   'goalAdopted',
   'goalContinued',
@@ -43,7 +43,9 @@ const GOAL_OUTCOMES = [
   'goalAlreadyMet',
   'goalStepIdle',
   'goalChoiceMissing',
-  'goalStepUnproductive'
+  'goalStepUnproductive',
+  'goalOwnDropIgnored',
+  'goalReplaced'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // What a measured step showed, from routine-v22: the exact target reached, an item gained, a
@@ -388,7 +390,8 @@ function normalizeBodyRecord (
     'perception',
     'perceptionAudit',
     'decision',
-    'goal'
+    'goal',
+    'shown'
   ]) {
     if (record[field] !== undefined && record[field] !== null) {
       normalized[field] = sanitizeValue(record[field], state)

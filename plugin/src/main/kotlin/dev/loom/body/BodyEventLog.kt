@@ -16,6 +16,8 @@
 package dev.loom.body
 
 import dev.loom.contract.Decision
+import dev.loom.contract.GoalRefusal
+import dev.loom.contract.GoalSummary
 import dev.loom.contract.LoomJson
 import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
@@ -145,6 +147,23 @@ data class BodyEventRecord(
     val decision: Decision? = null,
     /** How [decision]'s goal choice was resolved. Present on [BodyEvent.DECIDED] for goal reviews. */
     val goal: GoalEvidence? = null,
+    /**
+     * The goal and the refusal the answered perception carried to cognition, exactly as the mind
+     * was shown them. Present on [BodyEvent.DECIDED] for goal reviews, which is the one place the
+     * held goal and a refusal's explanation are added to a perception after it is recorded as
+     * [BodyEvent.PERCEIVED] (r16: no record kept either, so what the mind was told could not be
+     * audited).
+     */
+    val shown: ShownGoal? = null,
+)
+
+/** What one goal review showed cognition beyond the body's own perception. */
+@Serializable
+data class ShownGoal(
+    /** The held goal the perception carried, or `null` when it carried none. */
+    val goal: GoalSummary? = null,
+    /** Why the agent's previous goal decision was refused, told once, or `null`. */
+    val lastRefusal: GoalRefusal? = null,
 )
 
 /**

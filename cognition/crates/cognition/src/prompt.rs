@@ -39,13 +39,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v24";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v25";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v24";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v25";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v24";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v25";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -181,33 +181,42 @@ many steps in a row advanced nothing. If your body refused your last goal decisi
 why, once. Judge it against that evidence, not against a wish to look busy:
 - adopt: take up a new goal when you hold none and the evidence gives you one worth having. Name \
 the item and the total of it you must hold, and word the step this answer's action takes. The \
-total must be more than you hold and no more than you hold plus what is in sight could give you, \
-as you are told; only items something in sight could give are offered. A one-more goal ends at \
-its first pickup; where sight could give several, a total of several makes it a plan of several \
-steps. Holding no goal is a legitimate state. With none held you may make no goal choice.
+total must be more than you hold and no more than you hold plus what sight can be counted on to \
+give you, as you are told; only items something in sight could give are offered. A one-more goal \
+ends at its first pickup; where sight can give several, a total of several makes it a plan of \
+several steps. Holding no goal is a legitimate state. With none held you may make no goal choice.
 - continue: keep the held goal, judge the previous step, and word the next step this answer's \
 action takes. It is offered only while what you hold plus what is in sight could still meet it.
 - revise: change the held goal's total, and its step, when the evidence showed the old target \
 will not work, and judge the previous step. Revising keeps the count of steps that advanced \
 nothing.
+- replace: once the held goal has advanced nothing for three steps in a row, drop it and take \
+up a new one in the same answer - name the new item and total, word the step this answer's \
+action takes, and judge the previous step. At that bound replace is the only way to keep acting \
+toward a goal; complete it instead if its condition is met.
 - complete: drop the held goal because your body shows its success condition met.
 - abandon: drop the held goal because it is no longer worth pursuing, or to pursue another item.
 While you hold a goal every answer must say what it does with it, and your action is the goal's \
-step: dig and collect are offered only for what can give the goal's item, and adopt, continue or \
-revise beside idle or rest takes no step and is refused with your action, as is a total you \
-already hold or one beyond what sight could give. There is something to collect only when a \
-dropped item is listed, and a dropped item your body found no route to is not offered. Only \
-evidence advances a goal: the held count of its item rising, or the step you took carried out \
-with evidence - an action after which you hold more, or a walk that reaches a target in sight \
-somewhere the goal has not already been. A dig the server saw drop something for you is told to \
-you with where that drop is now, and a drop of yours still lying is offered to collect by its \
-ref, in sight or not; the drop itself is not progress until you hold it. What a block drops is \
-random within the range you are told: a dig may drop none of it, and another such block is a \
-fresh chance. A dig that drops nothing, a drop someone else takes, moving about, falling or \
-walking back is not progress, and revising is not progress either. After three steps in a row \
-that advanced nothing, your body refuses continue and revise, ends the goal, and acts on none of \
-that answer. When your success condition is met you must complete the goal, or revise it to a \
-total you do not yet hold, at that review; anything else is refused with your action.";
+step: dig and collect are offered only for what can give the goal's item, and adopt, continue, \
+revise or replace beside idle or rest takes no step and is not offered, as is a total you \
+already hold or one beyond what sight can be counted on to give. There is something to collect \
+only when a dropped item is listed, and a dropped item your body found no route to is not \
+offered. A dig the server saw drop something for you is told to you with where that drop is now, \
+and a drop of yours still lying is offered to collect by its ref, in sight or not. While your own \
+drop of the goal's item lies in reach, the goal's next step is to collect it, with approach true \
+when it is not beside you; digging for more is not offered until you hold it, because a drop left \
+lying is one another agent can take. Only evidence advances a goal: the held count of its item \
+rising, or the step you took carried out with evidence - an action after which you hold more, or \
+a walk onto a block that drops the goal's item, reaching it somewhere the goal has not already \
+been. A drop is not progress until you hold it, and a walk to anything else is no step. What a \
+block drops is random within the range you are told: the most is its best case, a dig may drop \
+none of it, and another such block is a fresh chance, so what sight can be counted on to give is \
+each block's expected yield, the middle of its range, not its most. A dig that drops nothing, a \
+drop someone else takes, moving about, falling or walking back is not progress, and revising is \
+not progress either. After three steps in a row that advanced nothing, your body refuses \
+continue and revise; only replace, or complete when met, is offered then. When your success \
+condition is met you must complete the goal, or revise it to a total you do not yet hold, at \
+that review; anything else is refused with your action.";
 
 /// The per-tier closing instruction.
 ///
@@ -448,6 +457,9 @@ fn refusal_line(refusal: &GoalRefusal) -> String {
         "goalCompletionUnmet" => "it completed a goal your inventory did not show met",
         "goalChoiceMissing" => "it acted while you held a goal and said nothing of the goal",
         "goalStepUnproductive" => "its action could not give the goal's item",
+        "goalOwnDropIgnored" => {
+            "it did not collect your own drop of the goal's item that lay in reach"
+        }
         "goalStalled" => "the goal had advanced nothing for three steps in a row, so it ended",
         "goalSuccessTargetMissing" => "it set a goal without its item and total",
         "goalStepMissing" => "it gave no step for the goal",
@@ -686,7 +698,7 @@ fn yields_line(surroundings: &[Observation]) -> String {
             .collect::<Vec<_>>()
             .join("; ");
         format!(
-            "Digging with what you hold drops, at random each dig, {named}{}; any other block drops nothing.",
+            "Digging with what you hold drops, at random each dig and the most only at best, {named}{}; any other block drops nothing.",
             omitted(
                 hidden_beyond(items.len(), MAX_YIELD_ITEMS),
                 "more item",
@@ -729,10 +741,9 @@ fn own_drops_line(drops: &[OwnDrop], last_step: Option<&str>) -> Option<String> 
                         drop.direction.unwrap_or(Bearing::Here),
                         drop.vertical_offset.unwrap_or(0.0)
                     ),
-                    offered = drop
-                        .drop_ref
-                        .as_deref()
-                        .map_or_else(String::new, |handle| format!(" (ref {})", field(handle)))
+                    offered = drop.drop_ref.as_deref().map_or_else(String::new, |handle| {
+                        format!(", which you can collect (ref {})", field(handle))
+                    })
                 ),
                 DropFate::Collected => "which you picked up".to_owned(),
                 DropFate::Taken => "which another player picked up".to_owned(),
@@ -752,25 +763,55 @@ fn own_drops_line(drops: &[OwnDrop], last_step: Option<&str>) -> Option<String> 
 /// How many more of each item what is in sight could give: the most a success count may ask
 /// beyond what is held (r14 kappa raised a stick goal with nothing in sight to give one).
 fn capacity_line(perception: &Perception) -> String {
-    let capacity = crate::offered::OfferedRefs::of(perception).capacity;
-    if capacity.is_empty() {
-        return "Nothing in sight could give you more of any item, so no goal can be set now."
-            .to_owned();
+    let offered = crate::offered::OfferedRefs::of(perception);
+    let mut lines = Vec::new();
+    if offered.capacity.is_empty() {
+        lines.push(
+            "Nothing in sight can be counted on to give you more of any item, so no goal can be set now."
+                .to_owned(),
+        );
+    } else {
+        let shown = offered
+            .capacity
+            .iter()
+            .take(MAX_YIELD_ITEMS)
+            .map(|(item, count)| {
+                let best = offered
+                    .best_case
+                    .iter()
+                    .find(|(name, _)| name == item)
+                    .map_or(*count, |(_, best)| *best);
+                format!("{count} more {} (at best {best})", field(item))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "What is in sight can be counted on to give you {shown}{}, beyond what you hold; a goal may count only on the first number.",
+            omitted(
+                hidden_beyond(offered.capacity.len(), MAX_YIELD_ITEMS),
+                "more item",
+                "more items"
+            )
+        ));
     }
-    let shown = capacity
-        .iter()
-        .take(MAX_YIELD_ITEMS)
-        .map(|(item, count)| format!("{count} more {}", field(item)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "What is in sight could give you at most {shown}{}, beyond what you hold.",
-        omitted(
-            hidden_beyond(capacity.len(), MAX_YIELD_ITEMS),
-            "more item",
-            "more items"
-        )
-    )
+    if offered.collect_required {
+        let refs: Vec<&str> = offered
+            .own_drops
+            .iter()
+            .map(|(handle, _)| handle.as_str())
+            .collect();
+        lines.push(format!(
+            "Your own drop of your goal's item lies in reach ({}): collect it now; no dig is offered until you hold it.",
+            some_refs(&refs)
+        ));
+    }
+    if offered.stalled {
+        lines.push(
+            "Your goal advanced nothing for three steps in a row: replace it with a new goal in this answer, whose step is your action, or abandon it."
+                .to_owned(),
+        );
+    }
+    lines.join(" ")
 }
 
 /// The nearest [`MAX_YIELD_REFS`] of `refs`, saying how many more there are.
@@ -1354,8 +1395,8 @@ mod tests {
         .unwrap();
         assert!(
             situation(&seen).contains(
-                "Digging with what you hold drops, at random each dig, 0 to 2 \
-                 item.minecraft.stick (from b2); any other block drops nothing."
+                "Digging with what you hold drops, at random each dig and the most only at best, \
+                 0 to 2 item.minecraft.stick (from b2); any other block drops nothing."
             ),
             "{}",
             situation(&seen)
@@ -1429,7 +1470,7 @@ mod tests {
         // r14 kappa body:00000243: a stick goal raised with nothing in sight to give one.
         let mut seen = goal_review_holding(None);
         assert!(situation(&seen).contains(
-            "Nothing in sight could give you more of any item, so no goal can be set now."
+            "Nothing in sight can be counted on to give you more of any item, so no goal can be set now."
         ));
         seen.surroundings.push(Observation {
             kind: ObservationKind::Block,
@@ -1450,7 +1491,7 @@ mod tests {
             route_refused: None,
         });
         assert!(situation(&seen)
-            .contains("What is in sight could give you at most 2 more item.minecraft.stick, beyond what you hold."));
+            .contains("What is in sight can be counted on to give you 1 more item.minecraft.stick (at best 2), beyond what you hold; a goal may count only on the first number."));
         // A settled step carries the goal and is answered as a review of it.
         seen.trigger = Trigger::StepSettled;
         seen.goal = Some(held("gather sticks", 0, Some(("dig", "accepted"))));
@@ -1462,7 +1503,7 @@ mod tests {
             amount: 2,
             source: "zombie".to_owned(),
         };
-        assert!(!situation(&seen).contains("could give you"));
+        assert!(!situation(&seen).contains("counted on to give you"));
     }
 
     #[test]

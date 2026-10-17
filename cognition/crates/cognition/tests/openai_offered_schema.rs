@@ -26,20 +26,48 @@ fn fixture(name: &str) -> Perception {
     serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
 }
 
-fn answer(intent: &Value) -> Value {
-    json!({ "intent": intent, "reasoning": "a test answer", "goal": null })
+/// Whether `schema` couples each intent to a goal choice, as a goal review's does.
+fn coupled(schema: &Value) -> bool {
+    schema["properties"].get("decision").is_some()
 }
 
+/// `intent` beside `goal`, in the shape `schema` asks for.
+fn answer_in(schema: &Value, intent: &Value, goal: &Value) -> Value {
+    if coupled(schema) {
+        json!({ "decision": { "intent": intent, "goal": goal }, "reasoning": "a test answer" })
+    } else {
+        json!({ "intent": intent, "reasoning": "a test answer", "goal": goal })
+    }
+}
+
+/// Whether `schema` admits `intent` beside no goal choice or an abandon, whichever it offers.
 fn accepts(schema: &Value, intent: &Value) -> bool {
-    jsonschema::validator_for(schema)
-        .expect("the request schema compiles")
-        .is_valid(&answer(intent))
+    let validator = jsonschema::validator_for(schema).expect("the request schema compiles");
+    [
+        json!(null),
+        json!({ "disposition": "abandon", "stepResult": "done" }),
+    ]
+    .iter()
+    .any(|goal| validator.is_valid(&answer_in(schema, intent, goal)))
+}
+
+/// Every intent variant `schema` offers.
+fn intent_variants(schema: &Value) -> Vec<Value> {
+    if coupled(schema) {
+        ["activeIntent", "passiveIntent"]
+            .iter()
+            .flat_map(|name| schema["$defs"][name]["anyOf"].as_array().unwrap().clone())
+            .collect()
+    } else {
+        schema["properties"]["intent"]["anyOf"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
 }
 
 fn actions(schema: &Value) -> Vec<String> {
-    schema["properties"]["intent"]["anyOf"]
-        .as_array()
-        .unwrap()
+    intent_variants(schema)
         .iter()
         .map(|variant| {
             variant["properties"]["action"]["enum"][0]
@@ -148,7 +176,9 @@ fn an_action_with_nothing_offered_to_name_is_not_offered() {
     seen.surroundings.clear();
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     assert_eq!(actions(&schema), ["say", "rest", "idle"]);
-    assert_eq!(schema["$defs"], json!({}));
+    // Only the intent groups a goal review pairs its choices with; no ref namespace.
+    let defs: Vec<&String> = schema["$defs"].as_object().unwrap().keys().collect();
+    assert_eq!(defs, ["activeIntent", "passiveIntent", "steppingIntent"]);
 
     let crafting = decision_schema_for(
         &OfferedRefs::of(&fixture("perception-crafting")),
@@ -186,7 +216,7 @@ fn every_offered_ref_is_one_enum_once_whichever_actions_spend_it() {
             + offered.pickup_items.len()
             + offered.route_items.len()
     );
-    for variant in schema["properties"]["intent"]["anyOf"].as_array().unwrap() {
+    for variant in intent_variants(&schema) {
         for (name, field) in variant["properties"].as_object().unwrap() {
             if ["action", "face", "destination", "approach"].contains(&name.as_str()) {
                 continue;
@@ -289,19 +319,41 @@ fn a_collect_or_attack_names_only_what_its_own_mode_can_reach() {
     assert_eq!(collects, 2, "one closed variant per approach mode");
 }
 
-/// The dispositions, `null` as "none", a schema's goal choice offers.
+/// Every goal choice shape `schema` offers: a coupled schema's stepping pairing first.
+fn goal_shapes(schema: &Value) -> Vec<Value> {
+    if coupled(schema) {
+        schema["properties"]["decision"]["anyOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|pairing| {
+                pairing["properties"]["goal"]["anyOf"]
+                    .as_array()
+                    .unwrap()
+                    .clone()
+            })
+            .collect()
+    } else {
+        schema["properties"]["goal"]["anyOf"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+}
+
+/// The dispositions, `null` as "none", a schema's goal choice offers, each once.
 fn dispositions(schema: &Value) -> Vec<String> {
-    schema["properties"]["goal"]["anyOf"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|variant| {
-            variant["properties"]["disposition"]["enum"][0]
-                .as_str()
-                .unwrap_or("none")
-                .to_owned()
-        })
-        .collect()
+    let mut named: Vec<String> = Vec::new();
+    for variant in goal_shapes(schema) {
+        let name = variant["properties"]["disposition"]["enum"][0]
+            .as_str()
+            .unwrap_or("none")
+            .to_owned();
+        if !named.contains(&name) {
+            named.push(name);
+        }
+    }
+    named
 }
 
 /// [`seen`] with a dead bush in reach that drops nought to two sticks.
@@ -334,7 +386,7 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     // there is no success item to name, so no goal can be worded.
     let review = fixture("perception-goal-review");
     assert_eq!(dispositions(&of(&review)), ["none"]);
-    assert_eq!(dispositions(&of(&with_bush(review))), ["none", "adopt"]);
+    assert_eq!(dispositions(&of(&with_bush(review))), ["adopt", "none"]);
     // An unmet condition is never completed, and a held goal is always answered. Eight oak logs
     // with nothing in sight to give one cannot be met, so it is not offered a continue (r15: a
     // continue was the one disposition the obtainability rule did not reach), and with a bush in
@@ -348,40 +400,54 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     let mut sticks = carried;
     let goal = sticks.goal.as_mut().unwrap();
     goal.success_item = Some("item.minecraft.stick".to_owned());
-    goal.success_count = Some(2);
+    goal.success_count = Some(1);
     assert_eq!(dispositions(&of(&sticks)), ["abandon"]);
     assert_eq!(
-        dispositions(&of(&with_bush(sticks))),
+        dispositions(&of(&with_bush(sticks.clone()))),
         ["continue", "revise", "abandon"]
     );
+    // Two sticks are one more than a bush's expected yield: not continued (r16 calibration).
+    sticks.goal.as_mut().unwrap().success_count = Some(2);
+    assert_eq!(dispositions(&of(&with_bush(sticks))), ["revise", "abandon"]);
     // r11: delta, epsilon and zeta held the stick their goal named and went on. A met
     // condition is completed or revised; nothing else, not even no choice, is offered.
     let met = with_bush(fixture("perception-goal-condition-met"));
-    assert_eq!(dispositions(&of(&met)), ["complete", "revise"]);
-    let continuing = json!({ "intent": { "action": "idle" }, "reasoning": "r", "goal": {
-        "disposition": "continue", "step": "s", "stepResult": "done"
-    }});
+    assert_eq!(dispositions(&of(&met)), ["revise", "complete"]);
     let schema = of(&met);
     let validator = jsonschema::validator_for(&schema).unwrap();
+    let continuing = answer_in(
+        &schema,
+        &json!({ "action": "idle" }),
+        &json!({ "disposition": "continue", "step": "s", "stepResult": "done" }),
+    );
     assert!(!validator.is_valid(&continuing));
-    assert!(!validator.is_valid(&answer(&json!({ "action": "idle" }))));
+    assert!(!validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "idle" }),
+        &json!(null)
+    )));
+    // A complete travels with any intent, idle included.
+    let completing = answer_in(
+        &schema,
+        &json!({ "action": "idle" }),
+        &json!({ "disposition": "complete", "stepResult": "done" }),
+    );
+    assert!(validator.is_valid(&completing));
     // A settled step reviews the goal just as a scheduled review does.
     let mut settled = fixture("perception-goal-carried");
     settled.trigger = loom_contract::Trigger::StepSettled;
     assert_eq!(GoalPhase::of(&settled), GoalPhase::Held);
-    // Any other trigger keeps the reference shape's whole offer, less the worded choices when,
-    // as here, nothing obtainable is in sight for a success item to name.
+    // Any other trigger keeps the reference shape's whole flat offer, less the worded choices
+    // when, as here, nothing obtainable is in sight for a success item to name.
     assert_eq!(
         dispositions(&of(&fixture("perception-threat-sighted"))),
-        ["none", "continue", "complete", "abandon"]
+        ["continue", "none", "complete", "abandon"]
     );
 }
 
 /// The count bounds a request's goal shapes give `item` under `disposition`.
 fn count_bounds(schema: &Value, disposition: &str, item: &str) -> Vec<(i64, i64)> {
-    schema["properties"]["goal"]["anyOf"]
-        .as_array()
-        .unwrap()
+    goal_shapes(schema)
         .iter()
         .filter(|variant| variant["properties"]["disposition"]["enum"][0] == disposition)
         .filter(|variant| variant["properties"]["successItem"]["enum"][0] == item)
@@ -405,18 +471,29 @@ fn a_success_count_is_the_total_to_hold_bounded_by_what_is_held_and_what_sight_c
         count: 3,
     });
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
-    // Three held and a bush that gives up to two: a total of four or five (r15: counts were read
-    // as more to gather, and eight goals asked for more than sight could give).
-    assert_eq!(count_bounds(&schema, "adopt", stick), [(4, 5)]);
+    // Three held and a bush expected to give one of its nought to two: a total of four (r15:
+    // counts were read as more to gather; r16: goals sized to every bush's best case failed).
+    assert_eq!(count_bounds(&schema, "adopt", stick), [(4, 4)]);
     let validator = jsonschema::validator_for(&schema).unwrap();
-    let adopt = |count: i64| {
-        json!({ "intent": { "action": "dig", "block": "b9" }, "reasoning": "r", "goal": {
-            "disposition": "adopt", "successItem": stick, "successCount": count, "step": "s"
-        }})
+    let adopt = |intent: Value, count: i64| {
+        answer_in(
+            &schema,
+            &intent,
+            &json!({ "disposition": "adopt", "successItem": stick, "successCount": count, "step": "s" }),
+        )
     };
-    assert!(validator.is_valid(&adopt(5)));
-    assert!(!validator.is_valid(&adopt(3)));
-    assert!(!validator.is_valid(&adopt(6)));
+    let dig = json!({ "action": "dig", "block": "b9" });
+    assert!(validator.is_valid(&adopt(dig.clone(), 4)));
+    assert!(!validator.is_valid(&adopt(dig.clone(), 3)));
+    assert!(!validator.is_valid(&adopt(dig, 5)));
+    // An adopt takes the answer's action as its step, so it never travels with idle or rest
+    // (r16: gamma and theta adopted beside idle).
+    for passive in ["idle", "rest"] {
+        assert!(
+            !validator.is_valid(&adopt(json!({ "action": passive }), 4)),
+            "{passive}"
+        );
+    }
 }
 
 #[test]
@@ -456,10 +533,108 @@ fn a_held_goal_offers_dig_and_collect_only_for_what_can_give_its_item() {
     assert_eq!(offered.pursued.as_deref(), Some("item.minecraft.stick"));
     assert_eq!(offered.dig_blocks, ["b9"]);
     assert_eq!(offered.route_items, ["d2"]);
-    assert_eq!(offered.capacity_of("item.minecraft.stick"), 3);
+    assert_eq!(offered.capacity_of("item.minecraft.stick"), 2);
     // Without the goal every handle in reach is offered again, but never the refused route.
     seen.goal = None;
     let free = OfferedRefs::of(&seen);
     assert_eq!(free.dig_blocks, ["b9", "b8"]);
     assert_eq!(free.route_items, ["d1", "d2"]);
+}
+
+/// A dropped stick `distance` blocks off, offered by `handle`.
+fn stick_drop(handle: &str, distance: f64) -> Observation {
+    Observation {
+        kind: ObservationKind::DroppedItem,
+        what: "item.minecraft.stick".to_owned(),
+        distance,
+        direction: loom_contract::Bearing::North,
+        vertical_offset: 0.0,
+        visible: true,
+        target_ref: handle.to_owned(),
+        count: Some(2),
+        standable: None,
+        yields: None,
+        dig_safe: None,
+        route_refused: None,
+    }
+}
+
+/// [`fixture`]'s carried goal turned into a stick goal of `count` that advanced nothing for
+/// `stalled` steps, beside a bush.
+fn stick_goal(count: i64, stalled: i64) -> Perception {
+    let mut seen = with_bush(fixture("perception-goal-carried"));
+    let goal = seen.goal.as_mut().unwrap();
+    goal.success_item = Some("item.minecraft.stick".to_owned());
+    goal.success_count = Some(count);
+    goal.progress.as_mut().unwrap().steps_without_progress = stalled;
+    seen
+}
+
+#[test]
+fn a_goal_at_the_stall_bound_is_offered_only_a_replace_beside_an_action() {
+    // r16 alpha body:00000113 and kappa body:00000148: a continue or revise at the bound was
+    // refused, the right collect with it, and a full review cycle was lost.
+    let seen = stick_goal(1, loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS);
+    assert_eq!(GoalPhase::of(&seen), GoalPhase::Stalled);
+    let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
+    assert_eq!(dispositions(&schema), ["replace"]);
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let replace = json!({ "disposition": "replace", "successItem": "item.minecraft.stick",
+        "successCount": 1, "step": "dig the bush", "stepResult": "noProgress" });
+    let dig = json!({ "action": "dig", "block": "b9" });
+    assert!(validator.is_valid(&answer_in(&schema, &dig, &replace)));
+    for passive in ["idle", "rest"] {
+        assert!(!validator.is_valid(&answer_in(&schema, &json!({ "action": passive }), &replace)));
+    }
+    for kept in ["continue", "revise"] {
+        let choice = json!({ "disposition": kept, "step": "s", "stepResult": "noProgress",
+            "successItem": "item.minecraft.stick", "successCount": 1 });
+        assert!(
+            !validator.is_valid(&answer_in(&schema, &dig, &choice)),
+            "{kept}"
+        );
+    }
+    // A met condition is completed, whatever the count says.
+    let mut met = seen;
+    met.goal
+        .as_mut()
+        .unwrap()
+        .progress
+        .as_mut()
+        .unwrap()
+        .condition_met = true;
+    assert_eq!(GoalPhase::of(&met), GoalPhase::Met);
+}
+
+#[test]
+fn an_own_drop_of_the_goal_item_in_reach_is_collected_before_any_dig() {
+    // r16: in 11 of 21 reviews with its own stick on offer the agent dug again or idled, and
+    // delta collected the lost drops (body:00000241, body:00000298).
+    let mut seen = stick_goal(1, 0);
+    seen.surroundings.push(stick_drop("d7", 6.0));
+    seen.self_state.own_drops.push(loom_contract::OwnDrop {
+        request_id: "req-dig".to_owned(),
+        what: "item.minecraft.stick".to_owned(),
+        count: 2,
+        fate: loom_contract::DropFate::Lying,
+        distance: Some(6.0),
+        direction: Some(loom_contract::Bearing::North),
+        vertical_offset: Some(0.0),
+        drop_ref: Some("d7".to_owned()),
+    });
+    let offered = OfferedRefs::of(&seen);
+    assert!(offered.collect_required);
+    assert!(offered.dig_blocks.is_empty());
+    let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let continuing = json!({ "disposition": "continue", "step": "s", "stepResult": "progressing" });
+    let collect = json!({ "action": "collect", "item": "d7", "approach": true });
+    assert!(validator.is_valid(&answer_in(&schema, &collect, &continuing)));
+    let dig = json!({ "action": "dig", "block": "b9" });
+    assert!(!validator.is_valid(&answer_in(&schema, &dig, &continuing)));
+    let walk = json!({ "action": "moveTo", "onto": "b9" });
+    assert!(!validator.is_valid(&answer_in(&schema, &walk, &continuing)));
+    // Abandoning stays open beside any action.
+    let abandon = json!({ "disposition": "abandon", "stepResult": "noProgress" });
+    assert!(validator.is_valid(&answer_in(&schema, &walk, &abandon)));
 }

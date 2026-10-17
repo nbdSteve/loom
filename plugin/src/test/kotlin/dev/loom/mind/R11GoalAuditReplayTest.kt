@@ -55,6 +55,8 @@ class R11GoalAuditReplayTest {
                     capacity = scene.capacity,
                     visible = setOfNotNull(intent.targetRef),
                     dropped = scene.dropped,
+                    // The cited walks were to bushes, sources of the goal's sticks.
+                    gives = listOfNotNull(intent.targetRef).associateWith { setOf(STICK) },
                 ),
             )
         val decision = decisionFor(perception(requestId = requestId, agentId = agent), intent).copy(goal = choice)

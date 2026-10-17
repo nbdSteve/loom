@@ -53,6 +53,9 @@ data class GoalEvidence(
         const val COMPLETED: String = "goalCompleted"
         const val ABANDONED: String = "goalAbandoned"
 
+        /** The held goal was abandoned and a new one adopted in the same answer, under its id. */
+        const val REPLACED: String = "goalReplaced"
+
         /** The mind made no goal choice; any held goal stays and keeps ageing. */
         const val UNADDRESSED: String = "goalUnaddressed"
 
@@ -129,6 +132,13 @@ data class GoalEvidence(
          */
         const val STEP_UNPRODUCTIVE: String = "goalStepUnproductive"
 
+        /**
+         * A continue or revise whose intent is not a collect while the agent's own drop of the goal's
+         * item lies in reach: refused with the intent, since a drop left lying is one another agent
+         * can take (r16: in 11 of 21 such reviews the agent dug again or idled beside its stick).
+         */
+        const val OWN_DROP_IGNORED: String = "goalOwnDropIgnored"
+
         /** The outcomes that refuse the decision's intent along with its goal choice. */
         val REFUSING: Set<String> =
             setOf(
@@ -140,11 +150,12 @@ data class GoalEvidence(
                 STALLED,
                 CHOICE_MISSING,
                 STEP_UNPRODUCTIVE,
+                OWN_DROP_IGNORED,
             )
 
         /** The outcomes that settle a decision with nothing its next review needs to be told. */
         val TOLD_NOTHING: Set<String> =
-            setOf(ADOPTED, CONTINUED, REVISED, COMPLETED, ABANDONED, UNADDRESSED, STALE, NOT_REVIEWED)
+            setOf(ADOPTED, CONTINUED, REVISED, REPLACED, COMPLETED, ABANDONED, UNADDRESSED, STALE, NOT_REVIEWED)
 
         /** A goal choice on a decision that did not answer a goal review. */
         const val NOT_REVIEWED: String = "goalNotReviewed"

@@ -22,6 +22,7 @@ import dev.loom.body.BodyPort
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
 import dev.loom.body.IntentOutcome
+import dev.loom.body.ShownGoal
 import dev.loom.body.tagOf
 import dev.loom.contract.Decision
 import dev.loom.contract.Perception
@@ -178,7 +179,7 @@ class EmbodiedCognition(
                 if (decision == null) {
                     lost(agentId, carried, failure ?: missingBoth(carried))
                 } else {
-                    actOn(agentId, decision)
+                    actOn(agentId, decision, carried.shownGoal())
                 }
             }
         }
@@ -281,9 +282,10 @@ class EmbodiedCognition(
     private fun actOn(
         agentId: AgentId,
         decision: Decision,
+        shown: ShownGoal?,
     ) {
         val goal = goals.resolve(agentId, decision)
-        journal.decided(agentId, decision, goal)
+        journal.decided(agentId, decision, goal, shown)
         // A decision incoherent with its own goal is refused here, before the body is asked:
         // its typed step is not its intent, or it ignored a met success condition.
         if (goal != null && goal.outcome in GoalEvidence.REFUSING) {
@@ -352,3 +354,6 @@ class EmbodiedCognition(
             failure
         }
 }
+
+/** What this perception showed cognition of its goal, when it reviews one. */
+private fun Perception.shownGoal(): ShownGoal? = ShownGoal(goal, lastRefusal).takeIf { trigger.reviewsGoal }

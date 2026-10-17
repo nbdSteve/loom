@@ -13,6 +13,7 @@ import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.GoalEvidence
+import dev.loom.body.ShownGoal
 import dev.loom.body.describe
 import dev.loom.body.tagOf
 import dev.loom.contract.Decision
@@ -39,8 +40,12 @@ class DecisionJournal(
         agentId: AgentId,
         decision: Decision,
         goal: GoalEvidence? = null,
+        shown: ShownGoal? = null,
     ) {
-        append(agentId, decision, BodyEvent.DECIDED, "${describe(decision.intent)}: ${decision.reasoning}", goal)
+        eventLog.append(
+            recordOf(agentId, decision, BodyEvent.DECIDED, "${describe(decision.intent)}: ${decision.reasoning}")
+                .copy(goal = goal, shown = shown),
+        )
     }
 
     /**
@@ -124,22 +129,26 @@ class DecisionJournal(
         decision: Decision,
         event: BodyEvent,
         detail: String,
-        goal: GoalEvidence? = null,
     ) {
-        eventLog.append(
-            BodyEventRecord(
-                tick = currentTick(),
-                // Loom's own id for the agent it asked about, never the mind's echo of
-                // it, so no answer can file a record against another agent.
-                agentId = agentId.value,
-                event = event,
-                detail = detail,
-                requestId = decision.requestId,
-                provenance = decision.provenance,
-                intent = tagOf(decision.intent),
-                decision = decision,
-                goal = goal,
-            ),
-        )
+        eventLog.append(recordOf(agentId, decision, event, detail))
     }
+
+    private fun recordOf(
+        agentId: AgentId,
+        decision: Decision,
+        event: BodyEvent,
+        detail: String,
+    ): BodyEventRecord =
+        BodyEventRecord(
+            tick = currentTick(),
+            // Loom's own id for the agent it asked about, never the mind's echo of
+            // it, so no answer can file a record against another agent.
+            agentId = agentId.value,
+            event = event,
+            detail = detail,
+            requestId = decision.requestId,
+            provenance = decision.provenance,
+            intent = tagOf(decision.intent),
+            decision = decision,
+        )
 }

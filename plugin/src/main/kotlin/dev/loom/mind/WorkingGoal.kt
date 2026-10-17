@@ -27,6 +27,7 @@ package dev.loom.mind
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
 import dev.loom.contract.AIR_ITEM
+import dev.loom.contract.DropFate
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalProgress
@@ -81,6 +82,8 @@ data class GoalObservation(
     val visible: Set<String> = emptySet(),
     val dropped: Set<String> = emptySet(),
     val gives: Map<String, Set<String>> = emptyMap(),
+    /** The agent's own lying drops a collect can route to, by ref, with the item each holds. */
+    val ownDrops: Map<String, String> = emptyMap(),
 ) {
     /** The block cell the agent stood in. */
     val cell: List<Int> get() = position.map { floor(it).toInt() }
@@ -96,22 +99,31 @@ data class GoalObservation(
                 seen.filter { it.kind == ObservationKind.DROPPED_ITEM && it.routeRefused != true }
                     .filter { it.distance <= COLLECT_REACH_BLOCKS }
             val digs = seen.filter { it.kind == ObservationKind.BLOCK && it.visible && it.digSafe == true }
-            val crafted = perception.selfState.craftingOptions.map { it.what to it.resultCount * it.maxCrafts }
-            val dug = digs.flatMap { it.yields.orEmpty() }.map { it.what to it.most }
+            // In halves of an item: a drop or craft exactly, a block its expected yield, the
+            // mean of its random least and most (r16: goals sized to every bush's most failed).
+            val crafted = perception.selfState.craftingOptions.map { it.what to 2 * it.resultCount * it.maxCrafts }
+            val dug = digs.flatMap { it.yields.orEmpty() }.filter { it.most >= 1 }.map { it.what to it.least + it.most }
+            val reachable = drops.map { it.ref }.toSet()
             return GoalObservation(
                 inventory = inventoryOf(perception.selfState),
                 position = perception.selfState.position,
                 capacity =
-                    (drops.map { it.what to (it.count ?: 1) } + crafted + dug)
+                    (drops.map { it.what to 2 * (it.count ?: 1) } + crafted + dug)
                         .filter { (what, _) -> isItemName(what) && what != AIR_ITEM }
                         .groupBy({ it.first }, { it.second })
-                        .mapValues { (_, counts) -> counts.sum() },
+                        .mapValues { (_, halves) -> halves.sum() / 2 }
+                        .filterValues { it >= 1 },
                 visible = seen.filter { it.visible }.map { it.ref }.toSet(),
                 dropped = perception.selfState.ownDrops.map { it.requestId }.toSet(),
                 gives =
                     seen
                         .filter { it.kind != ObservationKind.ENTITY }
                         .associate { seen -> seen.ref to (seen.yields?.map { it.what } ?: listOf(seen.what)).toSet() },
+                ownDrops =
+                    perception.selfState.ownDrops
+                        .filter { it.fate == DropFate.LYING }
+                        .mapNotNull { drop -> drop.ref?.takeIf { it in reachable }?.let { it to drop.what } }
+                        .toMap(),
             )
         }
 
@@ -128,6 +140,8 @@ internal data class StepRecord(
     val visible: Boolean,
     /** For a walk or flight, whether the body reported arriving. */
     val reached: Boolean?,
+    /** Whether the step's target is itself a source of the goal's item, as a walk must be. */
+    val towardSource: Boolean = false,
 )
 
 /**
@@ -180,7 +194,9 @@ private fun stepEvidenceOf(
     val accepted = goal.lastStep?.outcome == EventTag.ACCEPTED
     val gained = observed.inventory.any { (what, count) -> count > (before.inventory[what] ?: 0) }
     val dropped = goal.lastStep?.requestId?.let { it in observed.dropped } == true
-    val arrived = step.reached == true && step.visible && observed.cell !in step.visited
+    // A walk is evidence only onto a block that is itself a source of the goal's item (r16: two
+    // one-block walks onto terracotta were credited and reset the stall count).
+    val arrived = step.reached == true && step.visible && step.towardSource && observed.cell !in step.visited
     return when {
         !accepted -> StepEvidence.NONE
         goal.stepAction in MOVEMENT_STEPS -> if (arrived) StepEvidence.ARRIVED else StepEvidence.NONE
@@ -225,10 +241,13 @@ internal fun statementOf(
     count: Long,
 ): String = "hold $count $item"
 
+/** The dispositions that set a held goal's target anew, beside an adopt's first one. */
+private val RETARGETING = setOf(GoalDisposition.REVISE, GoalDisposition.REPLACE)
+
 /** The first field [choice]'s disposition requires that it did not give, or `null`. */
 internal fun missingFieldOf(choice: GoalChoice): String? {
     val adopting = choice.disposition == GoalDisposition.ADOPT
-    val worded = adopting || choice.disposition == GoalDisposition.REVISE
+    val worded = adopting || choice.disposition in RETARGETING
     val stepped = worded || choice.disposition == GoalDisposition.CONTINUE
     return when {
         worded && (choice.successItem == null || choice.successCount == null) -> GoalEvidence.SUCCESS_TARGET_MISSING

@@ -20,7 +20,8 @@ import dev.loom.contract.action
 internal val PASSIVE = setOf(IntentAction.IDLE, IntentAction.REST)
 
 /** The dispositions that take the decision's intent as the goal's step. */
-private val STEPPING = setOf(GoalDisposition.ADOPT, GoalDisposition.CONTINUE, GoalDisposition.REVISE)
+internal val STEPPING =
+    setOf(GoalDisposition.ADOPT, GoalDisposition.CONTINUE, GoalDisposition.REVISE, GoalDisposition.REPLACE)
 
 /**
  * Why [choice] cannot stand beside [intent] and the goal [presented] carried, or `null`: a met
@@ -41,6 +42,26 @@ internal fun incoherenceOf(
         ?: successRefusalOf(presented, choice, observed)
         ?: GoalEvidence.STEP_IDLE.takeIf { stepping && intent.action in PASSIVE }
         ?: GoalEvidence.STEP_UNPRODUCTIVE.takeIf { stepping && !canGive(presented, choice, intent, observed) }
+        ?: GoalEvidence.OWN_DROP_IGNORED.takeIf { ownDropIgnored(presented, choice, intent, observed) }
+}
+
+/** The dispositions that keep pursuing the held goal's item, rather than set a new goal. */
+private val PURSUING = setOf(GoalDisposition.CONTINUE, GoalDisposition.REVISE)
+
+/**
+ * Whether [choice] keeps pursuing the held goal while its item lies in reach as the agent's own
+ * drop and [intent] is not a collect: a drop left lying is one another agent can take (r16: in 11
+ * of 21 such reviews the agent dug again or idled, and delta collected the lost sticks).
+ */
+private fun ownDropIgnored(
+    presented: GoalSummary?,
+    choice: GoalChoice?,
+    intent: Intent,
+    observed: GoalObservation?,
+): Boolean {
+    val item = targetOf(presented, choice)?.first ?: return false
+    val lying = observed?.ownDrops?.containsValue(item) == true
+    return choice?.disposition in PURSUING && presented != null && lying && intent !is Intent.Collect
 }
 
 /**
@@ -65,12 +86,15 @@ private fun conditionRefusalOf(
     }
 }
 
+/** The dispositions that set a success condition of their own. */
+private val SETTING = setOf(GoalDisposition.ADOPT, GoalDisposition.REVISE, GoalDisposition.REPLACE)
+
 /** The success condition [choice] sets, or for a continue the one [presented] carries. */
 private fun targetOf(
     presented: GoalSummary?,
     choice: GoalChoice?,
 ): Pair<String, Long>? {
-    val setting = choice?.disposition == GoalDisposition.ADOPT || choice?.disposition == GoalDisposition.REVISE
+    val setting = choice?.disposition in SETTING
     val item = if (setting) choice?.successItem else presented?.successItem
     val count = if (setting) choice?.successCount else presented?.successCount
     return if (item != null && count != null) item to count else null

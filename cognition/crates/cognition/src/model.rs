@@ -373,7 +373,7 @@ impl ScriptedBackend {
             step: Some(SCRIPTED_STEP.to_owned()),
             step_result,
         };
-        let digging = matches!(intent, Intent::Dig { .. });
+        let digging = matches!(intent, Intent::Dig { .. } | Intent::Collect { .. });
         let Some(held) = &perception.goal else {
             let Intent::Dig { block } = intent else {
                 return None;
@@ -530,27 +530,47 @@ impl ScriptedBackend {
             }
             // The stand-in's one routine step: dig the nearest offered block that can drop
             // something, the held goal's item first, or do nothing when no such block is in reach.
-            Trigger::GoalReview | Trigger::StepSettled => {
-                let wanted = perception.goal.as_ref().and_then(|goal| goal.success_item.as_deref());
-                match nearest_yielding_dig(perception, wanted) {
-                    Some((block, item)) => Draft {
-                        goal: None,
-                        intent: Intent::Dig { block },
-                        reasoning: format!(
-                            "reviewed goals at the {tier:?} tier; a block in reach can drop {item}, so dig it",
-                            tier = route.tier()
-                        ),
-                    },
-                    None => Draft {
-                        goal: None,
-                        intent: Intent::Idle,
-                        reasoning: format!(
-                            "reviewed goals at the {tier:?} tier; no block in reach drops anything",
-                            tier = route.tier()
-                        ),
-                    },
-                }
-            }
+            Trigger::GoalReview | Trigger::StepSettled => Self::review_step(route, perception),
+        }
+    }
+}
+
+impl ScriptedBackend {
+    /// The stand-in's one routine step: collect its own drop of the held goal's item while one
+    /// lies in reach, as the body requires; else dig the nearest offered block that can drop
+    /// something, the held goal's item first; else do nothing.
+    fn review_step(route: &ModelRoute, perception: &Perception) -> Draft {
+        if let Some((item, approach)) = own_goal_drop(perception) {
+            return Draft {
+                goal: None,
+                intent: Intent::Collect { item, approach },
+                reasoning: format!(
+                    "reviewed goals at the {tier:?} tier; my own drop of the goal's item lies in reach, so collect it",
+                    tier = route.tier()
+                ),
+            };
+        }
+        let wanted = perception
+            .goal
+            .as_ref()
+            .and_then(|goal| goal.success_item.as_deref());
+        match nearest_yielding_dig(perception, wanted) {
+            Some((block, item)) => Draft {
+                goal: None,
+                intent: Intent::Dig { block },
+                reasoning: format!(
+                    "reviewed goals at the {tier:?} tier; a block in reach can drop {item}, so dig it",
+                    tier = route.tier()
+                ),
+            },
+            None => Draft {
+                goal: None,
+                intent: Intent::Idle,
+                reasoning: format!(
+                    "reviewed goals at the {tier:?} tier; no block in reach drops anything",
+                    tier = route.tier()
+                ),
+            },
         }
     }
 }
@@ -572,6 +592,18 @@ fn nearest_yielding_dig(perception: &Perception, wanted: Option<&str>) -> Option
         .and_then(|want| pick(Some(want)))
         .or_else(|| pick(Some(SCRIPTED_SUCCESS_ITEM)))
         .or_else(|| pick(None))
+}
+
+/// The ref of the agent's own drop of its held goal's item that the body requires it to collect,
+/// and whether reaching it needs an approach, or `None` when no collect is required.
+fn own_goal_drop(perception: &Perception) -> Option<(String, bool)> {
+    let offered = crate::offered::OfferedRefs::of(perception);
+    let wanted = offered.pursued.as_ref()?;
+    if !offered.collect_required {
+        return None;
+    }
+    let (handle, _) = offered.own_drops.iter().find(|(_, what)| what == wanted)?;
+    Some((handle.clone(), !offered.pickup_items.contains(handle)))
 }
 
 /// What digging the observed block `block` is for: `want` when it can drop that, else the

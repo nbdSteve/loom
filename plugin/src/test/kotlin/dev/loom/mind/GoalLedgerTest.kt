@@ -289,7 +289,12 @@ class GoalLedgerTest {
     ): Pair<GoalSummary?, GoalEvidence?> {
         val tick = requestId.drop(1).toLong() * 100
         // The step's own target is in sight, and a walk the body accepted arrived.
-        val seen = observed.copy(visible = observed.visible + listOfNotNull(intent.targetRef))
+        // Each walked-to target is a bush, a source of the goal's sticks, as the r11 scenes' were.
+        val seen =
+            observed.copy(
+                visible = observed.visible + listOfNotNull(intent.targetRef),
+                gives = observed.gives + listOfNotNull(intent.targetRef).associateWith { setOf(STICK) },
+            )
         val result = affirm(requestId, tick, seen, goalChoice(disposition), intent)
         val walk = intent is Intent.MoveTo || intent is Intent.Flee
         ledger.stepped(

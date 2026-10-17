@@ -93,7 +93,7 @@ token ceiling used by the research harness when it proves that the configured
 call budget cannot cross the spend ceiling.
 
 The canonical 48-entity, 48-block, 48-item fixture is 22,292 bytes on the cognition
-socket, 816 of them each block's `standable` and 1,296 each block's `yields` and `digSafe`. With `routine-v24`, it renders to 24,505 bytes of prompt text and a 30,796-byte
+socket, 816 of them each block's `standable` and 1,296 each block's `yields` and `digSafe`. With `routine-v25`, it renders to 25,371 bytes of prompt text and a 35,137-byte
 serialized provider request; the strict response schema's goal choice is most of the
 growth since `routine-v12` (23,931 bytes), and v17's working-goal fields (success condition,
 step, step verdict) are most of the 3,566 bytes added to v13's 26,500. v18's per-request
@@ -104,10 +104,12 @@ item and count and the step's action and ref to the goal variants, and narrows t
 adds the line of what digging would drop and an enum of the success items obtainable now, capped at 48; v23 states each yield's
 random range, what sight could give beyond what is held, and the agent's own drops, and drops the stated success condition and
 typed step from the answer; v24 drops the goal's statement from the answer, gives each success item, now capped at 16, its own
-goal shape with the counts it admits, and words the goal's rules and any refusal. The same envelope at
+goal shape with the counts it admits, and words the goal's rules and any refusal; v25 pairs each goal
+choice with the intents it may travel with, defining the intent variants once under `$defs`, and adds
+the replace shapes, which is most of its 4,341 bytes. The same envelope at
 a goal review carrying the widest legal goal (160-character statement, success condition and
 step, 64-character ids and item names, a 32-character step action, all 46 inventory changes, and the widest refusal it can be
-told of) renders a 36,971-byte request, 28,565 bytes inside the 65,536-byte quarter of the
+told of) renders a 41,450-byte request, 24,086 bytes inside the 65,536-byte quarter of the
 256 KiB ceiling that `openai::wire` tests pin. At `routine-v12`, local `o200k_base`
 tokenization measured 4,842 tokens for the system and situation text and 5,895 for the
 serialized request JSON; those are reproducible local tokenizer counts, not a claim about provider-billed chat framing. On an Apple M3

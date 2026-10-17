@@ -26,8 +26,11 @@ import java.util.UUID
 private const val MAX_PENDING_DROPS = 32
 
 /**
- * How long a drop waits to be attributed, and how long an attributed one is told: two goal
- * review cadences, so a review after the one following the dig still hears of it.
+ * How long a drop waits to be attributed, and how long an attributed one whose fate is known is
+ * still told: two goal review cadences, so a review after the one following the dig still hears
+ * of it. A drop still lying is told for as long as the server has its item entity, however long
+ * that is (r16: alpha's stick was forgotten at 4800 ticks while it lay another 550, and gamma
+ * took it); vanilla despawns an untouched item after 6000 ticks, which the despawn event reports.
  */
 internal const val OWN_DROP_RETENTION_TICKS: Long = 4800
 
@@ -105,7 +108,7 @@ internal class OwnDropLedger(
     private val currentTick: () -> Long,
     private val locate: (UUID) -> List<Double>?,
 ) {
-    private class Drop(
+    private inner class Drop(
         val owner: UUID,
         var entity: UUID,
         val what: String,
@@ -115,6 +118,13 @@ internal class OwnDropLedger(
     ) {
         var requestId: String? = null
         var fate: DropFate = DropFate.LYING
+            set(value) {
+                if (field == DropFate.LYING && value != DropFate.LYING) settledTick = currentTick()
+                field = value
+            }
+
+        /** When [fate] became known, from which a told drop's retention runs. */
+        var settledTick: Long? = null
     }
 
     private val pending = mutableMapOf<UUID, ArrayDeque<Drop>>()
@@ -172,16 +182,21 @@ internal class OwnDropLedger(
         for (drop in ours) {
             drop.requestId = requestId
             told.addFirst(drop)
-            while (told.size > MAX_OWN_DROPS) told.removeLast()
+            while (told.size > MAX_OWN_DROPS) told.remove(evictable(told))
         }
         return ours.map(::readingOf)
     }
 
     fun of(owner: UUID): List<OwnDropReading> {
         val told = attributed[owner] ?: return emptyList()
-        prune(told)
+        // Reading first settles the fate of a drop the server no longer has, so it can be forgotten.
+        told.forEach(::readingOf)
+        prune(told, keepLying = true)
         return told.map(::readingOf)
     }
+
+    /** The oldest drop whose fate is known, or the oldest of all when every one still lies. */
+    private fun evictable(told: ArrayDeque<Drop>): Drop = told.lastOrNull { it.fate != DropFate.LYING } ?: told.last
 
     private fun tracked(entity: UUID): Drop? =
         (pending.values.asSequence() + attributed.values.asSequence())
@@ -196,9 +211,20 @@ internal class OwnDropLedger(
         return OwnDropReading(requireNotNull(drop.requestId), drop.what, drop.count, drop.fate, place, entity)
     }
 
-    private fun prune(queue: ArrayDeque<Drop>) {
+    /**
+     * Forgets a drop past retention; with [keepLying], as for an attributed drop, only one whose
+     * fate is known, so a lying one stays told until the server no longer has its entity, which
+     * [readingOf] turns into a known fate. An unattributed drop waits only as long as retention.
+     */
+    private fun prune(
+        queue: ArrayDeque<Drop>,
+        keepLying: Boolean = false,
+    ) {
         val now = currentTick()
-        queue.removeAll { now - it.tick > OWN_DROP_RETENTION_TICKS }
+        queue.removeAll { drop ->
+            val since = if (keepLying) drop.settledTick else drop.tick
+            since != null && now - since > OWN_DROP_RETENTION_TICKS
+        }
     }
 }
 

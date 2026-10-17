@@ -31,7 +31,11 @@
  *   collects what cannot give its item, is refused before its intent reaches the body
  *   (`incoherenceOf`);
  * - a goal decision the ledger refused is told, with the numbers it was judged by, to the agent's
- *   next goal review, once.
+ *   next goal review, once;
+ * - a replace ends the held goal and adopts a new one under its own decision's id in one answer,
+ *   which is how a goal at the stall bound keeps acting without losing a review cycle;
+ * - a continue or revise that does not collect the agent's own lying drop of its goal's item is
+ *   refused, and a walk is credited only onto a block that is itself a source of the goal's item.
  */
 package dev.loom.mind
 
@@ -87,6 +91,7 @@ class GoalLedger(
         val stepVisible: Boolean = false,
         val reached: Boolean? = null,
         val measured: Boolean = false,
+        val towardSource: Boolean = false,
     ) {
         /**
          * This goal as [now] shows it, and the goal to hold after: its settled step measured, once.
@@ -98,9 +103,8 @@ class GoalLedger(
             if (measured && earlier != null) {
                 return summary.copy(progress = remeasured(summary, earlier, now)) to this
             }
-            val progress =
-                progressOf(summary, observed, now, StepRecord(visited, stepVisible, reached), stepsWithoutProgress)
-                    ?: earlier
+            val step = StepRecord(visited, stepVisible, reached, towardSource)
+            val progress = progressOf(summary, observed, now, step, stepsWithoutProgress) ?: earlier
             val shown = summary.copy(progress = progress)
             val settled = summary.lastStep != null && progress != null
             return shown to if (settled) copy(summary = shown, measured = true) else this
@@ -301,17 +305,30 @@ class GoalLedger(
         val next = nextGoalOf(presented, choice, Affirmation(requestId, basis.capturedTick, decision.intent))
         // A continue or revise carries the run of steps that changed nothing; only an adopted
         // goal starts it again, since only a measured change is evidence of progress.
-        val carriedCount =
-            if (choice.disposition == GoalDisposition.ADOPT) 0 else presented?.progress?.stepsWithoutProgress ?: 0
+        val fresh = choice.disposition in STARTING
+        val carriedCount = if (fresh) 0 else presented?.progress?.stepsWithoutProgress ?: 0
         // A new goal starts with only the cell it was adopted at; a kept goal remembers every cell
         // it has been reviewed at, so a walk back to one of them is no arrival anywhere new.
-        val earlier = if (choice.disposition == GoalDisposition.ADOPT) emptySet() else goals.held?.visited.orEmpty()
+        val earlier = if (fresh) emptySet() else goals.held?.visited.orEmpty()
         val visited = (earlier + listOfNotNull(basis.observed?.cell)).toList().takeLast(MAX_GOAL_CELLS).toSet()
         // A walk's step is evidence only toward a target this perception showed in sight.
         val target = decision.intent.targetRef
         val stepVisible = target != null && basis.observed?.visible?.contains(target) == true
+        val item = next?.successItem
+        val towardSource = item != null && target != null && item in basis.observed?.gives?.get(target).orEmpty()
         goals.held =
-            next?.let { Held(it, basis.capturedTick, requestId, basis.observed, carriedCount, visited, stepVisible) }
+            next?.let {
+                Held(
+                    it,
+                    basis.capturedTick,
+                    requestId,
+                    basis.observed,
+                    carriedCount,
+                    visited,
+                    stepVisible,
+                    towardSource = towardSource,
+                )
+            }
         return evidence.copy(
             outcome = acceptedTag(choice.disposition),
             goalId = next?.goalId,
@@ -322,6 +339,9 @@ class GoalLedger(
 
 /** The dispositions that keep the held goal, and so the run of steps that changed nothing. */
 private val KEEPING = setOf(GoalDisposition.CONTINUE, GoalDisposition.REVISE)
+
+/** The dispositions that start a goal of their own, and so a run of steps of its own. */
+private val STARTING = setOf(GoalDisposition.ADOPT, GoalDisposition.REPLACE)
 
 /** The decision affirming a goal: its request, when its perception was taken, and its intent. */
 private data class Affirmation(
@@ -341,7 +361,8 @@ private fun nextGoalOf(
     by: Affirmation,
 ): GoalSummary? =
     when (choice.disposition) {
-        GoalDisposition.ADOPT ->
+        // A replace ends the held goal and starts a new one under its own decision's id.
+        GoalDisposition.ADOPT, GoalDisposition.REPLACE ->
             GoalSummary(
                 goalId = by.requestId,
                 statement = statementOf(requireNotNull(choice.successItem), requireNotNull(choice.successCount)),
@@ -405,6 +426,7 @@ private fun acceptedTag(disposition: GoalDisposition): String =
         GoalDisposition.ADOPT -> GoalEvidence.ADOPTED
         GoalDisposition.CONTINUE -> GoalEvidence.CONTINUED
         GoalDisposition.REVISE -> GoalEvidence.REVISED
+        GoalDisposition.REPLACE -> GoalEvidence.REPLACED
         GoalDisposition.COMPLETE -> GoalEvidence.COMPLETED
         GoalDisposition.ABANDON -> GoalEvidence.ABANDONED
     }
