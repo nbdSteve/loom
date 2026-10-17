@@ -181,3 +181,28 @@ test('an unobtainable success item and a trapping dig are refused decisions the 
   assert.equal(trapped.blockers.inapplicable, 1)
   assert.equal(trapped.verdict, 'notReady')
 })
+
+function gate6 (bodyRecords) {
+  return readinessMetrics({ bodyRecords, harnessRecords: [], metrics: {}, generation: 6 })
+}
+
+test('a goal already met when set, or pursued by idling, is a refused decision from generation 6', () => {
+  const coherent = [
+    ...review('kappa', 'k1', evidenced('k', true, 'dropped')),
+    ...review('kappa', 'k2', evidenced('k', true, 'gained', 'goalCompleted', true))
+  ]
+  assert.equal(gate6(coherent).version, 'loom-readiness-gate/4')
+  assert.equal(gate6(coherent).goalCoherence.verdict, 'coherent')
+  // r14 theta body:00000174, delta body:00000187 and eta body:00000197 held two sticks and set a
+  // goal of one; eta's step was to idle.
+  for (const [tag, counter] of [['goalAlreadyMet', 'alreadyMetConditions'], ['goalStepIdle', 'idleSteps']]) {
+    const refused = gate6([...coherent, ...review('theta', 't1', { outcome: tag, disposition: 'adopt' }, tag)])
+    assert.equal(refused.goalCoherence[counter], 1, tag)
+    assert.equal(refused.goalCoherence.verdict, 'incoherent', tag)
+    assert.equal(refused.blockers.goalIncoherent, 1, tag)
+    assert.ok(refused.rates.decisionValidity < 1, tag)
+    assert.equal(refused.verdict, 'notReady', tag)
+  }
+  // Generation 5 never counted them.
+  assert.equal(gate5(coherent).goalCoherence.alreadyMetConditions, undefined)
+})

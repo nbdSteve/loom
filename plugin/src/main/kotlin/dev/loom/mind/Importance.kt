@@ -25,6 +25,8 @@ import dev.loom.contract.Trigger
  * - A **goal review** is the scheduled, ordinary case and by far the most
  *   frequent, so it is routine. Its whole purpose is to be cheap enough to run
  *   often.
+ * - A **settled step** is a goal review that follows the goal's last step at once
+ *   rather than at the next scheduled one, so it is routine for the same reason.
  * - A **sighting** is routine too: noticing a block is the most common thing that
  *   happens to a body, and reacting to one is a small, reversible choice.
  * - Being **spoken to** is notable: it is social, another party is waiting, and
@@ -43,6 +45,7 @@ import dev.loom.contract.Trigger
 fun importanceOf(trigger: Trigger): DecisionImportance =
     when (trigger) {
         is Trigger.GoalReview -> DecisionImportance.ROUTINE
+        is Trigger.StepSettled -> DecisionImportance.ROUTINE
         is Trigger.BlockSighted -> DecisionImportance.ROUTINE
         is Trigger.Spoken -> DecisionImportance.NOTABLE
         is Trigger.Damaged -> DecisionImportance.PIVOTAL

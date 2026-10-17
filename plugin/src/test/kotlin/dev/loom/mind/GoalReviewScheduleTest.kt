@@ -153,4 +153,42 @@ class GoalReviewScheduleTest {
         val perAgent = DEFAULT_GOAL_REVIEW_CADENCE_TICKS / 20
         assertTrue(perAgent >= 100L, "a 20-agent population would think every $perAgent ticks")
     }
+
+    @Test
+    @DisplayName("a settled goal step owes one follow-up review soon after, once per scheduled review")
+    fun aSettledStepIsFollowedUpOncePerScheduledReview() {
+        val agent = AgentId("agent-1")
+        val living = setOf(agent)
+        // Never reviewed: nothing to follow up.
+        schedule.settled(agent, now)
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(living, now + FOLLOW_UP_DELAY_TICKS))
+        assertEquals(listOf(agent), schedule.claim(living, now))
+        schedule.settled(agent, now + 5)
+        // Not before the drop of a dig can land and be picked up.
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(living, now + 5 + FOLLOW_UP_DELAY_TICKS - 1))
+        assertEquals(listOf(agent), schedule.claimFollowUps(living, now + 5 + FOLLOW_UP_DELAY_TICKS))
+        // The follow-up's own step settling owes nothing more until the next scheduled review.
+        schedule.settled(agent, now + 60)
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(living, now + CADENCE - 1))
+        // And the follow-up never moved the cadence.
+        assertEquals(emptyList<AgentId>(), schedule.claim(living, now + CADENCE - 1))
+        assertEquals(listOf(agent), schedule.claim(living, now + CADENCE))
+        schedule.settled(agent, now + CADENCE)
+        assertEquals(listOf(agent), schedule.claimFollowUps(living, now + CADENCE + FOLLOW_UP_DELAY_TICKS))
+    }
+
+    @Test
+    @DisplayName("an owed follow-up waits for a mind that is busy, and is dropped with its agent")
+    fun anOwedFollowUpWaitsAndIsForgotten() {
+        val agent = AgentId("agent-1")
+        schedule.claim(setOf(agent), 0)
+        schedule.settled(agent, 0)
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(agent), 100) { false })
+        assertEquals(listOf(agent), schedule.claimFollowUps(setOf(agent), 101))
+        val other = AgentId("agent-2")
+        schedule.claim(setOf(agent, other), CADENCE)
+        schedule.settled(other, CADENCE)
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(agent), CADENCE + 100))
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(agent, other), CADENCE + 100))
+    }
 }

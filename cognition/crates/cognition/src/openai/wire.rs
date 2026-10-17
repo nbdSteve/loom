@@ -28,9 +28,7 @@
 
 use std::sync::LazyLock;
 
-use loom_contract::{
-    GoalChoice, GoalDisposition, Intent, Perception, Trigger, MAX_GOAL_STATEMENT_CHARS,
-};
+use loom_contract::{GoalChoice, GoalDisposition, Intent, Perception, MAX_GOAL_STATEMENT_CHARS};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -318,11 +316,6 @@ fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> 
     let fields = goal_fields(choice.disposition);
     let present = [
         ("statement", fields.worded, choice.statement.is_some()),
-        (
-            "success condition",
-            fields.worded,
-            choice.success_condition.is_some(),
-        ),
         ("success item", fields.worded, choice.success_item.is_some()),
         (
             "success count",
@@ -330,14 +323,8 @@ fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> 
             choice.success_count.is_some(),
         ),
         ("step", fields.stepped, choice.step.is_some()),
-        ("step action", fields.stepped, choice.step_action.is_some()),
         ("step result", fields.judged, choice.step_result.is_some()),
     ];
-    // A step's ref is nullable, for an action that names none, so only its presence off a
-    // stepped disposition is a fault.
-    if !fields.stepped && choice.step_ref.is_some() {
-        return Err("the model's goal choice gave a step ref its disposition forbids".to_owned());
-    }
     for (name, required, given) in present {
         if required && !given {
             return Err(format!(
@@ -381,14 +368,13 @@ pub fn draft_from_answer(content: &str) -> Result<Draft, String> {
 
 /// The goal's free-text fields, bounded to the contract's length before they are typed.
 ///
-/// Strict mode cannot state a string length, so a model that words a goal, its success
-/// condition or its step at length writes a valid answer the contract would refuse - which
+/// Strict mode cannot state a string length, so a model that words a goal or its step at length writes a valid answer the contract would refuse - which
 /// lost the eighth live run in one answer. The text is cut, the way reasoning is, rather than
 /// the whole decision. Nothing else is touched: a blank field, a wrong type and every other
 /// shape fault still fail as a malformed answer.
 fn bounded_goal_texts(mut answer: Value) -> Value {
     if let Some(goal) = answer.get_mut("goal").and_then(Value::as_object_mut) {
-        for field in ["statement", "successCondition", "step"] {
+        for field in ["statement", "step"] {
             if let Some(Value::String(text)) = goal.get_mut(field) {
                 if text.chars().count() > MAX_GOAL_STATEMENT_CHARS {
                     let kept: String = text.chars().take(MAX_GOAL_STATEMENT_CHARS - 3).collect();
@@ -728,7 +714,7 @@ fn goal_variant(
 ) -> Option<Value> {
     let fields = goal_fields(disposition);
     let success_item = ref_field(
-        "The item the goal is achieved by holding, named exactly as the item is listed. Your body measures it from your own inventory.",
+        "The item the goal is achieved by holding, named exactly as the item is listed: only items something in sight could give you more of are offered. Your body measures it from your own inventory.",
         Namespace::SuccessItem,
         offered,
     );
@@ -746,15 +732,6 @@ fn goal_variant(
             "statement".to_owned(),
             json!({ "type": "string", "description": format!("The goal in your own words, {worded}.") }),
         );
-        properties.insert(
-            "successCondition".to_owned(),
-            json!({
-                "type": "string",
-                "description": format!(
-                    "What you would observe in your own perception when the goal is achieved, {worded}."
-                ),
-            }),
-        );
         if let Some(field) = success_item {
             properties.insert("successItem".to_owned(), field);
         }
@@ -764,7 +741,7 @@ fn goal_variant(
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 64,
-                "description": "How many of that item the goal is achieved by holding.",
+                "description": "How many of that item the goal is achieved by holding: more than you hold now, and no more than you hold plus what is in sight could give you.",
             }),
         );
     }
@@ -774,23 +751,8 @@ fn goal_variant(
             json!({
                 "type": "string",
                 "description": format!(
-                    "The one concrete next step this decision's action takes toward the goal, {worded}."
+                    "The one concrete next step this decision's action takes toward the goal, {worded}. Your action is the step: idle or rest is none."
                 ),
-            }),
-        );
-        properties.insert(
-            "stepAction".to_owned(),
-            json!({
-                "type": "string",
-                "enum": INTENT_ACTIONS,
-                "description": "The action this decision's intent takes, exactly. A step that names a different action from the intent is refused with it.",
-            }),
-        );
-        properties.insert(
-            "stepRef".to_owned(),
-            json!({
-                "type": ["string", "null"],
-                "description": "The ref this decision's intent acts on, exactly - the walk's block, the dig's block, the collect's item, the attack's target, the placement's support block - or null for an action that names none. A step that names a different ref from the intent is refused with it.",
             }),
         );
     }
@@ -813,18 +775,6 @@ fn goal_variant(
     }))
 }
 
-/// The optional goal choice: `null`, or exactly one closed disposition shape.
-///
-/// Strict mode requires the key, so "no choice" is an explicit `null` rather than
-/// an absent field. The statement exists only on the two dispositions that word a
-/// goal, which is what keeps a statement from riding on a disposition that would
-/// discard it.
-/// Every intent action, in the contract's order, for a typed step.
-const INTENT_ACTIONS: [&str; 13] = [
-    "say", "moveTo", "flee", "eat", "dig", "collect", "place", "equip", "craft", "attack", "sleep",
-    "rest", "idle",
-];
-
 /// Where one perception stands with its goal, which decides the goal choices it can make.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GoalPhase {
@@ -842,7 +792,7 @@ impl GoalPhase {
     /// The phase `perception` is in.
     #[must_use]
     pub fn of(perception: &Perception) -> Self {
-        if !matches!(perception.trigger, Trigger::GoalReview) {
+        if !perception.trigger.reviews_goal() {
             return Self::Any;
         }
         match &perception.goal {
@@ -1098,7 +1048,6 @@ mod tests {
                 action: "a".repeat(32),
                 outcome: "o".repeat(MAX_GOAL_ID_CHARS),
             }),
-            success_condition: Some("c".repeat(MAX_GOAL_STATEMENT_CHARS)),
             success_item: Some("i".repeat(MAX_ITEM_NAME_CHARS)),
             success_count: Some(MAX_SUCCESS_COUNT),
             step: Some("t".repeat(MAX_GOAL_STATEMENT_CHARS)),
@@ -1247,17 +1196,14 @@ mod tests {
             |disposition, statement: Option<&str>, step: Option<&str>, result| GoalChoice {
                 disposition,
                 statement: statement.map(str::to_owned),
-                success_condition: statement.map(|_| "a roof is overhead".to_owned()),
                 success_item: statement.map(|_| "item.minecraft.oak_log".to_owned()),
                 success_count: statement.map(|_| 4),
                 step: step.map(str::to_owned),
-                step_action: step.map(|_| IntentAction::Dig),
-                step_ref: step.map(|_| "b7".to_owned()),
                 step_result: result,
             };
         let cases = [
             (
-                r#"{"disposition":"adopt","statement":"find shelter","successCondition":"a roof is overhead","successItem":"item.minecraft.oak_log","successCount":4,"step":"walk to the cliff","stepAction":"dig","stepRef":"b7"}"#,
+                r#"{"disposition":"adopt","statement":"find shelter","successItem":"item.minecraft.oak_log","successCount":4,"step":"walk to the cliff"}"#,
                 choice(
                     GoalDisposition::Adopt,
                     Some("find shelter"),
@@ -1266,7 +1212,7 @@ mod tests {
                 ),
             ),
             (
-                r#"{"disposition":"continue","step":"dig into the cliff","stepAction":"dig","stepRef":"b7","stepResult":"done"}"#,
+                r#"{"disposition":"continue","step":"dig into the cliff","stepResult":"done"}"#,
                 choice(
                     GoalDisposition::Continue,
                     None,
@@ -1275,7 +1221,7 @@ mod tests {
                 ),
             ),
             (
-                r#"{"disposition":"revise","statement":"find shelter north","successCondition":"a roof is overhead","successItem":"item.minecraft.oak_log","successCount":4,"step":"walk north","stepAction":"dig","stepRef":"b7","stepResult":"noProgress"}"#,
+                r#"{"disposition":"revise","statement":"find shelter north","successItem":"item.minecraft.oak_log","successCount":4,"step":"walk north","stepResult":"noProgress"}"#,
                 choice(
                     GoalDisposition::Revise,
                     Some("find shelter north"),
@@ -1320,54 +1266,34 @@ mod tests {
     #[test]
     fn each_disposition_requires_its_working_goal_fields_and_forbids_the_rest() {
         let target = r#""successItem":"item.minecraft.stick","successCount":1"#;
-        let typed = r#""stepAction":"idle","stepRef":null"#;
         for (missing, field) in [
             (
-                format!(
-                    r#"{{"disposition":"adopt","successCondition":"c",{target},"step":"s",{typed}}}"#
-                ),
+                format!(r#"{{"disposition":"adopt",{target},"step":"s"}}"#),
                 "statement",
             ),
             (
-                format!(r#"{{"disposition":"adopt","statement":"g",{target},"step":"s",{typed}}}"#),
-                "success condition",
-            ),
-            (
-                format!(
-                    r#"{{"disposition":"adopt","statement":"g","successCondition":"c","successCount":1,"step":"s",{typed}}}"#
-                ),
+                r#"{"disposition":"adopt","statement":"g","successCount":1,"step":"s"}"#.to_owned(),
                 "success item",
             ),
             (
-                format!(
-                    r#"{{"disposition":"adopt","statement":"g","successCondition":"c","successItem":"item.minecraft.stick","step":"s",{typed}}}"#
-                ),
+                r#"{"disposition":"adopt","statement":"g","successItem":"item.minecraft.stick","step":"s"}"#
+                    .to_owned(),
                 "success count",
             ),
             (
-                format!(
-                    r#"{{"disposition":"adopt","statement":"g","successCondition":"c",{target},{typed}}}"#
-                ),
+                format!(r#"{{"disposition":"adopt","statement":"g",{target}}}"#),
                 "step",
             ),
             (
-                format!(
-                    r#"{{"disposition":"adopt","statement":"g","successCondition":"c",{target},"step":"s"}}"#
-                ),
-                "step action",
-            ),
-            (
-                format!(r#"{{"disposition":"continue",{typed},"stepResult":"done"}}"#),
+                r#"{"disposition":"continue","stepResult":"done"}"#.to_owned(),
                 "step",
             ),
             (
-                format!(r#"{{"disposition":"continue","step":"s",{typed}}}"#),
+                r#"{"disposition":"continue","step":"s"}"#.to_owned(),
                 "step result",
             ),
             (
-                format!(
-                    r#"{{"disposition":"revise","statement":"g","successCondition":"c",{target},"step":"s",{typed}}}"#
-                ),
+                format!(r#"{{"disposition":"revise","statement":"g",{target},"step":"s"}}"#),
                 "step result",
             ),
             (r#"{"disposition":"complete"}"#.to_owned(), "step result"),
@@ -1380,21 +1306,30 @@ mod tests {
             );
         }
         for forbidden in [
-            format!(
-                r#"{{"disposition":"continue","step":"s",{typed},"stepResult":"done","statement":"sk-lookalike"}}"#
-            ),
-            format!(
-                r#"{{"disposition":"continue","step":"s",{typed},"stepResult":"done","successItem":"item.minecraft.sk_lookalike"}}"#
-            ),
-            format!(
-                r#"{{"disposition":"adopt","statement":"g","successCondition":"c",{target},"step":"s",{typed},"stepResult":"done"}}"#
-            ),
+            r#"{"disposition":"continue","step":"s","stepResult":"done","statement":"sk-lookalike"}"#
+                .to_owned(),
+            r#"{"disposition":"continue","step":"s","stepResult":"done","successItem":"item.minecraft.sk_lookalike"}"#
+                .to_owned(),
+            format!(r#"{{"disposition":"adopt","statement":"g",{target},"step":"s","stepResult":"done"}}"#),
             r#"{"disposition":"complete","stepResult":"done","step":"sk-lookalike"}"#.to_owned(),
-            r#"{"disposition":"complete","stepResult":"done","stepRef":"b7"}"#.to_owned(),
         ] {
             let reason = goal_of(&forbidden).expect_err(&forbidden);
             assert!(reason.contains("forbids"), "{forbidden}: {reason}");
             assert!(!reason.contains("sk-lookalike"), "{reason}");
+        }
+        // A stated success condition or a typed step is no part of a choice from routine-v23: the
+        // body types both itself (r14 delta worded a log while naming a stick; gamma's step named a
+        // stick while its intent walked elsewhere).
+        for stated in [
+            format!(
+                r#"{{"disposition":"adopt","statement":"g","successCondition":"c",{target},"step":"s"}}"#
+            ),
+            format!(
+                r#"{{"disposition":"adopt","statement":"g",{target},"step":"s","stepAction":"dig","stepRef":"b7"}}"#
+            ),
+        ] {
+            let reason = goal_of(&stated).expect_err(&stated);
+            assert!(reason.contains("wrong shape"), "{stated}: {reason}");
         }
     }
 
@@ -1460,10 +1395,10 @@ mod tests {
         // whole run to one answer whose goal text was longer than the contract allows.
         let long = "w".repeat(MAX_GOAL_STATEMENT_CHARS * 2);
         let answer = format!(
-            r#"{{"intent":{{"action":"idle"}},"reasoning":"r","goal":{{"disposition":"adopt","statement":"{long}","successCondition":"{long}","successItem":"item.minecraft.stick","successCount":1,"step":"{long}","stepAction":"idle","stepRef":null}}}}"#
+            r#"{{"intent":{{"action":"idle"}},"reasoning":"r","goal":{{"disposition":"adopt","statement":"{long}","successItem":"item.minecraft.stick","successCount":1,"step":"{long}"}}}}"#
         );
         let goal = draft_from_answer(&answer).unwrap().goal.unwrap();
-        for text in [goal.statement, goal.success_condition, goal.step] {
+        for text in [goal.statement, goal.step] {
             let text = text.unwrap();
             assert_eq!(text.chars().count(), MAX_GOAL_STATEMENT_CHARS);
             assert!(text.ends_with("..."));

@@ -152,6 +152,7 @@ mod tests {
                 inventory_summary: vec![],
                 crafting_options: vec![],
                 crafting_options_omitted: 0,
+                own_drops: vec![],
                 world: WorldState {
                     day_phase: DayPhase::Day,
                     is_day: true,
@@ -217,7 +218,7 @@ mod tests {
         assert!(decided.reasoning.contains(DEEP));
         assert_eq!(decided.provenance.model, FAST);
         assert_eq!(decided.provenance.tier, DecisionImportance::Routine);
-        assert_eq!(decided.provenance.prompt_version, "routine-v22");
+        assert_eq!(decided.provenance.prompt_version, "routine-v23");
     }
 
     /// A backend that answers with one fixed intent, whatever it was offered.
@@ -317,14 +318,11 @@ mod tests {
             let choice = GoalChoice {
                 disposition,
                 statement: worded.then(|| "keep watch by the trees".to_owned()),
-                success_condition: worded.then(|| "the trees are in sight at dusk".to_owned()),
                 success_item: None,
                 success_count: None,
                 step: (disposition != GoalDisposition::Complete
                     && disposition != GoalDisposition::Abandon)
                     .then(|| "stand by the nearest tree".to_owned()),
-                step_action: None,
-                step_ref: None,
                 step_result: (disposition != GoalDisposition::Adopt)
                     .then_some(GoalStepResult::Progressing),
             };
@@ -336,7 +334,7 @@ mod tests {
             assert_eq!(decided.goal, Some(choice));
             assert_eq!(decided.intent, Intent::Idle);
             assert_eq!(decided.provenance.model, FAST);
-            assert_eq!(decided.provenance.prompt_version, "routine-v22");
+            assert_eq!(decided.provenance.prompt_version, "routine-v23");
         }
     }
 

@@ -51,6 +51,7 @@ class PerceptionOmissionTest {
                 inventorySummary = emptyList(),
                 craftingOptions = emptyList(),
                 craftingOptionsOmitted = 0,
+                ownDrops = emptyList(),
                 world = WorldState(dayPhase = DayPhase.DUSK, isDay = false, ticksUntilNightfall = 900),
             ),
         surroundings =

@@ -13,7 +13,11 @@ const { readinessMetrics } = require('./readiness.js')
 // and every server-checked claim true, with each non-success listed by its exact record.
 // Generation 4 makes goal coherence part of that verdict, measured from the typed goal.
 // Generation 5 credits a step only on its evidence and refuses unobtainable success items.
-const GATE_GENERATION = 5
+// Generation 6 counts a review action as meaningful only when it is a step of a goal, counts the
+// follow-up reviews a settled step owes, and refuses goals already met or pursued by idling.
+const GATE_GENERATION = 6
+// The goal outcomes of a decision whose action was a step of a goal it held or took up.
+const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`
 const PASSIVE_INTENTS = Object.freeze(['idle', 'rest'])
 const MOVEMENT_INTENTS = Object.freeze(['moveTo', 'flee'])
@@ -27,6 +31,11 @@ const MANUAL_CRITERIA = Object.freeze([
 
 function isNativeReviewRecord (record) {
   return record.trigger === 'goalReview' && record.origin === 'nativeGoalReviewSchedule'
+}
+
+// The follow-up review a settled goal step owes, from generation 6.
+function isFollowUpReviewRecord (record) {
+  return record.trigger === 'stepSettled' && record.origin === 'nativeGoalFollowUp'
 }
 
 // A goal-review action counts as confirmed only by server or body evidence, between its
@@ -59,9 +68,11 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
   if (schedule === undefined) return undefined
   const generation = Number.isInteger(stimulus.behaviorGateGeneration) ? stimulus.behaviorGateGeneration : 1
   const pilotProfile = stimulus.profile === undefined || stimulus.profile === 'pilot-180s'
+  const grounded = generation >= 6
   const nativeReviewKeys = new Set(
     harnessRecords
-      .filter((record) => record.event === 'cognitionForwarded' && isNativeReviewRecord(record))
+      .filter((record) => record.event === 'cognitionForwarded' &&
+        (isNativeReviewRecord(record) || (grounded && isFollowUpReviewRecord(record))))
       .map((record) => record.requestKey)
   )
   const nextDecision = new Map()
@@ -93,6 +104,9 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
     if (confirmation === null) continue
     actions.confirmed += 1
     actions.byConfirmation[confirmation] = (actions.byConfirmation[confirmation] ?? 0) + 1
+    // An action justified only by being active is not meaningful: from generation 6 it must be a
+    // step of a goal (r14: walks with no goal and a dig of a block that drops nothing counted).
+    if (grounded && !GOAL_GROUNDED_OUTCOMES.includes(record.goal?.outcome)) continue
     meaningful[record.agentId] = (meaningful[record.agentId] ?? 0) + 1
   }
   actions.acceptedAndConfirmedRate = actions.nonIdle === 0

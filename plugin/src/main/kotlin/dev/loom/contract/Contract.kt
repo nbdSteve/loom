@@ -328,6 +328,8 @@ data class SelfState(
     val craftingOptions: List<CraftingOption>,
     /** Craftable recipes omitted by the bounded option list. */
     val craftingOptionsOmitted: Long,
+    /** What the server saw this agent's own recent digs drop, newest first, wherever it went. */
+    val ownDrops: List<OwnDrop>,
     /** The bounded world clock the body reveals. */
     val world: WorldState,
 ) {
@@ -351,6 +353,93 @@ data class SelfState(
         }
         require(craftingOptionsOmitted >= 0) {
             "craftingOptionsOmitted must not be negative, got $craftingOptionsOmitted"
+        }
+        require(ownDrops.size <= MAX_OWN_DROPS) { "at most $MAX_OWN_DROPS own drops" }
+    }
+}
+
+/** Most of an agent's own recent dig drops one perception tells it about. */
+const val MAX_OWN_DROPS: Int = 8
+
+/** The most items one stack, or one block's drop of one item, can hold. */
+const val MAX_STACK_COUNT: Long = 64
+
+/** The item that is no item: what a loot roll that dropped nothing is reported as. */
+const val AIR_ITEM: String = "item.minecraft.air"
+
+/** What became of a stack an agent's own dig dropped. */
+@Serializable
+enum class DropFate {
+    /** Still lying where the server can see it. */
+    @SerialName("lying")
+    LYING,
+
+    /** Picked up by this agent. */
+    @SerialName("collected")
+    COLLECTED,
+
+    /** Picked up by another player. */
+    @SerialName("taken")
+    TAKEN,
+
+    /** Merged, despawned or destroyed. */
+    @SerialName("gone")
+    GONE,
+}
+
+/**
+ * One stack the server dropped for one of this agent's digs, attributed to the perception
+ * request whose dig dropped it. A lying drop is placed from the agent now, the way an
+ * observation is; any other fate has no place.
+ */
+@Serializable
+data class OwnDrop(
+    /** The perception request id of the decision whose dig dropped this stack. */
+    val requestId: String,
+    /** The item, exactly as an inventory stack names it. */
+    val what: String,
+    /** How many items the server dropped in the stack. */
+    val count: Long,
+    /** What became of it. */
+    val fate: DropFate,
+    /** How far a lying drop is from the agent now. */
+    val distance: Double? = null,
+    /** The bearing to a lying drop. */
+    val direction: Bearing? = null,
+    /** How far above the agent a lying drop is. */
+    val verticalOffset: Double? = null,
+) {
+    init {
+        requireBoundedText("own drop requestId", requestId, MAX_GOAL_ID_CHARS)
+        requireItemName(what)
+        require(count in 1..MAX_STACK_COUNT) { "a dropped stack holds 1 to $MAX_STACK_COUNT items" }
+        val lying = fate == DropFate.LYING
+        require((distance != null) == lying && (direction != null) == lying && (verticalOffset != null) == lying) {
+            "distance, direction and verticalOffset are present exactly for a lying drop"
+        }
+        distance?.let { require(it >= 0.0) { "a drop's distance is never negative" } }
+    }
+}
+
+/**
+ * One item digging a block with what the body holds can drop, with the range the server's
+ * random loot rules give: [least] the fewest one dig has dropped, zero when a dig may drop
+ * none, and [most] the most.
+ */
+@Serializable
+data class BlockYield(
+    /** The item, exactly as an inventory stack names it; never air. */
+    val what: String,
+    /** The fewest of it one dig has dropped. */
+    val least: Long,
+    /** The most of it one dig has dropped. */
+    val most: Long,
+) {
+    init {
+        requireItemName(what)
+        require(what != AIR_ITEM) { "a block never yields air" }
+        require(most in 1..MAX_STACK_COUNT && least in 0..most) {
+            "a yield's least is 0 to its most, and its most 1 to $MAX_STACK_COUNT"
         }
     }
 }
@@ -406,11 +495,12 @@ data class Observation(
      */
     val standable: Boolean? = null,
     /**
-     * What digging this block with the held item drops, as the server's loot rules answer it.
+     * What digging this block with the held item can drop, each with the range the server's
+     * random loot rules give.
      *
      * Present exactly for [ObservationKind.BLOCK]; empty when it drops nothing.
      */
-    val yields: List<String>? = null,
+    val yields: List<BlockYield>? = null,
     /**
      * Whether digging this block leaves the body a way out.
      *
@@ -428,10 +518,7 @@ data class Observation(
         require((standable != null) == block && (yields != null) == block && (digSafe != null) == block) {
             "standable, yields and digSafe are present exactly for a block observation"
         }
-        yields?.let {
-            require(it.size <= MAX_BLOCK_YIELDS) { "at most $MAX_BLOCK_YIELDS yields" }
-            it.forEach(::requireItemName)
-        }
+        yields?.let { require(it.size <= MAX_BLOCK_YIELDS) { "at most $MAX_BLOCK_YIELDS yields" } }
         count?.let { require(it >= 1) { "a dropped-item observation must hold at least one item" } }
     }
 }
@@ -514,7 +601,15 @@ sealed interface Trigger {
     @Serializable
     @SerialName("goalReview")
     data object GoalReview : Trigger
+
+    /** The held goal's last step ended, so the agent reviews the goal again at once. */
+    @Serializable
+    @SerialName("stepSettled")
+    data object StepSettled : Trigger
 }
+
+/** Whether this trigger is a review of the agent's goal, which alone carries the held goal. */
+val Trigger.reviewsGoal: Boolean get() = this == Trigger.GoalReview || this == Trigger.StepSettled
 
 /**
  * The bounded snapshot the body exposes to the mind. Carries no world handle:
@@ -611,9 +706,7 @@ data class GoalSummary(
     val adoptedTick: Long,
     /** The last step taken under the goal, once the body has answered it. */
     val lastStep: GoalStep? = null,
-    /** The observable state that would mean the goal is achieved. */
-    val successCondition: String? = null,
-    /** The item the goal must hold, which types the success condition. */
+    /** The item the goal must hold: its success condition, with [successCount]. */
     val successItem: String? = null,
     /** How many of the success item the goal must hold. */
     val successCount: Long? = null,
@@ -629,7 +722,6 @@ data class GoalSummary(
     init {
         requireBoundedText("goalId", goalId, MAX_GOAL_ID_CHARS)
         requireBoundedText("goal statement", statement, MAX_GOAL_STATEMENT_CHARS)
-        successCondition?.let { requireBoundedText("goal success condition", it, MAX_GOAL_STATEMENT_CHARS) }
         requireTypedSuccess(successItem, successCount)
         step?.let { requireBoundedText("goal step", it, MAX_GOAL_STATEMENT_CHARS) }
         stepRef?.let(::requireBoundedRef)
@@ -692,7 +784,7 @@ enum class StepEvidence {
     @SerialName("gained")
     GAINED,
 
-    /** A new dropped item lay in sight after the step. */
+    /** The server saw the step's own dig drop something for this agent, wherever it went. */
     @SerialName("dropped")
     DROPPED,
 
@@ -858,27 +950,19 @@ data class GoalChoice(
     val disposition: GoalDisposition,
     /** The goal's wording, for adopt and revise. */
     val statement: String? = null,
-    /** The observable state that would mean the goal is achieved, for adopt and revise. */
-    val successCondition: String? = null,
-    /** The item the goal must hold, typing the success condition, for adopt and revise. */
+    /** The item the goal must hold, its success condition with the count, for adopt and revise. */
     val successItem: String? = null,
     /** How many of the success item the goal must hold, for adopt and revise. */
     val successCount: Long? = null,
     /** The concrete next step this decision's intent takes, for adopt, continue and revise. */
     val step: String? = null,
-    /** The action the step takes, which must be the intent's own. */
-    val stepAction: IntentAction? = null,
-    /** The target ref the step names, which must be the intent's own; absent for none. */
-    val stepRef: String? = null,
     /** The verdict on the carried goal's previous step, for every disposition but adopt. */
     val stepResult: GoalStepResult? = null,
 ) {
     init {
         statement?.let { requireBoundedText("goal statement", it, MAX_GOAL_STATEMENT_CHARS) }
-        successCondition?.let { requireBoundedText("goal success condition", it, MAX_GOAL_STATEMENT_CHARS) }
         requireTypedSuccess(successItem, successCount)
         step?.let { requireBoundedText("goal step", it, MAX_GOAL_STATEMENT_CHARS) }
-        stepRef?.let(::requireBoundedRef)
     }
 }
 

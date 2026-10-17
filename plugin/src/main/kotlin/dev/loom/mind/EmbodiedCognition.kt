@@ -26,6 +26,7 @@ import dev.loom.body.tagOf
 import dev.loom.contract.Decision
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
+import dev.loom.contract.reviewsGoal
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.CompletionStage
@@ -49,6 +50,8 @@ data class CognitionCallbacks(
     val onApplied: (AppliedDecision) -> Unit = {},
     val onUnavailable: (Perception, Throwable) -> Unit = { _, _ -> },
     val onBodyUnavailable: (AgentId, Throwable) -> Unit = { _, _ -> },
+    /** Told when a step the held goal took was carried out and settled, so a follow-up review is owed. */
+    val onStepSettled: StepSettlement = StepSettlement.NONE,
 )
 
 /**
@@ -138,7 +141,7 @@ class EmbodiedCognition(
                 !danger.admit(agentId, perception) ->
                     EventTag.DANGER_COALESCED to "coalesced into the active danger episode for this threat"
                 // One review and one event at a time: the answer already coming covers this one.
-                inFlightFor(agentId, review = perception.trigger == Trigger.GoalReview) > 0 -> {
+                inFlightFor(agentId, review = perception.trigger.reviewsGoal) > 0 -> {
                     danger.withdraw(agentId, perception.requestId)
                     EventTag.COGNITION_COALESCED to
                         "coalesced: the agent already has cognition in flight for this kind of trigger"
@@ -151,7 +154,7 @@ class EmbodiedCognition(
             return
         }
         val carried =
-            if (perception.trigger == Trigger.GoalReview) {
+            if (perception.trigger.reviewsGoal) {
                 perception.copy(
                     goal =
                         goals.present(
@@ -193,7 +196,7 @@ class EmbodiedCognition(
         review: Boolean,
     ): Int =
         inFlight.values.count { (agent, perception) ->
-            agent == agentId && (perception.trigger == Trigger.GoalReview) == review
+            agent == agentId && perception.trigger.reviewsGoal == review
         }
 
     /**
@@ -302,13 +305,20 @@ class EmbodiedCognition(
                 // Cognition is asynchronous, so an agent can die or disconnect between
                 // perceiving and acting. The body records nothing for a decision it never
                 // received, so the loss is recorded here or nowhere.
-                goals.stepped(
-                    agentId,
-                    decision.requestId,
-                    tagOf(decision.intent),
-                    tagOf(applied),
-                    (applied as? IntentOutcome.Accepted)?.reached,
-                )
+                val goalStep =
+                    goals.stepped(
+                        agentId,
+                        decision.requestId,
+                        tagOf(decision.intent),
+                        tagOf(applied),
+                        (applied as? IntentOutcome.Accepted)?.reached,
+                    )
+                if (goalStep && applied is IntentOutcome.Accepted) {
+                    callbacks.onStepSettled.settled(
+                        agentId,
+                        journal.tick(),
+                    )
+                }
                 danger.settled(agentId, decision.requestId)
                 if (applied == IntentOutcome.NoSuchBody) danger.forget(agentId)
                 if (applied == IntentOutcome.NoSuchBody) {

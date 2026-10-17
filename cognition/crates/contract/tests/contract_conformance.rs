@@ -475,3 +475,46 @@ fn only_an_inventory_item_name_is_an_item_name() {
         assert!(!loom_contract::is_item_name(not_an_item), "{not_an_item}");
     }
 }
+
+#[test]
+fn an_own_drop_and_a_block_yield_hold_their_relations_at_decode() {
+    let drop = |fields: &str| serde_json::from_str::<loom_contract::OwnDrop>(fields);
+    assert!(drop(r#"{"requestId":"r","what":"item.minecraft.stick","count":2,"fate":"lying","distance":1.0,"direction":"east","verticalOffset":0.0}"#).is_ok());
+    assert!(
+        drop(r#"{"requestId":"r","what":"item.minecraft.stick","count":2,"fate":"taken"}"#).is_ok()
+    );
+    for bad in [
+        // A lying drop is placed, and no other fate is.
+        r#"{"requestId":"r","what":"item.minecraft.stick","count":2,"fate":"lying"}"#,
+        r#"{"requestId":"r","what":"item.minecraft.stick","count":2,"fate":"gone","distance":1.0,"direction":"east","verticalOffset":0.0}"#,
+        r#"{"requestId":"r","what":"item.minecraft.stick","count":2,"fate":"lying","distance":-1.0,"direction":"east","verticalOffset":0.0}"#,
+        r#"{"requestId":"r","what":"item.minecraft.stick","count":0,"fate":"collected"}"#,
+        r#"{"requestId":"r","what":"block.minecraft.dirt","count":1,"fate":"collected"}"#,
+    ] {
+        assert!(drop(bad).is_err(), "{bad}");
+    }
+    let yielded = |fields: &str| serde_json::from_str::<loom_contract::BlockYield>(fields);
+    assert!(yielded(r#"{"what":"item.minecraft.stick","least":0,"most":2}"#).is_ok());
+    for bad in [
+        r#"{"what":"item.minecraft.air","least":0,"most":1}"#,
+        r#"{"what":"item.minecraft.stick","least":3,"most":2}"#,
+        r#"{"what":"item.minecraft.stick","least":0,"most":65}"#,
+    ] {
+        assert!(yielded(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn a_perception_tells_at_most_eight_own_drops_and_both_reviews_carry_the_goal() {
+    let mut seen: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(contract_dir().join("fixtures/valid/perception-step-settled.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let decoded: Perception = serde_json::from_value(seen.clone()).unwrap();
+    assert!(decoded.trigger.reviews_goal());
+    assert!(loom_contract::Trigger::GoalReview.reviews_goal());
+    let drop = seen["selfState"]["ownDrops"][1].clone();
+    seen["selfState"]["ownDrops"] = serde_json::Value::Array(vec![drop; 9]);
+    assert!(serde_json::from_value::<Perception>(seen).is_err());
+}

@@ -24,8 +24,8 @@
 use std::future::Future;
 
 use loom_contract::{
-    Bearing, GoalChoice, GoalDisposition, GoalStepResult, Intent, ObservationKind, Perception,
-    Trigger, MAX_GOAL_STEPS_WITHOUT_PROGRESS,
+    Bearing, GoalChoice, GoalDisposition, GoalStepResult, Intent, Observation, ObservationKind,
+    Perception, Trigger, MAX_GOAL_STEPS_WITHOUT_PROGRESS,
 };
 use serde::Serialize;
 
@@ -330,11 +330,9 @@ const LOW_FOOD_LEVEL: i64 = 7;
 /// record reads it as a model's choice.
 pub const SCRIPTED_GOAL_STATEMENT: &str = "scripted stand-in goal: stay fed and unhurt";
 
-/// The stand-in's success condition and step, worded as its own for the same reason.
-pub const SCRIPTED_SUCCESS_CONDITION: &str =
-    "scripted stand-in condition: hold one of the item named";
-/// The item the scripted stand-in's placeholder goal is achieved by holding.
+/// The item the scripted stand-in prefers its placeholder goal to be achieved by holding.
 pub const SCRIPTED_SUCCESS_ITEM: &str = "item.minecraft.stick";
+/// The stand-in's step, worded as its own for the same reason.
 pub const SCRIPTED_STEP: &str = "scripted stand-in step: act on the trigger in front of me";
 
 /// The deterministic stand-in backend: a rule per trigger, no inference.
@@ -358,45 +356,43 @@ impl ScriptedBackend {
         draft
     }
 
-    /// The scripted goal rule: adopt one fixed placeholder goal at the first goal
-    /// review that carries none, and continue it at every later one.
+    /// The scripted goal rule: adopt one placeholder goal of holding one more of what the block
+    /// it digs can drop, continue it while it digs, and complete it once met.
     ///
-    /// It exists so the goal round trip - choice, ledger, carried summary, next
-    /// choice - is exercised deterministically without credentials. A fixed rule
-    /// is not agency, which is why its wording says it is the stand-in's. It reads
-    /// the body's progress evidence only as far as the bound requires: a step that
-    /// changed nothing is judged `noProgress`, and a goal at the no-progress bound
-    /// is abandoned rather than continued into the body's refusal.
+    /// It exists so the goal round trip - choice, ledger, carried summary, next choice, and the
+    /// follow-up review a settled step owes - is exercised deterministically without credentials.
+    /// A fixed rule is not agency, which is why its wording says it is the stand-in's. It reads the
+    /// body's progress evidence only as far as the ledger requires: a step that changed nothing is
+    /// judged `noProgress`, a goal at the no-progress bound or with nothing left to dig is
+    /// abandoned rather than continued into the body's refusal, and no goal is ever adopted beside
+    /// an idle step or for a count nothing in sight could give.
     fn goal_now(perception: &Perception, intent: &Intent) -> Option<GoalChoice> {
-        if !matches!(perception.trigger, Trigger::GoalReview) {
+        if !perception.trigger.reviews_goal() {
             return None;
         }
         let step = |disposition, step_result| GoalChoice {
             disposition,
             statement: None,
-            success_condition: None,
             success_item: None,
             success_count: None,
             step: Some(SCRIPTED_STEP.to_owned()),
-            step_action: Some(intent.action()),
-            step_ref: intent.target_ref().map(str::to_owned),
             step_result,
         };
+        let digging = matches!(intent, Intent::Dig { .. });
         let Some(held) = &perception.goal else {
-            // A success item must be one the agent can get now: the stick when it can, else the
-            // first item offered, and no goal at all when nothing is obtainable.
-            let obtainable = crate::offered::OfferedRefs::of(perception).obtainable;
-            let item = obtainable
-                .iter()
-                .find(|item| *item == SCRIPTED_SUCCESS_ITEM)
-                .or_else(|| obtainable.first())?;
-            return Some(GoalChoice {
-                statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
-                success_condition: Some(SCRIPTED_SUCCESS_CONDITION.to_owned()),
-                success_item: Some(item.clone()),
-                success_count: Some(1),
-                ..step(GoalDisposition::Adopt, None)
-            });
+            let Intent::Dig { block } = intent else {
+                return None;
+            };
+            let item = yield_of(perception, block, None)?;
+            let have = held_count(perception, &item);
+            return (crate::offered::OfferedRefs::of(perception).capacity_of(&item) >= 1).then(
+                || GoalChoice {
+                    statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
+                    success_item: Some(item),
+                    success_count: Some(have + 1),
+                    ..step(GoalDisposition::Adopt, None)
+                },
+            );
         };
         let progress = held.progress.as_ref();
         let step_result = match progress {
@@ -407,16 +403,15 @@ impl ScriptedBackend {
         };
         let ended = |disposition| GoalChoice {
             step: None,
-            step_action: None,
-            step_ref: None,
             ..step(disposition, Some(step_result))
         };
-        // A met condition is completed, a goal at the no-progress bound abandoned rather than
-        // continued into the body's refusal, and anything else continued.
+        // A met condition is completed; a goal at the no-progress bound, or with nothing in reach
+        // to dig for it, is abandoned rather than continued into the body's refusal.
         Some(if progress.is_some_and(|seen| seen.condition_met) {
             ended(GoalDisposition::Complete)
-        } else if progress
-            .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS)
+        } else if !digging
+            || progress
+                .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS)
         {
             ended(GoalDisposition::Abandon)
         } else {
@@ -512,7 +507,7 @@ impl ScriptedBackend {
             // names what it was told about first and lets the body refuse what is
             // not food, which is a refusal the body records. A demo therefore
             // provisions the food in the body's first occupied slot.
-            Trigger::GoalReview if perception.self_state.food <= LOW_FOOD_LEVEL => {
+            trigger if trigger.reviews_goal() && perception.self_state.food <= LOW_FOOD_LEVEL => {
                 let food = perception.self_state.food;
                 let saturation = perception.self_state.saturation;
                 match perception.self_state.inventory_summary.first() {
@@ -535,16 +530,77 @@ impl ScriptedBackend {
                     },
                 }
             }
-            Trigger::GoalReview => Draft {
-                goal: None,
-                intent: Intent::Idle,
-                reasoning: format!(
-                    "reviewed goals at the {tier:?} tier; nothing outranks what is already underway",
-                    tier = route.tier()
-                ),
-            },
+            // The stand-in's one routine step: dig the nearest offered block that can drop
+            // something, the held goal's item first, or do nothing when no such block is in reach.
+            Trigger::GoalReview | Trigger::StepSettled => {
+                let wanted = perception.goal.as_ref().and_then(|goal| goal.success_item.as_deref());
+                match nearest_yielding_dig(perception, wanted) {
+                    Some((block, item)) => Draft {
+                        goal: None,
+                        intent: Intent::Dig { block },
+                        reasoning: format!(
+                            "reviewed goals at the {tier:?} tier; a block in reach can drop {item}, so dig it",
+                            tier = route.tier()
+                        ),
+                    },
+                    None => Draft {
+                        goal: None,
+                        intent: Intent::Idle,
+                        reasoning: format!(
+                            "reviewed goals at the {tier:?} tier; no block in reach drops anything",
+                            tier = route.tier()
+                        ),
+                    },
+                }
+            }
         }
     }
+}
+
+/// The nearest block offered to dig that can drop something, and the item it is dug for:
+/// [`wanted`] where it can drop that, else the stick, else the first it can drop.
+fn nearest_yielding_dig(perception: &Perception, wanted: Option<&str>) -> Option<(String, String)> {
+    let offered = crate::offered::OfferedRefs::of(perception);
+    let diggable = |seen: &&Observation| offered.dig_blocks.contains(&seen.target_ref);
+    let candidates: Vec<&Observation> = perception.surroundings.iter().filter(diggable).collect();
+    let pick = |want: Option<&str>| {
+        candidates.iter().find_map(|seen| {
+            yield_of(perception, &seen.target_ref, want)
+                .filter(|item| want.is_none_or(|want| item == want))
+                .map(|item| (seen.target_ref.clone(), item))
+        })
+    };
+    wanted
+        .and_then(|want| pick(Some(want)))
+        .or_else(|| pick(Some(SCRIPTED_SUCCESS_ITEM)))
+        .or_else(|| pick(None))
+}
+
+/// What digging the observed block `block` is for: `want` when it can drop that, else the
+/// stick, else the first item it can drop.
+fn yield_of(perception: &Perception, block: &str, want: Option<&str>) -> Option<String> {
+    let yields = perception
+        .surroundings
+        .iter()
+        .find(|seen| seen.target_ref == block)?
+        .yields
+        .as_ref()?;
+    let named = |name: &str| yields.iter().find(|item| item.what == name);
+    want.and_then(named)
+        .or_else(|| named(SCRIPTED_SUCCESS_ITEM))
+        .or_else(|| yields.first())
+        .map(|item| item.what.clone())
+}
+
+/// How many of `item` the agent holds now.
+fn held_count(perception: &Perception, item: &str) -> i64 {
+    perception
+        .self_state
+        .inventory_summary
+        .iter()
+        .filter(|stack| stack.what == item)
+        .map(|stack| stack.count)
+        .sum()
 }
 
 impl ModelBackend for ScriptedBackend {
@@ -596,7 +652,7 @@ mod tests {
 
     use super::{
         BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, LOW_FOOD_LEVEL,
-        SCRIPTED_GOAL_STATEMENT, SCRIPTED_STEP, SCRIPTED_SUCCESS_CONDITION,
+        SCRIPTED_GOAL_STATEMENT, SCRIPTED_STEP,
     };
     use crate::config::{ConfigError, Env};
     use crate::router::{ModelCatalog, Router};
@@ -625,6 +681,7 @@ mod tests {
                 inventory_summary: vec![],
                 crafting_options: vec![],
                 crafting_options_omitted: 0,
+                own_drops: vec![],
                 world: WorldState {
                     day_phase: DayPhase::Day,
                     is_day: true,
@@ -764,31 +821,50 @@ mod tests {
     fn the_stand_in_adopts_at_its_first_review_and_continues_at_the_next() {
         let route = router().route(DecisionImportance::Routine);
         let mut first = perception(Trigger::GoalReview, DecisionImportance::Routine);
-        // With nothing obtainable there is no success item, so no goal is adopted (r13).
-        assert_eq!(ScriptedBackend::draft_now(&route, &first).goal, None);
-        first.self_state.inventory_summary = vec![loom_contract::InventoryStack {
-            slot_ref: "i1".to_owned(),
-            what: "item.minecraft.dirt".to_owned(),
-            count: 1,
+        // Nothing in reach drops anything: it idles, and adopts no goal beside an idle step (r14 eta).
+        let idle = ScriptedBackend::draft_now(&route, &first);
+        assert_eq!(idle.intent, Intent::Idle);
+        assert_eq!(idle.goal, None);
+        // A bush in reach that drops nought to two sticks: it digs it, for one more than it holds.
+        first.surroundings = vec![loom_contract::Observation {
+            kind: ObservationKind::Block,
+            what: "block.minecraft.dead_bush".to_owned(),
+            distance: 1.0,
+            direction: Bearing::North,
+            vertical_offset: 0.0,
+            visible: true,
+            target_ref: "b1".to_owned(),
+            count: None,
+            standable: Some(true),
+            yields: Some(vec![loom_contract::BlockYield {
+                what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
+                least: 0,
+                most: 2,
+            }]),
+            dig_safe: Some(true),
         }];
-        let adopted = ScriptedBackend::draft_now(&route, &first).goal.unwrap();
+        let digging = ScriptedBackend::draft_now(&route, &first);
+        assert_eq!(
+            digging.intent,
+            Intent::Dig {
+                block: "b1".to_owned()
+            }
+        );
+        let adopted = digging.goal.unwrap();
         assert_eq!(adopted.disposition, GoalDisposition::Adopt);
         assert_eq!(adopted.statement.as_deref(), Some(SCRIPTED_GOAL_STATEMENT));
-        assert_eq!(adopted.success_item.as_deref(), Some("item.minecraft.dirt"));
-        // The stick is preferred wherever it can be had.
-        first
-            .self_state
-            .inventory_summary
-            .push(loom_contract::InventoryStack {
-                slot_ref: "i2".to_owned(),
-                what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
-                count: 1,
-            });
-        let stick = ScriptedBackend::draft_now(&route, &first).goal.unwrap();
         assert_eq!(
-            stick.success_item.as_deref(),
+            adopted.success_item.as_deref(),
             Some(super::SCRIPTED_SUCCESS_ITEM)
         );
+        assert_eq!(adopted.success_count, Some(1));
+        first.self_state.inventory_summary = vec![loom_contract::InventoryStack {
+            slot_ref: "i1".to_owned(),
+            what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
+            count: 1,
+        }];
+        let more = ScriptedBackend::draft_now(&route, &first).goal.unwrap();
+        assert_eq!(more.success_count, Some(2));
 
         let mut later = perception(Trigger::GoalReview, DecisionImportance::Routine);
         later.goal = Some(GoalSummary {
@@ -797,7 +873,6 @@ mod tests {
             revision: 0,
             adopted_tick: 0,
             last_step: None,
-            success_condition: Some(SCRIPTED_SUCCESS_CONDITION.to_owned()),
             success_item: None,
             success_count: None,
             step: Some(SCRIPTED_STEP.to_owned()),
@@ -805,6 +880,10 @@ mod tests {
             step_ref: None,
             progress: None,
         });
+        // With nothing left in reach to dig for it, the goal is abandoned, not idled on.
+        let abandoned = ScriptedBackend::draft_now(&route, &later).goal.unwrap();
+        assert_eq!(abandoned.disposition, GoalDisposition::Abandon);
+        later.surroundings.clone_from(&first.surroundings);
         let continued = ScriptedBackend::draft_now(&route, &later).goal.unwrap();
         assert_eq!(continued.disposition, GoalDisposition::Continue);
         assert_eq!(continued.statement, None);

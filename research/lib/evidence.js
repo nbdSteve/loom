@@ -39,7 +39,9 @@ const GOAL_OUTCOMES = [
   'goalStepMismatch',
   'goalConditionMetIgnored',
   'goalCompletionUnmet',
-  'goalSuccessUnobtainable'
+  'goalSuccessUnobtainable',
+  'goalAlreadyMet',
+  'goalStepIdle'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // What a measured step showed, from routine-v22: the exact target reached, an item gained, a
@@ -503,6 +505,9 @@ function deriveMetrics (records, configuredAgents = []) {
   const stamps = new Map()
   const positions = new Map()
   const coLocations = []
+  // From gate generation 6: perceptions that showed another player within eight blocks, which a
+  // pairing of self-positions taken 20 ticks apart can miss (r14 beta saw delta at 1.9 blocks).
+  const playerSightings = []
   const perceptionAudits = []
 
   for (const record of bodyRecords) {
@@ -577,6 +582,12 @@ function deriveMetrics (records, configuredAgents = []) {
           }
         }
       }
+    }
+    const nearestPlayer = (record.perception?.surroundings ?? [])
+      .filter((seen) => seen.kind === 'entity' && seen.what === 'entity.minecraft.player' && Number.isFinite(seen.distance))
+      .reduce((nearest, seen) => Math.min(nearest, seen.distance), Infinity)
+    if (record.event === 'perceived' && nearestPlayer <= 8) {
+      playerSightings.push({ agentId: record.agentId, tick: record.tick, distanceBlocks: nearestPlayer })
     }
     if (record.event === 'perceived' && record.perceptionAudit !== undefined) {
       validatePerceptionAudit(record.perceptionAudit, `${record.recordId} perception audit`)
@@ -663,16 +674,33 @@ function deriveMetrics (records, configuredAgents = []) {
   const scriptedEvidence =
     configuredBackend === 'scripted' ||
     (stamps.size > 0 && [...stamps.values()].every((stamp) => stamp.model === 'scripted-stand-in'))
+  const spatialGeneration = Number.isInteger(stimulusRecords[0]?.behaviorGateGeneration)
+    ? stimulusRecords[0].behaviorGateGeneration
+    : 1
+  // Generation 6 states exactly what each spatial measure counts; earlier generations keep the
+  // sentence their committed evidence was published under.
+  const spatialStated = spatialGeneration >= 6
   const observations = []
   if (coLocations.length > 0) {
-    observations.push(`${coLocations.length} bounded co-location sample(s) placed two agents within eight blocks`)
+    observations.push(spatialStated
+      ? `${coLocations.length} paired self-position sample(s), the two agents' perceptions taken within 20 ticks of each other, placed two agents within eight blocks`
+      : `${coLocations.length} bounded co-location sample(s) placed two agents within eight blocks`)
+  }
+  if (spatialStated && playerSightings.length > 0) {
+    observations.push(`${playerSightings.length} perception(s) showed another player within eight blocks`)
   }
   if (socialSpeech > 0) observations.push(`${socialSpeech} speech intent(s) were accepted by the body`)
   if (attacks > 0) observations.push(`${attacks} attack intent(s) were applied`)
 
   const counterevidence = []
   if (socialSpeech === 0) counterevidence.push('No agent produced a speech intent.')
-  if (coLocations.length === 0) counterevidence.push('No bounded perception sample placed two agents within eight blocks.')
+  if (spatialStated) {
+    if (coLocations.length === 0 && playerSightings.length === 0) {
+      counterevidence.push('Neither a paired self-position sample nor any perception placed two agents within eight blocks.')
+    }
+  } else if (coLocations.length === 0) {
+    counterevidence.push('No bounded perception sample placed two agents within eight blocks.')
+  }
   if (attacks === 0) counterevidence.push('No attack intent was applied.')
   if ((byEvent.worldInteraction ?? 0) === 0) {
     counterevidence.push('No server-confirmed native world interaction occurred.')
@@ -744,7 +772,8 @@ function deriveMetrics (records, configuredAgents = []) {
     spatial: {
       coLocationThresholdBlocks: 8,
       maximumTickSeparation: 20,
-      coLocationSamples: coLocations
+      coLocationSamples: coLocations,
+      ...(spatialStated ? { playerSightings: playerSightings.length } : {})
     },
     crashContainment: {
       controlledCrashes: crashes.map((record) => ({

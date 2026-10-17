@@ -148,6 +148,7 @@
         "inventorySummary",
         "craftingOptions",
         "craftingOptionsOmitted",
+        "ownDrops",
         "world"
       ],
       "properties": {
@@ -191,7 +192,61 @@
           "type": "integer",
           "minimum": 0
         },
+        "ownDrops": {
+          "description": "What the server saw this agent's own recent digs drop, newest first, attributed to the request whose dig dropped it. Told to the digger whether or not the drop is in sight, and whatever became of it since, so a dig that dropped something another agent then took is still known to have yielded.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/OwnDrop" },
+          "maxItems": 8
+        },
         "world": { "$ref": "#/$defs/WorldState" }
+      }
+    },
+
+    "OwnDrop": {
+      "description": "One stack the server dropped for one of this agent's digs. fate is what became of it: lying where the server can still see it, collected by this agent, taken by another player, or gone (merged, despawned or destroyed). distance, direction and verticalOffset place a lying drop from the agent now, measured the way an observation's are, and are present exactly when fate is lying.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "what", "count", "fate"],
+      "properties": {
+        "requestId": {
+          "description": "The perception request id of the decision whose dig dropped this stack.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "what": { "$ref": "#/$defs/ItemName" },
+        "count": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "fate": { "$ref": "#/$defs/DropFate" },
+        "distance": { "type": "number", "minimum": 0 },
+        "direction": { "$ref": "#/$defs/Bearing" },
+        "verticalOffset": { "type": "number" }
+      },
+      "if": { "properties": { "fate": { "const": "lying" } } },
+      "then": { "required": ["distance", "direction", "verticalOffset"] },
+      "else": {
+        "allOf": [
+          { "not": { "required": ["distance"] } },
+          { "not": { "required": ["direction"] } },
+          { "not": { "required": ["verticalOffset"] } }
+        ]
+      }
+    },
+
+    "DropFate": {
+      "description": "What became of a stack an agent's own dig dropped.",
+      "type": "string",
+      "enum": ["lying", "collected", "taken", "gone"]
+    },
+
+    "BlockYield": {
+      "description": "One item digging a block with what the body holds can drop, and how many: the server's loot rules are random, so least is the fewest it has dropped and most the most, and a least of 0 means a dig may drop none of it at all.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "least", "most"],
+      "properties": {
+        "what": { "allOf": [{ "$ref": "#/$defs/ItemName" }, { "not": { "const": "item.minecraft.air" } }] },
+        "least": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "most": { "type": "integer", "minimum": 1, "maximum": 64 }
       }
     },
 
@@ -255,10 +310,10 @@
           "minimum": 1
         },
         "yields": {
-          "description": "The items digging this block with what the body holds drops, as the server's own loot rules answer it: empty when it drops nothing, such as bare-hand terracotta. Present only when kind is block.",
+          "description": "The items digging this block with what the body holds can drop, each with the range the server's own random loot rules give: empty when it drops nothing, such as bare-hand terracotta. Never air. Present only when kind is block.",
           "type": "array",
           "maxItems": 8,
-          "items": { "$ref": "#/$defs/ItemName" }
+          "items": { "$ref": "#/$defs/BlockYield" }
         },
         "digSafe": {
           "description": "Whether digging this block leaves the body a way out. False only for the block under the body's feet when no standable neighbour would let it climb out of the hole the dig makes. Present only when kind is block.",
@@ -346,6 +401,16 @@
           "properties": {
             "event": { "const": "goalReview" }
           }
+        },
+        {
+          "title": "StepSettled",
+          "description": "The step the agent's held goal last took has ended, so the agent reviews that goal again at once rather than at its next scheduled review. At most one follows each scheduled goal review. Empty variant.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event"],
+          "properties": {
+            "event": { "const": "stepSettled" }
+          }
         }
       ]
     },
@@ -392,7 +457,7 @@
           "minimum": 0
         },
         "goal": {
-          "description": "The agent's held short-term goal, present only on a goalReview perception and only while one is held.",
+          "description": "The agent's held short-term goal, present only on a goalReview or stepSettled perception and only while one is held.",
           "$ref": "#/$defs/GoalSummary"
         }
       }
@@ -569,7 +634,7 @@
     },
 
     "IntentAction": {
-      "description": "The action an Intent takes, as its action tag. A goal's typed step names one, and the body refuses a decision whose intent takes a different action from the step it states.",
+      "description": "The action an Intent takes, as its action tag. A held goal's typed step is the action its affirming decision's intent took.",
       "type": "string",
       "enum": ["say", "moveTo", "flee", "eat", "dig", "collect", "place", "equip", "craft", "attack", "sleep", "rest", "idle"]
     },
@@ -583,7 +648,7 @@
     },
 
     "GoalDisposition": {
-      "description": "What a goal review's decision does with the agent's short-term goal. adopt starts one where none is held; continue keeps the held goal; revise rewords the held goal under the same goalId; complete and abandon end it. Choosing any of them is independent of the intent, so continuing a goal while idling is legal.",
+      "description": "What a goal review's decision does with the agent's short-term goal. adopt starts one where none is held; continue keeps the held goal; revise rewords the held goal under the same goalId; complete and abandon end it. adopt, continue and revise take the decision's intent as the goal's step, so the body refuses them beside an idle or rest intent, which is no step.",
       "type": "string",
       "enum": ["adopt", "continue", "revise", "complete", "abandon"]
     },
@@ -595,19 +660,16 @@
     },
 
     "GoalChoice": {
-      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. statement is the goal's wording and successCondition its words for the state that would mean it is achieved; successItem and successCount type that state as holding at least that many of that item, which the body measures. All four are for adopt and revise. step words the one concrete next step this decision's intent takes toward the goal, and stepAction and stepRef type it: the action and target ref the intent itself takes, absent stepRef for an action that names none. All three are for adopt, continue and revise, and the body refuses a decision whose intent disagrees with its typed step before applying it. stepResult judges the carried goal's previous step, for every disposition except adopt. The body refuses a choice missing a field its disposition requires, and ignores the rest.",
+      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. statement is the goal's wording; successItem and successCount are its success condition, holding at least that many of that item, which the body measures and states in words itself. All three are for adopt and revise, and the body refuses a count the inventory already holds or one more than what is in sight could give. step words the one concrete next step this decision's intent takes toward the goal, for adopt, continue and revise; the body types that step from the intent itself. stepResult judges the carried goal's previous step, for every disposition except adopt. The body refuses a choice missing a field its disposition requires, and ignores the rest.",
       "type": "object",
       "additionalProperties": false,
       "required": ["disposition"],
       "properties": {
         "disposition": { "$ref": "#/$defs/GoalDisposition" },
         "statement": { "$ref": "#/$defs/GoalStatement" },
-        "successCondition": { "$ref": "#/$defs/GoalStatement" },
         "successItem": { "$ref": "#/$defs/ItemName" },
         "successCount": { "type": "integer", "minimum": 1, "maximum": 64 },
         "step": { "$ref": "#/$defs/GoalStatement" },
-        "stepAction": { "$ref": "#/$defs/IntentAction" },
-        "stepRef": { "$ref": "#/$defs/EntityRef" },
         "stepResult": { "$ref": "#/$defs/GoalStepResult" }
       }
     },
@@ -633,7 +695,7 @@
     },
 
     "StepEvidence": {
-      "description": "What showed the goal's last step was carried out: arrived for a walk that reached its visible target somewhere new to the goal, gained for an action after which the inventory held more of an item, dropped for one after which a new dropped item lay in sight, none when nothing did. Only a step with evidence advances.",
+      "description": "What showed the goal's last step was carried out: arrived for a walk that reached its visible target somewhere new to the goal, gained for an action after which the inventory held more of an item, dropped for a dig the server saw drop something for this agent's own request, wherever it went after, none when nothing did. Only a step with evidence advances.",
       "type": "string",
       "enum": ["arrived", "gained", "dropped", "none"]
     },
@@ -677,7 +739,7 @@
     },
 
     "GoalSummary": {
-      "description": "The one short-term goal the agent's previous goal review left held, carried into this goal review and no other trigger. Body-owned state, isolated per agent and bounded in size and lifetime.",
+      "description": "The one short-term goal the agent's previous goal review left held, carried into a goalReview or stepSettled perception and no other trigger. Body-owned state, isolated per agent and bounded in size and lifetime.",
       "type": "object",
       "additionalProperties": false,
       "required": ["goalId", "statement", "revision", "adoptedTick"],
@@ -700,15 +762,20 @@
           "minimum": 0
         },
         "lastStep": { "$ref": "#/$defs/GoalStep" },
-        "successCondition": { "$ref": "#/$defs/GoalStatement" },
         "successItem": { "$ref": "#/$defs/ItemName" },
         "successCount": { "type": "integer", "minimum": 1, "maximum": 64 },
         "step": {
           "description": "The step the goal's last affirming review chose to take.",
           "$ref": "#/$defs/GoalStatement"
         },
-        "stepAction": { "$ref": "#/$defs/IntentAction" },
-        "stepRef": { "$ref": "#/$defs/EntityRef" },
+        "stepAction": {
+          "description": "The action the step's decision's intent took.",
+          "$ref": "#/$defs/IntentAction"
+        },
+        "stepRef": {
+          "description": "The ref that intent acted on, absent for an action that names none.",
+          "$ref": "#/$defs/EntityRef"
+        },
         "progress": { "$ref": "#/$defs/GoalProgress" }
       }
     },

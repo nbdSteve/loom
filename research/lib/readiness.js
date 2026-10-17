@@ -17,6 +17,15 @@ const GOAL_INCOHERENT_TAGS = new Set(['goalStepMismatch', 'goalConditionMetIgnor
 // be one the agent could get, and a dig that would trap the agent is refused.
 const EVIDENCED_READINESS_VERSION = 'loom-readiness-gate/3'
 const EVIDENCED_GOAL_INCOHERENT_TAGS = new Set([...GOAL_INCOHERENT_TAGS, 'goalSuccessUnobtainable'])
+// Gate generation 6: a goal already met when it is set, or pursued by idling, is refused too.
+const GROUNDED_READINESS_VERSION = 'loom-readiness-gate/4'
+const GROUNDED_GOAL_INCOHERENT_TAGS = new Set([...EVIDENCED_GOAL_INCOHERENT_TAGS, 'goalAlreadyMet', 'goalStepIdle'])
+
+/** The goal ledger refusals gate [generation] counts as incoherent decisions. */
+function goalIncoherentTagsOf (generation) {
+  if (generation >= 6) return GROUNDED_GOAL_INCOHERENT_TAGS
+  return generation >= 5 ? EVIDENCED_GOAL_INCOHERENT_TAGS : GOAL_INCOHERENT_TAGS
+}
 // The evidence that may credit a step; `none`, or no evidence stated at all, never does.
 const CREDITING_STEP_EVIDENCE = new Set(['arrived', 'gained', 'dropped'])
 
@@ -65,8 +74,8 @@ const INAPPLICABLE_TAGS = new Set([
 const PROTOCOL_TAGS = new Set(['rejected', 'controlUnavailable', 'unsupported', 'noSuchBody'])
 
 /** The class a refusal tag ends its action in, under gate [generation] (the current one by default). */
-function refusalClass (tag, generation = 5) {
-  if ((generation >= 5 ? EVIDENCED_GOAL_INCOHERENT_TAGS : GOAL_INCOHERENT_TAGS).has(tag)) return 'goalIncoherent'
+function refusalClass (tag, generation = 6) {
+  if (goalIncoherentTagsOf(generation).has(tag)) return 'goalIncoherent'
   if (generation >= 5 && tag === 'digWouldTrap') return 'inapplicable'
   if (tag === 'controlNotReady') return 'concurrent'
   if (tag === 'moveOwnSpot') return 'noOpTarget'
@@ -190,7 +199,8 @@ function typedGoalCoherenceOf (bodyRecords, generation = 4) {
     stepMismatches: 0,
     unmetCompletions: 0,
     stalled: 0,
-    ...(evidenced ? { unevidencedCredits: 0, unobtainableConditions: 0 } : {})
+    ...(evidenced ? { unevidencedCredits: 0, unobtainableConditions: 0 } : {}),
+    ...(generation >= 6 ? { alreadyMetConditions: 0, idleSteps: 0 } : {})
   }
   for (const record of bodyRecords) {
     const goal = record.goal
@@ -199,6 +209,8 @@ function typedGoalCoherenceOf (bodyRecords, generation = 4) {
     if (goal.outcome === 'goalCompletionUnmet') counts.unmetCompletions += 1
     if (goal.outcome === 'goalStalled') counts.stalled += 1
     if (evidenced && goal.outcome === 'goalSuccessUnobtainable') counts.unobtainableConditions += 1
+    if (generation >= 6 && goal.outcome === 'goalAlreadyMet') counts.alreadyMetConditions += 1
+    if (generation >= 6 && goal.outcome === 'goalStepIdle') counts.idleSteps += 1
     if (goal.conditionMet === true) {
       counts.metConditions += 1
       if (goal.outcome === 'goalCompleted') counts.metCompleted += 1
@@ -223,13 +235,14 @@ function typedGoalCoherenceOf (bodyRecords, generation = 4) {
   const multiStepGoals = goals.filter((goal) => goal.condition >= 2).length
   const coherent = counts.stepMismatches === 0 && counts.unmetCompletions === 0 && counts.metIgnored === 0 &&
     multiStepGoals >= 1 &&
-    (!evidenced || (counts.unevidencedCredits === 0 && counts.unobtainableConditions === 0))
+    (!evidenced || (counts.unevidencedCredits === 0 && counts.unobtainableConditions === 0)) &&
+    (generation < 6 || (counts.alreadyMetConditions === 0 && counts.idleSteps === 0))
   return { ...counts, goalsMeasured: goals.length, multiStepGoals, verdict: coherent ? 'coherent' : 'incoherent' }
 }
 
 function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 3 }) {
   const typed = generation >= 4
-  const goalIncoherentTags = generation >= 5 ? EVIDENCED_GOAL_INCOHERENT_TAGS : GOAL_INCOHERENT_TAGS
+  const goalIncoherentTags = goalIncoherentTagsOf(generation)
   const blockerClasses = typed ? [...BLOCKER_CLASSES, 'goalIncoherent'] : BLOCKER_CLASSES
   const settledAfterDeath = new Set(
     Object.values(metrics.witnessedDeaths?.byAgent ?? {}).flatMap((entry) => entry.settledAfterDeath ?? [])
@@ -324,7 +337,9 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
   const coherence = typed ? typedGoalCoherenceOf(bodyRecords, generation) : undefined
   const ready = mechanicallyReady && (coherence === undefined || coherence.verdict === 'coherent')
   return {
-    version: generation >= 5 ? EVIDENCED_READINESS_VERSION : typed ? COHERENT_READINESS_VERSION : READINESS_VERSION,
+    version: [READINESS_VERSION, COHERENT_READINESS_VERSION, EVIDENCED_READINESS_VERSION, GROUNDED_READINESS_VERSION][
+      Math.min(Math.max(generation - 3, 0), 3)
+    ],
     actions: {
       total,
       byClass: Object.fromEntries(Object.entries(byClass).sort()),
@@ -354,6 +369,8 @@ module.exports = {
   EVIDENCED_GOAL_INCOHERENT_TAGS,
   EVIDENCED_READINESS_VERSION,
   GOAL_INCOHERENT_TAGS,
+  GROUNDED_GOAL_INCOHERENT_TAGS,
+  GROUNDED_READINESS_VERSION,
   RACE_CLASSES,
   READINESS_VERSION,
   readinessMetrics,

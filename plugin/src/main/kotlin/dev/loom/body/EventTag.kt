@@ -32,6 +32,9 @@ object EventTag {
     /** A scheduled goal review: the agent's own cadence, not the world's prompting. */
     const val GOAL_REVIEW: String = "goalReview"
 
+    /** The held goal's last step ended, prompting one follow-up goal review. */
+    const val STEP_SETTLED: String = "stepSettled"
+
     /** Somebody spoke to the agent. */
     const val SPOKEN: String = "spoken"
 
@@ -551,6 +554,7 @@ object EventTag {
 fun tagOf(trigger: Trigger): String =
     when (trigger) {
         is Trigger.GoalReview -> EventTag.GOAL_REVIEW
+        is Trigger.StepSettled -> EventTag.STEP_SETTLED
         is Trigger.Spoken -> EventTag.SPOKEN
         is Trigger.Damaged -> EventTag.DAMAGED
         is Trigger.ThreatSighted -> EventTag.THREAT_SIGHTED
@@ -584,10 +588,11 @@ fun tagOf(intent: Intent): String =
 val INTENT_REFUSAL_TAGS: Set<String> =
     setOf(
         EventTag.REJECTED,
-        GoalEvidence.STEP_MISMATCH,
         GoalEvidence.CONDITION_MET_IGNORED,
         GoalEvidence.COMPLETION_UNMET,
         GoalEvidence.SUCCESS_UNOBTAINABLE,
+        GoalEvidence.ALREADY_MET,
+        GoalEvidence.STEP_IDLE,
         EventTag.CONTROL_UNAVAILABLE,
         EventTag.CONTROL_NOT_READY,
         EventTag.EAT_SLOT_FORGOTTEN,

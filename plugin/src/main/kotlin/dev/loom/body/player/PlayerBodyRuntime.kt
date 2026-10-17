@@ -40,6 +40,7 @@ data class PlayerBodyAuthority(
     val speechClaims: SpeechClaims = SpeechClaims.NONE,
     val ground: BlockGround = BlockGround.UNKNOWN,
     val yields: BlockYields = BlockYields.NONE,
+    val ownDrops: OwnDrops = OwnDrops.NONE,
 )
 
 internal data class PlayerRuntime(

@@ -1,7 +1,7 @@
 {
   "experimentId": "2026-10-15-scripted-two-cycle-3-agent-sample",
   "title": "Credential-free 3-agent two-cycle real-time calibration sample",
-  "mode": "routine-v22-obtainable-goal",
+  "mode": "routine-v23-own-evidence",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -53,9 +53,9 @@
       "pivotal": "scripted-stand-in"
     },
     "prompts": {
-      "routine": "routine-v22",
-      "notable": "notable-v22",
-      "pivotal": "pivotal-v22"
+      "routine": "routine-v23",
+      "notable": "notable-v23",
+      "pivotal": "pivotal-v23"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,
@@ -118,7 +118,8 @@
     "nativeGoalReviewSchedule": {
       "cadenceTicks": 2400,
       "sliceTicks": 100,
-      "expectedReviewsPerAgent": 21
+      "expectedReviewsPerAgent": 21,
+      "followUpsPerReview": 1
     },
     "externalCognitionStimuli": "none",
     "startingInventories": "empty",

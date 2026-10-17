@@ -27,7 +27,7 @@ class R13GoalAuditReplayTest {
     /** What one review saw, beyond the agent's place. */
     private data class Seen(
         val inventory: Map<String, Long> = emptyMap(),
-        val obtainable: Set<String> = setOf(STICK),
+        val capacity: Map<String, Long> = mapOf(STICK to 8L),
         val visible: Set<String> = emptySet(),
         val arrived: Boolean = true,
     )
@@ -44,7 +44,7 @@ class R13GoalAuditReplayTest {
             GoalObservation(
                 seen.inventory,
                 at,
-                obtainable = seen.inventory.keys + seen.obtainable,
+                capacity = seen.capacity,
                 visible = seen.visible,
             )
         val carried = ledger.present(agent, review, review.substringAfter('-').toLong(), observed)
@@ -64,22 +64,21 @@ class R13GoalAuditReplayTest {
 
     private fun goal(
         disposition: GoalDisposition,
-        intent: Intent,
         success: Pair<String, Long> = STICK to 4L,
-    ) = goalChoice(disposition, "gather sticks", intent = intent, success = success)
+    ) = goalChoice(disposition, "gather sticks", success = success)
 
     @Test
     fun `alpha's four barren terracotta digs advance nothing and stall the goal`() {
         val at = listOf(14.5, 102.0, 2.5)
         // A stick goal, which is obtainable, so the chain itself is what is judged.
-        review("alpha-23", at, Seen(), goal(GoalDisposition.ADOPT, Intent.Dig("b72")), Intent.Dig("b72"))
+        review("alpha-23", at, Seen(), goal(GoalDisposition.ADOPT), Intent.Dig("b72"))
         val outcomes =
             listOf("110", "232", "452", "500").map { record ->
                 review(
                     "alpha-$record",
                     at,
                     Seen(),
-                    goal(GoalDisposition.REVISE, Intent.Dig("b$record")),
+                    goal(GoalDisposition.REVISE),
                     Intent.Dig("b$record"),
                 )
             }
@@ -97,8 +96,8 @@ class R13GoalAuditReplayTest {
             review(
                 "alpha-23",
                 listOf(12.5, 105.0, 0.5),
-                Seen(obtainable = emptySet()),
-                goal(GoalDisposition.ADOPT, Intent.Dig("b1"), "item.minecraft.terracotta" to 16L),
+                Seen(capacity = emptyMap()),
+                goal(GoalDisposition.ADOPT, "item.minecraft.terracotta" to 16L),
                 Intent.Dig("b1"),
             )
         assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, terracotta?.outcome)
@@ -108,7 +107,7 @@ class R13GoalAuditReplayTest {
                 "beta-28",
                 listOf(10.5, 99.0, 7.5),
                 Seen(),
-                goal(GoalDisposition.ADOPT, Intent.MoveTo("bcf"), "item.minecraft.oak_log" to 1L),
+                goal(GoalDisposition.ADOPT, "item.minecraft.oak_log" to 1L),
                 Intent.MoveTo("bcf"),
             )
         assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, log?.outcome)
@@ -118,7 +117,7 @@ class R13GoalAuditReplayTest {
                 "iota-53",
                 listOf(4.5, 111.0, -10.5),
                 Seen(),
-                goal(GoalDisposition.ADOPT, Intent.MoveTo("b13w"), "item.minecraft.dead_bush" to 1L),
+                goal(GoalDisposition.ADOPT, "item.minecraft.dead_bush" to 1L),
                 Intent.MoveTo("b13w"),
             )
         assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, bush?.outcome)
@@ -128,7 +127,7 @@ class R13GoalAuditReplayTest {
                 "iota-54",
                 listOf(4.5, 111.0, -10.5),
                 Seen(),
-                goal(GoalDisposition.ADOPT, Intent.MoveTo("b13w")),
+                goal(GoalDisposition.ADOPT),
                 Intent.MoveTo("b13w"),
             )
         assertEquals(GoalEvidence.ADOPTED, stick?.outcome)
@@ -140,7 +139,7 @@ class R13GoalAuditReplayTest {
         // block.minecraft.dead_bush, which no inventory stack can ever be.
         for (name in listOf("block.minecraft.terracotta", "block.minecraft.dead_bush")) {
             assertThrows(IllegalArgumentException::class.java) {
-                goal(GoalDisposition.ADOPT, Intent.Idle, name to 1L)
+                goal(GoalDisposition.ADOPT, name to 1L)
             }
         }
     }
@@ -153,7 +152,7 @@ class R13GoalAuditReplayTest {
             "gamma-128",
             listOf(4.5, 102.0, 11.5),
             none,
-            goal(GoalDisposition.ADOPT, Intent.MoveTo("beip")),
+            goal(GoalDisposition.ADOPT),
             Intent.MoveTo("beip"),
         )
         val (unseen, _) =
@@ -161,7 +160,7 @@ class R13GoalAuditReplayTest {
                 "gamma-284",
                 listOf(5.5, 102.0, 11.5),
                 none,
-                goal(GoalDisposition.REVISE, Intent.MoveTo("bf1")),
+                goal(GoalDisposition.REVISE),
                 Intent.MoveTo("bf1"),
             )
         assertEquals(StepEvidence.NONE, unseen?.progress?.stepEvidence)
@@ -171,7 +170,7 @@ class R13GoalAuditReplayTest {
             "gamma-285",
             listOf(5.5, 102.0, 11.5),
             inSight,
-            goal(GoalDisposition.REVISE, Intent.MoveTo("bf2")),
+            goal(GoalDisposition.REVISE),
             Intent.MoveTo("bf2"),
         )
         val (short, _) =
@@ -179,7 +178,7 @@ class R13GoalAuditReplayTest {
                 "gamma-495",
                 listOf(6.5, 102.0, 11.5),
                 none,
-                goal(GoalDisposition.REVISE, Intent.MoveTo("bf3")),
+                goal(GoalDisposition.REVISE),
                 Intent.MoveTo("bf3"),
             )
         assertEquals(StepEvidence.NONE, short?.progress?.stepEvidence)
@@ -188,7 +187,7 @@ class R13GoalAuditReplayTest {
             "delta-80",
             listOf(-5.5, 110.0, 8.5),
             none,
-            goal(GoalDisposition.ADOPT, Intent.MoveTo("b9")),
+            goal(GoalDisposition.ADOPT),
             Intent.MoveTo("b9"),
         )
         val (search, _) =
@@ -196,7 +195,7 @@ class R13GoalAuditReplayTest {
                 "delta-118",
                 listOf(-7.5, 110.0, 8.5),
                 none,
-                goal(GoalDisposition.REVISE, Intent.MoveTo("b10")),
+                goal(GoalDisposition.REVISE),
                 Intent.MoveTo("b10"),
             )
         assertEquals(StepEvidence.NONE, search?.progress?.stepEvidence)
@@ -209,7 +208,7 @@ class R13GoalAuditReplayTest {
             "kappa-58",
             listOf(10.5, 108.0, -6.5),
             bush,
-            goal(GoalDisposition.ADOPT, Intent.MoveTo("bush")),
+            goal(GoalDisposition.ADOPT),
             Intent.MoveTo("bush"),
         )
         val (reached, _) =
@@ -217,7 +216,7 @@ class R13GoalAuditReplayTest {
                 "kappa-99",
                 listOf(12.5, 108.0, -6.5),
                 Seen(),
-                goal(GoalDisposition.REVISE, Intent.Idle),
+                goal(GoalDisposition.REVISE),
                 Intent.Idle,
             )
         assertEquals(StepEvidence.ARRIVED, reached?.progress?.stepEvidence)

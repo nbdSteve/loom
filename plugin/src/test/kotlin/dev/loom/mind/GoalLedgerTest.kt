@@ -35,7 +35,7 @@ class GoalLedgerTest {
         disposition: GoalDisposition?,
         statement: String? = null,
     ): Decision =
-        decisionFor(perception(requestId = requestId, agentId = agentId.value))
+        decisionFor(perception(requestId = requestId, agentId = agentId.value), DIG)
             .copy(goal = disposition?.let { goalChoice(it, statement) })
 
     private fun review(
@@ -239,24 +239,15 @@ class GoalLedgerTest {
         x: Double,
         vararg stacks: Pair<String, Long>,
     ): GoalObservation =
-        GoalObservation(
-            mapOf(*stacks),
-            listOf(x, 64.0, 0.0),
-            obtainable =
-                setOf(
-                    *stacks.map {
-                        it.first
-                    }.toTypedArray(),
-                    STICK,
-                ),
-        )
+        // A bush in sight could give up to eight more sticks, as the r11 and r13 scenes' bushes did.
+        GoalObservation(mapOf(*stacks), listOf(x, 64.0, 0.0), capacity = mapOf(STICK to 8L))
 
     private fun affirm(
         requestId: String,
         tick: Long,
         observed: GoalObservation,
         choice: GoalChoice?,
-        intent: Intent = Intent.Idle,
+        intent: Intent = DIG,
     ): Pair<GoalSummary?, GoalEvidence?> {
         val carried = ledger.present(alpha, requestId, tick, observed)
         val decision = decisionFor(perception(requestId = requestId, agentId = alpha.value), intent).copy(goal = choice)
@@ -277,7 +268,7 @@ class GoalLedgerTest {
         val tick = requestId.drop(1).toLong() * 100
         // The step's own target is in sight, and a walk the body accepted arrived.
         val seen = observed.copy(visible = observed.visible + listOfNotNull(intent.targetRef))
-        val result = affirm(requestId, tick, seen, goalChoice(disposition, "gather a stick", intent = intent), intent)
+        val result = affirm(requestId, tick, seen, goalChoice(disposition, "gather a stick"), intent)
         val walk = intent is Intent.MoveTo || intent is Intent.Flee
         ledger.stepped(
             alpha,
@@ -292,35 +283,67 @@ class GoalLedgerTest {
     @Test
     fun aWorkingGoalNeedsItsTypedConditionStepAndVerdict() {
         val adoptBare = GoalChoice(GoalDisposition.ADOPT, statement = "gather wood", step = "walk to the tree")
-        assertEquals(GoalEvidence.SUCCESS_CONDITION_MISSING, affirm("r1", 100, seen(0.0), adoptBare).second?.outcome)
-        val untyped = adoptBare.copy(successCondition = "8 logs")
-        assertEquals(GoalEvidence.SUCCESS_TARGET_MISSING, affirm("r2", 100, seen(0.0), untyped).second?.outcome)
-        val adoptNoStep = untyped.copy(successItem = "item.minecraft.oak_log", successCount = 8, step = null)
-        assertEquals(GoalEvidence.STEP_MISSING, affirm("r3", 100, seen(0.0), adoptNoStep).second?.outcome)
-        val adoptNoAction = adoptNoStep.copy(step = "walk to the tree")
-        assertEquals(GoalEvidence.STEP_ACTION_MISSING, affirm("r4", 100, seen(0.0), adoptNoAction).second?.outcome)
-        affirm("r5", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather wood"))
+        assertEquals(GoalEvidence.SUCCESS_TARGET_MISSING, affirm("r1", 100, seen(0.0), adoptBare).second?.outcome)
+        val adoptNoStep = adoptBare.copy(successItem = STICK, successCount = 2, step = null)
+        assertEquals(GoalEvidence.STEP_MISSING, affirm("r2", 100, seen(0.0), adoptNoStep).second?.outcome)
+        affirm("r3", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather wood"))
         val unjudged = goalChoice(GoalDisposition.CONTINUE).copy(stepResult = null)
-        assertEquals(GoalEvidence.STEP_RESULT_MISSING, affirm("r6", 200, seen(0.0), unjudged).second?.outcome)
-        val carried = ledger.present(alpha, "r7", 300, seen(0.0))
+        assertEquals(GoalEvidence.STEP_RESULT_MISSING, affirm("r4", 200, seen(0.0), unjudged).second?.outcome)
+        val carried = ledger.present(alpha, "r5", 300, seen(0.0))
         assertEquals("item.minecraft.stick", carried?.successItem)
         assertEquals(1L, carried?.successCount)
-        assertEquals(IntentAction.IDLE, carried?.stepAction)
-        assertNull(carried?.stepRef)
     }
 
     @Test
-    fun aStepTypedAsAnotherActionOrRefIsRefusedWithItsIntent() {
-        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather a stick"))
-        val walk = Intent.MoveTo("bh90")
-        // The step names bh8s; the intent walks to bh90.
-        val misnamed = goalChoice(GoalDisposition.CONTINUE, intent = Intent.MoveTo("bh8s"))
-        assertEquals(GoalEvidence.STEP_MISMATCH, affirm("r2", 200, seen(0.0), misnamed, walk).second?.outcome)
-        // The step names a collect; the intent idles.
-        val collecting = goalChoice(GoalDisposition.CONTINUE, intent = Intent.Collect("d5r", approach = true))
-        assertEquals(GoalEvidence.STEP_MISMATCH, affirm("r3", 300, seen(0.0), collecting).second?.outcome)
-        // The goal is untouched by either.
-        assertEquals(IntentAction.IDLE, ledger.present(alpha, "r4", 400, seen(0.0))?.stepAction)
+    fun theStepIsTypedFromTheDecisionsOwnIntentNeverClaimed() {
+        // r14 gamma: a step naming a dropped stick while the intent walked the other way. A step is
+        // the intent's own, so it cannot name anything else.
+        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather a stick"), Intent.Dig("b1"))
+        val adopted = ledger.present(alpha, "r2", 200, seen(0.0))
+        assertEquals(IntentAction.DIG, adopted?.stepAction)
+        assertEquals("b1", adopted?.stepRef)
+        affirm("r2", 200, seen(0.0), goalChoice(GoalDisposition.CONTINUE), Intent.Collect("d4a", approach = true))
+        val continued = ledger.present(alpha, "r3", 300, seen(0.0))
+        assertEquals(IntentAction.COLLECT, continued?.stepAction)
+        assertEquals("d4a", continued?.stepRef)
+    }
+
+    @Test
+    fun aGoalPursuedByIdlingIsRefusedWithItsIntent() {
+        // r14 eta adopted a goal with an idle step: waiting is no step.
+        val idling = affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather a stick"), Intent.Idle)
+        assertEquals(GoalEvidence.STEP_IDLE, idling.second?.outcome)
+        assertNull(ledger.present(alpha, "r2", 200, seen(0.0)))
+        affirm("r2", 200, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather a stick"))
+        for ((request, disposition) in listOf("r3" to GoalDisposition.CONTINUE, "r4" to GoalDisposition.REVISE)) {
+            val resting = affirm(request, 300, seen(0.0), goalChoice(disposition, "gather a stick"), Intent.Rest)
+            assertEquals(GoalEvidence.STEP_IDLE, resting.second?.outcome, request)
+        }
+        // Ending a goal takes no step, so it may idle.
+        val ended = affirm("r5", 400, seen(0.0), goalChoice(GoalDisposition.ABANDON), Intent.Idle)
+        assertEquals(GoalEvidence.ABANDONED, ended.second?.outcome)
+    }
+
+    @Test
+    fun aGoalAlreadyMetOrBeyondWhatIsInSightIsRefused() {
+        // r14 theta, delta and eta set stick goals they already held, then "completed" them.
+        val holding = seen(0.0, STICK to 2L)
+        val met = affirm("r1", 100, holding, goalChoice(GoalDisposition.ADOPT, "gather sticks", success = STICK to 2L))
+        assertEquals(GoalEvidence.ALREADY_MET, met.second?.outcome)
+        // r14 kappa: a stick goal with no bush or drop in sight to give one more.
+        val barren = GoalObservation(mapOf(STICK to 1L), listOf(0.0, 64.0, 0.0))
+        val unreachable = affirm("r2", 100, barren, goalChoice(GoalDisposition.ADOPT, "gather", success = STICK to 2L))
+        assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, unreachable.second?.outcome)
+        // What the inventory holds and what is in sight could give, together, bound the count.
+        val bush = barren.copy(capacity = mapOf(STICK to 2L))
+        val beyond = affirm("r3", 100, bush, goalChoice(GoalDisposition.ADOPT, "gather", success = STICK to 4L))
+        assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, beyond.second?.outcome)
+        val within = affirm("r4", 100, bush, goalChoice(GoalDisposition.ADOPT, "gather", success = STICK to 3L))
+        assertEquals(GoalEvidence.ADOPTED, within.second?.outcome)
+        // A revise to a count already held is no new goal either.
+        ledger.stepped(alpha, "r4", EventTag.DIG, EventTag.ACCEPTED)
+        val reworded = affirm("r5", 200, bush, goalChoice(GoalDisposition.REVISE, "gather", success = STICK to 1L))
+        assertEquals(GoalEvidence.ALREADY_MET, reworded.second?.outcome)
     }
 
     @Test
@@ -399,31 +422,29 @@ class GoalLedgerTest {
     }
 
     @Test
-    fun aWorldStepAdvancesOnlyWhenItYieldedSomethingAndIdlingNeverDoes() {
+    fun aWorldStepAdvancesOnlyOnWhatItGainedOrWhatTheServerSawItsOwnDigDrop() {
         step("r1", seen(0.0), GoalDisposition.ADOPT, Intent.Dig("b1"))
         // The dig dropped dirt into the inventory: evidence, short of the stick the goal names.
         val (gained, _) = step("r2", seen(0.0, DIRT to 1L), GoalDisposition.CONTINUE, Intent.Dig("b2"))
         assertEquals(StepEvidence.GAINED, gained?.progress?.stepEvidence)
         assertEquals(true, gained?.progress?.stepAdvanced)
-        // The dig broke its block and dropped a stick on the ground: evidence too.
-        val dropped = seen(0.0, DIRT to 1L).copy(drops = mapOf(STICK to 1L))
-        val (onGround, _) = step("r3", dropped, GoalDisposition.CONTINUE, Intent.Dig("b3"))
-        assertEquals(StepEvidence.DROPPED, onGround?.progress?.stepEvidence)
-        // The dig broke its block and yielded nothing, as bare-hand terracotta does: no evidence.
-        val (barren, _) = step("r4", dropped, GoalDisposition.CONTINUE, Intent.Idle)
+        // The server attributed a drop to r2's own dig, which another agent then took: evidence.
+        val ownDrop = seen(0.0, DIRT to 1L).copy(dropped = setOf("r2"))
+        val (dropped, _) = step("r3", ownDrop, GoalDisposition.CONTINUE, Intent.Dig("b3"))
+        assertEquals(StepEvidence.DROPPED, dropped?.progress?.stepEvidence)
+        // A drop the server attributed to another request is not r3's: no evidence (r14 delta was
+        // credited for the stick beta's dig dropped).
+        val (barren, _) = step("r4", ownDrop, GoalDisposition.CONTINUE, Intent.Dig("b4"))
         assertEquals(StepEvidence.NONE, barren?.progress?.stepEvidence)
         assertEquals(false, barren?.progress?.stepAdvanced)
-        // And an idle step never advances, whatever happens.
-        val (idled, _) = step("r5", seen(0.0, DIRT to 1L), GoalDisposition.CONTINUE, Intent.Idle)
-        assertEquals(false, idled?.progress?.stepAdvanced)
     }
 
     @Test
     fun stepsThatAdvanceNothingEndTheGoalAtTheBoundEvenWhenRevised() {
-        step("r1", seen(0.0), GoalDisposition.ADOPT, Intent.Idle)
-        step("r2", seen(0.0), GoalDisposition.CONTINUE, Intent.Idle)
-        step("r3", seen(0.0), GoalDisposition.REVISE, Intent.Idle)
-        val (atBound, refused) = step("r4", seen(0.0), GoalDisposition.REVISE, Intent.Idle)
+        step("r1", seen(0.0), GoalDisposition.ADOPT, Intent.Dig("b1"))
+        step("r2", seen(0.0), GoalDisposition.CONTINUE, Intent.Dig("b2"))
+        step("r3", seen(0.0), GoalDisposition.REVISE, Intent.Dig("b3"))
+        val (atBound, refused) = step("r4", seen(0.0), GoalDisposition.REVISE, Intent.Dig("b4"))
         assertEquals(MAX_GOAL_STEPS_WITHOUT_PROGRESS, atBound?.progress?.stepsWithoutProgress)
         assertEquals(GoalEvidence.STALLED, refused?.outcome)
         assertNull(ledger.present(alpha, "r5", 500, seen(0.0)))
@@ -432,5 +453,6 @@ class GoalLedgerTest {
     private companion object {
         const val STICK = "item.minecraft.stick"
         const val DIRT = "item.minecraft.dirt"
+        val DIG: Intent = Intent.Dig("bush")
     }
 }

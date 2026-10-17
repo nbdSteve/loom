@@ -83,6 +83,9 @@
     },
     "goalReview": {
       "status": "supported"
+    },
+    "stepSettled": {
+      "status": "supported"
     }
   },
   "bodyOperations": {
@@ -162,10 +165,10 @@
       "status": "historical",
       "reason": "Pins routine-v13 prompts the current mind no longer serves."
     },
-    "first-tribe-routine-v22-agency-pilot.json": {
+    "first-tribe-routine-v23-agency-pilot.json": {
       "status": "runnable"
     },
-    "first-tribe-routine-v22-agency-pilot-scripted.json": {
+    "first-tribe-routine-v23-agency-pilot-scripted.json": {
       "status": "runnable"
     },
     "tribe-two-cycle-3.json": {
@@ -263,9 +266,17 @@
       "reason": "Pins routine-v21 prompts the current mind no longer serves."
     },
     "tribe-obtainable-goal-10m-10.json": {
-      "status": "runnable"
+      "status": "historical",
+      "reason": "Pins routine-v22 prompts the current mind no longer serves."
     },
     "tribe-obtainable-goal-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v22 prompts the current mind no longer serves."
+    },
+    "tribe-own-evidence-10m-10.json": {
+      "status": "runnable"
+    },
+    "tribe-own-evidence-10m-10-scripted.json": {
       "status": "runnable"
     }
   }

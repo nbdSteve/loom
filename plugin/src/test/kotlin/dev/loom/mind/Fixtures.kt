@@ -2,6 +2,7 @@ package dev.loom.mind
 
 import dev.loom.body.BodyEventLog
 import dev.loom.contract.Bearing
+import dev.loom.contract.BlockYield
 import dev.loom.contract.DayPhase
 import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
@@ -16,8 +17,6 @@ import dev.loom.contract.Provenance
 import dev.loom.contract.SelfState
 import dev.loom.contract.Trigger
 import dev.loom.contract.WorldState
-import dev.loom.contract.action
-import dev.loom.contract.targetRef
 import org.junit.jupiter.api.Assertions.assertEquals
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.time.Duration.Companion.seconds
@@ -105,6 +104,7 @@ fun perception(
                 inventorySummary = emptyList(),
                 craftingOptions = emptyList(),
                 craftingOptionsOmitted = 0,
+                ownDrops = emptyList(),
                 world = WorldState(dayPhase = DayPhase.DAY, isDay = true, ticksUntilNightfall = 6_000),
             ),
         surroundings = emptyList(),
@@ -137,7 +137,7 @@ val STICK_BUSH: Observation =
         visible = true,
         ref = "bush",
         standable = true,
-        yields = listOf("item.minecraft.stick"),
+        yields = listOf(BlockYield("item.minecraft.stick", 0, 2)),
         digSafe = true,
     )
 
@@ -183,16 +183,15 @@ fun decisionFor(
     )
 
 /**
- * A goal choice carrying every field [disposition] requires: a statement, a success condition
- * and its typed target to word a goal, the step an affirming decision takes typed as [intent]'s
- * own action and ref, and a verdict on the previous step for every disposition that answers a
- * carried goal.
+ * A goal choice carrying every field [disposition] requires: a statement and its typed success
+ * target to word a goal, the step an affirming decision takes, and a verdict on the previous step
+ * for every disposition that answers a carried goal. The step's type is the decision's own
+ * intent, which the ledger reads from the decision.
  */
 fun goalChoice(
     disposition: GoalDisposition,
     statement: String? = null,
     stepResult: GoalStepResult = GoalStepResult.PROGRESSING,
-    intent: Intent = Intent.Idle,
     success: Pair<String, Long> = "item.minecraft.stick" to 1L,
 ): GoalChoice {
     val worded = disposition == GoalDisposition.ADOPT || disposition == GoalDisposition.REVISE
@@ -200,12 +199,9 @@ fun goalChoice(
     return GoalChoice(
         disposition = disposition,
         statement = statement,
-        successCondition = if (worded) "the evidence shows it is done" else null,
         successItem = if (worded) success.first else null,
         successCount = if (worded) success.second else null,
         step = if (stepped) "the next concrete step" else null,
-        stepAction = if (stepped) intent.action else null,
-        stepRef = if (stepped) intent.targetRef else null,
         stepResult = if (disposition == GoalDisposition.ADOPT) null else stepResult,
     )
 }

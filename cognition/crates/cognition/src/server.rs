@@ -238,7 +238,7 @@ mod tests {
     use loom_contract::{Decision, Intent, Perception};
     use std::{future, io};
 
-    const SPOKEN_PERCEPTION: &str = r#"{"requestId":"req-spoken-1","agentId":"agent-alpha","trigger":{"event":"spoken","from":"player-steve","text":"want to trade?"},"importance":"NOTABLE","capturedTick":1024,"selfState":{"health":20.0,"food":20,"saturation":5.0,"position":[10.5,64.0,-8.25],"inventorySummary":[],"craftingOptions":[],"craftingOptionsOmitted":0,"world":{"dayPhase":"day","isDay":true,"ticksUntilNightfall":6000}},"surroundings":[],"surroundingsOmitted":0}"#;
+    const SPOKEN_PERCEPTION: &str = r#"{"requestId":"req-spoken-1","agentId":"agent-alpha","trigger":{"event":"spoken","from":"player-steve","text":"want to trade?"},"importance":"NOTABLE","capturedTick":1024,"selfState":{"health":20.0,"food":20,"saturation":5.0,"position":[10.5,64.0,-8.25],"inventorySummary":[],"craftingOptions":[],"craftingOptionsOmitted":0,"ownDrops":[],"world":{"dayPhase":"day","isDay":true,"ticksUntilNightfall":6000}},"surroundings":[],"surroundingsOmitted":0}"#;
 
     fn scripted_mind() -> Mind<ScriptedBackend> {
         Mind::new(

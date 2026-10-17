@@ -40,9 +40,12 @@ import dev.loom.bodycontrol.SensedTime
 import dev.loom.bodycontrol.SensedVitals
 import dev.loom.contract.Bearing
 import dev.loom.contract.BlockFace
+import dev.loom.contract.BlockYield
+import dev.loom.contract.DropFate
 import dev.loom.contract.EquipmentDestination
 import dev.loom.contract.Intent
 import dev.loom.contract.ObservationKind
+import dev.loom.contract.OwnDrop
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 import dev.loom.mind.CognitionBridge
@@ -444,6 +447,7 @@ private data class HarnessOptions(
     val healthCheckIntervalTicks: Long = 100,
     val healthFailureLimit: Int = 3,
     val yields: BlockYields = BlockYields.NONE,
+    val ownDrops: OwnDrops = OwnDrops.NONE,
 )
 
 private class StartupGate {
@@ -1871,6 +1875,7 @@ private fun buildPortHarness(
                     currentTick = tick::get,
                     ground = FakeGround(options.server),
                     yields = options.yields,
+                    ownDrops = options.ownDrops,
                 ),
             startupConcurrency = 1,
         )
@@ -2521,6 +2526,47 @@ class PlayerWalkResolutionTest {
     }
 
     @Test
+    fun `a ledge over open air and a pillar top are unsafe to dig out from under the body`() {
+        // The r14 audit's ledge scenario: a support dig must never be offered where the hole it
+        // leaves has no standable way out, whether the body would drop through it or be stuck in it.
+        val support = listOf(1, 63, 2)
+        val sides = listOf(listOf(2, 63, 2), listOf(0, 63, 2), listOf(1, 63, 3), listOf(1, 63, 1))
+        // A ledge: one side is ground to climb onto, but the cell under the ledge block is open air,
+        // so the dig drops the body through.
+        val ledge = FakePlayerServerState().apply { passable += listOf(1, 62, 2) }
+        // A pillar top: every side is open air over open air, nothing to climb back onto.
+        val pillar =
+            FakePlayerServerState().apply {
+                buried += sides
+                buried += sides.map { listOf(it[0], 62, it[2]) }
+            }
+        for ((name, server) in listOf("ledge" to ledge, "pillar" to pillar)) {
+            val agent = AgentId("agent-$name")
+            val harness =
+                harness(
+                    agent,
+                    HarnessOptions(
+                        server = server,
+                        intercept = { request ->
+                            (request as? BodyRequest.Sense)?.let {
+                                fakeSense(
+                                    it,
+                                ).copy(blocks = listOf(SensedBlock("minecraft:stone", support, visible = true)))
+                            }
+                        },
+                    ),
+                )
+            harness.port.spawn(agent).await()
+            val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+            val underfoot = seen.surroundings.single { it.kind == ObservationKind.BLOCK }
+            assertEquals(false, underfoot.digSafe, name)
+            val refused = harness.port.apply(agent, Intent.Dig(underfoot.ref), seen.requestId).await()
+            assertEquals(EventTag.DIG_WOULD_TRAP, (refused as IntentOutcome.Rejected).tag, name)
+            assertTrue(harness.connector.requests.none { it is BodyRequest.Dig }, name)
+        }
+    }
+
+    @Test
     fun `a block observation states what digging it yields, from the server, for that player`() {
         // The r13 bushes yielded sticks and the terracotta nothing; the mind is now told which.
         val agent = AgentId("agent-yields")
@@ -2528,15 +2574,70 @@ class PlayerWalkResolutionTest {
         val yields =
             BlockYields { position, player ->
                 asked += position to player
-                listOf("item.minecraft.stick")
+                listOf(BlockYield("item.minecraft.stick", 0, 2))
             }
         val harness = harness(agent, HarnessOptions(yields = yields))
         harness.port.spawn(agent).await()
         val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
         val block = seen.surroundings.single { it.kind == ObservationKind.BLOCK }
-        assertEquals(listOf("item.minecraft.stick"), block.yields)
+        assertEquals(listOf(BlockYield("item.minecraft.stick", 0, 2)), block.yields)
         assertEquals(listOf(listOf(4, 63, 2) to playerIdentityOf(agent)), asked)
         assertEquals(true, block.digSafe)
+    }
+
+    @Test
+    fun `a completed dig's server drop is attributed to its own request and told to the digger`() {
+        // r14: beta's dig b4v5 dropped two sticks delta took before beta's next review, and beta
+        // judged a dig that yielded as having yielded nothing.
+        val agent = AgentId("agent-drops")
+        val attributed = mutableListOf<Triple<String, List<Int>, Long>>()
+        val drops =
+            object : OwnDrops {
+                val told = mutableListOf<OwnDropReading>()
+
+                override fun attribute(
+                    identity: PlayerIdentity,
+                    requestId: String,
+                    block: List<Int>,
+                    sinceTick: Long,
+                ): List<OwnDropReading> {
+                    attributed += Triple(requestId, block, sinceTick)
+                    val taken = OwnDropReading(requestId, "item.minecraft.cobblestone", 1, DropFate.TAKEN, null)
+                    val lying =
+                        OwnDropReading(requestId, "item.minecraft.stick", 2, DropFate.LYING, listOf(6.5, 64.0, 2.5))
+                    told.addAll(0, listOf(taken, lying))
+                    return listOf(taken, lying)
+                }
+
+                override fun of(identity: PlayerIdentity): List<OwnDropReading> = told.toList()
+            }
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request -> (request as? BodyRequest.Sense)?.let(::interactionSense) },
+                    ownDrops = drops,
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        assertEquals(emptyList<OwnDrop>(), perception.selfState.ownDrops)
+        val stone = perception.surroundings.single { it.what == "block.minecraft.stone" }
+        harness.port.apply(agent, Intent.Dig(stone.ref), perception.requestId).await()
+
+        assertEquals(listOf(perception.requestId to listOf(2, 63, 2)), attributed.map { it.first to it.second })
+        val interaction = harness.records.single { it.event == BodyEvent.WORLD_INTERACTION }
+        assertTrue(
+            interaction.detail.endsWith("; dropped 1 item.minecraft.cobblestone, 2 item.minecraft.stick"),
+            interaction.detail,
+        )
+        val next = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val (taken, lying) = next.selfState.ownDrops
+        assertEquals(OwnDrop(perception.requestId, "item.minecraft.cobblestone", 1, DropFate.TAKEN), taken)
+        assertEquals(DropFate.LYING, lying.fate)
+        assertEquals(Bearing.EAST, lying.direction)
+        assertEquals(5.0, requireNotNull(lying.distance), 1e-9)
+        assertEquals(0.0, lying.verticalOffset)
     }
 
     @Test

@@ -11,11 +11,18 @@
  * judged noProgress, so the stall bound never fired. Here a move is credited only as a walk or
  * flight step that arrived somewhere the goal had not been, and the success condition is the
  * held count of the item it names, measured from the agent's own inventory.
+ *
+ * A step is the decision's own intent, typed by the ledger rather than claimed by the mind, and
+ * a dig is credited for a drop only when the server attributed that drop to the dig's own request
+ * (the r14 audit: delta was credited for a drop beta's dig made, and three of four collects took
+ * another agent's drop). A goal must be one the agent could still meet from what it holds and
+ * what is in sight, and one it has not met already.
  */
 package dev.loom.mind
 
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
+import dev.loom.contract.AIR_ITEM
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalProgress
@@ -30,7 +37,6 @@ import dev.loom.contract.SelfState
 import dev.loom.contract.StepEvidence
 import dev.loom.contract.action
 import dev.loom.contract.isItemName
-import dev.loom.contract.targetRef
 import kotlin.math.floor
 
 /** Distinct cells one goal remembers having been reviewed at; the oldest is forgotten past it. */
@@ -54,16 +60,17 @@ private val WORLD_STEPS =
 
 /**
  * What a review saw that a step can change or a goal can name: the agent's inventory by item
- * and count, its place, the dropped items in sight by item and count, every item it could obtain
- * now - held, dropped in sight, craftable, or yielded by a visible block it may dig - and the refs
- * that perception showed in sight. Compared between the review that affirmed a goal and the next.
+ * and count, its place, how many more of each item it could get from what is in sight - dropped
+ * in sight, craftable, or the most a visible block it may dig can drop - the refs that perception
+ * showed in sight, and the requests whose dig the server saw drop something for this agent.
+ * Compared between the review that affirmed a goal and the next.
  */
 data class GoalObservation(
     val inventory: Map<String, Long>,
     val position: List<Double>,
-    val drops: Map<String, Long> = emptyMap(),
-    val obtainable: Set<String> = inventory.keys,
+    val capacity: Map<String, Long> = emptyMap(),
     val visible: Set<String> = emptySet(),
+    val dropped: Set<String> = emptySet(),
 ) {
     /** The block cell the agent stood in. */
     val cell: List<Int> get() = position.map { floor(it).toInt() }
@@ -73,24 +80,24 @@ data class GoalObservation(
             GoalObservation(inventory = inventoryOf(state), position = state.position)
 
         fun of(perception: Perception): GoalObservation {
-            val inventory = inventoryOf(perception.selfState)
             val seen = perception.surroundings
-            val drops =
-                seen
-                    .filter { it.kind == ObservationKind.DROPPED_ITEM }
-                    .groupBy({ it.what }, { it.count ?: 1 })
-                    .mapValues { (_, counts) -> counts.sum() }
-            val yields =
+            val dropped = seen.filter { it.kind == ObservationKind.DROPPED_ITEM }.map { it.what to (it.count ?: 1) }
+            val crafted = perception.selfState.craftingOptions.map { it.what to it.resultCount * it.maxCrafts }
+            val dug =
                 seen
                     .filter { it.kind == ObservationKind.BLOCK && it.visible && it.digSafe == true }
                     .flatMap { it.yields.orEmpty() }
-            val crafted = perception.selfState.craftingOptions.map { it.what }
+                    .map { it.what to it.most }
             return GoalObservation(
-                inventory = inventory,
+                inventory = inventoryOf(perception.selfState),
                 position = perception.selfState.position,
-                drops = drops,
-                obtainable = (inventory.keys + drops.keys + crafted + yields).filter(::isItemName).toSet(),
+                capacity =
+                    (dropped + crafted + dug)
+                        .filter { (what, _) -> isItemName(what) && what != AIR_ITEM }
+                        .groupBy({ it.first }, { it.second })
+                        .mapValues { (_, counts) -> counts.sum() },
                 visible = seen.filter { it.visible }.map { it.ref }.toSet(),
+                dropped = perception.selfState.ownDrops.map { it.requestId }.toSet(),
             )
         }
 
@@ -143,8 +150,10 @@ internal fun progressOf(
  * What showed the goal's typed step was carried out, by the body's own outcome for it and what
  * it changed. A walk or flight is evidence only when the body arrived, at a target in sight when
  * it was chosen, in a cell the goal had not been reviewed at; a world action only when the agent
- * then held more of something or a new drop lay in sight. A dig that broke a block and dropped
- * nothing advances nothing (r13 alpha dug terracotta four times, credited every time).
+ * then held more of something, or when the server attributed a drop to that step's own request,
+ * wherever the drop went after. A dig that broke a block and dropped nothing advances nothing
+ * (r13 alpha dug terracotta four times, credited every time), and another agent's drop in sight
+ * is no evidence of this agent's step (r14 delta).
  */
 private fun stepEvidenceOf(
     goal: GoalSummary,
@@ -154,7 +163,7 @@ private fun stepEvidenceOf(
 ): StepEvidence {
     val accepted = goal.lastStep?.outcome == EventTag.ACCEPTED
     val gained = observed.inventory.any { (what, count) -> count > (before.inventory[what] ?: 0) }
-    val dropped = observed.drops.any { (what, count) -> count > (before.drops[what] ?: 0) }
+    val dropped = goal.lastStep?.requestId?.let { it in observed.dropped } == true
     val arrived = step.reached == true && step.visible && observed.cell !in step.visited
     return when {
         !accepted -> StepEvidence.NONE
@@ -183,33 +192,27 @@ internal fun missingFieldOf(choice: GoalChoice): String? {
     val adopting = choice.disposition == GoalDisposition.ADOPT
     val worded = adopting || choice.disposition == GoalDisposition.REVISE
     val stepped = worded || choice.disposition == GoalDisposition.CONTINUE
-    return (if (worded) missingWordingOf(choice) else null)
-        ?: (if (stepped) missingStepOf(choice) else null)
-        ?: GoalEvidence.STEP_RESULT_MISSING.takeIf { !adopting && choice.stepResult == null }
+    return when {
+        worded && choice.statement == null -> GoalEvidence.STATEMENT_MISSING
+        worded && (choice.successItem == null || choice.successCount == null) -> GoalEvidence.SUCCESS_TARGET_MISSING
+        stepped && choice.step == null -> GoalEvidence.STEP_MISSING
+        !adopting && choice.stepResult == null -> GoalEvidence.STEP_RESULT_MISSING
+        else -> null
+    }
 }
 
-/** The first field wording a goal needs that [choice] did not give, or `null`. */
-private fun missingWordingOf(choice: GoalChoice): String? =
-    when {
-        choice.statement == null -> GoalEvidence.STATEMENT_MISSING
-        choice.successCondition == null -> GoalEvidence.SUCCESS_CONDITION_MISSING
-        choice.successItem == null || choice.successCount == null -> GoalEvidence.SUCCESS_TARGET_MISSING
-        else -> null
-    }
+/** The intents that take no step, which a goal cannot be pursued by. */
+private val PASSIVE = setOf(IntentAction.IDLE, IntentAction.REST)
 
-/** The first field a step needs that [choice] did not give, or `null`. */
-private fun missingStepOf(choice: GoalChoice): String? =
-    when {
-        choice.step == null -> GoalEvidence.STEP_MISSING
-        choice.stepAction == null -> GoalEvidence.STEP_ACTION_MISSING
-        else -> null
-    }
+/** The dispositions that take the decision's intent as the goal's step. */
+private val STEPPING = setOf(GoalDisposition.ADOPT, GoalDisposition.CONTINUE, GoalDisposition.REVISE)
 
 /**
- * Why [choice] cannot stand beside [intent] and the goal [presented] carried, or `null`: a step
- * typed as one action and ref while the intent takes another, a met success condition neither
- * completed nor revised to a target [observed]'s inventory does not already meet, or a completion
- * the inventory does not show. Each refuses the decision before its intent reaches the body.
+ * Why [choice] cannot stand beside [intent] and the goal [presented] carried, or `null`: a met
+ * success condition neither completed nor revised to a target [observed]'s inventory does not
+ * already meet, a completion the inventory does not show, a success condition already met or
+ * more than what is in sight could give, or a step that is no step. Each refuses the decision
+ * before its intent reaches the body.
  */
 internal fun incoherenceOf(
     presented: GoalSummary?,
@@ -219,31 +222,38 @@ internal fun incoherenceOf(
 ): String? {
     val met = presented?.progress?.conditionMet == true
     val disposition = choice?.disposition
-    val stepped = disposition in setOf(GoalDisposition.ADOPT, GoalDisposition.CONTINUE, GoalDisposition.REVISE)
-    return when {
-        unobtainable(choice, observed) -> GoalEvidence.SUCCESS_UNOBTAINABLE
-        met && disposition != GoalDisposition.COMPLETE && !revisedPast(choice, observed) ->
-            GoalEvidence.CONDITION_MET_IGNORED
-        disposition == GoalDisposition.COMPLETE && !met -> GoalEvidence.COMPLETION_UNMET
-        stepped && choice?.stepAction != null &&
-            (choice.stepAction != intent.action || choice.stepRef != intent.targetRef) ->
-            GoalEvidence.STEP_MISMATCH
-        else -> null
-    }
+    val conditionRefusal =
+        when {
+            met && disposition != GoalDisposition.COMPLETE && !revisedPast(choice, observed) ->
+                GoalEvidence.CONDITION_MET_IGNORED
+            disposition == GoalDisposition.COMPLETE && !met -> GoalEvidence.COMPLETION_UNMET
+            else -> null
+        }
+    return conditionRefusal
+        ?: successRefusalOf(choice, observed)
+        ?: GoalEvidence.STEP_IDLE.takeIf { disposition in STEPPING && intent.action in PASSIVE }
 }
 
 /**
- * Whether [choice] words a goal whose success item [observed] shows no way to obtain: not held,
- * not dropped in sight, not craftable, and not yielded by a visible block the agent may dig. A
- * choice missing a field is refused for that first; obtainability is a question about a whole one.
+ * Why the success condition [choice] words cannot be a goal now, by [observed]: the inventory
+ * already holds the count, or the count is more than the inventory plus everything in sight could
+ * give. A choice missing a field is refused for that first; this is a question about a whole one.
  */
-private fun unobtainable(
+private fun successRefusalOf(
     choice: GoalChoice?,
     observed: GoalObservation?,
-): Boolean {
+): String? {
     val worded = choice?.disposition == GoalDisposition.ADOPT || choice?.disposition == GoalDisposition.REVISE
-    val item = choice?.successItem
-    return worded && observed != null && item != null && missingFieldOf(choice) == null && item !in observed.obtainable
+    val whole = choice?.takeIf { worded && missingFieldOf(it) == null }
+    val item = whole?.successItem
+    val count = whole?.successCount
+    val held = item?.let { observed?.inventory?.get(it) } ?: 0
+    return when {
+        observed == null || item == null || count == null -> null
+        held >= count -> GoalEvidence.ALREADY_MET
+        count > held + (observed.capacity[item] ?: 0) -> GoalEvidence.SUCCESS_UNOBTAINABLE
+        else -> null
+    }
 }
 
 /**

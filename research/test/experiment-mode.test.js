@@ -8,7 +8,8 @@ const path = require('node:path')
 
 const {
   createInterventionSchedule,
-  primaryBehaviorStimulusRecord
+  primaryBehaviorStimulusRecord,
+  requestOriginFor
 } = require('../lib/experiment-mode.js')
 const {
   ProcessSupervisor,
@@ -79,16 +80,25 @@ test('the primary behavior harness issues no loombody think command', () => {
     []
   )
   assert.deepEqual(primaryBehaviorStimulusRecord(config, 0), {
-    mode: 'routine-v22-obtainable-goal',
+    mode: 'routine-v23-own-evidence',
     externalCognitionStimuli: 'none',
     harnessThinkCommandsIssued: 0,
     nativeSchedulersOnly: true,
-    behaviorGateGeneration: 5,
+    behaviorGateGeneration: 6,
     profile: 'pilot-180s',
     nativeGoalReviewSchedule: {
       cadenceTicks: 2400,
       expectedReviewsPerAgent: 2,
+      followUpsPerReview: 1,
       sliceTicks: 100
     }
   })
+})
+
+test('a primary behavior request names the native source that raised it, a follow-up review its own', () => {
+  const config = primaryBehaviorConfig()
+  assert.equal(requestOriginFor(config, 'goalReview'), 'nativeGoalReviewSchedule')
+  // The one review a settled goal step owes is native, but not the schedule's.
+  assert.equal(requestOriginFor(config, 'stepSettled'), 'nativeGoalFollowUp')
+  assert.equal(requestOriginFor(config, 'threatSighted'), 'nativeEventDriver')
 })

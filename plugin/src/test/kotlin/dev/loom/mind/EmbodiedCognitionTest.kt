@@ -439,20 +439,17 @@ class EmbodiedCognitionTest {
     }
 
     @Test
-    @DisplayName("a decision whose typed step is not its own intent is refused before the body sees it")
+    @DisplayName("a decision pursuing its goal by idling is refused before the body sees it")
     fun aDecisionIncoherentWithItsGoalNeverReachesTheBody() {
         val records = mutableListOf<BodyEventRecord>()
         val body = recordingBodyInto(records)
         val applied = mutableListOf<AppliedDecision>()
-        // r11 gamma, body:00000048: the step names b140 while the intent walks to b142.
-        val stepped = goalChoice(GoalDisposition.ADOPT, "gather a stick", intent = Intent.MoveTo("b140"))
+        // r14 eta, body:00000197: a goal adopted with an idle step.
+        val adopting = goalChoice(GoalDisposition.ADOPT, "gather a stick")
         val cognition =
             EmbodiedCognition(
                 body,
-                mind = {
-                        p ->
-                    CompletableFuture.completedFuture(decisionFor(p, Intent.MoveTo("b142")).copy(goal = stepped))
-                },
+                mind = { p -> CompletableFuture.completedFuture(decisionFor(p, Intent.Idle).copy(goal = adopting)) },
                 mainThread = main,
                 journal = journalInto(records),
                 callbacks = CognitionCallbacks(onApplied = { applied.add(it) }),
@@ -463,10 +460,52 @@ class EmbodiedCognitionTest {
 
         assertTrue(body.applied.isEmpty(), "a refused decision must not reach the body")
         assertEquals(listOf(BodyEvent.PERCEIVED, BodyEvent.DECIDED, BodyEvent.INTENT_APPLIED), records.map { it.event })
-        assertEquals(GoalEvidence.STEP_MISMATCH, records[1].goal?.outcome)
-        assertEquals(GoalEvidence.STEP_MISMATCH, records[2].outcome)
+        assertEquals(GoalEvidence.STEP_IDLE, records[1].goal?.outcome)
+        assertEquals(GoalEvidence.STEP_IDLE, records[2].outcome)
         assertEquals("req-1", records[2].requestId)
-        assertEquals(GoalEvidence.STEP_MISMATCH, (applied.single().outcome as IntentOutcome.Rejected).tag)
+        assertEquals(GoalEvidence.STEP_IDLE, (applied.single().outcome as IntentOutcome.Rejected).tag)
+    }
+
+    @Test
+    @DisplayName("only an accepted step of the held goal settles, once, into a follow-up review")
+    fun anAcceptedGoalStepIsTheOneSettlement() {
+        val settled = mutableListOf<Pair<AgentId, Long>>()
+        val answers =
+            ArrayDeque(
+                listOf(
+                    // A goal adopted with a dig: its step settles.
+                    {
+                            p: Perception ->
+                        decisionFor(p, Intent.Dig("bush")).copy(goal = goalChoice(GoalDisposition.ADOPT, "a stick"))
+                    },
+                    // A walk with no goal choice: no step of the goal, nothing settles.
+                    { p: Perception -> decisionFor(p, Intent.MoveTo("bush")) },
+                ),
+            )
+        var request = 0
+        val body =
+            RecordingBody(
+                { perceptionNearBush(requestId = "req-${++request}", agentId = agent.value) },
+                main::drainingThread,
+                true,
+                BodyEventLog { },
+                currentTick = { tick },
+            )
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p -> CompletableFuture.completedFuture(answers.removeFirst()(p)) },
+                mainThread = main,
+                journal = journalInto(mutableListOf()),
+                callbacks = CognitionCallbacks(onStepSettled = { who, at -> settled.add(who to at) }),
+            )
+
+        cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+        cognition.consider(agent, Trigger.StepSettled)
+        main.drain()
+
+        assertEquals(listOf(agent to tick), settled)
     }
 
     @Test

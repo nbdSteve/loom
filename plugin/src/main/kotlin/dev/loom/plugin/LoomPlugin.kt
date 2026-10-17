@@ -22,7 +22,9 @@ import dev.loom.mind.CognitionSettings
 import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.GoalLedger
+import dev.loom.mind.GoalReviewSchedule
 import dev.loom.mind.PerAgentCognitionBridge
+import dev.loom.mind.StepSettlement
 import dev.loom.mind.tcp.TcpCognitionTransport
 import dev.loom.observe.Observatory
 import dev.loom.observe.ObservedEventLog
@@ -75,6 +77,9 @@ class LoomPlugin : JavaPlugin() {
     private var observatory: Observatory? = null
     private var display: BukkitTask? = null
     private var hearer: ((Heard) -> Unit)? = null
+
+    // One schedule: the mind tells it when a goal's step settles, and the driver claims from it.
+    internal val schedule = GoalReviewSchedule()
     private var cognition: EmbodiedCognition? = null
 
     /**
@@ -116,7 +121,7 @@ class LoomPlugin : JavaPlugin() {
         val port = createPlayerBody(witnessed, witness)
         bodyPort = port
 
-        val mind = connectMind(port, witnessed, goals)
+        val mind = connectMind(port, witnessed, goals, schedule)
         cognition = mind
         hearer = hearerOf(port, mind)
         val native =
@@ -212,6 +217,8 @@ class LoomPlugin : JavaPlugin() {
                 fleet.deployments.map { it.identity.uuid }.toSet(),
             )
         server.pluginManager.registerEvents(interactionEvents, this)
+        val ownDrops = BukkitOwnDrops(server, fleet.deployments.map { it.identity.uuid }.toSet())
+        server.pluginManager.registerEvents(ownDrops, this)
         val authority =
             PlayerBodyAuthority(
                 main = Executor { command -> bukkitMain.execute { command.run() } },
@@ -236,6 +243,7 @@ class LoomPlugin : JavaPlugin() {
                 speechClaims = sentSpeechOf(witness.speech, bukkitMain) { server.currentTick.toLong() },
                 ground = BukkitBlockGround(server),
                 yields = BukkitBlockYields(server),
+                ownDrops = ownDrops,
             )
         val infrastructures =
             fleet.deployments.map { deployment ->
@@ -266,6 +274,7 @@ class LoomPlugin : JavaPlugin() {
         bodies: BodyPort,
         eventLog: BodyEventLog,
         goals: GoalLedger,
+        settlement: StepSettlement,
     ): EmbodiedCognition {
         val settings = CognitionSettings.fromEnvironment()
         val wire =
@@ -311,6 +320,7 @@ class LoomPlugin : JavaPlugin() {
             goals = goals,
             callbacks =
                 CognitionCallbacks(
+                    onStepSettled = settlement,
                     onApplied = ::reportApplied,
                     onUnavailable = { perception, failure ->
                         logger.warning(

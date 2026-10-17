@@ -6,6 +6,7 @@ package dev.loom.body.player
 import dev.loom.body.BODY_SENSE_MAX_OFFERS_PER_KIND
 import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import dev.loom.body.blocksApart
+import dev.loom.contract.BlockYield
 import dev.loom.contract.ObservationKind
 import java.util.UUID
 
@@ -25,7 +26,7 @@ internal data class SceneOffer(
     val subject: UUID? = null,
     val count: Long? = null,
     val standable: Boolean? = null,
-    val yields: List<String>? = null,
+    val yields: List<BlockYield>? = null,
     val digSafe: Boolean? = null,
 ) {
     val key: Pair<ObservationKind, Int> = kind to sourceIndex

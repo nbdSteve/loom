@@ -20,7 +20,7 @@ const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,31}$/
 const COMMIT = /^[0-9a-f]{40}$/
 const TRIGGER = /^[a-z][A-Za-z]{0,39}$/
 const IMPORTANCES = new Set(['ROUTINE', 'NOTABLE', 'PIVOTAL'])
-const ORIGINS = new Set(['nativeEventDriver', 'nativeGoalReviewSchedule'])
+const ORIGINS = new Set(['nativeEventDriver', 'nativeGoalReviewSchedule', 'nativeGoalFollowUp'])
 const REFUSAL_UNITS = new Set(['calls', 'nanoUsd'])
 const MODES = new Set([
   'crash-containment',
@@ -34,7 +34,8 @@ const MODES = new Set([
   'routine-v19-actionable-refs',
   'routine-v20-typed-goal',
   'routine-v21-grounded-step',
-  'routine-v22-obtainable-goal'
+  'routine-v22-obtainable-goal',
+  'routine-v23-own-evidence'
 ])
 const MAX_INPUT_LINE_BYTES = 256 * 1024
 const BODY_EVENTS = new Set([

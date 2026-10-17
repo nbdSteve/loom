@@ -70,7 +70,7 @@ class GoalContinuityTest {
             NumberingBody(outcome),
             mind = { p ->
                 seen.add(p)
-                CompletableFuture.completedFuture(decisionFor(p, Intent.Idle).copy(goal = answers.next()))
+                CompletableFuture.completedFuture(decisionFor(p, Intent.Dig("bush")).copy(goal = answers.next()))
             },
             mainThread = main,
             journal = DecisionJournal(BodyEventLog { records.add(it) }, currentTick = { 0L }),
@@ -95,7 +95,7 @@ class GoalContinuityTest {
         val carried = seen[1].goal
         assertEquals("r1", carried?.goalId)
         assertEquals("find shelter", carried?.statement)
-        assertEquals(GoalStep("r1", EventTag.IDLE, EventTag.ACCEPTED), carried?.lastStep)
+        assertEquals(GoalStep("r1", EventTag.DIG, EventTag.ACCEPTED), carried?.lastStep)
 
         val (first, second) = decidedGoals()
         assertEquals(GoalEvidence.ADOPTED, first?.outcome)

@@ -43,7 +43,7 @@ use loom_cognition::openai::{OpenAiBackend, OpenAiConfig, MAX_RESPONSE_BYTES};
 use loom_cognition::router::Router;
 use loom_contract::{
     DayPhase, Decision, DecisionImportance, GoalChoice, GoalDisposition, GoalStepResult, Intent,
-    IntentAction, InventoryStack, Perception, SelfState, Trigger, WorldState,
+    InventoryStack, Perception, SelfState, Trigger, WorldState,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -357,6 +357,7 @@ fn perception(importance: DecisionImportance) -> Perception {
             }],
             crafting_options: vec![],
             crafting_options_omitted: 0,
+            own_drops: vec![],
             world: WorldState {
                 day_phase: DayPhase::Day,
                 is_day: true,
@@ -460,12 +461,9 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
         "goal": {
             "disposition": "revise",
             "statement": "gather wood nearer the hill",
-            "successCondition": "eight logs are in my inventory",
             "successItem": "item.minecraft.birch_log",
             "successCount": 8,
             "step": "walk to the birch on the hill",
-            "stepAction": "idle",
-            "stepRef": null,
             "stepResult": "noProgress"
         }
     });
@@ -477,18 +475,15 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
         Some(GoalChoice {
             disposition: GoalDisposition::Revise,
             statement: Some("gather wood nearer the hill".to_owned()),
-            success_condition: Some("eight logs are in my inventory".to_owned()),
             success_item: Some("item.minecraft.birch_log".to_owned()),
             success_count: Some(8),
             step: Some("walk to the birch on the hill".to_owned()),
-            step_action: Some(IntentAction::Idle),
-            step_ref: None,
             step_result: Some(GoalStepResult::NoProgress),
         })
     );
     assert_eq!(decision.intent, Intent::Idle);
     assert_eq!(decision.provenance.model, FAST_MODEL);
-    assert_eq!(decision.provenance.prompt_version, "routine-v22");
+    assert_eq!(decision.provenance.prompt_version, "routine-v23");
 }
 
 #[tokio::test]

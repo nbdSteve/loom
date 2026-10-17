@@ -19,6 +19,12 @@
  *   calls spread over a cadence rather than a hundred calls in one tick. Cognition
  *   is event-driven precisely so that bursts do not happen; a driver that reviewed
  *   everyone at once would reintroduce them on a timer.
+ *
+ * One more review is owed outside the cadence: when the step a held goal took settles, the
+ * agent reviews that goal again shortly after rather than waiting out the cadence, because a
+ * goal advanced at most once per two-minute review can barely be pursued over several steps
+ * (r14: 18 of 19 goals needed one item at most). That follow-up is bounded to one per scheduled
+ * review, so an agent costs at most twice its scheduled reviews whatever its steps do.
  */
 package dev.loom.mind
 
@@ -52,6 +58,28 @@ const val DEFAULT_GOAL_REVIEW_CADENCE_TICKS: Long = 2L * 60L * 20L
 private const val DEFAULT_SLICES_PER_CADENCE = 24
 
 /**
+ * How long after a held goal's step settles its follow-up review is due: long enough for a dug
+ * block's drop to land and be picked up, which vanilla delays ten ticks.
+ */
+const val FOLLOW_UP_DELAY_TICKS: Long = 40
+
+/** Follow-up reviews one scheduled review may be followed by. */
+const val MAX_FOLLOW_UPS_PER_REVIEW: Int = 1
+
+/** What hears that a held goal's step settled. Main thread only. */
+fun interface StepSettlement {
+    fun settled(
+        agent: AgentId,
+        tick: Long,
+    )
+
+    companion object {
+        /** Nothing follows a step up. */
+        val NONE: StepSettlement = StepSettlement { _, _ -> }
+    }
+}
+
+/**
  * Decides which living agents are due for a scheduled goal review.
  *
  * Not thread-safe: it holds each agent's last review time in a plain map and is
@@ -66,7 +94,7 @@ private const val DEFAULT_SLICES_PER_CADENCE = 24
 class GoalReviewSchedule(
     val cadenceTicks: Long = DEFAULT_GOAL_REVIEW_CADENCE_TICKS,
     private val slicesPerCadence: Int = DEFAULT_SLICES_PER_CADENCE,
-) {
+) : StepSettlement {
     init {
         require(cadenceTicks > 0) { "cadenceTicks must be positive, was $cadenceTicks" }
         require(slicesPerCadence >= 1) { "slicesPerCadence must be at least 1, was $slicesPerCadence" }
@@ -76,6 +104,11 @@ class GoalReviewSchedule(
     }
 
     private val lastReview = mutableMapOf<AgentId, Long>()
+
+    // When each owed follow-up review is due, and how many each agent's latest scheduled review
+    // has been followed by.
+    private val followUpDue = mutableMapOf<AgentId, Long>()
+    private val followUps = mutableMapOf<AgentId, Int>()
 
     /**
      * Longest-waiting first, so a population that outgrows one slice's share
@@ -133,12 +166,55 @@ class GoalReviewSchedule(
         ready: (AgentId) -> Boolean = { true },
     ): List<AgentId> {
         lastReview.keys.retainAll(living)
+        followUpDue.keys.retainAll(living)
+        followUps.keys.retainAll(living)
         val claimed =
             living
                 .filter { isDue(it, now) && ready(it) }
                 .sortedWith(longestWaitingFirst)
                 .take(perSlice(living.size))
-        claimed.forEach { lastReview[it] = now }
+        claimed.forEach {
+            lastReview[it] = now
+            // A scheduled review answers whatever a follow-up was owed for, and owes one anew.
+            followUpDue.remove(it)
+            followUps.remove(it)
+        }
+        return claimed
+    }
+
+    /**
+     * Owes [agent] one follow-up review [FOLLOW_UP_DELAY_TICKS] after [tick], when its held goal's
+     * step settled - unless its latest scheduled review has already been followed up
+     * [MAX_FOLLOW_UPS_PER_REVIEW] times, or it has never had a scheduled review at all.
+     */
+    override fun settled(
+        agent: AgentId,
+        tick: Long,
+    ) {
+        if (agent !in lastReview || (followUps[agent] ?: 0) >= MAX_FOLLOW_UPS_PER_REVIEW) return
+        followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS)
+    }
+
+    /**
+     * The owed follow-up reviews due by [now], out of [living], in agent order. A due one [ready]
+     * rejects stays owed. Claiming one counts it against the agent's latest scheduled review; it
+     * does not move that review, so the cadence is unchanged.
+     */
+    fun claimFollowUps(
+        living: Set<AgentId>,
+        now: Long,
+        ready: (AgentId) -> Boolean = { true },
+    ): List<AgentId> {
+        followUpDue.keys.retainAll(living)
+        val claimed =
+            followUpDue
+                .filter { (agent, due) -> due <= now && ready(agent) }
+                .keys
+                .sortedBy { it.value }
+        claimed.forEach {
+            followUpDue.remove(it)
+            followUps[it] = (followUps[it] ?: 0) + 1
+        }
         return claimed
     }
 

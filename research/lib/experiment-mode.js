@@ -44,12 +44,20 @@ const ROUTINE_V21_GROUNDED_STEP_MODE = 'routine-v21-grounded-step'
 // threat flight halts routine work in flight, because the r13 audit found five agents chasing
 // items they could not get and 22 zero-yield digs credited as progress.
 const ROUTINE_V22_OBTAINABLE_GOAL_MODE = 'routine-v22-obtainable-goal'
+// v23 keeps v22 and grounds a goal in the agent's own evidence: a goal already met or pursued by
+// idling is refused, the success condition and the step are typed by the body from the item, the
+// count and the intent, a success count must lie within what sight could give, a dig is credited
+// only for the drop the server attributed to its own request and that drop is told to the digger
+// wherever it goes, a block's yields state their random range, and a settled goal step owes one
+// follow-up review, because the r14 audit found three completions of goals met when set, a credit
+// for another agent's drop, and goals that could advance at most once per two-minute review.
+const ROUTINE_V23_OWN_EVIDENCE_MODE = 'routine-v23-own-evidence'
 // The two native-scheduler pilots share every condition except what each mode pins here.
 // Category fairness is a fact about the JVM selector a run used, so v12 stays false for
 // its committed evidence and v13, which runs on the 48-per-kind selector, attests true.
 // The prompt versions the mind serves today (`cognition/crates/cognition/src/prompt.rs`).
 // A configuration pinning any other version can only fail after it has run.
-const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v22', notable: 'notable-v22', pivotal: 'pivotal-v22' })
+const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v23', notable: 'notable-v23', pivotal: 'pivotal-v23' })
 // Modes kept only so artifacts committed under them still validate; no run may select one.
 const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V12_PRIMARY_BEHAVIOR_MODE]: Object.freeze({
@@ -88,12 +96,17 @@ const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V21_GROUNDED_STEP_MODE]: Object.freeze({
     prompts: Object.freeze({ routine: 'routine-v21', notable: 'notable-v21', pivotal: 'pivotal-v21' }),
     categoryFairSelection: true
-  })
-})
-const PRIMARY_BEHAVIOR_MODES = Object.freeze({
+  }),
   [ROUTINE_V22_OBTAINABLE_GOAL_MODE]: Object.freeze({
     prompts: Object.freeze({ routine: 'routine-v22', notable: 'notable-v22', pivotal: 'pivotal-v22' }),
     categoryFairSelection: true
+  })
+})
+const PRIMARY_BEHAVIOR_MODES = Object.freeze({
+  [ROUTINE_V23_OWN_EVIDENCE_MODE]: Object.freeze({
+    prompts: Object.freeze({ routine: 'routine-v23', notable: 'notable-v23', pivotal: 'pivotal-v23' }),
+    categoryFairSelection: true,
+    followUpsPerReview: 1
   })
 })
 function configuredMode (config) {
@@ -124,9 +137,10 @@ function postCrashReserveFor (config) {
 
 function requestOriginFor (config, trigger) {
   if (!isPrimaryBehaviorMode(config)) return undefined
-  return trigger === 'goalReview'
-    ? 'nativeGoalReviewSchedule'
-    : 'nativeEventDriver'
+  if (trigger === 'goalReview') return 'nativeGoalReviewSchedule'
+  // The one review a settled goal step owes, from routine-v23.
+  if (trigger === 'stepSettled') return 'nativeGoalFollowUp'
+  return 'nativeEventDriver'
 }
 
 function createInterventionSchedule (config, startedMillis) {
@@ -201,6 +215,7 @@ module.exports = {
   ROUTINE_V20_TYPED_GOAL_MODE,
   ROUTINE_V21_GROUNDED_STEP_MODE,
   ROUTINE_V22_OBTAINABLE_GOAL_MODE,
+  ROUTINE_V23_OWN_EVIDENCE_MODE,
   SERVED_PROMPTS,
   configuredMode,
   createInterventionSchedule,

@@ -1,7 +1,7 @@
 {
   "experimentId": "2026-10-15-openai-two-cycle-10-agent-proposal",
   "title": "10-agent two-cycle confirmation proposal",
-  "mode": "routine-v22-obtainable-goal",
+  "mode": "routine-v23-own-evidence",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -60,9 +60,9 @@
       "pivotal": "gpt-5.4"
     },
     "prompts": {
-      "routine": "routine-v22",
-      "notable": "notable-v22",
-      "pivotal": "pivotal-v22"
+      "routine": "routine-v23",
+      "notable": "notable-v23",
+      "pivotal": "pivotal-v23"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,
@@ -70,10 +70,10 @@
     "providerTimeoutMillis": 12000,
     "maxRequestBytes": 65536,
     "perAgentCallCeiling": 56,
-    "globalCallCeiling": 400,
+    "globalCallCeiling": 440,
     "globalOutstandingCeiling": 6,
     "maxOutputTokens": 2048,
-    "maxExternalSpendUsd": 77.83,
+    "maxExternalSpendUsd": 85.61,
     "pricing": {
       "currency": "USD",
       "effectiveDate": "2026-10-12",
@@ -165,7 +165,8 @@
     "nativeGoalReviewSchedule": {
       "cadenceTicks": 2400,
       "sliceTicks": 100,
-      "expectedReviewsPerAgent": 21
+      "expectedReviewsPerAgent": 21,
+      "followUpsPerReview": 1
     },
     "externalCognitionStimuli": "none",
     "startingInventories": "empty",

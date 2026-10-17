@@ -66,8 +66,11 @@ const PROFILES = {
     runDurationSeconds: 3600,
     simulationTickCeiling: TWO_CYCLE_TICKS,
     expectedReviewsPerAgent: 21,
-    callCeilings: Object.freeze({ perAgent: 56, global: 400, outstanding: 6 }),
-    maxExternalSpendUsd: 77.83,
+    // From routine-v23 each scheduled review may owe one follow-up, so the 210 planned reviews
+    // become 420 and the global ceiling 440; the spend ceiling is 440 calls at the worst-case
+    // price. Re-sized for the follow-ups, not re-measured.
+    callCeilings: Object.freeze({ perAgent: 56, global: 440, outstanding: 6 }),
+    maxExternalSpendUsd: 85.61,
     bounds: Object.freeze({ logBytes: 32 * 1024 * 1024, evidenceRecords: 20_000, artifactBytes: 32 * 1024 * 1024 }),
     paperMemoryMiB: 2048
   })
@@ -133,6 +136,8 @@ PROFILES['typed-goal-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] 
 PROFILES['grounded-step-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] })
 // And under routine-v22, because r13 ran under the v21 name.
 PROFILES['obtainable-goal-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] })
+// And under routine-v23, because r14 ran under the v22 name.
+PROFILES['own-evidence-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] })
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

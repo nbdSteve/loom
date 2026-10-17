@@ -15,8 +15,10 @@ import dev.loom.body.horizontalBearing
 import dev.loom.contract.CraftingOption
 import dev.loom.contract.InventoryStack
 import dev.loom.contract.MAX_BLOCK_YIELDS
+import dev.loom.contract.MAX_OWN_DROPS
 import dev.loom.contract.Observation
 import dev.loom.contract.ObservationKind
+import dev.loom.contract.OwnDrop
 import dev.loom.contract.SelfState
 import dev.loom.contract.WorldState
 import java.nio.charset.StandardCharsets
@@ -276,6 +278,7 @@ internal class PlayerSceneTranslator(
                     )
                 },
             craftingOptionsOmitted = raw.report.recipesOmitted,
+            ownDrops = ownDropsOf(context.authority.ownDrops.of(raw.identity), raw.report.position),
             world =
                 WorldState(
                     dayPhase = WorldClock.phaseOf(raw.report.time.timeOfDay.toLong()),
@@ -285,6 +288,24 @@ internal class PlayerSceneTranslator(
                 ),
         )
 }
+
+/** What the server saw an agent's own digs drop, a lying one placed from [position], where it stands now. */
+internal fun ownDropsOf(
+    readings: List<OwnDropReading>,
+    position: List<Double>,
+): List<OwnDrop> =
+    readings.take(MAX_OWN_DROPS).map { drop ->
+        val at = drop.position
+        OwnDrop(
+            requestId = drop.requestId,
+            what = drop.what,
+            count = drop.count,
+            fate = drop.fate,
+            distance = at?.let { blocksApart(position, it) },
+            direction = at?.let { horizontalBearing(it[0] - position[0], it[2] - position[2]) },
+            verticalOffset = at?.let { it[1] - position[1] },
+        )
+    }
 
 private fun entityDescriptionId(resource: String): String {
     val (namespace, path) = splitResource(resource)

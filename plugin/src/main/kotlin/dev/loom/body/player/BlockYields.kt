@@ -4,27 +4,47 @@
  */
 package dev.loom.body.player
 
+import dev.loom.contract.BlockYield
 import kotlin.math.floor
 
 /**
- * What digging the block at a position with what a player holds drops, as item names
- * (`item.minecraft.stick`), read from the server's own loot rules on the main thread.
+ * What digging the block at a position with what a player holds can drop, as item names
+ * (`item.minecraft.stick`) with the range of each the server's own random loot rules give, read
+ * on the main thread.
  *
  * Empty when the dig drops nothing, which is the evidence that bare-hand terracotta, or a dead
  * bush without shears, can never yield the item a goal names (the r13 audit: alpha, epsilon,
- * eta and iota spent half the run on such goals).
+ * eta and iota spent half the run on such goals). Never air: a roll that drops nothing is no
+ * item (r14: every dead bush listed `item.minecraft.air`).
  */
 fun interface BlockYields {
     fun of(
         position: List<Int>,
         player: PlayerIdentity,
-    ): List<String>
+    ): List<BlockYield>
 
     companion object {
         /** No server to ask: nothing is known to drop. */
         val NONE: BlockYields = BlockYields { _, _ -> emptyList() }
     }
 }
+
+/**
+ * The yields a set of sampled loot rolls shows, one per item: [rolls] holds, per roll, how many
+ * of each item it dropped. An item absent from a roll dropped none in it, so its least is zero.
+ */
+fun yieldsOf(rolls: List<Map<String, Long>>): List<BlockYield> =
+    rolls
+        .flatMap { it.keys }
+        .distinct()
+        .sorted()
+        .mapNotNull { item ->
+            val counts = rolls.map { it[item] ?: 0L }
+            val most = counts.max()
+            if (most < 1) null else BlockYield(item, counts.min(), most.coerceAtMost(MAX_YIELD_COUNT))
+        }
+
+private const val MAX_YIELD_COUNT = 64L
 
 /** The block cell directly under a body standing at [position]. */
 internal fun supportCellOf(position: List<Double>): List<Int> =

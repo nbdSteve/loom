@@ -1,7 +1,7 @@
 {
-  "experimentId": "2026-10-16-openai-routine-v22-agency-pilot-proposal",
-  "title": "Routine-v22 three-agent goal-continuity pilot",
-  "mode": "routine-v22-obtainable-goal",
+  "experimentId": "2026-10-16-scripted-routine-v23-agency-pilot-rehearsal",
+  "title": "Credential-free routine-v23 goal-continuity dry run",
+  "mode": "routine-v23-own-evidence",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -46,41 +46,36 @@
     }
   },
   "cognition": {
-    "backend": "openai",
-    "provider": "OpenAI Chat Completions",
+    "backend": "scripted",
+    "provider": "none-scripted-local",
     "models": {
-      "ordinary": "gpt-5.4-nano",
-      "pivotal": "gpt-5.4"
+      "ordinary": "scripted-stand-in",
+      "pivotal": "scripted-stand-in"
     },
     "prompts": {
-      "routine": "routine-v22",
-      "notable": "notable-v22",
-      "pivotal": "pivotal-v22"
+      "routine": "routine-v23",
+      "notable": "notable-v23",
+      "pivotal": "pivotal-v23"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,
-    "providerEndpoint": "https://api.openai.com/v1",
+    "providerEndpoint": null,
     "providerTimeoutMillis": 12000,
     "maxRequestBytes": 65536,
     "perAgentCallCeiling": 6,
     "globalCallCeiling": 12,
     "globalOutstandingCeiling": 3,
     "maxOutputTokens": 2048,
-    "maxExternalSpendUsd": 2.34,
+    "maxExternalSpendUsd": 0,
     "pricing": {
       "currency": "USD",
-      "effectiveDate": "2026-10-12",
-      "source": "OpenAI API Pricing and official GPT-5.4 model pages, accessed 2026-10-12; standard-processing rates.",
+      "effectiveDate": "2026-10-14",
+      "source": "No external provider; the shipped scripted backend has zero price.",
       "models": {
-        "gpt-5.4-nano": {
-          "inputNanoUsdPerToken": 200,
-          "cachedInputNanoUsdPerToken": 20,
-          "outputNanoUsdPerToken": 1250
-        },
-        "gpt-5.4": {
-          "inputNanoUsdPerToken": 2500,
-          "cachedInputNanoUsdPerToken": 250,
-          "outputNanoUsdPerToken": 15000
+        "scripted-stand-in": {
+          "inputNanoUsdPerToken": 0,
+          "cachedInputNanoUsdPerToken": 0,
+          "outputNanoUsdPerToken": 0
         }
       }
     }
@@ -123,7 +118,8 @@
     "nativeGoalReviewSchedule": {
       "cadenceTicks": 2400,
       "sliceTicks": 100,
-      "expectedReviewsPerAgent": 2
+      "expectedReviewsPerAgent": 2,
+      "followUpsPerReview": 1
     },
     "externalCognitionStimuli": "none",
     "startingInventories": "empty",

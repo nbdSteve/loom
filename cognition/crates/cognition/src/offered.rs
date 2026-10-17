@@ -27,7 +27,7 @@
 //! offered. `tests/offered_reach_parity.rs` reads every bound below from the body and JVM source.
 
 use loom_contract::{
-    is_item_name, Bearing, Intent, Observation, ObservationKind, Perception, Trigger,
+    is_item_name, Bearing, Intent, Observation, ObservationKind, Perception, Trigger, AIR_ITEM,
 };
 
 use crate::prompt::{MAX_CRAFTING_LINES, MAX_INVENTORY_LINES, MAX_OBSERVATIONS};
@@ -50,9 +50,9 @@ pub const ATTACK_REACH_BLOCKS: f64 = 3.1;
 /// `COMBAT_MAX_PURSUIT_DISTANCE` in `PlayerSurvivalPreparer.kt`.
 pub const MAX_PURSUIT_BLOCKS: f64 = 7.5;
 
-/// Most items a success condition may be offered: held and craftable first, then the nearest
-/// dropped and dug ones. Every block in sight may yield its own eight items, and a request schema
-/// may carry no more than 500 enum values in all.
+/// Most items a success condition may be offered: craftable first, then the nearest dropped and
+/// dug ones. Every block in sight may yield its own eight items, and a request schema may carry no
+/// more than 500 enum values in all.
 pub const MAX_OBTAINABLE_ITEMS: usize = 48;
 
 /// The handles one perception offers, each list in the order the prompt shows it.
@@ -81,9 +81,12 @@ pub struct OfferedRefs {
     pub stacks: Vec<String>,
     /// Shown craftable recipes: what `craft` may name.
     pub recipes: Vec<String>,
-    /// Every item the agent could obtain now - held, dropped in sight, craftable, or yielded by a
-    /// visible block it may dig - which is what a success condition may name.
+    /// Every item something in sight could give the agent more of - dropped in sight, craftable,
+    /// or yielded by a visible block it may dig - which is what a success condition may name.
     pub obtainable: Vec<String>,
+    /// How many more of each of [`Self::obtainable`] what is in sight could give at most, in the
+    /// same order: the bound a success count may reach beyond what is held.
+    pub capacity: Vec<(String, i64)>,
 }
 
 /// Appends `handle` unless the list already holds it.
@@ -104,6 +107,7 @@ impl OfferedRefs {
     #[must_use]
     pub fn of(perception: &Perception) -> Self {
         let mut offered = Self::default();
+        let mut sources: Vec<(&String, i64)> = Vec::new();
         for seen in perception.surroundings.iter().take(MAX_OBSERVATIONS) {
             let handle = seen.target_ref.as_str();
             match seen.kind {
@@ -119,7 +123,7 @@ impl OfferedRefs {
                     }
                     if seen.visible && dig_safe {
                         for item in seen.yields.iter().flatten() {
-                            offer(&mut offered.obtainable, item);
+                            sources.push((&item.what, item.most));
                         }
                     }
                     if seen.direction != Bearing::Here && seen.standable == Some(true) {
@@ -128,7 +132,7 @@ impl OfferedRefs {
                 }
                 ObservationKind::Entity => offered.creature(handle, seen.distance),
                 ObservationKind::DroppedItem => {
-                    offer(&mut offered.obtainable, &seen.what);
+                    sources.push((&seen.what, seen.count.unwrap_or(1)));
                     if seen.distance <= PASSIVE_PICKUP_REACH_BLOCKS {
                         offer(&mut offered.pickup_items, handle);
                     }
@@ -154,29 +158,40 @@ impl OfferedRefs {
         for option in state.crafting_options.iter().take(MAX_CRAFTING_LINES) {
             offer(&mut offered.recipes, &option.recipe_ref);
         }
-        // Held and craftable items lead, ahead of what the surroundings would give.
-        let mut obtainable = Vec::new();
-        for item in state
-            .inventory_summary
+        // Craftable items lead, ahead of what the surroundings would give. A held item alone is
+        // no source: a goal must be more than is held, and something in sight must give the rest
+        // (r14 kappa raised a stick goal with no bush or drop in sight).
+        let crafted = state
+            .crafting_options
             .iter()
-            .take(MAX_INVENTORY_LINES)
-            .map(|stack| &stack.what)
-            .chain(
-                state
-                    .crafting_options
-                    .iter()
-                    .take(MAX_CRAFTING_LINES)
-                    .map(|option| &option.what),
-            )
-            .chain(&offered.obtainable)
-        {
+            .take(MAX_CRAFTING_LINES)
+            .map(|option| (&option.what, option.result_count * option.max_crafts));
+        for (item, count) in crafted.chain(sources) {
             // Only an item name can be held, so anything else in a description is no condition.
-            if is_item_name(item) && obtainable.len() < MAX_OBTAINABLE_ITEMS {
-                offer(&mut obtainable, item);
+            if !is_item_name(item) || item == AIR_ITEM || count < 1 {
+                continue;
+            }
+            if let Some((_, total)) = offered.capacity.iter_mut().find(|(name, _)| name == item) {
+                *total = total.saturating_add(count);
+            } else if offered.capacity.len() < MAX_OBTAINABLE_ITEMS {
+                offered.capacity.push((item.clone(), count));
             }
         }
-        offered.obtainable = obtainable;
+        offered.obtainable = offered
+            .capacity
+            .iter()
+            .map(|(item, _)| item.clone())
+            .collect();
         offered
+    }
+
+    /// How many more of `item` what is in sight could give at most.
+    #[must_use]
+    pub fn capacity_of(&self, item: &str) -> i64 {
+        self.capacity
+            .iter()
+            .find(|(name, _)| name == item)
+            .map_or(0, |(_, count)| *count)
     }
 
     /// Offers one creature to flight, and to each attack mode whose bound it is within.
@@ -251,6 +266,15 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         );
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    /// A block yield of nought to two of `item`, as a dead bush's sticks are.
+    fn yielding(item: &str) -> loom_contract::BlockYield {
+        loom_contract::BlockYield {
+            what: item.to_owned(),
+            least: 0,
+            most: 2,
+        }
     }
 
     fn handles(list: &[&str]) -> Vec<String> {
@@ -520,7 +544,7 @@ mod tests {
         // r13 eta, body:00000148: the only standable block was the floor eta stood on.
         let mut floor = seen(ObservationKind::Block, "b1", 1.0, -1.0);
         floor.dig_safe = Some(false);
-        floor.yields = Some(handles(&["item.minecraft.terracotta"]));
+        floor.yields = Some(vec![yielding("item.minecraft.terracotta")]);
         let wall = seen(ObservationKind::Block, "b2", 1.0, 0.0);
         let offered = OfferedRefs::of(&scene(vec![floor, wall]));
         assert_eq!(offered.blocks, handles(&["b1", "b2"]));
@@ -544,24 +568,25 @@ mod tests {
         // r13 alpha, beta, epsilon and iota: terracotta, an oak log and a dead bush, none of
         // which anything in sight could give them.
         let mut bush = seen(ObservationKind::Block, "b1", 1.0, 0.0);
-        bush.yields = Some(handles(&["item.minecraft.stick"]));
+        bush.yields = Some(vec![yielding("item.minecraft.stick")]);
         let mut hidden = seen(ObservationKind::Block, "b2", 1.0, 0.0);
         hidden.visible = false;
-        hidden.yields = Some(handles(&["item.minecraft.oak_log"]));
+        hidden.yields = Some(vec![yielding("item.minecraft.oak_log")]);
         let mut drop = seen(ObservationKind::DroppedItem, "d1", 3.0, 0.0);
         drop.what = "item.minecraft.wheat_seeds".to_owned();
         let mut named = seen(ObservationKind::DroppedItem, "d2", 3.0, 0.0);
         named.what = "block.minecraft.dead_bush".to_owned();
         let offered = OfferedRefs::of(&scene(vec![bush, hidden, drop, named]));
-        // Held and craftable first, then what the surroundings would give; a block name never.
+        // Craftable first, then what the surroundings would give; a held item alone, a hidden
+        // block and a block name never.
         assert_eq!(
             offered.obtainable,
-            handles(&[
-                "item.minecraft.stone_sword",
-                "item.minecraft.stick",
-                "item.minecraft.wheat_seeds",
-            ])
+            handles(&["item.minecraft.stick", "item.minecraft.wheat_seeds"])
         );
+        // The recipe's four sticks and the bush's two at most.
+        assert_eq!(offered.capacity_of("item.minecraft.stick"), 6);
+        assert_eq!(offered.capacity_of("item.minecraft.wheat_seeds"), 1);
+        assert_eq!(offered.capacity_of("item.minecraft.stone_sword"), 0);
     }
 
     #[test]
@@ -571,7 +596,7 @@ mod tests {
                 let mut block = seen(ObservationKind::Block, &format!("b{index}"), 1.0, 0.0);
                 block.yields = Some(
                     (0..8)
-                        .map(|item| format!("item.minecraft.thing_{index}_{item}"))
+                        .map(|item| yielding(&format!("item.minecraft.thing_{index}_{item}")))
                         .collect(),
                 );
                 block
@@ -579,7 +604,7 @@ mod tests {
             .collect();
         let offered = OfferedRefs::of(&scene(blocks));
         assert_eq!(offered.obtainable.len(), super::MAX_OBTAINABLE_ITEMS);
-        assert_eq!(offered.obtainable[0], "item.minecraft.stone_sword");
-        assert_eq!(offered.obtainable[2], "item.minecraft.thing_0_0");
+        assert_eq!(offered.obtainable[0], "item.minecraft.stick");
+        assert_eq!(offered.obtainable[1], "item.minecraft.thing_0_0");
     }
 }

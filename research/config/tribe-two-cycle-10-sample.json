@@ -1,7 +1,7 @@
 {
   "experimentId": "2026-10-15-scripted-two-cycle-10-agent-sample",
   "title": "Credential-free 10-agent two-cycle real-time calibration sample",
-  "mode": "routine-v22-obtainable-goal",
+  "mode": "routine-v23-own-evidence",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -60,9 +60,9 @@
       "pivotal": "scripted-stand-in"
     },
     "prompts": {
-      "routine": "routine-v22",
-      "notable": "notable-v22",
-      "pivotal": "pivotal-v22"
+      "routine": "routine-v23",
+      "notable": "notable-v23",
+      "pivotal": "pivotal-v23"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,
@@ -70,7 +70,7 @@
     "providerTimeoutMillis": 12000,
     "maxRequestBytes": 65536,
     "perAgentCallCeiling": 56,
-    "globalCallCeiling": 400,
+    "globalCallCeiling": 440,
     "globalOutstandingCeiling": 6,
     "maxOutputTokens": 2048,
     "maxExternalSpendUsd": 0,
@@ -160,7 +160,8 @@
     "nativeGoalReviewSchedule": {
       "cadenceTicks": 2400,
       "sliceTicks": 100,
-      "expectedReviewsPerAgent": 21
+      "expectedReviewsPerAgent": 21,
+      "followUpsPerReview": 1
     },
     "externalCognitionStimuli": "none",
     "startingInventories": "empty",

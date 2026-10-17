@@ -13,16 +13,11 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 
 use loom_cognition::mind::Mind;
-use loom_cognition::model::{
-    ScriptedBackend, SCRIPTED_GOAL_STATEMENT, SCRIPTED_STEP, SCRIPTED_SUCCESS_CONDITION,
-    SCRIPTED_SUCCESS_ITEM,
-};
+use loom_cognition::model::{ScriptedBackend, SCRIPTED_GOAL_STATEMENT, SCRIPTED_STEP};
 use loom_cognition::offered::OfferedRefs;
 use loom_cognition::router::{ModelCatalog, Router};
 use loom_cognition::server::serve;
-use loom_contract::{
-    Decision, DecisionImportance, GoalChoice, GoalDisposition, GoalStepResult, Perception, Trigger,
-};
+use loom_contract::{Decision, DecisionImportance, GoalDisposition, Perception};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
@@ -132,58 +127,22 @@ async fn every_shared_perception_fixture_gets_a_routed_decision_over_a_socket() 
                 "a routine perception must never be answered by the deep model"
             );
         }
-        // The stand-in adopts where nothing is held and continues a carried goal, and
-        // that choice must survive the socket exactly as the mind made it.
-        let intent = &decision.intent;
-        let step = |disposition, step_result| GoalChoice {
-            disposition,
-            statement: None,
-            success_condition: None,
-            success_item: None,
-            success_count: None,
-            step: Some(SCRIPTED_STEP.to_owned()),
-            step_action: Some(intent.action()),
-            step_ref: intent.target_ref().map(str::to_owned),
-            step_result,
-        };
-        // It adopts only an item it can get now, the stick first, and nothing without one.
-        let obtainable = OfferedRefs::of(&sent).obtainable;
-        let item = obtainable
-            .iter()
-            .find(|item| *item == SCRIPTED_SUCCESS_ITEM)
-            .or_else(|| obtainable.first());
-        let expected = (sent.trigger == Trigger::GoalReview)
-            .then_some(())
-            .and_then(|()| match &sent.goal {
-                None => item.map(|item| GoalChoice {
-                    statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
-                    success_condition: Some(SCRIPTED_SUCCESS_CONDITION.to_owned()),
-                    success_item: Some(item.clone()),
-                    success_count: Some(1),
-                    ..step(GoalDisposition::Adopt, None)
-                }),
-                Some(held) => {
-                    let progress = held.progress.as_ref();
-                    let result = if progress
-                        .is_some_and(|seen| !seen.condition_advanced && !seen.step_advanced)
-                    {
-                        GoalStepResult::NoProgress
-                    } else {
-                        GoalStepResult::Progressing
-                    };
-                    Some(if progress.is_some_and(|seen| seen.condition_met) {
-                        GoalChoice {
-                            step: None,
-                            step_action: None,
-                            step_ref: None,
-                            ..step(GoalDisposition::Complete, Some(result))
-                        }
-                    } else {
-                        step(GoalDisposition::Continue, Some(result))
-                    })
-                }
-            });
-        assert_eq!(decision.goal, expected, "{}", fixture.display());
+        // The stand-in's intent and goal choice must survive the socket exactly as the mind
+        // made them: what it would decide for this perception directly is what arrived.
+        let router = Router::new(ModelCatalog::new(FAST_MODEL, DEEP_MODEL));
+        let direct = ScriptedBackend::draft_now(&router.route(sent.importance), &sent);
+        assert_eq!(decision.intent, direct.intent, "{}", fixture.display());
+        assert_eq!(decision.goal, direct.goal, "{}", fixture.display());
+        if sent.trigger.reviews_goal() && sent.goal.is_none() {
+            // An adopted goal names one more than is held of what the dug block can drop.
+            if let Some(goal) = &decision.goal {
+                assert_eq!(goal.disposition, GoalDisposition::Adopt);
+                assert_eq!(goal.statement.as_deref(), Some(SCRIPTED_GOAL_STATEMENT));
+                assert_eq!(goal.step.as_deref(), Some(SCRIPTED_STEP));
+                let item = goal.success_item.as_deref().unwrap();
+                assert!(OfferedRefs::of(&sent).capacity_of(item) >= 1);
+            }
+        }
     }
 }
 

@@ -14,7 +14,6 @@ import dev.loom.mind.AutonomousDriver
 import dev.loom.mind.DAMAGE_EPISODE_TICKS
 import dev.loom.mind.DamageDriver
 import dev.loom.mind.EmbodiedCognition
-import dev.loom.mind.GoalReviewSchedule
 import dev.loom.mind.THREAT_SCAN_CADENCE
 import dev.loom.mind.ThreatDriver
 import dev.loom.witness.DurablePermadeath
@@ -54,7 +53,6 @@ private fun LoomPlugin.driveAgents(
     bodies: BodyPort,
     mind: EmbodiedCognition,
 ): BukkitTask {
-    val schedule = GoalReviewSchedule()
     val driver =
         AutonomousDriver(
             bodies = bodies,

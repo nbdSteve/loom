@@ -709,6 +709,22 @@ test('the mechanical pilot gate passes only with confirmed behavior and typed co
   assert.equal(dead.pilotCriteria.noFailureEvidence, false)
 })
 
+test('from gate generation 6 only an action that steps a goal is meaningful behavior', () => {
+  // r14: walks with no goal and a dig of a block that drops nothing counted as meaningful.
+  const ungrounded = actingRaw()
+  const decided = ungrounded.body.find((record) =>
+    record.agentId === 'tribe-alpha' && record.requestId === 'native-1' && record.event === 'decided'
+  )
+  assert.ok(decided.goal !== undefined, 'the fixture review adopts a goal')
+  delete decided.goal
+  const gate = publish({ raw: ungrounded, stopReason: 'durationElapsed' }).metrics.behaviorGate
+  assert.equal(gate.version, 'loom-primary-behavior-gate/6')
+  // The action is still a confirmed review action, but no step of any goal.
+  assert.equal(gate.goalReviewActions.confirmed, 2)
+  assert.deepEqual(gate.meaningfulBehaviorByAgent, { 'tribe-beta': 1 })
+  assert.equal(gate.pilotCriteria.meaningfulBehaviorAgents, false)
+})
+
 test('a controlled stop is always a no-go gate', () => {
   const published = publish({ raw: controlledStopRawRecords({ inFlight: 3 }) })
   assert.equal(published.metrics.behaviorGate.pilotVerdict, 'no-go')

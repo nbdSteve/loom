@@ -224,7 +224,11 @@ fn the_widest_request_schema_stays_inside_the_providers_enum_limits() {
             target_ref: format!("b{index:03}"),
             yields: Some(
                 (0..loom_contract::MAX_BLOCK_YIELDS)
-                    .map(|item| format!("item.minecraft.{:0>49}", index * 8 + item))
+                    .map(|item| loom_contract::BlockYield {
+                        what: format!("item.minecraft.{:0>49}", index * 8 + item),
+                        least: 0,
+                        most: 64,
+                    })
                     .collect(),
             ),
             dig_safe: Some(index != 0),
@@ -299,41 +303,62 @@ fn dispositions(schema: &Value) -> Vec<String> {
         .collect()
 }
 
+/// [`seen`] with a dead bush in reach that drops nought to two sticks.
+fn with_bush(mut seen: Perception) -> Perception {
+    seen.surroundings.push(Observation {
+        kind: ObservationKind::Block,
+        what: "block.minecraft.dead_bush".to_owned(),
+        distance: 1.0,
+        direction: loom_contract::Bearing::North,
+        vertical_offset: 0.0,
+        visible: true,
+        target_ref: "b9".to_owned(),
+        count: None,
+        standable: Some(true),
+        yields: Some(vec![loom_contract::BlockYield {
+            what: "item.minecraft.stick".to_owned(),
+            least: 0,
+            most: 2,
+        }]),
+        dig_safe: Some(true),
+    });
+    seen
+}
+
 #[test]
 fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
-    let of = |name: &str| {
-        let seen = fixture(name);
-        decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen))
-    };
-    assert_eq!(
-        dispositions(&of("perception-goal-review")),
-        ["none", "adopt"]
-    );
-    // r13: alpha, beta, epsilon, eta and iota adopted items nothing in sight could give them.
-    // With nothing obtainable there is no success item to name, so no goal can be adopted.
-    let mut barren = fixture("perception-goal-review");
-    barren.self_state.inventory_summary.clear();
-    let barren = decision_schema_for(&OfferedRefs::of(&barren), GoalPhase::of(&barren));
-    assert_eq!(dispositions(&barren), ["none"]);
+    let of = |seen: &Perception| decision_schema_for(&OfferedRefs::of(seen), GoalPhase::of(seen));
+    // r14 kappa: a held item alone is no source. With nothing in sight to give more of anything
+    // there is no success item to name, so no goal can be worded.
+    let review = fixture("perception-goal-review");
+    assert_eq!(dispositions(&of(&review)), ["none"]);
+    assert_eq!(dispositions(&of(&with_bush(review))), ["none", "adopt"]);
     // An unmet condition is never completed.
+    let carried = fixture("perception-goal-carried");
+    assert_eq!(dispositions(&of(&carried)), ["none", "continue", "abandon"]);
     assert_eq!(
-        dispositions(&of("perception-goal-carried")),
+        dispositions(&of(&with_bush(carried))),
         ["none", "continue", "revise", "abandon"]
     );
     // r11: delta, epsilon and zeta held the stick their goal named and went on. A met
     // condition is completed or revised; nothing else, not even no choice, is offered.
-    let met = of("perception-goal-condition-met");
-    assert_eq!(dispositions(&met), ["complete", "revise"]);
+    let met = with_bush(fixture("perception-goal-condition-met"));
+    assert_eq!(dispositions(&of(&met)), ["complete", "revise"]);
     let continuing = json!({ "intent": { "action": "idle" }, "reasoning": "r", "goal": {
-        "disposition": "continue", "step": "s", "stepAction": "idle", "stepRef": null, "stepResult": "done"
+        "disposition": "continue", "step": "s", "stepResult": "done"
     }});
-    let validator = jsonschema::validator_for(&met).unwrap();
+    let schema = of(&met);
+    let validator = jsonschema::validator_for(&schema).unwrap();
     assert!(!validator.is_valid(&continuing));
     assert!(!validator.is_valid(&answer(&json!({ "action": "idle" }))));
+    // A settled step reviews the goal just as a scheduled review does.
+    let mut settled = fixture("perception-goal-carried");
+    settled.trigger = loom_contract::Trigger::StepSettled;
+    assert_eq!(GoalPhase::of(&settled), GoalPhase::Held);
     // Any other trigger keeps the reference shape's whole offer, less the worded choices when,
     // as here, nothing obtainable is in sight for a success item to name.
     assert_eq!(
-        dispositions(&of("perception-threat-sighted")),
+        dispositions(&of(&fixture("perception-threat-sighted"))),
         ["none", "continue", "complete", "abandon"]
     );
 }

@@ -478,8 +478,176 @@ pub struct SelfState {
     /// Craftable recipe offers omitted by the body-side list bound.
     #[serde(deserialize_with = "nonnegative_omission")]
     pub crafting_options_omitted: i64,
+    /// What the server saw this agent's own recent digs drop, newest first, wherever it went.
+    #[serde(deserialize_with = "bounded_own_drops")]
+    pub own_drops: Vec<OwnDrop>,
     /// The bounded world clock the body reveals.
     pub world: WorldState,
+}
+
+/// Most of an agent's own recent dig drops one perception tells it about.
+pub const MAX_OWN_DROPS: usize = 8;
+
+/// What became of a stack an agent's own dig dropped.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropFate {
+    /// Still lying where the server can see it.
+    #[serde(rename = "lying")]
+    Lying,
+    /// Picked up by this agent.
+    #[serde(rename = "collected")]
+    Collected,
+    /// Picked up by another player.
+    #[serde(rename = "taken")]
+    Taken,
+    /// Merged, despawned or destroyed.
+    #[serde(rename = "gone")]
+    Gone,
+}
+
+/// One stack the server dropped for one of this agent's digs, attributed to its request.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnDrop {
+    /// The perception request id of the decision whose dig dropped it.
+    pub request_id: String,
+    /// The item, exactly as an inventory stack names it.
+    pub what: String,
+    /// How many items the server dropped in the stack.
+    pub count: i64,
+    /// What became of it.
+    pub fate: DropFate,
+    /// How far a lying drop is from the agent now; present exactly when lying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance: Option<f64>,
+    /// The bearing to a lying drop; present exactly when lying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<Bearing>,
+    /// How far above the agent a lying drop is; present exactly when lying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_offset: Option<f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OwnDropWire {
+    #[serde(deserialize_with = "bounded_goal_id")]
+    request_id: String,
+    #[serde(deserialize_with = "bounded_item_name")]
+    what: String,
+    #[serde(deserialize_with = "bounded_stack_count")]
+    count: i64,
+    fate: DropFate,
+    #[serde(default)]
+    distance: Option<f64>,
+    #[serde(default)]
+    direction: Option<Bearing>,
+    #[serde(default)]
+    vertical_offset: Option<f64>,
+}
+
+impl<'de> Deserialize<'de> for OwnDrop {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = OwnDropWire::deserialize(deserializer)?;
+        let lying = raw.fate == DropFate::Lying;
+        if raw.distance.is_some() != lying
+            || raw.direction.is_some() != lying
+            || raw.vertical_offset.is_some() != lying
+        {
+            return Err(de::Error::custom(
+                "distance, direction and verticalOffset are present exactly for a lying drop",
+            ));
+        }
+        if raw.distance.is_some_and(|distance| distance < 0.0) {
+            return Err(de::Error::custom("a drop's distance is never negative"));
+        }
+        Ok(Self {
+            request_id: raw.request_id,
+            what: raw.what,
+            count: raw.count,
+            fate: raw.fate,
+            distance: raw.distance,
+            direction: raw.direction,
+            vertical_offset: raw.vertical_offset,
+        })
+    }
+}
+
+fn bounded_own_drops<'de, D>(deserializer: D) -> Result<Vec<OwnDrop>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let drops = Vec::<OwnDrop>::deserialize(deserializer)?;
+    if drops.len() > MAX_OWN_DROPS {
+        return Err(de::Error::invalid_length(
+            drops.len(),
+            &"at most 8 own drops",
+        ));
+    }
+    Ok(drops)
+}
+
+fn bounded_stack_count<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let count = i64::deserialize(deserializer)?;
+    if !(1..=MAX_STACK_COUNT).contains(&count) {
+        return Err(de::Error::custom("a dropped stack holds 1 to 64 items"));
+    }
+    Ok(count)
+}
+
+/// The most items one stack, or one block's drop of one item, can hold.
+pub const MAX_STACK_COUNT: i64 = 64;
+
+/// The item that is no item: what a loot roll that dropped nothing is reported as.
+pub const AIR_ITEM: &str = "item.minecraft.air";
+
+/// One item digging a block can drop, with the range the server's random loot rules give.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockYield {
+    /// The item, exactly as an inventory stack names it; never air.
+    pub what: String,
+    /// The fewest of it one dig has dropped; zero when a dig may drop none.
+    pub least: i64,
+    /// The most of it one dig has dropped.
+    pub most: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BlockYieldWire {
+    #[serde(deserialize_with = "bounded_item_name")]
+    what: String,
+    least: i64,
+    most: i64,
+}
+
+impl<'de> Deserialize<'de> for BlockYield {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = BlockYieldWire::deserialize(deserializer)?;
+        if raw.what == AIR_ITEM {
+            return Err(de::Error::custom("a block never yields air"));
+        }
+        if !(0..=raw.most).contains(&raw.least) || !(1..=MAX_STACK_COUNT).contains(&raw.most) {
+            return Err(de::Error::custom(
+                "a yield's least is 0 to its most, and its most 1 to 64",
+            ));
+        }
+        Ok(Self {
+            what: raw.what,
+            least: raw.least,
+            most: raw.most,
+        })
+    }
 }
 
 /// One already-summarized observation the body chose to reveal. The perception
@@ -516,10 +684,11 @@ pub struct Observation {
     /// covered, and a walk to a covered block has nowhere to end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub standable: Option<bool>,
-    /// What digging this block with the held item drops, as the server's loot rules answer it.
-    /// Present exactly for [`ObservationKind::Block`]; empty when it drops nothing.
+    /// What digging this block with the held item can drop, each with the range the server's
+    /// random loot rules give. Present exactly for [`ObservationKind::Block`]; empty when it
+    /// drops nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub yields: Option<Vec<String>>,
+    pub yields: Option<Vec<BlockYield>>,
     /// Whether digging this block leaves the body a way out. Present exactly for
     /// [`ObservationKind::Block`]; false only for the support block of a body with no exit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -542,7 +711,7 @@ struct ObservationWire {
     #[serde(default)]
     standable: Option<bool>,
     #[serde(default, deserialize_with = "bounded_optional_yields")]
-    yields: Option<Vec<String>>,
+    yields: Option<Vec<BlockYield>>,
     #[serde(default)]
     dig_safe: Option<bool>,
 }
@@ -646,6 +815,17 @@ pub enum Trigger {
     /// A scheduled prompt for the agent to reconsider its goals.
     #[serde(rename = "goalReview")]
     GoalReview,
+    /// The held goal's last step ended, so the agent reviews the goal again at once.
+    #[serde(rename = "stepSettled")]
+    StepSettled,
+}
+
+impl Trigger {
+    /// Whether this trigger is a review of the agent's goal, which alone carries the held goal.
+    #[must_use]
+    pub const fn reviews_goal(&self) -> bool {
+        matches!(self, Self::GoalReview | Self::StepSettled)
+    }
 }
 
 /// The bounded snapshot the body exposes to the mind. Carries no world handle:
@@ -810,18 +990,16 @@ where
     Ok(text)
 }
 
-fn bounded_optional_yields<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+fn bounded_optional_yields<'de, D>(deserializer: D) -> Result<Option<Vec<BlockYield>>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let yields = Option::<Vec<String>>::deserialize(deserializer)?;
-    if let Some(yields) = &yields {
-        if yields.len() > MAX_BLOCK_YIELDS {
-            return Err(de::Error::invalid_length(yields.len(), &"at most 8 yields"));
-        }
-        for name in yields {
-            refuse_non_item(name)?;
-        }
+    let yields = Option::<Vec<BlockYield>>::deserialize(deserializer)?;
+    if yields
+        .as_ref()
+        .is_some_and(|yields| yields.len() > MAX_BLOCK_YIELDS)
+    {
+        return Err(de::Error::custom("at most 8 yields"));
     }
     Ok(yields)
 }
@@ -926,14 +1104,7 @@ pub struct GoalSummary {
     /// The last step taken under the goal, once the body has answered it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_step: Option<GoalStep>,
-    /// The observable state that would mean the goal is achieved.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "bounded_optional_goal_statement"
-    )]
-    pub success_condition: Option<String>,
-    /// The item the goal must hold, which types the success condition.
+    /// The item the goal must hold: its success condition, with [`Self::success_count`].
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -1001,7 +1172,7 @@ pub enum StepEvidence {
     /// The inventory held more of an item after the step.
     #[serde(rename = "gained")]
     Gained,
-    /// A new dropped item lay in sight after the step.
+    /// The server saw the step's own dig drop something for this agent, wherever it went.
     #[serde(rename = "dropped")]
     Dropped,
     /// Nothing showed it: a dig that dropped nothing, a walk that did not arrive.
@@ -1091,14 +1262,7 @@ pub struct GoalChoice {
         deserialize_with = "bounded_optional_goal_statement"
     )]
     pub statement: Option<String>,
-    /// The observable state that would mean the goal is achieved, for adopt and revise.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "bounded_optional_goal_statement"
-    )]
-    pub success_condition: Option<String>,
-    /// The item the goal must hold, typing the success condition, for adopt and revise.
+    /// The item the goal must hold, its success condition with the count, for adopt and revise.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -1119,16 +1283,6 @@ pub struct GoalChoice {
         deserialize_with = "bounded_optional_goal_statement"
     )]
     pub step: Option<String>,
-    /// The action the step takes, which must be the intent's own, for adopt, continue and revise.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step_action: Option<IntentAction>,
-    /// The target ref the step names, which must be the intent's own; absent for none.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "bounded_optional_ref"
-    )]
-    pub step_ref: Option<String>,
     /// The verdict on the carried goal's previous step, for every disposition but adopt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step_result: Option<GoalStepResult>,
@@ -1254,46 +1408,6 @@ pub enum Intent {
     /// Do nothing this cycle.
     #[serde(rename = "idle")]
     Idle,
-}
-
-impl Intent {
-    /// The action this intent takes, as its `action` tag.
-    #[must_use]
-    pub const fn action(&self) -> IntentAction {
-        match self {
-            Self::Say { .. } => IntentAction::Say,
-            Self::MoveTo { .. } => IntentAction::MoveTo,
-            Self::Flee { .. } => IntentAction::Flee,
-            Self::Eat { .. } => IntentAction::Eat,
-            Self::Dig { .. } => IntentAction::Dig,
-            Self::Collect { .. } => IntentAction::Collect,
-            Self::Place { .. } => IntentAction::Place,
-            Self::Equip { .. } => IntentAction::Equip,
-            Self::Craft { .. } => IntentAction::Craft,
-            Self::Attack { .. } => IntentAction::Attack,
-            Self::Sleep { .. } => IntentAction::Sleep,
-            Self::Rest => IntentAction::Rest,
-            Self::Idle => IntentAction::Idle,
-        }
-    }
-
-    /// The one target ref a goal step names for this intent: the thing it acts on, or
-    /// `None` for an action that names nothing. A placement's target is its support block
-    /// and an attack's is its creature; the stack each spends is the means, not the target.
-    #[must_use]
-    pub fn target_ref(&self) -> Option<&str> {
-        match self {
-            Self::MoveTo { onto } => Some(onto),
-            Self::Flee { from } => Some(from),
-            Self::Eat { slot_ref } => Some(slot_ref),
-            Self::Dig { block } | Self::Place { block, .. } => Some(block),
-            Self::Collect { item, .. } | Self::Equip { item, .. } => Some(item),
-            Self::Craft { recipe, .. } => Some(recipe),
-            Self::Attack { target, .. } => Some(target),
-            Self::Sleep { bed } => Some(bed),
-            Self::Say { .. } | Self::Rest | Self::Idle => None,
-        }
-    }
 }
 
 /// Reproducibility stamp attached to every decision and written to the

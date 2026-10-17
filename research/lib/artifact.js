@@ -1,5 +1,8 @@
 'use strict'
 
+// One follow-up review per scheduled review: `MAX_FOLLOW_UPS_PER_REVIEW` in the JVM's schedule.
+const MAX_FOLLOW_UPS_PER_REVIEW = 1
+
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -191,17 +194,23 @@ function primaryBehaviorErrors (config) {
         `${profile.expectedReviewsPerAgent} reviews per agent for ${behavior.profile}`
     )
   }
-  if (
-    Number.isInteger(schedule?.expectedReviewsPerAgent) &&
-    schedule.expectedReviewsPerAgent > config.cognition?.perAgentCallCeiling
-  ) {
+  // From routine-v23 each scheduled review may be followed by one review once its goal step
+  // settles (`MAX_FOLLOW_UPS_PER_REVIEW` in `GoalReviewSchedule.kt`), so the planned reviews are
+  // the scheduled ones and as many follow-ups, and both ceilings must hold them.
+  const followUps = schedule?.followUpsPerReview ?? 0
+  if (followUps !== 0 && followUps !== MAX_FOLLOW_UPS_PER_REVIEW) {
+    errors.push(`primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview must be ${MAX_FOLLOW_UPS_PER_REVIEW} when stated`)
+  }
+  const plannedReviews = Number.isInteger(schedule?.expectedReviewsPerAgent)
+    ? schedule.expectedReviewsPerAgent * (1 + followUps)
+    : undefined
+  if (plannedReviews !== undefined && plannedReviews > config.cognition?.perAgentCallCeiling) {
     errors.push('planned native reviews exceed the per-agent cognition call ceiling')
   }
   if (
-    Number.isInteger(schedule?.expectedReviewsPerAgent) &&
+    plannedReviews !== undefined &&
     Array.isArray(config.agents) &&
-    schedule.expectedReviewsPerAgent * config.agents.length >
-      config.cognition?.globalCallCeiling
+    plannedReviews * config.agents.length > config.cognition?.globalCallCeiling
   ) {
     errors.push('planned native reviews exceed the global cognition call ceiling')
   }
@@ -219,6 +228,12 @@ function primaryBehaviorErrors (config) {
   const pinned = primaryBehaviorModeOf(configuredMode(config))
   if (behavior.categoryFairSelection !== pinned.categoryFairSelection) {
     errors.push(`primaryBehavior.categoryFairSelection must be ${pinned.categoryFairSelection} for ${configuredMode(config)}`)
+  }
+  if ((schedule?.followUpsPerReview ?? 0) !== (pinned.followUpsPerReview ?? 0)) {
+    errors.push(
+      `primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview must be ${pinned.followUpsPerReview ?? 0} ` +
+        `for ${configuredMode(config)}`
+    )
   }
   if (config.proof !== undefined) {
     errors.push('the primary behavior mode cannot configure crash or operator-think proof traffic')

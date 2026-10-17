@@ -111,6 +111,7 @@ internal class PlayerEvidenceRecorder(
     ) {
         val controlRequest = claim.controlRequest
         val audit = context.authority.serverState.auditInteraction(runtime.identity, claim)
+        val dropped = dropsOf(runtime, requestId, claim)
         val senseId =
             when (controlRequest) {
                 is BodyRequest.Dig -> controlRequest.senseId
@@ -131,10 +132,31 @@ internal class PlayerEvidenceRecorder(
                 ),
             detail =
                 "${describe(intent)}; sense $senseId; control ${controlRequest.requestId}; " +
-                    "body ${claim.bodyOutcome.lowercase()}${journeyOf(claim)}; vanilla ${audit.detail}",
+                    "body ${claim.bodyOutcome.lowercase()}${journeyOf(claim)}; vanilla ${audit.detail}$dropped",
             requestId = requestId,
             confirmed = audit.confirmed,
         )
+    }
+
+    /**
+     * Attributes what the server dropped for a completed dig to the dig's own request, and words
+     * it for the interaction record: what the dig yielded is that request's evidence, wherever the
+     * drop goes after.
+     */
+    private fun dropsOf(
+        runtime: PlayerRuntime,
+        requestId: String?,
+        claim: ServerInteractionClaim,
+    ): String {
+        val dug = claim is ServerInteractionClaim.Dig && claim.report.outcome == DigOutcome.DUG
+        if (requestId == null || !dug) return ""
+        val drops =
+            context.authority.ownDrops.attribute(runtime.identity, requestId, claim.offered.position, claim.startedTick)
+        return if (drops.isEmpty()) {
+            "; dropped nothing"
+        } else {
+            "; dropped " + drops.joinToString(", ") { "${it.count} ${it.what}" }
+        }
     }
 
     fun recordAction(
