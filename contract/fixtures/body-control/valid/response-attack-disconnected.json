@@ -1,1 +1,1 @@
-{"op":"attack","protocol":6,"requestId":"res-attack-disconnected","agentId":"agent-alpha","state":"ready","outcome":"disconnected","from":[0.5,64.5,0.5],"position":[1.5,64.5,0.5],"travelled":1,"elapsedMs":250,"attacks":1}
+{"op":"attack","protocol":7,"requestId":"res-attack-disconnected","agentId":"agent-alpha","state":"ready","outcome":"disconnected","from":[0.5,64.5,0.5],"position":[1.5,64.5,0.5],"travelled":1,"elapsedMs":250,"attacks":1}

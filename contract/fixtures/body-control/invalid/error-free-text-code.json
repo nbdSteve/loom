@@ -1,1 +1,1 @@
-{"protocol":6,"agentId":"agent-alpha","error":"Error: connect ECONNREFUSED 127.0.0.1:25565"}
+{"protocol":7,"agentId":"agent-alpha","error":"Error: connect ECONNREFUSED 127.0.0.1:25565"}

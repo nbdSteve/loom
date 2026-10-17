@@ -1,1 +1,1 @@
-{"op":"sleep","protocol":6,"requestId":"res-sleep-woke","agentId":"agent-alpha","state":"ready","outcome":"woke","elapsedMs":500,"entered":true}
+{"op":"sleep","protocol":7,"requestId":"res-sleep-woke","agentId":"agent-alpha","state":"ready","outcome":"woke","elapsedMs":500,"entered":true}

@@ -1,1 +1,1 @@
-{"op":"sleep","protocol":6,"requestId":"res-sleep-out-of-reach","agentId":"agent-alpha","state":"ready","outcome":"outOfReach","elapsedMs":500,"entered":false}
+{"op":"sleep","protocol":7,"requestId":"res-sleep-out-of-reach","agentId":"agent-alpha","state":"ready","outcome":"outOfReach","elapsedMs":500,"entered":false}

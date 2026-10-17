@@ -23,6 +23,13 @@
  * while the server's answer is in flight stops nothing, and the dig answers that answer: the
  * r23 rehearsal had one agent report `cancelled` for a break the server credited to it and the
  * other `dug` for the same block (`test/native-dig-contest.test.js`).
+ *
+ * And the block dug is the block offered. The world changes blocks of its own accord - grass
+ * spreads onto dirt the sky reaches - so the offer is read again as the dig starts, and a server
+ * update that turns the offered block into another before this body's finish stops the dig as
+ * `blockChanged`, attempted: the v28 plains rehearsal had grass spread onto the dirt at the
+ * bottom of an agent's own pit between its sense and its break, and the server broke a
+ * grass_block the body had been offered as dirt.
  */
 
 const { performance } = require('node:perf_hooks')
@@ -93,12 +100,14 @@ function serverUpdates (bot, position) {
   let finished = false
   let answered = false
   let waiting
+  let changed
   const heard = () => {
     if (finished) answered = true
     seen = true
     const listener = waiting
     waiting = undefined
     listener?.()
+    if (!finished) changed?.()
   }
   const originalWrite = client.write
   const watchedWrite = typeof originalWrite === 'function'
@@ -129,8 +138,13 @@ function serverUpdates (bot, position) {
     next (listener) {
       waiting = listener
     },
+    /** Hears every server update at the position before this client's own finish. */
+    beforeFinish (listener) {
+      changed = listener
+    },
     close () {
       waiting = undefined
+      changed = undefined
       client.off('block_change', single)
       client.off('multi_block_change', multiple)
       if (watchedWrite !== undefined && client.write === watchedWrite) client.write = originalWrite
@@ -239,7 +253,7 @@ function digOfferedBlock (bot, {
       }
     }
 
-    function complete (outcome) {
+    function complete (outcome, attempted = true) {
       if (settled) return
       settled = true
       clearTimeout(timer)
@@ -248,8 +262,8 @@ function digOfferedBlock (bot, {
       const report = {
         outcome,
         elapsedMs: elapsedSince(startedAt, now),
-        attempted: true,
-        ...(tool === undefined ? {} : { tool })
+        attempted,
+        ...(attempted && tool !== undefined ? { tool } : {})
       }
       if (release === undefined) resolve(report)
       else releaseAtRest(bot, release).then(() => resolve(report))
@@ -264,8 +278,25 @@ function digOfferedBlock (bot, {
       return true
     }
 
+    /** The offer read again: a block the world turned into another is no longer the one offered. */
+    const changedUnder = () => offeredBlock(bot, offered, index)?.outcome === 'blockChanged'
+
+    // A server update that turns the offered block into another before this body's finish
+    // stops the dig; one that removes it is answered by [gone] as before.
+    server?.beforeFinish(() => setImmediate(() => {
+      if (settled || server.finished() || !changedUnder()) return
+      stopDigging()
+      complete('blockChanged')
+    }))
+
     function start () {
       if (settled) return
+      // The simulation may have held the dig for a few ticks since the offer was read.
+      const again = offeredBlock(bot, offered, index)
+      if (again?.outcome !== undefined) {
+        complete(again.outcome, false)
+        return
+      }
       try {
         Promise.resolve(bot.dig(resolved.block, 'raycast')).then(
           confirmed,

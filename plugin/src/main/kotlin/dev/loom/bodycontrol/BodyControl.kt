@@ -1601,8 +1601,10 @@ sealed interface BodyResponse {
                         DigOutcome.CANCELLED,
                         DigOutcome.LIBRARY_FAILURE,
                     )
-            // From generation 6 a block another player broke mid-dig is blockGone, attempted.
-            require(attempted == handedToMineflayer || outcome == DigOutcome.BLOCK_GONE) {
+            // From generation 6 a block another player broke mid-dig is blockGone, attempted, and
+            // from generation 7 one the world turned into another mid-dig is blockChanged.
+            val midDig = setOf(DigOutcome.BLOCK_GONE, DigOutcome.BLOCK_CHANGED)
+            require(attempted == handedToMineflayer || outcome in midDig) {
                 "attempted is true exactly when the dig was handed to Mineflayer"
             }
             require(tool == null || attempted) {

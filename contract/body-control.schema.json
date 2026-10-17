@@ -6,8 +6,8 @@
 
   "$defs": {
     "ProtocolVersion": {
-      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted. Generation 6 is current. It moved from 5 because a dig report may now answer blockGone after the dig was handed to Mineflayer, when another player broke the block first; generation 5 moved from 4 because the body-chosen entity, block, and dropped-item response lists widened from 24 to 48 entries. Widening a body-chosen answer can hand an older controller a frame it never agreed to read. The const is a numeric value rather than a spelling, so 6, 6.0 and 6e0 all name this generation.",
-      "const": 6
+      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted. Generation 7 is current. It moved from 6 because a dig report may now answer blockChanged after the dig was handed to Mineflayer, when the world turned the offered block into another before this body finished it; generation 6 moved from 5 because a dig report may now answer blockGone after the dig was handed to Mineflayer, when another player broke the block first; generation 5 moved from 4 because the body-chosen entity, block, and dropped-item response lists widened from 24 to 48 entries. Widening a body-chosen answer can hand an older controller a frame it never agreed to read. The const is a numeric value rather than a spelling, so 7, 7.0 and 7e0 all name this generation.",
+      "const": 7
     },
 
     "ControlId": {
@@ -391,7 +391,7 @@
     },
 
     "DigOutcome": {
-      "description": "Every terminal answer to one dig. The first is a vanilla-confirmed block break; the next seven are exact pre-application facts; timedOut and cancelled stop an active dig; libraryFailure is the bounded residual when Mineflayer could not confirm a more specific result.",
+      "description": "Every terminal answer to one dig. The first is a vanilla-confirmed block break; the next seven are exact pre-application facts, of which blockGone and blockChanged may also end an active dig; timedOut and cancelled stop an active dig; libraryFailure is the bounded residual when Mineflayer could not confirm a more specific result.",
       "type": "string",
       "enum": [
         "dug",
@@ -1185,7 +1185,7 @@
         },
         {
           "title": "DigReport",
-          "description": "What became of one dig. attempted distinguishes a pre-application refusal from an operation handed to Mineflayer; tool is the actual main-hand item Mineflayer used and is absent for bare hand or when nothing was attempted. dug is this body's own break: the server's update answered its own finish. blockGone is either a block found gone before the dig was handed to Mineflayer, or one another player broke while this body was still digging it, which is attempted.",
+          "description": "What became of one dig. attempted distinguishes a pre-application refusal from an operation handed to Mineflayer; tool is the actual main-hand item Mineflayer used and is absent for bare hand or when nothing was attempted. dug is this body's own break: the server's update answered its own finish. blockGone is either a block found gone before the dig was handed to Mineflayer, or one another player broke while this body was still digging it, which is attempted. blockChanged is likewise either a block found changed before the dig was handed to Mineflayer, or one the world turned into another block before this body finished it, which is attempted and stops the dig.",
           "type": "object",
           "additionalProperties": false,
           "required": ["protocol", "requestId", "agentId", "op", "state", "outcome", "elapsedMs", "attempted"],

@@ -580,6 +580,54 @@ test('a block another player broke is gone, and a finish already written is not 
   assert.equal((await reportOf(halted)).outcome, 'cancelled')
 })
 
+test('a block the world turns into another before this body finishes is changed, not dug', async () => {
+  // The v28 plains rehearsal, tick 2982: grass spread onto the dirt at the bottom of epsilon's own
+  // pit between its sense and its break, and the server broke a grass_block offered as dirt.
+  const bot = worldBot()
+  const at = new Vec3(-10, 63, 7)
+  const dirt = bot.putBlock(solidBlock(at, 'dirt', { type: 10, stateId: 10 }))
+  const grass = solidBlock(at, 'grass_block', { type: 9, stateId: 9 })
+  const offered = [blockOffer(dirt)]
+  bot.entity.position = new Vec3(-9.5, 64, 7.5)
+  bot.inventory.slots[HOTBAR_SLOT] = itemStack('iron_shovel', 1)
+  bot.digTime = () => 750
+  let stopped = 0
+  bot.stopDigging = () => { stopped += 1 }
+  const finishes = []
+  const write = bot._client.write
+  bot._client.write = (name, parameters) => {
+    if (name === 'block_dig' && parameters?.status === 2) finishes.push(parameters.location)
+    return write?.call(bot._client, name, parameters)
+  }
+  // Mid-dig, the server says the dirt is now grass; Mineflayer would dig on and finish it.
+  bot.dig = () => new Promise((resolve, reject) => {
+    setImmediate(() => {
+      bot.putBlock(grass)
+      bot._client.emit('block_change', { location: { x: -10, y: 63, z: 7 }, type: grass.stateId })
+    })
+    bot.stopDigging = () => { stopped += 1; reject(new Error('Digging aborted')) }
+  })
+  const report = await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))
+  assert.deepEqual(report, {
+    outcome: 'blockChanged',
+    elapsedMs: report.elapsedMs,
+    attempted: true,
+    tool: 'iron_shovel'
+  })
+  assert.equal(stopped, 1, 'the dig of the changed block is stopped')
+  assert.deepEqual(finishes, [], 'no finish of the changed block is written')
+
+  // A server update that only repeats the offered state changes nothing, and the dig is dug.
+  bot.putBlock(dirt)
+  bot.dig = async (block) => {
+    bot._client.emit('block_change', { location: { x: -10, y: 63, z: 7 }, type: dirt.stateId })
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    serverBroke(bot, block.position)
+  }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome, 'dug')
+})
+
 test('dig timeout, halt, and teardown all stop the same bounded task', async () => {
   const bot = worldBot()
   const target = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))

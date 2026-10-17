@@ -44,7 +44,7 @@
  * lists widened from 24 to 48 entries. Adding operation names alone would not have
  * moved it; widening a body-chosen answer does.
  */
-const PROTOCOL_VERSION = 6
+const PROTOCOL_VERSION = 7
 
 /** Most dropped items one sense may ask to have reported out of sight. */
 const MAX_RETAINED_ITEMS = 8
@@ -1351,8 +1351,9 @@ function isDigReport (raw, literals) {
     'libraryFailure'
   ]).has(raw.outcome)
   // A block can be found gone before Mineflayer is invoked, or be broken by another player while
-  // this body is still digging it, from generation 6.
-  if (raw.outcome === 'blockGone') {
+  // this body is still digging it, from generation 6; and found changed before, or turned into
+  // another block by the world while this body is still digging it, from generation 7.
+  if (raw.outcome === 'blockGone' || raw.outcome === 'blockChanged') {
     if (raw.attempted === false && raw.tool !== undefined) return false
   } else if (raw.attempted !== handedToMineflayer) return false
   if (raw.tool !== undefined && (!raw.attempted || !isResourceName(raw.tool))) return false

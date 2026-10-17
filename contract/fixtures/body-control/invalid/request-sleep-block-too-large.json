@@ -1,1 +1,1 @@
-{"op":"sleep","protocol":6,"requestId":"bad-sleep","agentId":"agent-alpha","senseId":"sense-1","block":48,"timeoutMs":8000}
+{"op":"sleep","protocol":7,"requestId":"bad-sleep","agentId":"agent-alpha","senseId":"sense-1","block":48,"timeoutMs":8000}

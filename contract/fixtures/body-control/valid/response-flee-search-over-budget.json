@@ -1,1 +1,1 @@
-{"op":"flee","protocol":6,"requestId":"req-42","agentId":"agent-alpha","state":"ready","outcome":"searchOverBudget","from":[12.5,71.5,-40.5],"position":[12.5,71.5,-40.5],"travelled":0.25,"elapsedMs":519,"separation":3.5,"separationGained":-0.25}
+{"op":"flee","protocol":7,"requestId":"req-42","agentId":"agent-alpha","state":"ready","outcome":"searchOverBudget","from":[12.5,71.5,-40.5],"position":[12.5,71.5,-40.5],"travelled":0.25,"elapsedMs":519,"separation":3.5,"separationGained":-0.25}

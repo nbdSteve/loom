@@ -1,1 +1,1 @@
-{"op":"craft","protocol":6,"requestId":"bad-craft-response","agentId":"agent-alpha","state":"ready","outcome":"madeThings","elapsedMs":1,"attempted":false}
+{"op":"craft","protocol":7,"requestId":"bad-craft-response","agentId":"agent-alpha","state":"ready","outcome":"madeThings","elapsedMs":1,"attempted":false}
