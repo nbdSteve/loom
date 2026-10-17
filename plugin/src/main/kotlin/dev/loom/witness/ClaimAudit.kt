@@ -63,7 +63,7 @@ class ClaimAudit(
                 claimedInventory = claim.inventory,
                 observed = reading.vitals,
                 observedInventory = reading.inventory,
-                observedAfter = later?.vitals,
+                after = later,
             )
         if (found is Corroboration.Disputed) {
             journal.disputed(subjectOf(identity.agentId, uuid, username), found, currentTick())

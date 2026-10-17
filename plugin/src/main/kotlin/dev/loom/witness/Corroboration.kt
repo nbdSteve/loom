@@ -237,11 +237,20 @@ fun corroborate(
     claimedInventory: List<SensedStack>,
     observed: ObservedVitals,
     observedInventory: List<ObservedStack>,
-    observedAfter: ObservedVitals? = null,
+    after: ServerReading? = null,
 ): Corroboration {
-    val vitals = vitalFaults(claimed, observed, observedAfter ?: observed)
+    val vitals = vitalFaults(claimed, observed, after?.vitals ?: observed)
     val checkable = claimedInventory.filter { isCorroborableSlot(it.slot) }
-    val inventory = inventoryFaults(checkable, observedInventory.filter { isCorroborableSlot(it.slot) })
+    // The claim is one moment inside the round trip, so it agrees when it matches the server at
+    // either end: the path rehearsal's theta picked up a stick while its sense was in flight, and
+    // the claim held the stick the reading from before the request did not.
+    val before = inventoryFaults(checkable, observedInventory.filter { isCorroborableSlot(it.slot) })
+    val atAnswer =
+        after?.let {
+                reading ->
+            inventoryFaults(checkable, reading.inventory.filter { isCorroborableSlot(it.slot) })
+        }
+    val inventory = if (before.isNotEmpty() && atAnswer?.isEmpty() == true) atAnswer else before
     val outside = claimedInventory.size - checkable.size
     if (vitals.isEmpty() && inventory.isEmpty()) {
         return if (outside == 0) Corroboration.Agreed else Corroboration.PartlyChecked(outside)

@@ -132,10 +132,31 @@ class CorroborationTest {
         val before = ObservedVitals(health = 17.0, food = 20, saturation = 5.0)
         val after = ObservedVitals(health = 12.0, food = 20, saturation = 5.0)
         assertIs<Corroboration.Disputed>(corroborate(claimed, emptyList(), before, emptyList()))
-        assertEquals(Corroboration.Agreed, corroborate(claimed, emptyList(), before, emptyList(), after))
+        assertEquals(
+            Corroboration.Agreed,
+            corroborate(claimed, emptyList(), before, emptyList(), at(after)),
+        )
         // Outside the whole span, plus the tolerance, is still a body contradicting the server.
         val invented = SensedVitals(health = 8.0, food = 20, saturation = 5.0)
-        assertIs<Corroboration.Disputed>(corroborate(invented, emptyList(), before, emptyList(), after))
+        assertIs<Corroboration.Disputed>(
+            corroborate(invented, emptyList(), before, emptyList(), at(after)),
+        )
+    }
+
+    @Test
+    fun anInventoryThatChangedDuringTheRoundTripAgreesWithTheServerAtEitherEnd() {
+        // The path rehearsal: theta picked up a stick while its sense was in flight, and the claim
+        // held the stick the reading from before the request did not.
+        val vitals = SensedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val observed = ObservedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val stick = listOf(SensedStack(slot = 36, what = "stick", count = 1))
+        val held = listOf(ObservedStack(slot = 36, what = "stick", count = 1))
+        assertIs<Corroboration.Disputed>(corroborate(vitals, stick, observed, emptyList()))
+        val atAnswer = ServerReading(observed, held)
+        assertEquals(Corroboration.Agreed, corroborate(vitals, stick, observed, emptyList(), atAnswer))
+        // A stack the server held at neither end is still invented.
+        val two = listOf(SensedStack(slot = 36, what = "stick", count = 2))
+        assertIs<Corroboration.Disputed>(corroborate(vitals, two, observed, emptyList(), atAnswer))
     }
 
     @Test
@@ -145,15 +166,25 @@ class CorroborationTest {
         // change or a zero crossing.
         val stale = SensedVitals(health = 20.0, food = 20, saturation = 5.0)
         val drained = ObservedVitals(health = 20.0, food = 20, saturation = 3.0)
-        assertEquals(Corroboration.Agreed, corroborate(stale, emptyList(), drained, emptyList(), drained))
+        assertEquals(
+            Corroboration.Agreed,
+            corroborate(stale, emptyList(), drained, emptyList(), at(drained)),
+        )
         // A peaceful world raised the server to 7.0 with no resend either.
         val raised = ObservedVitals(health = 20.0, food = 20, saturation = 7.0)
-        assertEquals(Corroboration.Agreed, corroborate(stale, emptyList(), raised, emptyList(), raised))
+        assertEquals(
+            Corroboration.Agreed,
+            corroborate(stale, emptyList(), raised, emptyList(), at(raised)),
+        )
         // Zero-ness is what vanilla keeps in step, so disagreeing about it is a contradiction.
         val empty = ObservedVitals(health = 20.0, food = 20, saturation = 0.0)
-        assertIs<Corroboration.Disputed>(corroborate(stale, emptyList(), empty, emptyList(), empty))
+        assertIs<Corroboration.Disputed>(
+            corroborate(stale, emptyList(), empty, emptyList(), at(empty)),
+        )
         val starved = SensedVitals(health = 20.0, food = 20, saturation = 0.0)
-        assertIs<Corroboration.Disputed>(corroborate(starved, emptyList(), drained, emptyList(), drained))
+        assertIs<Corroboration.Disputed>(
+            corroborate(starved, emptyList(), drained, emptyList(), at(drained)),
+        )
     }
 
     @Test
@@ -498,4 +529,7 @@ class CorroborationTest {
 
         assertEquals((0 until FIRST_CORROBORABLE_SLOT).toList(), excluded)
     }
+
+    /** The server's reading when the answer is audited, with the inventory it held then. */
+    private fun at(vitals: ObservedVitals) = ServerReading(vitals, emptyList())
 }
