@@ -308,3 +308,23 @@ test('under generation 12 a one-step goal is no substance, and a chain counts on
   ]
   assert.equal(gate12(tiny).goalCoherence.pursuit.measured.oneStepGoals, 1)
 })
+
+test('a flight that stalled against the world border is a blocker, ended at the border face', () => {
+  // v29 plains rehearsal 2 theta (twice, from skeletons) and rehearsal 3 iota (from the zombie
+  // that killed it): each flight searched over the 128-block border and jumped in place against
+  // it until the stall bound ended it. The body now searches inside the border; the gate keeps
+  // such a flight a blocker rather than excusing it as terrain.
+  const fixture = path.join(__dirname, 'fixtures', 'v29-border-stalls.jsonl')
+  const bodyRecords = fs.readFileSync(fixture, 'utf8').trim().split('\n').map(JSON.parse)
+  const result = readinessMetrics({ bodyRecords, harnessRecords: [], metrics: {}, generation: 12, bars: { ...BARS, dangerEpisodes: 1 } })
+  const stalls = result.actions.nonSuccess.filter((entry) => entry.class === 'incompleteMovement')
+  assert.deepEqual(stalls.map((entry) => entry.agentId), ['tribe-theta', 'tribe-theta', 'tribe-iota'])
+  assert.equal(result.blockers.incompleteMovement, 3)
+  for (const moved of bodyRecords.filter((record) => record.event === 'moved')) {
+    assert.equal(moved.outcome, 'movementStalled')
+    // The summary's end position: one horizontal coordinate is the border face less half a body.
+    const end = moved.summary.split(' to ')[1].split(';')[0].split(',').map(Number)
+    const touching = Math.max(Math.abs(end[0]), Math.abs(end[2])) + 0.3
+    assert.ok(Math.abs(touching - 64) < 0.05, moved.summary)
+  }
+})

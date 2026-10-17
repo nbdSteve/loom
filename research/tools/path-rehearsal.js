@@ -144,8 +144,18 @@ function pathsOf (records, readiness) {
     record.intent === 'flee' && record.decision?.goal === undefined &&
     byKey(record.requestKey).some((entry) => entry.event === 'perceived' && (entry.trigger ?? entry.perception?.trigger?.event) === 'goalReview') &&
     byKey(record.requestKey).some((entry) => entry.event === 'intentApplied' && entry.outcome === 'accepted'))
+  // kappa stands against the world border's north face: its flight runs along the border and
+  // arrives, and no perception offers it a walk past the border (v29 rehearsal theta).
+  const alongBorder = hunted === undefined
+    ? undefined
+    : byKey(hunted.requestKey).find((entry) => entry.event === 'moved' && entry.outcome === 'movementArrived')
+  const bordered = of('tribe-kappa', 'perceived').find((record) =>
+    (record.perception?.explore ?? []).length > 0 &&
+    record.perception.explore.every((cell) => cell.direction !== 'north'))
   return {
     reviewFleesAHunterWithNoGoalChoice: evidence(hunted),
+    flightAlongTheBorderArrived: evidence(alongBorder),
+    noWalkOfferedPastTheBorder: evidence(bordered),
     nookDropCollectedFromThePit: evidence(nook),
     craftOfTwoApplicationsConfirmed: evidence(crafted),
     chainedToTheGoalItsRecipeUses: evidence(of('tribe-alpha', 'decided').find((record) => record.goal?.chainedFrom !== undefined)),

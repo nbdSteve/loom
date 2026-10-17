@@ -645,10 +645,21 @@ function createBody (options) {
     follow(bot)
   }
 
-  /** Starts both process channels in their required order. */
+  /**
+   * Starts both process channels in their required order.
+   *
+   * A client that cannot be started stops the control channel already listening before the
+   * failure is reported, so a failed start leaves nothing open: a throw here once left one
+   * listener per failed start holding the test process open with no timer to end it.
+   */
   async function start () {
     const started = await startControl()
-    startClient()
+    try {
+      startClient()
+    } catch (failure) {
+      await stop()
+      throw failure
+    }
     return started
   }
 

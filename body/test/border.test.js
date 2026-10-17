@@ -75,3 +75,28 @@ test('a walk past the border has no route, and one inside it arrives', async () 
   assert.equal(inside.outcome, 'arrived', JSON.stringify(inside))
   peer.stop()
 })
+
+test('a bot with no protocol client states no border', () => {
+  const bot = {}
+  assert.equal(trackWorldBorder(bot)(), undefined)
+  assert.equal(worldBorderOf(bot), undefined)
+})
+
+test('a client that cannot start stops the control channel it opened, and the start fails', async () => {
+  const { createBody } = require('../src/body')
+  const net = require('node:net')
+  const port = await H.freePort()
+  const body = createBody({
+    agentId: H.AGENT,
+    username: 'border',
+    minecraft: { host: '127.0.0.1', port: await H.freePort(), version: '1.21.1' },
+    control: { host: '127.0.0.1', port },
+    createBot: () => { throw new Error('no client') }
+  })
+  await assert.rejects(body.start(), /no client/)
+  // Nothing listens on the control port any more.
+  await assert.rejects(new Promise((resolve, reject) => {
+    const socket = net.connect(port, '127.0.0.1', () => { socket.end(); resolve() })
+    socket.on('error', reject)
+  }), /ECONNREFUSED/)
+})

@@ -798,6 +798,11 @@ in `blocksToAvoid`, which makes a route through it cost more than the search wil
 A body that falls in still floats, because that is Prismarine physics doing what vanilla
 does rather than a policy of Loom's.
 
+**The server's world border is a wall, and the one step exclusion a route is searched under.**
+Mineflayer keeps no border state and Prismarine's physics collides with blocks alone, so a search that did not know the border routed over it, and the server put the player back on every step until the stall bound ended the request.
+`src/border.js` reads the four border packets, takes the smaller end of a changing border, and prices every cell of a column a body's box would cross the border from as more than the search will pay.
+The v29 plains rehearsal's theta stalled three times against the 128-block border and iota died against it; `test/native-flee-border.test.js` replays theta's crater flight on its converged ground, and the JVM's `BukkitBlockGround` closes the same cells so no walk past the border is offered.
+
 **Sprinting is the one ability a request decides, which is why the policy is built per
 request.**
 Sprinting spends food, so a body allowed to sprint whenever it could would be quietly

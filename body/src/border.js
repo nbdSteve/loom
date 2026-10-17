@@ -31,12 +31,14 @@ const borders = new WeakMap()
 function trackWorldBorder (bot) {
   const known = borders.get(bot)
   if (known !== undefined) return known
+  const client = bot._client
+  // A bot with no protocol client is told no border, and states none.
+  if (typeof client?.on !== 'function') return () => undefined
   const state = { x: undefined, z: undefined, diameter: undefined }
   const finite = (value) => typeof value === 'number' && Number.isFinite(value)
   const sized = (from, to) => {
     if (finite(from) && finite(to) && from > 0 && to > 0) state.diameter = Math.min(from, to)
   }
-  const client = bot._client
   client.on('initialize_world_border', (packet) => {
     if (finite(packet.x) && finite(packet.z)) {
       state.x = packet.x

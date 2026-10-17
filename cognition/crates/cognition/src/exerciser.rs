@@ -25,9 +25,10 @@
 //! - `iota` stands in a pit beside a one-high nook its dirt lies in, just past vanilla's pickup
 //!   reach from where it stands, and collects it with approach (r28 plains rehearsal alpha,
 //!   tick 9765: refused `collectNoRoute`, because no cell covered the item from every point);
-//! - `kappa` stands beside a creeper that cannot move and, at its goal review, flees from it with
-//!   no goal choice, as a review beside a hunter now may (r20: kappa reviewed beside a zombie and a
-//!   skeleton, was offered only dirt digs, and died);
+//! - `kappa` stands against the world border beside a creeper that cannot move and, at its goal
+//!   review, flees from it with no goal choice, as a review beside a hunter now may (r20: kappa
+//!   reviewed beside a zombie and a skeleton, was offered only dirt digs, and died), along the
+//!   border rather than over it (v29 rehearsal theta stalled against it);
 //! - `eta` digs dirt for a two-dirt goal beside a pocket under an overhang that its perception
 //!   must report unsafe to dig, revises the goal to the total it already has once (refused), and
 //!   once the goal is met completes it plainly beside the dirt still in sight once (refused)
