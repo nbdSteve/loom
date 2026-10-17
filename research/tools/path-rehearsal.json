@@ -10,7 +10,8 @@
     "tribe-zeta",
     "tribe-eta",
     "tribe-theta",
-    "tribe-iota"
+    "tribe-iota",
+    "tribe-kappa"
   ],
   "paper": {
     "minecraftVersion": "1.21.1",
@@ -20,13 +21,14 @@
   },
   "world": {
     "seed": "1",
-    "difficulty": "peaceful",
-    "mobSpawning": false,
+    "difficulty": "easy",
+    "mobSpawning": true,
     "maxWorldSizeBlocks": 256,
     "worldBorderDiameterBlocks": 128,
     "viewDistanceChunks": 4,
     "simulationDistanceChunks": 4,
-    "levelType": "minecraft:flat"
+    "levelType": "minecraft:flat",
+    "monsterSpawnLimit": 0
   },
   "network": {
     "host": "127.0.0.1",
@@ -55,7 +57,7 @@
     "startupConcurrency": 2,
     "startupAttempts": 3,
     "logBytes": 16777216,
-    "runTicks": 5700,
+    "runTicks": 6200,
     "runSeconds": 420
   },
   "setup": [
@@ -65,7 +67,7 @@
     "gamerule randomTickSpeed 0",
     "weather clear",
     "time set 1000",
-    "difficulty peaceful",
+    "difficulty easy",
     "fill -28 -60 0 -28 -58 0 minecraft:oak_log",
     "setblock 3 -60 0 minecraft:oak_log",
     "setblock 2 -60 -40 minecraft:oak_log",
@@ -121,13 +123,19 @@
       43.357,
       -60,
       -29.5
+    ],
+    "tribe-kappa": [
+      -40.5,
+      -60,
+      -30.5
     ]
   },
   "afterPlacement": [
     "summon minecraft:item 34.5 -60 0.5 {Item:{id:\"minecraft:stick\",count:1},PickupDelay:450}",
     "summon minecraft:item -1.5 -60 -40.5 {Item:{id:\"minecraft:oak_log\",count:1},PickupDelay:32767,Age:5500}",
-    "summon minecraft:item 30.5 -60 40.5 {Item:{id:\"minecraft:stick\",count:1},PickupDelay:830}",
-    "summon minecraft:item 44.863 -60 -29.5 {Item:{id:\"minecraft:dirt\",count:1},PickupDelay:0}"
+    "summon minecraft:item 30.5 -60 40.5 {Item:{id:\"minecraft:stick\",count:1},PickupDelay:1100}",
+    "summon minecraft:item 44.863 -60 -29.5 {Item:{id:\"minecraft:dirt\",count:1},PickupDelay:0}",
+    "summon minecraft:creeper -37.5 -60 -30.5 {NoAI:1b,PersistenceRequired:1b,Silent:1b}"
   ],
-  "layout": "Six groups far enough apart that only beta hears zeta's speech (24 blocks): alpha beside a three-log trunk; beta three blocks from one log, whose drop lands outside the pickup box and is left lying, with zeta four blocks off; gamma four blocks from delta, who stands on a stick vanilla may not pick up for 450 ticks; epsilon beside one log and a log item no one may pick up that despawns about 500 ticks after it is summoned, with another log twelve blocks east past what it senses; theta stands on a stick vanilla may not pick up for 830 ticks, on a stone pad that gives a bare hand nothing, so its met goal is completed plainly and owes a review; eta stands on grass beside a pocket under an overhang, the block east of its support with stone two above it; iota stands at 43.357 in a one-cell pit, its only standable cell, beside a one-high nook east whose dirt lies at 44.863, 0.08 past vanilla's pickup box from where iota stands, as r28 rehearsal alpha's did at tick 9765."
+  "layout": "Six groups far enough apart that only beta hears zeta's speech (24 blocks): alpha beside a three-log trunk; beta three blocks from one log, whose drop lands outside the pickup box and is left lying, with zeta four blocks off; gamma four blocks from delta, who stands on a stick vanilla may not pick up for 450 ticks; epsilon beside one log and a log item no one may pick up that despawns about 500 ticks after it is summoned, with another log twelve blocks east past what it senses; theta stands on a stick vanilla may not pick up for 1100 ticks, on a stone pad that gives a bare hand nothing, so its met goal is completed plainly and owes a review; eta stands on grass beside a pocket under an overhang, the block east of its support with stone two above it; iota stands at 43.357 in a one-cell pit, its only standable cell, beside a one-high nook east whose dirt lies at 44.863, 0.08 past vanilla's pickup box from where iota stands, as r28 rehearsal alpha's did at tick 9765; kappa stands 3 blocks west of a creeper that cannot move, on an easy world that keeps hostile mobs but spawns none (the doMobSpawning gamerule is off); Bukkit's monster spawn limit is zero from the first tick, because superflat ground lies below y 40, where slimes spawn in any light."
 }

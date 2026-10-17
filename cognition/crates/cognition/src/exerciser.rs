@@ -25,6 +25,9 @@
 //! - `iota` stands in a pit beside a one-high nook its dirt lies in, just past vanilla's pickup
 //!   reach from where it stands, and collects it with approach (r28 plains rehearsal alpha,
 //!   tick 9765: refused `collectNoRoute`, because no cell covered the item from every point);
+//! - `kappa` stands beside a creeper that cannot move and, at its goal review, flees from it with
+//!   no goal choice, as a review beside a hunter now may (r20: kappa reviewed beside a zombie and a
+//!   skeleton, was offered only dirt digs, and died);
 //! - `eta` digs dirt for a two-dirt goal beside a pocket under an overhang that its perception
 //!   must report unsafe to dig, revises the goal to the total it already has once (refused), and
 //!   once the goal is met completes it plainly beside the dirt still in sight once (refused)
@@ -117,6 +120,7 @@ impl PathExerciser {
             "epsilon" => explorer(perception),
             "eta" => restater(perception),
             "iota" => fetcher(perception),
+            "kappa" => warden(perception),
             "zeta" => answer(
                 Intent::Say {
                     text: "hello from zeta".to_owned(),
@@ -408,6 +412,22 @@ fn collector(perception: &Perception) -> Draft {
         (_, Some(_)) if met(perception) => finish(perception),
         _ => answer(Intent::Idle, None, IDLE_ROLE),
     }
+}
+
+/// kappa: a flight from the first hunter the review offers, with no goal choice.
+fn warden(perception: &Perception) -> Draft {
+    OfferedRefs::of(perception).danger.first().map_or_else(
+        || answer(Intent::Idle, None, IDLE_ROLE),
+        |hunter| {
+            answer(
+                Intent::Flee {
+                    from: hunter.clone(),
+                },
+                None,
+                "flee the hunter beside me at my goal review",
+            )
+        },
+    )
 }
 
 /// iota: the first drop in route reach collected with approach, for a goal of holding it.
@@ -887,9 +907,38 @@ mod tests {
     }
 
     #[test]
+    fn kappa_flees_the_hunter_its_review_offers_with_no_goal_choice() {
+        let mut seen = review("kappa");
+        assert_eq!(draft(&seen).intent, Intent::Idle);
+        seen.surroundings = vec![Observation {
+            kind: ObservationKind::Entity,
+            what: "entity.minecraft.creeper".to_owned(),
+            distance: 3.0,
+            direction: Bearing::East,
+            vertical_offset: 0.0,
+            visible: true,
+            target_ref: "e1".to_owned(),
+            count: None,
+            standable: None,
+            yields: None,
+            dig_safe: None,
+            route_refused: None,
+            hunts: Some(true),
+        }];
+        let fled = draft(&seen);
+        assert_eq!(
+            fled.intent,
+            Intent::Flee {
+                from: "e1".to_owned()
+            }
+        );
+        assert!(fled.goal.is_none());
+    }
+
+    #[test]
     fn zeta_speaks_and_any_other_agent_is_the_stand_in() {
         assert!(matches!(draft(&review("zeta")).intent, Intent::Say { .. }));
-        let other = draft(&review("kappa"));
+        let other = draft(&review("lambda"));
         assert!(!other.reasoning.starts_with("path exerciser"));
     }
 }

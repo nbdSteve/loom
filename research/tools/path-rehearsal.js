@@ -33,7 +33,7 @@ const { readinessMetrics } = require('../lib/readiness.js')
 
 const REPO = path.resolve(__dirname, '..', '..')
 const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'path-rehearsal.json'), 'utf8'))
-const GENERATION = 11
+const GENERATION = 12
 const RETENTION_TICKS = 4800
 const POLL_MS = 500
 
@@ -48,12 +48,17 @@ function serverConfig () {
   }
 }
 
-/** Points the generated server at a flat world without structures. */
+/**
+ * Points the generated server at a flat world without structures, and with no natural monster
+ * spawning from the first tick: superflat ground lies below y 40, where slimes spawn in any light,
+ * and the one hostile the paths need is summoned. Bukkit fills every other setting of its own file.
+ */
 function flatten (runDirectory) {
   const file = path.join(runDirectory, 'server.properties')
   const properties = fs.readFileSync(file, 'utf8')
     .replace('generate-structures=true', 'generate-structures=false')
   fs.writeFileSync(file, `${properties}level-type=${CONFIG.world.levelType.replace(':', '\\:')}\n`)
+  fs.writeFileSync(path.join(runDirectory, 'bukkit.yml'), `spawn-limits:\n  monsters: ${CONFIG.world.monsterSpawnLimit}\n`)
 }
 
 function paperEnvironment (runDirectory, javaHome) {
@@ -133,7 +138,13 @@ function pathsOf (records, readiness) {
   const nook = of('tribe-iota', 'decided').find((record) =>
     record.intent === 'collect' && record.decision?.intent?.approach === true && confirmed(record) &&
     byKey(record.requestKey).some((entry) => entry.event === 'intentApplied' && entry.outcome === 'accepted'))
+  // kappa's goal review beside a creeper flees it with no goal choice, and the flight runs.
+  const hunted = of('tribe-kappa', 'decided').find((record) =>
+    record.intent === 'flee' && record.decision?.goal === undefined &&
+    byKey(record.requestKey).some((entry) => entry.event === 'perceived' && (entry.trigger ?? entry.perception?.trigger?.event) === 'goalReview') &&
+    byKey(record.requestKey).some((entry) => entry.event === 'intentApplied' && entry.outcome === 'accepted'))
   return {
+    reviewFleesAHunterWithNoGoalChoice: evidence(hunted),
     nookDropCollectedFromThePit: evidence(nook),
     craftOfTwoApplicationsConfirmed: evidence(crafted),
     chainedToTheGoalItsRecipeUses: evidence(of('tribe-alpha', 'decided').find((record) => record.goal?.chainedFrom !== undefined)),
