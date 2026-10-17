@@ -72,7 +72,9 @@ class GoalPursuitEndToEndTest {
                 0 -> craft(seen, "item.minecraft.oak_planks", 2) to target(GoalDisposition.ADOPT, PLANKS, 8)
                 // Eight planks held: complete that goal and adopt four sticks, crafted from them.
                 1 -> craft(seen, "item.minecraft.stick", 1) to target(GoalDisposition.REPLACE, STICK, 4)
-                else -> Intent.Idle to GoalChoice(GoalDisposition.COMPLETE, stepResult = GoalStepResult.DONE)
+                // Four sticks held with planks and a bush still in sight: from routine-v28 a plain
+                // completion here is refused, so the met goal is replaced by the next one.
+                else -> craft(seen, "item.minecraft.stick", 1) to target(GoalDisposition.REPLACE, STICK, 8)
             }
         }
         for (review in 1..3) {
@@ -85,7 +87,10 @@ class GoalPursuitEndToEndTest {
         assertTrue(PLANKS in obtainable, "planks are craftable from the held logs: $obtainable")
         assertTrue(first.surroundings.any { it.yields.orEmpty().any { yielded -> yielded.what == STICK } })
         val outcomes = world.records.filter { it.event == BodyEvent.DECIDED }.map { it.goal?.outcome }
-        assertEquals(listOf(GoalEvidence.ADOPTED, GoalEvidence.COMPLETED_ADOPTED, GoalEvidence.COMPLETED), outcomes)
+        assertEquals(
+            listOf(GoalEvidence.ADOPTED, GoalEvidence.COMPLETED_ADOPTED, GoalEvidence.COMPLETED_ADOPTED),
+            outcomes,
+        )
         val applied = world.records.filter { it.event == BodyEvent.INTENT_APPLIED }.map { it.outcome }
         assertEquals(listOf(EventTag.ACCEPTED, EventTag.ACCEPTED, EventTag.ACCEPTED), applied)
         val held = world.mind.seen[2].selfState.inventorySummary.associate { it.what to it.count }

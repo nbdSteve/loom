@@ -45,22 +45,8 @@ internal fun incoherenceOf(
         ?: GoalEvidence.STEP_IDLE.takeIf { stepping && intent.action in PASSIVE }
         ?: GoalEvidence.STEP_UNPRODUCTIVE.takeIf { stepping && !canGive(presented, choice, intent, observed) }
         ?: GoalEvidence.OWN_DROP_IGNORED.takeIf { ownDropIgnored(presented, choice, intent, observed) }
+        ?: reviseUnchangedOf(presented, choice)
 }
-
-/**
- * A revise that names an item other than the held goal's: a new goal, which is a replace, not a
- * revise (r18 zeta body:00000569 revised a scute goal into sticks under the same goal).
- */
-private fun reviseItemOf(
-    presented: GoalSummary?,
-    choice: GoalChoice?,
-): String? =
-    GoalEvidence.REVISE_ITEM_CHANGED.takeIf {
-        choice?.disposition == GoalDisposition.REVISE &&
-            presented?.successItem != null &&
-            choice.successItem != null &&
-            choice.successItem != presented.successItem
-    }
 
 /** The dispositions that keep pursuing the held goal's item, rather than set a new goal. */
 private val PURSUING = setOf(GoalDisposition.CONTINUE, GoalDisposition.REVISE)
@@ -101,11 +87,26 @@ private fun conditionRefusalOf(
         met && !movesOn && !revisedPast(choice, observed) -> GoalEvidence.CONDITION_MET_IGNORED
         disposition == GoalDisposition.ABANDON && achievable(presented, observed) ->
             GoalEvidence.ABANDONED_ACHIEVABLE
-        disposition == GoalDisposition.COMPLETE && !met -> GoalEvidence.COMPLETION_UNMET
+        disposition == GoalDisposition.COMPLETE -> completionRefusalOf(met, observed)
         presented != null && choice == null && intent.action !in PASSIVE -> GoalEvidence.CHOICE_MISSING
         else -> null
     }
 }
+
+/**
+ * Why a plain completion is refused, or `null`: an unmet condition, or a met one with a next goal
+ * in sight, which a replace adopts in the same answer rather than beside a filler step (r19:
+ * eight plain completes, two beside an equip, six leaving their agent goal-less for a cadence).
+ */
+private fun completionRefusalOf(
+    met: Boolean,
+    observed: GoalObservation?,
+): String? =
+    when {
+        !met -> GoalEvidence.COMPLETION_UNMET
+        observed?.capacity.orEmpty().isNotEmpty() -> GoalEvidence.COMPLETED_WITHOUT_NEXT
+        else -> null
+    }
 
 /**
  * Whether the goal [presented] carries could still be met from what [observed] holds and sees,
@@ -216,17 +217,4 @@ internal fun refusalOf(
         held = item?.let { observed?.inventory?.get(it) ?: 0 },
         capacity = item?.let { observed?.capacity?.get(it) ?: 0 },
     )
-}
-
-/**
- * Whether [choice] revises a met goal to a target the inventory does not already hold: a new
- * objective rather than the old one reworded, which in r11 kept a held stick "uncollected".
- */
-private fun revisedPast(
-    choice: GoalChoice?,
-    observed: GoalObservation?,
-): Boolean {
-    val item = choice?.successItem.takeIf { choice?.disposition == GoalDisposition.REVISE }
-    val count = choice?.successCount
-    return item != null && count != null && (observed?.inventory?.get(item) ?: 0) < count
 }

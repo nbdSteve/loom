@@ -92,6 +92,12 @@ sealed interface IntentOutcome {
     data class Rejected(
         val reason: String,
         val tag: String = EventTag.REJECTED,
+        /**
+         * Whether the server nonetheless saw the whole effect the step asked for, as a craft the
+         * body refused after every application had been made (r19 theta body:00000310): a step
+         * of its goal settled, and owed its follow-up, all the same.
+         */
+        val effected: Boolean = false,
     ) : IntentOutcome
 
     /**

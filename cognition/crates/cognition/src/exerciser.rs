@@ -246,6 +246,32 @@ fn pursue(perception: &Perception, item: &str) -> Option<Draft> {
     })
 }
 
+/// A met goal ended: replaced by the next goal sight offers, stepped toward by its own step or a
+/// walk to look further, or completed with a walk to look further when sight offers none.
+fn finish(perception: &Perception) -> Draft {
+    let offered = OfferedRefs::of(perception);
+    let Some((item, fewest, _)) = offered.count_bounds.first().cloned() else {
+        return look_further(
+            perception,
+            Some(judged(GoalDisposition::Complete)),
+            "complete the goal and look further",
+        );
+    };
+    let next = Some(target(GoalDisposition::Replace, &item, fewest));
+    match pursue(perception, &item) {
+        Some(step) => answer(
+            step.intent,
+            next,
+            "complete the met goal and adopt the next",
+        ),
+        None => look_further(
+            perception,
+            next,
+            "complete the met goal, adopt the next and look further",
+        ),
+    }
+}
+
 /// alpha: two logs, then planks, then sticks, each met goal replaced by the next in one answer.
 fn crafter(perception: &Perception) -> Draft {
     let Some(goal) = &perception.goal else {
@@ -274,11 +300,7 @@ fn crafter(perception: &Perception) -> Draft {
                 "complete the met goal and adopt the next by crafting it",
             );
         }
-        return look_further(
-            perception,
-            Some(judged(GoalDisposition::Complete)),
-            "complete the goal and look further",
-        );
+        return finish(perception);
     }
     pursue(perception, item).unwrap_or_else(|| {
         answer(
@@ -304,11 +326,7 @@ fn dropper(perception: &Perception) -> Draft {
         );
     }
     if met(perception) {
-        return answer(
-            Intent::Idle,
-            Some(judged(GoalDisposition::Complete)),
-            "complete the goal",
-        );
+        return finish(perception);
     }
     let refused = perception
         .last_refusal
@@ -375,11 +393,7 @@ fn collector(perception: &Perception) -> Draft {
             )),
             "collect the item at my feet without moving",
         ),
-        (_, Some(_)) if met(perception) => answer(
-            Intent::Idle,
-            Some(judged(GoalDisposition::Complete)),
-            "complete the goal",
-        ),
+        (_, Some(_)) if met(perception) => finish(perception),
         _ => answer(Intent::Idle, None, IDLE_ROLE),
     }
 }
@@ -400,11 +414,7 @@ fn explorer(perception: &Perception) -> Draft {
         );
     };
     if met(perception) {
-        return look_further(
-            perception,
-            Some(judged(GoalDisposition::Complete)),
-            "complete the goal",
-        );
+        return finish(perception);
     }
     let revealed = goal
         .progress

@@ -40,6 +40,7 @@ class R16GoalAuditReplayTest {
         val gives: Map<String, Set<String>> = mapOf("bush" to setOf(STICK)),
         val at: List<Double> = listOf(0.5, 100.0, 0.5),
         val inReach: Set<String> = emptySet(),
+        val capacity: Map<String, Long> = mapOf(STICK to 8L),
     )
 
     private fun review(
@@ -54,7 +55,7 @@ class R16GoalAuditReplayTest {
             GoalObservation(
                 scene.inventory,
                 scene.at,
-                capacity = mapOf(STICK to 8L),
+                capacity = scene.capacity,
                 visible = scene.gives.keys,
                 dropped = scene.dropped,
                 gives = scene.gives,
@@ -114,7 +115,8 @@ class R16GoalAuditReplayTest {
         val (gained, completed) =
             review(
                 "kappa-150",
-                Scene(inventory = mapOf(STICK to 2L)),
+                // From routine-v28 a plain completion stands only with no next goal in sight.
+                Scene(inventory = mapOf(STICK to 2L), capacity = emptyMap()),
                 goalChoice(GoalDisposition.COMPLETE),
                 Intent.Idle,
             )

@@ -19,6 +19,8 @@ data class ServerInteractionAudit(
     val detail: String,
     /** A claimed dig whose block the server's break event credits to another managed player. */
     val brokenByOther: Boolean = false,
+    /** Whether the server saw the whole effect the request asked for, whatever the body reported. */
+    val effected: Boolean = false,
 )
 
 /**

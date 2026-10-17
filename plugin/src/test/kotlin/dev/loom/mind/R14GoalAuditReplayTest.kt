@@ -121,7 +121,8 @@ class R14GoalAuditReplayTest {
             review(
                 "delta-107",
                 Scene(capacity = mapOf(STICK to 2L), dropped = setOf("beta-103")),
-                goalChoice(GoalDisposition.REVISE, success = STICK to 1L),
+                // delta's revise restated its total, which routine-v28 refuses: a continue.
+                goalChoice(GoalDisposition.CONTINUE),
                 Intent.Collect("d6", approach = true),
             )
         assertEquals(StepEvidence.NONE, others?.progress?.stepEvidence)

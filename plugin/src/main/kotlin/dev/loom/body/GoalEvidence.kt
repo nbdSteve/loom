@@ -56,6 +56,13 @@ data class GoalEvidence(
      * a direct input of a recipe for this goal's item, by the server's recipe registry.
      */
     val chainedFrom: String? = null,
+    /**
+     * Whether the perception this decision answered showed the agent's own drop of the held
+     * goal's item lying in reach: a step of the goal then owes a review to collect it, whichever
+     * step's dig dropped it (r19 delta body:00000254 adopted a sapling goal beside its own lying
+     * sapling, and no review was owed for 2300 ticks).
+     */
+    val ownGoalDropLying: Boolean? = null,
 ) {
     /** The tags [outcome] takes. */
     companion object {
@@ -164,6 +171,19 @@ data class GoalEvidence(
          */
         const val REVISE_ITEM_CHANGED: String = "goalReviseItemChanged"
 
+        /**
+         * A revise that names the held goal's own item and total, which changes nothing and would
+         * read as goal activity: refused with its intent (r19: 28 of 31 revises restated it).
+         */
+        const val REVISE_UNCHANGED: String = "goalReviseUnchanged"
+
+        /**
+         * A plain completion of a met goal while something in sight gives a next goal, which a
+         * replace adopts in the same answer: refused with its intent (r19: two completes beside a
+         * filler equip, six leaving their agent goal-less for a whole cadence).
+         */
+        const val COMPLETED_WITHOUT_NEXT: String = "goalCompletedWithoutNext"
+
         /** The outcomes that refuse the decision's intent along with its goal choice. */
         val REFUSING: Set<String> =
             setOf(
@@ -178,6 +198,8 @@ data class GoalEvidence(
                 OWN_DROP_IGNORED,
                 ABANDONED_ACHIEVABLE,
                 REVISE_ITEM_CHANGED,
+                REVISE_UNCHANGED,
+                COMPLETED_WITHOUT_NEXT,
             )
 
         /** The outcomes that settle a decision with nothing its next review needs to be told. */

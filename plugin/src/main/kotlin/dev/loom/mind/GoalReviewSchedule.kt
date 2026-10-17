@@ -76,6 +76,9 @@ const val MAX_FOLLOW_UPS_PER_REVIEW: Int = 2
  */
 const val ORDINARY_FOLLOW_UPS_PER_REVIEW: Int = 1
 
+/** Earned follow-ups an ordinary step leaves unspent, for a review owed to a lying drop or a completion. */
+const val OWED_RESERVE: Int = 1
+
 /** What hears that a held goal's step settled. Main thread only. */
 fun interface StepSettlement {
     /**
@@ -216,7 +219,9 @@ class GoalReviewSchedule(
     ) {
         val spentHere = followUps[agent] ?: 0
         val earned = allowance[agent] ?: 0
-        val ordinarySpent = !owed && spentHere >= ORDINARY_FOLLOW_UPS_PER_REVIEW
+        // An ordinary follow-up leaves the last earned one to a review that is owed (r19: the
+        // allowance ran out while own goal-item drops lay unreviewed for 2000 to 2300 ticks).
+        val ordinarySpent = !owed && (spentHere >= ORDINARY_FOLLOW_UPS_PER_REVIEW || earned <= OWED_RESERVE)
         if (agent !in lastReview || earned <= 0 || ordinarySpent) return
         followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS)
     }

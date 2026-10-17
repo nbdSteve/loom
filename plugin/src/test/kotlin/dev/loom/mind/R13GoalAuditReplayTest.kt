@@ -80,14 +80,15 @@ class R13GoalAuditReplayTest {
                     "alpha-$record",
                     at,
                     Seen(),
-                    goal(GoalDisposition.REVISE),
+                    // r13's revises restated the total, which routine-v28 refuses: a continue.
+                    goal(GoalDisposition.CONTINUE),
                     Intent.Dig("b$record"),
                 )
             }
         // Each dig broke its block and yielded nothing: no evidence, so the count climbs.
         assertEquals(listOf(1L, 2L, 3L), outcomes.take(3).map { it.first?.progress?.stepsWithoutProgress })
         assertEquals(listOf(StepEvidence.NONE), outcomes.take(3).map { it.first?.progress?.stepEvidence }.distinct())
-        // body:00000452 and the review after: at the bound the revise is the stall.
+        // body:00000452 and the review after: at the bound the continue is the stall.
         assertEquals(GoalEvidence.STALLED, outcomes[2].second?.outcome)
     }
 

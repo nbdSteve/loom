@@ -65,6 +65,7 @@ internal class PlayerEvidenceRecorder(
                     )
                 ended is IntentOutcome.Accepted ->
                     ended.copy(dropped = drops.filter { it.fate == DropFate.LYING }.map { it.what }.toSet())
+                ended is IntentOutcome.Rejected && audited?.second?.effected == true -> ended.copy(effected = true)
                 else -> ended
             }
         (execution.interaction as? ServerInteractionClaim.Collect)

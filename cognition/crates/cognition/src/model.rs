@@ -425,7 +425,22 @@ impl ScriptedBackend {
         let exploring =
             matches!(intent, Intent::MoveTo { onto } if offered.explore_targets.contains(onto));
         Some(if progress.is_some_and(|seen| seen.condition_met) {
-            ended(GoalDisposition::Complete)
+            // A met goal with a next one in sight is completed by adopting it in the same answer:
+            // what this step gives when sight offers a count of it, else the first item it does.
+            let made = Self::item_of(perception, intent)
+                .filter(|item| offered.count_bounds_of(item).is_some());
+            match made.or_else(|| offered.count_bounds.first().map(|(item, ..)| item.clone())) {
+                Some(item) => {
+                    let (fewest, _) = offered.count_bounds_of(&item).unwrap_or((1, 1));
+                    GoalChoice {
+                        success_item: Some(item),
+                        success_count: Some(fewest),
+                        step: None,
+                        ..step(GoalDisposition::Replace, Some(step_result))
+                    }
+                }
+                None => ended(GoalDisposition::Complete),
+            }
         } else if !acting
             || (unobtainable && !exploring)
             || progress
@@ -435,6 +450,20 @@ impl ScriptedBackend {
         } else {
             step(GoalDisposition::Continue, Some(step_result))
         })
+    }
+
+    /// What `intent` makes or digs for: a dig's yield, or a craft's result.
+    fn item_of(perception: &Perception, intent: &Intent) -> Option<String> {
+        match intent {
+            Intent::Dig { block } => yield_of(perception, block, None),
+            Intent::Craft { recipe, .. } => perception
+                .self_state
+                .crafting_options
+                .iter()
+                .find(|option| &option.recipe_ref == recipe)
+                .map(|option| option.what.clone()),
+            _ => None,
+        }
     }
 
     /// The per-trigger action rule, before any goal choice is attached.

@@ -380,6 +380,7 @@ class GoalLedger(
             goalId = next?.goalId,
             revision = next?.revision,
             chainedFrom = chainedFrom,
+            ownGoalDropLying = (item != null && basis.observed?.ownDrops?.containsValue(item) == true).takeIf { it },
         )
     }
 }

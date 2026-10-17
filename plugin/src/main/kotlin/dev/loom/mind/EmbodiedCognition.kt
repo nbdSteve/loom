@@ -296,6 +296,12 @@ class EmbodiedCognition(
             callbacks.onApplied(AppliedDecision(decision, refused))
             return
         }
+        // A plain completion leaves no goal held: it owes a review soon after, so the next goal is
+        // not a whole cadence away (r19: six completions left their agent goal-less for 2100 to
+        // 2400 ticks).
+        if (goal?.outcome == GoalEvidence.COMPLETED) {
+            callbacks.onStepSettled.settled(agentId, journal.tick(), owed = true)
+        }
         bodies.apply(agentId, decision.intent, decision.requestId).whenComplete { outcome, failure ->
             mainThread.execute {
                 val applied =
@@ -316,12 +322,15 @@ class EmbodiedCognition(
                         tagOf(applied),
                         (applied as? IntentOutcome.Accepted)?.reached,
                     )
-                if (goalStep != null && applied is IntentOutcome.Accepted) {
+                val effected =
+                    applied is IntentOutcome.Accepted || (applied as? IntentOutcome.Rejected)?.effected == true
+                if (goalStep != null && effected) {
                     // A step that left its own drop of the goal's item lying owes a review to collect it.
+                    val dropped = goalStep.successItem in (applied as? IntentOutcome.Accepted)?.dropped.orEmpty()
                     callbacks.onStepSettled.settled(
                         agentId,
                         journal.tick(),
-                        owed = goalStep.successItem in applied.dropped,
+                        owed = dropped || goal?.ownGoalDropLying == true,
                     )
                 }
                 danger.settled(agentId, decision.requestId)

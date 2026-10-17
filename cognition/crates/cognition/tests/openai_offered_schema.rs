@@ -403,11 +403,10 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     goal.success_item = Some("item.minecraft.stick".to_owned());
     goal.success_count = Some(1);
     assert_eq!(dispositions(&of(&sticks)), ["abandon"]);
-    // An achievable goal is pursued, never abandoned (r17 theta body:00000333).
-    assert_eq!(
-        dispositions(&of(&with_bush(sticks.clone()))),
-        ["continue", "revise"]
-    );
+    // An achievable goal is pursued, never abandoned (r17 theta body:00000333). A revise must
+    // change the total, and one stick is all sight gives, so no revise is offered (r19: 28 of
+    // 31 revises restated the total they were shown).
+    assert_eq!(dispositions(&of(&with_bush(sticks.clone()))), ["continue"]);
     // Two sticks are one more than a bush's expected yield (r16 calibration): the bush is still
     // dug toward the goal, and the goal may be revised to what sight gives, or abandoned (the
     // path rehearsal: a goal one log short was refused the collect of its own lying log).
@@ -420,9 +419,10 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     // condition is completed or revised; nothing else, not even no choice, is offered.
     let met = with_bush(fixture("perception-goal-condition-met"));
     // A replace on a met goal completes it and adopts the next in one answer (r17: every one of
-    // eleven completes idled for a full cycle).
-    // The bush gives sticks, not the held goal's logs, so no revise is offered.
-    assert_eq!(dispositions(&of(&met)), ["replace", "complete"]);
+    // eleven completes idled for a full cycle). While sight gives a next goal no plain complete
+    // is offered at all (r19: two completes beside a filler equip, six leaving their agent
+    // goal-less for a cadence). The bush gives sticks, not the held goal's logs, so no revise.
+    assert_eq!(dispositions(&of(&met)), ["replace"]);
     let schema = of(&met);
     let validator = jsonschema::validator_for(&schema).unwrap();
     let continuing = answer_in(
@@ -436,16 +436,21 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
         &json!({ "action": "idle" }),
         &json!(null)
     )));
-    // A complete travels with any intent, idle included, while nowhere is offered to look.
+    // With nothing in sight to give a next goal, a plain complete is offered, beside any intent
+    // while nowhere is offered to look.
+    let bare = fixture("perception-goal-condition-met");
+    assert_eq!(dispositions(&of(&bare)), ["complete"]);
     let completing = answer_in(
-        &schema,
+        &of(&bare),
         &json!({ "action": "idle" }),
         &json!({ "disposition": "complete", "stepResult": "done" }),
     );
-    assert!(validator.is_valid(&completing));
+    assert!(jsonschema::validator_for(&of(&bare))
+        .unwrap()
+        .is_valid(&completing));
     // Beside a cell at the edge of sight it travels with an action (r18: all eleven completes
     // idled, and six waited a whole cadence for the next goal).
-    let mut looking = met.clone();
+    let mut looking = bare.clone();
     looking.explore.push(loom_contract::ExploreTarget {
         target_ref: "x1".to_owned(),
         distance: 12.0,

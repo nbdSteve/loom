@@ -190,6 +190,9 @@ pub struct OfferedRefs {
     pub item_steps: Vec<ItemSteps>,
     /// The held goal's success item at a goal review, whatever phase it is in.
     pub held_item: Option<String>,
+    /// The held goal's success total, which a revise must change (r19: 28 of 31 revises set the
+    /// total they were shown, and read as goal activity).
+    pub held_total: Option<i64>,
 }
 
 /// Every item's whole capacity, uncut, so a held goal is judged by the rule the body uses: in
@@ -501,6 +504,7 @@ impl OfferedRefs {
             return;
         };
         self.held_item = Some(item.clone());
+        self.held_total = Some(count);
         let held = held_of(perception, item);
         let capacity = totals
             .iter()

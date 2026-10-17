@@ -147,13 +147,16 @@ internal class OwnDropLedger(
         entity: UUID,
         picker: UUID?,
     ) {
-        val drop = tracked(entity) ?: return
-        drop.fate =
-            when (picker) {
-                drop.owner -> DropFate.COLLECTED
-                null -> DropFate.GONE
-                else -> DropFate.TAKEN
-            }
+        // Every drop living in that stack, so one merged into another is settled with it (r19
+        // theta's merged log read gone although theta picked it up, perception body:00000509).
+        for (drop in tracked(entity)) {
+            drop.fate =
+                when (picker) {
+                    drop.owner -> DropFate.COLLECTED
+                    null -> DropFate.GONE
+                    else -> DropFate.TAKEN
+                }
+        }
     }
 
     /** The stack lives on inside the one it merged into, so that is what is followed. */
@@ -161,11 +164,11 @@ internal class OwnDropLedger(
         entity: UUID,
         into: UUID,
     ) {
-        tracked(entity)?.entity = into
+        tracked(entity).forEach { it.entity = into }
     }
 
     fun gone(entity: UUID) {
-        tracked(entity)?.fate = DropFate.GONE
+        tracked(entity).forEach { it.fate = DropFate.GONE }
     }
 
     fun attribute(
@@ -198,10 +201,12 @@ internal class OwnDropLedger(
     /** The oldest drop whose fate is known, or the oldest of all when every one still lies. */
     private fun evictable(told: ArrayDeque<Drop>): Drop = told.lastOrNull { it.fate != DropFate.LYING } ?: told.last
 
-    private fun tracked(entity: UUID): Drop? =
+    /** Every drop still lying in the item entity [entity], merged into it or its own. */
+    private fun tracked(entity: UUID): List<Drop> =
         (pending.values.asSequence() + attributed.values.asSequence())
             .flatMap { it.asSequence() }
-            .firstOrNull { it.entity == entity && it.fate == DropFate.LYING }
+            .filter { it.entity == entity && it.fate == DropFate.LYING }
+            .toList()
 
     private fun readingOf(drop: Drop): OwnDropReading {
         val place = if (drop.fate == DropFate.LYING) locate(drop.entity) else null

@@ -48,7 +48,9 @@ const GOAL_OUTCOMES = [
   'goalReplaced',
   'goalCompletedAdopted',
   'goalAbandonedAchievable',
-  'goalReviseItemChanged'
+  'goalReviseItemChanged',
+  'goalCompletedWithoutNext',
+  'goalReviseUnchanged'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // What a measured step showed, from routine-v22: the exact target reached, an item gained, a

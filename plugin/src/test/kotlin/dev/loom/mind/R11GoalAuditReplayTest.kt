@@ -78,6 +78,12 @@ class R11GoalAuditReplayTest {
 
     private fun revise() = goalChoice(GoalDisposition.REVISE)
 
+    /**
+     * r11's revises restated the held total, which from routine-v28 is refused as
+     * `goalReviseUnchanged`; the cases about what a step showed take each as the continue it was.
+     */
+    private fun onward() = goalChoice(GoalDisposition.CONTINUE)
+
     /** The step the ledger holds for [agent] after its last review: its action and ref. */
     private fun heldStep(agent: String): Pair<IntentAction?, String?> {
         val held = ledger.present(AgentId(agent), "$agent-probe", 1, null)
@@ -97,7 +103,7 @@ class R11GoalAuditReplayTest {
             )
         val counts =
             walks.map { (record, at) ->
-                review("alpha-$record", Scene(at, none), revise(), Intent.MoveTo("b$record"))
+                review("alpha-$record", Scene(at, none), onward(), Intent.MoveTo("b$record"))
                     .first
                     ?.progress
                     ?.stepsWithoutProgress
@@ -107,9 +113,9 @@ class R11GoalAuditReplayTest {
         // body:00000233: the step named bh8s while the intent walked to bh90. The step is now the
         // intent's own, so the goal holds the walk to bh90.
         val (back, revised) =
-            review("alpha-233", Scene(listOf(14.5, 101.0, 3.54), none), revise(), Intent.MoveTo("bh90"))
+            review("alpha-233", Scene(listOf(14.5, 101.0, 3.54), none), onward(), Intent.MoveTo("bh90"))
         assertEquals(2L, back?.progress?.stepsWithoutProgress)
-        assertEquals(GoalEvidence.REVISED, revised?.outcome)
+        assertEquals(GoalEvidence.CONTINUED, revised?.outcome)
         assertEquals(IntentAction.MOVE_TO to "bh90", heldStep("alpha"))
     }
 
@@ -128,7 +134,7 @@ class R11GoalAuditReplayTest {
         val outcomes =
             positions.mapIndexed { index, (record, at) ->
                 val walk = Intent.MoveTo("b$record")
-                val choice = if (index == 0) adopt() else revise()
+                val choice = if (index == 0) adopt() else onward()
                 review("beta-$record", Scene(at, none), choice, walk).second?.outcome
             }
         // Three returns in a row advance nothing, so the revise at the third is the stall.
@@ -144,13 +150,13 @@ class R11GoalAuditReplayTest {
             adopt(),
             Intent.MoveTo("bkv"),
         )
-        review("delta-80", Scene(at, emptyMap()), revise(), Intent.Dig("b500"))
+        review("delta-80", Scene(at, emptyMap()), onward(), Intent.Dig("b500"))
         // body:00000119: the stick is held; delta revised to the same target and dug on.
         val (met, ignored) =
             review(
                 "delta-120",
                 Scene(at, mapOf(STICK to 1L)),
-                revise(),
+                onward(),
                 Intent.Dig("b9hd"),
             )
         assertEquals(true, met?.progress?.conditionMet)
@@ -171,9 +177,15 @@ class R11GoalAuditReplayTest {
             decisionFor(perception(requestId = "b", agentId = "delta"), Intent.Idle)
                 .copy(goal = goalChoice(GoalDisposition.CONTINUE))
         assertEquals(GoalEvidence.STEP_IDLE, fresh.resolve(deltaId, idle)?.outcome)
-        // The completion it owed is accepted.
+        // The completion it owed is accepted once sight gives no next goal (from routine-v28 a
+        // completion beside a source is a replace).
         val (_, completed) =
-            review("delta-166", Scene(at, mapOf(STICK to 1L)), goalChoice(GoalDisposition.COMPLETE), Intent.Idle)
+            review(
+                "delta-166",
+                Scene(at, mapOf(STICK to 1L), capacity = emptyMap()),
+                goalChoice(GoalDisposition.COMPLETE),
+                Intent.Idle,
+            )
         assertEquals(GoalEvidence.COMPLETED, completed?.outcome)
     }
 
@@ -186,7 +198,7 @@ class R11GoalAuditReplayTest {
             adopt(),
             Intent.MoveTo("bpe"),
         )
-        review("epsilon-84", Scene(epsilon, emptyMap()), revise(), Intent.Dig("b56r"))
+        review("epsilon-84", Scene(epsilon, emptyMap()), onward(), Intent.Dig("b56r"))
         // body:00000121: the stick is held and epsilon continued.
         val (_, continued) =
             review(
@@ -204,7 +216,7 @@ class R11GoalAuditReplayTest {
             adopt(),
             Intent.MoveTo("b1tl"),
         )
-        review("zeta-108", Scene(zeta, emptyMap()), revise(), Intent.Dig("b6c0"))
+        review("zeta-108", Scene(zeta, emptyMap()), onward(), Intent.Dig("b6c0"))
         // body:00000147: the stick is held and zeta revised to "obtain sticks" again.
         val (_, reworded) =
             review(
@@ -237,14 +249,14 @@ class R11GoalAuditReplayTest {
             review(
                 "eta-88",
                 Scene(listOf(-9.5, 109.0, -6.5), none),
-                revise(),
+                onward(),
                 Intent.Dig("b5eo"),
             )
         assertEquals(false, fell?.progress?.stepAdvanced)
         assertEquals(1L, fell?.progress?.stepsWithoutProgress)
         // body:00000127: the dig of b5eo broke yellow terracotta with a bare hand and yielded
         // nothing, so under v22 it is no evidence either (the r13 audit's fix 1).
-        val (dug, _) = review("eta-128", Scene(listOf(-10.5, 109.0, -6.5), none), revise(), Intent.Dig("b5ep"))
+        val (dug, _) = review("eta-128", Scene(listOf(-10.5, 109.0, -6.5), none), onward(), Intent.Dig("b5ep"))
         assertEquals(StepEvidence.NONE, dug?.progress?.stepEvidence)
         assertEquals(false, dug?.progress?.stepAdvanced)
         assertEquals(2L, dug?.progress?.stepsWithoutProgress)
@@ -273,14 +285,14 @@ class R11GoalAuditReplayTest {
     fun `iota returning to its first cell is not credited as a walk`() {
         val none = emptyMap<String, Long>()
         review("iota-53", Scene(listOf(4.5, 111.0, -10.5), none), adopt(), Intent.MoveTo("b13w"))
-        review("iota-96", Scene(listOf(3.5, 111.0, -10.5), none), revise(), Intent.MoveTo("b537"))
-        review("iota-136", Scene(listOf(4.5, 111.0, -9.5), none), revise(), Intent.MoveTo("bde7"))
+        review("iota-96", Scene(listOf(3.5, 111.0, -10.5), none), onward(), Intent.MoveTo("b537"))
+        review("iota-136", Scene(listOf(4.5, 111.0, -9.5), none), onward(), Intent.MoveTo("bde7"))
         // body:00000255: back at the cell of body:00000096.
         val (returned, _) =
             review(
                 "iota-255",
                 Scene(listOf(3.5, 111.0, -10.5), none),
-                revise(),
+                onward(),
                 Intent.MoveTo("bhgq"),
             )
         assertEquals(false, returned?.progress?.stepAdvanced)
@@ -296,7 +308,7 @@ class R11GoalAuditReplayTest {
                 "kappa-100",
                 // The server attributed the stick d3b to kappa-58's own dig of b1gh.
                 Scene(at, emptyMap(), dropped = setOf("kappa-58")),
-                revise(),
+                onward(),
                 Intent.Collect("d3b", approach = true),
             )
         assertEquals(StepEvidence.DROPPED, dug?.progress?.stepEvidence)
@@ -304,7 +316,7 @@ class R11GoalAuditReplayTest {
         val (met, completed) =
             review(
                 "kappa-140",
-                Scene(listOf(13.3, 107.0, -6.5), mapOf(STICK to 1L)),
+                Scene(listOf(13.3, 107.0, -6.5), mapOf(STICK to 1L), capacity = emptyMap()),
                 goalChoice(GoalDisposition.COMPLETE),
                 Intent.Idle,
             )
@@ -346,7 +358,7 @@ class R11GoalAuditReplayTest {
                 review(
                     "theta-${index + 1}",
                     Scene(at, none),
-                    if (index == 0) adopt() else revise(),
+                    if (index == 0) adopt() else onward(),
                     walk,
                 ).second?.outcome
             }

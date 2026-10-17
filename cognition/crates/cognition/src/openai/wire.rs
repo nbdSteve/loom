@@ -917,6 +917,29 @@ fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
 }
 
 /// [`goal_offer`] for a goal review, whose choices narrow to what the ledger accepts.
+/// The revise shapes of the held goal's item: the ranges either side of its held total, never
+/// the total itself (r19: 28 of 31 revises set the total they were shown, and read as activity).
+fn revise_choices(refs: &OfferedRefs, item: &str) -> Vec<Value> {
+    let total = refs.held_total.unwrap_or(0);
+    let Some((fewest, most)) = refs.count_bounds_of(item) else {
+        return Vec::new();
+    };
+    [(fewest, most.min(total - 1)), (fewest.max(total + 1), most)]
+        .into_iter()
+        .filter(|(low, high)| low <= high)
+        .map(|(low, high)| {
+            goal_variant(
+                goal_fields(GoalDisposition::Revise),
+                "revise",
+                REVISE,
+                json!({ "type": "string", "enum": [item] }),
+                low,
+                high,
+            )
+        })
+        .collect()
+}
+
 fn coupled_offer(
     phase: GoalPhase,
     refs: &OfferedRefs,
@@ -951,12 +974,7 @@ fn coupled_offer(
     };
     let revise_held = || -> Vec<(String, Vec<Value>)> {
         held.iter()
-            .map(|item| {
-                (
-                    item.clone(),
-                    shaped(GoalDisposition::Revise, "revise", REVISE, item),
-                )
-            })
+            .map(|item| (item.clone(), revise_choices(refs, item)))
             .filter(|(_, choices)| !choices.is_empty())
             .collect()
     };
@@ -977,17 +995,7 @@ fn coupled_offer(
         // sight can meet all of it; one sight can meet is not abandoned (r17 theta), and one it
         // cannot may instead look further, or be abandoned (r18: five goals abandoned to look).
         GoalPhase::Held => {
-            let mut by_item = revise_held();
-            if let Some(item) = &held {
-                match by_item.iter_mut().find(|(name, _)| name == item) {
-                    Some((_, choices)) => {
-                        let mut first = continued();
-                        first.append(choices);
-                        *choices = first;
-                    }
-                    None => by_item.insert(0, (item.clone(), continued())),
-                }
-            }
+            let by_item = continue_first(revise_held(), held.as_ref(), continued());
             let short = !refs.goal_obtainable;
             GoalOffer {
                 by_item,
@@ -1009,10 +1017,17 @@ fn coupled_offer(
                     None => by_item.push((item, choices)),
                 }
             }
+            // A plain complete only when nothing in sight gives a next goal: otherwise the next is
+            // adopted in the same answer (r19: eight plain completes, two beside a filler equip).
+            let any = if by_item.is_empty() {
+                complete()
+            } else {
+                Vec::new()
+            };
             GoalOffer {
                 by_item,
                 exploring: Vec::new(),
-                any: complete(),
+                any,
             }
         }
         // With nothing in sight to give a goal for another item, the stalled one can only go.
@@ -1030,6 +1045,25 @@ fn coupled_offer(
             }
         }
     }
+}
+
+/// `by_item` with `continuing` offered first beside the held goal's own `item`'s steps.
+fn continue_first(
+    mut by_item: Vec<(String, Vec<Value>)>,
+    item: Option<&String>,
+    mut continuing: Vec<Value>,
+) -> Vec<(String, Vec<Value>)> {
+    let Some(item) = item else {
+        return by_item;
+    };
+    match by_item.iter_mut().find(|(name, _)| name == item) {
+        Some((_, choices)) => {
+            continuing.append(choices);
+            *choices = continuing;
+        }
+        None => by_item.insert(0, (item.clone(), continuing)),
+    }
+    by_item
 }
 
 /// The goal choice field over `choices`.

@@ -252,11 +252,14 @@ internal fun craftEventAudit(
         crafted.size == report.crafts &&
             crafted.sumOf { it.count } == report.count &&
             exactApplications
+    // A refused craft is confirmed only by a partial effect: one the server saw complete every
+    // application of is a false failure, and disputed (r19 theta body:00000310 and epsilon 352
+    // reported libraryFailure for crafts the server finished, and were confirmed).
     val confirmed =
         when {
             report.outcome == CraftOutcome.CRAFTED -> exactCompletion
             !report.attempted -> crafted.isEmpty()
-            else -> crafted.size <= request.crafts && exactApplications
+            else -> crafted.size < request.crafts && exactApplications
         }
     return ServerInteractionAudit(
         confirmed = confirmed,
@@ -267,6 +270,7 @@ internal fun craftEventAudit(
                     "${it.count} ${it.what} on tick ${it.tick}"
                 }
                 ?: "no matching craftItem event",
+        effected = crafted.size == request.crafts && exactApplications,
     )
 }
 

@@ -198,7 +198,8 @@ total, take its step with this answer's action, and judge the previous step. Onc
 has advanced nothing for three steps in a row, replace with a goal for a different item is the \
 only way to keep acting toward a goal. When the held goal's condition is met, replace completes \
 it and adopts the next in one answer, so finishing one goal need not cost a review.
-- complete: drop the held goal because your body shows its success condition met.
+- complete: drop the held goal because your body shows its success condition met, when nothing \
+in sight gives a next goal; while something does, replace it with the next goal instead.
 - abandon: drop the held goal because sight can no longer meet it and looking further has not \
 found a source. A goal sight can still meet is pursued, not abandoned.
 While you hold a goal every answer must say what it does with it, and your action is the goal's \
@@ -441,7 +442,10 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
             },
             carried = match progress.step_evidence {
                 StepEvidence::Arrived => "reached the target you named",
-                StepEvidence::Gained => "gained you an item",
+                StepEvidence::Gained => "gained you the goal's item",
+                StepEvidence::GainedInput => {
+                    "gained you an item a recipe for the goal's item is made from"
+                }
                 StepEvidence::Dropped => {
                     "made a drop the server saw your dig make, which is not progress until you hold it"
                 }
@@ -484,6 +488,12 @@ fn refusal_line(refusal: &GoalRefusal) -> String {
         }
         "goalReviseItemChanged" => {
             "it revised the goal to a different item, which is a new goal: replace instead"
+        }
+        "goalReviseUnchanged" => {
+            "it revised the goal to the total it already had, which changes nothing: continue instead"
+        }
+        "goalCompletedWithoutNext" => {
+            "it completed a met goal while sight gave a next one: replace it with the next instead"
         }
         "goalStalled" => "the goal had advanced nothing for three steps in a row, so it ended",
         "goalSuccessTargetMissing" => "it set a goal without its item and total",
@@ -1427,7 +1437,7 @@ mod tests {
             "you must complete this goal now, replace it with your next goal in this same answer, or revise it to a target you do not yet hold",
             "\"cut the oak log in reach\" (dig on b4).",
             "changed by +3 item.minecraft.oak_log, -1 item.minecraft.dirt",
-            "the success condition advanced, and your step gained you an item",
+            "the success condition advanced, and your step gained you the goal's item",
         ] {
             assert!(met.contains(expected), "missing {expected:?} in {met}");
         }

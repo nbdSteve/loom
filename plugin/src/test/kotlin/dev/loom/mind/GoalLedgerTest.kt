@@ -113,10 +113,14 @@ class GoalLedgerTest {
             GoalEvidence.COMPLETION_UNMET,
             affirm("b", 200, seen(0.0), goalChoice(GoalDisposition.COMPLETE)).second?.outcome,
         )
-        val (met, completed) = affirm("c", 300, seen(0.0, STICK to 1L), goalChoice(GoalDisposition.COMPLETE))
+        // A met goal beside a source of a next one is replaced, not completed beside a filler (r19).
+        val (met, beside) = affirm("c", 300, seen(0.0, STICK to 1L), goalChoice(GoalDisposition.COMPLETE))
         assertEquals(true, met?.progress?.conditionMet)
+        assertEquals(GoalEvidence.COMPLETED_WITHOUT_NEXT, beside?.outcome)
+        val bare = seen(0.0, STICK to 1L).copy(capacity = emptyMap())
+        val (_, completed) = affirm("d", 400, bare, goalChoice(GoalDisposition.COMPLETE))
         assertEquals(GoalEvidence.COMPLETED, completed?.outcome)
-        assertNull(ledger.present(alpha, "d", 400, seen(0.0, STICK to 1L)))
+        assertNull(ledger.present(alpha, "e", 500, bare))
     }
 
     @Test
@@ -286,6 +290,17 @@ class GoalLedgerTest {
         disposition: GoalDisposition,
         intent: Intent,
         outcome: String = EventTag.ACCEPTED,
+    ): Pair<GoalSummary?, GoalEvidence?> = stepWith(requestId, observed, goalChoice(disposition), intent, outcome)
+
+    private fun revisedTo(count: Long) = goalChoice(GoalDisposition.REVISE, success = STICK to count)
+
+    /** [step] under an exact [choice], as a revise to a named total needs. */
+    private fun stepWith(
+        requestId: String,
+        observed: GoalObservation,
+        choice: GoalChoice,
+        intent: Intent,
+        outcome: String = EventTag.ACCEPTED,
     ): Pair<GoalSummary?, GoalEvidence?> {
         val tick = requestId.drop(1).toLong() * 100
         // The step's own target is in sight, and a walk the body accepted arrived.
@@ -295,7 +310,7 @@ class GoalLedgerTest {
                 visible = observed.visible + listOfNotNull(intent.targetRef),
                 gives = observed.gives + listOfNotNull(intent.targetRef).associateWith { setOf(STICK) },
             )
-        val result = affirm(requestId, tick, seen, goalChoice(disposition), intent)
+        val result = affirm(requestId, tick, seen, choice, intent)
         val walk = intent is Intent.MoveTo || intent is Intent.Flee
         ledger.stepped(
             alpha,
@@ -378,7 +393,7 @@ class GoalLedgerTest {
         assertEquals(GoalEvidence.ADOPTED, within.second?.outcome)
         // A revise to a count already held is no new goal either.
         ledger.stepped(alpha, "r4", EventTag.DIG, EventTag.ACCEPTED)
-        val reworded = affirm("r5", 200, bush, goalChoice(GoalDisposition.REVISE, success = STICK to 1L))
+        val reworded = affirm("r5", 200, bush, revisedTo(1L))
         assertEquals(GoalEvidence.ALREADY_MET, reworded.second?.outcome)
     }
 
@@ -431,7 +446,7 @@ class GoalLedgerTest {
         }
         assertEquals(
             GoalEvidence.REVISED,
-            affirm("r5", 300, holding, goalChoice(GoalDisposition.REVISE, success = STICK to 3L))
+            affirm("r5", 300, holding, revisedTo(3L))
                 .second?.outcome,
         )
     }
@@ -480,11 +495,35 @@ class GoalLedgerTest {
     fun stepsThatAdvanceNothingEndTheGoalAtTheBoundEvenWhenRevised() {
         step("r1", seen(0.0), GoalDisposition.ADOPT, Intent.Dig("b1"))
         step("r2", seen(0.0), GoalDisposition.CONTINUE, Intent.Dig("b2"))
-        step("r3", seen(0.0), GoalDisposition.REVISE, Intent.Dig("b3"))
-        val (atBound, refused) = step("r4", seen(0.0), GoalDisposition.REVISE, Intent.Dig("b4"))
+        stepWith("r3", seen(0.0), revisedTo(2L), Intent.Dig("b3"))
+        val (atBound, refused) =
+            stepWith("r4", seen(0.0), revisedTo(3L), Intent.Dig("b4"))
         assertEquals(MAX_GOAL_STEPS_WITHOUT_PROGRESS, atBound?.progress?.stepsWithoutProgress)
         assertEquals(GoalEvidence.STALLED, refused?.outcome)
         assertNull(ledger.present(alpha, "r5", 500, seen(0.0)))
+    }
+
+    @Test
+    fun aReviseToTheHeldTotalChangesNothingAndIsRefusedWithItsIntent() {
+        // r19: 28 of 31 revises restated the total they were shown, and read as goal activity.
+        stepWith("r1", seen(0.0), goalChoice(GoalDisposition.ADOPT, success = STICK to 2L), Intent.Dig("b1"))
+        val (_, restated) =
+            stepWith(
+                "r2",
+                seen(0.0),
+                revisedTo(2L),
+                Intent.Dig("b2"),
+            )
+        assertEquals(GoalEvidence.REVISE_UNCHANGED, restated?.outcome)
+        assertEquals(GoalEvidence.REVISE_UNCHANGED, ledger.takeRefusal(alpha)?.outcome)
+        val (_, changed) =
+            stepWith(
+                "r3",
+                seen(0.0),
+                revisedTo(3L),
+                Intent.Dig("b3"),
+            )
+        assertEquals(GoalEvidence.REVISED, changed?.outcome)
     }
 
     private companion object {

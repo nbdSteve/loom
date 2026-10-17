@@ -91,6 +91,25 @@ class OwnDropLedgerTest {
     }
 
     @Test
+    fun `two own drops merged into one stack are both collected when it is picked up`() {
+        // r19 theta body:00000496: its second log merged into the first, theta picked the stack up,
+        // and the merged log read gone (perception body:00000509).
+        val first = uuid("log-1")
+        val second = uuid("log-2")
+        places[first] = listOf(4.5, 78.0, 4.5)
+        places[second] = listOf(4.5, 78.0, 4.5)
+        ledger.dropped(alpha, first, LOG, 1, listOf(4, 80, 4))
+        ledger.attribute(alpha, "r1", listOf(4, 80, 4), sinceTick = 0)
+        ledger.dropped(alpha, second, LOG, 1, listOf(4, 79, 4))
+        ledger.attribute(alpha, "r2", listOf(4, 79, 4), sinceTick = 0)
+        ledger.merged(second, first)
+        places.remove(second)
+        ledger.pickedUp(first, alpha)
+        places.remove(first)
+        assertEquals(listOf(DropFate.COLLECTED, DropFate.COLLECTED), ledger.of(alpha).map { it.fate })
+    }
+
+    @Test
     fun `what is told is bounded in count and in server ticks`() {
         repeat(MAX_OWN_DROPS + 3) { index ->
             ledger.dropped(alpha, uuid("drop-$index"), STICK, 1, listOf(index, 64, 0))
@@ -185,6 +204,7 @@ class OwnDropLedgerTest {
 
     private companion object {
         const val STICK = "item.minecraft.stick"
+        const val LOG = "item.minecraft.oak_log"
 
         fun uuid(name: String): UUID = UUID.nameUUIDFromBytes(name.toByteArray())
     }
