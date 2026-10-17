@@ -264,7 +264,7 @@ class GoalLedger(
         val incoherent =
             if (unchanged) {
                 stalledOf(basis.presented, choice)
-                    ?: incoherenceOf(basis.presented, choice, decision.intent, basis.observed)
+                    ?: incoherenceOf(basis.presented, choice, decision.intent, basis.observed, recipes)
             } else {
                 null
             }

@@ -29,21 +29,23 @@ internal val STEPPING =
  * success condition neither completed nor revised to a target [observed]'s inventory does not
  * already meet, a completion the inventory does not show, a held goal left unanswered by a
  * decision that acts, a success condition already met or more than what is held and in sight
- * could give, a step that is no step, or a dig or collect that cannot give the goal's item. Each
- * refuses the decision before its intent reaches the body.
+ * could give, a step that is no step, or a dig or collect that cannot give the goal's item or a
+ * direct input of a recipe for it, by [recipes]. Each refuses the decision before its intent
+ * reaches the body.
  */
 internal fun incoherenceOf(
     presented: GoalSummary?,
     choice: GoalChoice?,
     intent: Intent,
     observed: GoalObservation?,
+    recipes: RecipeInputs = RecipeInputs.NONE,
 ): String? {
     val stepping = choice?.disposition in STEPPING
     return reviseItemOf(presented, choice)
         ?: conditionRefusalOf(presented, choice, intent, observed)
         ?: successRefusalOf(presented, choice, observed)
         ?: GoalEvidence.STEP_IDLE.takeIf { stepping && intent.action in PASSIVE }
-        ?: GoalEvidence.STEP_UNPRODUCTIVE.takeIf { stepping && !canGive(presented, choice, intent, observed) }
+        ?: GoalEvidence.STEP_UNPRODUCTIVE.takeIf { stepping && !canGive(presented, choice, intent, observed, recipes) }
         ?: GoalEvidence.OWN_DROP_IGNORED.takeIf { ownDropIgnored(presented, choice, intent, observed) }
         ?: reviseUnchangedOf(presented, choice)
 }
@@ -181,6 +183,7 @@ private fun canGive(
     choice: GoalChoice?,
     intent: Intent,
     observed: GoalObservation?,
+    recipes: RecipeInputs,
 ): Boolean {
     val target =
         when (intent) {
@@ -194,7 +197,8 @@ private fun canGive(
     // A handle the perception never described is not judged here; the body refuses it. An equip
     // gives nothing, so it is no step of a goal (r19: two equips stood in as a goal's step).
     val given = target?.let { observed?.gives?.get(it) }
-    return item == null || (intent !is Intent.Equip && (given == null || item in given))
+    val toward = item?.let { recipes.inputsOf(it) + it }.orEmpty()
+    return item == null || (intent !is Intent.Equip && (given == null || given.any { it in toward }))
 }
 
 /**

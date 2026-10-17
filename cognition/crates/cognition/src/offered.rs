@@ -907,6 +907,35 @@ mod tests {
     }
 
     #[test]
+    fn r19_a_stick_goal_is_offered_its_recipe_first_and_its_surest_digs_and_counted_at_the_mean() {
+        // r19 alpha body:00000237: a craftable stick recipe was crowded out behind four leaves,
+        // each counted as a stick a dig though 33 leaf digs dropped one.
+        let leaf = |index: usize| {
+            let mut leaf = seen(ObservationKind::Block, &format!("l{index}"), 1.0, 0.0);
+            leaf.yields = Some(vec![loom_contract::BlockYield {
+                per_hundred: 3,
+                ..yielding("item.minecraft.stick")
+            }]);
+            leaf
+        };
+        let mut bush = seen(ObservationKind::Block, "b9", 1.0, 0.0);
+        bush.yields = Some(vec![yielding("item.minecraft.stick")]);
+        let surroundings = (0..5).map(leaf).chain(std::iter::once(bush)).collect();
+        let mut review = scene(surroundings);
+        review.trigger = loom_contract::Trigger::GoalReview;
+        let offered = OfferedRefs::of(&review);
+        let sticks = offered
+            .item_steps
+            .iter()
+            .find(|steps| steps.item == "item.minecraft.stick")
+            .unwrap();
+        assert_eq!(sticks.recipes, handles(&["r1"]));
+        assert_eq!(sticks.dig, handles(&["b9", "l0", "l1"]));
+        // The recipe's four and the bush's one; five leaves at three hundredths give no stick.
+        assert_eq!(offered.capacity_of("item.minecraft.stick"), 5);
+    }
+
+    #[test]
     fn a_stack_or_recipe_the_prompt_cut_is_not_offered() {
         let mut seen = fixture("perception-crafting");
         let stack = seen.self_state.inventory_summary[0].clone();
