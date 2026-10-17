@@ -194,7 +194,7 @@ internal class PlayerSceneTranslator(
                     visible = block.visible,
                     standable = context.authority.ground.standCell(block.position) != null,
                     yields = context.authority.yields.of(block.position, raw.identity).take(MAX_BLOCK_YIELDS),
-                    digSafe = digLeavesExit(context.authority.ground, raw.report.position, block.position),
+                    digSafe = digSafeAt(context.authority.ground, raw.report.position, block.position),
                 )
             }
         val items =

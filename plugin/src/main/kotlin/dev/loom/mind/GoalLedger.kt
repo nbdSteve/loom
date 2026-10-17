@@ -80,6 +80,7 @@ private val CLEARING_EVENTS =
  */
 class GoalLedger(
     private val lifetimeTicks: Long = GOAL_LIFETIME_TICKS,
+    private val recipes: RecipeInputs = RecipeInputs.NONE,
 ) {
     private data class Held(
         val summary: GoalSummary,
@@ -93,6 +94,7 @@ class GoalLedger(
         val measured: Boolean = false,
         val towardSource: Boolean = false,
         val explored: Boolean = false,
+        val inputs: Set<String> = emptySet(),
     ) {
         /**
          * This goal as [now] shows it, and the goal to hold after: its settled step measured, once.
@@ -104,7 +106,7 @@ class GoalLedger(
             if (measured && earlier != null) {
                 return summary.copy(progress = remeasured(summary, earlier, now)) to this
             }
-            val step = StepRecord(visited, stepVisible, reached, towardSource, explored)
+            val step = StepRecord(visited, stepVisible, reached, towardSource, explored, inputs)
             val progress = progressOf(summary, observed, now, step, stepsWithoutProgress) ?: earlier
             val shown = summary.copy(progress = progress)
             val settled = summary.lastStep != null && progress != null
@@ -157,6 +159,31 @@ class GoalLedger(
         var held: Held? = null
         var refusal: GoalRefusal? = null
         val pending = LinkedHashMap<String, Basis>()
+
+        /** The agent's latest goals met, by id with their item, newest last. */
+        private val met = ArrayDeque<Pair<String, String>>()
+
+        /**
+         * Records [presented] as met when [tag] completed it, and answers which met goal the
+         * goal [next] starts is chained to: the newest whose item is a direct input of a recipe
+         * for [next]'s item, by [recipes] (r19: no goal built on another goal's item).
+         */
+        fun chainOf(
+            tag: String,
+            presented: GoalSummary?,
+            next: GoalSummary?,
+            starting: Boolean,
+            recipes: RecipeInputs,
+        ): String? {
+            val item = presented?.successItem
+            if (item != null && tag in COMPLETING) {
+                met.addLast(presented.goalId to item)
+                while (met.size > MAX_MET_GOALS) met.removeFirst()
+            }
+            val wanted = next?.successItem?.takeIf { starting } ?: return null
+            val needs = recipes.inputsOf(wanted)
+            return met.lastOrNull { (_, made) -> made in needs }?.first
+        }
     }
 
     private val agents = HashMap<AgentId, AgentGoals>()
@@ -331,6 +358,8 @@ class GoalLedger(
         val towardSource =
             item != null && target != null && !inReach && item in basis.observed?.gives?.get(target).orEmpty()
         val explored = target != null && target in basis.observed?.explore.orEmpty()
+        val tag = acceptedTag(choice.disposition, presented)
+        val chainedFrom = goals.chainOf(tag, presented, next, fresh, recipes)
         goals.held =
             next?.let {
                 Held(
@@ -343,15 +372,23 @@ class GoalLedger(
                     stepVisible,
                     towardSource = towardSource,
                     explored = explored,
+                    inputs = item?.let(recipes::inputsOf).orEmpty(),
                 )
             }
         return evidence.copy(
-            outcome = acceptedTag(choice.disposition, presented),
+            outcome = tag,
             goalId = next?.goalId,
             revision = next?.revision,
+            chainedFrom = chainedFrom,
         )
     }
 }
+
+/** Met goals one agent remembers for chaining; the oldest is forgotten past it. */
+private const val MAX_MET_GOALS = 4
+
+/** The tags of a decision that met and ended the goal it was shown. */
+private val COMPLETING = setOf(GoalEvidence.COMPLETED, GoalEvidence.COMPLETED_ADOPTED)
 
 /** The dispositions that keep the held goal, and so the run of steps that changed nothing. */
 private val KEEPING = setOf(GoalDisposition.CONTINUE, GoalDisposition.REVISE)

@@ -259,6 +259,7 @@ fn the_widest_request_schema_stays_inside_the_providers_enum_limits() {
                         what: format!("item.minecraft.{:0>49}", index * 8 + item),
                         least: 0,
                         most: 64,
+                        per_hundred: 6400,
                     })
                     .collect(),
             ),
@@ -373,6 +374,7 @@ fn with_bush(mut seen: Perception) -> Perception {
             what: "item.minecraft.stick".to_owned(),
             least: 0,
             most: 2,
+            per_hundred: 100,
         }]),
         dig_safe: Some(true),
         route_refused: None,
@@ -618,6 +620,7 @@ fn a_goal_at_the_stall_bound_is_offered_only_a_replace_beside_an_action() {
         what: "item.minecraft.dirt".to_owned(),
         least: 1,
         most: 1,
+        per_hundred: 100,
     }]);
     seen.surroundings.push(dirt);
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
@@ -715,6 +718,7 @@ fn with_block(
                 what: name.to_owned(),
                 least,
                 most,
+                per_hundred: (least + most) * 50,
             })
             .into_iter()
             .collect(),
@@ -882,6 +886,7 @@ fn the_widest_goal_review_schema_stays_inside_the_providers_enum_limits() {
                         what: format!("item.minecraft.{:0>49}", (index + item) % 24),
                         least: 0,
                         most: 64,
+                        per_hundred: 6400,
                     })
                     .collect(),
             ),

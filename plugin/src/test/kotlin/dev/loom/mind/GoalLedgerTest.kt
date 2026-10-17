@@ -460,10 +460,11 @@ class GoalLedgerTest {
     @Test
     fun aWorldStepAdvancesOnlyOnWhatItGainedOrWhatTheServerSawItsOwnDigDrop() {
         step("r1", seen(0.0), GoalDisposition.ADOPT, Intent.Dig("b1"))
-        // The dig dropped dirt into the inventory: evidence, short of the stick the goal names.
-        val (gained, _) = step("r2", seen(0.0, DIRT to 1L), GoalDisposition.CONTINUE, Intent.Dig("b2"))
-        assertEquals(StepEvidence.GAINED, gained?.progress?.stepEvidence)
-        assertEquals(true, gained?.progress?.stepAdvanced)
+        // The dig gave dirt, which is not the stick the goal names nor made into one: no evidence
+        // (r19: a sapling dug for a stick goal reset the stall count).
+        val (other, _) = step("r2", seen(0.0, DIRT to 1L), GoalDisposition.CONTINUE, Intent.Dig("b2"))
+        assertEquals(StepEvidence.NONE, other?.progress?.stepEvidence)
+        assertEquals(false, other?.progress?.stepAdvanced)
         // The server attributed a drop to r2's own dig, which another agent then took: evidence.
         val ownDrop = seen(0.0, DIRT to 1L).copy(dropped = setOf("r2"))
         val (dropped, _) = step("r3", ownDrop, GoalDisposition.CONTINUE, Intent.Dig("b3"))

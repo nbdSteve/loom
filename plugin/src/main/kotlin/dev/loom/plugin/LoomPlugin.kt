@@ -106,7 +106,7 @@ class LoomPlugin : JavaPlugin() {
 
         val watched = Observatory()
         observatory = watched
-        val goals = GoalLedger()
+        val goals = GoalLedger(recipes = BukkitRecipeInputs(server))
         val log =
             ObservedEventLog(goals.watching(file), watched::saw) { failure ->
                 logger.warning("observer display failed: ${failure.message}")

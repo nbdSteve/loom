@@ -157,7 +157,7 @@ pub struct OfferedRefs {
     /// or yielded by a visible block it may dig - which is what a success condition may name.
     pub obtainable: Vec<String>,
     /// How many more of each item what is in sight can be counted on to give: drops and crafts
-    /// exactly, and a block its expected yield, the mean of its random least and most. The bound a
+    /// exactly, and a block its expected yield, the mean of the server's sampled rolls. The bound a
     /// success count may reach beyond what is held.
     pub capacity: Vec<(String, i64)>,
     /// How many more of each item what is in sight could give at best, every block at its most.
@@ -193,7 +193,7 @@ pub struct OfferedRefs {
 }
 
 /// Every item's whole capacity, uncut, so a held goal is judged by the rule the body uses: in
-/// halves of an item, and at best. Craftable items lead, ahead of what the surroundings would
+/// hundredths of an item, and at best. Craftable items lead, ahead of what the surroundings would
 /// give. A held item alone is no source: a goal must be more than is held, and something in sight
 /// must give the rest (r14 kappa raised a stick goal with no bush or drop in sight).
 fn totals_of(
@@ -207,19 +207,19 @@ fn totals_of(
         .take(MAX_CRAFTING_LINES)
         .map(|option| {
             let count = option.result_count.saturating_mul(option.max_crafts);
-            (&option.what, count.saturating_mul(2), count)
+            (&option.what, count.saturating_mul(100), count)
         });
     let mut totals: Vec<(String, i64, i64)> = Vec::new();
-    for (item, halves, best) in crafted.chain(sources) {
+    for (item, hundredths, best) in crafted.chain(sources) {
         // Only an item name can be held, so anything else in a description is no condition.
         if !is_item_name(item) || item == AIR_ITEM || best < 1 {
             continue;
         }
         if let Some((_, total, most)) = totals.iter_mut().find(|(name, ..)| name == item) {
-            *total = total.saturating_add(halves);
+            *total = total.saturating_add(hundredths);
             *most = most.saturating_add(best);
         } else {
-            totals.push((item.clone(), halves, best));
+            totals.push((item.clone(), hundredths, best));
         }
     }
     totals
@@ -261,6 +261,17 @@ pub fn held_of(perception: &Perception, item: &str) -> i64 {
         .sum()
 }
 
+/// How many of `item` a hundred digs of the observed block `handle` drop on average, or 0.
+fn mean_yield(perception: &Perception, handle: &str, item: &str) -> i64 {
+    perception
+        .surroundings
+        .iter()
+        .find(|seen| seen.target_ref == handle)
+        .and_then(|seen| seen.yields.as_ref())
+        .and_then(|yields| yields.iter().find(|given| given.what == item))
+        .map_or(0, |given| given.per_hundred)
+}
+
 /// Appends `handle` unless the list already holds it.
 fn offer(list: &mut Vec<String>, handle: &str) {
     if !list.iter().any(|held| held == handle) {
@@ -279,8 +290,9 @@ impl OfferedRefs {
     #[must_use]
     pub fn of(perception: &Perception) -> Self {
         let mut offered = Self::default();
-        // Each source of an item with what it gives in halves of an item - a block its expected
-        // yield, the mean of its least and most, and a drop or a craft exactly - and at best.
+        // Each source of an item with what it gives in hundredths of an item - a block the mean of
+        // the server's sampled rolls, and a drop or a craft exactly - and at best (r19: leaves
+        // counted at the middle of their range as about a stick each gave one in 33 digs).
         let mut sources: Vec<(&String, i64, i64)> = Vec::new();
         // What each dig and collect handle can give, for a held goal's restriction below.
         let mut gives: Vec<(&str, &String)> = Vec::new();
@@ -299,11 +311,7 @@ impl OfferedRefs {
                     }
                     if seen.visible && dig_safe {
                         for item in seen.yields.iter().flatten() {
-                            sources.push((
-                                &item.what,
-                                item.least.saturating_add(item.most),
-                                item.most,
-                            ));
+                            sources.push((&item.what, item.per_hundred, item.most));
                             gives.push((handle, &item.what));
                         }
                     }
@@ -321,7 +329,7 @@ impl OfferedRefs {
                     if seen.distance <= MOVE_REACH_BLOCKS {
                         offer(&mut offered.route_items, handle);
                         let count = seen.count.unwrap_or(1);
-                        sources.push((&seen.what, count.saturating_mul(2), count));
+                        sources.push((&seen.what, count.saturating_mul(100), count));
                         gives.push((handle, &seen.what));
                     }
                 }
@@ -359,7 +367,7 @@ impl OfferedRefs {
         // case is luck (r16: four goals sized to every bush's most, three of them failed).
         let calibrated: Vec<(String, i64)> = totals
             .iter()
-            .map(|(item, halves, _)| (item.clone(), halves / 2))
+            .map(|(item, hundredths, _)| (item.clone(), hundredths / 100))
             .collect();
         offered.own_drops = own_drops_of(perception, &offered.route_items);
         offered.pursue(perception, &calibrated, &gives);
@@ -418,9 +426,10 @@ impl OfferedRefs {
                 let collecting = self.collect_required && self.pursued.as_ref() == Some(item);
                 let source = |handle: &String| gives_item(handle, item);
                 let none = |_: &String| false;
-                let dig = take(&self.dig_blocks, if collecting { &none } else { &source });
-                let pickup = take(&self.pickup_items, &source);
-                let route = take(&self.route_items, &source);
+                // A craft that makes the item outright comes first, then its drops, then the blocks
+                // whose sampled rolls give most of it, so the budget is never spent on rare drops
+                // while a recipe or a sure source waits (r19: a craftable stick recipe was crowded
+                // out behind four leaves eight times).
                 let recipe = |handle: &String| {
                     !collecting
                         && perception
@@ -430,6 +439,12 @@ impl OfferedRefs {
                             .any(|option| &option.recipe_ref == handle && &option.what == item)
                 };
                 let recipes = take(&self.recipes, &recipe);
+                let pickup = take(&self.pickup_items, &source);
+                let route = take(&self.route_items, &source);
+                let mut by_yield = self.dig_blocks.clone();
+                by_yield
+                    .sort_by_key(|handle| std::cmp::Reverse(mean_yield(perception, handle, item)));
+                let dig = take(&by_yield, if collecting { &none } else { &source });
                 let walk = |handle: &String| {
                     !collecting
                         && !self.blocks.contains(handle)
@@ -634,6 +649,7 @@ mod tests {
             what: item.to_owned(),
             least: 0,
             most: 2,
+            per_hundred: 100,
         }
     }
 

@@ -52,6 +52,11 @@ internal class PlayerInteractionPreparer(
                         "digging the block underfoot would leave no way out",
                         EventTag.DIG_WOULD_TRAP,
                     )
+                } else if (strandsDrop(context.authority.ground, sense, resolved.index)) {
+                    rejectedInteraction(
+                        "the block's drop would land where no body can step down to collect it",
+                        EventTag.DIG_DROP_UNREACHABLE,
+                    )
                 } else {
                     withSenseOrReject(sense, requestId, EventTag.DIG_SENSE_FORGOTTEN, "block") {
                         BodyRequest.Dig(
@@ -367,4 +372,15 @@ private fun trapsBody(
     val report = sense?.raw?.report
     val block = report?.blocks?.getOrNull(index)
     return report != null && block != null && !digLeavesExit(ground, report.position, block.position)
+}
+
+/** Whether the sensed block at [index] would drop where no body can step down to collect it. */
+private fun strandsDrop(
+    ground: BlockGround,
+    sense: HeldSense?,
+    index: Int,
+): Boolean {
+    val report = sense?.raw?.report
+    val block = report?.blocks?.getOrNull(index)
+    return report != null && block != null && !digLeavesDropReachable(ground, report.position, block.position)
 }

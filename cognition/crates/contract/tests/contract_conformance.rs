@@ -494,11 +494,17 @@ fn an_own_drop_and_a_block_yield_hold_their_relations_at_decode() {
         assert!(drop(bad).is_err(), "{bad}");
     }
     let yielded = |fields: &str| serde_json::from_str::<loom_contract::BlockYield>(fields);
-    assert!(yielded(r#"{"what":"item.minecraft.stick","least":0,"most":2}"#).is_ok());
+    assert!(
+        yielded(r#"{"what":"item.minecraft.stick","least":0,"most":2,"perHundred":3}"#).is_ok()
+    );
     for bad in [
-        r#"{"what":"item.minecraft.air","least":0,"most":1}"#,
-        r#"{"what":"item.minecraft.stick","least":3,"most":2}"#,
-        r#"{"what":"item.minecraft.stick","least":0,"most":65}"#,
+        r#"{"what":"item.minecraft.air","least":0,"most":1,"perHundred":50}"#,
+        r#"{"what":"item.minecraft.stick","least":3,"most":2,"perHundred":250}"#,
+        r#"{"what":"item.minecraft.stick","least":0,"most":65,"perHundred":100}"#,
+        // A mean below 100 times the least or above 100 times the most is no sampled mean.
+        r#"{"what":"item.minecraft.stick","least":1,"most":2,"perHundred":99}"#,
+        r#"{"what":"item.minecraft.stick","least":0,"most":2,"perHundred":201}"#,
+        r#"{"what":"item.minecraft.stick","least":0,"most":2}"#,
     ] {
         assert!(yielded(bad).is_err(), "{bad}");
     }

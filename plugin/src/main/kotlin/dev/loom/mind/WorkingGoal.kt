@@ -47,6 +47,9 @@ import dev.loom.contract.isItemName
 import kotlin.math.floor
 import kotlin.math.sqrt
 
+/** Capacity is summed in hundredths of an item, the unit a block's sampled mean is stated in. */
+private const val HUNDRED = 100L
+
 /** Distinct cells one goal remembers having been reviewed at; the oldest is forgotten past it. */
 const val MAX_GOAL_CELLS: Int = 64
 
@@ -92,6 +95,8 @@ data class GoalObservation(
     val capacity: Map<String, Long> = emptyMap(),
     val visible: Set<String> = emptySet(),
     val dropped: Set<String> = emptySet(),
+    /** The items each of those requests' drops held, by request; absent for one not told. */
+    val droppedItems: Map<String, Set<String>> = emptyMap(),
     val gives: Map<String, Set<String>> = emptyMap(),
     /** The agent's own lying drops a collect can route to, by ref, with the item each holds. */
     val ownDrops: Map<String, String> = emptyMap(),
@@ -114,22 +119,28 @@ data class GoalObservation(
                 seen.filter { it.kind == ObservationKind.DROPPED_ITEM && it.routeRefused != true }
                     .filter { it.distance <= COLLECT_REACH_BLOCKS }
             val digs = seen.filter { it.kind == ObservationKind.BLOCK && it.visible && it.digSafe == true }
-            // In halves of an item: a drop or craft exactly, a block its expected yield, the
-            // mean of its random least and most (r16: goals sized to every bush's most failed).
-            val crafted = perception.selfState.craftingOptions.map { it.what to 2 * it.resultCount * it.maxCrafts }
-            val dug = digs.flatMap { it.yields.orEmpty() }.filter { it.most >= 1 }.map { it.what to it.least + it.most }
+            // In hundredths of an item: a drop or craft exactly, a block the mean of the server's
+            // sampled rolls (r16: goals sized to every bush's most failed; r19: leaves counted at
+            // the middle of their range as about a stick each gave one in 33 digs).
+            val crafted =
+                perception.selfState.craftingOptions.map { it.what to HUNDRED * it.resultCount * it.maxCrafts }
+            val dug = digs.flatMap { it.yields.orEmpty() }.filter { it.most >= 1 }.map { it.what to it.perHundred }
             val reachable = drops.map { it.ref }.toSet()
             return GoalObservation(
                 inventory = inventoryOf(perception.selfState),
                 position = perception.selfState.position,
                 capacity =
-                    (drops.map { it.what to 2 * (it.count ?: 1) } + crafted + dug)
+                    (drops.map { it.what to HUNDRED * (it.count ?: 1) } + crafted + dug)
                         .filter { (what, _) -> isItemName(what) && what != AIR_ITEM }
                         .groupBy({ it.first }, { it.second })
-                        .mapValues { (_, halves) -> halves.sum() / 2 }
+                        .mapValues { (_, hundredths) -> hundredths.sum() / HUNDRED }
                         .filterValues { it >= 1 },
                 visible = seen.filter { it.visible }.map { it.ref }.toSet(),
                 dropped = perception.selfState.ownDrops.map { it.requestId }.toSet(),
+                droppedItems =
+                    perception.selfState.ownDrops
+                        .groupBy({ it.requestId }, { it.what })
+                        .mapValues { (_, items) -> items.toSet() },
                 gives =
                     seen
                         .filter { it.kind != ObservationKind.ENTITY }
@@ -180,6 +191,8 @@ internal data class StepRecord(
     val towardSource: Boolean = false,
     /** Whether the step walked to a cell at the edge of sight. */
     val explored: Boolean = false,
+    /** The direct inputs of a recipe for the goal's item, whose gain is a typed step toward it. */
+    val inputs: Set<String> = emptySet(),
 )
 
 /**
@@ -233,10 +246,11 @@ private fun stallCountOf(
  * What showed the goal's typed step was carried out, by the body's own outcome for it and what
  * it changed. A walk or flight is evidence only when the body arrived, at a target in sight when
  * it was chosen, in a cell the goal had not been reviewed at; a world action only when the agent
- * then held more of something, or when the server attributed a drop to that step's own request,
- * wherever the drop went after. A dig that broke a block and dropped nothing advances nothing
- * (r13 alpha dug terracotta four times, credited every time), and another agent's drop in sight
- * is no evidence of this agent's step (r14 delta).
+ * then held more of the goal's item or of a direct input of a recipe for it, or when the server
+ * attributed a drop of one of those to that step's own request, wherever the drop went after.
+ * A dig that broke a block and dropped nothing advances nothing (r13 alpha dug terracotta four
+ * times, credited every time), and another agent's drop in sight is no evidence of this agent's
+ * step (r14 delta).
  */
 private fun stepEvidenceOf(
     goal: GoalSummary,
@@ -245,16 +259,35 @@ private fun stepEvidenceOf(
     step: StepRecord,
 ): StepEvidence {
     val accepted = goal.lastStep?.outcome == EventTag.ACCEPTED
-    val gained = observed.inventory.any { (what, count) -> count > (before.inventory[what] ?: 0) }
-    val dropped = goal.lastStep?.requestId?.let { it in observed.dropped } == true
+    val rose = { item: String -> (observed.inventory[item] ?: 0) > (before.inventory[item] ?: 0) }
+    // Only the goal's own item, or a direct input of a recipe for it, is evidence (r19: a sapling
+    // dug for a stick goal, and a stick and an apple for a sapling goal, reset the stall count).
+    val item = goal.successItem
+    val toward = setOfNotNull(item) + step.inputs
+    val dropped = droppedToward(goal, observed, toward)
     return when {
         !accepted -> StepEvidence.NONE
         goal.stepAction in MOVEMENT_STEPS -> movementEvidenceOf(goal, before, observed, step)
         goal.stepAction !in WORLD_STEPS -> StepEvidence.NONE
-        gained -> StepEvidence.GAINED
+        item != null && rose(item) -> StepEvidence.GAINED
+        step.inputs.any(rose) -> StepEvidence.GAINED_INPUT
         dropped -> StepEvidence.DROPPED
         else -> StepEvidence.NONE
     }
+}
+
+/**
+ * Whether the server attributed a drop to [goal]'s last step's own request, of an item [toward]
+ * names, or of an item it did not tell.
+ */
+private fun droppedToward(
+    goal: GoalSummary,
+    observed: GoalObservation,
+    toward: Set<String>,
+): Boolean {
+    val request = goal.lastStep?.requestId ?: return false
+    val told = observed.droppedItems[request]
+    return request in observed.dropped && (told == null || told.any { it in toward })
 }
 
 /**

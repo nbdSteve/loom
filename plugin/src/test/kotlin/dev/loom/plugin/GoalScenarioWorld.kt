@@ -184,8 +184,8 @@ internal data class Scene(
             val (x, y, z) = position
             val block = blocks.firstOrNull { it.x == x && it.y == y && it.z == z }
             when (block?.name) {
-                "dead_bush" -> listOf(BlockYield("item.minecraft.stick", 0, 2))
-                "dirt" -> listOf(BlockYield("item.minecraft.dirt", 1, 1))
+                "dead_bush" -> listOf(BlockYield("item.minecraft.stick", 0, 2, 100))
+                "dirt" -> listOf(BlockYield("item.minecraft.dirt", 1, 1, 100))
                 else -> emptyList()
             }
         }

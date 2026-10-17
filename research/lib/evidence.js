@@ -54,7 +54,8 @@ const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // What a measured step showed, from routine-v22: the exact target reached, an item gained, a
 // new drop in sight, or nothing.
 // From routine-v27 a walk to the edge of sight that brought a source of the item into sight.
-const GOAL_STEP_EVIDENCE = ['arrived', 'gained', 'dropped', 'revealed', 'none']
+// From routine-v28 a gain of a direct input of a recipe for the goal's item.
+const GOAL_STEP_EVIDENCE = ['arrived', 'gained', 'gainedInput', 'dropped', 'revealed', 'none']
 // Outcomes that act on the very goal the answered review was handed.
 const GOAL_CONTINUING_OUTCOMES = ['goalContinued', 'goalRevised', 'goalCompleted']
 
@@ -273,7 +274,7 @@ function validateGoalEvidence (goal, event, label) {
   if (goal.disposition !== undefined && !GOAL_DISPOSITIONS.includes(goal.disposition)) {
     throw new Error(`${label} has an unknown goal disposition`)
   }
-  for (const field of ['presentedGoalId', 'goalId', 'expiredGoalId']) {
+  for (const field of ['presentedGoalId', 'goalId', 'expiredGoalId', 'chainedFrom']) {
     if (!validGoalId(goal[field])) throw new Error(`${label} goal ${field} is not a bounded id`)
   }
   for (const field of ['presentedRevision', 'revision']) {

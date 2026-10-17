@@ -221,9 +221,10 @@ not already been, or a walk to the edge of sight that brings a source of the ite
 that showed none. A drop is not progress until you hold it, but while it lies in reach it does \
 not count toward the three steps either, because its collect is the next step; a walk to \
 anything else is no step. What a \
-block drops is random within the range you are told: the most is its best case, a dig may drop \
-none of it, and another such block is a fresh chance, so what sight can be counted on to give is \
-each block's expected yield, the middle of its range, not its most. A dig that drops nothing, a \
+block drops is random: you are told the fewest and the most one dig has dropped and how many one \
+dig drops on average in the server's own sampled rolls. The most is only its best case and a dig \
+may drop none, so what sight can be counted on to give is that average, which for a rare drop - \
+a stick from leaves - is far below the middle of its range. A dig that drops nothing, a \
 drop someone else takes, moving about, falling or walking back is not progress, and revising is \
 not progress either. After three steps in a row that advanced nothing, your body refuses \
 continue and revise; only replace with a different item, abandon, or complete when met, is \
@@ -682,8 +683,9 @@ const MAX_YIELD_REFS: usize = 4;
 /// Grouped by item and bounded in items and refs however many blocks share one, and a block it is
 /// not safe to dig is named as such.
 fn yields_line(surroundings: &[Observation]) -> String {
-    // Each item with the fewest and most any block in sight drops of it, and the blocks.
-    let mut items: Vec<(&str, i64, i64, Vec<&str>)> = Vec::new();
+    // Each item with the fewest and most any block in sight drops of it, the most a hundred digs
+    // of one such block drop on average, and the blocks.
+    let mut items: Vec<(&str, i64, i64, i64, Vec<&str>)> = Vec::new();
     let mut unsafe_digs: Vec<&str> = Vec::new();
     for seen in surroundings.iter().take(MAX_OBSERVATIONS) {
         if seen.kind != ObservationKind::Block || !seen.visible {
@@ -695,12 +697,19 @@ fn yields_line(surroundings: &[Observation]) -> String {
         }
         for item in seen.yields.iter().flatten() {
             match items.iter_mut().find(|(named, ..)| *named == item.what) {
-                Some((_, least, most, refs)) => {
+                Some((_, least, most, mean, refs)) => {
                     *least = (*least).min(item.least);
                     *most = (*most).max(item.most);
+                    *mean = (*mean).max(item.per_hundred);
                     refs.push(&seen.target_ref);
                 }
-                None => items.push((&item.what, item.least, item.most, vec![&seen.target_ref])),
+                None => items.push((
+                    &item.what,
+                    item.least,
+                    item.most,
+                    item.per_hundred,
+                    vec![&seen.target_ref],
+                )),
             }
         }
     }
@@ -710,13 +719,17 @@ fn yields_line(surroundings: &[Observation]) -> String {
         let named = items
             .iter()
             .take(MAX_YIELD_ITEMS)
-            .map(|(item, least, most, refs)| {
+            .map(|(item, least, most, mean, refs)| {
                 let count = if least == most {
                     format!("{most}")
                 } else {
-                    format!("{least} to {most}")
+                    format!(
+                        "{least} to {most}, about {}.{:02} a dig",
+                        mean / 100,
+                        mean % 100
+                    )
                 };
-                format!("{count} {} (from {})", field(item), some_refs(refs))
+                format!("{}: {count} (from {})", field(item), some_refs(refs))
             })
             .collect::<Vec<_>>()
             .join("; ");
@@ -733,7 +746,7 @@ fn yields_line(surroundings: &[Observation]) -> String {
         drops
     } else {
         format!(
-            "{drops} Digging {} would leave you in a hole with no way out, so it is not offered.",
+            "{drops} Digging {} would leave you in a hole with no way out, or its drop where you could not reach it, so it is not offered.",
             some_refs(&unsafe_digs)
         )
     }
@@ -1452,14 +1465,14 @@ mod tests {
         assert!(
             situation(&seen).contains(
                 "Digging with what you hold drops, at random each dig and the most only at best, \
-                 0 to 2 item.minecraft.stick (from b2); any other block drops nothing."
+                 item.minecraft.stick: 0 to 2, about 1.00 a dig (from b2); any other block drops nothing."
             ),
             "{}",
             situation(&seen)
         );
         seen.surroundings[0].dig_safe = Some(false);
         assert!(situation(&seen).contains(
-            "Digging b1 would leave you in a hole with no way out, so it is not offered."
+            "Digging b1 would leave you in a hole with no way out, or its drop where you could not reach it, so it is not offered."
         ));
         let bush = seen.surroundings[1].clone();
         seen.surroundings.extend((3..8).map(|index| Observation {
@@ -1468,7 +1481,7 @@ mod tests {
             ..bush.clone()
         }));
         assert!(situation(&seen).contains(
-            "0 to 2 item.minecraft.stick (from b2, b3, b4, b5 and 2 more); any other block"
+            "item.minecraft.stick: 0 to 2, about 1.00 a dig (from b2, b3, b4, b5 and 2 more); any other block"
         ));
         for block in &mut seen.surroundings {
             block.yields = Some(vec![]);
@@ -1542,6 +1555,7 @@ mod tests {
                 what: "item.minecraft.stick".to_owned(),
                 least: 0,
                 most: 2,
+                per_hundred: 100,
             }]),
             dig_safe: Some(true),
             route_refused: None,
@@ -1856,6 +1870,7 @@ mod tests {
                         what: format!("item.minecraft.{:0>49}", index * 8 + item),
                         least: 0,
                         most: 64,
+                        per_hundred: 6400,
                     })
                     .collect(),
             );

@@ -176,8 +176,8 @@ class R14GoalAuditReplayTest {
     @Test
     fun `air is no yield, so a bush can never list it`() {
         // All 110 dead-bush observations of r14 listed item.minecraft.air beside the stick.
-        assertThrows(IllegalArgumentException::class.java) { BlockYield(AIR_ITEM, 0, 1) }
-        assertEquals(BlockYield(STICK, 0, 2), BlockYield(STICK, 0, 2))
+        assertThrows(IllegalArgumentException::class.java) { BlockYield(AIR_ITEM, 0, 1, 50) }
+        assertEquals(BlockYield(STICK, 0, 2, 100), BlockYield(STICK, 0, 2, 100))
     }
 
     private companion object {

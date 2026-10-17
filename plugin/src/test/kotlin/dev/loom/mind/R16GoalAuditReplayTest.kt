@@ -169,7 +169,7 @@ class R16GoalAuditReplayTest {
                 visible = true,
                 ref = "b1",
                 standable = true,
-                yields = listOf(BlockYield(STICK, 0, 2)),
+                yields = listOf(BlockYield(STICK, 0, 2, 100)),
                 digSafe = true,
             )
         val seen =

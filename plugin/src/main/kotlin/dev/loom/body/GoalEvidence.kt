@@ -51,6 +51,11 @@ data class GoalEvidence(
      * reads as forced by sight or chosen.
      */
     val targetCapacity: Long? = null,
+    /**
+     * The earlier met goal this adopted or replacing goal is chained to: the newest whose item is
+     * a direct input of a recipe for this goal's item, by the server's recipe registry.
+     */
+    val chainedFrom: String? = null,
 ) {
     /** The tags [outcome] takes. */
     companion object {

@@ -343,6 +343,13 @@ object EventTag {
      */
     const val DIG_WOULD_TRAP: String = "digWouldTrap"
 
+    /**
+     * A dig below the feet whose drop would land where no body can step down to collect it:
+     * refused before the body is asked, and never offered, because the observation says digSafe
+     * false (r19 beta body:00000441, kappa 00000383).
+     */
+    const val DIG_DROP_UNREACHABLE: String = "digDropUnreachable"
+
     const val DIG_BLOCK_UNNAMED: String = "digBlockUnnamed"
     const val DIG_BLOCK_GONE: String = "digBlockGone"
 
@@ -628,6 +635,7 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.DIG_SENSE_FORGOTTEN,
         EventTag.DIG_BLOCK_UNNAMED,
         EventTag.DIG_WOULD_TRAP,
+        EventTag.DIG_DROP_UNREACHABLE,
         EventTag.DIG_BLOCK_GONE,
         EventTag.DIG_CONTEST_GONE,
         EventTag.DIG_BLOCK_CHANGED,

@@ -617,7 +617,8 @@ pub const MAX_STACK_COUNT: i64 = 64;
 /// The item that is no item: what a loot roll that dropped nothing is reported as.
 pub const AIR_ITEM: &str = "item.minecraft.air";
 
-/// One item digging a block can drop, with the range the server's random loot rules give.
+/// One item digging a block can drop, with the range the server's random loot rules give and
+/// the mean of its sampled rolls.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockYield {
@@ -627,6 +628,9 @@ pub struct BlockYield {
     pub least: i64,
     /// The most of it one dig has dropped.
     pub most: i64,
+    /// How many of it a hundred digs drop on average: the expected yield, between 100 times
+    /// `least` and 100 times `most` (r19: a leaf counted as about one stick dropped one in 33).
+    pub per_hundred: i64,
 }
 
 #[derive(Deserialize)]
@@ -636,6 +640,7 @@ struct BlockYieldWire {
     what: String,
     least: i64,
     most: i64,
+    per_hundred: i64,
 }
 
 impl<'de> Deserialize<'de> for BlockYield {
@@ -652,10 +657,18 @@ impl<'de> Deserialize<'de> for BlockYield {
                 "a yield's least is 0 to its most, and its most 1 to 64",
             ));
         }
+        if !(raw.least.saturating_mul(100)..=raw.most.saturating_mul(100))
+            .contains(&raw.per_hundred)
+        {
+            return Err(de::Error::custom(
+                "a yield's perHundred lies between 100 times its least and 100 times its most",
+            ));
+        }
         Ok(Self {
             what: raw.what,
             least: raw.least,
             most: raw.most,
+            per_hundred: raw.per_hundred,
         })
     }
 }
@@ -1295,9 +1308,12 @@ pub enum StepEvidence {
     /// A walk reached its visible target, somewhere new to the goal.
     #[serde(rename = "arrived")]
     Arrived,
-    /// The inventory held more of an item after the step.
+    /// The inventory held more of the goal's item after the step.
     #[serde(rename = "gained")]
     Gained,
+    /// The inventory held more of a direct input of a recipe for the goal's item after the step.
+    #[serde(rename = "gainedInput")]
+    GainedInput,
     /// The server saw the step's own dig drop something for this agent, wherever it went.
     #[serde(rename = "dropped")]
     Dropped,

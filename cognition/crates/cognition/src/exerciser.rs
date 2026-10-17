@@ -468,6 +468,7 @@ mod tests {
                 what: LOG.to_owned(),
                 least: 1,
                 most: 1,
+                per_hundred: 100,
             }]),
             dig_safe: Some(true),
             route_refused: None,

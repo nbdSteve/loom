@@ -111,9 +111,13 @@ class OwnDropLedgerTest {
     fun `sampled loot rolls give each item's range, and a roll that drops nothing is no item`() {
         // A dead bush drops nought to two sticks; r14 listed it as dropping air.
         val rolls = listOf(mapOf(STICK to 2L), emptyMap(), mapOf(STICK to 1L))
-        assertEquals(listOf(BlockYield(STICK, 0, 2)), yieldsOf(rolls))
+        assertEquals(listOf(BlockYield(STICK, 0, 2, 100)), yieldsOf(rolls))
         assertEquals(emptyList<BlockYield>(), yieldsOf(listOf(emptyMap(), emptyMap())))
-        assertEquals(listOf(BlockYield(STICK, 1, 1)), yieldsOf(listOf(mapOf(STICK to 1L), mapOf(STICK to 1L))))
+        assertEquals(listOf(BlockYield(STICK, 1, 1, 100)), yieldsOf(listOf(mapOf(STICK to 1L), mapOf(STICK to 1L))))
+        // r19: a leaf drops a stick about one dig in fifty, which the middle of its nought-to-two
+        // range read as one a dig; the sampled mean states it as two in a hundred.
+        val leaves = List(1000) { if (it % 50 == 0) mapOf(STICK to 1L) else emptyMap() }
+        assertEquals(listOf(BlockYield(STICK, 0, 1, 2)), yieldsOf(leaves))
     }
 
     @Test

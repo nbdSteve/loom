@@ -137,7 +137,7 @@ val STICK_BUSH: Observation =
         visible = true,
         ref = "bush",
         standable = true,
-        yields = listOf(BlockYield("item.minecraft.stick", 0, 2)),
+        yields = listOf(BlockYield("item.minecraft.stick", 0, 2, 100)),
         digSafe = true,
     )
 

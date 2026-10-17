@@ -1,6 +1,6 @@
 /*
- * The two server facts a block observation states beyond where it is: what digging it yields,
- * and whether digging it leaves the body a way out.
+ * The server facts a block observation states beyond where it is: what digging it yields, and
+ * whether digging it leaves the body a way out and its drop where a body can collect it.
  */
 package dev.loom.body.player
 
@@ -31,7 +31,8 @@ fun interface BlockYields {
 
 /**
  * The yields a set of sampled loot rolls shows, one per item: [rolls] holds, per roll, how many
- * of each item it dropped. An item absent from a roll dropped none in it, so its least is zero.
+ * of each item it dropped. An item absent from a roll dropped none in it, so its least is zero,
+ * and its mean per hundred digs is the rolls' own average, rounded.
  */
 fun yieldsOf(rolls: List<Map<String, Long>>): List<BlockYield> =
     rolls
@@ -39,16 +40,66 @@ fun yieldsOf(rolls: List<Map<String, Long>>): List<BlockYield> =
         .distinct()
         .sorted()
         .mapNotNull { item ->
-            val counts = rolls.map { it[item] ?: 0L }
+            val counts = rolls.map { (it[item] ?: 0L).coerceAtMost(MAX_YIELD_COUNT) }
             val most = counts.max()
-            if (most < 1) null else BlockYield(item, counts.min(), most.coerceAtMost(MAX_YIELD_COUNT))
+            val least = counts.min()
+            val mean = (counts.sum() * PER_HUNDRED_DIGS + rolls.size / 2) / rolls.size
+            if (most < 1) {
+                null
+            } else {
+                BlockYield(
+                    item,
+                    least,
+                    most,
+                    mean.coerceIn(least * PER_HUNDRED_DIGS, most * PER_HUNDRED_DIGS),
+                )
+            }
         }
+
+private const val PER_HUNDRED_DIGS = 100L
 
 private const val MAX_YIELD_COUNT = 64L
 
 /** The block cell directly under a body standing at [position]. */
 internal fun supportCellOf(position: List<Double>): List<Int> =
     listOf(floor(position[0]).toInt(), floor(position[1]).toInt() - 1, floor(position[2]).toInt())
+
+/**
+ * Whether digging [block] leaves a body at [position] both a way out ([digLeavesExit]) and its
+ * drop where a body can collect it ([digLeavesDropReachable]): what a block observation states as
+ * `digSafe`.
+ */
+internal fun digSafeAt(
+    ground: BlockGround,
+    position: List<Double>,
+    block: List<Int>,
+): Boolean = digLeavesExit(ground, position, block) && digLeavesDropReachable(ground, position, block)
+
+/**
+ * Whether the drop of digging [block] below the feet of a body at [position] lands where a body
+ * can step down to collect it. A block whose cell above is open opens a pocket the drop falls
+ * into, and the pocket is out of reach when it lies two or more cells below the feet, when its
+ * floor is open too so the drop falls further, or when the cell over its mouth is solid so no
+ * body can step down into it without striking its head. r19 beta body:00000441 and kappa dug the
+ * block diagonally below their feet under the edge of a hill; each drop lay in a one-block pocket
+ * under an overhang, and each collect was refused for no route (body:00000453, 00000384). Only
+ * the ground's positive answer refuses: a block at or above the feet, the support itself, which
+ * [digLeavesExit] judges, and a block whose cell above is solid are not this rule's.
+ */
+internal fun digLeavesDropReachable(
+    ground: BlockGround,
+    position: List<Double>,
+    block: List<Int>,
+): Boolean {
+    val feet = floor(position[1]).toInt()
+    val (x, y, z) = block
+    val mouth = listOf(x, y + 1, z)
+    if (y >= feet || block == supportCellOf(position) || !ground.standsIn(mouth)) return true
+    val deep = y <= feet - 2
+    val bottomless = ground.standsIn(listOf(x, y - 1, z))
+    val overhung = !ground.standsIn(listOf(x, y + 2, z))
+    return !deep && !bottomless && !overhung
+}
 
 /**
  * Whether digging [block] leaves a body standing at [position] a way out.

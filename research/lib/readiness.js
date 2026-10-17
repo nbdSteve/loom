@@ -70,7 +70,7 @@ function goalIncoherentTagsOf (generation) {
   return generation >= 5 ? EVIDENCED_GOAL_INCOHERENT_TAGS : GOAL_INCOHERENT_TAGS
 }
 // The evidence that may credit a step; `none`, or no evidence stated at all, never does.
-const CREDITING_STEP_EVIDENCE = new Set(['arrived', 'gained', 'dropped', 'revealed'])
+const CREDITING_STEP_EVIDENCE = new Set(['arrived', 'gained', 'gainedInput', 'dropped', 'revealed'])
 
 const PASSIVE_INTENTS = Object.freeze(['idle', 'rest'])
 const INTERACTION_INTENTS = Object.freeze(['dig', 'collect', 'place', 'equip', 'craft', 'attack', 'sleep'])
@@ -126,10 +126,11 @@ const INAPPLICABLE_TAGS = new Set([
 const PROTOCOL_TAGS = new Set(['rejected', 'controlUnavailable', 'unsupported', 'noSuchBody'])
 
 /** The class a refusal tag ends its action in, under gate [generation] (the current one by default). */
-function refusalClass (tag, generation = 10) {
+function refusalClass (tag, generation = 11) {
   if (goalIncoherentTagsOf(generation).has(tag)) return 'goalIncoherent'
   if (generation >= 7 && TERRAIN_TAGS.has(tag)) return TERRAIN_CLASS
   if (generation >= 5 && tag === 'digWouldTrap') return 'inapplicable'
+  if (generation >= 11 && tag === 'digDropUnreachable') return 'inapplicable'
   if (tag === 'controlNotReady') return 'concurrent'
   if (tag === 'moveOwnSpot') return 'noOpTarget'
   if (/BodyDied$/.test(tag)) return 'death'

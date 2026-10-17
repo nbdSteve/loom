@@ -441,6 +441,12 @@ data class BlockYield(
     val least: Long,
     /** The most of it one dig has dropped. */
     val most: Long,
+    /**
+     * How many of it a hundred digs drop on average in the server's sampled rolls: the expected
+     * yield, between 100 times [least] and 100 times [most] (r19: a leaf counted as about one
+     * stick dropped one in 33).
+     */
+    val perHundred: Long,
 ) {
     init {
         requireItemName(what)
@@ -448,6 +454,13 @@ data class BlockYield(
         require(most in 1..MAX_STACK_COUNT && least in 0..most) {
             "a yield's least is 0 to its most, and its most 1 to $MAX_STACK_COUNT"
         }
+        require(perHundred in least * PER_HUNDRED..most * PER_HUNDRED) {
+            "a yield's perHundred lies between 100 times its least and 100 times its most"
+        }
+    }
+
+    private companion object {
+        const val PER_HUNDRED = 100L
     }
 }
 
@@ -857,9 +870,13 @@ enum class StepEvidence {
     @SerialName("arrived")
     ARRIVED,
 
-    /** The inventory held more of an item after the step. */
+    /** The inventory held more of the goal's item after the step. */
     @SerialName("gained")
     GAINED,
+
+    /** The inventory held more of a direct input of a recipe for the goal's item after the step. */
+    @SerialName("gainedInput")
+    GAINED_INPUT,
 
     /** The server saw the step's own dig drop something for this agent, wherever it went. */
     @SerialName("dropped")

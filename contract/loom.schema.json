@@ -259,14 +259,15 @@
     },
 
     "BlockYield": {
-      "description": "One item digging a block with what the body holds can drop, and how many: the server's loot rules are random, so least is the fewest it has dropped and most the most, and a least of 0 means a dig may drop none of it at all.",
+      "description": "One item digging a block with what the body holds can drop, and how many: the server's loot rules are random, so least is the fewest it dropped in the server's sampled rolls and most the most, a least of 0 means a dig may drop none of it at all, and perHundred is how many of it a hundred digs drop on average in those rolls - the expected yield, which for a rare drop is far below the middle of its range. perHundred lies between 100 times least and 100 times most.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["what", "least", "most"],
+      "required": ["what", "least", "most", "perHundred"],
       "properties": {
         "what": { "allOf": [{ "$ref": "#/$defs/ItemName" }, { "not": { "const": "item.minecraft.air" } }] },
         "least": { "type": "integer", "minimum": 0, "maximum": 64 },
-        "most": { "type": "integer", "minimum": 1, "maximum": 64 }
+        "most": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "perHundred": { "type": "integer", "minimum": 0, "maximum": 6400 }
       }
     },
 
@@ -746,9 +747,9 @@
     },
 
     "StepEvidence": {
-      "description": "What showed the goal's last step was carried out: arrived for a walk that reached its visible target somewhere new to the goal, gained for an action after which the inventory held more of an item, dropped for a dig the server saw drop something for this agent's own request, wherever it went after, revealed for a walk to the edge of sight that arrived where a source of the goal's item was then in sight, none when nothing did. Only a step with evidence advances.",
+      "description": "What showed the goal's last step was carried out: arrived for a walk that reached its visible target somewhere new to the goal, gained for an action after which the inventory held more of the goal's item, gainedInput for one after which it held more of a direct input of a recipe for the goal's item, dropped for a dig the server saw drop something for this agent's own request, wherever it went after, revealed for a walk to the edge of sight that arrived where a source of the goal's item was then in sight, none when nothing did. Only a step with evidence advances.",
       "type": "string",
-      "enum": ["arrived", "gained", "dropped", "revealed", "none"]
+      "enum": ["arrived", "gained", "gainedInput", "dropped", "revealed", "none"]
     },
 
     "InventoryChange": {

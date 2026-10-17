@@ -2579,13 +2579,13 @@ class PlayerWalkResolutionTest {
         val yields =
             BlockYields { position, player ->
                 asked += position to player
-                listOf(BlockYield("item.minecraft.stick", 0, 2))
+                listOf(BlockYield("item.minecraft.stick", 0, 2, 100))
             }
         val harness = harness(agent, HarnessOptions(yields = yields))
         harness.port.spawn(agent).await()
         val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
         val block = seen.surroundings.single { it.kind == ObservationKind.BLOCK }
-        assertEquals(listOf(BlockYield("item.minecraft.stick", 0, 2)), block.yields)
+        assertEquals(listOf(BlockYield("item.minecraft.stick", 0, 2, 100)), block.yields)
         assertEquals(listOf(listOf(4, 63, 2) to playerIdentityOf(agent)), asked)
         assertEquals(true, block.digSafe)
     }
