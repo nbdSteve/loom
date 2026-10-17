@@ -1021,3 +1021,54 @@ fn a_goal_review_beside_a_hunter_may_flee_from_it_with_no_goal_choice() {
     let calm_schema = decision_schema_for(&OfferedRefs::of(&calm), GoalPhase::of(&calm));
     assert!(calm_schema["$defs"].get("dangerRef").is_none());
 }
+
+#[test]
+fn a_source_recalled_out_of_sight_can_be_a_goal_walked_toward_by_its_edge_of_sight_cell() {
+    // r20: no agent without a log in sight could set a log goal, and the only walk to the edge
+    // of sight came with an abandon.
+    let mut seen = fixture("perception-goal-review");
+    seen.explore = vec![
+        loom_contract::ExploreTarget {
+            target_ref: "x1".to_owned(),
+            distance: 12.0,
+            direction: loom_contract::Bearing::North,
+            vertical_offset: 0.0,
+        },
+        loom_contract::ExploreTarget {
+            target_ref: "x2".to_owned(),
+            distance: 12.0,
+            direction: loom_contract::Bearing::South,
+            vertical_offset: 0.0,
+        },
+    ];
+    seen.recalled = vec![loom_contract::RecalledSource {
+        what: "item.minecraft.oak_log".to_owned(),
+        distance: 18.0,
+        direction: loom_contract::Bearing::North,
+        vertical_offset: 1.0,
+        per_hundred: 500,
+    }];
+    let offered = OfferedRefs::of(&seen);
+    assert_eq!(offered.capacity_of("item.minecraft.oak_log"), 5);
+    let logs = offered
+        .item_steps
+        .iter()
+        .find(|steps| steps.item == "item.minecraft.oak_log")
+        .unwrap();
+    assert_eq!(logs.toward, vec!["x1".to_owned()]);
+    let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
+    assert_eq!(dispositions(&schema), ["adopt", "none"]);
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let toward = |onto: &str| {
+        answer_in(
+            &schema,
+            &json!({ "action": "moveTo", "onto": onto }),
+            &json!({ "disposition": "adopt", "successItem": "item.minecraft.oak_log", "successCount": 3 }),
+        )
+    };
+    assert!(validator.is_valid(&toward("x1")));
+    assert!(
+        !validator.is_valid(&toward("x2")),
+        "a walk away from the source is no step toward it"
+    );
+}

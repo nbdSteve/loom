@@ -16,6 +16,7 @@ import dev.loom.contract.DecisionImportance
 import dev.loom.contract.ExploreTarget
 import dev.loom.contract.Observation
 import dev.loom.contract.Perception
+import dev.loom.contract.RecalledSource
 import dev.loom.contract.SelfState
 import dev.loom.contract.Trigger
 import java.util.UUID
@@ -47,6 +48,8 @@ internal data class PlayerScene(
     val selfState: SelfState,
     /** The cells at the edge of sight this perception offers, each with the cell a walk ends in. */
     val explore: List<Pair<ExploreTarget, List<Int>>> = emptyList(),
+    /** The sources of items out of sight the body saw recently. */
+    val recalled: List<RecalledSource> = emptyList(),
 ) {
     fun perception(trigger: Trigger): Perception =
         Perception(
@@ -59,6 +62,7 @@ internal data class PlayerScene(
             surroundings = surroundings,
             surroundingsOmitted = surroundingsOmitted,
             explore = explore.map { it.first },
+            recalled = recalled,
         )
 }
 

@@ -296,6 +296,7 @@ fn situation_of(perception: &Perception) -> String {
     lines.push(yields_line(&perception.surroundings));
     lines.extend(own_spot_line(&perception.surroundings));
     lines.extend(explore_line(&perception.explore));
+    lines.extend(recalled_line(&perception.recalled));
     if perception.trigger.reviews_goal() {
         lines.extend(danger_line(perception));
     }
@@ -927,6 +928,30 @@ fn own_spot_line(surroundings: &[Observation]) -> Option<String> {
     })
 }
 
+/// The sources of items out of sight the body saw recently, or nothing (r20: no agent without a
+/// log in sight could set a log goal, and kappa and theta forgot the logs they had seen).
+fn recalled_line(sources: &[loom_contract::RecalledSource]) -> Option<String> {
+    if sources.is_empty() {
+        return None;
+    }
+    let named = sources
+        .iter()
+        .take(loom_contract::MAX_RECALLED_SOURCES)
+        .map(|source| {
+            format!(
+                "{} {}, about {:.2} in all",
+                field(&source.what),
+                whereabouts(source.distance, source.direction, source.vertical_offset),
+                f64::from(u16::try_from(source.per_hundred).unwrap_or(u16::MAX)) / 100.0
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    Some(format!(
+        "Out of sight now, you recently saw sources of: {named}. A goal for one of them is walked toward by the cell at the edge of sight in its direction."
+    ))
+}
+
 /// The hunters near enough to flee from at a goal review, or nothing (r20: kappa reviewed at
 /// health 7.7 beside a zombie and a skeleton, was offered only dirt digs, and died).
 fn danger_line(perception: &Perception) -> Option<String> {
@@ -1267,6 +1292,7 @@ mod tests {
             goal: None,
             last_refusal: None,
             explore: vec![],
+            recalled: vec![],
         }
     }
 

@@ -694,8 +694,15 @@ data class Perception(
      * so an agent that sees nothing worth doing can walk to look further.
      */
     val explore: List<ExploreTarget> = emptyList(),
+    /**
+     * Sources of items the body saw recently and does not see now, nearest first: where the
+     * nearest one of each item was. A goal for a recalled item is walked toward by the cells at
+     * the edge of sight in its direction.
+     */
+    val recalled: List<RecalledSource> = emptyList(),
 ) {
     init {
+        require(recalled.size <= MAX_RECALLED_SOURCES) { "at most $MAX_RECALLED_SOURCES recalled sources" }
         require(surroundings.size <= MAX_PERCEPTION_OBSERVATIONS) {
             "surroundings must state at most $MAX_PERCEPTION_OBSERVATIONS observations, " +
                 "got ${surroundings.size}"
@@ -727,6 +734,33 @@ private fun requireBoundedText(
 
 /** Most exploration targets one perception carries: one per compass bearing. */
 const val MAX_EXPLORE_TARGETS: Int = 8
+
+/** Most recalled sources one perception carries. */
+const val MAX_RECALLED_SOURCES: Int = 8
+
+/** The most a hundred digs of one block can drop of one item: 64 a dig. */
+const val MAX_PER_HUNDRED: Long = 6400
+
+/** Where the body last saw a source of an item it does not see now. */
+@Serializable
+data class RecalledSource(
+    /** The item, exactly as an inventory stack names it. */
+    val what: String,
+    /** How far the source was from the agent, in blocks. */
+    val distance: Double,
+    /** The horizontal bearing to it. */
+    val direction: Bearing,
+    /** How far above the agent it was. */
+    val verticalOffset: Double,
+    /** How many of the item a hundred digs of it drop on average. */
+    val perHundred: Long,
+) {
+    init {
+        require(distance >= 0.0) { "a recalled source's distance is never negative" }
+        require(perHundred in 1..MAX_PER_HUNDRED) { "a recalled source yields 1 to $MAX_PER_HUNDRED hundredths" }
+        require(what != AIR_ITEM) { "a recalled source is never air" }
+    }
+}
 
 /** One standable cell at the edge of sight, placed from the agent the way an observation is. */
 @Serializable

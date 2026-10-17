@@ -1351,6 +1351,11 @@ fn item_step_variants(
         &steps.walks,
         "A block out of dig reach that can drop this goal's item, to walk to.",
     );
+    let toward = named(
+        "Toward",
+        &steps.toward,
+        "A cell at the edge of sight toward where you last saw a source of this goal's item.",
+    );
     [
         dig.map(|block| intent_variant("dig", vec![("block", Some(block))])),
         pickup.map(|item| {
@@ -1374,6 +1379,7 @@ fn item_step_variants(
             )
         }),
         walk.map(|onto| intent_variant("moveTo", vec![("onto", Some(onto))])),
+        toward.map(|onto| intent_variant("moveTo", vec![("onto", Some(onto))])),
     ]
     .into_iter()
     .flatten()

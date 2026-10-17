@@ -369,6 +369,7 @@ fn perception(importance: DecisionImportance) -> Perception {
         goal: None,
         last_refusal: None,
         explore: vec![],
+        recalled: vec![],
     }
 }
 

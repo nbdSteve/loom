@@ -87,6 +87,7 @@ internal class PlayerSceneTranslator(
             candidates = candidatesOf(selected, surroundings),
             selfState = selfStateOf(raw, slotBindings, recipeBindings, itemRefsOf(itemOffers, droppedItemBindings)),
             explore = exploreOf(context.authority.ground, raw.report.position),
+            recalled = context.recall.recalled(raw.report.position, selected),
         )
     }
 

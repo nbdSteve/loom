@@ -927,6 +927,54 @@ pub struct Perception {
         deserialize_with = "bounded_explore"
     )]
     pub explore: Vec<ExploreTarget>,
+    /// Sources of items the body saw recently and does not see now, nearest first: where the
+    /// nearest one of each item was. A goal for a recalled item is walked toward by the cells at
+    /// the edge of sight in its direction.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "bounded_recalled"
+    )]
+    pub recalled: Vec<RecalledSource>,
+}
+
+/// Most recalled sources one perception carries.
+pub const MAX_RECALLED_SOURCES: usize = 8;
+
+fn bounded_recalled<'de, D>(deserializer: D) -> Result<Vec<RecalledSource>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let sources = Vec::<RecalledSource>::deserialize(deserializer)?;
+    if sources.len() > MAX_RECALLED_SOURCES {
+        return Err(de::Error::custom("at most 8 recalled sources"));
+    }
+    if sources.iter().any(|source| {
+        source.distance < 0.0
+            || !(1..=6400).contains(&source.per_hundred)
+            || source.what == "item.minecraft.air"
+    }) {
+        return Err(de::Error::custom(
+            "a recalled source has a non-negative distance, a yield of 1 to 6400 hundredths, and is never air",
+        ));
+    }
+    Ok(sources)
+}
+
+/// Where the body last saw a source of an item it does not see now.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecalledSource {
+    /// The item, exactly as an inventory stack names it.
+    pub what: String,
+    /// How far the source was from the agent, in blocks.
+    pub distance: f64,
+    /// The horizontal bearing to it.
+    pub direction: Bearing,
+    /// How far above the agent it was.
+    pub vertical_offset: f64,
+    /// How many of the item a hundred digs of it drop on average.
+    pub per_hundred: i64,
 }
 
 /// Most exploration targets one perception carries: one per compass bearing.

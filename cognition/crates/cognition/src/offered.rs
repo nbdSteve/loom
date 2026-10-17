@@ -103,6 +103,9 @@ pub struct ItemSteps {
     /// Standable blocks out of dig reach that can drop it: a walk onto one reaches a source a dig
     /// could not already reach (r18: all seven credited walks were onto bushes already in reach).
     pub walks: Vec<String>,
+    /// Cells at the edge of sight in the direction of a recalled source of it: a walk toward
+    /// where the body last saw one (r20: no agent without a log in sight could set a log goal).
+    pub toward: Vec<String>,
 }
 
 impl ItemSteps {
@@ -114,6 +117,7 @@ impl ItemSteps {
             && self.route.is_empty()
             && self.recipes.is_empty()
             && self.walks.is_empty()
+            && self.toward.is_empty()
     }
 
     /// Whether `intent` is one of these steps.
@@ -126,7 +130,7 @@ impl ItemSteps {
                 held(if *approach { &self.route } else { &self.pickup }, item)
             }
             Intent::Craft { recipe, .. } => held(&self.recipes, recipe),
-            Intent::MoveTo { onto } => held(&self.walks, onto),
+            Intent::MoveTo { onto } => held(&self.walks, onto) || held(&self.toward, onto),
             _ => false,
         }
     }
@@ -288,6 +292,22 @@ fn mean_yield(perception: &Perception, handle: &str, item: &str) -> i64 {
         .map_or(0, |given| given.per_hundred)
 }
 
+/// The sources recalled out of sight, each with what the body expects of it in hundredths and at
+/// best, so a goal for one can be set and walked toward (r20).
+fn recalled_sources(perception: &Perception) -> impl Iterator<Item = (&String, i64, i64)> {
+    perception
+        .recalled
+        .iter()
+        .take(loom_contract::MAX_RECALLED_SOURCES)
+        .map(|source| {
+            (
+                &source.what,
+                source.per_hundred,
+                (source.per_hundred + 99) / 100,
+            )
+        })
+}
+
 /// Appends `handle` unless the list already holds it.
 fn offer(list: &mut Vec<String>, handle: &str) {
     if !list.iter().any(|held| held == handle) {
@@ -381,6 +401,7 @@ impl OfferedRefs {
             offer(&mut offered.walk_targets, &target.target_ref);
             offer(&mut offered.explore_targets, &target.target_ref);
         }
+        sources.extend(recalled_sources(perception));
         let state = &perception.self_state;
         for stack in state.inventory_summary.iter().take(MAX_INVENTORY_LINES) {
             offer(&mut offered.stacks, &stack.slot_ref);
@@ -478,6 +499,16 @@ impl OfferedRefs {
                         && source(handle)
                 };
                 let walks = take(&self.walk_targets, &walk);
+                let recalled_toward = |handle: &String| {
+                    !collecting
+                        && perception.explore.iter().any(|cell| {
+                            &cell.target_ref == handle
+                                && perception.recalled.iter().any(|source| {
+                                    &source.what == item && source.direction == cell.direction
+                                })
+                        })
+                };
+                let toward = take(&self.explore_targets, &recalled_toward);
                 ItemSteps {
                     item: item.clone(),
                     dig,
@@ -485,6 +516,7 @@ impl OfferedRefs {
                     route,
                     recipes,
                     walks,
+                    toward,
                 }
             })
             .collect()

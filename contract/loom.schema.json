@@ -512,7 +512,27 @@
           "type": "array",
           "maxItems": 8,
           "items": { "$ref": "#/$defs/ExploreTarget" }
+        },
+        "recalled": {
+          "description": "Sources of items the body saw recently and does not see now, nearest first: where the nearest one of each item was, and the expected yield of a dig of it in hundredths. A goal for a recalled item is walked toward by the cells at the edge of sight in its direction (r20: no agent without a log in sight could set a log goal, and the only walk to the edge of sight came with an abandon).",
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/RecalledSource" }
         }
+      }
+    },
+
+    "RecalledSource": {
+      "description": "Where the body last saw a source of an item it does not see now, placed from the agent the way an observation is.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "distance", "direction", "verticalOffset", "perHundred"],
+      "properties": {
+        "what": { "allOf": [{ "$ref": "#/$defs/ItemName" }, { "not": { "const": "item.minecraft.air" } }] },
+        "distance": { "type": "number", "minimum": 0 },
+        "direction": { "$ref": "#/$defs/Bearing" },
+        "verticalOffset": { "type": "number" },
+        "perHundred": { "type": "integer", "minimum": 1, "maximum": 6400 }
       }
     },
 

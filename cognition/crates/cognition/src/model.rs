@@ -848,6 +848,7 @@ mod tests {
             goal: None,
             last_refusal: None,
             explore: vec![],
+            recalled: vec![],
         }
     }
 

@@ -104,9 +104,14 @@ data class GoalObservation(
     val explore: Set<String> = emptySet(),
     /** The blocks within the body's interaction reach of the eyes, by ref: dug where it stands. */
     val inReach: Set<String> = emptySet(),
+    /** The items [capacity] counts only from a source recalled out of sight, not from sight. */
+    val recalledOnly: Set<String> = emptySet(),
 ) {
     /** The block cell the agent stood in. */
     val cell: List<Int> get() = position.map { floor(it).toInt() }
+
+    /** How many of [item] sight itself could give: none for an item only recalled out of sight. */
+    fun inSight(item: String): Long = if (item in recalledOnly) 0 else capacity[item] ?: 0
 
     companion object {
         fun of(state: SelfState): GoalObservation =
@@ -125,12 +130,15 @@ data class GoalObservation(
             val crafted =
                 perception.selfState.craftingOptions.map { it.what to HUNDRED * it.resultCount * it.maxCrafts }
             val dug = digs.flatMap { it.yields.orEmpty() }.filter { it.most >= 1 }.map { it.what to it.perHundred }
+            // A source seen recently and out of sight now counts, so a goal for it can be set and
+            // walked toward (r20: no agent without a log in sight could set a log goal).
+            val recalled = perception.recalled.map { it.what to it.perHundred }
             val reachable = drops.map { it.ref }.toSet()
             return GoalObservation(
                 inventory = inventoryOf(perception.selfState),
                 position = perception.selfState.position,
                 capacity =
-                    (drops.map { it.what to HUNDRED * (it.count ?: 1) } + crafted + dug)
+                    (drops.map { it.what to HUNDRED * (it.count ?: 1) } + crafted + dug + recalled)
                         .filter { (what, _) -> isItemName(what) && what != AIR_ITEM }
                         .groupBy({ it.first }, { it.second })
                         .mapValues { (_, hundredths) -> hundredths.sum() / HUNDRED }
@@ -158,6 +166,9 @@ data class GoalObservation(
                         .filter { fromEyes(it) <= INTERACTION_REACH_BLOCKS }
                         .map { it.ref }
                         .toSet(),
+                recalledOnly =
+                    recalled.map { it.first }.toSet() -
+                        (drops.map { it.what } + crafted.map { it.first } + dug.map { it.first }).toSet(),
             )
         }
 
@@ -308,7 +319,7 @@ private fun movementEvidenceOf(
     val item = goal.successItem
     val revealed =
         reached && step.explored && item != null &&
-            (before.capacity[item] ?: 0) == 0L && (observed.capacity[item] ?: 0) > 0
+            before.inSight(item) == 0L && observed.inSight(item) > 0
     return when {
         arrived -> StepEvidence.ARRIVED
         revealed -> StepEvidence.REVEALED
