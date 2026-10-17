@@ -6,12 +6,12 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v27 wooded-goal pilot,
-`research/config/first-tribe-routine-v27-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v27-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v28 explored-goal pilot,
+`research/config/first-tribe-routine-v28-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v28-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
-native event drivers. It uses the v27 prompts, which show each agent its own
+native event drivers. It uses the v28 prompts, which show each agent its own
 carried goal and let the model return an optional typed goal choice, and it
 attests `categoryFairSelection: true` because the 48-per-kind selector it runs on
 is category-fair. Since v14 a `moveTo` names an observed block by ref rather than
@@ -96,8 +96,15 @@ Each goal item is offered only its own steps, and a dig, collect, craft or walk 
 An unseen hunter is news only within eight blocks, and follow-ups are earned per scheduled review and spent over the run, so one is owed while an own drop of the goal's item lies and any earned one remains.
 The live profile stands in a forest, where wood can be dug and crafted.
 The r18 audit found every stall fired on a dig that had just dropped two sticks, all eleven completions idled, five goals abandoned to look further, and 21 of 22 goals for sticks.
+v28 keeps v27 and holds a goal to substance.
+A block's yield is the server's sampled mean, a goal's recipe is offered before its digs, and only a gain of the goal's item or of a direct input of a recipe for it is progress.
+A revise must change the held total, a plain completion is refused beside a next goal's source, and an equip is no goal step.
+A step that leaves an own drop of the goal's item lying, and a plain completion, owe a follow-up from a reserved allowance.
+A dig whose drop would fall into a pocket out of reach is unsafe, and a craft the server shows fully applied is followed up even when the body refused it.
+The live profile stands on plains a walk from the woods and starts in the afternoon, so wood must be looked for and night falls inside the run.
+The r19 audit found ten of 34 goals were dirt one dig at a time, leaves counted as a stick a dig, 28 of 31 revises restating their total, no goal built on another, no walk and no danger.
 `research/lib/experiment-mode.js` owns the pins. In the
-scripted twin the stand-in digs the nearest block in reach that can drop something, walks onto a source of its goal's item out of reach or to the edge of sight when none is in reach, adopts one placeholder goal of holding one more of what it drops, continues it while it digs and completes it once met; that exercises the goal round
+scripted twin the stand-in digs the nearest block in reach that can drop something, walks onto a source of its goal's item out of reach or to the edge of sight when none is in reach, adopts one placeholder goal of holding one more of what it drops, continues it while it digs and once met replaces it with a goal sight still gives, or completes it when sight gives none; that exercises the goal round
 trip, the follow-up review and the own-drop evidence, and is not evidence of agency.
 
 Each primary-behavior configuration names a frozen profile, which
@@ -128,13 +135,19 @@ ran `-r6` and the v17 `research/config/tribe-working-goal-10m-10*.json` that ran
 `research/config/tribe-own-evidence-10m-10*.json` that ran `-r15`, and the v24
 `research/config/tribe-answered-goal-10m-10*.json` that ran `-r16`, and the v25
 `research/config/tribe-collected-goal-10m-10*.json` that ran `-r17`, and the v26
-`research/config/tribe-pursued-goal-10m-10*.json` that ran `-r18`; `wooded-goal-10m-10` is the
-same profile under the v27 mode, in the `f1-forest-ring` scene, with its plan cut to the five
-scheduled reviews a run can finish (the sixth is due at tick 12,000 itself) and its generation-10
-coherence bars pre-registered beside it, configured by `research/config/tribe-wooded-goal-10m-10*.json`.
-The forest scene is seed `10001`, the first seed from 10001 whose ring around the origin is dry
-land among trees, with its ten slots surveyed by `research/tools/survey-ring.js` from a fresh
-world under the rule the profile states; the survey reproduces them exactly.
+`research/config/tribe-pursued-goal-10m-10*.json` that ran `-r18`, and the v27
+`research/config/tribe-wooded-goal-10m-10*.json` that ran `-r19` in the `f1-forest-ring` scene
+(seed `10001`, dry land among trees); `explored-goal-10m-10` is the same profile under the v28
+mode, in the `e1-explore-ring` scene, with its plan cut to the five scheduled reviews a run can
+finish (the sixth is due at tick 12,000 itself) and its generation-11 coherence bars
+pre-registered beside it, configured by `research/config/tribe-explored-goal-10m-10*.json`.
+The plains scene is seed `20011`, the first seed from 20001 whose ring around the origin is flat
+dry land with most slots' nearest log beyond what a body senses: one tree stands 3.6 and 6.1
+blocks from two slots and the woods lie 10.8 to 25.7 blocks from the other eight, so wood must be
+looked for. Its ten slots were surveyed by `research/tools/survey-ring.js` from a fresh world,
+and the survey reproduces them exactly. It is the one scene that does not start at dawn: its
+`initialTimeOfDay` is 9000, so dusk falls about 3,500 ticks in and the hostile creatures night
+spawns on open ground are part of the run; nothing is summoned and no goal or item is given.
 The live one
 carries the next fresh `2026-10-16-openai-10-agent-10m-r<n>` id. Each id is consumed
 by its one attempt and its published artifact names the commit it ran from.
@@ -173,7 +186,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v27-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v28-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -192,8 +205,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v27-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v27-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v28-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v28-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -407,12 +420,18 @@ An idle or rest beside a cell at the edge of sight counts whatever its goal choi
 A complete-and-adopt answers a met condition.
 Generation 9 is frozen, so r18 re-derives exactly as published; `test/readiness-wooded.test.js` holds r18's evidence to generation 10, where it is `notReady` with four needless flights and its pursuit bars not cleared.
 
+Generation 11 (`loom-readiness-gate/9`) answers the r19 audit, which found generation 10's bars cleared by goals with no substance.
+A revise that restates its shown total (`goalReviseUnchanged`) and a plain completion beside a next goal's source (`goalCompletedWithoutNext`) are `goalIncoherent` blockers, and a `collectNoRoute` to the agent's own lying drop no more than two blocks above its feet is the `ownDropUnreached` blocker rather than terrain.
+The pursuit bars count goal activity without restated revises, the fleet's and the least agent's share of time holding a goal that advanced within the last 2,400 ticks, multi-step agents and completions only for goals sight did not guarantee one dig at a time or that a later goal built on, goals chained to an earlier met goal whose item their recipe uses that then advanced, craft steps of chained goals, the agents that walked to an offered cell at the edge of sight, and the perceptions that answered a threat sighted or damage taken.
+`goalCoherence.schemaGuarantees` reports apart the counters the request schema holds at zero, because a zero there is a property of the schema and not behaviour.
+Generation 10 is frozen, so r19 re-derives exactly as published; `test/readiness-substantive.test.js` holds r19's evidence to generation 11, where it is `notReady` with 28 restated revises, three own-drop route refusals, one substantive multi-step agent, no chained goal, no exploration walk and no danger met.
+
 ## The path rehearsal
 
 `research/tools/path-rehearsal.js` is a deterministic live rehearsal of the goal paths no research run has reached by itself, and it is not a research run.
-It starts one real Paper server with the Loom plugin and six real bodies on a flat world laid out by the console commands in `research/tools/path-rehearsal.json`, with the cognition service answering as the path exerciser (`LOOM_COGNITION_BACKEND=scripted-paths`).
-Each agent walks one path, and the run's own evidence, normalized and judged by readiness gate generation 10, must show each one as the server witnessed it.
-The paths are: a craft of two applications accepted and confirmed, and a goal completed and the next adopted in one answer; an own drop ignored and refused; that drop still told lying more than 4,800 ticks after the dig; a flight from a peer classed `peerFlight`; a collect without moving that vanilla's own pickup ends; a walk to the edge of sight credited `revealed`; and a revise to another item refused.
+It starts one real Paper server with the Loom plugin and eight real bodies on a flat world laid out by the console commands in `research/tools/path-rehearsal.json`, with the cognition service answering as the path exerciser (`LOOM_COGNITION_BACKEND=scripted-paths`).
+Each agent walks one path, and the run's own evidence, normalized and judged by readiness gate generation 11, must show each one as the server witnessed it.
+The paths are: a craft of two applications accepted and confirmed, and a goal completed and the next adopted in one answer, chained to the goal whose item its recipe uses; an own drop ignored and refused; that drop still told lying more than 4,800 ticks after the dig; a flight from a peer classed `peerFlight`; a collect without moving that vanilla's own pickup ends; a walk to the edge of sight credited `revealed`; a revise to another item refused; a revise to the held total refused; a plain completion beside a source refused; a plain completion with nothing in sight accepted and followed by the review it owed; and a block beside the support under an overhang reported unsafe to dig.
 No other decision may fail, no claim may be disputed, and no action may end in a class the paths do not explain.
 Vanilla picks up an item inside the pickup box within half a second and despawns a lying one after 6,000 ticks, which is why a collect without moving uses a summoned item with a pickup delay, and why a peer's spoken line, timed by the review stagger, gives the dropping agent a perception between 4,800 and 6,000 ticks after its dig.
 Its world is built for the paths, its mind is scripted, and nothing is published: it writes one report under `.scratch/path-rehearsal/` and exits non-zero unless every path is covered.
@@ -564,7 +583,7 @@ An empty value or lookup failure stops before cognition starts. An HTTP 401 or
 403 from the provider stops the whole run after that refusal, with no retry and
 only a stable provider-safe error.
 
-The routine-v27 pilot routes routine and notable decisions to
+The routine-v28 pilot routes routine and notable decisions to
 `gpt-5.4-nano` and only the existing pivotal tier to `gpt-5.4`. It runs three
 agents for at most 180 wall-clock seconds or 4,000 server ticks, whichever
 comes first, and permits at most six calls per agent, eighteen calls globally,
