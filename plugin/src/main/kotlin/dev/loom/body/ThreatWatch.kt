@@ -154,7 +154,20 @@ enum class ThreatSuppressionReason(
      * ran from mobs out of sight 15 to 16 blocks off.
      */
     DISTANT_UNSEEN(EventTag.THREAT_DISTANT_UNSEEN),
+
+    /**
+     * The hunter is in sight but further than [THREAT_SIGHT_NEWS_BLOCKS]: in r20, 22 flights ran
+     * from mobs in view more than 16 blocks off, gained a median of about two blocks and ended
+     * more than 20 off either way, spending 22 of the run's 150 calls.
+     */
+    DISTANT_SEEN(EventTag.THREAT_DISTANT_SEEN),
 }
+
+/**
+ * How near a hunter in sight must be before its sighting is worth an agent's decision: the
+ * body's perception radius, past which a flight cannot measurably gain (r20).
+ */
+const val THREAT_SIGHT_NEWS_BLOCKS: Double = 16.0
 
 /**
  * How near an out-of-sight hunter must be before its sighting is worth an agent's decision. r18's
@@ -314,8 +327,15 @@ class ThreatWatch(
 
         val refused = mutableListOf<ThreatSuppression>()
         for (candidate in hunters) {
-            if (!candidate.visible && candidate.distance > THREAT_NEAR_BLOCKS) {
-                refused += ThreatSuppression(candidate.what, candidate.ref, ThreatSuppressionReason.DISTANT_UNSEEN)
+            val distant =
+                when {
+                    !candidate.visible && candidate.distance > THREAT_NEAR_BLOCKS ->
+                        ThreatSuppressionReason.DISTANT_UNSEEN
+                    candidate.distance > THREAT_SIGHT_NEWS_BLOCKS -> ThreatSuppressionReason.DISTANT_SEEN
+                    else -> null
+                }
+            if (distant != null) {
+                refused += ThreatSuppression(candidate.what, candidate.ref, distant)
                 continue
             }
             when (val verdict = examine(agent, candidate, memories[candidate.subject], reachable)) {

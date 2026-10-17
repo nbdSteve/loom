@@ -14,8 +14,10 @@
  * mind. Until that decision has settled - answered and applied, or lost - and for
  * [DANGER_EPISODE_COOLDOWN_TICKS] after, another threat or damage perception about the same
  * threat for the same agent is coalesced into it rather than sent. A different threat is new
- * information and is always sent. Nothing here decides how to act; it decides only whether
- * a second identical question is worth a model call.
+ * information and is sent, unless it is further off than a threat whose decision is still open:
+ * in r20, eta's flight from a zombie 6.8 blocks off was preempted by one from a skeleton 23.1 off.
+ * Damage is nearest of all. Nothing here decides how to act; it decides only whether a second
+ * question is worth a model call.
  *
  * Engine-free and main-thread only, like the rest of the cognition seam.
  */
@@ -47,7 +49,10 @@ fun dangerKeyOf(trigger: Trigger): String? =
 class DangerEpisodes(
     private val currentTick: () -> Long,
 ) {
-    private class Episode {
+    private class Episode(
+        /** How far off the threat was when the episode opened; zero for damage. */
+        val distance: Double,
+    ) {
         val open = mutableSetOf<String>()
         var settledTick: Long? = null
     }
@@ -68,8 +73,10 @@ class DangerEpisodes(
         val byThreat = episodes.getOrPut(agentId) { mutableMapOf() }
         byThreat.entries.removeIf { (_, episode) -> episode.expiredAt(now) }
         // Whatever survived the sweep is open or still cooling down.
-        val admitted = key !in byThreat
-        if (admitted) byThreat[key] = Episode().also { it.open += perception.requestId }
+        val distance = (perception.trigger as? Trigger.ThreatSighted)?.distance ?: 0.0
+        val nearerOpen = byThreat.values.any { it.open.isNotEmpty() && it.distance < distance }
+        val admitted = key !in byThreat && !nearerOpen
+        if (admitted) byThreat[key] = Episode(distance).also { it.open += perception.requestId }
         return admitted
     }
 

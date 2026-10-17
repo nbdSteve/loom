@@ -32,11 +32,28 @@ class DangerEpisodesTest {
         assertFalse(episodes.admit(alpha, sighting("r2")))
         // Damage from the same kind of creature is the same episode.
         assertFalse(episodes.admit(alpha, damage("r3")))
-        // A different threat, and the same threat for another agent, are new information.
+        // A different threat as near, and the same threat for another agent, are new information.
         assertTrue(episodes.admit(alpha, sighting("r4", "entity.minecraft.skeleton")))
         assertTrue(episodes.admit(beta, sighting("r5")))
         // Goal reviews are never coalesced.
         assertTrue(episodes.admit(alpha, perceptionWith("r6", Trigger.GoalReview)))
+    }
+
+    @Test
+    fun `a further threat waits while a nearer one is being answered`() {
+        // r20 eta body:00001074 fled a zombie 6.8 off; body:00001100, a flight from a skeleton
+        // 23.1 off, superseded it.
+        val near =
+            perceptionWith("r1", Trigger.ThreatSighted("entity.minecraft.zombie", "e1", 6.8, Bearing.NORTH, true))
+        val far =
+            perceptionWith("r2", Trigger.ThreatSighted("entity.minecraft.skeleton", "e2", 15.0, Bearing.EAST, true))
+        assertTrue(episodes.admit(alpha, near))
+        assertFalse(episodes.admit(alpha, far))
+        // Damage is nearest of all, and is sent.
+        assertTrue(episodes.admit(alpha, damage("r3", "spider")))
+        episodes.settled(alpha, "r1")
+        episodes.settled(alpha, "r3")
+        assertTrue(episodes.admit(alpha, far.copy(requestId = "r4")))
     }
 
     @Test

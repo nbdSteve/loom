@@ -62,7 +62,14 @@ class ThreatWatchTest {
         assertNull(far.sighted)
         assertEquals(listOf(ThreatSuppressionReason.DISTANT_UNSEEN), far.suppressed.map { it.reason })
         assertEquals(EventTag.THREAT_DISTANT_UNSEEN, ThreatSuppressionReason.DISTANT_UNSEEN.tag)
-        assertNotNull(watch.consider(beta, listOf(zombie("e4", distance = 22.4, visible = true)), aRoute()).sighted)
+        // r20: 22 flights ran from mobs in view more than 16 blocks off and gained a median of
+        // about two; a hunter in view is news only within the perception radius.
+        val seenFar = watch.consider(beta, listOf(zombie("e4", distance = 22.4, visible = true)), aRoute())
+        assertNull(seenFar.sighted)
+        assertEquals(listOf(ThreatSuppressionReason.DISTANT_SEEN), seenFar.suppressed.map { it.reason })
+        assertEquals(EventTag.THREAT_DISTANT_SEEN, ThreatSuppressionReason.DISTANT_SEEN.tag)
+        val seenAtRadius = zombie("e6", distance = THREAT_SIGHT_NEWS_BLOCKS, visible = true)
+        assertNotNull(watch.consider(beta, listOf(seenAtRadius), aRoute()).sighted)
         val near = watch.consider(alpha, listOf(zombie("e5", distance = THREAT_NEAR_BLOCKS, visible = false)), aRoute())
         assertNotNull(near.sighted)
     }
@@ -335,8 +342,11 @@ private class FakeThreatClock(
 /** The engine's own description of the hunter every case here uses. */
 private const val ZOMBIE = "entity.minecraft.zombie"
 
-/** Comfortably outside [PIVOTAL_THREAT_DISTANCE_BLOCKS], and well inside what a body sees. */
-private const val FAR_OFF_BLOCKS: Double = 20.0
+/**
+ * Comfortably outside [PIVOTAL_THREAT_DISTANCE_BLOCKS], and inside [THREAT_SIGHT_NEWS_BLOCKS],
+ * past which a hunter in view is not news at all.
+ */
+private const val FAR_OFF_BLOCKS: Double = 14.0
 
 /** A Minecraft day, used only to show that ticks alone restore no allowance. */
 private const val TICKS_IN_A_WORLD_DAY: Long = 24_000L

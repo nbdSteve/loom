@@ -162,6 +162,9 @@ object EventTag {
     /** A hunter out of sight and beyond [THREAT_NEAR_BLOCKS], not worth a flight. */
     const val THREAT_DISTANT_UNSEEN: String = "threatDistantUnseen"
 
+    /** A hunter in sight but beyond [THREAT_SIGHT_NEWS_BLOCKS], not worth a flight. */
+    const val THREAT_DISTANT_SEEN: String = "threatDistantSeen"
+
     /** A witnessed server damage event reached cognition as one `damaged` trigger. */
     const val DAMAGE_SUBMITTED: String = "damageSubmitted"
 
