@@ -29,6 +29,7 @@ const { normalizeEvidence } = require('../lib/evidence.js')
 const { bodyEvents, buildComponents, ensurePaper, findJava21, verifyNoListeners, writeServerFiles } = require('../lib/harness.js')
 const { ProcessSupervisor, RunFailure, delay, waitForCondition, waitForPort } = require('../lib/lifecycle.js')
 const { seedPaperRuntime } = require('../lib/paper-runtime.js')
+const { isCoalesced } = require('../lib/danger.js')
 const { readinessMetrics } = require('../lib/readiness.js')
 
 const REPO = path.resolve(__dirname, '..', '..')
@@ -174,7 +175,7 @@ function faultsOf (records, readiness, windowEnd) {
   for (const entry of counted) byClass[entry.class] = (byClass[entry.class] ?? 0) + 1
   const expected = new Set(['confirmed', 'peerFlight', 'goalIncoherent', 'terrain', 'targetRace', 'superseded', 'concurrent'])
   return {
-    cognitionFailures: body.filter((record) => record.event === 'cognitionUnavailable' && record.outcome !== 'dangerCoalesced' && record.outcome !== 'cognitionCoalesced').length,
+    cognitionFailures: body.filter((record) => record.event === 'cognitionUnavailable' && !isCoalesced(record)).length,
     disputes: body.filter((record) => record.event === 'witnessDisputed').length,
     unexpectedClasses: Object.fromEntries(Object.entries(byClass).filter(([name]) => !expected.has(name))),
     unexpectedRefusals: counted

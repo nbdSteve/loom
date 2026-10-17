@@ -17,6 +17,7 @@ import dev.loom.body.player.ProcessBodySupervisor
 import dev.loom.body.player.SocketBodyControlConnector
 import dev.loom.mind.AppliedDecision
 import dev.loom.mind.AsyncCognitionBridge
+import dev.loom.mind.CallReserve
 import dev.loom.mind.CognitionCallbacks
 import dev.loom.mind.CognitionSettings
 import dev.loom.mind.DecisionJournal
@@ -24,6 +25,7 @@ import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.GoalLedger
 import dev.loom.mind.GoalReviewSchedule
 import dev.loom.mind.PerAgentCognitionBridge
+import dev.loom.mind.ReservingCognitionBridge
 import dev.loom.mind.StepSettlement
 import dev.loom.mind.tcp.TcpCognitionTransport
 import dev.loom.mind.watching
@@ -315,7 +317,7 @@ class LoomPlugin : JavaPlugin() {
         )
         return EmbodiedCognition(
             bodies = bodies,
-            mind = fair,
+            mind = ReservingCognitionBridge(fair, CallReserve.fromEnvironment()),
             mainThread = BukkitMainThread(this),
             journal = DecisionJournal(eventLog, currentTick = { server.currentTick.toLong() }),
             goals = goals,

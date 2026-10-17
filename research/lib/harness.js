@@ -321,8 +321,25 @@ function applyPrimaryBehaviorInitialConditions (paper, config, journal) {
  * states none leaves the JVM's own allowance in place.
  */
 function followUpsEnvironmentOf (config) {
-  const followUps = config.primaryBehavior?.nativeGoalReviewSchedule?.followUpsPerReview
-  return Number.isInteger(followUps) ? { LOOM_GOAL_FOLLOW_UPS_PER_REVIEW: String(followUps) } : {}
+  const schedule = config.primaryBehavior?.nativeGoalReviewSchedule
+  const followUps = schedule?.followUpsPerReview
+  const agents = Array.isArray(config.agents) ? config.agents.length : 0
+  const global = config.cognition?.globalCallCeiling
+  const perAgent = config.cognition?.perAgentCallCeiling
+  // Each agent's share of the run's calls, kept by the JVM for the scheduled reviews still due:
+  // the night's danger spent r20's whole ceiling before its last reviews (`CallReserve`).
+  const share = agents > 0 && Number.isInteger(global) && Number.isInteger(perAgent)
+    ? Math.min(perAgent, Math.floor(global / agents))
+    : undefined
+  return {
+    ...(Number.isInteger(followUps) ? { LOOM_GOAL_FOLLOW_UPS_PER_REVIEW: String(followUps) } : {}),
+    ...(share !== undefined && Number.isInteger(schedule?.expectedReviewsPerAgent)
+      ? {
+          LOOM_COGNITION_CALLS_PER_AGENT: String(share),
+          LOOM_EXPECTED_REVIEWS_PER_AGENT: String(schedule.expectedReviewsPerAgent)
+        }
+      : {})
+  }
 }
 
 function nativeCognitionStartOf (config) {
@@ -1321,6 +1338,7 @@ function paperWarnings (logFile) {
 }
 
 module.exports = {
+  followUpsEnvironmentOf,
   applyPrimaryBehaviorInitialConditions,
   authenticationFailure,
   bodyEvents,

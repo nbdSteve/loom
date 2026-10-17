@@ -6,10 +6,13 @@ const DANGER_COALESCED = 'dangerCoalesced'
 // A perception the JVM coalesced because the agent already had cognition in flight for the
 // same kind of trigger - one review and one event at a time. Also deliberately not asked.
 const COGNITION_COALESCED = 'cognitionCoalesced'
+// A perception the JVM did not send because the agent's remaining calls were kept for its
+// scheduled reviews (`CallReserve`). Also deliberately not asked.
+const CALL_RESERVED = 'callReserved'
 
 function isCoalesced (record) {
   return record.event === 'cognitionUnavailable' &&
-    (record.outcome === DANGER_COALESCED || record.outcome === COGNITION_COALESCED)
+    [DANGER_COALESCED, COGNITION_COALESCED, CALL_RESERVED].includes(record.outcome)
 }
 
 // A perception still waiting for the mind when the plugin shut down after the run ended.
@@ -74,6 +77,7 @@ module.exports = {
   cognitionCoalescingMetrics,
   DANGER_COALESCED,
   dangerEpisodeMetrics,
+  CALL_RESERVED,
   isCoalesced,
   isShutdownEnding,
   unansweredAccountedFor
