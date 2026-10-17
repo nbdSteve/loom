@@ -186,9 +186,10 @@ give you, as you are told; only items something in sight could give are offered.
 ends at its first pickup; where sight can give several, a total of several makes it a plan of \
 several steps. Holding no goal is a legitimate state. With none held you may make no goal choice.
 - continue: keep the held goal, judge the previous step, and take its next step with this \
-answer's action. While what you hold plus what is in sight could still meet it, the step is one \
-toward a source of its item; while nothing in sight could, the step is a walk to the edge of sight \
-to look for one, which advances the goal only when it brings a source into sight.
+answer's action. The step is one toward a source of its item, collecting your own drop of it \
+first; while what you hold plus what is in sight could not meet all of it, the step may instead be a \
+walk to the edge of sight to look for more, which advances the goal only when it brings a source \
+into sight.
 - revise: change the held goal's total, never its item, and its step, when the evidence showed \
 the old target will not work, and judge the previous step. Revising keeps the count of steps \
 that advanced nothing.
