@@ -183,6 +183,55 @@ class EmbodiedCognitionTest {
     }
 
     @Test
+    @DisplayName("no review is claimed while the agent's own flight still holds the body")
+    fun noReviewWhileTheAgentsFlightHoldsTheBody() {
+        // r20 theta body:00001087: a follow-up fired during a pivotal flight and was refused
+        // controlNotReady, with a revise recorded for a step that never ran.
+        val flying = CompletableFuture<IntentOutcome>()
+        val body =
+            object : BodyPort {
+                override fun spawn(agentId: AgentId) = fail("cognition must not spawn bodies")
+
+                override fun despawn(agentId: AgentId) = fail("cognition must not despawn bodies")
+
+                override fun apply(
+                    agentId: AgentId,
+                    intent: Intent,
+                    requestId: String?,
+                ): CompletableFuture<IntentOutcome> = flying
+
+                override fun perceive(
+                    agentId: AgentId,
+                    trigger: Trigger,
+                ): CompletableFuture<Perception?> = CompletableFuture.completedFuture(null)
+
+                override fun senseThreat(agentId: AgentId) = fail("not this test's business")
+
+                override fun tick(tick: Long) = fail("cognition must never drive the tick")
+
+                override fun liveBodies(): Set<AgentId> = fail("cognition does not enumerate bodies")
+            }
+        val decisions = mutableMapOf<String, CompletableFuture<Decision>>()
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p -> CompletableFuture<Decision>().also { decisions[p.requestId] = it } },
+                mainThread = main,
+                journal = journalInto(mutableListOf()),
+            )
+        val zombie = Trigger.ThreatSighted("entity.minecraft.zombie", "e1", 6.0, Bearing.NORTH, true)
+        val sighted = perception(requestId = "danger-1", agentId = agent.value, trigger = zombie)
+        cognition.submit(agent, sighted)
+        main.drain()
+        decisions.getValue("danger-1").complete(decisionFor(sighted, Intent.Flee("e1")))
+        main.drain()
+        assertEquals(false, cognition.canReview(agent), "the flight still holds the body")
+        flying.complete(IntentOutcome.Accepted("safe"))
+        main.drain()
+        assertEquals(true, cognition.canReview(agent))
+    }
+
+    @Test
     @DisplayName("a repeat about the threat an agent is already answering is coalesced, not sent")
     fun aDangerRepeatIsCoalescedIntoTheActiveEpisode() {
         val records = mutableListOf<BodyEventRecord>()

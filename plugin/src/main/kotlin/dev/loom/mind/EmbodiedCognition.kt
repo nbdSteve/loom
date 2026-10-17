@@ -192,7 +192,15 @@ class EmbodiedCognition(
      * waiting for the mind. A schedule asks this before claiming, so an owed review that does
      * not fit is deferred to a later slice rather than refused and lost. Main thread only.
      */
-    fun canReview(agentId: AgentId): Boolean = !shutDown && inFlightFor(agentId, review = true) == 0
+    fun canReview(agentId: AgentId): Boolean =
+        !shutDown && inFlightFor(agentId, review = true) == 0 && agentId !in fleeing
+
+    /**
+     * The agents whose flight the body is still carrying out: a review then could only be refused
+     * as not ready (r20: theta's follow-up fired during a pivotal flight, and both its collects
+     * were refused `controlNotReady`).
+     */
+    private val fleeing = mutableSetOf<AgentId>()
 
     /** How many of [agentId]'s perceptions of one kind - reviews or events - await the mind. */
     private fun inFlightFor(
@@ -306,8 +314,11 @@ class EmbodiedCognition(
         if (goal?.outcome == GoalEvidence.COMPLETED) {
             callbacks.onStepSettled.settled(agentId, journal.tick(), owed = true)
         }
+        val flight = decision.intent is Intent.Flee
+        if (flight) fleeing += agentId
         bodies.apply(agentId, decision.intent, decision.requestId).whenComplete { outcome, failure ->
             mainThread.execute {
+                if (flight) fleeing -= agentId
                 val applied =
                     if (failure != null) {
                         callbacks.onBodyUnavailable(agentId, underlying(failure))
