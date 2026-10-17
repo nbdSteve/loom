@@ -7,8 +7,10 @@
 // package's own Mineflayer, and reads the generated terrain around the origin. At each of ten
 // even bearings it takes the first radius from 12 to 16 whose column's highest collision block
 // that is not leaves is ground rather than a log, with two passable cells above it, and reports
-// that slot with what stands under and in it and how many logs lie within sixteen blocks. The
-// same seed and server build give the same slots, which is what lets a profile pin them.
+// that slot with what stands under and in it, how many logs lie within sixteen and within
+// thirty-two blocks, and the nearest log's distance. A slot whose nearest log lies past dig reach
+// is one where an agent must walk to find wood. The same seed and server build give the same
+// slots, which is what lets a profile pin them.
 //
 // Usage: node research/tools/survey-ring.js --seed 10001 \
 //   --runtime .scratch/paper/runtime-1.21.1-133-<sha> --jar .scratch/paper/paper-1.21.1-133.jar \
@@ -28,7 +30,7 @@ const { Vec3 } = require(path.join(REPO, 'body', 'node_modules', 'vec3'))
 
 const BEARINGS = 10
 const RADII = [12, 13, 14, 15, 16]
-const LOG_RADIUS = 16
+const LOG_RADII = [16, 32]
 const LOG_RISE = 6
 const TOP = 160
 const BOTTOM = 40
@@ -74,23 +76,27 @@ function slotAt (at, bearing) {
   return null
 }
 
-/** How many logs lie within [LOG_RADIUS] blocks of `slot`, and the nearest one's distance. */
+/** How many logs lie within each of [LOG_RADII] blocks of `slot`, and the nearest one's distance. */
 function logsNear (at, slot) {
   const [x, y, z] = slot.position.map(Math.floor)
-  let count = 0
+  const widest = LOG_RADII[LOG_RADII.length - 1]
+  const counts = LOG_RADII.map(() => 0)
   let nearest = Infinity
-  for (let dx = -LOG_RADIUS; dx <= LOG_RADIUS; dx += 1) {
-    for (let dz = -LOG_RADIUS; dz <= LOG_RADIUS; dz += 1) {
+  for (let dx = -widest; dx <= widest; dx += 1) {
+    for (let dz = -widest; dz <= widest; dz += 1) {
       for (let dy = -LOG_RISE; dy <= LOG_RISE; dy += 1) {
         const block = at(x + dx, y + dy, z + dz)
-        if (block !== null && /_log$/.test(block.name)) {
-          count += 1
-          nearest = Math.min(nearest, Math.hypot(dx, dy, dz))
-        }
+        if (block === null || !/_log$/.test(block.name)) continue
+        const apart = Math.hypot(dx, dy, dz)
+        LOG_RADII.forEach((radius, index) => { if (Math.max(Math.abs(dx), Math.abs(dz)) <= radius) counts[index] += 1 })
+        nearest = Math.min(nearest, apart)
       }
     }
   }
-  return { logsWithin16: count, nearestLog: Number.isFinite(nearest) ? Number(nearest.toFixed(1)) : null }
+  return {
+    ...Object.fromEntries(LOG_RADII.map((radius, index) => [`logsWithin${radius}`, counts[index]])),
+    nearestLog: Number.isFinite(nearest) ? Number(nearest.toFixed(1)) : null
+  }
 }
 
 async function main () {

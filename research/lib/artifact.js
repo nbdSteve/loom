@@ -178,12 +178,15 @@ function primaryBehaviorErrors (config) {
     errors.push(`primaryBehavior.scene must be ${profile.scene} for ${behavior.profile}`)
   }
   const clock = behavior.initialWorldClock
+  // A scene may start later in the day so that night, and the danger it brings, falls inside a
+  // bounded run; every scene before `e1-explore-ring` starts at dawn.
+  const startTime = scene?.initialTimeOfDay ?? 0
   if (
-    clock?.timeOfDay !== 0 ||
+    clock?.timeOfDay !== startTime ||
     clock?.day !== 0 ||
     clock?.isDay !== true
   ) {
-    errors.push('primaryBehavior.initialWorldClock must pin day 0 at time 0')
+    errors.push(`primaryBehavior.initialWorldClock must pin day 0 at time ${startTime}`)
   }
   const schedule = behavior.nativeGoalReviewSchedule
   if (

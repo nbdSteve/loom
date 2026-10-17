@@ -40,6 +40,21 @@ const SCENES = Object.freeze({
       [-11.5, 69, 0.5], [-9.5, 72, -7.5], [-3.5, 77, -11.5], [3.5, 79, -11.5], [9.5, 78, -7.5]
     ]),
     coverRule: 'A collision-free, non-fluid cover block (short_grass, a peony) in the feet cell counts as passable; leaves above a slot are passed through to the ground beneath them. Nothing is cleared or placed.'
+  }),
+  // The first seed of the sequence from 20001 whose ring around the origin is flat dry land with
+  // most slots' nearest log beyond what a body senses, surveyed by `tools/survey-ring.js`: one
+  // tree stands west of the ring, 3.6 and 6.1 blocks from two slots, and the woods lie 10.8 to
+  // 25.7 blocks from the rest, so wood must be looked for. Every slot stands on grass_block with
+  // air in its feet cell. The run starts at time 9000, so dusk falls about 3500 ticks in and
+  // night, with the hostile creatures it spawns on open ground, holds for the rest of the run.
+  'e1-explore-ring': Object.freeze({
+    seed: '20011',
+    positions: Object.freeze([
+      [12.5, 67, 0.5], [9.5, 67, 7.5], [3.5, 67, 11.5], [-4.5, 66, 12.5], [-9.5, 66, 7.5],
+      [-11.5, 66, 0.5], [-9.5, 66, -7.5], [-3.5, 67, -11.5], [3.5, 68, -11.5], [9.5, 69, -7.5]
+    ]),
+    initialTimeOfDay: 9000,
+    coverRule: null
   })
 })
 
@@ -204,6 +219,33 @@ PROFILES['wooded-goal-10m-10'] = Object.freeze({
     originalTargetCompletions: 3,
     distinctGoalItems: 2,
     craftSteps: 1
+  })
+})
+// The v28 profile moves the scene to the plains a walk from the woods, starting in the
+// afternoon, and pre-registers the generation-11 bars before the run (the r19 audit). Goal
+// activity counts no revise that restates its total, and held time only while the goal advanced
+// within the last 2400 ticks; multi-step agents and completions count only goals that sight did
+// not guarantee one dig at a time, or that a later goal built on; two goals must be chained to an
+// earlier goal whose item their recipe uses and advance; one craft must step a chained goal;
+// three agents must walk to the edge of sight; and one perception must answer a threat sighted or
+// damage taken. The shares and the idle bar are r18's.
+PROFILES['explored-goal-10m-10'] = Object.freeze({
+  ...PROFILES['shakedown-10m-10'],
+  scene: 'e1-explore-ring',
+  expectedReviewsPerAgent: 5,
+  coherenceBars: Object.freeze({
+    goalActiveReviewShare: 0.6,
+    minAgentGoalActiveReviewShare: 0.4,
+    progressingHeldTimeShare: 0.5,
+    minAgentProgressingHeldTimeShare: 0.25,
+    maxIdleBesideExploration: 0,
+    substantiveMultiStepAgents: 3,
+    substantiveCompletions: 3,
+    chainedGoals: 2,
+    distinctGoalItems: 3,
+    craftChainSteps: 1,
+    exploringAgents: 3,
+    dangerEncounters: 1
   })
 })
 Object.freeze(PROFILES)

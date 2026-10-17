@@ -148,20 +148,20 @@ test('every feature flag must be true because no runtime route reads one', () =>
   }
 })
 
-test('the routine-v27 pilot preflights under the v12 treatment plus v27 prompts and category fairness', () => {
+test('the routine-v28 pilot preflights under the v12 treatment plus v28 prompts and category fairness', () => {
   const config = openAiGoalContinuityConfig()
   assert.deepEqual(validateRunConfig(config), [])
   assert.deepEqual(validateRunConfig(goalContinuityConfig()), [])
   const manifest = validateProspectiveManifest(config, SOURCE)
-  assert.equal(manifest.protocol.mode, 'routine-v27-wooded-goal')
+  assert.equal(manifest.protocol.mode, 'routine-v28-explored-goal')
   assert.equal(manifest.protocol.categoryFairSelection, true)
   assert.equal(manifest.protocol.controlledBodyCrashPlanned, false)
   assert.deepEqual(manifest.provenance.prompts, {
-    routine: 'routine-v27',
-    notable: 'notable-v27',
-    pivotal: 'pivotal-v27'
+    routine: 'routine-v28',
+    notable: 'notable-v28',
+    pivotal: 'pivotal-v28'
   })
-  // The v27 pilot is the v13 pilot with only its mode, prompts, identity, the follow-up reviews a
+  // The v28 pilot is the v13 pilot with only its mode, prompts, identity, the follow-up reviews a
   // settled goal step owes, and the global and spend ceilings that hold them moved.
   for (const suffix of ['', '-scripted']) {
     const read = (version) => {
@@ -173,7 +173,7 @@ test('the routine-v27 pilot preflights under the v12 treatment plus v27 prompts 
       delete pinned.cognition.maxExternalSpendUsd
       return pinned
     }
-    assert.deepEqual(read('v27'), read('v13'))
+    assert.deepEqual(read('v28'), read('v13'))
   }
   assert.deepEqual(manifest.provenance.models, { ordinary: 'gpt-5.4-nano', pivotal: 'gpt-5.4' })
   // 18 calls at the worst-case price, from v26's two owed follow-ups per review.
@@ -208,7 +208,7 @@ test('each native-scheduler pilot refuses the other pilot prompts or fairness at
 
   const v13OldPrompts = goalContinuityConfig()
   v13OldPrompts.cognition.prompts = { routine: 'routine-v13', notable: 'notable-v13', pivotal: 'pivotal-v13' }
-  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v27')))
+  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v28')))
   const v13 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v13-agency-pilot-scripted.json'))
   assert.ok(validateRunConfig(v13).some((error) => error.includes('mode routine-v13-goal-continuity is historical')))
 
@@ -236,7 +236,7 @@ test('each native-scheduler pilot refuses the other pilot prompts or fairness at
   assert.notDeepEqual(validateRunConfig(model), [])
 })
 
-test('the scripted v27 publication carries adoption then continuity without claiming agency', () => {
+test('the scripted v28 publication carries adoption then continuity without claiming agency', () => {
   const config = goalContinuityConfig()
   const raw = primaryBehaviorRawRecords(config)
   // r14 beta body:00000150 saw delta 1.9 blocks off while no self-position pairing found them.
@@ -249,7 +249,7 @@ test('the scripted v27 publication carries adoption then continuity without clai
   assert.deepEqual(validation.errors, [])
   assert.equal(published.metrics.spatial.playerSightings, 1)
   assert.ok(published.metrics.findings.observations.includes('1 perception(s) showed another player within eight blocks'))
-  assert.equal(published.manifest.protocol.mode, 'routine-v27-wooded-goal')
+  assert.equal(published.manifest.protocol.mode, 'routine-v28-explored-goal')
   assert.equal(published.manifest.protocol.categoryFairSelection, true)
   assert.equal(published.manifest.perceptionAudit.byKind.entities.jvmCutOmittedCount, 0)
   assert.equal(published.metrics.goalContinuity.byOutcome.goalAdopted, 3)
@@ -259,11 +259,11 @@ test('the scripted v27 publication carries adoption then continuity without clai
     ['tribe-alpha', 'tribe-beta', 'tribe-gamma']
   )
   const readme = fs.readFileSync(path.join(published.artifactDirectory, 'README.md'), 'utf8')
-  assert.match(readme, /routine-v27 pilot/)
+  assert.match(readme, /routine-v28 pilot/)
   assert.match(readme, /It is not a model-behavior result/)
   // The current gate generation states readiness and lists every action that did not succeed.
   const readiness = published.metrics.behaviorGate.readiness
-  assert.equal(readiness.version, 'loom-readiness-gate/8')
+  assert.equal(readiness.version, 'loom-readiness-gate/9')
   assert.match(readme, new RegExp(`Readiness: \\*\\*${readiness.verdict}\\*\\*`))
   // Coherence is part of that verdict and stated beside the mechanical one.
   assert.match(readme, new RegExp(`Goal coherence: \\*\\*${readiness.goalCoherence.verdict}\\*\\*, part of the verdict`))
@@ -682,6 +682,29 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   })
   assert.equal(SCENES['f1-forest-ring'].seed, '10001')
   assert.equal(SCENES['f1-forest-ring'].positions.length, 10)
+  // The v28 profile moves the scene to the plains a walk from the woods, starting in the
+  // afternoon, and pre-registers the generation-11 bars (the r19 audit).
+  const { coherenceBars: exploredBars, ...explored } = PROFILES['explored-goal-10m-10']
+  assert.deepEqual(explored, { ...shakedown, scene: 'e1-explore-ring', expectedReviewsPerAgent: 5 })
+  assert.ok(Object.isFrozen(exploredBars))
+  assert.deepEqual({ ...exploredBars }, {
+    goalActiveReviewShare: 0.6,
+    minAgentGoalActiveReviewShare: 0.4,
+    progressingHeldTimeShare: 0.5,
+    minAgentProgressingHeldTimeShare: 0.25,
+    maxIdleBesideExploration: 0,
+    substantiveMultiStepAgents: 3,
+    substantiveCompletions: 3,
+    chainedGoals: 2,
+    distinctGoalItems: 3,
+    craftChainSteps: 1,
+    exploringAgents: 3,
+    dangerEncounters: 1
+  })
+  assert.equal(SCENES['e1-explore-ring'].seed, '20011')
+  assert.equal(SCENES['e1-explore-ring'].positions.length, 10)
+  assert.equal(SCENES['e1-explore-ring'].initialTimeOfDay, 9000)
+  assert.equal(SCENES['f1-forest-ring'].initialTimeOfDay, undefined)
   const { coherenceBars, ...pursued } = PROFILES['pursued-goal-10m-10']
   assert.deepEqual(pursued, { ...shakedown, expectedReviewsPerAgent: 5 })
   assert.ok(Object.isFrozen(coherenceBars))
@@ -692,15 +715,18 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
     originalTargetCompletions: 3
   })
   for (const file of ['tribe-shakedown-10m-10.json', 'tribe-shakedown-10m-10-scripted.json']) {
-    for (const earlier of ['grounded-walk', 'grounded-walk-v15', 'working-goal', 'offered-refs', 'actionable-refs', 'typed-goal', 'grounded-step', 'obtainable-goal', 'own-evidence', 'answered-goal', 'collected-goal', 'pursued-goal'].map((name) => file.replace('shakedown', name)).concat(file)) {
+    for (const earlier of ['grounded-walk', 'grounded-walk-v15', 'working-goal', 'offered-refs', 'actionable-refs', 'typed-goal', 'grounded-step', 'obtainable-goal', 'own-evidence', 'answered-goal', 'collected-goal', 'pursued-goal', 'wooded-goal'].map((name) => file.replace('shakedown', name)).concat(file)) {
       assert.ok(validateRunConfig(read(earlier)).some((error) => error.includes('historical')), earlier)
     }
     const v13 = read(file)
-    const v27 = read(file.replace('shakedown', 'wooded-goal'))
-    // The forest scene moves the seed and every slot; nothing else about the world does.
-    assert.equal(v27.world.seed, SCENES['f1-forest-ring'].seed)
-    assert.equal(v27.primaryBehavior.scene, 'f1-forest-ring')
-    for (const config of [v13, v27]) {
+    const v28 = read(file.replace('shakedown', 'explored-goal'))
+    // The plains scene moves the seed, every slot and the start time; nothing else about the
+    // world does.
+    assert.equal(v28.world.seed, SCENES['e1-explore-ring'].seed)
+    assert.equal(v28.primaryBehavior.scene, 'e1-explore-ring')
+    assert.equal(v28.primaryBehavior.initialWorldClock.timeOfDay, 9000)
+    v28.primaryBehavior.initialWorldClock.timeOfDay = 0
+    for (const config of [v13, v28]) {
       for (const key of ['experimentId', 'title', 'mode']) delete config[key]
       delete config.cognition.prompts
       delete config.primaryBehavior.profile
@@ -710,23 +736,23 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
       delete config.primaryBehavior.initialPositions
     }
     // From v24 the plan names the five scheduled reviews a run can finish.
-    assert.equal(v27.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent, 5)
-    v27.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 6
-    assert.deepEqual(v27, v13, file)
+    assert.equal(v28.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent, 5)
+    v28.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 6
+    assert.deepEqual(v28, v13, file)
   }
-  const live = read('tribe-wooded-goal-10m-10.json')
-  const scripted = read('tribe-wooded-goal-10m-10-scripted.json')
+  const live = read('tribe-explored-goal-10m-10.json')
+  const scripted = read('tribe-explored-goal-10m-10-scripted.json')
   const base = read('tribe-two-cycle-10.json')
   assert.match(live.experimentId, /^2026-10-16-openai-10-agent-10m-r[0-9]+$/)
-  assert.equal(live.mode, 'routine-v27-wooded-goal')
+  assert.equal(live.mode, 'routine-v28-explored-goal')
   for (const config of [live, scripted]) {
     assert.deepEqual(validateRunConfig(config), [], config.experimentId)
-    assert.equal(config.primaryBehavior.profile, 'wooded-goal-10m-10')
+    assert.equal(config.primaryBehavior.profile, 'explored-goal-10m-10')
     assert.deepEqual(config.agents, [...AGENT_ORDER])
-    assert.equal(config.primaryBehavior.scene, 'f1-forest-ring')
-    assert.equal(config.world.seed, SCENES['f1-forest-ring'].seed)
-    assert.deepEqual(config.primaryBehavior.initialPositions, placementOf(wooded).positions)
-    assert.deepEqual(config.primaryBehavior.initialWorldClock, { timeOfDay: 0, day: 0, isDay: true })
+    assert.equal(config.primaryBehavior.scene, 'e1-explore-ring')
+    assert.equal(config.world.seed, SCENES['e1-explore-ring'].seed)
+    assert.deepEqual(config.primaryBehavior.initialPositions, placementOf(explored).positions)
+    assert.deepEqual(config.primaryBehavior.initialWorldClock, { timeOfDay: 9000, day: 0, isDay: true })
     assert.equal(config.primaryBehavior.startingInventories, 'empty')
     assert.equal(config.primaryBehavior.externalCognitionStimuli, 'none')
     assert.equal(config.proof, undefined)
@@ -752,6 +778,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
     copy.world.seed = null
     copy.primaryBehavior.scene = null
     copy.primaryBehavior.initialPositions = null
+    copy.primaryBehavior.initialWorldClock.timeOfDay = 0
     return copy
   }
   assert.deepEqual(pinned(live), pinned(base))
@@ -760,7 +787,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   assert.equal(live.cognition.backend, 'openai')
   assert.equal(scripted.cognition.backend, 'scripted')
   const manifest = validateProspectiveManifest(live, SOURCE)
-  assert.equal(manifest.protocol.profile, 'wooded-goal-10m-10')
+  assert.equal(manifest.protocol.profile, 'explored-goal-10m-10')
   assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 29.184)
 
   const drifts = [
@@ -798,7 +825,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
     (config) => { config.mode = 'routine-v13-goal-continuity' }
   ]
   for (const drift of drifts) {
-    const config = read('tribe-wooded-goal-10m-10.json')
+    const config = read('tribe-explored-goal-10m-10.json')
     drift(config)
     assert.notDeepEqual(validateRunConfig(config), [], drift.toString())
   }

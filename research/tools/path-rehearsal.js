@@ -7,11 +7,14 @@
 // laid out by console commands (`tools/path-rehearsal.json`), with the cognition service answering
 // as the path exerciser (`LOOM_COGNITION_BACKEND=scripted-paths`, `cognition/src/exerciser.rs`).
 // Each agent walks one path; the server witnesses what each body did, and the run's own evidence,
-// normalized and judged by readiness gate generation 10, must show every path as the exerciser
+// normalized and judged by readiness gate generation 11, must show every path as the exerciser
 // drove it: a craft of two applications and a goal completed and the next adopted in one answer,
-// an own drop ignored and refused, an own drop still told lying past 4800 ticks, a flight from a
-// peer classed as one, a collect without moving that vanilla's own pickup ends, a
-// walk to the edge of sight credited as revealing a source, and a revise to another item refused.
+// each chained to the goal whose item its recipe is made from, an own drop ignored and refused,
+// an own drop still told lying past 4800 ticks, a flight from a peer classed as one, a collect
+// without moving that vanilla's own pickup ends, a walk to the edge of sight credited as
+// revealing a source, a revise to another item refused, a revise to the held total refused, a
+// plain completion beside a source refused, a plain completion with none accepted and followed by
+// the review it owed, and a block beside the support under an overhang reported unsafe to dig.
 //
 // It is not a research run: its world is built for the paths, its mind is scripted, and nothing
 // is published. It writes under `.scratch/path-rehearsal/` and prints one report.
@@ -30,7 +33,7 @@ const { readinessMetrics } = require('../lib/readiness.js')
 
 const REPO = path.resolve(__dirname, '..', '..')
 const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'path-rehearsal.json'), 'utf8'))
-const GENERATION = 10
+const GENERATION = 11
 const RETENTION_TICKS = 4800
 const POLL_MS = 500
 
@@ -115,8 +118,24 @@ function pathsOf (records, readiness) {
       record.tick - dugAt >= RETENTION_TICKS &&
       (record.perception?.selfState?.ownDrops ?? []).some((drop) =>
         drop.requestId === firstDig.requestId && drop.fate === 'lying'))
+  // theta's plain completion owes a review: a perception it settles into, triggered stepSettled.
+  const completed = of('tribe-theta', 'decided').find((record) => record.goal?.outcome === 'goalCompleted')
+  const owed = completed === undefined
+    ? undefined
+    : of('tribe-theta', 'perceived').find((record) =>
+      record.tick > completed.tick && (record.trigger ?? record.perception?.trigger?.event) === 'stepSettled')
+  // eta's block east of its support, one below its feet, has stone two above it: unsafe to dig.
+  const pocket = of('tribe-eta', 'perceived').find((record) =>
+    (record.perception?.surroundings ?? []).some((seen) =>
+      seen.kind === 'block' && seen.direction === 'east' && seen.verticalOffset === -0.5 &&
+      seen.distance < 1.6 && seen.digSafe === false))
   return {
     craftOfTwoApplicationsConfirmed: evidence(crafted),
+    chainedToTheGoalItsRecipeUses: evidence(of('tribe-alpha', 'decided').find((record) => record.goal?.chainedFrom !== undefined)),
+    reviseToTheHeldTotalRefused: evidence(applied('tribe-eta', 'goalReviseUnchanged')),
+    completionBesideASourceRefused: evidence(applied('tribe-eta', 'goalCompletedWithoutNext')),
+    plainCompletionOwedItsReview: evidence(owed),
+    pocketUnderAnOverhangUnsafe: evidence(pocket),
     completedAndAdopted: evidence(completedAdopted),
     ownDropIgnoredRefused: evidence(applied('tribe-beta', 'goalOwnDropIgnored')),
     ownDropToldLyingPastRetention: evidence(retained),
@@ -145,7 +164,9 @@ function faultsOf (records, readiness, windowEnd) {
     unexpectedRefusals: counted
       .filter((entry) => entry.class === 'goalIncoherent')
       .map((entry) => entry.evidence?.outcome)
-      .filter((outcome) => !['goalOwnDropIgnored', 'goalReviseItemChanged'].includes(outcome))
+      .filter((outcome) => ![
+        'goalOwnDropIgnored', 'goalReviseItemChanged', 'goalReviseUnchanged', 'goalCompletedWithoutNext'
+      ].includes(outcome))
   }
 }
 

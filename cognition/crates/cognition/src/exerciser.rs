@@ -14,12 +14,18 @@
 //! - `beta` digs a log, walks away from its lying drop once (refused as an ignored own drop), and
 //!   then leaves the drop lying, so a perception past retention still tells it;
 //! - `gamma` flees the nearest other player in sight;
-//! - `delta` collects, without moving, an item lying at its feet that vanilla delays picking up;
+//! - `delta` collects, without moving, an item lying at its feet that vanilla delays picking up,
+//!   and `theta` does the same where nothing else in sight gives anything, so its met goal is
+//!   completed plainly and owes a review;
 //! - `epsilon` digs the one log in reach, and once the other log it counted on is gone walks east
 //!   to the edge of sight to look for another, then revises its log goal to planks once (refused)
 //!   before finishing it;
 //! - `zeta` speaks at every goal review, so an agent nearby perceives at a time no review of its
-//!   own reaches.
+//!   own reaches;
+//! - `eta` digs dirt for a two-dirt goal beside a pocket under an overhang that its perception
+//!   must report unsafe to dig, revises the goal to the total it already has once (refused), and
+//!   once the goal is met completes it plainly beside the dirt still in sight once (refused)
+//!   before replacing it.
 //!
 //! Any other agent is answered by [`ScriptedBackend`].
 
@@ -38,6 +44,7 @@ use crate::router::ModelRoute;
 pub const EXERCISER_MODEL_ID: &str = "scripted-path-exerciser";
 
 const LOG: &str = "item.minecraft.oak_log";
+const DIRT: &str = "item.minecraft.dirt";
 const PLANKS: &str = "item.minecraft.oak_planks";
 const STICK: &str = "item.minecraft.stick";
 const PLAYER: &str = "entity.minecraft.player";
@@ -103,8 +110,9 @@ impl PathExerciser {
             "alpha" => crafter(perception),
             "beta" => dropper(perception),
             "gamma" => fleer(perception),
-            "delta" => collector(perception),
+            "delta" | "theta" => collector(perception),
             "epsilon" => explorer(perception),
+            "eta" => restater(perception),
             "zeta" => answer(
                 Intent::Say {
                     text: "hello from zeta".to_owned(),
@@ -438,6 +446,58 @@ fn explorer(perception: &Perception) -> Draft {
     })
 }
 
+/// Whether the review was told its last answer was refused as `outcome`.
+fn refused_as(perception: &Perception, outcome: &str) -> bool {
+    perception
+        .last_refusal
+        .as_ref()
+        .is_some_and(|refusal| refusal.outcome == outcome)
+}
+
+/// eta: a two-dirt goal, one revise to the same total (refused), and once met one plain
+/// completion beside the dirt in sight (refused) before the replace it owed.
+fn restater(perception: &Perception) -> Draft {
+    let Some(goal) = &perception.goal else {
+        return dig_of(perception, DIRT).map_or_else(
+            || answer(Intent::Idle, None, IDLE_ROLE),
+            |block| {
+                answer(
+                    Intent::Dig { block },
+                    Some(target(GoalDisposition::Adopt, DIRT, 2)),
+                    "dig dirt for a two-dirt goal",
+                )
+            },
+        );
+    };
+    let item = goal.success_item.as_deref().unwrap_or(DIRT);
+    if met(perception) {
+        if refused_as(perception, "goalCompletedWithoutNext") {
+            return finish(perception);
+        }
+        return answer(
+            Intent::Idle,
+            Some(judged(GoalDisposition::Complete)),
+            "complete the met goal beside dirt still in sight, which the body must refuse",
+        );
+    }
+    let Some(step) = pursue(perception, item) else {
+        return answer(
+            Intent::Idle,
+            Some(judged(GoalDisposition::Abandon)),
+            "nothing gives it",
+        );
+    };
+    let unrevised = goal.revision == 0 && perception.last_refusal.is_none();
+    match goal.success_count {
+        Some(total) if unrevised => answer(
+            step.intent,
+            Some(target(GoalDisposition::Revise, item, total)),
+            "revise the goal to the total it already has, which the body must refuse",
+        ),
+        _ => step,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -706,6 +766,53 @@ mod tests {
             Intent::Dig {
                 block: "b9".to_owned()
             }
+        );
+    }
+
+    #[test]
+    fn eta_restates_its_total_once_and_completes_beside_dirt_once_before_replacing() {
+        let grass = || Observation {
+            what: "block.minecraft.grass_block".to_owned(),
+            yields: Some(vec![BlockYield {
+                what: super::DIRT.to_owned(),
+                least: 1,
+                most: 1,
+                per_hundred: 100,
+            }]),
+            standable: Some(true),
+            ..log("g1")
+        };
+        let mut first = review("eta");
+        first.surroundings = vec![grass()];
+        let adopted = draft(&first);
+        assert_eq!(
+            adopted.intent,
+            Intent::Dig {
+                block: "g1".to_owned()
+            }
+        );
+        let adopt = adopted.goal.unwrap();
+        assert_eq!(adopt.disposition, GoalDisposition::Adopt);
+        assert_eq!(adopt.success_count, Some(2));
+        let mut second = first.clone();
+        holding(&mut second, super::DIRT, 0, 2, StepEvidence::None);
+        let restated = draft(&second).goal.unwrap();
+        assert_eq!(restated.disposition, GoalDisposition::Revise);
+        assert_eq!(restated.success_count, Some(2));
+        second.last_refusal = Some(refusal("goalReviseUnchanged"));
+        assert_eq!(
+            draft(&second).goal.unwrap().disposition,
+            GoalDisposition::Continue
+        );
+        let mut met = first.clone();
+        holding(&mut met, super::DIRT, 2, 2, StepEvidence::Gained);
+        let plain = draft(&met);
+        assert_eq!(plain.intent, Intent::Idle);
+        assert_eq!(plain.goal.unwrap().disposition, GoalDisposition::Complete);
+        met.last_refusal = Some(refusal("goalCompletedWithoutNext"));
+        assert_eq!(
+            draft(&met).goal.unwrap().disposition,
+            GoalDisposition::Replace
         );
     }
 

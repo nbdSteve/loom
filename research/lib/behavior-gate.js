@@ -24,7 +24,12 @@ const { readinessMetrics } = require('./readiness.js')
 // profile's pre-registered positive bars.
 // Generation 10 judges a flight by its threat rather than its gain, refuses a revise that changes
 // the goal's item, and measures pursuit per agent, over time, by item kind and by craft.
-const GATE_GENERATION = 10
+// Generation 11 refuses a revise that restates its total and a plain completion beside a next
+// goal's source, classes a noRoute to an agent's own fresh drop as a blocker rather than terrain,
+// and measures substantive pursuit: progressing held time, goals sight did not guarantee or a
+// later goal built on, chained goals, exploration walks and danger met, with the counters the
+// schema guarantees reported apart from behavioral evidence.
+const GATE_GENERATION = 11
 // The goal outcomes of a decision whose action was a step of a goal it held or took up.
 const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised', 'goalReplaced', 'goalCompletedAdopted'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`

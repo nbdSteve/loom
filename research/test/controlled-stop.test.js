@@ -719,7 +719,7 @@ test('from gate generation 6 only an action that steps a goal is meaningful beha
   assert.ok(decided.goal !== undefined, 'the fixture review adopts a goal')
   delete decided.goal
   const gate = publish({ raw: ungrounded, stopReason: 'durationElapsed' }).metrics.behaviorGate
-  assert.equal(gate.version, 'loom-primary-behavior-gate/10')
+  assert.equal(gate.version, 'loom-primary-behavior-gate/11')
   // The action is still a confirmed review action, but no step of any goal.
   assert.equal(gate.goalReviewActions.confirmed, 2)
   assert.deepEqual(gate.meaningfulBehaviorByAgent, { 'tribe-beta': 1 })
