@@ -32,7 +32,8 @@ const MODES = new Set([
   'routine-v17-working-goal',
   'routine-v18-offered-refs',
   'routine-v19-actionable-refs',
-  'routine-v20-typed-goal'
+  'routine-v20-typed-goal',
+  'routine-v21-grounded-step'
 ])
 const MAX_INPUT_LINE_BYTES = 256 * 1024
 const BODY_EVENTS = new Set([

@@ -350,6 +350,28 @@ class R11GoalAuditReplayTest {
         assertNull(ledger.present(AgentId("theta"), "theta-end", 99, GoalObservation(none, cells.last())))
     }
 
+    @Test
+    fun `r12 theta, standing in the bush its step named, may dig it but not walk elsewhere under that step`() {
+        val at = listOf(-3.5, 108.0, -10.5)
+        // body:00000062 of r12: the step names the bush b1mo underfoot; the intent walks to b1mq.
+        val (_, refused) =
+            review(
+                "theta-62",
+                at,
+                emptyMap(),
+                misstep(GoalDisposition.ADOPT, Intent.MoveTo("b1mo")),
+                Intent.MoveTo("b1mq"),
+            )
+        assertEquals(GoalEvidence.STEP_MISMATCH, refused?.outcome)
+        // The coherent decision the v21 perception points it at: dig the bush where it stands.
+        val (_, adopted) = review("theta-63", at, emptyMap(), adopt(Intent.Dig("b1mo")), Intent.Dig("b1mo"))
+        assertEquals(GoalEvidence.ADOPTED, adopted?.outcome)
+        val (dug, _) =
+            review("theta-64", at, mapOf(STICK to 1L), goalChoice(GoalDisposition.COMPLETE), Intent.Idle)
+        assertEquals(true, dug?.progress?.stepAdvanced)
+        assertEquals(true, dug?.progress?.conditionMet)
+    }
+
     private companion object {
         const val STICK = "item.minecraft.stick"
     }

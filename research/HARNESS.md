@@ -6,12 +6,12 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v20 typed-goal pilot,
-`research/config/first-tribe-routine-v20-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v20-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v21 grounded-step pilot,
+`research/config/first-tribe-routine-v21-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v21-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
-native event drivers. It uses the v20 prompts, which show each agent its own
+native event drivers. It uses the v21 prompts, which show each agent its own
 carried goal and let the model return an optional typed goal choice, and it
 attests `categoryFairSelection: true` because the 48-per-kind selector it runs on
 is category-fair. Since v14 a `moveTo` names an observed block by ref rather than
@@ -44,7 +44,12 @@ v20 keeps v19 and types the working goal: the success condition is an item and c
 measures, the step is the intent's own action and ref, a step that disagrees with its intent or a
 met condition left neither completed nor revised is refused before the body acts, and only
 evidence that advances the condition or carries out the step resets the stall count, because the
-independent r11 audit found the run's goal progress was movement and three met conditions unseen. `research/lib/experiment-mode.js` owns the pins. In the
+independent r11 audit found the run's goal progress was movement and three met conditions unseen.
+v21 keeps v20 and grounds each step in the perception: what the agent stands in is named as a dig
+rather than a walk, the absence of any dropped item is stated, a refused decision is explained at
+the next review, and a several-item goal is suggested where several are offered, because r12's
+fourteen step mismatches were walks away from a bush the agent stood in and collects of drops that
+did not exist. `research/lib/experiment-mode.js` owns the pins. In the
 scripted twin the stand-in adopts one fixed placeholder goal at each agent's
 first review and continues it at the second; that exercises the goal round
 trip and is not evidence of agency.
@@ -70,8 +75,9 @@ and are historical, as are the v14 `research/config/tribe-grounded-walk-10m-10*.
 that ran `-r5` and the v15 `research/config/tribe-grounded-walk-v15-10m-10*.json` that
 ran `-r6` and the v17 `research/config/tribe-working-goal-10m-10*.json` that ran `-r8` and
 `-r9`, the v18 `research/config/tribe-offered-refs-10m-10*.json` that ran `-r10`, and the v19
-`research/config/tribe-actionable-refs-10m-10*.json` that ran `-r11`; `typed-goal-10m-10` is the
-same profile under the v20 mode, configured by `research/config/tribe-typed-goal-10m-10*.json`.
+`research/config/tribe-actionable-refs-10m-10*.json` that ran `-r11`, and the v20
+`research/config/tribe-typed-goal-10m-10*.json` that ran `-r12`; `grounded-step-10m-10` is the
+same profile under the v21 mode, configured by `research/config/tribe-grounded-step-10m-10*.json`.
 The live one
 carries the next fresh `2026-10-16-openai-10-agent-10m-r<n>` id. Each id is consumed
 by its one attempt and its published artifact names the commit it ran from.
@@ -87,7 +93,8 @@ primary-behavior mode), and the `first-tribe-routine-v13-agency-pilot*.json` and
 routine-v14 and routine-v15 grounded-walk modes), and the `tribe-working-goal-10m-10*.json`
 files (the routine-v17 working-goal mode), and the `tribe-offered-refs-10m-10*.json` files (the
 routine-v18 offered-refs mode), and the `tribe-actionable-refs-10m-10*.json` files (the
-routine-v19 actionable-refs mode). They pin prompts the current mind no longer serves, so
+routine-v19 actionable-refs mode), and the `tribe-typed-goal-10m-10*.json` files (the routine-v20
+typed-goal mode). They pin prompts the current mind no longer serves, so
 preflight refuses them before anything is built, started or read; the artifacts
 committed under them still validate. `contract/fixtures/capability-support.json`
 is the one classification of which configurations, modes, intents, triggers and
@@ -106,7 +113,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v20-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v21-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -125,8 +132,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v20-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v20-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v21-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v21-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -444,7 +451,7 @@ An empty value or lookup failure stops before cognition starts. An HTTP 401 or
 403 from the provider stops the whole run after that refusal, with no retry and
 only a stable provider-safe error.
 
-The routine-v20 pilot routes routine and notable decisions to
+The routine-v21 pilot routes routine and notable decisions to
 `gpt-5.4-nano` and only the existing pivotal tier to `gpt-5.4`. It runs three
 agents for at most 180 wall-clock seconds or 4,000 server ticks, whichever
 comes first, and permits at most six calls per agent, twelve calls globally,

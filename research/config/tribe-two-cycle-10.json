@@ -1,7 +1,7 @@
 {
   "experimentId": "2026-10-15-openai-two-cycle-10-agent-proposal",
   "title": "10-agent two-cycle confirmation proposal",
-  "mode": "routine-v20-typed-goal",
+  "mode": "routine-v21-grounded-step",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -60,9 +60,9 @@
       "pivotal": "gpt-5.4"
     },
     "prompts": {
-      "routine": "routine-v20",
-      "notable": "notable-v20",
-      "pivotal": "pivotal-v20"
+      "routine": "routine-v21",
+      "notable": "notable-v21",
+      "pivotal": "pivotal-v21"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,

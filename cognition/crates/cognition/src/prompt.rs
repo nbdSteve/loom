@@ -36,13 +36,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v20";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v21";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v20";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v21";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v20";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v21";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -178,8 +178,9 @@ chose and whether your body carried it out, and how many steps in a row advanced
 nothing. Judge it against that evidence, not against a wish to look busy:
 - adopt: take up a new goal when you hold none and the evidence gives you one \
 worth having. Word the goal and its success condition, name the item and count \
-that achieve it, and name the one step this answer's action takes. Holding no goal \
-is a legitimate state.
+that achieve it, and name the one step this answer's action takes. A one-item goal \
+ends at its first pickup; where several are offered, a count of several makes it a \
+plan. Holding no goal is a legitimate state.
 - continue: keep the held goal, judge the previous step, and name the next step \
 this answer's action takes.
 - revise: change the goal, its success target and its step when the evidence \
@@ -190,7 +191,8 @@ the count of steps that advanced nothing.
 A step is typed: it names the action your answer's intent takes and the ref that \
 intent acts on (null for an action that names none), and both must be your \
 intent's own. A step that says one thing while your intent does another is refused \
-with your action. Only evidence advances a goal: the held count of its item rising, \
+with your action. There is something to collect only when a dropped item is \
+listed; breaking a plant may drop nothing. Only evidence advances a goal: the held count of its item rising, \
 or the step you named being carried out - and a walk counts only when it arrives \
 somewhere the goal has not already been. Moving about, falling or walking back is \
 not progress, and rewording the goal is not progress either. After three steps in a \
@@ -257,6 +259,8 @@ fn situation_of(perception: &Perception) -> String {
         &perception.surroundings,
         perception.surroundings_omitted,
     ));
+    lines.extend(own_spot_line(&perception.surroundings));
+    lines.extend(no_dropped_item_line(&perception.surroundings));
     if matches!(perception.trigger, Trigger::GoalReview) {
         lines.push(goal_line(perception.goal.as_ref()));
     }
@@ -328,12 +332,23 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
     };
     let step = goal.last_step.as_ref().map_or_else(
         || "no step under it has been answered yet".to_owned(),
-        |step| {
-            format!(
+        |step| match step.outcome.as_str() {
+            "goalStepMismatch" => format!(
+                "your last decision ({action}) was refused before your body acted, because the \
+                 step it named was a different action or ref from the action it took",
+                action = field(&step.action)
+            ),
+            "goalConditionMetIgnored" => "your last decision was refused before your body acted, \
+                 because it neither completed nor revised a goal whose condition was met"
+                .to_owned(),
+            "goalCompletionUnmet" => "your last decision was refused before your body acted, \
+                 because it completed a goal your inventory did not show met"
+                .to_owned(),
+            outcome => format!(
                 "your last step under it was {action} and your body reported {outcome}",
                 action = field(&step.action),
-                outcome = field(&step.outcome)
-            )
+                outcome = field(outcome)
+            ),
         },
     );
     let mut parts = vec![format!(
@@ -569,6 +584,52 @@ fn surroundings_line(surroundings: &[Observation], omitted_by_the_body: i64) -> 
         "You can see: {shown}{more}",
         more = omitted(hidden, "more thing", "more things")
     )
+}
+
+/// The cells a standing body occupies: its feet and its head.
+const OWN_SPOT_CELLS: usize = 2;
+
+/// What stands in the agent's own spot, stated on its own line because a mind that missed it
+/// walked to a neighbour while its step named the plant it already stood in (r12: theta, epsilon,
+/// beta and iota, seven decisions refused as goalStepMismatch).
+fn own_spot_line(surroundings: &[Observation]) -> Option<String> {
+    let standing_in: Vec<String> = surroundings
+        .iter()
+        .take(MAX_OBSERVATIONS)
+        .filter(|seen| {
+            seen.kind == ObservationKind::Block
+                && seen.direction == Bearing::Here
+                && seen.vertical_offset >= 0.0
+        })
+        // A body's own spot is its feet and head cells, so at most two things share it.
+        .take(OWN_SPOT_CELLS)
+        .map(|seen| {
+            format!(
+                "{what} (ref {handle})",
+                what = field(&seen.what),
+                handle = field(&seen.target_ref)
+            )
+        })
+        .collect();
+    (!standing_in.is_empty()).then(|| {
+        format!(
+            "You are standing in: {}. To break what you stand in, dig it where you are; a walk to it \
+             goes nowhere and is not offered.",
+            standing_in.join(", ")
+        )
+    })
+}
+
+/// That no dropped item is in sight, stated outright so a step never names a collect of a drop
+/// that does not exist (r12: seven decisions named one while none was in the perception).
+fn no_dropped_item_line(surroundings: &[Observation]) -> Option<String> {
+    let none = !surroundings
+        .iter()
+        .take(MAX_OBSERVATIONS)
+        .any(|seen| seen.kind == ObservationKind::DroppedItem);
+    none.then(|| {
+        "No dropped item is in your surroundings, so there is nothing to collect.".to_owned()
+    })
 }
 
 /// The world clock, as a sentence.
@@ -1036,6 +1097,62 @@ mod tests {
         ] {
             assert!(met.contains(expected), "missing {expected:?} in {met}");
         }
+    }
+
+    #[test]
+    fn the_plant_an_agent_stands_in_is_named_on_its_own_line_as_a_dig() {
+        // r12 theta, body:00000062: standing in dead bush b1mo, the step named it as a walk.
+        let seen: Perception = serde_json::from_str(include_str!(
+            "../../../../contract/fixtures/valid/perception-standing-on.json"
+        ))
+        .unwrap();
+        let rendered = situation(&seen);
+        assert!(
+            rendered.contains(
+                "You are standing in: block.minecraft.dead_bush (ref b2). To break what you stand in, \
+                 dig it where you are; a walk to it goes nowhere and is not offered."
+            ),
+            "{rendered}"
+        );
+        let mut open = seen.clone();
+        open.surroundings
+            .retain(|observed| observed.direction != Bearing::Here);
+        assert!(!situation(&open).contains("You are standing in"));
+    }
+
+    #[test]
+    fn the_absence_of_any_dropped_item_is_stated_outright() {
+        // r12 epsilon, delta, theta, beta and iota named a collect with no drop in sight.
+        let seen: Perception = serde_json::from_str(include_str!(
+            "../../../../contract/fixtures/valid/perception-standing-on.json"
+        ))
+        .unwrap();
+        assert!(situation(&seen)
+            .contains("No dropped item is in your surroundings, so there is nothing to collect."));
+        let mut with_one = seen.clone();
+        with_one.surroundings.push(Observation {
+            kind: ObservationKind::DroppedItem,
+            what: "item.minecraft.stick".to_owned(),
+            distance: 2.0,
+            direction: Bearing::North,
+            vertical_offset: 0.0,
+            visible: true,
+            target_ref: "d1".to_owned(),
+            count: Some(2),
+            standable: None,
+        });
+        assert!(!situation(&with_one).contains("No dropped item"));
+    }
+
+    #[test]
+    fn a_refused_decision_is_explained_beside_the_goal_it_answered() {
+        let mut goal = held("gather sticks", 0, Some(("moveTo", "goalStepMismatch")));
+        goal.success_condition = Some("two sticks".to_owned());
+        let rendered = situation(&goal_review_holding(Some(goal)));
+        assert!(
+            rendered.contains("was refused before your body acted, because the step it named was a different action or ref from the action it took"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -1678,7 +1795,7 @@ mod tests {
         seen.self_state.inventory_summary = vec![stack("i1", &"a".repeat(MAX_FIELD_CHARS * 4), 1)];
         let prompt = render(&router().route(seen.importance), &seen);
         assert!(prompt.situation.contains("..."));
-        assert!(prompt.situation.chars().count() < MAX_FIELD_CHARS * 4);
+        assert!(!prompt.situation.contains(&"a".repeat(MAX_FIELD_CHARS + 1)));
     }
 
     #[test]
