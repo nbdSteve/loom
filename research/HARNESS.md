@@ -89,7 +89,7 @@ A step that leaves the agent's own drop of its goal's item lying owes one more f
 A threat out of sight and more than 16 blocks off is not sighted.
 The r17 audit found trivial goals, 27 of 50 scheduled reviews ending idle, nine flights from mobs out of sight 22 blocks off, and a replace that relabelled a stalled goal.
 `research/lib/experiment-mode.js` owns the pins. In the
-scripted twin the stand-in digs the nearest block in reach that can drop something, adopts one placeholder goal of holding one more of what it drops, continues it while it digs and completes it once met; that exercises the goal round
+scripted twin the stand-in digs the nearest block in reach that can drop something, walks onto a source of its goal's item out of reach or to the edge of sight when none is in reach, adopts one placeholder goal of holding one more of what it drops, continues it while it digs and completes it once met; that exercises the goal round
 trip, the follow-up review and the own-drop evidence, and is not evidence of agency.
 
 Each primary-behavior configuration names a frozen profile, which

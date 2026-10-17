@@ -374,6 +374,7 @@ impl ScriptedBackend {
             step_result,
         };
         let digging = matches!(intent, Intent::Dig { .. } | Intent::Collect { .. });
+        let acting = digging || matches!(intent, Intent::MoveTo { .. });
         let Some(held) = &perception.goal else {
             let Intent::Dig { block } = intent else {
                 return None;
@@ -399,14 +400,15 @@ impl ScriptedBackend {
             step: None,
             ..step(disposition, Some(step_result))
         };
-        // A met condition is completed; a goal at the no-progress bound, with nothing in reach to
-        // dig for it, or that what is in sight could no longer meet, is abandoned rather than
-        // continued into the body's refusal.
+        // A met condition is completed; a goal at the no-progress bound, with no step to take for
+        // it, or that what is in sight could no longer meet, is abandoned rather than continued
+        // into the body's refusal. One sight can still meet is walked toward instead, because the
+        // body refuses its abandon (the v26 rehearsal's three `goalAbandonedAchievable`).
         let unobtainable = held.success_item.is_some()
             && !crate::offered::OfferedRefs::of(perception).goal_obtainable;
         Some(if progress.is_some_and(|seen| seen.condition_met) {
             ended(GoalDisposition::Complete)
-        } else if !digging
+        } else if !acting
             || unobtainable
             || progress
                 .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS)
@@ -563,9 +565,26 @@ impl ScriptedBackend {
                     tier = route.tier()
                 ),
             },
-            // With no goal and nothing in reach to dig, it walks to the edge of sight to look
-            // further, rather than idling where it stands.
-            None => match perception.explore.first().filter(|_| perception.goal.is_none()) {
+            // With a goal's source in sight but out of reach it walks onto that source; with
+            // nothing in reach to dig, it walks to the edge of sight to look further, rather than
+            // idling where it stands.
+            None => match nearest_source_walk(perception, wanted) {
+                Some((onto, item)) => Draft {
+                    goal: None,
+                    intent: Intent::MoveTo { onto },
+                    reasoning: format!(
+                        "reviewed goals at the {tier:?} tier; a block in sight can drop {item}, so walk to it",
+                        tier = route.tier()
+                    ),
+                },
+                None => Self::look_further(route, perception),
+            },
+        }
+    }
+
+    /// Walk to the first cell at the edge of sight, or do nothing when none is offered.
+    fn look_further(route: &ModelRoute, perception: &Perception) -> Draft {
+        match perception.explore.first() {
                 Some(target) => Draft {
                     goal: None,
                     intent: Intent::MoveTo {
@@ -584,9 +603,27 @@ impl ScriptedBackend {
                         tier = route.tier()
                     ),
                 },
-            },
         }
     }
+}
+
+/// The nearest block offered as a walk target that can drop the held goal's [`wanted`] item.
+fn nearest_source_walk(perception: &Perception, wanted: Option<&str>) -> Option<(String, String)> {
+    let wanted = wanted?;
+    let offered = crate::offered::OfferedRefs::of(perception);
+    perception
+        .surroundings
+        .iter()
+        .filter(|seen| offered.walk_targets.contains(&seen.target_ref))
+        .filter(|seen| {
+            seen.yields.as_ref().is_some_and(|yields| {
+                yields
+                    .iter()
+                    .any(|item| item.what == wanted && item.most > 0)
+            })
+        })
+        .min_by(|a, b| a.distance.total_cmp(&b.distance))
+        .map(|seen| (seen.target_ref.clone(), wanted.to_owned()))
 }
 
 /// The nearest block offered to dig that can drop something, and the item it is dug for:
@@ -934,6 +971,69 @@ mod tests {
         assert_eq!(continued.disposition, GoalDisposition::Continue);
         assert_eq!(continued.success_item, None);
         assert!(SCRIPTED_STEP.starts_with("scripted stand-in"));
+    }
+
+    #[test]
+    fn a_held_goal_whose_source_is_in_sight_but_out_of_reach_walks_to_it_rather_than_abandoning() {
+        // The v26 rehearsal: a bush in sight past dig reach, and the stand-in abandoned a goal
+        // the body refused to let go as goalAbandonedAchievable.
+        let route = router().route(DecisionImportance::Routine);
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.goal = Some(GoalSummary {
+            goal_id: "req-1".to_owned(),
+            statement: "hold 1 item.minecraft.stick".to_owned(),
+            revision: 0,
+            adopted_tick: 0,
+            last_step: None,
+            success_item: Some(super::SCRIPTED_SUCCESS_ITEM.to_owned()),
+            success_count: Some(1),
+            step: None,
+            step_action: None,
+            step_ref: None,
+            progress: None,
+        });
+        let bush = |handle: &str, distance: f64| loom_contract::Observation {
+            kind: ObservationKind::Block,
+            what: "block.minecraft.dead_bush".to_owned(),
+            distance,
+            direction: Bearing::North,
+            vertical_offset: 0.0,
+            visible: true,
+            target_ref: handle.to_owned(),
+            count: None,
+            standable: Some(true),
+            yields: Some(vec![loom_contract::BlockYield {
+                what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
+                least: 0,
+                most: 2,
+            }]),
+            dig_safe: Some(true),
+            route_refused: None,
+        };
+        seen.surroundings = vec![bush("b9", 9.0), bush("b7", 7.0)];
+        let walking = ScriptedBackend::draft_now(&route, &seen);
+        assert_eq!(
+            walking.intent,
+            Intent::MoveTo {
+                onto: "b7".to_owned()
+            }
+        );
+        assert_eq!(walking.goal.unwrap().disposition, GoalDisposition::Continue);
+        // With no source in sight it looks further, still pursuing the goal.
+        seen.surroundings.clear();
+        seen.explore = vec![loom_contract::ExploreTarget {
+            target_ref: "x1".to_owned(),
+            distance: 12.0,
+            direction: Bearing::East,
+            vertical_offset: 0.0,
+        }];
+        let looking = ScriptedBackend::draft_now(&route, &seen);
+        assert_eq!(
+            looking.intent,
+            Intent::MoveTo {
+                onto: "x1".to_owned()
+            }
+        );
     }
 
     #[test]
