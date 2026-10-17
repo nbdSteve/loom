@@ -180,7 +180,7 @@ jobs:
       - name: Fail if an offline end-to-end acceptance was skipped
         # They run only where node and body deps exist, so a skip here proves nothing.
         run: |
-          for suite in SpeechEndToEndTest GoalScenarioEndToEndTest GoalRefusalEndToEndTest; do
+          for suite in SpeechEndToEndTest GoalScenarioEndToEndTest GoalRefusalEndToEndTest GoalPursuitEndToEndTest; do
             report=build/test-results/test/TEST-dev.loom.plugin.$suite.xml
             grep -q 'skipped="0"' "$report" || {
               echo "the offline acceptance $suite did not run: $report" >&2

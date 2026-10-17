@@ -39,8 +39,11 @@ const PROFILES = {
     runDurationSeconds: 180,
     simulationTickCeiling: 4000,
     expectedReviewsPerAgent: 2,
-    callCeilings: Object.freeze({ perAgent: 6, global: 12, outstanding: 3 }),
-    maxExternalSpendUsd: 2.34
+    // From routine-v26 two scheduled reviews may owe two follow-ups each, so three agents plan 18
+    // reviews; the global ceiling holds them and the spend ceiling is those calls at the
+    // worst-case price.
+    callCeilings: Object.freeze({ perAgent: 6, global: 18, outstanding: 3 }),
+    maxExternalSpendUsd: 3.51
   }),
   // Two full day/night cycles. Review 20 is due at tick 48,000 itself, so the plan names 21
   // and the window rule owes only the ones the ending made due.
@@ -55,8 +58,12 @@ const PROFILES = {
     runDurationSeconds: 3600,
     simulationTickCeiling: TWO_CYCLE_TICKS,
     expectedReviewsPerAgent: 21,
-    callCeilings: Object.freeze({ perAgent: 56, global: 150, outstanding: 3 }),
-    maxExternalSpendUsd: 29.19,
+    // From routine-v26 each scheduled review may owe two follow-ups, the second only while an own
+    // goal-item drop lies, so 21 planned reviews per agent become 63 and the per-agent ceiling 64;
+    // the global ceiling is three agents' 64 and the spend ceiling those calls at the worst-case
+    // price. Re-sized for the follow-ups, not re-measured.
+    callCeilings: Object.freeze({ perAgent: 64, global: 192, outstanding: 3 }),
+    maxExternalSpendUsd: 37.36,
     bounds: Object.freeze({ logBytes: 16 * 1024 * 1024, evidenceRecords: 10_000, artifactBytes: 8 * 1024 * 1024 }),
     paperMemoryMiB: 1024
   }),
@@ -66,11 +73,12 @@ const PROFILES = {
     runDurationSeconds: 3600,
     simulationTickCeiling: TWO_CYCLE_TICKS,
     expectedReviewsPerAgent: 21,
-    // From routine-v23 each scheduled review may owe one follow-up, so the 210 planned reviews
-    // become 420 and the global ceiling 440; the spend ceiling is 440 calls at the worst-case
-    // price. Re-sized for the follow-ups, not re-measured.
-    callCeilings: Object.freeze({ perAgent: 56, global: 440, outstanding: 6 }),
-    maxExternalSpendUsd: 85.61,
+    // From routine-v26 each scheduled review may owe two follow-ups, the second only while an own
+    // goal-item drop lies, so the 210 planned reviews become 630 and the ceilings 64 per agent and
+    // 640 in all; the spend ceiling is 640 calls at the worst-case price. Re-sized for the
+    // follow-ups, not re-measured.
+    callCeilings: Object.freeze({ perAgent: 64, global: 640, outstanding: 6 }),
+    maxExternalSpendUsd: 124.52,
     bounds: Object.freeze({ logBytes: 32 * 1024 * 1024, evidenceRecords: 20_000, artifactBytes: 32 * 1024 * 1024 }),
     paperMemoryMiB: 2048
   })
@@ -144,6 +152,22 @@ PROFILES['own-evidence-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'
 PROFILES['answered-goal-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'], expectedReviewsPerAgent: 5 })
 // And under routine-v25, because r16 ran under the v24 name, with the same five-review plan.
 PROFILES['collected-goal-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'], expectedReviewsPerAgent: 5 })
+// And under routine-v26, because r17 ran under the v25 name, with the same five-review plan.
+// Its coherence bars are pre-registered here, before the run, and are the gate's positive half
+// from generation 9 (the r17 audit): at least three in five goal reviews hold or take up a goal and
+// step toward it, no review idles without a goal while cells at the edge of sight are offered, at
+// least two agents advance one goal at two or more steps at its original total, and at least three
+// goals are completed at their original total two or more above what was held when adopted.
+PROFILES['pursued-goal-10m-10'] = Object.freeze({
+  ...PROFILES['shakedown-10m-10'],
+  expectedReviewsPerAgent: 5,
+  coherenceBars: Object.freeze({
+    goalActiveReviewShare: 0.6,
+    maxIdleWithExploration: 0,
+    multiStepAgentsAtOriginalTarget: 2,
+    originalTargetCompletions: 3
+  })
+})
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

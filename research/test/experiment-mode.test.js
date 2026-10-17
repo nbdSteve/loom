@@ -81,16 +81,16 @@ test('the primary behavior harness issues no loombody think command', () => {
     []
   )
   assert.deepEqual(primaryBehaviorStimulusRecord(config, 0), {
-    mode: 'routine-v25-collected-goal',
+    mode: 'routine-v26-pursued-goal',
     externalCognitionStimuli: 'none',
     harnessThinkCommandsIssued: 0,
     nativeSchedulersOnly: true,
-    behaviorGateGeneration: 8,
+    behaviorGateGeneration: 9,
     profile: 'pilot-180s',
     nativeGoalReviewSchedule: {
       cadenceTicks: 2400,
       expectedReviewsPerAgent: 2,
-      followUpsPerReview: 1,
+      followUpsPerReview: 2,
       sliceTicks: 100
     }
   })

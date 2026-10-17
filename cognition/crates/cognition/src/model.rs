@@ -563,13 +563,27 @@ impl ScriptedBackend {
                     tier = route.tier()
                 ),
             },
-            None => Draft {
-                goal: None,
-                intent: Intent::Idle,
-                reasoning: format!(
-                    "reviewed goals at the {tier:?} tier; no block in reach drops anything",
-                    tier = route.tier()
-                ),
+            // With no goal and nothing in reach to dig, it walks to the edge of sight to look
+            // further, rather than idling where it stands.
+            None => match perception.explore.first().filter(|_| perception.goal.is_none()) {
+                Some(target) => Draft {
+                    goal: None,
+                    intent: Intent::MoveTo {
+                        onto: target.target_ref.clone(),
+                    },
+                    reasoning: format!(
+                        "reviewed goals at the {tier:?} tier; nothing in sight drops anything, so look further",
+                        tier = route.tier()
+                    ),
+                },
+                None => Draft {
+                    goal: None,
+                    intent: Intent::Idle,
+                    reasoning: format!(
+                        "reviewed goals at the {tier:?} tier; no block in reach drops anything",
+                        tier = route.tier()
+                    ),
+                },
             },
         }
     }
@@ -721,6 +735,7 @@ mod tests {
             surroundings_omitted: 0,
             goal: None,
             last_refusal: None,
+            explore: vec![],
         }
     }
 

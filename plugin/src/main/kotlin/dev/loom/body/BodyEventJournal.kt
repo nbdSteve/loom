@@ -191,8 +191,19 @@ class BodyEventJournal(
         detail: String,
         outcome: String,
         requestId: String? = null,
+        retreat: RetreatEvidence? = null,
     ) {
-        classified(agentId, BodyEvent.RETREATING, detail, outcome, requestId)
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.RETREATING,
+                detail = detail,
+                requestId = requestId,
+                outcome = outcome,
+                retreat = retreat,
+            ),
+        )
     }
 
     /**

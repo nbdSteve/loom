@@ -13,6 +13,7 @@ import dev.loom.body.ThreatCandidate
 import dev.loom.body.WorldTargetRefBinding
 import dev.loom.bodycontrol.BodyResponse
 import dev.loom.contract.DecisionImportance
+import dev.loom.contract.ExploreTarget
 import dev.loom.contract.Observation
 import dev.loom.contract.Perception
 import dev.loom.contract.SelfState
@@ -44,6 +45,8 @@ internal data class PlayerScene(
     val perceptionAudit: PerceptionAudit,
     val candidates: List<ThreatCandidate>,
     val selfState: SelfState,
+    /** The cells at the edge of sight this perception offers, each with the cell a walk ends in. */
+    val explore: List<Pair<ExploreTarget, List<Int>>> = emptyList(),
 ) {
     fun perception(trigger: Trigger): Perception =
         Perception(
@@ -55,6 +58,7 @@ internal data class PlayerScene(
             selfState = selfState,
             surroundings = surroundings,
             surroundingsOmitted = surroundingsOmitted,
+            explore = explore.map { it.first },
         )
 }
 
@@ -64,6 +68,8 @@ internal class HeldSense(
     val entitySubjects: Map<Int, UUID>,
     val droppedItemSubjects: Map<Int, UUID>,
     val rememberedAt: Long,
+    /** The cell each exploration ref of this sense names, where a walk to it ends. */
+    val exploreCells: Map<String, List<Int>> = emptyMap(),
 ) {
     private val closed = AtomicBoolean()
     var keepalive: ScheduledFuture<*>? = null
@@ -117,6 +123,7 @@ internal class PlayerSenseSessions(
             scene.entitySubjects,
             scene.droppedItemSubjects,
             scene.raw.capturedTick,
+            scene.explore.associate { (target, cell) -> target.ref to cell },
         ).also { sense ->
             held.getOrPut(agentId) { LinkedHashMap() }[requestId] = sense
         }

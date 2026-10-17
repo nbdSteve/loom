@@ -85,8 +85,11 @@ pub struct OfferedRefs {
     /// The rest of them, which a dig would leave the agent trapped by: offered to `place` and
     /// `sleep` only.
     pub kept_blocks: Vec<String>,
-    /// Standable blocks outside the agent's own column: what `moveTo` may name.
+    /// Standable blocks outside the agent's own column, and the cells at the edge of sight: what
+    /// `moveTo` may name.
     pub walk_targets: Vec<String>,
+    /// The cells at the edge of sight, of [`Self::walk_targets`].
+    pub explore_targets: Vec<String>,
     /// Shown living things, and a sighted threat: what `flee` may name.
     pub creatures: Vec<String>,
     /// Creatures within attack reach: what an `attack` without approach may name.
@@ -183,6 +186,14 @@ fn own_drops_of(perception: &Perception, route_items: &[String]) -> Vec<(String,
         .collect()
 }
 
+/// The total the held goal a goal review carries asks of `item`, if its item is that one.
+fn goal_total(perception: &Perception, item: &str) -> Option<i64> {
+    let goal = perception.goal.as_ref()?;
+    (goal.success_item.as_deref() == Some(item))
+        .then_some(goal.success_count)
+        .flatten()
+}
+
 /// How many of `item` the agent's whole inventory holds, as the body counts a success condition.
 #[must_use]
 pub fn held_of(perception: &Perception, item: &str) -> i64 {
@@ -271,6 +282,16 @@ impl OfferedRefs {
         {
             offered.creature(entity_ref, *distance);
         }
+        // Cells at the edge of sight are walks like any other, offered so an agent that sees nothing
+        // worth doing can look further (r17: eta idled three reviews with a bush 5.4 blocks off).
+        for target in perception
+            .explore
+            .iter()
+            .take(loom_contract::MAX_EXPLORE_TARGETS)
+        {
+            offer(&mut offered.walk_targets, &target.target_ref);
+            offer(&mut offered.explore_targets, &target.target_ref);
+        }
         let state = &perception.self_state;
         for stack in state.inventory_summary.iter().take(MAX_INVENTORY_LINES) {
             offer(&mut offered.stacks, &stack.slot_ref);
@@ -297,24 +318,32 @@ impl OfferedRefs {
             .filter(|(_, count)| *count >= 1)
             .take(MAX_OBTAINABLE_ITEMS)
             .collect();
-        let pursued = offered.pursued.clone();
-        offered.count_bounds = offered
-            .capacity
-            .iter()
-            .filter(|(item, _)| pursued.as_ref().is_none_or(|goal| goal == item))
-            .filter_map(|(item, capacity)| {
-                let held = held_of(perception, item);
-                let fewest = held.saturating_add(1);
-                let most = held.saturating_add(*capacity).min(MAX_SUCCESS_COUNT);
-                (fewest <= most).then(|| (item.clone(), fewest, most))
-            })
-            .collect();
+        offered.count_bounds = offered.count_bounds_for(perception);
         offered.obtainable = offered
             .count_bounds
             .iter()
             .map(|(item, ..)| item.clone())
             .collect();
         offered
+    }
+
+    /// For each item [`Self::capacity`] names, the fewest and most a success count may ask now.
+    fn count_bounds_for(&self, perception: &Perception) -> Vec<(String, i64, i64)> {
+        self.capacity
+            .iter()
+            .filter(|(item, _)| self.pursued.as_ref().is_none_or(|goal| goal == item))
+            .filter_map(|(item, capacity)| {
+                let held = held_of(perception, item);
+                // A replace of a stalled goal may not set the same item again at the same or a
+                // lower total, which would only clear the stall count (r17 alpha body:00000163).
+                let stalled_total = goal_total(perception, item).filter(|_| self.stalled);
+                let fewest = held
+                    .saturating_add(1)
+                    .max(stalled_total.map_or(0, |total| total.saturating_add(1)));
+                let most = held.saturating_add(*capacity).min(MAX_SUCCESS_COUNT);
+                (fewest <= most).then(|| (item.clone(), fewest, most))
+            })
+            .collect()
     }
 
     /// Judges the held goal a goal review carries, and while it is unmet and still obtainable
@@ -524,6 +553,20 @@ mod tests {
         let crafting = OfferedRefs::of(&fixture("perception-crafting"));
         assert_eq!(crafting.stacks, handles(&["i1"]));
         assert_eq!(crafting.recipes, handles(&["r1"]));
+    }
+
+    #[test]
+    fn a_cell_at_the_edge_of_sight_is_a_walk_and_nothing_else() {
+        let offered = OfferedRefs::of(&fixture("perception-explore"));
+        assert_eq!(offered.walk_targets, handles(&["x1", "x2"]));
+        assert_eq!(offered.explore_targets, handles(&["x1", "x2"]));
+        assert!(offered.blocks.is_empty());
+        assert!(offered.admits(&Intent::MoveTo {
+            onto: "x1".to_owned()
+        }));
+        assert!(!offered.admits(&Intent::Dig {
+            block: "x1".to_owned()
+        }));
     }
 
     #[test]

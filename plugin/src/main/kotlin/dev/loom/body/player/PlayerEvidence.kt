@@ -7,6 +7,7 @@ import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
 import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
+import dev.loom.body.RetreatEvidence
 import dev.loom.body.WitnessedPlayer
 import dev.loom.body.describe
 import dev.loom.body.tagOf
@@ -17,6 +18,7 @@ import dev.loom.bodycontrol.DigOutcome
 import dev.loom.bodycontrol.EatOutcome
 import dev.loom.bodycontrol.EquipOutcome
 import dev.loom.bodycontrol.PlaceOutcome
+import dev.loom.contract.DropFate
 import dev.loom.contract.Intent
 
 private const val PLAYER_FOOD_CAPACITY = 20.0
@@ -50,11 +52,20 @@ internal class PlayerEvidenceRecorder(
         val agentId = runtime.identity.agentId
         val audited =
             execution.interaction?.let { it to context.authority.serverState.auditInteraction(runtime.identity, it) }
+        val brokenByOther = audited?.second?.brokenByOther == true
+        // Only this body's own break dropped anything for it.
+        val drops = if (brokenByOther) emptyList() else attributedDrops(runtime, requestId, execution.interaction)
+        val ended = execution.outcome
         val outcome =
-            if (audited?.second?.brokenByOther == true) {
-                IntentOutcome.Rejected("the server credits the dug block to another player", EventTag.DIG_CONTEST_GONE)
-            } else {
-                execution.outcome
+            when {
+                brokenByOther ->
+                    IntentOutcome.Rejected(
+                        "the server credits the dug block to another player",
+                        EventTag.DIG_CONTEST_GONE,
+                    )
+                ended is IntentOutcome.Accepted ->
+                    ended.copy(dropped = drops.filter { it.fate == DropFate.LYING }.map { it.what }.toSet())
+                else -> ended
             }
         (execution.interaction as? ServerInteractionClaim.Collect)
             ?.takeIf { it.report.outcome == CollectOutcome.NO_ROUTE }
@@ -64,7 +75,7 @@ internal class PlayerEvidenceRecorder(
         recordWalk(runtime, requestId, execution)
         recordFlight(runtime, requestId, execution)
         recordMeal(agentId, execution)
-        audited?.let { (claim, audit) -> recordInteraction(runtime, intent, requestId, claim, audit) }
+        audited?.let { recordInteraction(runtime, intent, requestId, it, drops) }
         return outcome
     }
 
@@ -103,6 +114,7 @@ internal class PlayerEvidenceRecorder(
                 "separation ${report.separation ?: "unread"}",
             retreatTag(report.outcome),
             requestId,
+            RetreatEvidence(report.separation, report.separationGained),
         )
     }
 
@@ -125,12 +137,18 @@ internal class PlayerEvidenceRecorder(
         runtime: PlayerRuntime,
         intent: Intent,
         requestId: String?,
-        claim: ServerInteractionClaim,
-        audit: ServerInteractionAudit,
+        audited: Pair<ServerInteractionClaim, ServerInteractionAudit>,
+        drops: List<OwnDropReading>,
     ) {
+        val (claim, audit) = audited
         val controlRequest = claim.controlRequest
-        // Only this body's own break dropped anything for it.
-        val dropped = if (audit.brokenByOther) "; dropped nothing of its own" else dropsOf(runtime, requestId, claim)
+        val dropped =
+            when {
+                audit.brokenByOther -> "; dropped nothing of its own"
+                !dug(claim) || requestId == null -> ""
+                drops.isEmpty() -> "; dropped nothing"
+                else -> "; dropped " + drops.joinToString(", ") { "${it.count} ${it.what}" }
+            }
         val senseId =
             when (controlRequest) {
                 is BodyRequest.Dig -> controlRequest.senseId
@@ -158,25 +176,25 @@ internal class PlayerEvidenceRecorder(
     }
 
     /**
-     * Attributes what the server dropped for a completed dig to the dig's own request, and words
-     * it for the interaction record: what the dig yielded is that request's evidence, wherever the
-     * drop goes after.
+     * Attributes what the server dropped for a completed dig to the dig's own request: what the dig
+     * yielded is that request's evidence, wherever the drop goes after.
      */
-    private fun dropsOf(
+    private fun attributedDrops(
         runtime: PlayerRuntime,
         requestId: String?,
-        claim: ServerInteractionClaim,
-    ): String {
-        val dug = claim is ServerInteractionClaim.Dig && claim.report.outcome == DigOutcome.DUG
-        if (requestId == null || !dug) return ""
-        val drops =
-            context.authority.ownDrops.attribute(runtime.identity, requestId, claim.offered.position, claim.startedTick)
-        return if (drops.isEmpty()) {
-            "; dropped nothing"
-        } else {
-            "; dropped " + drops.joinToString(", ") { "${it.count} ${it.what}" }
-        }
+        claim: ServerInteractionClaim?,
+    ): List<OwnDropReading> {
+        if (requestId == null || claim !is ServerInteractionClaim.Dig || !dug(claim)) return emptyList()
+        return context.authority.ownDrops.attribute(
+            runtime.identity,
+            requestId,
+            claim.offered.position,
+            claim.startedTick,
+        )
     }
+
+    private fun dug(claim: ServerInteractionClaim): Boolean =
+        claim is ServerInteractionClaim.Dig && claim.report.outcome == DigOutcome.DUG
 
     fun recordAction(
         agentId: AgentId,

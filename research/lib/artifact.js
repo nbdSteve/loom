@@ -1,7 +1,8 @@
 'use strict'
 
-// One follow-up review per scheduled review: `MAX_FOLLOW_UPS_PER_REVIEW` in the JVM's schedule.
-const MAX_FOLLOW_UPS_PER_REVIEW = 1
+// The follow-up reviews a scheduled review may owe, by the mode that pins them: one from v23, and
+// from v26 a second while an own goal-item drop lies (`MAX_FOLLOW_UPS_PER_REVIEW` in the JVM's
+// schedule). A mode that pins none owes none.
 
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
@@ -199,8 +200,9 @@ function primaryBehaviorErrors (config) {
   // settles (`MAX_FOLLOW_UPS_PER_REVIEW` in `GoalReviewSchedule.kt`), so the planned reviews are
   // the scheduled ones and as many follow-ups, and both ceilings must hold them.
   const followUps = schedule?.followUpsPerReview ?? 0
-  if (followUps !== 0 && followUps !== MAX_FOLLOW_UPS_PER_REVIEW) {
-    errors.push(`primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview must be ${MAX_FOLLOW_UPS_PER_REVIEW} when stated`)
+  const pinnedFollowUps = primaryBehaviorModeOf(config.mode)?.followUpsPerReview ?? 0
+  if (followUps !== 0 && followUps !== pinnedFollowUps) {
+    errors.push(`primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview must be ${pinnedFollowUps} when stated`)
   }
   const plannedReviews = Number.isInteger(schedule?.expectedReviewsPerAgent)
     ? schedule.expectedReviewsPerAgent * (1 + followUps)

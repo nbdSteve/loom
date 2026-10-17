@@ -246,7 +246,8 @@ class GoalLedger(
 
     /**
      * Records the body's [outcome] tag for [action] when [requestId] is the held goal's latest
-     * step, and answers whether it was: only then has a step of the held goal settled.
+     * step, and answers the held goal when it was, `null` otherwise: only then has a step of the
+     * held goal settled.
      */
     @Synchronized
     fun stepped(
@@ -255,16 +256,13 @@ class GoalLedger(
         action: String,
         outcome: String,
         reached: Boolean? = null,
-    ): Boolean {
+    ): GoalSummary? {
         val goals = agents[agentId]
         val held = goals?.held
-        if (held?.affirmedBy != requestId) return false
-        goals.held =
-            held.copy(
-                summary = held.summary.copy(lastStep = GoalStep(requestId, action, outcome)),
-                reached = reached,
-            )
-        return true
+        if (held?.affirmedBy != requestId) return null
+        val summary = held.summary.copy(lastStep = GoalStep(requestId, action, outcome))
+        goals.held = held.copy(summary = summary, reached = reached)
+        return summary
     }
 
     /** Drops the record of a review the mind never answered. */
@@ -306,7 +304,7 @@ class GoalLedger(
         // A continue or revise carries the run of steps that changed nothing; only an adopted
         // goal starts it again, since only a measured change is evidence of progress.
         val fresh = choice.disposition in STARTING
-        val carriedCount = if (fresh) 0 else presented?.progress?.stepsWithoutProgress ?: 0
+        val carriedCount = carriedCountOf(presented, choice)
         // A new goal starts with only the cell it was adopted at; a kept goal remembers every cell
         // it has been reviewed at, so a walk back to one of them is no arrival anywhere new.
         val earlier = if (fresh) emptySet() else goals.held?.visited.orEmpty()
@@ -330,7 +328,7 @@ class GoalLedger(
                 )
             }
         return evidence.copy(
-            outcome = acceptedTag(choice.disposition),
+            outcome = acceptedTag(choice.disposition, presented),
             goalId = next?.goalId,
             revision = next?.revision,
         )
@@ -370,14 +368,14 @@ private fun nextGoalOf(
                 adoptedTick = by.capturedTick,
                 successItem = choice.successItem,
                 successCount = choice.successCount,
-                step = choice.step,
+                step = stepOf(by.intent),
                 stepAction = by.intent.action,
                 stepRef = by.intent.targetRef,
             )
         GoalDisposition.CONTINUE ->
             requireNotNull(presented).copy(
                 lastStep = null,
-                step = choice.step,
+                step = stepOf(by.intent),
                 stepAction = by.intent.action,
                 stepRef = by.intent.targetRef,
                 progress = null,
@@ -389,7 +387,7 @@ private fun nextGoalOf(
                 lastStep = null,
                 successItem = choice.successItem,
                 successCount = choice.successCount,
-                step = choice.step,
+                step = stepOf(by.intent),
                 stepAction = by.intent.action,
                 stepRef = by.intent.targetRef,
                 progress = null,
@@ -420,13 +418,35 @@ private fun stalledOf(
             (presented?.progress?.stepsWithoutProgress ?: 0) >= MAX_GOAL_STEPS_WITHOUT_PROGRESS
     }
 
-/** The tag an applied [disposition] is recorded under. */
-private fun acceptedTag(disposition: GoalDisposition): String =
+/**
+ * The run of steps that advanced nothing [choice] carries on from [presented]: none for a goal it
+ * starts afresh, except a replace that sets the same item again at the same or a lower total,
+ * which is the old goal relabelled (r17 alpha body:00000163).
+ */
+private fun carriedCountOf(
+    presented: GoalSummary?,
+    choice: GoalChoice,
+): Long {
+    val relabelled =
+        choice.disposition == GoalDisposition.REPLACE &&
+            presented?.progress?.conditionMet != true &&
+            choice.successItem == presented?.successItem &&
+            (choice.successCount ?: 0) <= (presented?.successCount ?: 0)
+    val fresh = choice.disposition in STARTING && !relabelled
+    return if (fresh) 0 else presented?.progress?.stepsWithoutProgress ?: 0
+}
+
+/** The tag an applied [disposition] is recorded under; a replace of a met goal completed it first. */
+private fun acceptedTag(
+    disposition: GoalDisposition,
+    presented: GoalSummary?,
+): String =
     when (disposition) {
         GoalDisposition.ADOPT -> GoalEvidence.ADOPTED
         GoalDisposition.CONTINUE -> GoalEvidence.CONTINUED
         GoalDisposition.REVISE -> GoalEvidence.REVISED
-        GoalDisposition.REPLACE -> GoalEvidence.REPLACED
+        GoalDisposition.REPLACE ->
+            if (presented?.progress?.conditionMet == true) GoalEvidence.COMPLETED_ADOPTED else GoalEvidence.REPLACED
         GoalDisposition.COMPLETE -> GoalEvidence.COMPLETED
         GoalDisposition.ABANDON -> GoalEvidence.ABANDONED
     }

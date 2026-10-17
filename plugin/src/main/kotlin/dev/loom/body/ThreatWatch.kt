@@ -146,7 +146,17 @@ enum class ThreatSuppressionReason(
 
     /** This agent's pivotal threat budget for the night is spent. */
     OVER_NIGHTLY_CAP(EventTag.THREAT_OVER_NIGHTLY_CAP),
+
+    /**
+     * The hunter is out of sight and further than [THREAT_NEAR_BLOCKS]: nothing a flight could
+     * measurably escape. In r17 nine flights ran from mobs behind walls 22 to 24 blocks off,
+     * moved under six blocks and ended about as far away as they began.
+     */
+    DISTANT_UNSEEN(EventTag.THREAT_DISTANT_UNSEEN),
 }
+
+/** How near an out-of-sight hunter must be before its sighting is worth an agent's decision. */
+const val THREAT_NEAR_BLOCKS: Double = 16.0
 
 /** One hostile in view, as the threat rule needs it. */
 data class ThreatCandidate(
@@ -299,6 +309,10 @@ class ThreatWatch(
 
         val refused = mutableListOf<ThreatSuppression>()
         for (candidate in hunters) {
+            if (!candidate.visible && candidate.distance > THREAT_NEAR_BLOCKS) {
+                refused += ThreatSuppression(candidate.what, candidate.ref, ThreatSuppressionReason.DISTANT_UNSEEN)
+                continue
+            }
             when (val verdict = examine(agent, candidate, memories[candidate.subject], reachable)) {
                 is Examination.Refused -> refused += ThreatSuppression(candidate.what, candidate.ref, verdict.reason)
                 is Examination.Report -> {

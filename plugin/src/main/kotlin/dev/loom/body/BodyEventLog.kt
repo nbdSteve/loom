@@ -155,6 +155,20 @@ data class BodyEventRecord(
      * audited).
      */
     val shown: ShownGoal? = null,
+    /** What a flight measured, on [BodyEvent.RETREATING]: how far from its threat it ended and gained. */
+    val retreat: RetreatEvidence? = null,
+)
+
+/**
+ * A flight's measured separation from the threat it fled: where it ended and how much it gained,
+ * both absent when the body could not measure them. Typed so a flight that ran from a threat far
+ * out of sight and gained nothing is read from fields (r17: nine flights from mobs 22 blocks away
+ * gained under six blocks each).
+ */
+@Serializable
+data class RetreatEvidence(
+    val separation: Double? = null,
+    val separationGained: Double? = null,
 )
 
 /** What one goal review showed cognition beyond the body's own perception. */

@@ -891,6 +891,48 @@ pub struct Perception {
     /// once, at the next goal review or step-settled perception.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_refusal: Option<GoalRefusal>,
+    /// Cells beyond what the body can see where it can stand, each a `moveTo` target by its ref,
+    /// so an agent that sees nothing worth doing can walk to look further.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "bounded_explore"
+    )]
+    pub explore: Vec<ExploreTarget>,
+}
+
+/// Most exploration targets one perception carries: one per compass bearing.
+pub const MAX_EXPLORE_TARGETS: usize = 8;
+
+fn bounded_explore<'de, D>(deserializer: D) -> Result<Vec<ExploreTarget>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let targets = Vec::<ExploreTarget>::deserialize(deserializer)?;
+    if targets.len() > MAX_EXPLORE_TARGETS {
+        return Err(de::Error::custom("at most 8 exploration targets"));
+    }
+    if targets.iter().any(|target| target.distance < 0.0) {
+        return Err(de::Error::custom(
+            "an exploration target's distance is never negative",
+        ));
+    }
+    Ok(targets)
+}
+
+/// One standable cell at the edge of sight, placed from the agent the way an observation is.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExploreTarget {
+    /// The handle a `moveTo` names this cell by.
+    #[serde(rename = "ref", deserialize_with = "bounded_ref")]
+    pub target_ref: String,
+    /// How far the cell is from the agent, in blocks.
+    pub distance: f64,
+    /// The horizontal bearing to the cell.
+    pub direction: Bearing,
+    /// How far above the agent the cell is.
+    pub vertical_offset: f64,
 }
 
 /// One goal decision the body refused before acting: which request, the countable outcome tag

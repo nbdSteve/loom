@@ -165,10 +165,10 @@
       "status": "historical",
       "reason": "Pins routine-v13 prompts the current mind no longer serves."
     },
-    "first-tribe-routine-v25-agency-pilot.json": {
+    "first-tribe-routine-v26-agency-pilot.json": {
       "status": "runnable"
     },
-    "first-tribe-routine-v25-agency-pilot-scripted.json": {
+    "first-tribe-routine-v26-agency-pilot-scripted.json": {
       "status": "runnable"
     },
     "tribe-two-cycle-3.json": {
@@ -290,9 +290,17 @@
       "reason": "Pins routine-v24 prompts the current mind no longer serves."
     },
     "tribe-collected-goal-10m-10.json": {
-      "status": "runnable"
+      "status": "historical",
+      "reason": "Pins routine-v25 prompts the current mind no longer serves."
     },
     "tribe-collected-goal-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v25 prompts the current mind no longer serves."
+    },
+    "tribe-pursued-goal-10m-10.json": {
+      "status": "runnable"
+    },
+    "tribe-pursued-goal-10m-10-scripted.json": {
       "status": "runnable"
     }
   }

@@ -27,10 +27,10 @@
 //! give a second, driftable statement of the same thing.
 
 use loom_contract::{
-    Bearing, CraftingOption, DayPhase, DecisionImportance, DropFate, GoalRefusal, GoalSummary,
-    IntentAction, InventoryChange, InventoryStack, Observation, ObservationKind, OwnDrop,
-    Perception, SelfState, StepEvidence, Trigger, WorldState, MAX_GOAL_STEPS_WITHOUT_PROGRESS,
-    MAX_OWN_DROPS, MAX_PERCEPTION_OBSERVATIONS,
+    Bearing, CraftingOption, DayPhase, DecisionImportance, DropFate, ExploreTarget, GoalRefusal,
+    GoalSummary, IntentAction, InventoryChange, InventoryStack, Observation, ObservationKind,
+    OwnDrop, Perception, SelfState, StepEvidence, Trigger, WorldState,
+    MAX_GOAL_STEPS_WITHOUT_PROGRESS, MAX_OWN_DROPS, MAX_PERCEPTION_OBSERVATIONS,
 };
 
 use std::fmt::Write as _;
@@ -39,13 +39,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v25";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v26";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v25";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v26";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v25";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v26";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -180,28 +180,31 @@ inventory changed since your last step, the step you last took and what showed f
 many steps in a row advanced nothing. If your body refused your last goal decision, you are told \
 why, once. Judge it against that evidence, not against a wish to look busy:
 - adopt: take up a new goal when you hold none and the evidence gives you one worth having. Name \
-the item and the total of it you must hold, and word the step this answer's action takes. The \
+the item and the total of it you must hold; your action is the step, which your body words. The \
 total must be more than you hold and no more than you hold plus what sight can be counted on to \
 give you, as you are told; only items something in sight could give are offered. A one-more goal \
 ends at its first pickup; where sight can give several, a total of several makes it a plan of \
 several steps. Holding no goal is a legitimate state. With none held you may make no goal choice.
-- continue: keep the held goal, judge the previous step, and word the next step this answer's \
-action takes. It is offered only while what you hold plus what is in sight could still meet it.
+- continue: keep the held goal, judge the previous step, and take its next step with this \
+answer's action. It is offered only while what you hold plus what is in sight could still meet it.
 - revise: change the held goal's total, and its step, when the evidence showed the old target \
 will not work, and judge the previous step. Revising keeps the count of steps that advanced \
 nothing.
-- replace: once the held goal has advanced nothing for three steps in a row, drop it and take \
-up a new one in the same answer - name the new item and total, word the step this answer's \
-action takes, and judge the previous step. At that bound replace is the only way to keep acting \
-toward a goal; complete it instead if its condition is met.
+- replace: drop the held goal and take up a new one in the same answer - name the new item and \
+total, take its step with this answer's action, and judge the previous step. Once the held goal \
+has advanced nothing for three steps in a row, replace is the only way to keep acting toward a \
+goal, and the same item may then be set again only at a higher total. When the held goal's \
+condition is met, replace completes it and adopts the next in one answer.
 - complete: drop the held goal because your body shows its success condition met.
-- abandon: drop the held goal because it is no longer worth pursuing, or to pursue another item.
+- abandon: drop the held goal because sight can no longer meet it. A goal sight can still meet \
+is pursued, not abandoned.
 While you hold a goal every answer must say what it does with it, and your action is the goal's \
 step: dig and collect are offered only for what can give the goal's item, and adopt, continue, \
 revise or replace beside idle or rest takes no step and is not offered, as is a total you \
 already hold or one beyond what sight can be counted on to give. There is something to collect \
 only when a dropped item is listed, and a dropped item your body found no route to is not \
-offered. A dig the server saw drop something for you is told to you with where that drop is now, \
+offered. Your body sees only the nearest blocks; when nothing in sight is worth doing, you are \
+offered cells at the edge of sight to walk to, so you can look further. A dig the server saw drop something for you is told to you with where that drop is now, \
 and a drop of yours still lying is offered to collect by its ref, in sight or not. While your own \
 drop of the goal's item lies in reach, the goal's next step is to collect it, with approach true \
 when it is not beside you; digging for more is not offered until you hold it, because a drop left \
@@ -279,6 +282,7 @@ fn situation_of(perception: &Perception) -> String {
     ));
     lines.push(yields_line(&perception.surroundings));
     lines.extend(own_spot_line(&perception.surroundings));
+    lines.extend(explore_line(&perception.explore));
     lines.extend(no_dropped_item_line(&perception.surroundings));
     let last_step = perception
         .goal
@@ -460,9 +464,11 @@ fn refusal_line(refusal: &GoalRefusal) -> String {
         "goalOwnDropIgnored" => {
             "it did not collect your own drop of the goal's item that lay in reach"
         }
+        "goalAbandonedAchievable" => {
+            "it abandoned a goal that what you held and saw could still meet"
+        }
         "goalStalled" => "the goal had advanced nothing for three steps in a row, so it ended",
         "goalSuccessTargetMissing" => "it set a goal without its item and total",
-        "goalStepMissing" => "it gave no step for the goal",
         "goalStepResultMissing" => "it did not judge the previous step",
         _ => "it broke a goal rule",
     };
@@ -867,6 +873,29 @@ fn own_spot_line(surroundings: &[Observation]) -> Option<String> {
     })
 }
 
+/// The cells at the edge of sight a walk can reach to look further, or nothing when none is offered
+/// (r17: eta idled three reviews with a dead bush 5.4 blocks off, just past what its body saw).
+fn explore_line(targets: &[ExploreTarget]) -> Option<String> {
+    if targets.is_empty() {
+        return None;
+    }
+    let named = targets
+        .iter()
+        .take(loom_contract::MAX_EXPLORE_TARGETS)
+        .map(|target| {
+            format!(
+                "{} {}",
+                field(&target.target_ref),
+                whereabouts(target.distance, target.direction, target.vertical_offset)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    Some(format!(
+        "To look further, you can walk to the edge of sight: {named}. What lies there is unknown until you see it."
+    ))
+}
+
 /// That no dropped item is in sight, stated outright so a step never names a collect of a drop
 /// that does not exist (r12: seven decisions named one while none was in the perception).
 fn no_dropped_item_line(surroundings: &[Observation]) -> Option<String> {
@@ -1106,9 +1135,9 @@ mod tests {
     };
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
-        Bearing, CraftingOption, DayPhase, DecisionImportance, DropFate, GoalRefusal, GoalStep,
-        GoalSummary, InventoryStack, Observation, ObservationKind, OwnDrop, Perception, SelfState,
-        Trigger, WorldState, MAX_OWN_DROPS,
+        Bearing, CraftingOption, DayPhase, DecisionImportance, DropFate, ExploreTarget,
+        GoalRefusal, GoalStep, GoalSummary, InventoryStack, Observation, ObservationKind, OwnDrop,
+        Perception, SelfState, Trigger, WorldState, MAX_OWN_DROPS,
     };
 
     fn router() -> Router {
@@ -1164,6 +1193,7 @@ mod tests {
             surroundings_omitted: 0,
             goal: None,
             last_refusal: None,
+            explore: vec![],
         }
     }
 
@@ -2456,5 +2486,38 @@ mod tests {
         assert!(prompt.situation.contains("unknown"));
         assert!(!prompt.situation.contains("NaN"));
         assert!(!prompt.situation.contains("inf"));
+    }
+
+    #[test]
+    fn cells_at_the_edge_of_sight_are_offered_to_look_further_and_named_once() {
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        let before = render(&router().route(seen.importance), &seen).situation;
+        assert!(!before.contains("To look further"), "{before}");
+        seen.explore = (0..=loom_contract::MAX_EXPLORE_TARGETS)
+            .map(|index| ExploreTarget {
+                target_ref: format!("x{index}"),
+                distance: 12.0,
+                direction: Bearing::North,
+                vertical_offset: -2.0,
+            })
+            .collect();
+        let situation = render(&router().route(seen.importance), &seen).situation;
+        assert_eq!(
+            situation.matches("To look further").count(),
+            1,
+            "{situation}"
+        );
+        assert!(
+            situation.contains("x0 about 12.0 blocks away to the north and 2.0 blocks below"),
+            "{situation}"
+        );
+        assert!(
+            situation.contains("unknown until you see it"),
+            "{situation}"
+        );
+        assert!(
+            !situation.contains(&format!("x{}", loom_contract::MAX_EXPLORE_TARGETS)),
+            "the bound must cut: {situation}"
+        );
     }
 }

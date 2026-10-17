@@ -148,40 +148,43 @@ test('every feature flag must be true because no runtime route reads one', () =>
   }
 })
 
-test('the routine-v25 pilot preflights under the v12 treatment plus v25 prompts and category fairness', () => {
+test('the routine-v26 pilot preflights under the v12 treatment plus v26 prompts and category fairness', () => {
   const config = openAiGoalContinuityConfig()
   assert.deepEqual(validateRunConfig(config), [])
   assert.deepEqual(validateRunConfig(goalContinuityConfig()), [])
   const manifest = validateProspectiveManifest(config, SOURCE)
-  assert.equal(manifest.protocol.mode, 'routine-v25-collected-goal')
+  assert.equal(manifest.protocol.mode, 'routine-v26-pursued-goal')
   assert.equal(manifest.protocol.categoryFairSelection, true)
   assert.equal(manifest.protocol.controlledBodyCrashPlanned, false)
   assert.deepEqual(manifest.provenance.prompts, {
-    routine: 'routine-v25',
-    notable: 'notable-v25',
-    pivotal: 'pivotal-v25'
+    routine: 'routine-v26',
+    notable: 'notable-v26',
+    pivotal: 'pivotal-v26'
   })
-  // The v25 pilot is the v13 pilot with only its mode, prompts, identity and the follow-up review
-  // a settled goal step owes moved.
+  // The v26 pilot is the v13 pilot with only its mode, prompts, identity, the follow-up reviews a
+  // settled goal step owes, and the global and spend ceilings that hold them moved.
   for (const suffix of ['', '-scripted']) {
     const read = (version) => {
       const pinned = readJson(path.join(__dirname, '..', 'config', `first-tribe-routine-${version}-agency-pilot${suffix}.json`))
       for (const key of ['experimentId', 'title', 'mode']) delete pinned[key]
       delete pinned.cognition.prompts
       delete pinned.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview
+      delete pinned.cognition.globalCallCeiling
+      delete pinned.cognition.maxExternalSpendUsd
       return pinned
     }
-    assert.deepEqual(read('v25'), read('v13'))
+    assert.deepEqual(read('v26'), read('v13'))
   }
   assert.deepEqual(manifest.provenance.models, { ordinary: 'gpt-5.4-nano', pivotal: 'gpt-5.4' })
-  assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 2.33472)
-  assert.equal(manifest.cognition.maxExternalSpendUsd, 2.34)
+  // 18 calls at the worst-case price, from v26's two owed follow-ups per review.
+  assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 3.50208)
+  assert.equal(manifest.cognition.maxExternalSpendUsd, 3.51)
 
   assert.equal(manifest.cognition.perAgentCallCeiling, 6)
-  assert.equal(manifest.cognition.globalCallCeiling, 12)
+  assert.equal(manifest.cognition.globalCallCeiling, 18)
 
-  // Everything but the mode, title, prompts, fairness attestation, per-agent call share, speech
-  // and the follow-up review a settled goal step owes is the v12 pilot.
+  // Everything but the mode, title, prompts, fairness attestation, call ceilings, speech and the
+  // follow-up reviews a settled goal step owes is the v12 pilot.
   const v12 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v12-agency-pilot.json'))
   for (const drop of [v12, config]) {
     for (const key of ['experimentId', 'title', 'mode', 'configFile']) delete drop[key]
@@ -192,6 +195,8 @@ test('the routine-v25 pilot preflights under the v12 treatment plus v25 prompts 
     delete drop.featureFlags.speech
     delete drop.primaryBehavior.profile
     delete drop.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview
+    delete drop.cognition.globalCallCeiling
+    delete drop.cognition.maxExternalSpendUsd
   }
   assert.deepEqual(config, v12)
 })
@@ -203,7 +208,7 @@ test('each native-scheduler pilot refuses the other pilot prompts or fairness at
 
   const v13OldPrompts = goalContinuityConfig()
   v13OldPrompts.cognition.prompts = { routine: 'routine-v13', notable: 'notable-v13', pivotal: 'pivotal-v13' }
-  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v25')))
+  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v26')))
   const v13 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v13-agency-pilot-scripted.json'))
   assert.ok(validateRunConfig(v13).some((error) => error.includes('mode routine-v13-goal-continuity is historical')))
 
@@ -231,7 +236,7 @@ test('each native-scheduler pilot refuses the other pilot prompts or fairness at
   assert.notDeepEqual(validateRunConfig(model), [])
 })
 
-test('the scripted v25 publication carries adoption then continuity without claiming agency', () => {
+test('the scripted v26 publication carries adoption then continuity without claiming agency', () => {
   const config = goalContinuityConfig()
   const raw = primaryBehaviorRawRecords(config)
   // r14 beta body:00000150 saw delta 1.9 blocks off while no self-position pairing found them.
@@ -244,7 +249,7 @@ test('the scripted v25 publication carries adoption then continuity without clai
   assert.deepEqual(validation.errors, [])
   assert.equal(published.metrics.spatial.playerSightings, 1)
   assert.ok(published.metrics.findings.observations.includes('1 perception(s) showed another player within eight blocks'))
-  assert.equal(published.manifest.protocol.mode, 'routine-v25-collected-goal')
+  assert.equal(published.manifest.protocol.mode, 'routine-v26-pursued-goal')
   assert.equal(published.manifest.protocol.categoryFairSelection, true)
   assert.equal(published.manifest.perceptionAudit.byKind.entities.jvmCutOmittedCount, 0)
   assert.equal(published.metrics.goalContinuity.byOutcome.goalAdopted, 3)
@@ -254,11 +259,11 @@ test('the scripted v25 publication carries adoption then continuity without clai
     ['tribe-alpha', 'tribe-beta', 'tribe-gamma']
   )
   const readme = fs.readFileSync(path.join(published.artifactDirectory, 'README.md'), 'utf8')
-  assert.match(readme, /routine-v25 pilot/)
+  assert.match(readme, /routine-v26 pilot/)
   assert.match(readme, /It is not a model-behavior result/)
   // The current gate generation states readiness and lists every action that did not succeed.
   const readiness = published.metrics.behaviorGate.readiness
-  assert.equal(readiness.version, 'loom-readiness-gate/6')
+  assert.equal(readiness.version, 'loom-readiness-gate/7')
   assert.match(readme, new RegExp(`Readiness: \\*\\*${readiness.verdict}\\*\\*`))
   // Coherence is part of that verdict and stated beside the mechanical one.
   assert.match(readme, new RegExp(`Goal coherence: \\*\\*${readiness.goalCoherence.verdict}\\*\\*, part of the verdict`))
@@ -296,10 +301,10 @@ test('primary behavior preflight refuses native review plans outside per-agent o
       .includes('planned native reviews exceed the global cognition call ceiling')
   )
 
-  // From routine-v23 each scheduled review may owe one follow-up, and both ceilings must hold the
-  // scheduled reviews and their follow-ups together: the pilot's 2 reviews are 4 calls an agent.
+  // From routine-v26 each scheduled review may owe two follow-ups, and both ceilings must hold the
+  // scheduled reviews and their follow-ups together: the pilot's 2 reviews are 6 calls an agent.
   const followed = goalContinuityConfig()
-  followed.cognition.perAgentCallCeiling = 3
+  followed.cognition.perAgentCallCeiling = 5
   assert.ok(
     validateRunConfig(followed)
       .includes('planned native reviews exceed the per-agent cognition call ceiling')
@@ -307,12 +312,12 @@ test('primary behavior preflight refuses native review plans outside per-agent o
   const unstated = goalContinuityConfig()
   delete unstated.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview
   assert.ok(
-    validateRunConfig(unstated).some((error) => error.includes('followUpsPerReview must be 1')),
+    validateRunConfig(unstated).some((error) => error.includes('followUpsPerReview must be 2')),
     validateRunConfig(unstated).join('\n')
   )
   const doubled = goalContinuityConfig()
-  doubled.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview = 2
-  assert.ok(validateRunConfig(doubled).some((error) => error.includes('followUpsPerReview must be 1 when stated')))
+  doubled.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview = 1
+  assert.ok(validateRunConfig(doubled).some((error) => error.includes('followUpsPerReview must be 2 when stated')))
 
   const workers = goalContinuityConfig()
   assert.deepEqual(validateRunConfig(workers), [])
@@ -658,31 +663,41 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   for (const name of ['answered-goal-10m-10', 'collected-goal-10m-10']) {
     assert.deepEqual({ ...PROFILES[name] }, { ...shakedown, expectedReviewsPerAgent: 5 }, name)
   }
+  // The v26 profile pre-registers its coherence bars beside the same plan (the r17 audit).
+  const { coherenceBars, ...pursued } = PROFILES['pursued-goal-10m-10']
+  assert.deepEqual(pursued, { ...shakedown, expectedReviewsPerAgent: 5 })
+  assert.ok(Object.isFrozen(coherenceBars))
+  assert.deepEqual({ ...coherenceBars }, {
+    goalActiveReviewShare: 0.6,
+    maxIdleWithExploration: 0,
+    multiStepAgentsAtOriginalTarget: 2,
+    originalTargetCompletions: 3
+  })
   for (const file of ['tribe-shakedown-10m-10.json', 'tribe-shakedown-10m-10-scripted.json']) {
-    for (const earlier of ['grounded-walk', 'grounded-walk-v15', 'working-goal', 'offered-refs', 'actionable-refs', 'typed-goal', 'grounded-step', 'obtainable-goal', 'own-evidence', 'answered-goal'].map((name) => file.replace('shakedown', name)).concat(file)) {
+    for (const earlier of ['grounded-walk', 'grounded-walk-v15', 'working-goal', 'offered-refs', 'actionable-refs', 'typed-goal', 'grounded-step', 'obtainable-goal', 'own-evidence', 'answered-goal', 'collected-goal'].map((name) => file.replace('shakedown', name)).concat(file)) {
       assert.ok(validateRunConfig(read(earlier)).some((error) => error.includes('historical')), earlier)
     }
     const v13 = read(file)
-    const v25 = read(file.replace('shakedown', 'collected-goal'))
-    for (const config of [v13, v25]) {
+    const v26 = read(file.replace('shakedown', 'pursued-goal'))
+    for (const config of [v13, v26]) {
       for (const key of ['experimentId', 'title', 'mode']) delete config[key]
       delete config.cognition.prompts
       delete config.primaryBehavior.profile
       delete config.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview
     }
     // From v24 the plan names the five scheduled reviews a run can finish.
-    assert.equal(v25.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent, 5)
-    v25.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 6
-    assert.deepEqual(v25, v13, file)
+    assert.equal(v26.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent, 5)
+    v26.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 6
+    assert.deepEqual(v26, v13, file)
   }
-  const live = read('tribe-collected-goal-10m-10.json')
-  const scripted = read('tribe-collected-goal-10m-10-scripted.json')
+  const live = read('tribe-pursued-goal-10m-10.json')
+  const scripted = read('tribe-pursued-goal-10m-10-scripted.json')
   const base = read('tribe-two-cycle-10.json')
   assert.match(live.experimentId, /^2026-10-16-openai-10-agent-10m-r[0-9]+$/)
-  assert.equal(live.mode, 'routine-v25-collected-goal')
+  assert.equal(live.mode, 'routine-v26-pursued-goal')
   for (const config of [live, scripted]) {
     assert.deepEqual(validateRunConfig(config), [], config.experimentId)
-    assert.equal(config.primaryBehavior.profile, 'collected-goal-10m-10')
+    assert.equal(config.primaryBehavior.profile, 'pursued-goal-10m-10')
     assert.deepEqual(config.agents, [...AGENT_ORDER])
     assert.equal(config.primaryBehavior.scene, 's2-ring')
     assert.equal(config.world.seed, SCENES['s2-ring'].seed)
@@ -718,7 +733,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   assert.equal(live.cognition.backend, 'openai')
   assert.equal(scripted.cognition.backend, 'scripted')
   const manifest = validateProspectiveManifest(live, SOURCE)
-  assert.equal(manifest.protocol.profile, 'collected-goal-10m-10')
+  assert.equal(manifest.protocol.profile, 'pursued-goal-10m-10')
   assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 29.184)
 
   const drifts = [
@@ -756,7 +771,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
     (config) => { config.mode = 'routine-v13-goal-continuity' }
   ]
   for (const drift of drifts) {
-    const config = read('tribe-collected-goal-10m-10.json')
+    const config = read('tribe-pursued-goal-10m-10.json')
     drift(config)
     assert.notDeepEqual(validateRunConfig(config), [], drift.toString())
   }

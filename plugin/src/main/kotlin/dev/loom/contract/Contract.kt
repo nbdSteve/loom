@@ -666,12 +666,18 @@ data class Perception(
      * at the next goal review or step-settled perception.
      */
     val lastRefusal: GoalRefusal? = null,
+    /**
+     * Cells beyond what the body can see where it can stand, each a `moveTo` target by its ref,
+     * so an agent that sees nothing worth doing can walk to look further.
+     */
+    val explore: List<ExploreTarget> = emptyList(),
 ) {
     init {
         require(surroundings.size <= MAX_PERCEPTION_OBSERVATIONS) {
             "surroundings must state at most $MAX_PERCEPTION_OBSERVATIONS observations, " +
                 "got ${surroundings.size}"
         }
+        require(explore.size <= MAX_EXPLORE_TARGETS) { "at most $MAX_EXPLORE_TARGETS exploration targets" }
         require(surroundingsOmitted >= 0) {
             "surroundingsOmitted must not be negative, got $surroundingsOmitted"
         }
@@ -694,6 +700,27 @@ private fun requireBoundedText(
 ) {
     val characters = text.codePointCount(0, text.length)
     require(characters in 1..max) { "$field must be 1..$max characters, got $characters" }
+}
+
+/** Most exploration targets one perception carries: one per compass bearing. */
+const val MAX_EXPLORE_TARGETS: Int = 8
+
+/** One standable cell at the edge of sight, placed from the agent the way an observation is. */
+@Serializable
+data class ExploreTarget(
+    /** The handle a `moveTo` names this cell by. */
+    val ref: String,
+    /** How far the cell is from the agent, in blocks. */
+    val distance: Double,
+    /** The horizontal bearing to the cell. */
+    val direction: Bearing,
+    /** How far above the agent the cell is. */
+    val verticalOffset: Double,
+) {
+    init {
+        requireBoundedRef(ref)
+        require(distance >= 0.0) { "an exploration target's distance is never negative" }
+    }
 }
 
 /**

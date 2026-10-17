@@ -152,15 +152,16 @@ test('a global call stop counts calls admitted before the closure, including in-
   const published = publish({
     raw: controlledStopRawRecords({
       bound: 'globalCall',
-      eventChains: 6,
+      eventChains: 12,
       eventAgents: ['tribe-alpha', 'tribe-beta', 'tribe-gamma'],
       inFlight: 3,
       stopAgent: 'tribe-alpha'
     })
   })
+  // The pilot's global ceiling holds its reviews and both follow-ups each may owe, from v26.
   const stop = assertNoGo(published, 'cognitionBudgetExhausted')
-  assert.equal(stop.forwardedAtClose, 12)
-  assert.equal(stop.refusal.observed, 12)
+  assert.equal(stop.forwardedAtClose, 18)
+  assert.equal(stop.refusal.observed, 18)
 })
 
 test('a spend stop is typed, but a spend refusal the reservation could not produce is refused', () => {
@@ -718,7 +719,7 @@ test('from gate generation 6 only an action that steps a goal is meaningful beha
   assert.ok(decided.goal !== undefined, 'the fixture review adopts a goal')
   delete decided.goal
   const gate = publish({ raw: ungrounded, stopReason: 'durationElapsed' }).metrics.behaviorGate
-  assert.equal(gate.version, 'loom-primary-behavior-gate/8')
+  assert.equal(gate.version, 'loom-primary-behavior-gate/9')
   // The action is still a confirmed review action, but no step of any goal.
   assert.equal(gate.goalReviewActions.confirmed, 2)
   assert.deepEqual(gate.meaningfulBehaviorByAgent, { 'tribe-beta': 1 })

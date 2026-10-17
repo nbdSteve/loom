@@ -49,6 +49,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -96,7 +97,8 @@ internal data class SceneStack(
 /**
  * One scene: who stands where, every block beside the stone floor at y 63, the creatures and
  * dropped items in view, what the bodies carry, the time of day, whether the peers serve dig
- * breaks as one shared server, and which dropped items the server attributed to whose dig.
+ * breaks as one shared server, and which dropped items the server attributed to whose dig - or,
+ * with [trackDrops], the real [OwnDropLedger] on the world's own server clock, fed by the test.
  */
 internal data class Scene(
     val stands: List<Stand>,
@@ -108,6 +110,8 @@ internal data class Scene(
     val inventory: List<SceneStack> = emptyList(),
     val ownDrops: Map<String, SceneItem> = emptyMap(),
     val columns: Int = 2,
+    val serveCrafts: Boolean = false,
+    val trackDrops: Boolean = false,
 ) {
     /** The scene as the peers script reads it. */
     fun json(identities: Map<AgentId, PlayerIdentity>): String =
@@ -128,6 +132,7 @@ internal data class Scene(
             "timeOfDay" to timeOfDay,
             "serveBreaks" to serveBreaks,
             "columns" to columns,
+            "serveCrafts" to serveCrafts,
             "items" to
                 JsonArray(
                     items.map {
@@ -188,6 +193,20 @@ internal data class Scene(
     }
 }
 
+/** [OwnDrops] read from a real [OwnDropLedger], as [BukkitOwnDrops] reads it. */
+private class LedgerDrops(
+    private val ledger: OwnDropLedger,
+) : OwnDrops {
+    override fun attribute(
+        identity: PlayerIdentity,
+        requestId: String,
+        block: List<Int>,
+        sinceTick: Long,
+    ): List<OwnDropReading> = ledger.attribute(identity.uuid, requestId, block, sinceTick)
+
+    override fun of(identity: PlayerIdentity): List<OwnDropReading> = ledger.of(identity.uuid)
+}
+
 /** One dig packet a body wrote, as the fake server saw it. */
 internal data class DigWrite(
     val agentId: String,
@@ -226,6 +245,11 @@ internal class ScenarioWorld(
     closers: MutableList<() -> Unit>,
 ) {
     private val tick = AtomicLong(1_000)
+    private val lying = ConcurrentHashMap<UUID, List<Double>>()
+    private val identities = scene.stands.map { it.agent }.associateWith(::playerIdentityOf)
+
+    /** The server's own-drop bookkeeping when the scene tracks drops; touched on the main thread only. */
+    private val dropLedger = OwnDropLedger(tick::get) { lying[it] }
     private val mainExecutor = Executors.newSingleThreadExecutor { Thread(it, "fake-server-main") }
     private val main = MainThread { task -> mainExecutor.execute(task) }
     private val kept = CopyOnWriteArrayList<BodyEventRecord>()
@@ -238,7 +262,6 @@ internal class ScenarioWorld(
 
     init {
         val ids = scene.stands.map { it.agent }
-        val identities = ids.associateWith(::playerIdentityOf)
         val peers =
             ProcessBuilder(listOf(node, SCENE_PEERS.toString(), scene.json(identities)))
                 .directory(REPO.resolve("body").toFile())
@@ -275,7 +298,7 @@ internal class ScenarioWorld(
                 currentTick = tick::get,
                 ground = scene.ground,
                 yields = scene.yields,
-                ownDrops = scene.drops,
+                ownDrops = if (scene.trackDrops) LedgerDrops(dropLedger) else scene.drops,
             )
         val port =
             PlayerBodyPort(
@@ -297,6 +320,33 @@ internal class ScenarioWorld(
     fun review(agent: AgentId) {
         tick.addAndGet(REVIEW_TICKS)
         onMain { cognition.consider(agent, Trigger.GoalReview) }
+    }
+
+    /** Lets [ticks] of server time pass with nothing reviewed. */
+    fun advance(ticks: Long) {
+        tick.addAndGet(ticks)
+    }
+
+    /** The server dropped [item] for [agent]'s break of [block], and attributed it to [requestId]. */
+    fun dropped(
+        agent: AgentId,
+        requestId: String,
+        item: SceneItem,
+        block: List<Int>,
+    ) = onMain {
+        val owner = identities.getValue(agent).uuid
+        lying[item.uuid] = listOf(item.x, item.y, item.z)
+        dropLedger.dropped(owner, item.uuid, "item.minecraft.${item.what}", item.count.toLong(), block)
+        dropLedger.attribute(owner, requestId, block, sinceTick = 0)
+    }
+
+    /** [picker] took [item], as Paper's pickup event reports it. */
+    fun taken(
+        item: SceneItem,
+        picker: AgentId,
+    ) = onMain {
+        lying.remove(item.uuid)
+        dropLedger.pickedUp(item.uuid, identities.getValue(picker).uuid)
     }
 
     fun digWrites(): List<DigWrite> = writes.toList()

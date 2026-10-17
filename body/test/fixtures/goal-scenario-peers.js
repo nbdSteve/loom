@@ -13,7 +13,8 @@
  * With `serveBreaks` the script is also the shared server for digs: the first finish written
  * for a block is the one break it takes, which it reports as a `{"broke":...}` line and then
  * broadcasts to every client, the way vanilla answers a finished dig to the digger and to every
- * player tracking the chunk. Stops every body when stdin closes.
+ * player tracking the chunk. With `serveCrafts` it also answers crafts in the player's own grid.
+ * Stops every body when stdin closes.
  */
 
 const { Vec3 } = require('vec3')
@@ -40,6 +41,44 @@ function floor (bot, columns) {
       }
       bot.world.setColumn(cx, cz, column)
     }
+  }
+}
+
+/**
+ * The server half of a crafting transaction in the player's own 2x2 grid, as
+ * `test/native-craft-terminal.test.js` answers it: each grid click is answered on a later turn
+ * with the result vanilla's matcher gives the grid so far, and the player's slots are restated
+ * when the grid closes. The recipe each craft expects is the one the body hands Mineflayer.
+ */
+function serveCrafts (bot, client) {
+  let stateId = 10
+  let expected = Infinity
+  let result = null
+  const craft = bot.craft
+  bot.craft = function (recipe, count, table) {
+    expected = recipe.inShape
+      ? recipe.inShape.flat().filter((cell) => cell.id !== -1).length
+      : recipe.ingredients.length
+    result = new Item(recipe.result.id, recipe.result.count, recipe.result.metadata ?? null)
+    return craft.call(this, recipe, count, table)
+  }
+  const write = client.write
+  client.write = function (name, parameters) {
+    const answered = write.call(this, name, parameters)
+    if (name === 'window_click' && parameters.windowId === 0 && [1, 2, 3, 4].includes(parameters.slot)) {
+      const filled = [1, 2, 3, 4].filter((slot) => bot.inventory.slots[slot] != null).length
+      const item = filled >= expected ? result : null
+      setImmediate(() => client.emit('set_slot', {
+        windowId: 0, stateId: ++stateId, slot: 0, item: Item.toNotch(item ?? null)
+      }))
+    } else if (name === 'close_window') {
+      setImmediate(() => {
+        for (let slot = 9; slot < 45; slot += 1) {
+          client.emit('set_slot', { windowId: 0, stateId: ++stateId, slot, item: Item.toNotch(bot.inventory.slots[slot] ?? null) })
+        }
+      })
+    }
+    return answered
   }
 }
 
@@ -90,6 +129,7 @@ async function main () {
         metadata: [{ key: 8, type: 'item_stack', value: Item.toNotch(stack(what, count)) }]
       })
     }
+    if (scene.serveCrafts) serveCrafts(peer.bot, peer.client)
     if (scene.inventory !== undefined) {
       stocked(peer.client, scene.inventory.map(({ slot, what, count }) => [slot, what, count]))
     }

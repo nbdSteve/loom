@@ -115,7 +115,8 @@ class GoalContinuityTest {
             main.drain()
         }
         assertEquals(EventTag.CONTROL_NOT_READY, seen[1].goal?.lastStep?.outcome)
-        assertEquals(GoalEvidence.ABANDONED, decidedGoals()[1]?.outcome)
+        // A goal the bush in sight can still meet is pursued, not abandoned (from routine-v26).
+        assertEquals(GoalEvidence.ABANDONED_ACHIEVABLE, decidedGoals()[1]?.outcome)
     }
 
     @Test

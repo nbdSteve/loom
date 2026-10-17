@@ -262,7 +262,7 @@ class R11GoalAuditReplayTest {
         val (_, abandoned) =
             review(
                 "gamma-252",
-                Scene(listOf(5.5, 102.0, 11.5), emptyMap()),
+                Scene(listOf(5.5, 102.0, 11.5), emptyMap(), capacity = emptyMap()),
                 goalChoice(GoalDisposition.ABANDON),
                 Intent.Idle,
             )

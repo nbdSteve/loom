@@ -6,12 +6,12 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v25 collected-goal pilot,
-`research/config/first-tribe-routine-v25-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v25-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v26 pursued-goal pilot,
+`research/config/first-tribe-routine-v26-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v26-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
-native event drivers. It uses the v25 prompts, which show each agent its own
+native event drivers. It uses the v26 prompts, which show each agent its own
 carried goal and let the model return an optional typed goal choice, and it
 attests `categoryFairSelection: true` because the 48-per-kind selector it runs on
 is category-fair. Since v14 a `moveTo` names an observed block by ref rather than
@@ -81,17 +81,24 @@ A walk is credited only onto a block that is itself a source of the goal's item.
 What sight can be counted on to give is each block's expected yield, and its best case is stated apart.
 Own drops are told until their fate is known, and every review's record states the goal and refusal the mind was shown.
 The r16 audit found that the 9 remaining refusals were answers the schema still offered, and that the agent dug again or idled in 11 of 21 reviews with its own stick on offer.
+v26 keeps v25 and holds a goal to positive bars set before the run.
+Each perception offers up to eight cells at the edge of sight as walk targets, so an agent with nothing in sight can look further.
+The body words the step from the decision's intent, so no free-text step can contradict it.
+A replace of the same item at the same or a lower total keeps the stall count, a replace of a met goal completes it and adopts the next in one answer, and an abandon of a goal that what is held and seen can still meet is refused.
+A step that leaves the agent's own drop of its goal's item lying owes one more follow-up review, so each configuration from v26 on states `followUpsPerReview: 2`.
+A threat out of sight and more than 16 blocks off is not sighted.
+The r17 audit found trivial goals, 27 of 50 scheduled reviews ending idle, nine flights from mobs out of sight 22 blocks off, and a replace that relabelled a stalled goal.
 `research/lib/experiment-mode.js` owns the pins. In the
 scripted twin the stand-in digs the nearest block in reach that can drop something, adopts one placeholder goal of holding one more of what it drops, continues it while it digs and completes it once met; that exercises the goal round
 trip, the follow-up review and the own-drop evidence, and is not evidence of agency.
 
 Each primary-behavior configuration names a frozen profile, which
 `research/lib/profiles.js` owns: `pilot-180s` (the r5 scene, three agents, 180
-seconds or 4,000 ticks, two reviews each, 6/12/3 calls, $2.34),
+seconds or 4,000 ticks, two reviews each, 6/18/3 calls, $3.51),
 `two-cycle-3` and `two-cycle-10` (the `s2-ring` scene on seed
 `27183455263279`, the first three or all ten surveyed ring slots, 3,600 seconds or
-48,000 ticks, up to 21 reviews each, 56/150/3 or 56/400/6 calls, $29.19 or
-$77.83, and the measured log, evidence and publication bounds below). Preflight refuses any drift from the named profile. The `s2-ring`
+48,000 ticks, up to 21 reviews each, 64/192/3 or 64/640/6 calls, $37.36 or
+$124.52, and the measured log, evidence and publication bounds below). Preflight refuses any drift from the named profile. The `s2-ring`
 positions are the survey's marker-confirmed slots, under its disclosed cover rule:
 a collision-free, non-fluid cover block in the feet cell counts as passable, and
 nothing is cleared or placed; the manifest states that rule. Their configurations
@@ -111,9 +118,11 @@ ran `-r6` and the v17 `research/config/tribe-working-goal-10m-10*.json` that ran
 `research/config/tribe-grounded-step-10m-10*.json` that ran `-r13`, and the v22
 `research/config/tribe-obtainable-goal-10m-10*.json` that ran `-r14`, and the v23
 `research/config/tribe-own-evidence-10m-10*.json` that ran `-r15`, and the v24
-`research/config/tribe-answered-goal-10m-10*.json` that ran `-r16`; `collected-goal-10m-10` is the
-same profile under the v25 mode with its plan cut to the five scheduled reviews a run can finish
-(the sixth is due at tick 12,000 itself), configured by `research/config/tribe-collected-goal-10m-10*.json`.
+`research/config/tribe-answered-goal-10m-10*.json` that ran `-r16`, and the v25
+`research/config/tribe-collected-goal-10m-10*.json` that ran `-r17`; `pursued-goal-10m-10` is the
+same profile under the v26 mode with its plan cut to the five scheduled reviews a run can finish
+(the sixth is due at tick 12,000 itself) and its coherence bars pre-registered beside it, configured by
+`research/config/tribe-pursued-goal-10m-10*.json`.
 The live one
 carries the next fresh `2026-10-16-openai-10-agent-10m-r<n>` id. Each id is consumed
 by its one attempt and its published artifact names the commit it ran from.
@@ -131,7 +140,9 @@ files (the routine-v17 working-goal mode), and the `tribe-offered-refs-10m-10*.j
 routine-v18 offered-refs mode), and the `tribe-actionable-refs-10m-10*.json` files (the
 routine-v19 actionable-refs mode), and the `tribe-typed-goal-10m-10*.json` files (the routine-v20
 typed-goal mode), and the `tribe-grounded-step-10m-10*.json` files (the routine-v21 grounded-step
-mode), and the `tribe-obtainable-goal-10m-10*.json` files (the routine-v22 obtainable-goal mode). They pin prompts the current mind no longer serves, so
+mode), and the `tribe-obtainable-goal-10m-10*.json` files (the routine-v22 obtainable-goal mode), and the
+`tribe-own-evidence-10m-10*.json`, `tribe-answered-goal-10m-10*.json` and `tribe-collected-goal-10m-10*.json`
+files (the routine-v23, routine-v24 and routine-v25 modes). They pin prompts the current mind no longer serves, so
 preflight refuses them before anything is built, started or read; the artifacts
 committed under them still validate. `contract/fixtures/capability-support.json`
 is the one classification of which configurations, modes, intents, triggers and
@@ -150,7 +161,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v25-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v26-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -169,8 +180,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v25-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v25-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v26-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v26-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -369,6 +380,13 @@ Generation 8 (`loom-readiness-gate/6`) also refuses a continue or revise that do
 A replaced goal (`goalReplaced`) counts its action as a step of the new goal for the behavior gate.
 Generation 7 is frozen, so r16 re-derives exactly as published.
 
+Generation 9 (`loom-readiness-gate/7`) adds positive bars, because r17 cleared generation 8 while the independent audit found trivial goals, idle reviews and needless flights.
+The run's profile pre-registers its `coherenceBars`, and `goalCoherence.pursuit` states each bar beside what the run measured: the share of goal reviews that held or took up a goal and stepped toward it, the reviews that held no goal and idled beside offered cells at the edge of sight, the agents with a goal whose condition advanced at two or more steps at its original, never cut, target, and the completions at an original target that needed two or more beyond what was held when adopted.
+Coherence needs every bar cleared, and no bars stated clears none.
+A safe flight from another managed player is the `peerFlight` blocker, and one from a threat neither in view nor within 16 blocks that gained under four blocks of separation is the `needlessFlight` blocker; a `retreating` record states the separation and the separation gained.
+An abandon of a goal that what is held and seen can still meet (`goalAbandonedAchievable`) is the `goalIncoherent` blocker and an invalid decision.
+Generation 8 is frozen, so r17 re-derives exactly as published; `test/readiness-pursuit.test.js` holds r17's evidence to generation 9, where it is `notReady` with nine needless flights, one peer flight and its pursuit bars not cleared.
+
 ## Lifecycle and cleanup
 
 Before it creates the disposable server or reads a credential, the harness refuses to start unless the run volume has at least 2 GiB free, or more when the configured log and artifact bounds need it.
@@ -512,17 +530,17 @@ An empty value or lookup failure stops before cognition starts. An HTTP 401 or
 403 from the provider stops the whole run after that refusal, with no retry and
 only a stable provider-safe error.
 
-The routine-v25 pilot routes routine and notable decisions to
+The routine-v26 pilot routes routine and notable decisions to
 `gpt-5.4-nano` and only the existing pivotal tier to `gpt-5.4`. It runs three
 agents for at most 180 wall-clock seconds or 4,000 server ticks, whichever
-comes first, and permits at most six calls per agent, twelve calls globally,
+comes first, and permits at most six calls per agent, eighteen calls globally,
 and three calls outstanding. Its 65,536-byte request and 2,048-output-token
-bounds make the estimate-independent worst case $2.33472 at the pinned rates;
-the configured spend ceiling is $2.34.
+bounds make the estimate-independent worst case $3.50208 at the pinned rates;
+the configured spend ceiling is $3.51.
 
 The paid two-cycle profiles use the same routing and bounds. Three agents at
-56/150/3 calls make the worst case $29.184 against a $29.19 ceiling; ten agents
-at 56/400/6 make it $77.824 against $77.83. The ten-minute shakedown at 24/150/6 makes it $29.184 against $29.19.
+64/192/3 calls make the worst case $37.35552 against a $37.36 ceiling; ten agents
+at 64/640/6 make it $124.5184 against $124.52. The ten-minute shakedown at 24/150/6 makes it $29.184 against $29.19.
 Each needs its own exact approval.
 
 After explicit approval, replace the proposal placeholder with the approved

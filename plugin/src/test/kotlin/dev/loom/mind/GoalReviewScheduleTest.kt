@@ -160,20 +160,20 @@ class GoalReviewScheduleTest {
         val agent = AgentId("agent-1")
         val living = setOf(agent)
         // Never reviewed: nothing to follow up.
-        schedule.settled(agent, now)
+        schedule.settled(agent, now, owed = false)
         assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(living, now + FOLLOW_UP_DELAY_TICKS))
         assertEquals(listOf(agent), schedule.claim(living, now))
-        schedule.settled(agent, now + 5)
+        schedule.settled(agent, now + 5, owed = false)
         // Not before the drop of a dig can land and be picked up.
         assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(living, now + 5 + FOLLOW_UP_DELAY_TICKS - 1))
         assertEquals(listOf(agent), schedule.claimFollowUps(living, now + 5 + FOLLOW_UP_DELAY_TICKS))
         // The follow-up's own step settling owes nothing more until the next scheduled review.
-        schedule.settled(agent, now + 60)
+        schedule.settled(agent, now + 60, owed = false)
         assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(living, now + CADENCE - 1))
         // And the follow-up never moved the cadence.
         assertEquals(emptyList<AgentId>(), schedule.claim(living, now + CADENCE - 1))
         assertEquals(listOf(agent), schedule.claim(living, now + CADENCE))
-        schedule.settled(agent, now + CADENCE)
+        schedule.settled(agent, now + CADENCE, owed = false)
         assertEquals(listOf(agent), schedule.claimFollowUps(living, now + CADENCE + FOLLOW_UP_DELAY_TICKS))
     }
 
@@ -182,12 +182,12 @@ class GoalReviewScheduleTest {
     fun anOwedFollowUpWaitsAndIsForgotten() {
         val agent = AgentId("agent-1")
         schedule.claim(setOf(agent), 0)
-        schedule.settled(agent, 0)
+        schedule.settled(agent, 0, owed = false)
         assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(agent), 100) { false })
         assertEquals(listOf(agent), schedule.claimFollowUps(setOf(agent), 101))
         val other = AgentId("agent-2")
         schedule.claim(setOf(agent, other), CADENCE)
-        schedule.settled(other, CADENCE)
+        schedule.settled(other, CADENCE, owed = false)
         assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(agent), CADENCE + 100))
         assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(agent, other), CADENCE + 100))
     }

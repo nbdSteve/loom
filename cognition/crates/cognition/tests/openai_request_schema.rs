@@ -152,19 +152,22 @@ fn every_goal_disposition_the_contract_names_is_one_the_provider_may_answer() {
         json!({
             "disposition": "adopt",
             "successItem": "item.minecraft.oak_log",
-            "successCount": 4,
-            "step": "rest by the cliff to the north"
+            "successCount": 4
         }),
         json!({
             "disposition": "continue",
-            "step": "dig into the cliff",
             "stepResult": "done"
         }),
         json!({
             "disposition": "revise",
             "successItem": "item.minecraft.oak_log",
             "successCount": 4,
-            "step": "walk north",
+            "stepResult": "noProgress"
+        }),
+        json!({
+            "disposition": "replace",
+            "successItem": "item.minecraft.stick",
+            "successCount": 2,
             "stepResult": "noProgress"
         }),
         json!({ "disposition": "complete", "stepResult": "done" }),

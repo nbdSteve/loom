@@ -1,6 +1,7 @@
 'use strict'
 
 const { unansweredAccountedFor } = require('./danger.js')
+const { PROFILES } = require('./profiles.js')
 const { readinessMetrics } = require('./readiness.js')
 
 // Mechanical measurements behind the pre-registered primary-behavior gates. Criteria
@@ -19,9 +20,11 @@ const { readinessMetrics } = require('./readiness.js')
 // item and an answer past the stall bound, and reads a body's noRoute as the ground's answer.
 // Generation 8 refuses a step that leaves the agent's own drop of its goal's item lying, counts a
 // replaced goal's action as a step of its new goal, and credits a walk only onto a goal source.
-const GATE_GENERATION = 8
+// Generation 9 judges flights, refuses abandoning an achievable goal, and holds coherence to the
+// profile's pre-registered positive bars.
+const GATE_GENERATION = 9
 // The goal outcomes of a decision whose action was a step of a goal it held or took up.
-const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised', 'goalReplaced'])
+const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised', 'goalReplaced', 'goalCompletedAdopted'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`
 const PASSIVE_INTENTS = Object.freeze(['idle', 'rest'])
 const MOVEMENT_INTENTS = Object.freeze(['moveTo', 'flee'])
@@ -194,7 +197,17 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
     ...(generation >= 2
       ? { interactionsByOperation: Object.fromEntries(Object.entries(interactionsByOperation).sort()) }
       : {}),
-    ...(generation >= 3 ? { readiness: readinessMetrics({ bodyRecords, harnessRecords, metrics, generation }) } : {}),
+    ...(generation >= 3
+      ? {
+          readiness: readinessMetrics({
+            bodyRecords,
+            harnessRecords,
+            metrics,
+            generation,
+            bars: PROFILES[stimulus.profile]?.coherenceBars
+          })
+        }
+      : {}),
     omissionsByKind: omissions,
     nightPerceptionsByAgent: Object.fromEntries(Object.entries(nightPerceptionsByAgent).sort()),
     calls: {

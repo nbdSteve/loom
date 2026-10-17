@@ -75,6 +75,8 @@ sealed interface IntentOutcome {
     data class Accepted(
         val effect: String,
         val reached: Boolean? = null,
+        /** The items the server dropped for this step's own dig that still lie where it can see. */
+        val dropped: Set<String> = emptySet(),
     ) : IntentOutcome
 
     /** No body exists for the agent the intent was addressed to. */

@@ -402,9 +402,10 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     goal.success_item = Some("item.minecraft.stick".to_owned());
     goal.success_count = Some(1);
     assert_eq!(dispositions(&of(&sticks)), ["abandon"]);
+    // An achievable goal is pursued, never abandoned (r17 theta body:00000333).
     assert_eq!(
         dispositions(&of(&with_bush(sticks.clone()))),
-        ["continue", "revise", "abandon"]
+        ["continue", "revise"]
     );
     // Two sticks are one more than a bush's expected yield: not continued (r16 calibration).
     sticks.goal.as_mut().unwrap().success_count = Some(2);
@@ -412,13 +413,15 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     // r11: delta, epsilon and zeta held the stick their goal named and went on. A met
     // condition is completed or revised; nothing else, not even no choice, is offered.
     let met = with_bush(fixture("perception-goal-condition-met"));
-    assert_eq!(dispositions(&of(&met)), ["revise", "complete"]);
+    // A replace on a met goal completes it and adopts the next in one answer (r17: every one of
+    // eleven completes idled for a full cycle).
+    assert_eq!(dispositions(&of(&met)), ["revise", "replace", "complete"]);
     let schema = of(&met);
     let validator = jsonschema::validator_for(&schema).unwrap();
     let continuing = answer_in(
         &schema,
         &json!({ "action": "idle" }),
-        &json!({ "disposition": "continue", "step": "s", "stepResult": "done" }),
+        &json!({ "disposition": "continue", "stepResult": "done" }),
     );
     assert!(!validator.is_valid(&continuing));
     assert!(!validator.is_valid(&answer_in(
@@ -479,7 +482,7 @@ fn a_success_count_is_the_total_to_hold_bounded_by_what_is_held_and_what_sight_c
         answer_in(
             &schema,
             &intent,
-            &json!({ "disposition": "adopt", "successItem": stick, "successCount": count, "step": "s" }),
+            &json!({ "disposition": "adopt", "successItem": stick, "successCount": count }),
         )
     };
     let dig = json!({ "action": "dig", "block": "b9" });
@@ -574,20 +577,31 @@ fn stick_goal(count: i64, stalled: i64) -> Perception {
 fn a_goal_at_the_stall_bound_is_offered_only_a_replace_beside_an_action() {
     // r16 alpha body:00000113 and kappa body:00000148: a continue or revise at the bound was
     // refused, the right collect with it, and a full review cycle was lost.
-    let seen = stick_goal(1, loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS);
+    let mut seen = stick_goal(1, loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS);
+    // With the bush alone sight gives one stick, so a replace raising the total past the held
+    // goal's one cannot be met: the stalled goal is offered only an abandon.
     assert_eq!(GoalPhase::of(&seen), GoalPhase::Stalled);
+    let bare = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
+    assert_eq!(dispositions(&bare), ["abandon"]);
+    seen.surroundings.push(stick_drop("d7", 6.0));
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     assert_eq!(dispositions(&schema), ["replace"]);
+    // r17 alpha body:00000163 replaced "hold 2 stick" with "hold 2 stick" and cleared its stall
+    // count; the same item may only be set again at a higher total.
+    assert_eq!(
+        count_bounds(&schema, "replace", "item.minecraft.stick"),
+        [(2, 3)]
+    );
     let validator = jsonschema::validator_for(&schema).unwrap();
     let replace = json!({ "disposition": "replace", "successItem": "item.minecraft.stick",
-        "successCount": 1, "step": "dig the bush", "stepResult": "noProgress" });
+        "successCount": 2, "stepResult": "noProgress" });
     let dig = json!({ "action": "dig", "block": "b9" });
     assert!(validator.is_valid(&answer_in(&schema, &dig, &replace)));
     for passive in ["idle", "rest"] {
         assert!(!validator.is_valid(&answer_in(&schema, &json!({ "action": passive }), &replace)));
     }
     for kept in ["continue", "revise"] {
-        let choice = json!({ "disposition": kept, "step": "s", "stepResult": "noProgress",
+        let choice = json!({ "disposition": kept, "stepResult": "noProgress",
             "successItem": "item.minecraft.stick", "successCount": 1 });
         assert!(
             !validator.is_valid(&answer_in(&schema, &dig, &choice)),
@@ -627,14 +641,14 @@ fn an_own_drop_of_the_goal_item_in_reach_is_collected_before_any_dig() {
     assert!(offered.dig_blocks.is_empty());
     let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
     let validator = jsonschema::validator_for(&schema).unwrap();
-    let continuing = json!({ "disposition": "continue", "step": "s", "stepResult": "progressing" });
+    let continuing = json!({ "disposition": "continue", "stepResult": "progressing" });
     let collect = json!({ "action": "collect", "item": "d7", "approach": true });
     assert!(validator.is_valid(&answer_in(&schema, &collect, &continuing)));
     let dig = json!({ "action": "dig", "block": "b9" });
     assert!(!validator.is_valid(&answer_in(&schema, &dig, &continuing)));
     let walk = json!({ "action": "moveTo", "onto": "b9" });
     assert!(!validator.is_valid(&answer_in(&schema, &walk, &continuing)));
-    // Abandoning stays open beside any action.
+    // An achievable goal is not abandoned either (r17 theta body:00000333).
     let abandon = json!({ "disposition": "abandon", "stepResult": "noProgress" });
-    assert!(validator.is_valid(&answer_in(&schema, &walk, &abandon)));
+    assert!(!validator.is_valid(&answer_in(&schema, &walk, &abandon)));
 }

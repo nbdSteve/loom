@@ -497,7 +497,7 @@ class EmbodiedCognitionTest {
                 mind = { p -> CompletableFuture.completedFuture(answers.removeFirst()(p)) },
                 mainThread = main,
                 journal = journalInto(mutableListOf()),
-                callbacks = CognitionCallbacks(onStepSettled = { who, at -> settled.add(who to at) }),
+                callbacks = CognitionCallbacks(onStepSettled = { who, at, _ -> settled.add(who to at) }),
             )
 
         cognition.consider(agent, Trigger.GoalReview)

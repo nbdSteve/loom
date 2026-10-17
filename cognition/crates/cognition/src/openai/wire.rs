@@ -270,38 +270,31 @@ struct Answer {
 
 /// Which goal-choice fields one disposition requires; every other field is forbidden.
 ///
-/// The working-goal shape: adopt and revise set the goal's success condition;
-/// adopt, continue and revise name the one step this decision takes toward it; and every
-/// disposition that answers a carried goal judges that goal's previous step.
+/// The working-goal shape: adopt, revise and replace set the goal's success condition, and every
+/// disposition that answers a carried goal judges that goal's previous step. The step itself is
+/// the decision's own intent, which the body words, so no answer states it.
 const fn goal_fields(disposition: GoalDisposition) -> GoalFields {
     match disposition {
         GoalDisposition::Adopt => GoalFields {
             targeted: true,
-            stepped: true,
             judged: false,
-        },
-        GoalDisposition::Continue => GoalFields {
-            targeted: false,
-            stepped: true,
-            judged: true,
         },
         GoalDisposition::Revise | GoalDisposition::Replace => GoalFields {
             targeted: true,
-            stepped: true,
             judged: true,
         },
-        GoalDisposition::Complete | GoalDisposition::Abandon => GoalFields {
-            targeted: false,
-            stepped: false,
-            judged: true,
-        },
+        GoalDisposition::Continue | GoalDisposition::Complete | GoalDisposition::Abandon => {
+            GoalFields {
+                targeted: false,
+                judged: true,
+            }
+        }
     }
 }
 
 #[derive(Clone, Copy)]
 struct GoalFields {
     targeted: bool,
-    stepped: bool,
     judged: bool,
 }
 
@@ -327,7 +320,6 @@ fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> 
             fields.targeted,
             choice.success_count.is_some(),
         ),
-        ("step", fields.stepped, choice.step.is_some()),
         ("step result", fields.judged, choice.step_result.is_some()),
     ];
     for (name, required, given) in present {
@@ -779,17 +771,6 @@ fn goal_variant(
             }),
         );
     }
-    if fields.stepped {
-        properties.insert(
-            "step".to_owned(),
-            json!({
-                "type": "string",
-                "description": format!(
-                    "The one concrete next step this decision's action takes toward the goal, in one short sentence of at most {MAX_GOAL_STATEMENT_CHARS} characters. Your action is the step: idle or rest is none."
-                ),
-            }),
-        );
-    }
     if fields.judged {
         properties.insert(
             "stepResult".to_owned(),
@@ -903,7 +884,7 @@ fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
         variants(
             GoalDisposition::Replace,
             "replace",
-            "Abandon the held goal, which advanced nothing for three steps, and take up a new one in this same answer, whose step is this answer's action.",
+            "End the held goal - one that advanced nothing for three steps, or one whose condition is met - and take up a new one in this same answer, whose step is this answer's action.",
         )
     };
     let complete = || {
@@ -932,9 +913,13 @@ fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
         GoalPhase::Unheld => (vec![adopt()], vec![none()]),
         // A held goal must be answered: a decision that acts while ignoring its goal is refused,
         // so null is not offered (r15 kappa).
-        GoalPhase::Held if obtainable => (vec![continued(), revise()], vec![abandon()]),
+        // A goal sight can still meet is not abandoned: it is pursued, or its total revised (r17
+        // theta body:00000333 abandoned a goal one stick short with a bush in sight).
+        GoalPhase::Held if obtainable => (vec![continued(), revise()], vec![]),
         GoalPhase::Held => (vec![revise()], vec![abandon()]),
-        GoalPhase::Met => (vec![revise()], vec![complete()]),
+        // A met goal is completed, or completed and a new one adopted in the same answer by a
+        // replace, so a completion need not cost an idle review (r17: 11 of 11 completes idled).
+        GoalPhase::Met => (vec![revise(), replace()], vec![complete()]),
         // With nothing in sight to give a new goal, the stalled one can only be dropped.
         GoalPhase::Stalled => {
             let replacing = replace();
@@ -1241,6 +1226,16 @@ mod tests {
                 steps_without_progress: i64::MAX,
             }),
         });
+        // Every cell at the edge of sight it may be offered, each a walk target of its own, at
+        // the widest place a number can render.
+        seen.explore = (0..loom_contract::MAX_EXPLORE_TARGETS)
+            .map(|index| loom_contract::ExploreTarget {
+                target_ref: format!("{index:x>REF_MAX_CHARS$}"),
+                distance: f64::MAX,
+                direction: loom_contract::Bearing::North,
+                vertical_offset: -f64::MAX,
+            })
+            .collect();
         // And the widest refusal a review can be told of.
         seen.last_refusal = Some(loom_contract::GoalRefusal {
             request_id: "q".repeat(MAX_GOAL_ID_CHARS),
@@ -1479,11 +1474,6 @@ mod tests {
                     .to_owned(),
                 "success count",
             ),
-            (format!(r#"{{"disposition":"adopt",{target}}}"#), "step"),
-            (
-                r#"{"disposition":"continue","stepResult":"done"}"#.to_owned(),
-                "step",
-            ),
             (
                 r#"{"disposition":"continue","step":"s"}"#.to_owned(),
                 "step result",
@@ -1505,7 +1495,6 @@ mod tests {
             r#"{"disposition":"continue","step":"s","stepResult":"done","successItem":"item.minecraft.sk_lookalike"}"#
                 .to_owned(),
             format!(r#"{{"disposition":"adopt",{target},"step":"s","stepResult":"done"}}"#),
-            r#"{"disposition":"complete","stepResult":"done","step":"sk-lookalike"}"#.to_owned(),
         ] {
             let reason = goal_of(&forbidden).expect_err(&forbidden);
             assert!(reason.contains("forbids"), "{forbidden}: {reason}");
@@ -1513,7 +1502,9 @@ mod tests {
         }
         // A stated success condition or a typed step is no part of a choice from routine-v23, and a
         // statement none from routine-v24: the body words and types all three itself (r14 delta
-        // worded a log while naming a stick; r15 statements and counts disagreed).
+        // worded a log while naming a stick; r15 statements and counts disagreed). From
+        // routine-v26 the step's wording is the body's too, from the intent (r17 epsilon worded
+        // terracotta while its intent dug a bush), so a step an answer still gives is ignored.
         for stated in [
             format!(r#"{{"disposition":"adopt","successCondition":"c",{target},"step":"s"}}"#),
             format!(

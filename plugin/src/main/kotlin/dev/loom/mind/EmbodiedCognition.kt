@@ -316,10 +316,12 @@ class EmbodiedCognition(
                         tagOf(applied),
                         (applied as? IntentOutcome.Accepted)?.reached,
                     )
-                if (goalStep && applied is IntentOutcome.Accepted) {
+                if (goalStep != null && applied is IntentOutcome.Accepted) {
+                    // A step that left its own drop of the goal's item lying owes a review to collect it.
                     callbacks.onStepSettled.settled(
                         agentId,
                         journal.tick(),
+                        owed = goalStep.successItem in applied.dropped,
                     )
                 }
                 danger.settled(agentId, decision.requestId)

@@ -45,7 +45,9 @@ const GOAL_OUTCOMES = [
   'goalChoiceMissing',
   'goalStepUnproductive',
   'goalOwnDropIgnored',
-  'goalReplaced'
+  'goalReplaced',
+  'goalCompletedAdopted',
+  'goalAbandonedAchievable'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // What a measured step showed, from routine-v22: the exact target reached, an item gained, a
@@ -391,7 +393,8 @@ function normalizeBodyRecord (
     'perceptionAudit',
     'decision',
     'goal',
-    'shown'
+    'shown',
+    'retreat'
   ]) {
     if (record[field] !== undefined && record[field] !== null) {
       normalized[field] = sanitizeValue(record[field], state)

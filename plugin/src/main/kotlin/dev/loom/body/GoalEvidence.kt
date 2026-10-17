@@ -56,6 +56,9 @@ data class GoalEvidence(
         /** The held goal was abandoned and a new one adopted in the same answer, under its id. */
         const val REPLACED: String = "goalReplaced"
 
+        /** The held goal's met condition was completed and a new goal adopted in the same answer. */
+        const val COMPLETED_ADOPTED: String = "goalCompletedAdopted"
+
         /** The mind made no goal choice; any held goal stays and keeps ageing. */
         const val UNADDRESSED: String = "goalUnaddressed"
 
@@ -67,9 +70,6 @@ data class GoalEvidence(
 
         /** An adopt answered a perception that already carried a goal. */
         const val ALREADY_HELD: String = "goalAlreadyHeld"
-
-        /** An adopt, continue or revise without the step its action takes. */
-        const val STEP_MISSING: String = "goalStepMissing"
 
         /** A continue, revise, complete or abandon without a verdict on the previous step. */
         const val STEP_RESULT_MISSING: String = "goalStepResultMissing"
@@ -139,6 +139,13 @@ data class GoalEvidence(
          */
         const val OWN_DROP_IGNORED: String = "goalOwnDropIgnored"
 
+        /**
+         * An abandon of a goal that what the agent held and saw could still meet, neither met nor
+         * stalled: refused with its intent (r17 theta abandoned a goal one stick short with a bush
+         * in sight).
+         */
+        const val ABANDONED_ACHIEVABLE: String = "goalAbandonedAchievable"
+
         /** The outcomes that refuse the decision's intent along with its goal choice. */
         val REFUSING: Set<String> =
             setOf(
@@ -151,11 +158,23 @@ data class GoalEvidence(
                 CHOICE_MISSING,
                 STEP_UNPRODUCTIVE,
                 OWN_DROP_IGNORED,
+                ABANDONED_ACHIEVABLE,
             )
 
         /** The outcomes that settle a decision with nothing its next review needs to be told. */
         val TOLD_NOTHING: Set<String> =
-            setOf(ADOPTED, CONTINUED, REVISED, REPLACED, COMPLETED, ABANDONED, UNADDRESSED, STALE, NOT_REVIEWED)
+            setOf(
+                ADOPTED,
+                CONTINUED,
+                REVISED,
+                REPLACED,
+                COMPLETED,
+                COMPLETED_ADOPTED,
+                ABANDONED,
+                UNADDRESSED,
+                STALE,
+                NOT_REVIEWED,
+            )
 
         /** A goal choice on a decision that did not answer a goal review. */
         const val NOT_REVIEWED: String = "goalNotReviewed"

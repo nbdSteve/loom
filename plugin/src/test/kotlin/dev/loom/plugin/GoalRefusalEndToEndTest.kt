@@ -81,7 +81,8 @@ class GoalRefusalEndToEndTest {
                 GoalEvidence.ALREADY_MET,
                 GoalEvidence.ADOPTED,
                 GoalEvidence.CHOICE_MISSING,
-                GoalEvidence.ABANDONED,
+                // Three sticks with two held and a bush in sight is still achievable (r17 theta).
+                GoalEvidence.ABANDONED_ACHIEVABLE,
             ),
             outcomes,
         )
@@ -95,10 +96,10 @@ class GoalRefusalEndToEndTest {
         // Exactly what each review showed the mind, on its own decided record.
         val shown = world.records.filter { it.event == BodyEvent.DECIDED }.map { it.shown }
         assertEquals(world.mind.seen.map { ShownGoal(it.goal, it.lastRefusal) }, shown)
-        // Three of the five answers are refused, and no refusal reached the body.
+        // Four of the five answers are refused, and no refusal reached the body.
         val readiness = world.readiness(GATE_GENERATION)
         val classes = readiness.getValue("actions").jsonObject.getValue("byClass").jsonObject
-        assertEquals(3, classes.getValue("goalIncoherent").jsonPrimitive.int)
+        assertEquals(4, classes.getValue("goalIncoherent").jsonPrimitive.int)
     }
 
     @Test
@@ -205,7 +206,7 @@ class GoalRefusalEndToEndTest {
     }
 
     private companion object {
-        const val GATE_GENERATION = 8
+        const val GATE_GENERATION = 9
         const val STICK_ID = 50
         val ALPHA = AgentId("agent-alpha")
         val BUSH = Cell(10, 64, 8, "dead_bush")

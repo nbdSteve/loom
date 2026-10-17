@@ -159,6 +159,9 @@ object EventTag {
      */
     const val THREAT_OVER_NIGHTLY_CAP: String = "threatOverNightlyCap"
 
+    /** A hunter out of sight and beyond [THREAT_NEAR_BLOCKS], not worth a flight. */
+    const val THREAT_DISTANT_UNSEEN: String = "threatDistantUnseen"
+
     /** A witnessed server damage event reached cognition as one `damaged` trigger. */
     const val DAMAGE_SUBMITTED: String = "damageSubmitted"
 

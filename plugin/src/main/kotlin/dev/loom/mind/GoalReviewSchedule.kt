@@ -64,18 +64,26 @@ private const val DEFAULT_SLICES_PER_CADENCE = 24
 const val FOLLOW_UP_DELAY_TICKS: Long = 40
 
 /** Follow-up reviews one scheduled review may be followed by. */
-const val MAX_FOLLOW_UPS_PER_REVIEW: Int = 1
+const val MAX_FOLLOW_UPS_PER_REVIEW: Int = 2
+
+/** Follow-ups any settled step owes; the rest are owed only while an own goal-item drop lies. */
+const val ORDINARY_FOLLOW_UPS_PER_REVIEW: Int = 1
 
 /** What hears that a held goal's step settled. Main thread only. */
 fun interface StepSettlement {
+    /**
+     * [agent]'s held goal's step settled at [tick]; [owed] when it left the agent's own drop of the
+     * goal's item lying, which is owed a review to collect it before another agent does.
+     */
     fun settled(
         agent: AgentId,
         tick: Long,
+        owed: Boolean,
     )
 
     companion object {
         /** Nothing follows a step up. */
-        val NONE: StepSettlement = StepSettlement { _, _ -> }
+        val NONE: StepSettlement = StepSettlement { _, _, _ -> }
     }
 }
 
@@ -185,13 +193,18 @@ class GoalReviewSchedule(
     /**
      * Owes [agent] one follow-up review [FOLLOW_UP_DELAY_TICKS] after [tick], when its held goal's
      * step settled - unless its latest scheduled review has already been followed up
-     * [MAX_FOLLOW_UPS_PER_REVIEW] times, or it has never had a scheduled review at all.
+     * [ORDINARY_FOLLOW_UPS_PER_REVIEW] times, or [MAX_FOLLOW_UPS_PER_REVIEW] times when the step
+     * left the agent's own drop of the goal's item lying ([owed]), or it has never had a scheduled
+     * review at all. r17 beta's dig at its one follow-up dropped two sticks with no review owed
+     * until 2255 ticks later, and gamma took them.
      */
     override fun settled(
         agent: AgentId,
         tick: Long,
+        owed: Boolean,
     ) {
-        if (agent !in lastReview || (followUps[agent] ?: 0) >= MAX_FOLLOW_UPS_PER_REVIEW) return
+        val bound = if (owed) MAX_FOLLOW_UPS_PER_REVIEW else ORDINARY_FOLLOW_UPS_PER_REVIEW
+        if (agent !in lastReview || (followUps[agent] ?: 0) >= bound) return
         followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS)
     }
 

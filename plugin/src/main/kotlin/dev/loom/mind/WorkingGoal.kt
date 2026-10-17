@@ -26,14 +26,17 @@ package dev.loom.mind
 
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
+import dev.loom.body.describe
 import dev.loom.contract.AIR_ITEM
 import dev.loom.contract.DropFate
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalProgress
 import dev.loom.contract.GoalSummary
+import dev.loom.contract.Intent
 import dev.loom.contract.IntentAction
 import dev.loom.contract.InventoryChange
+import dev.loom.contract.MAX_GOAL_STATEMENT_CHARS
 import dev.loom.contract.MAX_INVENTORY_CHANGES
 import dev.loom.contract.ObservationKind
 import dev.loom.contract.Perception
@@ -235,6 +238,13 @@ internal fun remeasured(
     return measured.copy(conditionMet = held >= (goal.successCount ?: Long.MAX_VALUE), conditionHeld = held)
 }
 
+/**
+ * A step's wording, from the decision's own intent: the body's, never the mind's, so the text a
+ * later review is shown cannot name what the intent did not do (r17 epsilon's step said it dug
+ * terracotta for sticks while its intent dug a dead bush).
+ */
+internal fun stepOf(intent: Intent): String = describe(intent).take(MAX_GOAL_STATEMENT_CHARS)
+
 /** The goal's wording, from its typed success condition: the total of the item to hold. */
 internal fun statementOf(
     item: String,
@@ -248,10 +258,9 @@ private val RETARGETING = setOf(GoalDisposition.REVISE, GoalDisposition.REPLACE)
 internal fun missingFieldOf(choice: GoalChoice): String? {
     val adopting = choice.disposition == GoalDisposition.ADOPT
     val worded = adopting || choice.disposition in RETARGETING
-    val stepped = worded || choice.disposition == GoalDisposition.CONTINUE
+    // The step is the decision's own intent and the body words it, so no choice must state one.
     return when {
         worded && (choice.successItem == null || choice.successCount == null) -> GoalEvidence.SUCCESS_TARGET_MISSING
-        stepped && choice.step == null -> GoalEvidence.STEP_MISSING
         !adopting && choice.stepResult == null -> GoalEvidence.STEP_RESULT_MISSING
         else -> null
     }

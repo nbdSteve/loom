@@ -492,7 +492,26 @@
         "lastRefusal": {
           "description": "Why the body refused the agent's previous goal decision before acting on it, told once, at the next goalReview or stepSettled perception.",
           "$ref": "#/$defs/GoalRefusal"
+        },
+        "explore": {
+          "description": "Cells beyond what the body can see where it can stand, one per compass bearing at most, each a moveTo target named by its ref, so an agent that sees nothing worth doing can walk to look further. They state no more than where a body can stand; what lies there is unknown until the body senses it.",
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/ExploreTarget" }
         }
+      }
+    },
+
+    "ExploreTarget": {
+      "description": "One standable cell at the edge of sight, placed from the agent the way an observation is.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "distance", "direction", "verticalOffset"],
+      "properties": {
+        "ref": { "$ref": "#/$defs/EntityRef" },
+        "distance": { "type": "number", "minimum": 0 },
+        "direction": { "$ref": "#/$defs/Bearing" },
+        "verticalOffset": { "type": "number" }
       }
     },
 

@@ -56,6 +56,18 @@ class ThreatWatchTest {
     }
 
     @Test
+    fun `a hostile out of sight and far off raises no sighting, and one in view or near does`() {
+        // r17: nine flights ran from mobs behind walls 21.9 to 23.5 blocks away and gained under six.
+        val far = watch.consider(alpha, listOf(zombie("e3", distance = 22.4, visible = false)), aRoute())
+        assertNull(far.sighted)
+        assertEquals(listOf(ThreatSuppressionReason.DISTANT_UNSEEN), far.suppressed.map { it.reason })
+        assertEquals(EventTag.THREAT_DISTANT_UNSEEN, ThreatSuppressionReason.DISTANT_UNSEEN.tag)
+        assertNotNull(watch.consider(beta, listOf(zombie("e4", distance = 22.4, visible = true)), aRoute()).sighted)
+        val near = watch.consider(alpha, listOf(zombie("e5", distance = THREAT_NEAR_BLOCKS, visible = false)), aRoute())
+        assertNotNull(near.sighted)
+    }
+
+    @Test
     fun `a hostile standing still is not reported again inside the cadence`() {
         watch.consider(alpha, listOf(zombie("e1")), aRoute())
 

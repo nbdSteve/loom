@@ -199,14 +199,14 @@ class AutonomousDriverTest {
         val driver = driverFor(bodies)
         driver.sweep()
         main.drain()
-        schedule.settled(agent, now)
+        schedule.settled(agent, now, owed = false)
         now += FOLLOW_UP_DELAY_TICKS
         driver.sweep()
         main.drain()
         assertEquals(listOf(Trigger.GoalReview, Trigger.StepSettled), asked.map { it.trigger })
         assertEquals(DecisionImportance.ROUTINE, asked.last().importance)
         // The follow-up's own step owes nothing more: the next review is the scheduled one.
-        schedule.settled(agent, now)
+        schedule.settled(agent, now, owed = false)
         now = CADENCE
         driver.sweep()
         main.drain()

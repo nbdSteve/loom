@@ -311,8 +311,13 @@ class GoalLedgerTest {
     fun aWorkingGoalNeedsItsTypedConditionStepAndVerdict() {
         val adoptBare = GoalChoice(GoalDisposition.ADOPT, step = "walk to the tree")
         assertEquals(GoalEvidence.SUCCESS_TARGET_MISSING, affirm("r1", 100, seen(0.0), adoptBare).second?.outcome)
+        // From routine-v26 the step is the intent's own, worded by the body: no choice states it,
+        // and one that does is not believed (r17 epsilon worded terracotta while it dug a bush).
         val adoptNoStep = adoptBare.copy(successItem = STICK, successCount = 2, step = null)
-        assertEquals(GoalEvidence.STEP_MISSING, affirm("r2", 100, seen(0.0), adoptNoStep).second?.outcome)
+        assertEquals(GoalEvidence.ADOPTED, affirm("r2", 100, seen(0.0), adoptNoStep).second?.outcome)
+        assertEquals("dig bush", ledger.present(alpha, "r2b", 150, seen(0.0))?.step)
+        ledger.forget(alpha, "r2b")
+        ledger.clear(alpha)
         affirm("r3", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT))
         val unjudged = goalChoice(GoalDisposition.CONTINUE).copy(stepResult = null)
         assertEquals(GoalEvidence.STEP_RESULT_MISSING, affirm("r4", 200, seen(0.0), unjudged).second?.outcome)
@@ -346,8 +351,12 @@ class GoalLedgerTest {
             val resting = affirm(request, 300, seen(0.0), goalChoice(disposition), Intent.Rest)
             assertEquals(GoalEvidence.STEP_IDLE, resting.second?.outcome, request)
         }
-        // Ending a goal takes no step, so it may idle.
-        val ended = affirm("r5", 400, seen(0.0), goalChoice(GoalDisposition.ABANDON), Intent.Idle)
+        // A goal sight can still meet is pursued, not abandoned (r17 theta body:00000333).
+        val achievable = affirm("r5", 400, seen(0.0), goalChoice(GoalDisposition.ABANDON), Intent.Idle)
+        assertEquals(GoalEvidence.ABANDONED_ACHIEVABLE, achievable.second?.outcome)
+        // Ending a goal sight can no longer meet takes no step, so it may idle.
+        val barren = GoalObservation(emptyMap(), listOf(0.0, 64.0, 0.0))
+        val ended = affirm("r6", 500, barren, goalChoice(GoalDisposition.ABANDON), Intent.Idle)
         assertEquals(GoalEvidence.ABANDONED, ended.second?.outcome)
     }
 

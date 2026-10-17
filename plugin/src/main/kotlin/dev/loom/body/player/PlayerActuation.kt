@@ -202,6 +202,8 @@ internal class PlayerActionPreparer(
         requestId: String?,
         sense: HeldSense?,
     ): () -> ActionExecution {
+        // A cell at the edge of sight is where its walk ends: the server stood it up when it was offered.
+        val explored = sense?.exploreCells?.get(intent.onto)?.map(Int::toDouble)
         val resolved =
             requestId?.let {
                 context.refs.blocks.resolve(
@@ -214,6 +216,9 @@ internal class PlayerActionPreparer(
         val block =
             (resolved as? WorldTargetResolution.Bound)?.let { sense?.raw?.report?.blocks?.getOrNull(it.index) }
         return when {
+            explored != null -> {
+                { move(runtime, explored, sense) }
+            }
             resolved == WorldTargetResolution.Unknown ->
                 rejectedAction("that request never named such a block", EventTag.MOVE_BLOCK_UNNAMED)
             block == null ->

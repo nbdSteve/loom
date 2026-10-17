@@ -14,6 +14,7 @@ import dev.loom.contract.GoalRefusal
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.Intent
 import dev.loom.contract.IntentAction
+import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
 import dev.loom.contract.action
 
 /** The intents that take no step, which a goal cannot be pursued by. */
@@ -77,13 +78,35 @@ private fun conditionRefusalOf(
 ): String? {
     val met = presented?.progress?.conditionMet == true
     val disposition = choice?.disposition
+    // A replace of a met goal completes it and adopts the next in one answer (r17: every one of
+    // eleven completes idled for a full review cycle).
+    val movesOn = disposition == GoalDisposition.COMPLETE || disposition == GoalDisposition.REPLACE
     return when {
-        met && disposition != GoalDisposition.COMPLETE && !revisedPast(choice, observed) ->
-            GoalEvidence.CONDITION_MET_IGNORED
+        met && !movesOn && !revisedPast(choice, observed) -> GoalEvidence.CONDITION_MET_IGNORED
+        disposition == GoalDisposition.ABANDON && achievable(presented, observed) ->
+            GoalEvidence.ABANDONED_ACHIEVABLE
         disposition == GoalDisposition.COMPLETE && !met -> GoalEvidence.COMPLETION_UNMET
         presented != null && choice == null && intent.action !in PASSIVE -> GoalEvidence.CHOICE_MISSING
         else -> null
     }
+}
+
+/**
+ * Whether the goal [presented] carries could still be met from what [observed] holds and sees,
+ * and is neither met nor at the stall bound: a goal to pursue, not to abandon (r17 theta
+ * body:00000333 abandoned a goal one stick short with a bush in sight, and fled a peer).
+ */
+private fun achievable(
+    presented: GoalSummary?,
+    observed: GoalObservation?,
+): Boolean {
+    val item = presented?.successItem
+    val count = presented?.successCount
+    val progress = presented?.progress
+    val atBound = (progress?.stepsWithoutProgress ?: 0) >= MAX_GOAL_STEPS_WITHOUT_PROGRESS
+    val reach = item?.let { (observed?.inventory?.get(it) ?: 0) + (observed?.capacity?.get(it) ?: 0) }
+    return observed != null && count != null && reach != null && progress?.conditionMet != true && !atBound &&
+        count <= reach
 }
 
 /** The dispositions that set a success condition of their own. */
