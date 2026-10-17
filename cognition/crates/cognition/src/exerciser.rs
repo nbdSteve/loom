@@ -857,6 +857,34 @@ mod tests {
     }
 
     #[test]
+    fn iota_collects_the_drop_in_its_nook_with_approach_and_then_waits() {
+        let mut seen = review("iota");
+        seen.surroundings = vec![dropped("d1", "item.minecraft.dirt", 1.506, 0.0)];
+        let fetched = draft(&seen);
+        assert_eq!(
+            fetched.intent,
+            Intent::Collect {
+                item: "d1".to_owned(),
+                approach: true
+            }
+        );
+        let adopt = fetched.goal.unwrap();
+        assert_eq!(adopt.disposition, GoalDisposition::Adopt);
+        assert_eq!(adopt.success_count, Some(1));
+        // Nothing to collect, or a goal it holds and has not met: it waits.
+        assert_eq!(draft(&review("iota")).intent, Intent::Idle);
+        let mut holding_goal = review("iota");
+        holding(
+            &mut holding_goal,
+            "item.minecraft.dirt",
+            0,
+            1,
+            StepEvidence::None,
+        );
+        assert_eq!(draft(&holding_goal).intent, Intent::Idle);
+    }
+
+    #[test]
     fn zeta_speaks_and_any_other_agent_is_the_stand_in() {
         assert!(matches!(draft(&review("zeta")).intent, Intent::Say { .. }));
         let other = draft(&review("kappa"));
