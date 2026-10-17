@@ -17,7 +17,9 @@ import dev.loom.contract.Intent
 import dev.loom.contract.IntentAction
 import dev.loom.contract.InventoryChange
 import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
+import dev.loom.contract.StepEvidence
 import dev.loom.contract.Trigger
+import dev.loom.contract.targetRef
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -236,7 +238,18 @@ class GoalLedgerTest {
     private fun seen(
         x: Double,
         vararg stacks: Pair<String, Long>,
-    ): GoalObservation = GoalObservation(mapOf(*stacks), listOf(x, 64.0, 0.0))
+    ): GoalObservation =
+        GoalObservation(
+            mapOf(*stacks),
+            listOf(x, 64.0, 0.0),
+            obtainable =
+                setOf(
+                    *stacks.map {
+                        it.first
+                    }.toTypedArray(),
+                    STICK,
+                ),
+        )
 
     private fun affirm(
         requestId: String,
@@ -262,9 +275,17 @@ class GoalLedgerTest {
         outcome: String = EventTag.ACCEPTED,
     ): Pair<GoalSummary?, GoalEvidence?> {
         val tick = requestId.drop(1).toLong() * 100
-        val result =
-            affirm(requestId, tick, observed, goalChoice(disposition, "gather a stick", intent = intent), intent)
-        ledger.stepped(alpha, requestId, tagOf(intent), outcome)
+        // The step's own target is in sight, and a walk the body accepted arrived.
+        val seen = observed.copy(visible = observed.visible + listOfNotNull(intent.targetRef))
+        val result = affirm(requestId, tick, seen, goalChoice(disposition, "gather a stick", intent = intent), intent)
+        val walk = intent is Intent.MoveTo || intent is Intent.Flee
+        ledger.stepped(
+            alpha,
+            requestId,
+            tagOf(intent),
+            outcome,
+            reached = if (walk) outcome == EventTag.ACCEPTED else null,
+        )
         return result
     }
 
@@ -318,6 +339,7 @@ class GoalLedgerTest {
                 inventoryDelta = listOf(InventoryChange(DIRT, -1), InventoryChange(STICK, 1)),
                 conditionAdvanced = true,
                 stepAdvanced = false,
+                stepEvidence = StepEvidence.NONE,
                 stepsWithoutProgress = 0,
             ),
             half?.progress,
@@ -377,13 +399,23 @@ class GoalLedgerTest {
     }
 
     @Test
-    fun aWorldStepAdvancesWhenTheBodyCarriedItOutAndIdlingNeverDoes() {
+    fun aWorldStepAdvancesOnlyWhenItYieldedSomethingAndIdlingNeverDoes() {
         step("r1", seen(0.0), GoalDisposition.ADOPT, Intent.Dig("b1"))
-        val (dug, _) = step("r2", seen(0.0), GoalDisposition.CONTINUE, Intent.Idle)
-        assertEquals(true, dug?.progress?.stepAdvanced)
-        val (idled, _) = step("r3", seen(0.0), GoalDisposition.CONTINUE, Intent.Dig("b2"), EventTag.DIG_TIMED_OUT)
+        // The dig dropped dirt into the inventory: evidence, short of the stick the goal names.
+        val (gained, _) = step("r2", seen(0.0, DIRT to 1L), GoalDisposition.CONTINUE, Intent.Dig("b2"))
+        assertEquals(StepEvidence.GAINED, gained?.progress?.stepEvidence)
+        assertEquals(true, gained?.progress?.stepAdvanced)
+        // The dig broke its block and dropped a stick on the ground: evidence too.
+        val dropped = seen(0.0, DIRT to 1L).copy(drops = mapOf(STICK to 1L))
+        val (onGround, _) = step("r3", dropped, GoalDisposition.CONTINUE, Intent.Dig("b3"))
+        assertEquals(StepEvidence.DROPPED, onGround?.progress?.stepEvidence)
+        // The dig broke its block and yielded nothing, as bare-hand terracotta does: no evidence.
+        val (barren, _) = step("r4", dropped, GoalDisposition.CONTINUE, Intent.Idle)
+        assertEquals(StepEvidence.NONE, barren?.progress?.stepEvidence)
+        assertEquals(false, barren?.progress?.stepAdvanced)
+        // And an idle step never advances, whatever happens.
+        val (idled, _) = step("r5", seen(0.0, DIRT to 1L), GoalDisposition.CONTINUE, Intent.Idle)
         assertEquals(false, idled?.progress?.stepAdvanced)
-        assertEquals(false, ledger.present(alpha, "r4", 400, seen(0.0))?.progress?.stepAdvanced)
     }
 
     @Test

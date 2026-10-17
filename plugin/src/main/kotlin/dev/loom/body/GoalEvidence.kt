@@ -3,6 +3,7 @@ package dev.loom.body
 
 import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalStepResult
+import dev.loom.contract.StepEvidence
 import kotlinx.serialization.Serializable
 
 /**
@@ -41,6 +42,8 @@ data class GoalEvidence(
     val conditionAdvanced: Boolean? = null,
     /** Whether the presented goal's typed step was carried out since its last affirming review. */
     val stepAdvanced: Boolean? = null,
+    /** What showed it, from the presented goal's progress. */
+    val stepEvidence: StepEvidence? = null,
 ) {
     /** The tags [outcome] takes. */
     companion object {
@@ -104,8 +107,16 @@ data class GoalEvidence(
         /** A completion of a goal whose success condition the inventory does not show: refused with the intent. */
         const val COMPLETION_UNMET: String = "goalCompletionUnmet"
 
+        /**
+         * An adopt or revise naming a success item the agent cannot obtain now - not held, not
+         * dropped in sight, not craftable, and not yielded by any visible block it may dig with
+         * what it holds: refused with the intent. In r13 five agents chased such items for half
+         * the run: terracotta without a pickaxe, a dead bush without shears, a log never in sight.
+         */
+        const val SUCCESS_UNOBTAINABLE: String = "goalSuccessUnobtainable"
+
         /** The outcomes that refuse the decision's intent along with its goal choice. */
-        val REFUSING: Set<String> = setOf(STEP_MISMATCH, CONDITION_MET_IGNORED, COMPLETION_UNMET)
+        val REFUSING: Set<String> = setOf(STEP_MISMATCH, CONDITION_MET_IGNORED, COMPLETION_UNMET, SUCCESS_UNOBTAINABLE)
 
         /** A goal choice on a decision that did not answer a goal review. */
         const val NOT_REVIEWED: String = "goalNotReviewed"

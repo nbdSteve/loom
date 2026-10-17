@@ -39,6 +39,7 @@ data class PlayerBodyAuthority(
     val currentTick: () -> Long,
     val speechClaims: SpeechClaims = SpeechClaims.NONE,
     val ground: BlockGround = BlockGround.UNKNOWN,
+    val yields: BlockYields = BlockYields.NONE,
 )
 
 internal data class PlayerRuntime(

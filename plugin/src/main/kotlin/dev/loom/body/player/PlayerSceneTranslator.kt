@@ -14,6 +14,7 @@ import dev.loom.body.blocksApart
 import dev.loom.body.horizontalBearing
 import dev.loom.contract.CraftingOption
 import dev.loom.contract.InventoryStack
+import dev.loom.contract.MAX_BLOCK_YIELDS
 import dev.loom.contract.Observation
 import dev.loom.contract.ObservationKind
 import dev.loom.contract.SelfState
@@ -188,6 +189,8 @@ internal class PlayerSceneTranslator(
                     position = block.position.map { it + BLOCK_CENTER_OFFSET },
                     visible = block.visible,
                     standable = context.authority.ground.standCell(block.position) != null,
+                    yields = context.authority.yields.of(block.position, raw.identity).take(MAX_BLOCK_YIELDS),
+                    digSafe = digLeavesExit(context.authority.ground, raw.report.position, block.position),
                 )
             }
         val items =
@@ -222,6 +225,8 @@ internal class PlayerSceneTranslator(
             ref = ref,
             count = offer.count,
             standable = offer.standable,
+            yields = offer.yields,
+            digSafe = offer.digSafe,
         )
     }
 

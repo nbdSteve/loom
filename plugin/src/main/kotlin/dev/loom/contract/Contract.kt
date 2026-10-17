@@ -405,14 +405,32 @@ data class Observation(
      * covered, and a walk to a covered block has nowhere to end.
      */
     val standable: Boolean? = null,
+    /**
+     * What digging this block with the held item drops, as the server's loot rules answer it.
+     *
+     * Present exactly for [ObservationKind.BLOCK]; empty when it drops nothing.
+     */
+    val yields: List<String>? = null,
+    /**
+     * Whether digging this block leaves the body a way out.
+     *
+     * Present exactly for [ObservationKind.BLOCK]; false only for the support block of a body
+     * with no standable exit.
+     */
+    val digSafe: Boolean? = null,
 ) {
     init {
         requireBoundedRef(ref)
         require((count != null) == (kind == ObservationKind.DROPPED_ITEM)) {
             "count is present exactly for a dropped-item observation"
         }
-        require((standable != null) == (kind == ObservationKind.BLOCK)) {
-            "standable is present exactly for a block observation"
+        val block = kind == ObservationKind.BLOCK
+        require((standable != null) == block && (yields != null) == block && (digSafe != null) == block) {
+            "standable, yields and digSafe are present exactly for a block observation"
+        }
+        yields?.let {
+            require(it.size <= MAX_BLOCK_YIELDS) { "at most $MAX_BLOCK_YIELDS yields" }
+            it.forEach(::requireItemName)
         }
         count?.let { require(it >= 1) { "a dropped-item observation must hold at least one item" } }
     }
@@ -646,8 +664,10 @@ data class GoalProgress(
     val inventoryDelta: List<InventoryChange>,
     /** Whether the held count of the success item rose since that review. */
     val conditionAdvanced: Boolean,
-    /** Whether the typed step was carried out: for a walk, arriving somewhere new to the goal. */
+    /** Whether the typed step was carried out with evidence, which [stepEvidence] names. */
     val stepAdvanced: Boolean,
+    /** What showed the step was carried out, or that nothing did. */
+    val stepEvidence: StepEvidence,
     /** How many affirmed steps in a row advanced neither. */
     val stepsWithoutProgress: Long,
 ) {
@@ -656,6 +676,41 @@ data class GoalProgress(
         require(inventoryDelta.size <= MAX_INVENTORY_CHANGES) { "at most $MAX_INVENTORY_CHANGES inventory changes" }
         require(stepsWithoutProgress >= 0) { "stepsWithoutProgress must not be negative, got $stepsWithoutProgress" }
     }
+}
+
+/** Most items one block observation says digging it drops. */
+const val MAX_BLOCK_YIELDS: Int = 8
+
+/** What showed the goal's last step was carried out. */
+@Serializable
+enum class StepEvidence {
+    /** A walk reached its visible target, somewhere new to the goal. */
+    @SerialName("arrived")
+    ARRIVED,
+
+    /** The inventory held more of an item after the step. */
+    @SerialName("gained")
+    GAINED,
+
+    /** A new dropped item lay in sight after the step. */
+    @SerialName("dropped")
+    DROPPED,
+
+    /** Nothing showed it: a dig that dropped nothing, a walk that did not arrive. */
+    @SerialName("none")
+    NONE,
+}
+
+/**
+ * Whether [name] is an item as an inventory stack names it, `item.<namespace>.<path>`; mirrors
+ * the Rust contract's `is_item_name`. A block's name is not one.
+ */
+fun isItemName(name: String): Boolean = name.length <= MAX_ITEM_NAME_CHARS && ITEM_NAME.matches(name)
+
+private val ITEM_NAME = Regex("item\\.[a-z0-9_]+\\.[a-z0-9_.]+")
+
+private fun requireItemName(name: String) {
+    require(isItemName(name)) { "an item name is item.<namespace>.<path>" }
 }
 
 /** How the held count of one item changed since the goal's last affirming review. */
@@ -667,7 +722,7 @@ data class InventoryChange(
     val change: Long,
 ) {
     init {
-        requireBoundedText("inventory change item", what, MAX_ITEM_NAME_CHARS)
+        requireItemName(what)
         require(change != 0L) { "an inventory change is never zero" }
     }
 }
@@ -760,7 +815,7 @@ private fun requireTypedSuccess(
     item: String?,
     count: Long?,
 ) {
-    item?.let { requireBoundedText("goal success item", it, MAX_ITEM_NAME_CHARS) }
+    item?.let(::requireItemName)
     count?.let { require(it in 1..MAX_SUCCESS_COUNT) { "goal success count must be 1..$MAX_SUCCESS_COUNT, got $it" } }
 }
 

@@ -13,11 +13,11 @@ internal fun movementOutcome(
     movement: String,
 ): IntentOutcome =
     when (outcome) {
-        MoveOutcome.ARRIVED -> IntentOutcome.Accepted("$movement arrived")
-        MoveOutcome.CANCELLED -> IntentOutcome.Accepted("$movement was cancelled after moving")
-        MoveOutcome.STALLED -> IntentOutcome.Accepted("$movement stalled after starting")
-        MoveOutcome.OVER_TRAVELLED -> IntentOutcome.Accepted("$movement reached its travel bound")
-        MoveOutcome.TIMED_OUT -> IntentOutcome.Accepted("$movement reached its time bound")
+        MoveOutcome.ARRIVED -> IntentOutcome.Accepted("$movement arrived", reached = true)
+        MoveOutcome.CANCELLED -> IntentOutcome.Accepted("$movement was cancelled after moving", reached = false)
+        MoveOutcome.STALLED -> IntentOutcome.Accepted("$movement stalled after starting", reached = false)
+        MoveOutcome.OVER_TRAVELLED -> IntentOutcome.Accepted("$movement reached its travel bound", reached = false)
+        MoveOutcome.TIMED_OUT -> IntentOutcome.Accepted("$movement reached its time bound", reached = false)
         MoveOutcome.OUT_OF_RANGE, MoveOutcome.NO_ROUTE, MoveOutcome.SEARCH_OVER_BUDGET ->
             routeRefusal(outcome, movement)
         MoveOutcome.SENSE_FORGOTTEN ->

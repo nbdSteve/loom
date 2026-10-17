@@ -6,12 +6,12 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v21 grounded-step pilot,
-`research/config/first-tribe-routine-v21-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v21-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v22 obtainable-goal pilot,
+`research/config/first-tribe-routine-v22-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v22-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
-native event drivers. It uses the v21 prompts, which show each agent its own
+native event drivers. It uses the v22 prompts, which show each agent its own
 carried goal and let the model return an optional typed goal choice, and it
 attests `categoryFairSelection: true` because the 48-per-kind selector it runs on
 is category-fair. Since v14 a `moveTo` names an observed block by ref rather than
@@ -49,7 +49,14 @@ v21 keeps v20 and grounds each step in the perception: what the agent stands in 
 rather than a walk, the absence of any dropped item is stated, a refused decision is explained at
 the next review, and a several-item goal is suggested where several are offered, because r12's
 fourteen step mismatches were walks away from a bush the agent stood in and collects of drops that
-did not exist. `research/lib/experiment-mode.js` owns the pins. In the
+did not exist.
+v22 keeps v21 and holds a goal to evidence.
+A success item must be one the agent can get now: held, dropped in sight, craftable, or dropped by a block in sight when dug with what it holds, which the server states per block.
+A step is credited only on the evidence it produced: the exact named target in sight reached, an item gained, or a new drop in sight.
+A dig that would leave the agent in a hole with no standable way out is never offered and is refused as `digWouldTrap`.
+A threat flight halts routine work in flight and then flees.
+The r13 audit found five agents chasing items they could not get and 22 zero-yield digs credited as progress.
+`research/lib/experiment-mode.js` owns the pins. In the
 scripted twin the stand-in adopts one fixed placeholder goal at each agent's
 first review and continues it at the second; that exercises the goal round
 trip and is not evidence of agency.
@@ -76,8 +83,9 @@ that ran `-r5` and the v15 `research/config/tribe-grounded-walk-v15-10m-10*.json
 ran `-r6` and the v17 `research/config/tribe-working-goal-10m-10*.json` that ran `-r8` and
 `-r9`, the v18 `research/config/tribe-offered-refs-10m-10*.json` that ran `-r10`, and the v19
 `research/config/tribe-actionable-refs-10m-10*.json` that ran `-r11`, and the v20
-`research/config/tribe-typed-goal-10m-10*.json` that ran `-r12`; `grounded-step-10m-10` is the
-same profile under the v21 mode, configured by `research/config/tribe-grounded-step-10m-10*.json`.
+`research/config/tribe-typed-goal-10m-10*.json` that ran `-r12`, and the v21
+`research/config/tribe-grounded-step-10m-10*.json` that ran `-r13`; `obtainable-goal-10m-10` is the
+same profile under the v22 mode, configured by `research/config/tribe-obtainable-goal-10m-10*.json`.
 The live one
 carries the next fresh `2026-10-16-openai-10-agent-10m-r<n>` id. Each id is consumed
 by its one attempt and its published artifact names the commit it ran from.
@@ -94,7 +102,8 @@ routine-v14 and routine-v15 grounded-walk modes), and the `tribe-working-goal-10
 files (the routine-v17 working-goal mode), and the `tribe-offered-refs-10m-10*.json` files (the
 routine-v18 offered-refs mode), and the `tribe-actionable-refs-10m-10*.json` files (the
 routine-v19 actionable-refs mode), and the `tribe-typed-goal-10m-10*.json` files (the routine-v20
-typed-goal mode). They pin prompts the current mind no longer serves, so
+typed-goal mode), and the `tribe-grounded-step-10m-10*.json` files (the routine-v21 grounded-step
+mode). They pin prompts the current mind no longer serves, so
 preflight refuses them before anything is built, started or read; the artifacts
 committed under them still validate. `contract/fixtures/capability-support.json`
 is the one classification of which configurations, modes, intents, triggers and
@@ -113,7 +122,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v21-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v22-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -132,8 +141,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v21-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v21-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v22-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v22-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -308,6 +317,12 @@ It is `coherent` only with no step mismatch, no unmet completion, no met conditi
 A decision the goal ledger refused is the `goalIncoherent` blocker and an invalid decision, even when its intent was passive.
 `test/readiness-coherence.test.js` holds r11's own evidence to that gate, where it is `notReady`.
 
+Generation 5 (`loom-readiness-gate/3`) fails coherence directly on two things r13 showed generation 4 could pass by luck.
+A credited step must state the evidence it produced (`stepEvidence` of `arrived`, `gained` or `dropped`), so a credited step with `none` or no evidence at all is counted in `unevidencedCredits`.
+A goal refused as `goalSuccessUnobtainable` is counted in `unobtainableConditions`; it is also the `goalIncoherent` blocker and an invalid decision.
+Coherence needs both counts at zero beside generation 4's rules, and a `digWouldTrap` refusal is `inapplicable`.
+Generations 3 and 4 are frozen, so r10 to r13 re-derive exactly as published; the same test file holds r13's evidence to generation 5, where all 37 of its credited steps are unevidenced.
+
 ## Lifecycle and cleanup
 
 Before it creates the disposable server or reads a credential, the harness refuses to start unless the run volume has at least 2 GiB free, or more when the configured log and artifact bounds need it.
@@ -451,7 +466,7 @@ An empty value or lookup failure stops before cognition starts. An HTTP 401 or
 403 from the provider stops the whole run after that refusal, with no retry and
 only a stable provider-safe error.
 
-The routine-v21 pilot routes routine and notable decisions to
+The routine-v22 pilot routes routine and notable decisions to
 `gpt-5.4-nano` and only the existing pivotal tier to `gpt-5.4`. It runs three
 agents for at most 180 wall-clock seconds or 4,000 server ticks, whichever
 comes first, and permits at most six calls per agent, twelve calls globally,

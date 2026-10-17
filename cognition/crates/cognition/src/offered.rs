@@ -26,7 +26,9 @@
 //! whose top was covered; both were refused by the body, correctly, and neither should have been
 //! offered. `tests/offered_reach_parity.rs` reads every bound below from the body and JVM source.
 
-use loom_contract::{Bearing, Intent, Observation, ObservationKind, Perception, Trigger};
+use loom_contract::{
+    is_item_name, Bearing, Intent, Observation, ObservationKind, Perception, Trigger,
+};
 
 use crate::prompt::{MAX_CRAFTING_LINES, MAX_INVENTORY_LINES, MAX_OBSERVATIONS};
 
@@ -48,11 +50,21 @@ pub const ATTACK_REACH_BLOCKS: f64 = 3.1;
 /// `COMBAT_MAX_PURSUIT_DISTANCE` in `PlayerSurvivalPreparer.kt`.
 pub const MAX_PURSUIT_BLOCKS: f64 = 7.5;
 
+/// Most items a success condition may be offered: held and craftable first, then the nearest
+/// dropped and dug ones. Every block in sight may yield its own eight items, and a request schema
+/// may carry no more than 500 enum values in all.
+pub const MAX_OBTAINABLE_ITEMS: usize = 48;
+
 /// The handles one perception offers, each list in the order the prompt shows it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OfferedRefs {
-    /// Visible blocks within interaction reach: what `dig`, `place` and `sleep` may name.
+    /// Visible blocks within interaction reach: what `place` and `sleep` may name.
     pub blocks: Vec<String>,
+    /// Those of them a dig leaves a way out of: what `dig` may name.
+    pub dig_blocks: Vec<String>,
+    /// The rest of them, which a dig would leave the agent trapped by: offered to `place` and
+    /// `sleep` only.
+    pub kept_blocks: Vec<String>,
     /// Standable blocks outside the agent's own column: what `moveTo` may name.
     pub walk_targets: Vec<String>,
     /// Shown living things, and a sighted threat: what `flee` may name.
@@ -69,6 +81,9 @@ pub struct OfferedRefs {
     pub stacks: Vec<String>,
     /// Shown craftable recipes: what `craft` may name.
     pub recipes: Vec<String>,
+    /// Every item the agent could obtain now - held, dropped in sight, craftable, or yielded by a
+    /// visible block it may dig - which is what a success condition may name.
+    pub obtainable: Vec<String>,
 }
 
 /// Appends `handle` unless the list already holds it.
@@ -93,8 +108,19 @@ impl OfferedRefs {
             let handle = seen.target_ref.as_str();
             match seen.kind {
                 ObservationKind::Block => {
+                    let dig_safe = seen.dig_safe == Some(true);
                     if seen.visible && from_eyes(seen) <= INTERACTION_REACH_BLOCKS {
                         offer(&mut offered.blocks, handle);
+                        if dig_safe {
+                            offer(&mut offered.dig_blocks, handle);
+                        } else {
+                            offer(&mut offered.kept_blocks, handle);
+                        }
+                    }
+                    if seen.visible && dig_safe {
+                        for item in seen.yields.iter().flatten() {
+                            offer(&mut offered.obtainable, item);
+                        }
                     }
                     if seen.direction != Bearing::Here && seen.standable == Some(true) {
                         offer(&mut offered.walk_targets, handle);
@@ -102,6 +128,7 @@ impl OfferedRefs {
                 }
                 ObservationKind::Entity => offered.creature(handle, seen.distance),
                 ObservationKind::DroppedItem => {
+                    offer(&mut offered.obtainable, &seen.what);
                     if seen.distance <= PASSIVE_PICKUP_REACH_BLOCKS {
                         offer(&mut offered.pickup_items, handle);
                     }
@@ -127,6 +154,28 @@ impl OfferedRefs {
         for option in state.crafting_options.iter().take(MAX_CRAFTING_LINES) {
             offer(&mut offered.recipes, &option.recipe_ref);
         }
+        // Held and craftable items lead, ahead of what the surroundings would give.
+        let mut obtainable = Vec::new();
+        for item in state
+            .inventory_summary
+            .iter()
+            .take(MAX_INVENTORY_LINES)
+            .map(|stack| &stack.what)
+            .chain(
+                state
+                    .crafting_options
+                    .iter()
+                    .take(MAX_CRAFTING_LINES)
+                    .map(|option| &option.what),
+            )
+            .chain(&offered.obtainable)
+        {
+            // Only an item name can be held, so anything else in a description is no condition.
+            if is_item_name(item) && obtainable.len() < MAX_OBTAINABLE_ITEMS {
+                offer(&mut obtainable, item);
+            }
+        }
+        offered.obtainable = obtainable;
         offered
     }
 
@@ -149,7 +198,7 @@ impl OfferedRefs {
             Intent::MoveTo { onto } => held(&self.walk_targets, onto),
             Intent::Flee { from } => held(&self.creatures, from),
             Intent::Eat { slot_ref } => held(&self.stacks, slot_ref),
-            Intent::Dig { block } => held(&self.blocks, block),
+            Intent::Dig { block } => held(&self.dig_blocks, block),
             Intent::Collect { item, approach } => held(
                 if *approach {
                     &self.route_items
@@ -219,6 +268,8 @@ mod tests {
             target_ref: handle.to_owned(),
             count: (kind == ObservationKind::DroppedItem).then_some(1),
             standable: (kind == ObservationKind::Block).then_some(true),
+            yields: (kind == ObservationKind::Block).then(Vec::new),
+            dig_safe: (kind == ObservationKind::Block).then_some(true),
         }
     }
 
@@ -462,5 +513,73 @@ mod tests {
         assert!(!offered.admits(&Intent::Eat {
             slot_ref: format!("i{MAX_INVENTORY_LINES}")
         }));
+    }
+
+    #[test]
+    fn a_block_whose_dig_would_trap_is_offered_to_place_and_sleep_but_never_to_dig() {
+        // r13 eta, body:00000148: the only standable block was the floor eta stood on.
+        let mut floor = seen(ObservationKind::Block, "b1", 1.0, -1.0);
+        floor.dig_safe = Some(false);
+        floor.yields = Some(handles(&["item.minecraft.terracotta"]));
+        let wall = seen(ObservationKind::Block, "b2", 1.0, 0.0);
+        let offered = OfferedRefs::of(&scene(vec![floor, wall]));
+        assert_eq!(offered.blocks, handles(&["b1", "b2"]));
+        assert_eq!(offered.dig_blocks, handles(&["b2"]));
+        assert_eq!(offered.kept_blocks, handles(&["b1"]));
+        assert!(!offered.admits(&Intent::Dig {
+            block: "b1".to_owned()
+        }));
+        assert!(offered.admits(&Intent::Dig {
+            block: "b2".to_owned()
+        }));
+        // Its yield is no success item either, since it may not be dug.
+        assert!(!offered
+            .obtainable
+            .iter()
+            .any(|item| item == "item.minecraft.terracotta"));
+    }
+
+    #[test]
+    fn a_success_item_is_only_one_the_agent_can_get_now() {
+        // r13 alpha, beta, epsilon and iota: terracotta, an oak log and a dead bush, none of
+        // which anything in sight could give them.
+        let mut bush = seen(ObservationKind::Block, "b1", 1.0, 0.0);
+        bush.yields = Some(handles(&["item.minecraft.stick"]));
+        let mut hidden = seen(ObservationKind::Block, "b2", 1.0, 0.0);
+        hidden.visible = false;
+        hidden.yields = Some(handles(&["item.minecraft.oak_log"]));
+        let mut drop = seen(ObservationKind::DroppedItem, "d1", 3.0, 0.0);
+        drop.what = "item.minecraft.wheat_seeds".to_owned();
+        let mut named = seen(ObservationKind::DroppedItem, "d2", 3.0, 0.0);
+        named.what = "block.minecraft.dead_bush".to_owned();
+        let offered = OfferedRefs::of(&scene(vec![bush, hidden, drop, named]));
+        // Held and craftable first, then what the surroundings would give; a block name never.
+        assert_eq!(
+            offered.obtainable,
+            handles(&[
+                "item.minecraft.stone_sword",
+                "item.minecraft.stick",
+                "item.minecraft.wheat_seeds",
+            ])
+        );
+    }
+
+    #[test]
+    fn the_success_items_offered_are_bounded_however_much_the_blocks_yield() {
+        let blocks = (0..48)
+            .map(|index| {
+                let mut block = seen(ObservationKind::Block, &format!("b{index}"), 1.0, 0.0);
+                block.yields = Some(
+                    (0..8)
+                        .map(|item| format!("item.minecraft.thing_{index}_{item}"))
+                        .collect(),
+                );
+                block
+            })
+            .collect();
+        let offered = OfferedRefs::of(&scene(blocks));
+        assert_eq!(offered.obtainable.len(), super::MAX_OBTAINABLE_ITEMS);
+        assert_eq!(offered.obtainable[0], "item.minecraft.stone_sword");
+        assert_eq!(offered.obtainable[2], "item.minecraft.thing_0_0");
     }
 }

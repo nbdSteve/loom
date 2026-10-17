@@ -1,7 +1,7 @@
 {
-  "experimentId": "2026-10-16-openai-routine-v21-agency-pilot-proposal",
-  "title": "Routine-v21 three-agent goal-continuity pilot",
-  "mode": "routine-v21-grounded-step",
+  "experimentId": "2026-10-16-openai-routine-v22-agency-pilot-proposal",
+  "title": "Routine-v22 three-agent goal-continuity pilot",
+  "mode": "routine-v22-obtainable-goal",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -53,9 +53,9 @@
       "pivotal": "gpt-5.4"
     },
     "prompts": {
-      "routine": "routine-v21",
-      "notable": "notable-v21",
-      "pivotal": "pivotal-v21"
+      "routine": "routine-v22",
+      "notable": "notable-v22",
+      "pivotal": "pivotal-v22"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,

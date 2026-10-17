@@ -17,6 +17,7 @@ use loom_cognition::model::{
     ScriptedBackend, SCRIPTED_GOAL_STATEMENT, SCRIPTED_STEP, SCRIPTED_SUCCESS_CONDITION,
     SCRIPTED_SUCCESS_ITEM,
 };
+use loom_cognition::offered::OfferedRefs;
 use loom_cognition::router::{ModelCatalog, Router};
 use loom_cognition::server::serve;
 use loom_contract::{
@@ -145,35 +146,43 @@ async fn every_shared_perception_fixture_gets_a_routed_decision_over_a_socket() 
             step_ref: intent.target_ref().map(str::to_owned),
             step_result,
         };
-        let expected = (sent.trigger == Trigger::GoalReview).then(|| match &sent.goal {
-            None => GoalChoice {
-                statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
-                success_condition: Some(SCRIPTED_SUCCESS_CONDITION.to_owned()),
-                success_item: Some(SCRIPTED_SUCCESS_ITEM.to_owned()),
-                success_count: Some(1),
-                ..step(GoalDisposition::Adopt, None)
-            },
-            Some(held) => {
-                let progress = held.progress.as_ref();
-                let result = if progress
-                    .is_some_and(|seen| !seen.condition_advanced && !seen.step_advanced)
-                {
-                    GoalStepResult::NoProgress
-                } else {
-                    GoalStepResult::Progressing
-                };
-                if progress.is_some_and(|seen| seen.condition_met) {
-                    GoalChoice {
-                        step: None,
-                        step_action: None,
-                        step_ref: None,
-                        ..step(GoalDisposition::Complete, Some(result))
-                    }
-                } else {
-                    step(GoalDisposition::Continue, Some(result))
+        // It adopts only an item it can get now, the stick first, and nothing without one.
+        let obtainable = OfferedRefs::of(&sent).obtainable;
+        let item = obtainable
+            .iter()
+            .find(|item| *item == SCRIPTED_SUCCESS_ITEM)
+            .or_else(|| obtainable.first());
+        let expected = (sent.trigger == Trigger::GoalReview)
+            .then_some(())
+            .and_then(|()| match &sent.goal {
+                None => item.map(|item| GoalChoice {
+                    statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
+                    success_condition: Some(SCRIPTED_SUCCESS_CONDITION.to_owned()),
+                    success_item: Some(item.clone()),
+                    success_count: Some(1),
+                    ..step(GoalDisposition::Adopt, None)
+                }),
+                Some(held) => {
+                    let progress = held.progress.as_ref();
+                    let result = if progress
+                        .is_some_and(|seen| !seen.condition_advanced && !seen.step_advanced)
+                    {
+                        GoalStepResult::NoProgress
+                    } else {
+                        GoalStepResult::Progressing
+                    };
+                    Some(if progress.is_some_and(|seen| seen.condition_met) {
+                        GoalChoice {
+                            step: None,
+                            step_action: None,
+                            step_ref: None,
+                            ..step(GoalDisposition::Complete, Some(result))
+                        }
+                    } else {
+                        step(GoalDisposition::Continue, Some(result))
+                    })
                 }
-            }
-        });
+            });
         assert_eq!(decision.goal, expected, "{}", fixture.display());
     }
 }

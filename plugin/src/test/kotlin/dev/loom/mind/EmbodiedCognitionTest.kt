@@ -138,7 +138,7 @@ class EmbodiedCognitionTest {
         records: MutableList<BodyEventRecord>,
         present: Boolean = true,
     ) = RecordingBody(
-        { perception(agentId = agent.value) },
+        { perceptionNearBush(agentId = agent.value) },
         main::drainingThread,
         present,
         BodyEventLog { records.add(it) },

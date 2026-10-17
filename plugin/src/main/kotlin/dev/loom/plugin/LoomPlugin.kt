@@ -235,6 +235,7 @@ class LoomPlugin : JavaPlugin() {
                 currentTick = { server.currentTick.toLong() },
                 speechClaims = sentSpeechOf(witness.speech, bukkitMain) { server.currentTick.toLong() },
                 ground = BukkitBlockGround(server),
+                yields = BukkitBlockYields(server),
             )
         val infrastructures =
             fleet.deployments.map { deployment ->

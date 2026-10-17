@@ -47,15 +47,22 @@ internal class PlayerInteractionPreparer(
                     EventTag.DIG_BLOCK_UNNAMED,
                 )
             is WorldTargetResolution.Bound ->
-                withSenseOrReject(sense, requestId, EventTag.DIG_SENSE_FORGOTTEN, "block") {
-                    BodyRequest.Dig(
-                        protocol = BODY_CONTROL_PROTOCOL_VERSION,
-                        requestId = context.infrastructure.requestIds.next("dig"),
-                        agentId = runtime.identity.agentId.value,
-                        senseId = requireNotNull(requestId),
-                        block = resolved.index,
-                        timeoutMs = INTERACTION_DEADLINE_MS,
+                if (trapsBody(context.authority.ground, sense, resolved.index)) {
+                    rejectedInteraction(
+                        "digging the block underfoot would leave no way out",
+                        EventTag.DIG_WOULD_TRAP,
                     )
+                } else {
+                    withSenseOrReject(sense, requestId, EventTag.DIG_SENSE_FORGOTTEN, "block") {
+                        BodyRequest.Dig(
+                            protocol = BODY_CONTROL_PROTOCOL_VERSION,
+                            requestId = context.infrastructure.requestIds.next("dig"),
+                            agentId = runtime.identity.agentId.value,
+                            senseId = requireNotNull(requestId),
+                            block = resolved.index,
+                            timeoutMs = INTERACTION_DEADLINE_MS,
+                        )
+                    }
                 }
         }
     }
@@ -350,3 +357,14 @@ private fun rejectedInteraction(
     {
         ActionExecution(IntentOutcome.Rejected(reason, tag))
     }
+
+/** Whether the sensed block at [index] is the body's support with no exit once it is dug. */
+private fun trapsBody(
+    ground: BlockGround,
+    sense: HeldSense?,
+    index: Int,
+): Boolean {
+    val report = sense?.raw?.report
+    val block = report?.blocks?.getOrNull(index)
+    return report != null && block != null && !digLeavesExit(ground, report.position, block.position)
+}

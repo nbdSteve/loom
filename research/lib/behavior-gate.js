@@ -12,7 +12,8 @@ const { readinessMetrics } = require('./readiness.js')
 // Generation 3 adds the readiness gate: every decision valid, every action's terminal typed,
 // and every server-checked claim true, with each non-success listed by its exact record.
 // Generation 4 makes goal coherence part of that verdict, measured from the typed goal.
-const GATE_GENERATION = 4
+// Generation 5 credits a step only on its evidence and refuses unobtainable success items.
+const GATE_GENERATION = 5
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`
 const PASSIVE_INTENTS = Object.freeze(['idle', 'rest'])
 const MOVEMENT_INTENTS = Object.freeze(['moveTo', 'flee'])

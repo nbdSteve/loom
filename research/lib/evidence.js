@@ -38,9 +38,13 @@ const GOAL_OUTCOMES = [
   'goalStepActionMissing',
   'goalStepMismatch',
   'goalConditionMetIgnored',
-  'goalCompletionUnmet'
+  'goalCompletionUnmet',
+  'goalSuccessUnobtainable'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
+// What a measured step showed, from routine-v22: the exact target reached, an item gained, a
+// new drop in sight, or nothing.
+const GOAL_STEP_EVIDENCE = ['arrived', 'gained', 'dropped', 'none']
 // Outcomes that act on the very goal the answered review was handed.
 const GOAL_CONTINUING_OUTCOMES = ['goalContinued', 'goalRevised', 'goalCompleted']
 
@@ -273,6 +277,9 @@ function validateGoalEvidence (goal, event, label) {
   if (goal.stepsWithoutProgress !== undefined &&
     (!Number.isSafeInteger(goal.stepsWithoutProgress) || goal.stepsWithoutProgress < 0)) {
     throw new Error(`${label} goal stepsWithoutProgress must be a non-negative integer`)
+  }
+  if (goal.stepEvidence !== undefined && !GOAL_STEP_EVIDENCE.includes(goal.stepEvidence)) {
+    throw new Error(`${label} has an unknown goal step evidence`)
   }
   for (const field of ['conditionMet', 'conditionAdvanced', 'stepAdvanced']) {
     if (goal[field] !== undefined && typeof goal[field] !== 'boolean') {

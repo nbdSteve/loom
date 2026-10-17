@@ -216,8 +216,14 @@
               "kind": { "const": "block" }
             }
           },
-          "then": { "required": ["standable"] },
-          "else": { "not": { "required": ["standable"] } }
+          "then": { "required": ["standable", "yields", "digSafe"] },
+          "else": {
+            "allOf": [
+              { "not": { "required": ["standable"] } },
+              { "not": { "required": ["yields"] } },
+              { "not": { "required": ["digSafe"] } }
+            ]
+          }
         }
       ],
       "properties": {
@@ -247,6 +253,16 @@
           "description": "How many items the dropped-item entity currently represents. Present only when kind is droppedItem; absent for entities and blocks. The bindings enforce that relation.",
           "type": "integer",
           "minimum": 1
+        },
+        "yields": {
+          "description": "The items digging this block with what the body holds drops, as the server's own loot rules answer it: empty when it drops nothing, such as bare-hand terracotta. Present only when kind is block.",
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/ItemName" }
+        },
+        "digSafe": {
+          "description": "Whether digging this block leaves the body a way out. False only for the block under the body's feet when no standable neighbour would let it climb out of the hole the dig makes. Present only when kind is block.",
+          "type": "boolean"
         },
         "standable": {
           "description": "Whether a body can stand at this block: on top of a solid block with two open cells above it, or in the own cell of a block the server gives no collision, with solid ground below and an open cell above. Read from the server's ground rather than from sight, because a block whose face is visible can still be covered. Present only when kind is block; absent for entities and dropped items. The bindings enforce that relation.",
@@ -559,10 +575,11 @@
     },
 
     "ItemName": {
-      "description": "An item exactly as the body names it in an inventory stack's what, such as item.minecraft.stick. A success condition names the item its goal must hold.",
+      "description": "An item exactly as the body names it in an inventory stack's what, such as item.minecraft.stick: always item.namespace.path. A success condition names the item its goal must hold.",
       "type": "string",
       "minLength": 1,
-      "maxLength": 64
+      "maxLength": 64,
+      "pattern": "^item\\.[a-z0-9_]+\\.[a-z0-9_.]+$"
     },
 
     "GoalDisposition": {
@@ -599,7 +616,7 @@
       "description": "Body-measured evidence about the goal since its last affirming review, never claimed by the mind. conditionHeld is how many of the success item the inventory holds now and conditionMet whether that reaches successCount. inventoryDelta is every item whose held count changed. conditionAdvanced says the held count rose; stepAdvanced says the typed step was carried out, which for a walk means arriving somewhere the goal had not been. stepsWithoutProgress counts affirmed steps in a row that advanced neither; moving about, falling or returning advances nothing.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["conditionMet", "conditionHeld", "inventoryDelta", "conditionAdvanced", "stepAdvanced", "stepsWithoutProgress"],
+      "required": ["conditionMet", "conditionHeld", "inventoryDelta", "conditionAdvanced", "stepAdvanced", "stepEvidence", "stepsWithoutProgress"],
       "properties": {
         "conditionMet": { "type": "boolean" },
         "conditionHeld": { "type": "integer", "minimum": 0 },
@@ -610,8 +627,15 @@
         },
         "conditionAdvanced": { "type": "boolean" },
         "stepAdvanced": { "type": "boolean" },
+        "stepEvidence": { "$ref": "#/$defs/StepEvidence" },
         "stepsWithoutProgress": { "type": "integer", "minimum": 0 }
       }
+    },
+
+    "StepEvidence": {
+      "description": "What showed the goal's last step was carried out: arrived for a walk that reached its visible target somewhere new to the goal, gained for an action after which the inventory held more of an item, dropped for one after which a new dropped item lay in sight, none when nothing did. Only a step with evidence advances.",
+      "type": "string",
+      "enum": ["arrived", "gained", "dropped", "none"]
     },
 
     "InventoryChange": {

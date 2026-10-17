@@ -451,3 +451,27 @@ fn scoped_schema(schema: &serde_json::Value, def: &str) -> serde_json::Value {
     rooted.insert("$defs".to_string(), schema["$defs"].clone());
     serde_json::Value::Object(rooted)
 }
+
+#[test]
+fn only_an_inventory_item_name_is_an_item_name() {
+    // r13: eta's goal named block.minecraft.terracotta, which no inventory ever holds.
+    for item in [
+        "item.minecraft.stick",
+        "item.minecraft.oak_log",
+        "item.mod_pack.tools.copper_pick",
+    ] {
+        assert!(loom_contract::is_item_name(item), "{item}");
+    }
+    for not_an_item in [
+        "block.minecraft.terracotta",
+        "stick",
+        "item.minecraft",
+        "item..stick",
+        "item.Minecraft.stick",
+        "item.minecraft.dead bush",
+        "item.mine.craft.stick-",
+        &format!("item.minecraft.{}", "a".repeat(64)),
+    ] {
+        assert!(!loom_contract::is_item_name(not_an_item), "{not_an_item}");
+    }
+}

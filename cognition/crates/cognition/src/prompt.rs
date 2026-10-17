@@ -28,21 +28,22 @@
 
 use loom_contract::{
     Bearing, CraftingOption, DayPhase, DecisionImportance, GoalSummary, IntentAction,
-    InventoryChange, InventoryStack, Observation, ObservationKind, Perception, SelfState, Trigger,
-    WorldState, MAX_GOAL_STEPS_WITHOUT_PROGRESS, MAX_PERCEPTION_OBSERVATIONS,
+    InventoryChange, InventoryStack, Observation, ObservationKind, Perception, SelfState,
+    StepEvidence, Trigger, WorldState, MAX_GOAL_STEPS_WITHOUT_PROGRESS,
+    MAX_PERCEPTION_OBSERVATIONS,
 };
 
 use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v21";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v22";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v21";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v22";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v21";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v22";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -58,9 +59,10 @@ pub(crate) const MAX_CRAFTING_LINES: usize = 24;
 
 /// Longest a single world-supplied string may be inside a prompt.
 ///
-/// Long enough for a sentence somebody said or a description of a thing, short
-/// enough that no one field can dominate the situation.
-const MAX_FIELD_CHARS: usize = 200;
+/// Long enough for a sentence somebody said, a description of a thing, or a goal text whole
+/// (the longest text Loom bounds itself), short enough that no one field can dominate the
+/// situation.
+const MAX_FIELD_CHARS: usize = loom_contract::MAX_GOAL_STATEMENT_CHARS;
 
 /// What the model is asked, in the two parts a chat request needs.
 ///
@@ -191,11 +193,14 @@ the count of steps that advanced nothing.
 A step is typed: it names the action your answer's intent takes and the ref that \
 intent acts on (null for an action that names none), and both must be your \
 intent's own. A step that says one thing while your intent does another is refused \
-with your action. There is something to collect only when a dropped item is \
-listed; breaking a plant may drop nothing. Only evidence advances a goal: the held count of its item rising, \
-or the step you named being carried out - and a walk counts only when it arrives \
-somewhere the goal has not already been. Moving about, falling or walking back is \
-not progress, and rewording the goal is not progress either. After three steps in a \
+with your action. Name a success item you can get now: one you hold, one dropped in \
+sight, one a recipe offers, or one a block in sight drops when dug; the answer lists \
+exactly those. There is something to collect only when a dropped item is listed. \
+Only evidence advances a goal: the held count of its item rising, or the step you \
+named carried out with evidence - a dig or other action after which you hold more or \
+a new drop lies in sight, or a walk that reaches the target you named in sight, \
+somewhere the goal has not already been. A dig that drops nothing, moving about, \
+falling or walking back is not progress, and rewording the goal is not progress either. After three steps in a \
 row that advanced nothing, your body refuses continue and revise and ends the goal. \
 When your success condition is met you must complete the goal, or revise it to a \
 target you do not yet hold, at that review; anything else is refused with your action.";
@@ -259,6 +264,7 @@ fn situation_of(perception: &Perception) -> String {
         &perception.surroundings,
         perception.surroundings_omitted,
     ));
+    lines.push(yields_line(&perception.surroundings));
     lines.extend(own_spot_line(&perception.surroundings));
     lines.extend(no_dropped_item_line(&perception.surroundings));
     if matches!(perception.trigger, Trigger::GoalReview) {
@@ -405,10 +411,11 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
             } else {
                 "did not advance"
             },
-            carried = if progress.step_advanced {
-                "was carried out"
-            } else {
-                "advanced nothing"
+            carried = match progress.step_evidence {
+                StepEvidence::Arrived => "reached the target you named",
+                StepEvidence::Gained => "gained you an item",
+                StepEvidence::Dropped => "left a new dropped item in sight",
+                StepEvidence::None => "showed no evidence and advanced nothing",
             },
             count = progress.steps_without_progress,
             plural = if progress.steps_without_progress == 1 {
@@ -584,6 +591,81 @@ fn surroundings_line(surroundings: &[Observation], omitted_by_the_body: i64) -> 
         "You can see: {shown}{more}",
         more = omitted(hidden, "more thing", "more things")
     )
+}
+
+/// Most distinct items the digging line names.
+const MAX_YIELD_ITEMS: usize = 8;
+
+/// Most block refs the digging line names for one item, or as unsafe to dig: the nearest ones.
+const MAX_YIELD_REFS: usize = 4;
+
+/// What digging each block in sight would drop with what the agent holds, from the server: the
+/// evidence a goal's success item has to stand on (r13: terracotta needs a pickaxe, a dead bush
+/// item shears). Grouped by item and bounded in items and refs however many blocks share one, and
+/// a block it is not safe to dig is named as such.
+fn yields_line(surroundings: &[Observation]) -> String {
+    let mut items: Vec<(&str, Vec<&str>)> = Vec::new();
+    let mut unsafe_digs: Vec<&str> = Vec::new();
+    for seen in surroundings.iter().take(MAX_OBSERVATIONS) {
+        if seen.kind != ObservationKind::Block || !seen.visible {
+            continue;
+        }
+        if seen.dig_safe == Some(false) {
+            unsafe_digs.push(&seen.target_ref);
+            continue;
+        }
+        for item in seen.yields.iter().flatten() {
+            match items.iter_mut().find(|(named, _)| named == item) {
+                Some((_, refs)) => refs.push(&seen.target_ref),
+                None => items.push((item, vec![&seen.target_ref])),
+            }
+        }
+    }
+    let drops = if items.is_empty() {
+        "Digging with what you hold, no block in sight drops anything.".to_owned()
+    } else {
+        let named = items
+            .iter()
+            .take(MAX_YIELD_ITEMS)
+            .map(|(item, refs)| format!("{} (from {})", field(item), some_refs(refs)))
+            .collect::<Vec<_>>()
+            .join("; ");
+        format!(
+            "Digging with what you hold drops {named}{}; any other block drops nothing.",
+            omitted(
+                hidden_beyond(items.len(), MAX_YIELD_ITEMS),
+                "more item",
+                "more items"
+            )
+        )
+    };
+    if unsafe_digs.is_empty() {
+        drops
+    } else {
+        format!(
+            "{drops} Digging {} would leave you in a hole with no way out, so it is not offered.",
+            some_refs(&unsafe_digs)
+        )
+    }
+}
+
+/// The nearest [`MAX_YIELD_REFS`] of `refs`, saying how many more there are.
+fn some_refs(refs: &[&str]) -> String {
+    let shown = refs
+        .iter()
+        .take(MAX_YIELD_REFS)
+        .map(|target| field(target))
+        .collect::<Vec<_>>()
+        .join(", ");
+    match hidden_beyond(refs.len(), MAX_YIELD_REFS) {
+        0 => shown,
+        more => format!("{shown} and {more} more"),
+    }
+}
+
+/// How many of `total` a list cut at `shown` leaves out.
+fn hidden_beyond(total: usize, shown: usize) -> u64 {
+    u64::try_from(total.saturating_sub(shown)).unwrap_or(u64::MAX)
 }
 
 /// The cells a standing body occupies: its feet and its head.
@@ -901,6 +983,8 @@ mod tests {
                 target_ref: "e1".to_owned(),
                 count: None,
                 standable: None,
+                yields: None,
+                dig_safe: None,
             }],
             surroundings_omitted: 0,
             goal: None,
@@ -929,6 +1013,8 @@ mod tests {
                 target_ref: "b0".to_owned(),
                 count: None,
                 standable: Some(true),
+                yields: Some(vec![]),
+                dig_safe: Some(true),
             },
             Observation {
                 kind: ObservationKind::Block,
@@ -940,6 +1026,8 @@ mod tests {
                 target_ref: "b1".to_owned(),
                 count: None,
                 standable: Some(true),
+                yields: Some(vec![]),
+                dig_safe: Some(true),
             },
         ];
         seen.surroundings_omitted = 117;
@@ -1052,6 +1140,7 @@ mod tests {
             inventory_delta: vec![],
             condition_advanced: false,
             step_advanced: false,
+            step_evidence: loom_contract::StepEvidence::None,
             steps_without_progress: 2,
         });
         let rendered = situation(&goal_review_holding(Some(goal.clone())));
@@ -1060,8 +1149,8 @@ mod tests {
         assert!(
             rendered.contains(
                 "Since then your inventory did not change; the success condition did not advance, \
-                 and your step advanced nothing; 2 steps in a row advanced nothing (continue and \
-                 revise are refused at 3)."
+                 and your step showed no evidence and advanced nothing; 2 steps in a row advanced \
+                 nothing (continue and revise are refused at 3)."
             ),
             "{rendered}"
         );
@@ -1085,6 +1174,7 @@ mod tests {
             ],
             condition_advanced: true,
             step_advanced: true,
+            step_evidence: loom_contract::StepEvidence::Gained,
             steps_without_progress: 0,
         });
         let met = situation(&goal_review_holding(Some(goal)));
@@ -1093,7 +1183,7 @@ mod tests {
             "you must complete this goal now, or revise it to a target you do not yet hold",
             "\"cut the oak log in reach\" (dig on b4).",
             "changed by +3 item.minecraft.oak_log, -1 item.minecraft.dirt",
-            "the success condition advanced, and your step was carried out",
+            "the success condition advanced, and your step gained you an item",
         ] {
             assert!(met.contains(expected), "missing {expected:?} in {met}");
         }
@@ -1121,6 +1211,43 @@ mod tests {
     }
 
     #[test]
+    fn what_digging_would_drop_and_which_dig_would_trap_are_stated() {
+        // r13: alpha dug terracotta four times with a bare hand for nothing, and eta dug the
+        // floor it stood on into a shaft it could not leave.
+        let mut seen: Perception = serde_json::from_str(include_str!(
+            "../../../../contract/fixtures/valid/perception-standing-on.json"
+        ))
+        .unwrap();
+        assert!(
+            situation(&seen).contains(
+                "Digging with what you hold drops item.minecraft.stick (from b2); any other \
+                 block drops nothing."
+            ),
+            "{}",
+            situation(&seen)
+        );
+        seen.surroundings[0].dig_safe = Some(false);
+        assert!(situation(&seen).contains(
+            "Digging b1 would leave you in a hole with no way out, so it is not offered."
+        ));
+        let bush = seen.surroundings[1].clone();
+        seen.surroundings.extend((3..8).map(|index| Observation {
+            target_ref: format!("b{index}"),
+            direction: Bearing::North,
+            ..bush.clone()
+        }));
+        assert!(situation(&seen).contains(
+            "drops item.minecraft.stick (from b2, b3, b4, b5 and 2 more); any other block"
+        ));
+        for block in &mut seen.surroundings {
+            block.yields = Some(vec![]);
+            block.dig_safe = Some(true);
+        }
+        assert!(situation(&seen)
+            .contains("Digging with what you hold, no block in sight drops anything."));
+    }
+
+    #[test]
     fn the_absence_of_any_dropped_item_is_stated_outright() {
         // r12 epsilon, delta, theta, beta and iota named a collect with no drop in sight.
         let seen: Perception = serde_json::from_str(include_str!(
@@ -1140,6 +1267,8 @@ mod tests {
             target_ref: "d1".to_owned(),
             count: Some(2),
             standable: None,
+            yields: None,
+            dig_safe: None,
         });
         assert!(!situation(&with_one).contains("No dropped item"));
     }
@@ -1365,6 +1494,21 @@ mod tests {
             if observation.kind == ObservationKind::DroppedItem {
                 observation.count = Some(64);
             }
+        }
+        // The widest digging line: more distinct contract-length items than it names, and a
+        // block it is unsafe to dig.
+        let blocks = seen
+            .surroundings
+            .iter_mut()
+            .filter(|observation| observation.kind == ObservationKind::Block);
+        for (index, block) in blocks.enumerate() {
+            block.visible = true;
+            block.dig_safe = Some(index != 0);
+            block.yields = Some(
+                (0..loom_contract::MAX_BLOCK_YIELDS)
+                    .map(|item| format!("item.minecraft.{:0>49}", index * 8 + item))
+                    .collect(),
+            );
         }
         seen.self_state.inventory_summary = (0..46)
             .map(|index| InventoryStack {
@@ -1846,6 +1990,8 @@ mod tests {
                 target_ref: format!("e{i}"),
                 count: None,
                 standable: None,
+                yields: None,
+                dig_safe: None,
             })
             .collect();
         seen.surroundings_omitted = 7;
@@ -1879,6 +2025,8 @@ mod tests {
                 target_ref: format!("e{i}"),
                 count: None,
                 standable: None,
+                yields: None,
+                dig_safe: None,
             })
             .collect();
         seen.surroundings_omitted = -1_000;
@@ -1962,6 +2110,8 @@ mod tests {
                 target_ref: format!("e{i}"),
                 count: None,
                 standable: None,
+                yields: None,
+                dig_safe: None,
             })
             .collect();
         let prompt = render(&router().route(seen.importance), &seen);

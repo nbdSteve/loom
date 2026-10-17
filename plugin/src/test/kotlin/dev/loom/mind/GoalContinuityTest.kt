@@ -45,7 +45,7 @@ private class NumberingBody(
         trigger: Trigger,
     ): CompletableFuture<Perception?> =
         CompletableFuture.completedFuture(
-            perception(requestId = "r${++next}", agentId = agentId.value, trigger = trigger),
+            perceptionNearBush(requestId = "r${++next}", agentId = agentId.value, trigger = trigger),
         )
 
     override fun senseThreat(agentId: AgentId): CompletableFuture<Perception?> = fail("not under test")

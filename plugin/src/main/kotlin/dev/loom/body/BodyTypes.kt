@@ -68,9 +68,13 @@ data class BodyInspection(
 
 /** Outcome of applying a contract `Intent` to a body. */
 sealed interface IntentOutcome {
-    /** The body accepted the intent; [effect] describes what it will do. */
+    /**
+     * The body accepted the intent; [effect] describes what it will do. [reached] says, for a
+     * walk or flight, whether it arrived where it was sent; `null` for anything else.
+     */
     data class Accepted(
         val effect: String,
+        val reached: Boolean? = null,
     ) : IntentOutcome
 
     /** No body exists for the agent the intent was addressed to. */

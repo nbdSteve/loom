@@ -23,6 +23,12 @@ import java.util.concurrent.CompletionStage
 private const val MOVEMENT_DEADLINE_MS = 20_000
 private const val FLEE_DISTANCE_BLOCKS = 24
 
+/** Flight attempts against a busy body: the first, one after the halt, and settling retries. */
+private const val PREEMPT_ATTEMPTS = 6
+
+/** How long a halted interaction is given to settle between flight attempts. */
+private const val PREEMPT_SETTLE_MS = 100L
+
 /** From a block's corner coordinate to its centre on a horizontal axis. */
 private const val BLOCK_CENTER_OFFSET = 0.5
 
@@ -379,28 +385,41 @@ internal class PlayerActionPreparer(
                             timeoutMs = MOVEMENT_DEADLINE_MS,
                             sprint = true,
                         )
-                    val operation: () -> ActionExecution = { flee(sense, request) }
+                    val operation: () -> ActionExecution = { flee(runtime, sense, request) }
                     operation
                 }
             }
         }
     }
 
+    /**
+     * One flight, which preempts routine work: a flee is the answer to a threat, so when the body
+     * is busy with a dig or another exclusive request it is halted and the flight asked for again,
+     * a bounded number of times while the halted work settles. r13 eta's flight was refused as
+     * notReady for 130 ticks behind a dig decided before the zombie appeared.
+     */
     private fun flee(
+        runtime: PlayerRuntime,
         sense: HeldSense,
         request: BodyRequest.Flee,
     ): ActionExecution {
-        val report =
-            sense.raw.connection.request(
-                request,
-                context.infrastructure.settings.movementTimeout,
-            ) as? BodyResponse.FleeReport
-                ?: throw BodyControlFailure.ProtocolViolation()
-        return ActionExecution(
-            outcome = movementOutcome(report.outcome, "flight"),
-            fleeRequest = request,
-            fleeReport = report,
-        )
+        var attempt = request
+        var halted = false
+        repeat(PREEMPT_ATTEMPTS) { tries ->
+            try {
+                return fleeOnce(sense, attempt, context.infrastructure.settings.movementTimeout)
+            } catch (busy: BodyControlFailure.Refused) {
+                if (busy.code != ErrorCode.NOT_READY || tries == PREEMPT_ATTEMPTS - 1) throw busy
+                if (!halted) {
+                    halt(runtime, "halted routine work for a flight")
+                    halted = true
+                } else {
+                    Thread.sleep(PREEMPT_SETTLE_MS)
+                }
+                attempt = attempt.copy(requestId = context.infrastructure.requestIds.next("flee"))
+            }
+        }
+        error("unreachable: the last attempt returns or throws")
     }
 
     private fun <T> withControl(
@@ -426,3 +445,19 @@ private fun rejectedAction(
     {
         ActionExecution(IntentOutcome.Rejected(reason, tag))
     }
+
+/** One flight request on the sense connection that named its threat. */
+private fun fleeOnce(
+    sense: HeldSense,
+    request: BodyRequest.Flee,
+    timeout: java.time.Duration,
+): ActionExecution {
+    val report =
+        sense.raw.connection.request(request, timeout) as? BodyResponse.FleeReport
+            ?: throw BodyControlFailure.ProtocolViolation()
+    return ActionExecution(
+        outcome = movementOutcome(report.outcome, "flight"),
+        fleeRequest = request,
+        fleeReport = report,
+    )
+}

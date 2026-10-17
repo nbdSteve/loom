@@ -120,6 +120,29 @@ fn the_block_underfoot_is_offered_to_dig_and_never_to_a_walk() {
 }
 
 #[test]
+fn a_block_whose_dig_would_trap_the_agent_is_never_offered_to_dig() {
+    // r13 eta, body:00000043 to body:00000270: four digs of its own floor left a 1x1 shaft
+    // and three flights with no route out.
+    let mut seen = fixture("perception-standing-on");
+    seen.surroundings[0].dig_safe = Some(false);
+    let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
+    assert_eq!(schema["$defs"]["keptBlockRef"]["enum"], json!(["b1"]));
+    assert_eq!(schema["$defs"]["digBlockRef"]["enum"], json!(["b2", "b3"]));
+    assert!(!accepts(
+        &schema,
+        &json!({ "action": "dig", "block": "b1" })
+    ));
+    assert!(accepts(&schema, &json!({ "action": "dig", "block": "b2" })));
+    // The block stays a block for everything a dig is not.
+    for block in ["b1", "b2"] {
+        assert!(accepts(
+            &schema,
+            &json!({ "action": "sleep", "bed": block })
+        ));
+    }
+}
+
+#[test]
 fn an_action_with_nothing_offered_to_name_is_not_offered() {
     let mut seen = fixture("perception-standing-on");
     seen.surroundings.clear();
@@ -154,13 +177,15 @@ fn every_offered_ref_is_one_enum_once_whichever_actions_spend_it() {
     enum_values(&schema["$defs"], &mut count, &mut characters);
     assert_eq!(
         count,
-        offered.blocks.len()
+        offered.dig_blocks.len()
+            + offered.kept_blocks.len()
             + offered.walk_targets.len()
             + offered.creatures.len()
             + offered.strike_targets.len()
             + offered.pursuit_targets.len()
             + offered.pickup_items.len()
             + offered.route_items.len()
+            + offered.obtainable.len()
     );
     for variant in schema["properties"]["intent"]["anyOf"].as_array().unwrap() {
         for (name, field) in variant["properties"].as_object().unwrap() {
@@ -190,10 +215,19 @@ fn the_widest_request_schema_stays_inside_the_providers_enum_limits() {
         target_ref: String::new(),
         count: None,
         standable: Some(true),
+        yields: None,
+        dig_safe: Some(true),
     };
+    // Each block yields eight items of the contract's longest name, and one is unsafe to dig.
     seen.surroundings = (0..MAX_PERCEPTION_OBSERVATIONS)
         .map(|index| Observation {
             target_ref: format!("b{index:03}"),
+            yields: Some(
+                (0..loom_contract::MAX_BLOCK_YIELDS)
+                    .map(|item| format!("item.minecraft.{:0>49}", index * 8 + item))
+                    .collect(),
+            ),
+            dig_safe: Some(index != 0),
             ..block.clone()
         })
         .collect();
@@ -275,6 +309,12 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
         dispositions(&of("perception-goal-review")),
         ["none", "adopt"]
     );
+    // r13: alpha, beta, epsilon, eta and iota adopted items nothing in sight could give them.
+    // With nothing obtainable there is no success item to name, so no goal can be adopted.
+    let mut barren = fixture("perception-goal-review");
+    barren.self_state.inventory_summary.clear();
+    let barren = decision_schema_for(&OfferedRefs::of(&barren), GoalPhase::of(&barren));
+    assert_eq!(dispositions(&barren), ["none"]);
     // An unmet condition is never completed.
     assert_eq!(
         dispositions(&of("perception-goal-carried")),
@@ -290,9 +330,10 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     let validator = jsonschema::validator_for(&met).unwrap();
     assert!(!validator.is_valid(&continuing));
     assert!(!validator.is_valid(&answer(&json!({ "action": "idle" }))));
-    // Any other trigger keeps the reference shape's whole offer.
+    // Any other trigger keeps the reference shape's whole offer, less the worded choices when,
+    // as here, nothing obtainable is in sight for a success item to name.
     assert_eq!(
         dispositions(&of("perception-threat-sighted")),
-        ["none", "adopt", "continue", "revise", "complete", "abandon"]
+        ["none", "continue", "complete", "abandon"]
     );
 }

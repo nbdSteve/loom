@@ -443,6 +443,7 @@ private data class HarnessOptions(
     val intercept: (BodyRequest) -> BodyResponse? = { null },
     val healthCheckIntervalTicks: Long = 100,
     val healthFailureLimit: Int = 3,
+    val yields: BlockYields = BlockYields.NONE,
 )
 
 private class StartupGate {
@@ -1869,6 +1870,7 @@ private fun buildPortHarness(
                     eventLog = BodyEventLog(records::add),
                     currentTick = tick::get,
                     ground = FakeGround(options.server),
+                    yields = options.yields,
                 ),
             startupConcurrency = 1,
         )
@@ -2476,6 +2478,101 @@ class PlayerWalkResolutionTest {
         val beside = seen.surroundings.first { it.direction == Bearing.NORTH }
         val walked = harness.port.apply(agent, Intent.MoveTo(beside.ref), seen.requestId).await()
         assertTrue(walked is IntentOutcome.Accepted, walked.toString())
+    }
+
+    @Test
+    fun `the block under feet in a shaft is offered as unsafe to dig and a dig of it is refused`() {
+        // r13 eta at body:00000148 and 519: a 1x1 shaft it dug itself, every wall unstandable.
+        val agent = AgentId("agent-shaft")
+        val support = listOf(1, 63, 2)
+        val walls = listOf(listOf(2, 63, 2), listOf(0, 63, 2), listOf(1, 63, 3), listOf(1, 63, 1))
+        val server =
+            FakePlayerServerState().apply {
+                buried += walls
+                buried += walls.map { listOf(it[0], 62, it[2]) }
+            }
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    server = server,
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let {
+                            fakeSense(
+                                it,
+                            ).copy(blocks = listOf(SensedBlock("minecraft:yellow_terracotta", support, visible = true)))
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val underfoot = seen.surroundings.single { it.kind == ObservationKind.BLOCK }
+        assertEquals(false, underfoot.digSafe)
+
+        val refused = harness.port.apply(agent, Intent.Dig(underfoot.ref), seen.requestId).await()
+
+        assertEquals(EventTag.DIG_WOULD_TRAP, (refused as IntentOutcome.Rejected).tag)
+        assertTrue(harness.connector.requests.none { it is BodyRequest.Dig })
+        // With one wall open to climb onto, the same dig is safe and is asked of the body.
+        server.buried.remove(walls.first())
+        val open = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        assertEquals(true, open.surroundings.single { it.kind == ObservationKind.BLOCK }.digSafe)
+    }
+
+    @Test
+    fun `a block observation states what digging it yields, from the server, for that player`() {
+        // The r13 bushes yielded sticks and the terracotta nothing; the mind is now told which.
+        val agent = AgentId("agent-yields")
+        val asked = mutableListOf<Pair<List<Int>, PlayerIdentity>>()
+        val yields =
+            BlockYields { position, player ->
+                asked += position to player
+                listOf("item.minecraft.stick")
+            }
+        val harness = harness(agent, HarnessOptions(yields = yields))
+        harness.port.spawn(agent).await()
+        val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val block = seen.surroundings.single { it.kind == ObservationKind.BLOCK }
+        assertEquals(listOf("item.minecraft.stick"), block.yields)
+        assertEquals(listOf(listOf(4, 63, 2) to playerIdentityOf(agent)), asked)
+        assertEquals(true, block.digSafe)
+    }
+
+    @Test
+    fun `a flight refused by a busy body halts the routine work and is asked again`() {
+        // r13 eta body:00000272: the flee was refused notReady behind a dig decided earlier.
+        val agent = AgentId("agent-preempt")
+        var busy = true
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        when {
+                            request is BodyRequest.Halt -> {
+                                busy = false
+                                null
+                            }
+                            request is BodyRequest.Flee && busy -> throw BodyControlFailure.Refused(ErrorCode.NOT_READY)
+                            else -> null
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val threat = seen.surroundings.first { it.kind == ObservationKind.ENTITY }
+
+        val fled = harness.port.apply(agent, Intent.Flee(threat.ref), seen.requestId).await()
+
+        assertTrue(fled is IntentOutcome.Accepted, fled.toString())
+        val asked = harness.connector.requests.filter { it is BodyRequest.Flee || it is BodyRequest.Halt }
+        // The connector lists requests per connection, so the halt's place is proven by the retry
+        // succeeding at all: the body stays busy until it is halted.
+        assertEquals(mapOf("Flee" to 2, "Halt" to 1), asked.groupingBy { it::class.simpleName!! }.eachCount())
+        // The retry is a fresh request, never a reused id.
+        assertEquals(2, asked.filterIsInstance<BodyRequest.Flee>().map { it.requestId }.distinct().size)
     }
 
     @Test

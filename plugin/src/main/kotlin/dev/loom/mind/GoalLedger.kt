@@ -71,6 +71,8 @@ class GoalLedger(
         val observed: GoalObservation?,
         val stepsWithoutProgress: Long,
         val visited: Set<List<Int>>,
+        val stepVisible: Boolean = false,
+        val reached: Boolean? = null,
     )
 
     private data class Basis(
@@ -115,8 +117,13 @@ class GoalLedger(
             goals.held?.let { held ->
                 held.summary.copy(
                     progress =
-                        progressOf(held.summary, held.observed, observed, held.visited, held.stepsWithoutProgress)
-                            ?: held.summary.progress,
+                        progressOf(
+                            held.summary,
+                            held.observed,
+                            observed,
+                            StepRecord(held.visited, held.stepVisible, held.reached),
+                            held.stepsWithoutProgress,
+                        ) ?: held.summary.progress,
                 )
             }
         goals.pending.remove(requestId)
@@ -165,6 +172,7 @@ class GoalLedger(
                 conditionMet = basis.presented?.progress?.conditionMet,
                 conditionAdvanced = basis.presented?.progress?.conditionAdvanced,
                 stepAdvanced = basis.presented?.progress?.stepAdvanced,
+                stepEvidence = basis.presented?.progress?.stepEvidence,
             )
         val unchanged =
             basis.session == goals.session &&
@@ -196,11 +204,16 @@ class GoalLedger(
         requestId: String,
         action: String,
         outcome: String,
+        reached: Boolean? = null,
     ) {
         val goals = agents[agentId] ?: return
         val held = goals.held
         if (held?.affirmedBy == requestId) {
-            goals.held = held.copy(summary = held.summary.copy(lastStep = GoalStep(requestId, action, outcome)))
+            goals.held =
+                held.copy(
+                    summary = held.summary.copy(lastStep = GoalStep(requestId, action, outcome)),
+                    reached = reached,
+                )
         }
     }
 
@@ -261,7 +274,10 @@ class GoalLedger(
         // it has been reviewed at, so a walk back to one of them is no arrival anywhere new.
         val earlier = if (choice.disposition == GoalDisposition.ADOPT) emptySet() else goals.held?.visited.orEmpty()
         val visited = (earlier + listOfNotNull(basis.observed?.cell)).toList().takeLast(MAX_GOAL_CELLS).toSet()
-        goals.held = next?.let { Held(it, basis.capturedTick, requestId, basis.observed, carriedCount, visited) }
+        // A walk's step is evidence only toward a target this perception showed in sight.
+        val stepVisible = choice.stepRef != null && basis.observed?.visible?.contains(choice.stepRef) == true
+        goals.held =
+            next?.let { Held(it, basis.capturedTick, requestId, basis.observed, carriedCount, visited, stepVisible) }
         return evidence.copy(
             outcome = acceptedTag(choice.disposition),
             goalId = next?.goalId,

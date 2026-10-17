@@ -158,7 +158,7 @@ class EmbodiedCognition(
                             agentId,
                             perception.requestId,
                             perception.capturedTick,
-                            GoalObservation.of(perception.selfState),
+                            GoalObservation.of(perception),
                         ),
                 )
             } else {
@@ -302,7 +302,13 @@ class EmbodiedCognition(
                 // Cognition is asynchronous, so an agent can die or disconnect between
                 // perceiving and acting. The body records nothing for a decision it never
                 // received, so the loss is recorded here or nowhere.
-                goals.stepped(agentId, decision.requestId, tagOf(decision.intent), tagOf(applied))
+                goals.stepped(
+                    agentId,
+                    decision.requestId,
+                    tagOf(decision.intent),
+                    tagOf(applied),
+                    (applied as? IntentOutcome.Accepted)?.reached,
+                )
                 danger.settled(agentId, decision.requestId)
                 if (applied == IntentOutcome.NoSuchBody) danger.forget(agentId)
                 if (applied == IntentOutcome.NoSuchBody) {

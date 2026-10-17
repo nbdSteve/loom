@@ -330,6 +330,13 @@ object EventTag {
     const val EAT_SLOT_INACCESSIBLE: String = "eatSlotInaccessible"
 
     const val DIG_SENSE_FORGOTTEN: String = "digSenseForgotten"
+
+/**
+     * A dig of the block underfoot that would leave the body in a hole it cannot leave: refused
+     * before the body is asked. Never offered, because the block observation says digSafe false.
+     */
+    const val DIG_WOULD_TRAP: String = "digWouldTrap"
+
     const val DIG_BLOCK_UNNAMED: String = "digBlockUnnamed"
     const val DIG_BLOCK_GONE: String = "digBlockGone"
     const val DIG_BLOCK_CHANGED: String = "digBlockChanged"
@@ -580,6 +587,7 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         GoalEvidence.STEP_MISMATCH,
         GoalEvidence.CONDITION_MET_IGNORED,
         GoalEvidence.COMPLETION_UNMET,
+        GoalEvidence.SUCCESS_UNOBTAINABLE,
         EventTag.CONTROL_UNAVAILABLE,
         EventTag.CONTROL_NOT_READY,
         EventTag.EAT_SLOT_FORGOTTEN,
@@ -604,6 +612,7 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.RETREAT_SEARCH_OVER_BUDGET,
         EventTag.DIG_SENSE_FORGOTTEN,
         EventTag.DIG_BLOCK_UNNAMED,
+        EventTag.DIG_WOULD_TRAP,
         EventTag.DIG_BLOCK_GONE,
         EventTag.DIG_BLOCK_CHANGED,
         EventTag.DIG_OUT_OF_REACH,

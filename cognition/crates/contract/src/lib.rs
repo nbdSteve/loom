@@ -516,6 +516,14 @@ pub struct Observation {
     /// covered, and a walk to a covered block has nowhere to end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub standable: Option<bool>,
+    /// What digging this block with the held item drops, as the server's loot rules answer it.
+    /// Present exactly for [`ObservationKind::Block`]; empty when it drops nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yields: Option<Vec<String>>,
+    /// Whether digging this block leaves the body a way out. Present exactly for
+    /// [`ObservationKind::Block`]; false only for the support block of a body with no exit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dig_safe: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -533,6 +541,10 @@ struct ObservationWire {
     count: Option<i64>,
     #[serde(default)]
     standable: Option<bool>,
+    #[serde(default, deserialize_with = "bounded_optional_yields")]
+    yields: Option<Vec<String>>,
+    #[serde(default)]
+    dig_safe: Option<bool>,
 }
 
 impl<'de> Deserialize<'de> for Observation {
@@ -546,9 +558,13 @@ impl<'de> Deserialize<'de> for Observation {
                 "count is present exactly for a dropped-item observation",
             ));
         }
-        if raw.standable.is_some() != (raw.kind == ObservationKind::Block) {
+        let block = raw.kind == ObservationKind::Block;
+        if raw.standable.is_some() != block
+            || raw.yields.is_some() != block
+            || raw.dig_safe.is_some() != block
+        {
             return Err(de::Error::custom(
-                "standable is present exactly for a block observation",
+                "standable, yields and digSafe are present exactly for a block observation",
             ));
         }
         if raw.count.is_some_and(|count| count < 1) {
@@ -566,6 +582,8 @@ impl<'de> Deserialize<'de> for Observation {
             target_ref: raw.target_ref,
             count: raw.count,
             standable: raw.standable,
+            yields: raw.yields,
+            dig_safe: raw.dig_safe,
         })
     }
 }
@@ -741,13 +759,44 @@ pub const MAX_SUCCESS_COUNT: i64 = 64;
 /// Most inventory changes one progress reading carries: one per player inventory slot.
 pub const MAX_INVENTORY_CHANGES: usize = 46;
 
+/// Most items one block observation says digging it drops.
+pub const MAX_BLOCK_YIELDS: usize = 8;
+
+/// Whether `name` is an item as an inventory stack names it: `item.<namespace>.<path>`, in
+/// lower-case letters, digits, underscores and dots. A block's name (`block.minecraft.terracotta`)
+/// is not one, and a success condition naming one could never be met.
+#[must_use]
+pub fn is_item_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("item.") else {
+        return false;
+    };
+    let Some((namespace, path)) = rest.split_once('.') else {
+        return false;
+    };
+    let word = |text: &str, dots: bool| {
+        !text.is_empty()
+            && text.chars().all(|c| {
+                c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || (dots && c == '.')
+            })
+    };
+    name.chars().count() <= MAX_ITEM_NAME_CHARS && word(namespace, false) && word(path, true)
+}
+
+fn refuse_non_item<E: de::Error>(name: &str) -> Result<(), E> {
+    if is_item_name(name) {
+        Ok(())
+    } else {
+        Err(E::custom("an item name is item.<namespace>.<path>"))
+    }
+}
+
 fn bounded_optional_item_name<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let text = Option::<String>::deserialize(deserializer)?;
     if let Some(text) = &text {
-        refuse_unbounded_text(text, MAX_ITEM_NAME_CHARS)?;
+        refuse_non_item(text)?;
     }
     Ok(text)
 }
@@ -757,8 +806,24 @@ where
     D: Deserializer<'de>,
 {
     let text = String::deserialize(deserializer)?;
-    refuse_unbounded_text(&text, MAX_ITEM_NAME_CHARS)?;
+    refuse_non_item(&text)?;
     Ok(text)
+}
+
+fn bounded_optional_yields<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let yields = Option::<Vec<String>>::deserialize(deserializer)?;
+    if let Some(yields) = &yields {
+        if yields.len() > MAX_BLOCK_YIELDS {
+            return Err(de::Error::invalid_length(yields.len(), &"at most 8 yields"));
+        }
+        for name in yields {
+            refuse_non_item(name)?;
+        }
+    }
+    Ok(yields)
 }
 
 fn bounded_optional_success_count<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
@@ -918,11 +983,30 @@ pub struct GoalProgress {
     pub inventory_delta: Vec<InventoryChange>,
     /// Whether the held count of the success item rose since that review.
     pub condition_advanced: bool,
-    /// Whether the typed step was carried out: for a walk, arriving somewhere new to the goal.
+    /// Whether the typed step was carried out with evidence, which [`Self::step_evidence`] names.
     pub step_advanced: bool,
+    /// What showed the step was carried out, or that nothing did.
+    pub step_evidence: StepEvidence,
     /// How many affirmed steps in a row advanced neither.
     #[serde(deserialize_with = "nonnegative_goal_count")]
     pub steps_without_progress: i64,
+}
+
+/// What showed the goal's last step was carried out.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepEvidence {
+    /// A walk reached its visible target, somewhere new to the goal.
+    #[serde(rename = "arrived")]
+    Arrived,
+    /// The inventory held more of an item after the step.
+    #[serde(rename = "gained")]
+    Gained,
+    /// A new dropped item lay in sight after the step.
+    #[serde(rename = "dropped")]
+    Dropped,
+    /// Nothing showed it: a dig that dropped nothing, a walk that did not arrive.
+    #[serde(rename = "none")]
+    None,
 }
 
 /// How the held count of one item changed since the goal's last affirming review.

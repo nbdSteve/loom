@@ -480,6 +480,7 @@ fn intent_variant(action: &str, fields: Vec<(&str, Option<Value>)>) -> Option<Va
 #[derive(Clone, Copy)]
 enum Namespace {
     Block,
+    DigBlock,
     WalkTarget,
     Creature,
     StrikeTarget,
@@ -488,11 +489,13 @@ enum Namespace {
     RouteItem,
     Stack,
     Recipe,
+    SuccessItem,
 }
 
 impl Namespace {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 11] = [
         Self::Block,
+        Self::DigBlock,
         Self::WalkTarget,
         Self::Creature,
         Self::StrikeTarget,
@@ -501,11 +504,13 @@ impl Namespace {
         Self::RouteItem,
         Self::Stack,
         Self::Recipe,
+        Self::SuccessItem,
     ];
 
     const fn name(self) -> &'static str {
         match self {
-            Self::Block => "blockRef",
+            Self::Block => "keptBlockRef",
+            Self::DigBlock => "digBlockRef",
             Self::WalkTarget => "walkTargetRef",
             Self::Creature => "creatureRef",
             Self::StrikeTarget => "strikeTargetRef",
@@ -514,12 +519,14 @@ impl Namespace {
             Self::RouteItem => "routeItemRef",
             Self::Stack => "stackRef",
             Self::Recipe => "recipeRef",
+            Self::SuccessItem => "successItemName",
         }
     }
 
     const fn description(self) -> &'static str {
         match self {
-            Self::Block => "A block ref offered in this message that is in sight and within reach.",
+            Self::Block => "A block ref offered in this message that is in sight and within reach, but that you may not dig: digging it would leave you in a hole with no way out.",
+            Self::DigBlock => "A block ref offered in this message that is in sight, within reach, and safe to dig.",
             Self::WalkTarget => {
                 "A block ref offered in this message that you can stand at, outside your own spot."
             }
@@ -534,12 +541,14 @@ impl Namespace {
             Self::RouteItem => "A dropped-item ref offered in this message within walking reach.",
             Self::Stack => "An inventory-stack ref offered in this message.",
             Self::Recipe => "A recipe ref offered in this message.",
+            Self::SuccessItem => "An item you can obtain now: one you hold, one dropped in sight, one a recipe offers, or one a block in sight drops when you dig it.",
         }
     }
 
     fn of(self, offered: &OfferedRefs) -> &[String] {
         match self {
-            Self::Block => &offered.blocks,
+            Self::Block => &offered.kept_blocks,
+            Self::DigBlock => &offered.dig_blocks,
             Self::WalkTarget => &offered.walk_targets,
             Self::Creature => &offered.creatures,
             Self::StrikeTarget => &offered.strike_targets,
@@ -548,6 +557,7 @@ impl Namespace {
             Self::RouteItem => &offered.route_items,
             Self::Stack => &offered.stacks,
             Self::Recipe => &offered.recipes,
+            Self::SuccessItem => &offered.obtainable,
         }
     }
 }
@@ -567,6 +577,25 @@ fn ref_field(
             "anyOf": [{ "$ref": format!("#/$defs/{}", namespace.name()) }],
         })),
     }
+}
+
+/// One ref field any of several namespaces may fill, which is how one action names refs that
+/// another action splits: `place` and `sleep` take every block in reach, partitioned by whether a
+/// dig may name it, so that no block's handle is listed twice in a request's enums.
+fn any_ref_field(
+    description: &str,
+    namespaces: &[Namespace],
+    offered: Option<&OfferedRefs>,
+) -> Option<Value> {
+    let Some(refs) = offered else {
+        return Some(json!({ "type": "string", "description": description }));
+    };
+    let any: Vec<Value> = namespaces
+        .iter()
+        .filter(|namespace| !namespace.of(refs).is_empty())
+        .map(|namespace| json!({ "$ref": format!("#/$defs/{}", namespace.name()) }))
+        .collect();
+    (!any.is_empty()).then(|| json!({ "description": description, "anyOf": any }))
 }
 
 /// The `$defs` a request carries: one closed string enum per namespace it offers.
@@ -689,8 +718,23 @@ fn attack_variants(offered: Option<&OfferedRefs>) -> Vec<Option<Value>> {
 }
 
 /// One goal disposition, as a closed object carrying exactly the fields it requires.
-fn goal_variant(disposition: GoalDisposition, name: &str, description: &str) -> Value {
+/// One goal disposition, or `None` when it words a goal and a request offers nothing it could
+/// name as a success item.
+fn goal_variant(
+    disposition: GoalDisposition,
+    name: &str,
+    description: &str,
+    offered: Option<&OfferedRefs>,
+) -> Option<Value> {
     let fields = goal_fields(disposition);
+    let success_item = ref_field(
+        "The item the goal is achieved by holding, named exactly as the item is listed. Your body measures it from your own inventory.",
+        Namespace::SuccessItem,
+        offered,
+    );
+    if fields.worded && success_item.is_none() {
+        return None;
+    }
     let mut properties = serde_json::Map::new();
     properties.insert(
         "disposition".to_owned(),
@@ -711,13 +755,9 @@ fn goal_variant(disposition: GoalDisposition, name: &str, description: &str) -> 
                 ),
             }),
         );
-        properties.insert(
-            "successItem".to_owned(),
-            json!({
-                "type": "string",
-                "description": "The item the goal is achieved by holding, named exactly as a stack you carry or a dropped item shows it, such as item.minecraft.stick. Your body measures it from your own inventory.",
-            }),
-        );
+        if let Some(field) = success_item {
+            properties.insert("successItem".to_owned(), field);
+        }
         properties.insert(
             "successCount".to_owned(),
             json!({
@@ -765,12 +805,12 @@ fn goal_variant(disposition: GoalDisposition, name: &str, description: &str) -> 
         );
     }
     let required: Vec<Value> = properties.keys().map(|key| json!(key)).collect();
-    json!({
+    Some(json!({
         "type": "object",
         "properties": properties,
         "required": required,
         "additionalProperties": false,
-    })
+    }))
 }
 
 /// The optional goal choice: `null`, or exactly one closed disposition shape.
@@ -827,12 +867,13 @@ impl GoalPhase {
 /// goal, which is what keeps a statement from riding on a disposition that would
 /// discard it. At a review the offer narrows to what the ledger accepts: a met success
 /// condition can only be completed or revised, and an unmet one is never completed.
-fn goal_choice_schema(phase: GoalPhase) -> Value {
+fn goal_choice_schema(phase: GoalPhase, offered: Option<&OfferedRefs>) -> Value {
     let adopt = || {
         goal_variant(
             GoalDisposition::Adopt,
             "adopt",
             "Take up a new goal when you hold none.",
+            offered,
         )
     };
     let continued = || {
@@ -840,16 +881,18 @@ fn goal_choice_schema(phase: GoalPhase) -> Value {
             GoalDisposition::Continue,
             "continue",
             "Keep the held goal and take its next step.",
+            offered,
         )
     };
     let revise = || {
-        goal_variant(GoalDisposition::Revise, "revise", "Keep pursuing the held goal with new wording, success target and step; when its condition is met, a revise must name a target you do not yet hold.")
+        goal_variant(GoalDisposition::Revise, "revise", "Keep pursuing the held goal with new wording, success target and step; when its condition is met, a revise must name a target you do not yet hold.", offered)
     };
     let complete = || {
         goal_variant(
             GoalDisposition::Complete,
             "complete",
             "The held goal's success condition is met; drop it.",
+            offered,
         )
     };
     let abandon = || {
@@ -857,9 +900,10 @@ fn goal_choice_schema(phase: GoalPhase) -> Value {
             GoalDisposition::Abandon,
             "abandon",
             "The held goal is no longer worth pursuing; drop it.",
+            offered,
         )
     };
-    let none = || json!({ "type": "null" });
+    let none = || Some(json!({ "type": "null" }));
     let choices = match phase {
         GoalPhase::Any => vec![
             none(),
@@ -873,6 +917,7 @@ fn goal_choice_schema(phase: GoalPhase) -> Value {
         GoalPhase::Held => vec![none(), continued(), revise(), abandon()],
         GoalPhase::Met => vec![complete(), revise()],
     };
+    let choices: Vec<Value> = choices.into_iter().flatten().collect();
     json!({
         "description": "Your choice about your one short-term goal, only at a scheduled goal review; null makes no choice and leaves any held goal as it is.",
         "anyOf": choices,
@@ -880,7 +925,14 @@ fn goal_choice_schema(phase: GoalPhase) -> Value {
 }
 
 fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Value {
-    let blocks = |description: &str| ref_field(description, Namespace::Block, offered);
+    let blocks = |description: &str| {
+        any_ref_field(
+            description,
+            &[Namespace::DigBlock, Namespace::Block],
+            offered,
+        )
+    };
+    let dig_blocks = |description: &str| ref_field(description, Namespace::DigBlock, offered);
     let walk_targets = |description: &str| ref_field(description, Namespace::WalkTarget, offered);
     let creatures = |description: &str| ref_field(description, Namespace::Creature, offered);
     let stacks = |description: &str| ref_field(description, Namespace::Stack, offered);
@@ -893,7 +945,7 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
         intent_variant("moveTo", vec![("onto", walk_targets("The ref of the one nearby block to walk to: the body stands on top of a solid block, or in the own space of a block it can walk through such as a dead bush or grass. A block ref from this message outside your own spot, never coordinates or an invented one."))]),
         intent_variant("flee", vec![("from", creatures("The ref of the one living thing to move away from. A creature ref given in this message, never a name, a type, or an invented one."))]),
         intent_variant("eat", vec![("ref", stacks("The ref of the one stack in your own inventory to eat one item from. A stack ref given in this message, never an item name or an invented one."))]),
-        intent_variant("dig", vec![("block", blocks("The ref of the exact nearby block to dig once. A block ref from this message, never coordinates or an item name."))]),
+        intent_variant("dig", vec![("block", dig_blocks("The ref of the exact nearby block to dig once. A block ref from this message, never coordinates or an item name."))]),
     ];
     variants.extend(collect_variants(offered));
     variants.extend([
@@ -948,7 +1000,7 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
                 "type": "string",
                 "description": "One or two sentences on why this action, recorded permanently.",
             },
-            "goal": goal_choice_schema(phase),
+            "goal": goal_choice_schema(phase, offered),
         },
         "required": ["intent", "reasoning", "goal"],
         "additionalProperties": false,
@@ -1064,6 +1116,7 @@ mod tests {
                     .collect(),
                 condition_advanced: true,
                 step_advanced: true,
+                step_evidence: loom_contract::StepEvidence::None,
                 steps_without_progress: i64::MAX,
             }),
         });
@@ -1331,7 +1384,7 @@ mod tests {
                 r#"{{"disposition":"continue","step":"s",{typed},"stepResult":"done","statement":"sk-lookalike"}}"#
             ),
             format!(
-                r#"{{"disposition":"continue","step":"s",{typed},"stepResult":"done","successItem":"sk-lookalike"}}"#
+                r#"{{"disposition":"continue","step":"s",{typed},"stepResult":"done","successItem":"item.minecraft.sk_lookalike"}}"#
             ),
             format!(
                 r#"{{"disposition":"adopt","statement":"g","successCondition":"c",{target},"step":"s",{typed},"stepResult":"done"}}"#

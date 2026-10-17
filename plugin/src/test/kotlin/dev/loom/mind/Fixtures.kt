@@ -1,6 +1,7 @@
 package dev.loom.mind
 
 import dev.loom.body.BodyEventLog
+import dev.loom.contract.Bearing
 import dev.loom.contract.DayPhase
 import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
@@ -9,6 +10,7 @@ import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.Intent
 import dev.loom.contract.Observation
+import dev.loom.contract.ObservationKind
 import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
 import dev.loom.contract.SelfState
@@ -107,6 +109,36 @@ fun perception(
             ),
         surroundings = emptyList(),
         surroundingsOmitted = 0,
+    )
+
+/** [perception] with a dead bush in sight that yields sticks, which makes a stick goal obtainable. */
+fun perceptionNearBush(
+    requestId: String = "req-1",
+    agentId: String = "agent-alpha",
+    trigger: Trigger = Trigger.GoalReview,
+): Perception =
+    perception(
+        requestId = requestId,
+        agentId = agentId,
+        trigger = trigger,
+    ).copy(surroundings = listOf(STICK_BUSH))
+
+/**
+ * A dead bush in sight that digging with a bare hand yields sticks from: what makes the sticks
+ * the goal helpers name obtainable, as the r11 and r13 scenes' bushes did.
+ */
+val STICK_BUSH: Observation =
+    Observation(
+        kind = ObservationKind.BLOCK,
+        what = "block.minecraft.dead_bush",
+        distance = 2.0,
+        direction = Bearing.NORTH,
+        verticalOffset = 0.0,
+        visible = true,
+        ref = "bush",
+        standable = true,
+        yields = listOf("item.minecraft.stick"),
+        digSafe = true,
     )
 
 /**

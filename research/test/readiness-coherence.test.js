@@ -108,3 +108,76 @@ test('a met condition answered by a revise to a new target is answered', () => {
   assert.equal(result.goalCoherence.metIgnored, 0)
   assert.equal(result.goalCoherence.verdict, 'coherent')
 })
+
+const R13 = path.join(__dirname, '..', 'experiments', '2026-10-16-openai-10-agent-10m-r13')
+
+function gate5 (bodyRecords) {
+  return readinessMetrics({ bodyRecords, harnessRecords: [], metrics: {}, generation: 5 })
+}
+
+const evidenced = (goalId, conditionAdvanced, stepEvidence, outcome = 'goalContinued', conditionMet = false) =>
+  ({ ...measured(goalId, conditionAdvanced, stepEvidence !== 'none', outcome, conditionMet), stepEvidence })
+
+test('r13, judged under gate generation 5, credits no step that showed no evidence', () => {
+  const records = fs.readFileSync(path.join(R13, 'evidence.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)
+  const metrics = JSON.parse(fs.readFileSync(path.join(R13, 'metrics.json'), 'utf8'))
+  const result = readinessMetrics({
+    bodyRecords: records.filter((entry) => entry.source === 'body'),
+    harnessRecords: records.filter((entry) => entry.source === 'harness'),
+    metrics,
+    generation: 5
+  })
+  assert.equal(result.version, 'loom-readiness-gate/3')
+  // All 37 measured steps were credited on acceptance alone, 22 of them ones the mind itself
+  // called noProgress; none states the evidence it produced.
+  assert.equal(result.goalCoherence.unevidencedCredits, 37)
+  assert.equal(result.goalCoherence.verdict, 'incoherent')
+  assert.equal(result.verdict, 'notReady')
+  // Its committed generation-4 reading is unchanged.
+  assert.equal(metrics.behaviorGate.readiness.version, 'loom-readiness-gate/2')
+  assert.equal(metrics.behaviorGate.readiness.goalCoherence.unevidencedCredits, undefined)
+})
+
+test('a zero-yield dig credited as a step fails coherence, whatever else the run did', () => {
+  // r13 alpha body:00000072, 110, 232 and 452: four confirmed breaks of terracotta, nothing held.
+  const coherent = [
+    ...review('kappa', 'k1', evidenced('k', true, 'gained')),
+    ...review('kappa', 'k2', evidenced('k', true, 'gained', 'goalCompleted', true))
+  ]
+  assert.equal(gate5(coherent).goalCoherence.verdict, 'coherent')
+  const credited = { ...measured('a', false, true), stepEvidence: 'none' }
+  for (const zeroYield of [credited, measured('a', false, true)]) {
+    const result = gate5([...coherent, ...review('alpha', 'a1', zeroYield)])
+    assert.equal(result.goalCoherence.unevidencedCredits, 1)
+    assert.equal(result.goalCoherence.verdict, 'incoherent')
+    assert.equal(result.verdict, 'notReady')
+  }
+  // The same records under generation 4 never looked for evidence.
+  assert.equal(gate4([...coherent, ...review('alpha', 'a1', credited)]).goalCoherence.unevidencedCredits, undefined)
+  // A step that showed no evidence and was not credited is honest, not incoherent.
+  assert.equal(gate5([...coherent, ...review('alpha', 'a1', evidenced('a', false, 'none'))]).goalCoherence.verdict, 'coherent')
+})
+
+test('an unobtainable success item and a trapping dig are refused decisions the gate counts', () => {
+  const coherent = [
+    ...review('kappa', 'k1', evidenced('k', true, 'dropped')),
+    ...review('kappa', 'k2', evidenced('k', true, 'gained', 'goalCompleted', true))
+  ]
+  // r13 alpha, beta, epsilon, eta and iota: terracotta, an oak log and a dead bush adopted with
+  // nothing in sight that could give them.
+  const unobtainable = review('eta', 'e1', { outcome: 'goalSuccessUnobtainable', disposition: 'adopt' }, 'goalSuccessUnobtainable')
+  const refused = gate5([...coherent, ...unobtainable])
+  assert.equal(refused.goalCoherence.unobtainableConditions, 1)
+  assert.equal(refused.goalCoherence.verdict, 'incoherent')
+  assert.equal(refused.blockers.goalIncoherent, 1)
+  assert.ok(refused.rates.decisionValidity < 1)
+  assert.equal(refused.verdict, 'notReady')
+  // r13 eta body:00000043 to 270: a dig of its own floor with no way out is refused as inapplicable.
+  const trap = [
+    record('eta', { event: 'decided', requestId: 'e2', requestKey: 'eta:e2', intent: 'dig' }),
+    record('eta', { event: 'intentApplied', requestId: 'e2', requestKey: 'eta:e2', intent: 'dig', outcome: 'digWouldTrap' })
+  ]
+  const trapped = gate5([...coherent, ...trap])
+  assert.equal(trapped.blockers.inapplicable, 1)
+  assert.equal(trapped.verdict, 'notReady')
+})

@@ -331,7 +331,8 @@ const LOW_FOOD_LEVEL: i64 = 7;
 pub const SCRIPTED_GOAL_STATEMENT: &str = "scripted stand-in goal: stay fed and unhurt";
 
 /// The stand-in's success condition and step, worded as its own for the same reason.
-pub const SCRIPTED_SUCCESS_CONDITION: &str = "scripted stand-in condition: hold one stick";
+pub const SCRIPTED_SUCCESS_CONDITION: &str =
+    "scripted stand-in condition: hold one of the item named";
 /// The item the scripted stand-in's placeholder goal is achieved by holding.
 pub const SCRIPTED_SUCCESS_ITEM: &str = "item.minecraft.stick";
 pub const SCRIPTED_STEP: &str = "scripted stand-in step: act on the trigger in front of me";
@@ -382,10 +383,17 @@ impl ScriptedBackend {
             step_result,
         };
         let Some(held) = &perception.goal else {
+            // A success item must be one the agent can get now: the stick when it can, else the
+            // first item offered, and no goal at all when nothing is obtainable.
+            let obtainable = crate::offered::OfferedRefs::of(perception).obtainable;
+            let item = obtainable
+                .iter()
+                .find(|item| *item == SCRIPTED_SUCCESS_ITEM)
+                .or_else(|| obtainable.first())?;
             return Some(GoalChoice {
                 statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
                 success_condition: Some(SCRIPTED_SUCCESS_CONDITION.to_owned()),
-                success_item: Some(SCRIPTED_SUCCESS_ITEM.to_owned()),
+                success_item: Some(item.clone()),
                 success_count: Some(1),
                 ..step(GoalDisposition::Adopt, None)
             });
@@ -657,6 +665,8 @@ mod tests {
             target_ref: handle.to_owned(),
             count: None,
             standable: None,
+            yields: None,
+            dig_safe: None,
         });
         seen
     }
@@ -753,10 +763,32 @@ mod tests {
     #[test]
     fn the_stand_in_adopts_at_its_first_review_and_continues_at_the_next() {
         let route = router().route(DecisionImportance::Routine);
-        let first = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        let mut first = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        // With nothing obtainable there is no success item, so no goal is adopted (r13).
+        assert_eq!(ScriptedBackend::draft_now(&route, &first).goal, None);
+        first.self_state.inventory_summary = vec![loom_contract::InventoryStack {
+            slot_ref: "i1".to_owned(),
+            what: "item.minecraft.dirt".to_owned(),
+            count: 1,
+        }];
         let adopted = ScriptedBackend::draft_now(&route, &first).goal.unwrap();
         assert_eq!(adopted.disposition, GoalDisposition::Adopt);
         assert_eq!(adopted.statement.as_deref(), Some(SCRIPTED_GOAL_STATEMENT));
+        assert_eq!(adopted.success_item.as_deref(), Some("item.minecraft.dirt"));
+        // The stick is preferred wherever it can be had.
+        first
+            .self_state
+            .inventory_summary
+            .push(loom_contract::InventoryStack {
+                slot_ref: "i2".to_owned(),
+                what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
+                count: 1,
+            });
+        let stick = ScriptedBackend::draft_now(&route, &first).goal.unwrap();
+        assert_eq!(
+            stick.success_item.as_deref(),
+            Some(super::SCRIPTED_SUCCESS_ITEM)
+        );
 
         let mut later = perception(Trigger::GoalReview, DecisionImportance::Routine);
         later.goal = Some(GoalSummary {
@@ -988,6 +1020,8 @@ mod tests {
                 target_ref: handle.to_owned(),
                 count: None,
                 standable: Some(true),
+                yields: Some(vec![]),
+                dig_safe: Some(true),
             });
         }
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
