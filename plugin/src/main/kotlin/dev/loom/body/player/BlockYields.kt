@@ -106,9 +106,10 @@ internal fun digLeavesDropReachable(
  *
  * Only the block underfoot can trap a body: dug, it drops the body one cell into a hole whose
  * walls are its four neighbours, and the movement policy neither digs nor towers out. So it is
- * safe only over solid ground, with a neighbour at the support's level the body can then stand
- * on or walk into. r13's eta dug its support four times and fled from the shaft three times with
- * no route out.
+ * safe only over solid ground, and only where the body can walk out of where it lands
+ * ([escapesFrom]). r20's four shaft-diggers each passed a one-level check on every dig, and every
+ * one of their 13 flights was `noRoute`. r13's eta dug its support four times and fled from the
+ * shaft three times with no route out.
  */
 internal fun digLeavesExit(
     ground: BlockGround,
@@ -118,9 +119,12 @@ internal fun digLeavesExit(
     val support = supportCellOf(position)
     val (x, y, z) = support
     val sides = listOf(listOf(x + 1, y, z), listOf(x - 1, y, z), listOf(x, y, z + 1), listOf(x, y, z - 1))
-    return block != support ||
-        !ground.standsIn(listOf(x, y - 1, z)) &&
-        sides.any { side ->
-            ground.standCell(side) != null || ground.standCell(listOf(side[0], side[1] - 1, side[2])) == side
-        }
+    return when {
+        block != support -> true
+        ground.standsIn(listOf(x, y - 1, z)) -> false
+        // Where the ground does not report the body's own feet cell open it has no word on the
+        // walk out, and the one-level rule stands: a neighbour to step up onto.
+        !ground.standsIn(listOf(x, y + 1, z)) -> sides.any { side -> ground.standCell(side) != null }
+        else -> escapesFrom(ground, support)
+    }
 }

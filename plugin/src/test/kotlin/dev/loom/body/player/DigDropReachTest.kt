@@ -66,3 +66,43 @@ class DigDropReachTest {
         assertTrue(digLeavesDropReachable(BlockGround.UNKNOWN, feet, beside))
     }
 }
+
+/** Whether digging the block underfoot leaves a way back up, replayed on r20's shafts. */
+class DigLeavesExitTest {
+    /** A ground whose only open cells are [open]; everything else is solid. */
+    private fun openAt(vararg open: List<Int>): BlockGround = BlockGround { position -> position in open }
+
+    private val feet = listOf(-9.5, 63.0, 7.5)
+    private val support = listOf(-10, 62, 7)
+
+    @Test
+    fun `the support of a body at the bottom of a two-wide shaft is no longer dug`() {
+        // r20 epsilon at (-10, 62, 7), 4 deep, its shaft's other column (-11, 62..66, 7) open:
+        // the next column at the new depth was the "way out", and the shaft became a trap.
+        val shaft = (63..66).flatMap { y -> listOf(listOf(-10, y, 7), listOf(-11, y, 7)) }.toTypedArray()
+        val walls = openAt(*shaft)
+        assertFalse(digLeavesExit(walls, listOf(-9.5, 63.0, 7.5), listOf(-10, 62, 7)))
+    }
+
+    @Test
+    fun `a support beside open ground at the body's own level is still dug`() {
+        // A flat field: a neighbour of the support is solid with two open cells over it, so the
+        // body steps back up out of its one-deep hole.
+        val field = BlockGround { position -> position[1] >= 63 }
+        assertTrue(digLeavesExit(field, feet, support))
+        // A one-deep hole in that field: dug again, its floor would land the body two deep with
+        // no step up out of it, so it is not dug.
+        val hole = BlockGround { position -> position[1] >= 63 || position == listOf(-10, 62, 7) }
+        assertFalse(digLeavesExit(hole, listOf(-9.5, 62.0, 7.5), listOf(-10, 61, 7)))
+        // The same hole beside a step: a dug block next to it at the hole's floor lets the body
+        // climb out one level at a time.
+        val stepped =
+            BlockGround { position ->
+                position[1] >= 63 || position == listOf(-10, 62, 7) || position == listOf(-9, 62, 7)
+            }
+        assertTrue(digLeavesExit(stepped, listOf(-9.5, 62.0, 7.5), listOf(-10, 61, 7)))
+        // Two deep and boxed in on every side but one column: no way out.
+        val well = openAt(*(61..66).map { y -> listOf(-10, y, 7) }.toTypedArray())
+        assertFalse(digLeavesExit(well, listOf(-9.5, 61.0, 7.5), listOf(-10, 60, 7)))
+    }
+}
