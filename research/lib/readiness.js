@@ -61,6 +61,20 @@ const WOODED_GOAL_INCOHERENT_TAGS = new Set([...PURSUED_GOAL_INCOHERENT_TAGS, 'g
 // the counters the schema guarantees are reported apart from the behaviour the bars measure.
 const SUBSTANTIVE_READINESS_VERSION = 'loom-readiness-gate/9'
 const SUBSTANTIVE_GOAL_INCOHERENT_TAGS = new Set([...WOODED_GOAL_INCOHERENT_TAGS, 'goalCompletedWithoutNext', 'goalReviseUnchanged'])
+// Gate generation 12: the r20 audit found the generation-11 bars cleared on one-step goals - 28 of
+// 39 asked for one more than was held - on chained crafts the adopting craft itself met, on
+// perceptions counted as danger, and on held time after a death. A goal now counts toward the
+// substance and chain bars only when it needed two or more beyond what was held and lay, was not
+// re-adopted at or below a total the same agent had just cut from, and - when chained - advanced
+// after the decision that adopted it; "local" means sight guaranteed the whole count; held time
+// ends at the agent's death; danger is counted in answered episodes; a review that fled a hunter
+// is no idle; and a flight refused for no route from inside the agent's own dug hole is the
+// selfTrapped blocker rather than terrain.
+const GROUNDED_GOAL_READINESS_VERSION = 'loom-readiness-gate/10'
+// From generation 12, a no-route flight from inside a hole the agent dug under itself.
+const SELF_TRAPPED_BLOCKER_CLASSES = Object.freeze(['selfTrapped'])
+// How many more of its item than was held a goal must need to count as more than one step.
+const MIN_SUBSTANTIVE_GAIN = 2
 // How long after a goal's last advance its held time still counts as pursuit.
 const PROGRESS_WINDOW_TICKS = 2400
 // The interaction reach from the eyes, and the eye height it is measured from (offered.rs).
@@ -146,7 +160,7 @@ const INAPPLICABLE_TAGS = new Set([
 const PROTOCOL_TAGS = new Set(['rejected', 'controlUnavailable', 'unsupported', 'noSuchBody'])
 
 /** The class a refusal tag ends its action in, under gate [generation] (the current one by default). */
-function refusalClass (tag, generation = 11) {
+function refusalClass (tag, generation = 12) {
   if (goalIncoherentTagsOf(generation).has(tag)) return 'goalIncoherent'
   if (generation >= 7 && TERRAIN_TAGS.has(tag)) return TERRAIN_CLASS
   if (generation >= 5 && tag === 'digWouldTrap') return 'inapplicable'
@@ -220,6 +234,30 @@ function ownDropUnreached (decision, own) {
   const perception = own.find((record) => record.event === 'perceived')?.perception
   const drop = (perception?.selfState?.ownDrops ?? []).find((told) => told.ref === item && told.fate === 'lying')
   return drop !== undefined && (drop.verticalOffset ?? 0) < LODGED_RISE_BLOCKS
+}
+
+/** How far off, horizontally, a block below the feet is one a body digs itself a hole with. */
+const DUG_BENEATH_REACH_BLOCKS = 1.6
+
+/**
+ * Whether the agent behind a no-route flight had dug itself into the ground before it: a dig
+ * decision naming a block its perception showed below its feet and within a step of where it
+ * stood, its support or the block beside it (r20: all 13 flights refused for no route came from
+ * shafts and pits the four agents had dug themselves; delta's by digging beside its support).
+ */
+function dugOwnSupport (bodyRecords, flight) {
+  const perceptionOf = new Map(bodyRecords
+    .filter((record) => record.event === 'perceived' && record.agentId === flight.agentId)
+    .map((record) => [record.requestKey, record.perception]))
+  return bodyRecords.some((record) => {
+    if (record.event !== 'decided' || record.agentId !== flight.agentId || record.intent !== 'dig') return false
+    if (!(record.tick < flight.tick)) return false
+    const block = record.decision?.intent?.block
+    const seen = (perceptionOf.get(record.requestKey)?.surroundings ?? []).find((entry) => entry.ref === block)
+    if (seen === undefined || seen.verticalOffset >= 0) return false
+    const horizontal = Math.sqrt(Math.max(0, seen.distance ** 2 - seen.verticalOffset ** 2))
+    return seen.direction === 'here' || horizontal <= DUG_BENEATH_REACH_BLOCKS
+  })
 }
 
 /** The terminal of one accepted action, and the record that states it. */
@@ -362,11 +400,7 @@ function typedGoalCoherenceOf (bodyRecords, generation = 4, bars = undefined) {
   }
   const goals = [...byGoal.values()]
   const multiStepGoals = goals.filter((goal) => goal.condition >= 2).length
-  const pursuit = generation >= 11
-    ? substantivePursuitOf(bodyRecords, byGoal, bars)
-    : generation >= 10
-      ? woodedPursuitOf(bodyRecords, byGoal, bars)
-      : generation >= 9 ? pursuitOf(bodyRecords, byGoal, bars) : undefined
+  const pursuit = pursuitFor(generation, bodyRecords, byGoal, bars)
   const coherent = (pursuit === undefined || pursuit.verdict === 'cleared') && counts.stepMismatches === 0 && counts.unmetCompletions === 0 && counts.metIgnored === 0 &&
     multiStepGoals >= 1 &&
     (!evidenced || (counts.unevidencedCredits === 0 && counts.unobtainableConditions === 0)) &&
@@ -760,14 +794,203 @@ function substantivePursuitOf (bodyRecords, byGoal, bars) {
   return { bars: bars ?? null, measured, verdict: cleared ? 'cleared' : 'notCleared' }
 }
 
+/** The pursuit measure gate [generation] holds goals to, if any. */
+function pursuitFor (generation, bodyRecords, byGoal, bars) {
+  if (generation >= 12) return groundedPursuitOf(bodyRecords, byGoal, bars)
+  if (generation >= 11) return substantivePursuitOf(bodyRecords, byGoal, bars)
+  if (generation >= 10) return woodedPursuitOf(bodyRecords, byGoal, bars)
+  if (generation >= 9) return pursuitOf(bodyRecords, byGoal, bars)
+  return undefined
+}
+
+/** How many of [item] sight guarantees one dig at a time: each visible dig-safe block in reach's least. */
+function guaranteedCountOf (perception, item) {
+  return (perception?.surroundings ?? [])
+    .filter((seen) => seen.kind === 'block' && seen.visible === true && seen.digSafe === true &&
+      fromEyes(seen) <= INTERACTION_REACH_BLOCKS)
+    .reduce((sum, seen) => sum + (seen.yields ?? [])
+      .filter((given) => given.what === item)
+      .reduce((least, given) => least + given.least, 0), 0)
+}
+
+/**
+ * The generation-12 pursuit bars and what the run measured against each (the r20 audit). As
+ * generation 11, except:
+ * - a goal is substantive only when it needed MIN_SUBSTANTIVE_GAIN or more beyond what was held
+ *   and lay, was not re-adopted at or below a total the same agent had cut from for that item,
+ *   and either sight did not guarantee its whole count one dig at a time or a later goal chained
+ *   from it;
+ * - a chained goal counts only when it needed MIN_SUBSTANTIVE_GAIN more and advanced at least
+ *   twice - once more than the decision that adopted it - and a craft steps a chain only after
+ *   that adopting decision;
+ * - a review answered by a flight from a hunter is goal activity, not an idle;
+ * - held time ends at each agent's death;
+ * - danger is the number of danger perceptions answered rather than coalesced, with the deaths.
+ */
+function groundedPursuitOf (bodyRecords, byGoal, bars) {
+  const perceptionOf = new Map(bodyRecords
+    .filter((record) => record.event === 'perceived' && record.requestKey !== undefined)
+    .map((record) => [record.requestKey, record.perception]))
+  const appliedOf = new Map(bodyRecords
+    .filter((record) => record.event === 'intentApplied' && record.requestKey !== undefined)
+    .map((record) => [record.requestKey, record.outcome]))
+  const reviews = bodyRecords.filter((record) =>
+    record.event === 'decided' && record.goal !== undefined && record.goal.outcome !== 'goalNotReviewed')
+  const noOp = (record) => record.goal.outcome === 'goalRevised' &&
+    record.decision?.goal?.successItem === record.shown?.goal?.successItem &&
+    record.decision?.goal?.successCount === record.shown?.goal?.successCount
+  const fled = (record) => record.intent === 'flee' && record.goal.outcome === 'goalUnaddressed'
+  const active = (record) => (GOAL_ACTIVE_OUTCOMES.has(record.goal.outcome) && !noOp(record)) || fled(record)
+  const byAgent = new Map()
+  for (const record of reviews) {
+    const entry = byAgent.get(record.agentId) ?? { reviews: 0, active: 0 }
+    entry.reviews += 1
+    if (active(record)) entry.active += 1
+    byAgent.set(record.agentId, entry)
+  }
+  const idleBesideExploration = reviews.filter((record) =>
+    PASSIVE_INTENTS.includes(record.intent) &&
+    (perceptionOf.get(record.requestKey)?.explore?.length ?? 0) > 0).length
+  const original = new Map()
+  const items = new Set()
+  const chainedFrom = new Set()
+  const cutFrom = new Map()
+  for (const record of reviews) {
+    const goal = record.goal
+    const choice = record.decision?.goal
+    if (['goalAdopted', 'goalReplaced', 'goalCompletedAdopted'].includes(goal.outcome) && goal.goalId !== undefined) {
+      const item = choice?.successItem
+      items.add(item)
+      const perception = perceptionOf.get(record.requestKey)
+      const self = perception?.selfState
+      const carried = (self?.inventorySummary ?? []).filter((stack) => stack.what === item)
+        .reduce((sum, stack) => sum + stack.count, 0)
+      const lying = (self?.ownDrops ?? []).filter((drop) => drop.what === item && drop.fate === 'lying')
+        .reduce((sum, drop) => sum + drop.count, 0)
+      const count = choice?.successCount
+      const held = carried + lying
+      if (goal.chainedFrom !== undefined) chainedFrom.add(goal.chainedFrom)
+      const recut = cutFrom.get(`${record.agentId}:${item}`)
+      original.set(goal.goalId, {
+        agentId: record.agentId,
+        item,
+        count,
+        held,
+        cut: false,
+        adoptedBy: record.requestKey,
+        small: !Number.isInteger(count) || count - held < MIN_SUBSTANTIVE_GAIN,
+        readopted: recut !== undefined && Number.isInteger(count) && count <= recut,
+        local: Number.isInteger(count) && guaranteedCountOf(perception, item) >= count - held,
+        chained: goal.chainedFrom !== undefined
+      })
+    } else if (goal.outcome === 'goalRevised' && original.has(goal.goalId)) {
+      const entry = original.get(goal.goalId)
+      const count = choice?.successCount
+      const forced = Number.isInteger(goal.targetHeld) && Number.isInteger(goal.targetCapacity) &&
+        goal.targetHeld + goal.targetCapacity < entry.count
+      if (choice?.successItem !== undefined && choice.successItem !== entry.item) entry.cut = true
+      else if (Number.isInteger(count) && count < entry.count) {
+        const key = `${entry.agentId}:${entry.item}`
+        cutFrom.set(key, Math.max(cutFrom.get(key) ?? 0, entry.count))
+        if (forced) entry.count = count
+        else entry.cut = true
+      }
+    }
+  }
+  const advances = (goalId) => byGoal.get(goalId)?.condition ?? 0
+  const sized = (entry) => !entry.small && !entry.readopted
+  let chainedGoals = 0
+  for (const [goalId, entry] of original) {
+    if (entry.chained && sized(entry) && advances(goalId) >= 2) chainedGoals += 1
+  }
+  const substantive = (goalId) => {
+    const entry = original.get(goalId)
+    return entry !== undefined && sized(entry) && (!entry.local || chainedFrom.has(goalId))
+  }
+  const atOriginal = (goalId) => original.has(goalId) && !original.get(goalId).cut
+  const multiStepAgents = new Set([...original.entries()]
+    .filter(([goalId]) => advances(goalId) >= 2 && atOriginal(goalId) && substantive(goalId))
+    .map(([, entry]) => entry.agentId))
+  const substantiveCompletions = reviews.filter((record) => {
+    const goalId = record.goal.presentedGoalId
+    if (!COMPLETING_OUTCOMES.has(record.goal.outcome) || record.goal.conditionMet !== true) return false
+    if (!atOriginal(goalId) || !substantive(goalId)) return false
+    return advances(goalId) >= 2
+  }).length
+  const chainedGoalIds = new Set([...original.entries()]
+    .filter(([, entry]) => entry.chained && sized(entry)).map(([goalId]) => goalId))
+  const craftChainSteps = reviews.filter((record) =>
+    record.intent === 'craft' && active(record) && appliedOf.get(record.requestKey) === 'accepted' &&
+    chainedGoalIds.has(record.goal.goalId) &&
+    original.get(record.goal.goalId)?.adoptedBy !== record.requestKey).length
+  const exploringAgents = new Set(bodyRecords.filter((record) => {
+    if (record.event !== 'decided' || record.intent !== 'moveTo') return false
+    const onto = record.decision?.intent?.onto
+    const offered = (perceptionOf.get(record.requestKey)?.explore ?? []).map((cell) => cell.ref)
+    return onto !== undefined && offered.includes(onto) && appliedOf.get(record.requestKey) === 'accepted'
+  }).map((record) => record.agentId)).size
+  const answered = new Set(bodyRecords
+    .filter((record) => record.event === 'decided' && record.requestKey !== undefined)
+    .map((record) => record.requestKey))
+  const dangerEpisodes = bodyRecords.filter((record) =>
+    record.event === 'perceived' && answered.has(record.requestKey) &&
+    ['threatSighted', 'damaged'].includes(record.perception?.trigger?.event ?? record.trigger)).length
+  const deaths = new Set(bodyRecords.filter((record) => record.event === 'died').map((record) => record.agentId)).size
+  const held = progressingTimeOf(bodyRecords, { endAtDeath: true })
+  const shares = [...byAgent.values()].map((entry) => entry.active / entry.reviews)
+  const measured = {
+    goalActiveReviewShare: ratio(reviews.filter(active).length, reviews.length),
+    minAgentGoalActiveReviewShare: shares.length === 0 ? null : Number(Math.min(...shares).toFixed(6)),
+    progressingHeldTimeShare: held.fleet,
+    minAgentProgressingHeldTimeShare: held.minAgent,
+    idleBesideExploration,
+    noOpRevises: reviews.filter(noOp).length,
+    oneStepGoals: [...original.values()].filter((entry) => entry.small).length,
+    readoptedGoals: [...original.values()].filter((entry) => entry.readopted).length,
+    substantiveMultiStepAgents: multiStepAgents.size,
+    substantiveCompletions,
+    chainedGoals,
+    distinctGoalItems: [...items].filter((item) => typeof item === 'string').length,
+    craftChainSteps,
+    exploringAgents,
+    dangerEpisodes,
+    deaths
+  }
+  const at = (value, bar) => (value ?? 0) >= bar
+  const cleared = bars !== undefined &&
+    at(measured.goalActiveReviewShare, bars.goalActiveReviewShare) &&
+    at(measured.minAgentGoalActiveReviewShare, bars.minAgentGoalActiveReviewShare) &&
+    at(measured.progressingHeldTimeShare, bars.progressingHeldTimeShare) &&
+    at(measured.minAgentProgressingHeldTimeShare, bars.minAgentProgressingHeldTimeShare) &&
+    idleBesideExploration <= bars.maxIdleBesideExploration &&
+    at(measured.substantiveMultiStepAgents, bars.substantiveMultiStepAgents) &&
+    at(substantiveCompletions, bars.substantiveCompletions) &&
+    at(chainedGoals, bars.chainedGoals) &&
+    at(measured.distinctGoalItems, bars.distinctGoalItems) &&
+    at(craftChainSteps, bars.craftChainSteps) &&
+    at(exploringAgents, bars.exploringAgents) &&
+    at(dangerEpisodes, bars.dangerEpisodes)
+  return {
+    bars: bars ?? null,
+    measured,
+    // The two review shares are close to fixed by the request schema, which offers no idle or
+    // rest while a goal is held: they are reported beside the behaviour, not as it (r20).
+    schemaShaped: ['goalActiveReviewShare', 'minAgentGoalActiveReviewShare'],
+    verdict: cleared ? 'cleared' : 'notCleared'
+  }
+}
+
 /**
  * The fleet's and the least agent's share of server time holding a goal that advanced within
  * PROGRESS_WINDOW_TICKS: for each agent, from its first perception to the run's last record, the
  * time after each decided record whose resolution left a goal held, up to its next decided record,
  * counted only until the window since the goal was set or last advanced closes.
  */
-function progressingTimeOf (bodyRecords) {
-  const end = maximumTick(bodyRecords)
+function progressingTimeOf (bodyRecords, { endAtDeath = false } = {}) {
+  const runEnd = maximumTick(bodyRecords)
+  const diedAt = new Map(bodyRecords
+    .filter((record) => endAtDeath && record.event === 'died' && record.agentId !== undefined)
+    .map((record) => [record.agentId, record.tick]))
   const agents = new Map()
   const count = (entry, until) => {
     if (entry.since === null) return
@@ -799,7 +1022,8 @@ function progressingTimeOf (bodyRecords) {
   let held = 0
   let span = 0
   const shares = []
-  for (const entry of agents.values()) {
+  for (const [agentId, entry] of agents) {
+    const end = diedAt.get(agentId) ?? runEnd
     count(entry, end)
     const window = end - entry.start
     if (window <= 0) continue
@@ -821,7 +1045,8 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
         ...BLOCKER_CLASSES,
         'goalIncoherent',
         ...(generation >= 9 ? FLIGHT_BLOCKER_CLASSES : []),
-        ...(generation >= 11 ? OWN_DROP_BLOCKER_CLASSES : [])
+        ...(generation >= 11 ? OWN_DROP_BLOCKER_CLASSES : []),
+        ...(generation >= 12 ? SELF_TRAPPED_BLOCKER_CLASSES : [])
       ]
     : BLOCKER_CLASSES
   const raceClasses = raceClassesOf(generation)
@@ -877,6 +1102,10 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       if (generation >= 11 && ending.class === TERRAIN_CLASS && ownDropUnreached(decision, own)) {
         ending.class = 'ownDropUnreached'
       }
+      if (generation >= 12 && ending.class === TERRAIN_CLASS && decision.intent === 'flee' &&
+          dugOwnSupport(bodyRecords, decision)) {
+        ending.class = 'selfTrapped'
+      }
     }
     if (!Object.hasOwn(byClass, ending.class)) ending.class = 'unexplainedRefusal'
     byClass[ending.class] += 1
@@ -930,8 +1159,10 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       COLLECTED_READINESS_VERSION,
       PURSUED_READINESS_VERSION,
       WOODED_READINESS_VERSION,
-      SUBSTANTIVE_READINESS_VERSION
-    ][Math.min(Math.max(generation - 3, 0), 8)],
+      SUBSTANTIVE_READINESS_VERSION,
+      GROUNDED_GOAL_READINESS_VERSION,
+      GROUNDED_GOAL_READINESS_VERSION
+    ][Math.min(Math.max(generation - 3, 0), 9)],
     actions: {
       total,
       byClass: Object.fromEntries(Object.entries(byClass).sort()),

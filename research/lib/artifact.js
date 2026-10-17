@@ -220,6 +220,17 @@ function primaryBehaviorErrors (config) {
   ) {
     errors.push('planned native reviews exceed the global cognition call ceiling')
   }
+  // From routine-v29 the plan must leave the mode's share of the global ceiling to events: r20
+  // planned exactly 150 reviews against a ceiling of 150, and the night's danger stopped the run.
+  const reserveShare = primaryBehaviorModeOf(config.mode)?.eventCallReserveShare ?? 0
+  if (
+    plannedReviews !== undefined &&
+    reserveShare > 0 &&
+    Array.isArray(config.agents) &&
+    plannedReviews * config.agents.length > Math.floor(config.cognition?.globalCallCeiling * (1 - reserveShare))
+  ) {
+    errors.push('planned native reviews leave less than the mode\'s event share of the global cognition call ceiling')
+  }
   if (behavior.externalCognitionStimuli !== 'none') {
     errors.push('primaryBehavior.externalCognitionStimuli must be none')
   }

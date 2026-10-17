@@ -245,3 +245,66 @@ test('a goal held without advancing counts toward progressing time only within i
   const { measured } = gate11([start, ...adopted, later]).goalCoherence.pursuit
   assert.equal(measured.progressingHeldTimeShare, 0.4)
 })
+
+const R20 = path.join(__dirname, '..', 'experiments', '2026-10-16-openai-10-agent-10m-r20')
+
+test('r20, judged under gate generation 12, is not ready on the measures its audit re-derived', () => {
+  const records = fs.readFileSync(path.join(R20, 'evidence.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)
+  const metrics = JSON.parse(fs.readFileSync(path.join(R20, 'metrics.json'), 'utf8'))
+  const result = readinessMetrics({
+    bodyRecords: records.filter((entry) => entry.source === 'body'),
+    harnessRecords: records.filter((entry) => entry.source === 'harness'),
+    metrics,
+    generation: 12,
+    bars: { ...BARS, dangerEpisodes: 1 }
+  })
+  assert.equal(result.version, 'loom-readiness-gate/10')
+  // All 13 flights refused for no route ran from pits and shafts the agents had dug themselves.
+  assert.equal(result.blockers.selfTrapped, 13)
+  assert.equal(result.actions.byClass.terrain, 0)
+  const { measured, verdict, schemaShaped } = result.goalCoherence.pursuit
+  assert.equal(verdict, 'notCleared')
+  // 28 of 39 goals asked for one more than was held; 13 were re-adopted at a total just cut from.
+  assert.equal(measured.oneStepGoals, 28)
+  assert.equal(measured.readoptedGoals, 13)
+  // The three chained crafts were each met by the craft that adopted them, so none counts.
+  assert.equal(measured.chainedGoals, 0)
+  assert.equal(measured.craftChainSteps, 0)
+  assert.equal(measured.substantiveCompletions, 0)
+  // Danger is answered perceptions, not coalesced ones, and three agents died.
+  assert.equal(measured.dangerEpisodes, 49)
+  assert.equal(measured.deaths, 3)
+  assert.deepEqual(schemaShaped, ['goalActiveReviewShare', 'minAgentGoalActiveReviewShare'])
+  // Generation 11 is frozen: r20 re-derives as published.
+  assert.equal(metrics.behaviorGate.readiness.version, 'loom-readiness-gate/9')
+})
+
+test('under generation 12 a one-step goal is no substance, and a chain counts only after its adopting craft', () => {
+  const bars12 = { ...BARS, dangerEpisodes: 1 }
+  const gate12 = (bodyRecords) => readinessMetrics({ bodyRecords, harnessRecords: [], metrics: {}, generation: 12, bars: bars12 })
+  // The explorer's planks goal advanced once, by the craft that adopted it: no chain yet.
+  assert.equal(gate12(explorer('alpha')).goalCoherence.pursuit.measured.chainedGoals, 0)
+  // One more review that measures the second craft's planks: it needed 16 beyond 0 and advanced
+  // twice, a chain that counts, with the second craft its one chain step.
+  const onward = [
+    ...explorer('alpha'),
+    ...review('alpha', 'alpha5', { intent: 'craft', goal: stepped('alpha-planks', true), perception: sight(PLANKS, 12) })
+  ]
+  const alone = gate12(onward).goalCoherence.pursuit.measured
+  assert.equal(alone.chainedGoals, 1)
+  assert.equal(alone.craftChainSteps, 2)
+  assert.equal(alone.oneStepGoals, 0)
+  const tiny = [
+    ...review('kappa', 'k1', {
+      goal: { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'kappa', revision: 0 },
+      choice: { disposition: 'adopt', successItem: LOG, successCount: 1 },
+      perception: { selfState: { inventorySummary: [], ownDrops: [] }, surroundings: [] }
+    }),
+    ...review('kappa', 'k2', {
+      goal: { ...stepped('kappa', true, 'goalCompleted', { conditionMet: true }) },
+      choice: { disposition: 'complete' },
+      perception: { selfState: { inventorySummary: [{ ref: 'i1', what: LOG, count: 1 }], ownDrops: [] }, surroundings: [] }
+    })
+  ]
+  assert.equal(gate12(tiny).goalCoherence.pursuit.measured.oneStepGoals, 1)
+})

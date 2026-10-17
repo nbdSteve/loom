@@ -248,6 +248,30 @@ PROFILES['explored-goal-10m-10'] = Object.freeze({
     dangerEncounters: 1
   })
 })
+// The v29 profile keeps the plains scene and pre-registers the generation-12 bars (the r20 audit).
+// A goal counts toward substance only when it needed two or more beyond what was held, was not
+// re-adopted at a total just cut from, and - chained - advanced after its adoption; danger is
+// counted in answered episodes. The plan earns one follow-up a scheduled review, so its hundred
+// calls leave a third of the ceiling to the night's events.
+PROFILES['night-goal-10m-10'] = Object.freeze({
+  ...PROFILES['shakedown-10m-10'],
+  scene: 'e1-explore-ring',
+  expectedReviewsPerAgent: 5,
+  coherenceBars: Object.freeze({
+    goalActiveReviewShare: 0.6,
+    minAgentGoalActiveReviewShare: 0.4,
+    progressingHeldTimeShare: 0.5,
+    minAgentProgressingHeldTimeShare: 0.25,
+    maxIdleBesideExploration: 0,
+    substantiveMultiStepAgents: 3,
+    substantiveCompletions: 3,
+    chainedGoals: 2,
+    distinctGoalItems: 3,
+    craftChainSteps: 1,
+    exploringAgents: 3,
+    dangerEpisodes: 1
+  })
+})
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

@@ -1,7 +1,7 @@
 {
-  "experimentId": "2026-10-16-openai-routine-v28-agency-pilot-proposal",
-  "title": "Routine-v28 three-agent goal-continuity pilot",
-  "mode": "routine-v28-explored-goal",
+  "experimentId": "2026-10-16-openai-routine-v29-agency-pilot-proposal",
+  "title": "Routine-v29 three-agent goal-continuity pilot",
+  "mode": "routine-v29-night-goal",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -53,9 +53,9 @@
       "pivotal": "gpt-5.4"
     },
     "prompts": {
-      "routine": "routine-v28",
-      "notable": "notable-v28",
-      "pivotal": "pivotal-v28"
+      "routine": "routine-v29",
+      "notable": "notable-v29",
+      "pivotal": "pivotal-v29"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,
@@ -124,7 +124,7 @@
       "cadenceTicks": 2400,
       "sliceTicks": 100,
       "expectedReviewsPerAgent": 2,
-      "followUpsPerReview": 2
+      "followUpsPerReview": 1
     },
     "externalCognitionStimuli": "none",
     "startingInventories": "empty",

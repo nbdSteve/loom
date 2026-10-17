@@ -29,7 +29,10 @@ const { readinessMetrics } = require('./readiness.js')
 // and measures substantive pursuit: progressing held time, goals sight did not guarantee or a
 // later goal built on, chained goals, exploration walks and danger met, with the counters the
 // schema guarantees reported apart from behavioral evidence.
-const GATE_GENERATION = 11
+// Generation 12 holds goals to substance a one-step goal cannot fake, counts chains only past
+// their adopting craft, ends held time at death, counts danger in answered episodes, and classes a
+// no-route flight from the agent's own dug hole as the selfTrapped blocker.
+const GATE_GENERATION = 12
 // The goal outcomes of a decision whose action was a step of a goal it held or took up.
 const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised', 'goalReplaced', 'goalCompletedAdopted'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`
