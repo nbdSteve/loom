@@ -6,12 +6,12 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v28 explored-goal pilot,
-`research/config/first-tribe-routine-v28-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v28-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v29 night-goal pilot,
+`research/config/first-tribe-routine-v29-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v29-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
-native event drivers. It uses the v28 prompts, which show each agent its own
+native event drivers. It uses the v29 prompts, which show each agent its own
 carried goal and let the model return an optional typed goal choice, and it
 attests `categoryFairSelection: true` because the 48-per-kind selector it runs on
 is category-fair. Since v14 a `moveTo` names an observed block by ref rather than
@@ -103,6 +103,14 @@ A step that leaves an own drop of the goal's item lying, and a plain completion,
 A dig whose drop would fall into a pocket out of reach is unsafe, and a craft the server shows fully applied is followed up even when the body refused it.
 The live profile stands on plains a walk from the woods and starts in the afternoon, so wood must be looked for and night falls inside the run.
 The r19 audit found ten of 34 goals were dirt one dig at a time, leaves counted as a stick a dig, 28 of 31 revises restating their total, no goal built on another, no walk and no danger.
+v29 keeps v28 and makes danger and exploration answerable.
+A perception that ends without an action gives its body sense back, and one refused at capacity is recorded.
+A goal review may flee from a hunter near it and keep its goal, and a threat answered without a flight is asked about again.
+A hunter in sight past the perception radius is no news, a farther threat waits while a nearer one is answered, and a body states a route to a threat only when it searched for one.
+A dig underfoot needs a walk out of where the body lands, a review waits while the agent's own flight holds the body, and a call refused at the harness ceiling is typed.
+The body remembers sources it saw recently, so a goal for an item out of sight can be set and walked toward.
+Each scheduled review earns one follow-up, so each configuration from v29 on states `followUpsPerReview: 1`, and preflight requires the planned reviews to leave a third of the global call ceiling to events.
+The r20 audit found 17 hits on the three agents that died unperceived because coalesced perceptions held every body sense, a review beside two hostiles offered only dirt digs, 13 flights from self-dug shafts, and a plan that left the night's danger no calls.
 `research/lib/experiment-mode.js` owns the pins. In the
 scripted twin the stand-in digs the nearest block in reach that can drop something, walks onto a source of its goal's item out of reach or to the edge of sight when none is in reach, adopts one placeholder goal of holding one more of what it drops, continues it while it digs and once met replaces it with a goal sight still gives, or completes it when sight gives none; that exercises the goal round
 trip, the follow-up review and the own-drop evidence, and is not evidence of agency.
@@ -137,10 +145,11 @@ ran `-r6` and the v17 `research/config/tribe-working-goal-10m-10*.json` that ran
 `research/config/tribe-collected-goal-10m-10*.json` that ran `-r17`, and the v26
 `research/config/tribe-pursued-goal-10m-10*.json` that ran `-r18`, and the v27
 `research/config/tribe-wooded-goal-10m-10*.json` that ran `-r19` in the `f1-forest-ring` scene
-(seed `10001`, dry land among trees); `explored-goal-10m-10` is the same profile under the v28
-mode, in the `e1-explore-ring` scene, with its plan cut to the five scheduled reviews a run can
-finish (the sixth is due at tick 12,000 itself) and its generation-11 coherence bars
-pre-registered beside it, configured by `research/config/tribe-explored-goal-10m-10*.json`.
+(seed `10001`, dry land among trees), and the v28 `research/config/tribe-explored-goal-10m-10*.json`
+that ran `-r20`; `night-goal-10m-10` is the same profile under the v29 mode, in the
+`e1-explore-ring` scene, with its plan cut to the five scheduled reviews a run can finish (the
+sixth is due at tick 12,000 itself), one follow-up each, and its generation-12 coherence bars
+pre-registered beside it, configured by `research/config/tribe-night-goal-10m-10*.json`.
 The plains scene is seed `20011`, the first seed from 20001 whose ring around the origin is flat
 dry land with most slots' nearest log beyond what a body senses: one tree stands 3.6 and 6.1
 blocks from two slots and the woods lie 10.8 to 25.7 blocks from the other eight, so wood must be
@@ -425,6 +434,12 @@ A revise that restates its shown total (`goalReviseUnchanged`) and a plain compl
 The pursuit bars count goal activity without restated revises, the fleet's and the least agent's share of time holding a goal that advanced within the last 2,400 ticks, multi-step agents and completions only for goals sight did not guarantee one dig at a time or that a later goal built on, goals chained to an earlier met goal whose item their recipe uses that then advanced, craft steps of chained goals, the agents that walked to an offered cell at the edge of sight, and the perceptions that answered a threat sighted or damage taken.
 `goalCoherence.schemaGuarantees` reports apart the counters the request schema holds at zero, because a zero there is a property of the schema and not behaviour.
 Generation 10 is frozen, so r19 re-derives exactly as published; `test/readiness-substantive.test.js` holds r19's evidence to generation 11, where it is `notReady` with 28 restated revises, three own-drop route refusals, one substantive multi-step agent, no chained goal, no exploration walk and no danger met.
+
+Generation 12 (`loom-readiness-gate/10`) answers the r20 audit, which found the generation-11 bars cleared on one-step goals, on chained crafts the adopting craft itself met, on perceptions counted as danger, and on held time after a death.
+A goal counts toward the substance and chain bars only when it needed two or more beyond what was held and lay, was not re-adopted at or below a total the same agent had cut from, and - when chained - advanced at least twice; a craft steps a chain only after the decision that adopted it; "local" means sight guaranteed the whole count one dig at a time.
+Held time ends at each agent's death, danger is the danger perceptions that reached a decision (`dangerEpisodes`, with `deaths` beside it), and a review that fled a hunter is goal activity.
+A no-route flight by an agent that had dug a block below its feet within a step is the `selfTrapped` blocker rather than terrain, and the two review shares are reported as `schemaShaped`, because the schema offers no idle while a goal is held.
+Generation 11 is frozen, so r20 re-derives exactly as published; the same test holds r20's evidence to generation 12, where it is `notReady` with 13 self-trapped flights, 28 one-step goals, 13 re-adopted goals, no chain, no substantive completion and three deaths.
 
 ## The path rehearsal
 

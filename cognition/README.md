@@ -94,7 +94,7 @@ token ceiling used by the research harness when it proves that the configured
 call budget cannot cross the spend ceiling.
 
 The canonical 48-entity, 48-block, 48-item fixture is 22,292 bytes on the cognition
-socket, 816 of them each block's `standable` and 1,296 each block's `yields` and `digSafe`. With `routine-v28`, it renders to 26,737 bytes of system and situation text and a 34,699-byte
+socket, 816 of them each block's `standable` and 1,296 each block's `yields` and `digSafe`. With `routine-v29`, it renders to 26,737 bytes of system and situation text and a 34,699-byte
 serialized provider request; the strict response schema's goal choice is most of the
 growth since `routine-v12` (23,931 bytes), and v17's working-goal fields (success condition,
 step, step verdict) are most of the 3,566 bytes added to v13's 26,500. v18's per-request
@@ -113,7 +113,7 @@ item only its own steps, each under its own `$defs` enums of at most four refs, 
 continue by a walk to the edge of sight, and offers no idle or rest at a goal review beside such a cell, which on this
 fixture is a net 707 bytes smaller; v28 states each yield's sampled mean, offers a goal's recipe before its digs, splits
 a revise's range around the held total, and words the new refusals, 192 bytes more; the widest goal review the contract
-admits, sixteen items each with its own steps, names 492 of the provider's 500 enum values. The same envelope at
+admits, sixteen items each with its own steps, names 492 of the provider's 500 enum values; v29 names at most the 16 nearest creatures to flight and attack and offers a review a flight from its four nearest hunters, because 48 creatures in reach took a contract-legal review to 539, and the widest review beside 48 hunters, eight recalled sources and eight cells at the edge of sight names 454. The same envelope at
 a goal review carrying the widest legal goal (160-character statement, success condition and
 step, 64-character ids and item names, a 32-character step action, all 46 inventory changes, the widest refusal it can be
 told of, and all eight cells at the edge of sight at the widest number a distance can render) renders a 45,606-byte request,
