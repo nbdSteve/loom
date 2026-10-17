@@ -126,6 +126,58 @@ test('an item hanging over a trench is collected from a cell beside it, not refu
   peer.stop()
 })
 
+/**
+ * r19 kappa's own drop in the pocket it dug: the block beside its support, one below its feet,
+ * with the block two above that cell solid. The item rests on the pocket's floor.
+ */
+async function pocketCollect (overhung) {
+  const { Vec3 } = require('vec3')
+  const given = await H.embodied()
+  const { body, bot, client, port } = given
+  openBody = body
+  H.spawned(client, FED)
+  H.clockReported(client, { timeOfDay: 6000, day: 2 })
+  client.emit('position', H.positionPacket({ x: 8.46, y: 64, z: 8.5, yaw: 0, pitch: 0, teleportId: 1 }))
+  const walls = [{ x: 8, y: 62, z: 9 }, ...(overhung ? [{ x: 8, y: 65, z: 9 }] : [])]
+  H.ground(bot, { walls })
+  bot.world.setBlockStateId(new Vec3(8, 63, 9), H.registry.blocksByName.air.defaultState)
+  const item = { x: 8.5, y: 63, z: 9.3 }
+  H.spotted(client, { id: ITEM_ID, what: 'item', ...item })
+  client.emit('entity_metadata', {
+    entityId: ITEM_ID,
+    metadata: [{ key: 8, type: 'item_stack', value: H.Item.toNotch(H.stack('dirt', 1)) }]
+  })
+  await H.settled(200)
+  const taken = vanillaPickup(client, bot, item)
+  const peer = await H.handshaken(port)
+  const sensed = await peer.answer(H.request('sense', 's1', { radius: 8, limit: 8 }))
+  const index = sensed.items.findIndex((offered) => offered.what === 'dirt')
+  assert.ok(index >= 0, JSON.stringify(sensed.items))
+  const report = await H.promptly(peer.answer(H.request('collect', 'c1', {
+    senseId: 's1', item: index, approach: true, timeoutMs: DEADLINE_MS * 2, sprint: false
+  })), 'the collection', DEADLINE_MS * 2 + 3000)
+  peer.stop()
+  return { report, taken: taken() }
+}
+
+test('a drop in a one-deep pocket beside the support is collected by stepping down into it', async () => {
+  // r19 kappa body:00000384 and beta body:00000453 were refused noRoute for a drop like this one;
+  // an open pocket is routable, so the refusal was not the pocket itself.
+  const { report, taken } = await pocketCollect(false)
+  assert.equal(report.outcome, 'collected', JSON.stringify(report))
+  assert.equal(taken, true)
+})
+
+test('a drop in a pocket under an overhang is noRoute: no body fits into the cell above it', async () => {
+  // kappa's pocket had grass two above its floor (it dug that block at body:00000501). A body
+  // 1.8 tall cannot pass under it, and from beside, the item lies a quarter block below the
+  // pickup box. The terrain is real, and the agent made it; the JVM now refuses such a dig as
+  // `digDropUnreachable` before it reaches the body.
+  const { report, taken } = await pocketCollect(true)
+  assert.equal(report.outcome, 'noRoute', JSON.stringify(report))
+  assert.equal(taken, false)
+})
+
 test('a passive collect is admitted only inside vanilla pickup reach, and an approach only to cells that cover from anywhere', () => {
   const {
     PASSIVE_PICKUP_ABOVE_BLOCKS, PASSIVE_PICKUP_BELOW_BLOCKS, PASSIVE_PICKUP_HORIZONTAL_BLOCKS, covers, withinPickup

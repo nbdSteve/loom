@@ -191,9 +191,10 @@ private fun canGive(
             else -> null
         }
     val item = targetOf(presented, choice)?.first
-    // A handle the perception never described is not judged here; the body refuses it.
+    // A handle the perception never described is not judged here; the body refuses it. An equip
+    // gives nothing, so it is no step of a goal (r19: two equips stood in as a goal's step).
     val given = target?.let { observed?.gives?.get(it) }
-    return item == null || given == null || item in given
+    return item == null || (intent !is Intent.Equip && (given == null || item in given))
 }
 
 /**

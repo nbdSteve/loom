@@ -565,8 +565,10 @@ function schemaGuaranteesOf (counts) {
 
 /**
  * The fleet's and the least-holding agent's share of server time spent holding a goal: for each
- * agent, from its first perception to the run's last record, the time after each decided record
- * whose resolution left a goal held, up to its next decided record.
+ * agent, from its first record of any kind to the run's last record, the time after each decided
+ * record whose resolution left a goal held, up to its next decided record. Generations 9 and 10
+ * are committed under this measure; generation 11 measures from the first perception instead
+ * (`progressingTimeOf`), as the r19 audit found this one counted the time before it.
  */
 function heldTimeOf (bodyRecords) {
   const end = maximumTick(bodyRecords)
