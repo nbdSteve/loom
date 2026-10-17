@@ -1,0 +1,1358 @@
+{
+  "admissionEnd": {
+    "closures": 1,
+    "endTick": 12025,
+    "forwardedAfterEnd": 0,
+    "forwardedAtEnd": 53,
+    "nativeReviews": {
+      "byAgent": {
+        "tribe-alpha": {
+          "attempted": 5,
+          "completed": 5,
+          "maximum": 5,
+          "minimum": 5
+        },
+        "tribe-beta": {
+          "attempted": 5,
+          "completed": 5,
+          "maximum": 5,
+          "minimum": 5
+        },
+        "tribe-delta": {
+          "attempted": 5,
+          "completed": 5,
+          "maximum": 5,
+          "minimum": 5
+        },
+        "tribe-epsilon": {
+          "attempted": 5,
+          "completed": 5,
+          "maximum": 5,
+          "minimum": 5
+        },
+        "tribe-eta": {
+          "attempted": 5,
+          "completed": 5,
+          "maximum": 5,
+          "minimum": 5
+        },
+        "tribe-gamma": {
+          "attempted": 5,
+          "completed": 5,
+          "maximum": 5,
+          "minimum": 5
+        },
+        "tribe-iota": {
+          "attempted": 5,
+          "completed": 5,
+          "maximum": 5,
+          "minimum": 5
+        },
+        "tribe-kappa": {
+          "attempted": 5,
+          "completed": 5,
+          "maximum": 5,
+          "minimum": 5
+        },
+        "tribe-theta": {
+          "attempted": 5,
+          "completed": 5,
+          "maximum": 5,
+          "minimum": 5
+        },
+        "tribe-zeta": {
+          "attempted": 5,
+          "completed": 5,
+          "maximum": 5,
+          "minimum": 5
+        }
+      }
+    },
+    "outstandingAtEnd": 0,
+    "reason": "durationElapsed",
+    "refusedAfterEnd": 0,
+    "windowTicks": 11965
+  },
+  "behavior": {
+    "attackIntents": 0,
+    "byIntent": {
+      "dig": 10,
+      "flee": 2,
+      "idle": 11,
+      "moveTo": 30
+    },
+    "byOutcome": {
+      "accepted": 39,
+      "dangerCoalesced": 2,
+      "goalStepMismatch": 14,
+      "movementArrived": 23,
+      "retreatSafe": 2,
+      "serverEffectConfirmed": 10,
+      "threatDebounced": 5,
+      "threatUnchanged": 2
+    },
+    "deaths": 0,
+    "decisionsByIntent": {
+      "dig": 10,
+      "flee": 2,
+      "idle": 11,
+      "moveTo": 30
+    },
+    "disconnects": 0,
+    "movementRecords": 23,
+    "sleepIntents": 0,
+    "speechIntents": 0,
+    "witnessDisputeRecords": 0,
+    "witnessDisputesByOutcome": {},
+    "worldInteractionRecords": 10
+  },
+  "behaviorGate": {
+    "calls": {
+      "forwardedByAgent": {
+        "tribe-alpha": 5,
+        "tribe-beta": 5,
+        "tribe-delta": 5,
+        "tribe-epsilon": 5,
+        "tribe-eta": 7,
+        "tribe-gamma": 5,
+        "tribe-iota": 5,
+        "tribe-kappa": 5,
+        "tribe-theta": 6,
+        "tribe-zeta": 5
+      },
+      "forwardedPerThousandTicks": 4.429586,
+      "peakOutstanding": 2
+    },
+    "cleanupVerified": true,
+    "externalSpendNanoUsd": 49321140,
+    "goalContinuityAgents": [
+      "tribe-alpha",
+      "tribe-delta",
+      "tribe-epsilon",
+      "tribe-eta",
+      "tribe-gamma",
+      "tribe-iota",
+      "tribe-kappa",
+      "tribe-theta",
+      "tribe-zeta"
+    ],
+    "goalReviewActions": {
+      "accepted": 32,
+      "acceptedAndConfirmedRate": 0.8,
+      "byConfirmation": {
+        "movement": 22,
+        "serverEffect": 10
+      },
+      "confirmed": 32,
+      "nonIdle": 40
+    },
+    "interactionsByOperation": {
+      "dig": {
+        "confirmed": 10,
+        "disputed": 0
+      }
+    },
+    "manualCriteria": [
+      "each counted meaningful behavior has an evidence-grounded aim",
+      "no counted action is justified only by being active",
+      "no cross-agent goal leakage in the typed fields"
+    ],
+    "meaningfulBehaviorByAgent": {
+      "tribe-alpha": 5,
+      "tribe-beta": 1,
+      "tribe-delta": 3,
+      "tribe-epsilon": 3,
+      "tribe-eta": 4,
+      "tribe-gamma": 5,
+      "tribe-iota": 2,
+      "tribe-kappa": 3,
+      "tribe-theta": 2,
+      "tribe-zeta": 4
+    },
+    "nightPerceptionsByAgent": {},
+    "omissionsByKind": {
+      "blocks": {
+        "bodyReportedOmissionShare": 0.145572,
+        "bodyReportedOmittedCount": 429,
+        "jvmCutOmittedCount": 0,
+        "rawBodyListCount": 2518
+      },
+      "droppedItems": {
+        "bodyReportedOmissionShare": 0,
+        "bodyReportedOmittedCount": 0,
+        "jvmCutOmittedCount": 0,
+        "rawBodyListCount": 0
+      },
+      "entities": {
+        "bodyReportedOmissionShare": 0,
+        "bodyReportedOmittedCount": 0,
+        "jvmCutOmittedCount": 0,
+        "rawBodyListCount": 419
+      }
+    },
+    "pilotCriteria": null,
+    "pilotVerdict": "notApplicable",
+    "readiness": {
+      "actions": {
+        "byClass": {
+          "concurrent": 0,
+          "confirmed": 34,
+          "death": 0,
+          "falseSuccess": 0,
+          "goalIncoherent": 14,
+          "inapplicable": 0,
+          "incompleteMovement": 0,
+          "noOpTarget": 0,
+          "protocolError": 0,
+          "staleRef": 0,
+          "superseded": 0,
+          "targetRace": 0,
+          "unconfirmed": 0,
+          "unexplainedRefusal": 0,
+          "unknownTimeout": 0,
+          "untypedTerminal": 0,
+          "wrongKindRef": 0
+        },
+        "nonSuccess": [
+          {
+            "agentId": "tribe-epsilon",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000039",
+              "tick": 522
+            },
+            "intent": "moveTo",
+            "race": false,
+            "requestKey": "tribe-epsilon:loom003398683d-sense-1h"
+          },
+          {
+            "agentId": "tribe-theta",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000063",
+              "tick": 997
+            },
+            "intent": "moveTo",
+            "race": false,
+            "requestKey": "tribe-theta:loom9bc6579ca4-sense-33"
+          },
+          {
+            "agentId": "tribe-beta",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000075",
+              "tick": 2702
+            },
+            "intent": "moveTo",
+            "race": false,
+            "requestKey": "tribe-beta:loomeab7eb8acb-sense-96"
+          },
+          {
+            "agentId": "tribe-delta",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000078",
+              "tick": 2799
+            },
+            "intent": "idle",
+            "race": false,
+            "requestKey": "tribe-delta:loom3b4ef3e082-sense-98"
+          },
+          {
+            "agentId": "tribe-epsilon",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000081",
+              "tick": 2898
+            },
+            "intent": "idle",
+            "race": false,
+            "requestKey": "tribe-epsilon:loom003398683d-sense-9m"
+          },
+          {
+            "agentId": "tribe-eta",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000084",
+              "tick": 3017
+            },
+            "intent": "idle",
+            "race": false,
+            "requestKey": "tribe-eta:loom421b3b32c1-sense-9u"
+          },
+          {
+            "agentId": "tribe-beta",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000124",
+              "tick": 5104
+            },
+            "intent": "moveTo",
+            "race": false,
+            "requestKey": "tribe-beta:loomeab7eb8acb-sense-hb"
+          },
+          {
+            "agentId": "tribe-delta",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000137",
+              "tick": 5204
+            },
+            "intent": "moveTo",
+            "race": false,
+            "requestKey": "tribe-delta:loom3b4ef3e082-sense-hd"
+          },
+          {
+            "agentId": "tribe-beta",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000169",
+              "tick": 7502
+            },
+            "intent": "moveTo",
+            "race": false,
+            "requestKey": "tribe-beta:loomeab7eb8acb-sense-pg"
+          },
+          {
+            "agentId": "tribe-iota",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000188",
+              "tick": 8001
+            },
+            "intent": "moveTo",
+            "race": false,
+            "requestKey": "tribe-iota:loom8b6535c92c-sense-qp"
+          },
+          {
+            "agentId": "tribe-theta",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000195",
+              "tick": 8200
+            },
+            "intent": "idle",
+            "race": false,
+            "requestKey": "tribe-theta:loom9bc6579ca4-sense-rj"
+          },
+          {
+            "agentId": "tribe-beta",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000206",
+              "tick": 9906
+            },
+            "intent": "idle",
+            "race": false,
+            "requestKey": "tribe-beta:loomeab7eb8acb-sense-xl"
+          },
+          {
+            "agentId": "tribe-iota",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000225",
+              "tick": 10397
+            },
+            "intent": "idle",
+            "race": false,
+            "requestKey": "tribe-iota:loom8b6535c92c-sense-yu"
+          },
+          {
+            "agentId": "tribe-kappa",
+            "class": "goalIncoherent",
+            "evidence": {
+              "event": "intentApplied",
+              "outcome": "goalStepMismatch",
+              "recordId": "body:00000228",
+              "tick": 10502
+            },
+            "intent": "moveTo",
+            "race": false,
+            "requestKey": "tribe-kappa:loomf309750e7b-sense-z4"
+          }
+        ],
+        "total": 48
+      },
+      "blockers": {
+        "falseSuccess": 0,
+        "goalIncoherent": 14,
+        "inapplicable": 0,
+        "incompleteMovement": 0,
+        "noOpTarget": 0,
+        "protocolError": 0,
+        "staleRef": 0,
+        "unconfirmed": 0,
+        "unexplainedRefusal": 0,
+        "unknownTimeout": 0,
+        "untypedTerminal": 0,
+        "wrongKindRef": 0
+      },
+      "cognitionFailures": {},
+      "goalCoherence": {
+        "conditionSteps": 4,
+        "goalsMeasured": 12,
+        "measuredSteps": 29,
+        "metCompleted": 4,
+        "metConditions": 4,
+        "metIgnored": 0,
+        "metRevised": 0,
+        "multiStepGoals": 0,
+        "stalled": 0,
+        "stepMismatches": 14,
+        "stepOnlySteps": 23,
+        "unadvancedSteps": 2,
+        "unmetCompletions": 0,
+        "verdict": "incoherent"
+      },
+      "mechanicalVerdict": "notReady",
+      "races": 0,
+      "rates": {
+        "decisionValidity": 0.735849,
+        "serverTruthfulness": 1,
+        "typedTerminalAccounting": 1
+      },
+      "serverDisputes": 0,
+      "verdict": "notReady",
+      "version": "loom-readiness-gate/2"
+    },
+    "version": "loom-primary-behavior-gate/4"
+  },
+  "cognition": {
+    "decisionsByStamp": [
+      {
+        "decisions": 3,
+        "model": "gpt-5.4-nano",
+        "promptVersion": "notable-v20",
+        "tier": "NOTABLE"
+      },
+      {
+        "decisions": 50,
+        "model": "gpt-5.4-nano",
+        "promptVersion": "routine-v20",
+        "tier": "ROUTINE"
+      }
+    ],
+    "externalSpendNanoUsd": 49321140,
+    "externalSpendUsd": 0.04932114,
+    "forwardedCalls": 53,
+    "providerUsageCalls": 53,
+    "refusedCalls": 0,
+    "usageByModel": {
+      "gpt-5.4-nano": {
+        "cachedPromptTokens": 91392,
+        "calls": 53,
+        "completionTokens": 7810,
+        "costNanoUsd": 49321140,
+        "promptTokens": 280046,
+        "totalTokens": 287856
+      }
+    }
+  },
+  "crashContainment": {
+    "cleanupVerified": true,
+    "controlledCrashes": [],
+    "peerDecisionsAfterCrash": {}
+  },
+  "cycles": {
+    "applied": 53,
+    "decided": 53,
+    "discarded": 0,
+    "incomplete": [],
+    "perceived": 55,
+    "unavailable": 2
+  },
+  "dangerEpisodes": {
+    "byAgent": {
+      "tribe-eta": 1,
+      "tribe-theta": 1
+    },
+    "byTrigger": {
+      "threatSighted": 2
+    },
+    "coalesced": 2
+  },
+  "findings": {
+    "counterevidence": [
+      "No agent produced a speech intent.",
+      "No bounded perception sample placed two agents within eight blocks.",
+      "No attack intent was applied."
+    ],
+    "interpretations": [
+      "Counts describe recorded behavior only; they do not establish motive, cooperation, specialization, hierarchy, or emergence."
+    ],
+    "limitations": [
+      "Perception positions are samples rather than continuous trajectories.",
+      "One bounded live-model run cannot establish that an observed pattern is stable or emergent."
+    ],
+    "observations": []
+  },
+  "goalContinuity": {
+    "agents": [
+      {
+        "agentId": "tribe-alpha",
+        "byOutcome": {
+          "goalAdopted": 1,
+          "goalRevised": 4
+        },
+        "continuingReviews": 4,
+        "goalsAdopted": 1
+      },
+      {
+        "agentId": "tribe-beta",
+        "byOutcome": {
+          "goalAdopted": 1,
+          "goalStepMismatch": 4
+        },
+        "continuingReviews": 0,
+        "goalsAdopted": 1
+      },
+      {
+        "agentId": "tribe-delta",
+        "byOutcome": {
+          "goalAdopted": 2,
+          "goalRevised": 1,
+          "goalStepMismatch": 2
+        },
+        "continuingReviews": 1,
+        "goalsAdopted": 2
+      },
+      {
+        "agentId": "tribe-epsilon",
+        "byOutcome": {
+          "goalAdopted": 1,
+          "goalRevised": 2,
+          "goalStepMismatch": 2
+        },
+        "continuingReviews": 2,
+        "goalsAdopted": 1
+      },
+      {
+        "agentId": "tribe-eta",
+        "byOutcome": {
+          "goalAdopted": 1,
+          "goalRevised": 3,
+          "goalStepMismatch": 1
+        },
+        "continuingReviews": 3,
+        "goalsAdopted": 1
+      },
+      {
+        "agentId": "tribe-gamma",
+        "byOutcome": {
+          "goalAdopted": 1,
+          "goalRevised": 4
+        },
+        "continuingReviews": 4,
+        "goalsAdopted": 1
+      },
+      {
+        "agentId": "tribe-iota",
+        "byOutcome": {
+          "goalAdopted": 1,
+          "goalCompleted": 1,
+          "goalRevised": 1,
+          "goalStepMismatch": 2
+        },
+        "continuingReviews": 2,
+        "goalsAdopted": 1
+      },
+      {
+        "agentId": "tribe-kappa",
+        "byOutcome": {
+          "goalAdopted": 2,
+          "goalCompleted": 1,
+          "goalContinued": 1,
+          "goalStepMismatch": 1
+        },
+        "continuingReviews": 2,
+        "goalsAdopted": 2
+      },
+      {
+        "agentId": "tribe-theta",
+        "byOutcome": {
+          "goalAdopted": 2,
+          "goalCompleted": 1,
+          "goalStepMismatch": 2
+        },
+        "continuingReviews": 1,
+        "goalsAdopted": 2
+      },
+      {
+        "agentId": "tribe-zeta",
+        "byOutcome": {
+          "goalAdopted": 1,
+          "goalCompleted": 1,
+          "goalRevised": 3
+        },
+        "continuingReviews": 4,
+        "goalsAdopted": 1
+      }
+    ],
+    "agentsWithContinuity": [
+      "tribe-alpha",
+      "tribe-delta",
+      "tribe-epsilon",
+      "tribe-eta",
+      "tribe-gamma",
+      "tribe-iota",
+      "tribe-kappa",
+      "tribe-theta",
+      "tribe-zeta"
+    ],
+    "byOutcome": {
+      "goalAdopted": 13,
+      "goalCompleted": 4,
+      "goalContinued": 1,
+      "goalRevised": 18,
+      "goalStepMismatch": 14
+    },
+    "workingGoal": {
+      "byAgent": {
+        "tribe-alpha": {
+          "completed": 0,
+          "maxStepsWithoutProgress": 1,
+          "stalled": 0,
+          "stepResults": {
+            "noProgress": 4
+          }
+        },
+        "tribe-beta": {
+          "completed": 0,
+          "maxStepsWithoutProgress": 0,
+          "stalled": 0,
+          "stepResults": {
+            "noProgress": 2
+          }
+        },
+        "tribe-delta": {
+          "completed": 0,
+          "maxStepsWithoutProgress": 0,
+          "stalled": 0,
+          "stepResults": {
+            "noProgress": 3
+          }
+        },
+        "tribe-epsilon": {
+          "completed": 0,
+          "maxStepsWithoutProgress": 0,
+          "stalled": 0,
+          "stepResults": {
+            "noProgress": 2
+          }
+        },
+        "tribe-eta": {
+          "completed": 0,
+          "maxStepsWithoutProgress": 0,
+          "stalled": 0,
+          "stepResults": {
+            "noProgress": 4
+          }
+        },
+        "tribe-gamma": {
+          "completed": 0,
+          "maxStepsWithoutProgress": 1,
+          "stalled": 0,
+          "stepResults": {
+            "noProgress": 4
+          }
+        },
+        "tribe-iota": {
+          "completed": 1,
+          "maxStepsWithoutProgress": 0,
+          "stalled": 0,
+          "stepResults": {
+            "done": 1,
+            "noProgress": 1
+          }
+        },
+        "tribe-kappa": {
+          "completed": 1,
+          "maxStepsWithoutProgress": 0,
+          "stalled": 0,
+          "stepResults": {
+            "done": 1,
+            "noProgress": 1,
+            "progressing": 1
+          }
+        },
+        "tribe-theta": {
+          "completed": 1,
+          "maxStepsWithoutProgress": 0,
+          "stalled": 0,
+          "stepResults": {
+            "done": 1
+          }
+        },
+        "tribe-zeta": {
+          "completed": 1,
+          "maxStepsWithoutProgress": 0,
+          "stalled": 0,
+          "stepResults": {
+            "done": 1,
+            "noProgress": 3
+          }
+        }
+      },
+      "completed": 4,
+      "stalled": 0,
+      "stepResults": {
+        "done": 4,
+        "noProgress": 24,
+        "progressing": 1
+      }
+    }
+  },
+  "perceptionAudit": {
+    "byKind": {
+      "blocks": {
+        "bodyReportedOmittedCount": 429,
+        "jvmCutOmittedCount": 0,
+        "jvmSelectedCount": 2518,
+        "rawBodyListCount": 2518,
+        "samples": 55
+      },
+      "droppedItems": {
+        "bodyReportedOmittedCount": 0,
+        "jvmCutOmittedCount": 0,
+        "jvmSelectedCount": 0,
+        "rawBodyListCount": 0,
+        "samples": 55
+      },
+      "entities": {
+        "bodyReportedOmittedCount": 0,
+        "jvmCutOmittedCount": 0,
+        "jvmSelectedCount": 419,
+        "rawBodyListCount": 419,
+        "samples": 55
+      }
+    },
+    "complete": true,
+    "initialByAgent": [
+      {
+        "agentId": "tribe-alpha",
+        "capturedTick": 161,
+        "inventoryStacks": 0,
+        "position": [
+          12.5,
+          105,
+          0.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 92
+        }
+      },
+      {
+        "agentId": "tribe-beta",
+        "capturedTick": 261,
+        "inventoryStacks": 0,
+        "position": [
+          10.5,
+          99,
+          7.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 193
+        }
+      },
+      {
+        "agentId": "tribe-delta",
+        "capturedTick": 361,
+        "inventoryStacks": 0,
+        "position": [
+          -3.5,
+          110,
+          11.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 288
+        }
+      },
+      {
+        "agentId": "tribe-epsilon",
+        "capturedTick": 461,
+        "inventoryStacks": 0,
+        "position": [
+          -9.5,
+          111,
+          7.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 389
+        }
+      },
+      {
+        "agentId": "tribe-eta",
+        "capturedTick": 561,
+        "inventoryStacks": 0,
+        "position": [
+          -9.5,
+          110,
+          -6.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 481
+        }
+      },
+      {
+        "agentId": "tribe-gamma",
+        "capturedTick": 661,
+        "inventoryStacks": 0,
+        "position": [
+          4.5,
+          102,
+          11.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 582
+        }
+      },
+      {
+        "agentId": "tribe-iota",
+        "capturedTick": 761,
+        "inventoryStacks": 0,
+        "position": [
+          4.5,
+          111,
+          -10.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 697
+        }
+      },
+      {
+        "agentId": "tribe-kappa",
+        "capturedTick": 861,
+        "inventoryStacks": 0,
+        "position": [
+          10.5,
+          108,
+          -6.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 796
+        }
+      },
+      {
+        "agentId": "tribe-theta",
+        "capturedTick": 961,
+        "inventoryStacks": 0,
+        "position": [
+          -3.5,
+          108,
+          -10.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 886
+        }
+      },
+      {
+        "agentId": "tribe-zeta",
+        "capturedTick": 1061,
+        "inventoryStacks": 0,
+        "position": [
+          -11.5,
+          110,
+          0.5
+        ],
+        "worldClock": {
+          "day": 0,
+          "isDay": true,
+          "timeOfDay": 985
+        }
+      }
+    ],
+    "samples": 55
+  },
+  "primaryBehavior": {
+    "configuredInitialPositions": {
+      "tribe-alpha": [
+        12.5,
+        105,
+        0.5
+      ],
+      "tribe-beta": [
+        10.5,
+        99,
+        7.5
+      ],
+      "tribe-delta": [
+        -3.5,
+        110,
+        11.5
+      ],
+      "tribe-epsilon": [
+        -9.5,
+        111,
+        7.5
+      ],
+      "tribe-eta": [
+        -9.5,
+        110,
+        -6.5
+      ],
+      "tribe-gamma": [
+        4.5,
+        102,
+        11.5
+      ],
+      "tribe-iota": [
+        4.5,
+        111,
+        -10.5
+      ],
+      "tribe-kappa": [
+        10.5,
+        108,
+        -6.5
+      ],
+      "tribe-theta": [
+        -3.5,
+        108,
+        -10.5
+      ],
+      "tribe-zeta": [
+        -11.5,
+        110,
+        0.5
+      ]
+    },
+    "configuredInitialWorldClock": {
+      "day": 0,
+      "isDay": true,
+      "timeOfDay": 0
+    },
+    "externalCognitionStimuli": "none",
+    "harnessThinkCommandsIssued": 0,
+    "initialConditionAttestations": 1,
+    "nativeGoalReviewSchedule": {
+      "cadenceTicks": 2400,
+      "expectedReviewsPerAgent": 6,
+      "sliceTicks": 100
+    },
+    "nativeGoalReviewsByAgent": {
+      "tribe-alpha": 5,
+      "tribe-beta": 5,
+      "tribe-delta": 5,
+      "tribe-epsilon": 5,
+      "tribe-eta": 5,
+      "tribe-gamma": 5,
+      "tribe-iota": 5,
+      "tribe-kappa": 5,
+      "tribe-theta": 5,
+      "tribe-zeta": 5
+    },
+    "nativeSchedulersOnly": true,
+    "requestsByOrigin": {
+      "nativeEventDriver": 3,
+      "nativeGoalReviewSchedule": 50
+    },
+    "startingInventories": "empty",
+    "stimulusAttestations": 1
+  },
+  "records": {
+    "agents": [
+      {
+        "actions": 5,
+        "agentId": "tribe-alpha",
+        "appliedByIntent": {
+          "moveTo": 5
+        },
+        "byEvent": {
+          "decided": 5,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 5,
+          "moved": 5,
+          "perceived": 5,
+          "spawned": 1,
+          "witnessJoined": 1
+        },
+        "byOutcome": {
+          "accepted": 5,
+          "movementArrived": 5
+        },
+        "decisions": 5,
+        "decisionsByIntent": {
+          "moveTo": 5
+        },
+        "records": 24
+      },
+      {
+        "actions": 5,
+        "agentId": "tribe-beta",
+        "appliedByIntent": {
+          "idle": 1,
+          "moveTo": 4
+        },
+        "byEvent": {
+          "decided": 5,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 5,
+          "moved": 1,
+          "perceived": 5,
+          "spawned": 1,
+          "witnessJoined": 1
+        },
+        "byOutcome": {
+          "accepted": 1,
+          "goalStepMismatch": 4,
+          "movementArrived": 1
+        },
+        "decisions": 5,
+        "decisionsByIntent": {
+          "idle": 1,
+          "moveTo": 4
+        },
+        "records": 20
+      },
+      {
+        "actions": 5,
+        "agentId": "tribe-delta",
+        "appliedByIntent": {
+          "dig": 1,
+          "idle": 1,
+          "moveTo": 3
+        },
+        "byEvent": {
+          "decided": 5,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 5,
+          "moved": 2,
+          "perceived": 5,
+          "spawned": 1,
+          "witnessJoined": 1,
+          "worldInteraction": 1
+        },
+        "byOutcome": {
+          "accepted": 3,
+          "goalStepMismatch": 2,
+          "movementArrived": 2,
+          "serverEffectConfirmed": 1
+        },
+        "decisions": 5,
+        "decisionsByIntent": {
+          "dig": 1,
+          "idle": 1,
+          "moveTo": 3
+        },
+        "records": 22
+      },
+      {
+        "actions": 5,
+        "agentId": "tribe-epsilon",
+        "appliedByIntent": {
+          "dig": 2,
+          "idle": 1,
+          "moveTo": 2
+        },
+        "byEvent": {
+          "decided": 5,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 5,
+          "moved": 1,
+          "perceived": 5,
+          "spawned": 1,
+          "witnessJoined": 1,
+          "worldInteraction": 2
+        },
+        "byOutcome": {
+          "accepted": 3,
+          "goalStepMismatch": 2,
+          "movementArrived": 1,
+          "serverEffectConfirmed": 2
+        },
+        "decisions": 5,
+        "decisionsByIntent": {
+          "dig": 2,
+          "idle": 1,
+          "moveTo": 2
+        },
+        "records": 22
+      },
+      {
+        "actions": 7,
+        "agentId": "tribe-eta",
+        "appliedByIntent": {
+          "dig": 1,
+          "flee": 1,
+          "idle": 2,
+          "moveTo": 3
+        },
+        "byEvent": {
+          "cognitionUnavailable": 1,
+          "decided": 7,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 7,
+          "moved": 4,
+          "perceived": 8,
+          "retreating": 1,
+          "spawned": 1,
+          "threatSuppressed": 7,
+          "witnessJoined": 1,
+          "worldInteraction": 1
+        },
+        "byOutcome": {
+          "accepted": 6,
+          "dangerCoalesced": 1,
+          "goalStepMismatch": 1,
+          "movementArrived": 4,
+          "retreatSafe": 1,
+          "serverEffectConfirmed": 1,
+          "threatDebounced": 5,
+          "threatUnchanged": 2
+        },
+        "decisions": 7,
+        "decisionsByIntent": {
+          "dig": 1,
+          "flee": 1,
+          "idle": 2,
+          "moveTo": 3
+        },
+        "records": 40
+      },
+      {
+        "actions": 5,
+        "agentId": "tribe-gamma",
+        "appliedByIntent": {
+          "dig": 1,
+          "moveTo": 4
+        },
+        "byEvent": {
+          "decided": 5,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 5,
+          "moved": 4,
+          "perceived": 5,
+          "spawned": 1,
+          "witnessJoined": 1,
+          "worldInteraction": 1
+        },
+        "byOutcome": {
+          "accepted": 5,
+          "movementArrived": 4,
+          "serverEffectConfirmed": 1
+        },
+        "decisions": 5,
+        "decisionsByIntent": {
+          "dig": 1,
+          "moveTo": 4
+        },
+        "records": 24
+      },
+      {
+        "actions": 5,
+        "agentId": "tribe-iota",
+        "appliedByIntent": {
+          "dig": 1,
+          "idle": 2,
+          "moveTo": 2
+        },
+        "byEvent": {
+          "decided": 5,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 5,
+          "moved": 1,
+          "perceived": 5,
+          "spawned": 1,
+          "witnessJoined": 1,
+          "worldInteraction": 1
+        },
+        "byOutcome": {
+          "accepted": 3,
+          "goalStepMismatch": 2,
+          "movementArrived": 1,
+          "serverEffectConfirmed": 1
+        },
+        "decisions": 5,
+        "decisionsByIntent": {
+          "dig": 1,
+          "idle": 2,
+          "moveTo": 2
+        },
+        "records": 21
+      },
+      {
+        "actions": 5,
+        "agentId": "tribe-kappa",
+        "appliedByIntent": {
+          "dig": 1,
+          "idle": 1,
+          "moveTo": 3
+        },
+        "byEvent": {
+          "decided": 5,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 5,
+          "moved": 2,
+          "perceived": 5,
+          "spawned": 1,
+          "witnessJoined": 1,
+          "worldInteraction": 1
+        },
+        "byOutcome": {
+          "accepted": 4,
+          "goalStepMismatch": 1,
+          "movementArrived": 2,
+          "serverEffectConfirmed": 1
+        },
+        "decisions": 5,
+        "decisionsByIntent": {
+          "dig": 1,
+          "idle": 1,
+          "moveTo": 3
+        },
+        "records": 22
+      },
+      {
+        "actions": 6,
+        "agentId": "tribe-theta",
+        "appliedByIntent": {
+          "dig": 1,
+          "flee": 1,
+          "idle": 2,
+          "moveTo": 2
+        },
+        "byEvent": {
+          "cognitionUnavailable": 1,
+          "decided": 6,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 6,
+          "moved": 1,
+          "perceived": 7,
+          "retreating": 1,
+          "spawned": 1,
+          "witnessJoined": 1,
+          "worldInteraction": 1
+        },
+        "byOutcome": {
+          "accepted": 4,
+          "dangerCoalesced": 1,
+          "goalStepMismatch": 2,
+          "movementArrived": 1,
+          "retreatSafe": 1,
+          "serverEffectConfirmed": 1
+        },
+        "decisions": 6,
+        "decisionsByIntent": {
+          "dig": 1,
+          "flee": 1,
+          "idle": 2,
+          "moveTo": 2
+        },
+        "records": 27
+      },
+      {
+        "actions": 5,
+        "agentId": "tribe-zeta",
+        "appliedByIntent": {
+          "dig": 2,
+          "idle": 1,
+          "moveTo": 2
+        },
+        "byEvent": {
+          "decided": 5,
+          "despawned": 1,
+          "healthChanged": 1,
+          "intentApplied": 5,
+          "moved": 2,
+          "perceived": 5,
+          "spawned": 1,
+          "witnessJoined": 1,
+          "worldInteraction": 2
+        },
+        "byOutcome": {
+          "accepted": 5,
+          "movementArrived": 2,
+          "serverEffectConfirmed": 2
+        },
+        "decisions": 5,
+        "decisionsByIntent": {
+          "dig": 2,
+          "idle": 1,
+          "moveTo": 2
+        },
+        "records": 23
+      }
+    ],
+    "body": 245,
+    "byEvent": {
+      "cognitionUnavailable": 2,
+      "decided": 53,
+      "despawned": 10,
+      "healthChanged": 10,
+      "intentApplied": 53,
+      "moved": 23,
+      "perceived": 55,
+      "retreating": 2,
+      "spawned": 10,
+      "threatSuppressed": 7,
+      "witnessJoined": 10,
+      "worldInteraction": 10
+    },
+    "harness": 119,
+    "total": 364
+  },
+  "schemaVersion": "loom-derived-metrics/1",
+  "spatial": {
+    "coLocationSamples": [],
+    "coLocationThresholdBlocks": 8,
+    "maximumTickSeparation": 20
+  },
+  "timing": {
+    "firstTick": 60,
+    "lastTick": 12025,
+    "tickSpan": 11965
+  }
+}
