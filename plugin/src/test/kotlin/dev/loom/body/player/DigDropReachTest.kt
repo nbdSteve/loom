@@ -85,6 +85,24 @@ class DigLeavesExitTest {
     }
 
     @Test
+    fun `the block under the stair out of a dug hole is not dug`() {
+        // The v29 plains rehearsal, epsilon: in its own hole at (-10, 64, 7), floor 2 below the
+        // surface at 66, the hole's other column (-11, 65, 7) on solid (-11, 64, 7) was the stair
+        // out. It dug that block at tick 2987, and its flights were refused noRoute after it.
+        val surface = BlockGround { position -> position[1] >= 66 }
+        val hole =
+            BlockGround { position ->
+                surface.standsIn(position) || position in
+                    listOf(listOf(-10, 64, 7), listOf(-10, 65, 7), listOf(-11, 65, 7))
+            }
+        val at = listOf(-9.5, 64.0, 7.5)
+        assertFalse(digLeavesExit(hole, at, listOf(-11, 64, 7)), "the stair's own footing")
+        // A block that is no part of the walk out is dug as before, and so is the wall beside.
+        assertTrue(digLeavesExit(hole, at, listOf(-9, 65, 7)))
+        assertTrue(digLeavesExit(hole, at, listOf(-20, 64, 7)))
+    }
+
+    @Test
     fun `a support beside open ground at the body's own level is still dug`() {
         // A flat field: a neighbour of the support is solid with two open cells over it, so the
         // body steps back up out of its one-deep hole.

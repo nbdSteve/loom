@@ -11,6 +11,17 @@ internal const val ESCAPE_RADIUS_BLOCKS = 3
 /** How far above its landing a walk out of a dug hole must climb to count as out of it. */
 internal const val ESCAPE_RISE_BLOCKS = 2
 
+/**
+ * Whether [block] lies where the walk out of [feet] can pass: within [ESCAPE_RADIUS_BLOCKS]
+ * sideways, and no higher than the cell above the feet. A block further off is no step of it.
+ */
+internal fun nearWalkOut(
+    feet: List<Int>,
+    block: List<Int>,
+): Boolean =
+    maxOf(abs(block[0] - feet[0]), abs(block[2] - feet[2])) <= ESCAPE_RADIUS_BLOCKS &&
+        block[1] <= feet[1] + 1 && block[1] >= feet[1] - ESCAPE_DROP_BLOCKS - 1
+
 /** The most a body drops in one step of the walk out, as the movement policy's own drop bound. */
 private const val ESCAPE_DROP_BLOCKS = 3
 
@@ -18,7 +29,7 @@ private const val ESCAPE_DROP_BLOCKS = 3
 private const val ESCAPE_MAX_CELLS = 512
 
 /**
- * Whether a body landing in [landing] - the cell of the support it dug out, now open - can
+ * Whether a body in [landing], with the block at [opened] dug open if one is named, can
  * walk to a cell [ESCAPE_RADIUS_BLOCKS] sideways or [ESCAPE_RISE_BLOCKS] up by steps a body
  * makes: level, up one with head room to jump, or down at most [ESCAPE_DROP_BLOCKS].
  *
@@ -30,8 +41,9 @@ private const val ESCAPE_MAX_CELLS = 512
 internal fun escapesFrom(
     ground: BlockGround,
     landing: List<Int>,
+    opened: List<Int>? = null,
 ): Boolean {
-    val walk = EscapeWalk(ground, landing)
+    val walk = EscapeWalk(ground, landing, opened)
     if (!walk.standable(landing)) return false
     val seen = mutableSetOf(landing)
     val frontier = ArrayDeque(listOf(landing))
@@ -48,8 +60,9 @@ internal fun escapesFrom(
 private class EscapeWalk(
     private val ground: BlockGround,
     private val landing: List<Int>,
+    private val opened: List<Int>?,
 ) {
-    fun open(cell: List<Int>): Boolean = cell == landing || ground.standsIn(cell)
+    fun open(cell: List<Int>): Boolean = cell == opened || ground.standsIn(cell)
 
     fun standable(cell: List<Int>): Boolean = open(cell) && open(cell.up(1)) && !open(cell.up(-1))
 

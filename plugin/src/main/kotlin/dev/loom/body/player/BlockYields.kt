@@ -119,12 +119,17 @@ internal fun digLeavesExit(
     val support = supportCellOf(position)
     val (x, y, z) = support
     val sides = listOf(listOf(x + 1, y, z), listOf(x - 1, y, z), listOf(x, y, z + 1), listOf(x, y, z - 1))
+    val feet = listOf(x, y + 1, z)
     return when {
-        block != support -> true
-        ground.standsIn(listOf(x, y - 1, z)) -> false
         // Where the ground does not report the body's own feet cell open it has no word on the
-        // walk out, and the one-level rule stands: a neighbour to step up onto.
-        !ground.standsIn(listOf(x, y + 1, z)) -> sides.any { side -> ground.standCell(side) != null }
-        else -> escapesFrom(ground, support)
+        // walk out, and the one-level rule stands for the support: a neighbour to step up onto.
+        !ground.standsIn(feet) ->
+            block != support || !ground.standsIn(listOf(x, y - 1, z)) && sides.any { ground.standCell(it) != null }
+        block == support -> !ground.standsIn(listOf(x, y - 1, z)) && escapesFrom(ground, support, opened = support)
+        // Any other block near enough to be part of the walk out may be the step it needs: a body
+        // that can walk out now must still be able to once it is dug (the v29 rehearsal: epsilon
+        // dug the feet-level block beside it, which was the stair out of its own two-wide hole).
+        !nearWalkOut(feet, block) -> true
+        else -> !escapesFrom(ground, feet) || escapesFrom(ground, feet, opened = block)
     }
 }
