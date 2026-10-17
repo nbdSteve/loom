@@ -125,3 +125,22 @@ test('an item hanging over a trench is collected from a cell beside it, not refu
   assert.equal(taken(), true)
   peer.stop()
 })
+
+test('a passive collect is admitted only inside vanilla pickup reach, and an approach only to cells that cover from anywhere', () => {
+  const {
+    PASSIVE_PICKUP_ABOVE_BLOCKS, PASSIVE_PICKUP_BELOW_BLOCKS, PASSIVE_PICKUP_HORIZONTAL_BLOCKS, covers, withinPickup
+  } = require('../src/collecting')
+  // The reach is vanilla's own geometry: player half width 0.3, growth 1 and 0.5, height 1.8, and
+  // the item's 0.25 box.
+  assert.equal(PASSIVE_PICKUP_HORIZONTAL_BLOCKS, 0.3 + 1 + 0.125)
+  assert.equal(PASSIVE_PICKUP_BELOW_BLOCKS, 0.25 + 0.5)
+  assert.equal(PASSIVE_PICKUP_ABOVE_BLOCKS, 1.8 + 0.5)
+  // The v25 rehearsal's theta: a stick 1.9 away but one block below the feet is out of reach.
+  assert.equal(withinPickup([-2.5, 109, -9.5], [-2.5, 108, -7.85]), false)
+  assert.equal(withinPickup([-2.5, 109, -9.5], [-2.5, 109, -8.3]), true)
+  // The v25 rehearsal's beta: the cell whose centre covered its stick at z 5.16 does not cover it
+  // from the cell's far edge, where the walk stopped; the stick's own cell does.
+  const stick = [10.37, 100, 5.16]
+  assert.equal(covers([10, 99, 6], stick), false)
+  assert.equal(covers([10, 99, 5], stick), true)
+})

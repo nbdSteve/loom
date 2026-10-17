@@ -39,8 +39,27 @@ pub const INTERACTION_REACH_BLOCKS: f64 = 5.1;
 /// Mineflayer's player eye height, from which interaction reach is measured.
 pub const EYE_HEIGHT_BLOCKS: f64 = 1.62;
 
-/// `PASSIVE_PICKUP_REACH_BLOCKS` in `body/src/collecting.js`.
-pub const PASSIVE_PICKUP_REACH_BLOCKS: f64 = 2.0;
+/// `PASSIVE_PICKUP_HORIZONTAL_BLOCKS` in `body/src/collecting.js`: vanilla's grown pickup box,
+/// sideways, from the feet. The mind offers the circle inside that square.
+pub const PASSIVE_PICKUP_HORIZONTAL_BLOCKS: f64 = 1.425;
+
+/// `PASSIVE_PICKUP_BELOW_BLOCKS` in `body/src/collecting.js`: how far below the feet it reaches.
+pub const PASSIVE_PICKUP_BELOW_BLOCKS: f64 = 0.75;
+
+/// `PASSIVE_PICKUP_ABOVE_BLOCKS` in `body/src/collecting.js`: how far above the feet it reaches.
+pub const PASSIVE_PICKUP_ABOVE_BLOCKS: f64 = 2.3;
+
+/// Whether vanilla would pick `seen`, a dropped item, up from where the body stands: inside the
+/// grown pickup box, not merely within a straight-line reach (the v25 rehearsal: a stick 1.9
+/// away and one block below the feet was offered without moving, and never picked up).
+fn within_pickup(seen: &Observation) -> bool {
+    let horizontal = (seen.distance.powi(2) - seen.vertical_offset.powi(2))
+        .max(0.0)
+        .sqrt();
+    horizontal < PASSIVE_PICKUP_HORIZONTAL_BLOCKS
+        && seen.vertical_offset > -PASSIVE_PICKUP_BELOW_BLOCKS
+        && seen.vertical_offset < PASSIVE_PICKUP_ABOVE_BLOCKS
+}
 
 /// `MOVE_REACH_BLOCKS` in `body/src/movement.js`: how far an approach may route.
 pub const MOVE_REACH_BLOCKS: f64 = 32.0;
@@ -230,7 +249,7 @@ impl OfferedRefs {
                 // A drop the body already found no route to is neither offered nor counted on
                 // (r15: five collects were refused as noRoute while their items stood in capacity).
                 ObservationKind::DroppedItem if seen.route_refused != Some(true) => {
-                    if seen.distance <= PASSIVE_PICKUP_REACH_BLOCKS {
+                    if within_pickup(seen) {
                         offer(&mut offered.pickup_items, handle);
                     }
                     if seen.distance <= MOVE_REACH_BLOCKS {
@@ -424,10 +443,7 @@ impl OfferedRefs {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{
-        OfferedRefs, ATTACK_REACH_BLOCKS, INTERACTION_REACH_BLOCKS, MAX_PURSUIT_BLOCKS,
-        PASSIVE_PICKUP_REACH_BLOCKS,
-    };
+    use super::{OfferedRefs, ATTACK_REACH_BLOCKS, INTERACTION_REACH_BLOCKS, MAX_PURSUIT_BLOCKS};
     use crate::prompt::{MAX_CRAFTING_LINES, MAX_INVENTORY_LINES};
     use loom_contract::{
         Bearing, BlockFace, CraftingOption, EquipmentDestination, Intent, InventoryStack,
@@ -544,12 +560,9 @@ mod tests {
     #[test]
     fn an_item_or_creature_is_offered_to_each_mode_whose_reach_it_is_within() {
         let offered = OfferedRefs::of(&scene(vec![
-            seen(
-                ObservationKind::DroppedItem,
-                "close",
-                PASSIVE_PICKUP_REACH_BLOCKS,
-                -0.5,
-            ),
+            seen(ObservationKind::DroppedItem, "close", 1.2, -0.5),
+            // The v25 rehearsal's theta: 1.9 away but a block below the feet, out of pickup reach.
+            seen(ObservationKind::DroppedItem, "below", 1.93, -1.0),
             // r10's stick, 18 blocks off: collected only by walking to it.
             seen(ObservationKind::DroppedItem, "stick", 18.17, -2.0),
             seen(ObservationKind::Entity, "beside", ATTACK_REACH_BLOCKS, 0.0),
@@ -557,7 +570,7 @@ mod tests {
             seen(ObservationKind::Entity, "afar", 12.0, 0.0),
         ]));
         assert_eq!(offered.pickup_items, handles(&["close"]));
-        assert_eq!(offered.route_items, handles(&["close", "stick"]));
+        assert_eq!(offered.route_items, handles(&["close", "below", "stick"]));
         let collect = |item: &str, approach| Intent::Collect {
             item: item.to_owned(),
             approach,

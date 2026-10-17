@@ -597,11 +597,12 @@ it.
 
 **The seven native world interactions are one-shot applications of retained authority.**
 `dig` names one offered block and uses only the item already in the main hand.
-`collect` names one exact dropped-item entity and either waits within passive pickup reach or,
+`collect` names one exact dropped-item entity and either waits within passive pickup reach - inside vanilla's grown pickup box from where the body stands (`withinPickup`), never a straight-line distance - or,
 when `approach` is true, gives the existing bounded movement wrapper one search for any of the
 cells a body could stand in whose pickup box covers that entity's sensed position
 (`pickupCells`, `movement.approach`).
 Those cells are fixed by the item's position and vanilla's geometry, not chosen: vanilla picks an item up only inside the player's box grown by one block sideways and half a block vertically, a stop one cell short of an item lying far into its block arrives outside that reach, and the item's own cell may have nothing to stand on - r15's stick hung over a one-block trench from the edge of the block beside it, and five walks to its own cell were refused `noRoute`.
+A cell counts only when its box reaches the item from every point of the cell's floor, because a walk ends where the pathfinder first stands in the cell rather than at its centre (`covers`).
 `noRoute` therefore means no cell within pickup reach of the item has a route.
 `place` names one support block, one offered slot and one face; the exact offered stack must
 already be in the selected main hand, so placement never equips or searches.

@@ -13,7 +13,8 @@ use std::path::Path;
 
 use loom_cognition::offered::{
     ATTACK_REACH_BLOCKS, EYE_HEIGHT_BLOCKS, INTERACTION_REACH_BLOCKS, MAX_PURSUIT_BLOCKS,
-    MOVE_REACH_BLOCKS, PASSIVE_PICKUP_REACH_BLOCKS,
+    MOVE_REACH_BLOCKS, PASSIVE_PICKUP_ABOVE_BLOCKS, PASSIVE_PICKUP_BELOW_BLOCKS,
+    PASSIVE_PICKUP_HORIZONTAL_BLOCKS,
 };
 
 fn source(relative: &str) -> String {
@@ -49,8 +50,18 @@ fn every_reach_bound_is_the_one_the_body_or_jvm_enforces() {
         ),
         (
             "body/src/collecting.js",
-            "PASSIVE_PICKUP_REACH_BLOCKS",
-            PASSIVE_PICKUP_REACH_BLOCKS,
+            "PASSIVE_PICKUP_HORIZONTAL_BLOCKS",
+            PASSIVE_PICKUP_HORIZONTAL_BLOCKS,
+        ),
+        (
+            "body/src/collecting.js",
+            "PASSIVE_PICKUP_BELOW_BLOCKS",
+            PASSIVE_PICKUP_BELOW_BLOCKS,
+        ),
+        (
+            "body/src/collecting.js",
+            "PASSIVE_PICKUP_ABOVE_BLOCKS",
+            PASSIVE_PICKUP_ABOVE_BLOCKS,
         ),
         (
             "body/src/movement.js",

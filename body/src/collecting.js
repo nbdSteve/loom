@@ -15,8 +15,17 @@ const { blocksApart } = require('./movement')
 const { elapsedSince, offeredItem } = require('./interaction')
 const { droppedStack, positionOf } = require('./sensing')
 
-/** How near an item must already be when the request forbids approach movement. */
-const PASSIVE_PICKUP_REACH_BLOCKS = 2
+/**
+ * How near an item must already be when the request forbids approach movement: inside vanilla's
+ * grown pickup box from where the body stands. Horizontally the player's half width, its growth
+ * and the item's half width, 0.3 + 1 + 0.125 on each axis; vertically from the item's top 0.5
+ * below the feet, 0.25 + 0.5, to 0.5 above the head, 1.8 + 0.5. A straight-line reach of two
+ * blocks admitted an item one block below the feet that vanilla never picks up, and the collect
+ * waited out its deadline (the v25 rehearsal, theta).
+ */
+const PASSIVE_PICKUP_HORIZONTAL_BLOCKS = 1.425
+const PASSIVE_PICKUP_BELOW_BLOCKS = 0.75
+const PASSIVE_PICKUP_ABOVE_BLOCKS = 2.3
 
 /** A movement wrapper with no `approach`, as a test double may be, walks into the item's own cell. */
 const ITEM_CELL_TOLERANCE = 0
@@ -51,14 +60,26 @@ function pickupCells (bot, position, from) {
   return cells.sort((a, b) => blocksApart(from, centre(a)) - blocksApart(from, centre(b)))
 }
 
-/** Whether a body standing in `cell` would pick up an item lying at `position`. */
+/**
+ * Whether a body standing anywhere in `cell` would pick up an item lying at `position`. A walk
+ * ends where the pathfinder first stands in the cell, not at its centre, so the box must reach
+ * the item from every point of the cell's floor: the v25 rehearsal's beta stopped 0.17 short of
+ * the centre of a cell whose centre covered its stick, and waited out the deadline.
+ */
 function covers ([cx, cy, cz], [ix, iy, iz]) {
   const overlaps = (low, high, itemLow, itemHigh) => low < itemHigh && itemLow < high
-  return overlaps(cx + 0.5 - PLAYER_HALF_WIDTH - PICKUP_GROWTH.x, cx + 0.5 + PLAYER_HALF_WIDTH + PICKUP_GROWTH.x,
-    ix - ITEM_HALF_WIDTH, ix + ITEM_HALF_WIDTH) &&
+  const reach = PLAYER_HALF_WIDTH + PICKUP_GROWTH.x
+  return overlaps(cx + 1 - reach, cx + reach, ix - ITEM_HALF_WIDTH, ix + ITEM_HALF_WIDTH) &&
     overlaps(cy - PICKUP_GROWTH.y, cy + PLAYER_HEIGHT + PICKUP_GROWTH.y, iy, iy + ITEM_HEIGHT) &&
-    overlaps(cz + 0.5 - PLAYER_HALF_WIDTH - PICKUP_GROWTH.z, cz + 0.5 + PLAYER_HALF_WIDTH + PICKUP_GROWTH.z,
-      iz - ITEM_HALF_WIDTH, iz + ITEM_HALF_WIDTH)
+    overlaps(cz + 1 - reach, cz + reach, iz - ITEM_HALF_WIDTH, iz + ITEM_HALF_WIDTH)
+}
+
+/** Whether vanilla would pick up an item at `position` from a body whose feet are at `from`. */
+function withinPickup ([fx, fy, fz], [ix, iy, iz]) {
+  return Math.abs(ix - fx) < PASSIVE_PICKUP_HORIZONTAL_BLOCKS &&
+    Math.abs(iz - fz) < PASSIVE_PICKUP_HORIZONTAL_BLOCKS &&
+    iy - fy > -PASSIVE_PICKUP_BELOW_BLOCKS &&
+    iy - fy < PASSIVE_PICKUP_ABOVE_BLOCKS
 }
 
 /** Whether a body can stand with its feet in the cell: free feet and head, ground beneath. */
@@ -111,7 +132,7 @@ function collectOfferedItem (bot, movement, {
       cancel: () => false
     }
   }
-  if (!approach && blocksApart(from, resolved.position) > PASSIVE_PICKUP_REACH_BLOCKS) {
+  if (!approach && !withinPickup(from, resolved.position)) {
     return {
       promise: Promise.resolve(unmoved('outOfRange', from, startedAt, now)),
       cancel: () => false
@@ -293,7 +314,11 @@ function collectOfferedItem (bot, movement, {
 
 module.exports = {
   ITEM_CELL_TOLERANCE,
-  PASSIVE_PICKUP_REACH_BLOCKS,
+  PASSIVE_PICKUP_ABOVE_BLOCKS,
+  PASSIVE_PICKUP_BELOW_BLOCKS,
+  PASSIVE_PICKUP_HORIZONTAL_BLOCKS,
   collectOfferedItem,
-  pickupCells
+  covers,
+  pickupCells,
+  withinPickup
 }
