@@ -16,6 +16,8 @@ import dev.loom.contract.LoomJson
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 import dev.loom.mind.AsyncCognitionBridge
+import dev.loom.mind.CognitionFailure
+import dev.loom.mind.CognitionUnavailableException
 import dev.loom.mind.decisionFor
 import dev.loom.mind.perception
 import kotlinx.serialization.decodeFromString
@@ -442,6 +444,24 @@ class TcpCognitionTransportTest {
             thrown.message?.contains("perception was not valid JSON") == true,
             "the mind's own words must survive: ${thrown.message}",
         )
+    }
+
+    @Test
+    @DisplayName("a harness budget refusal is its own typed failure, not a failed mind")
+    fun aBudgetRefusalIsTyped() {
+        // r20 body:00002239: the 151st call was refused at the global ceiling and recorded as
+        // failed; only the harness's own record named the ceiling.
+        val mind =
+            managed(
+                FakeMind {
+                    """{"error":"cognition request refused by experiment budget","code":"budgetRefused"}"""
+                },
+            )
+
+        val thrown = assertThrows<CognitionUnavailableException> { transportTo(mind).ask(perception()) }
+
+        assertEquals(CognitionFailure.BudgetRefused, thrown.failure)
+        assertEquals("budgetRefused", thrown.failure.tag)
     }
 
     @Test

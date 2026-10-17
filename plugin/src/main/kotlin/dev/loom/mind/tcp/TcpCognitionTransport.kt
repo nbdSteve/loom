@@ -56,7 +56,9 @@ import dev.loom.contract.Decision
 import dev.loom.contract.LoomJson
 import dev.loom.contract.Perception
 import dev.loom.mind.ATTEMPTS_PER_ASK
+import dev.loom.mind.CognitionFailure
 import dev.loom.mind.CognitionTransport
+import dev.loom.mind.CognitionUnavailableException
 import dev.loom.mind.MIN_SOCKET_TIMEOUT_MILLIS
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -79,6 +81,9 @@ import kotlin.time.TimeSource
 
 /** The key the service's refusal frame carries. Not a contract type. */
 private const val ERROR_KEY = "error"
+
+/** The refusal code the research harness's budget proxy states for a call over a ceiling. */
+private const val BUDGET_REFUSED_CODE = "budgetRefused"
 
 /** The byte that ends a frame in both directions. */
 private const val NEWLINE = '\n'.code
@@ -217,7 +222,17 @@ private class Deadline(
 private data class WireError(
     @SerialName(ERROR_KEY) val error: String,
     val failure: JsonObject? = null,
+    /** A closed refusal code, where the refuser states one: `budgetRefused` from the harness. */
+    val code: String? = null,
 )
+
+/** What a refusal frame is thrown as: the harness's budget refusal typed, any other as I/O. */
+private fun refusalOf(wire: WireError): Exception =
+    if (wire.code == BUDGET_REFUSED_CODE) {
+        CognitionUnavailableException(CognitionFailure.BudgetRefused, "refused: ${wire.error}")
+    } else {
+        IOException("the mind refused: ${wire.error}")
+    }
 
 /**
  * Speaks to a cognition service over TCP, one connection per calling thread.
@@ -418,9 +433,7 @@ class TcpCognitionTransport(
     ): Decision {
         val element = LoomJson.parseToJsonElement(response)
         val refusal = element.jsonObject[ERROR_KEY]
-        if (refusal != null) {
-            throw IOException("the mind refused: ${LoomJson.decodeFromJsonElement<WireError>(element).error}")
-        }
+        if (refusal != null) throw refusalOf(LoomJson.decodeFromJsonElement<WireError>(element))
         val decision = LoomJson.decodeFromJsonElement<Decision>(element)
         if (decision.requestId != asked.requestId) {
             throw IOException(

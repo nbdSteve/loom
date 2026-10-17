@@ -84,6 +84,15 @@ sealed interface CognitionFailure {
         override val tag: String get() = "agentBudgetExhausted"
     }
 
+    /**
+     * The research harness refused the request at one of its call or spend ceilings, before any
+     * mind was asked (r20: the 151st call was recorded as `failed`, and only the harness's own
+     * record named the ceiling).
+     */
+    data object BudgetRefused : CognitionFailure {
+        override val tag: String get() = "budgetRefused"
+    }
+
     /** The mind was reached but failed, refused, or answered unusably. */
     data class Failed(
         val reason: String,
@@ -242,7 +251,7 @@ class AsyncCognitionBridge(
                 onFailure(perception, CognitionFailure.TimedOut(timeout))
             }
         } catch (failure: Throwable) {
-            fail(decided, perception, CognitionFailure.Failed(failure.toString()), failure)
+            fail(decided, perception, failureOf(failure), failure)
         }
     }
 
@@ -270,6 +279,7 @@ class AsyncCognitionBridge(
                 CognitionFailure.Saturated -> "was refused: every worker and queue slot is busy"
                 is CognitionFailure.AgentBudgetExhausted ->
                     "was refused: this agent already has ${failure.limit} request(s) outstanding"
+                CognitionFailure.BudgetRefused -> "was refused at the research harness's call or spend ceiling"
                 is CognitionFailure.Failed -> "failed: ${failure.reason}"
             }
 

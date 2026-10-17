@@ -15,8 +15,8 @@ const REFUSAL_BOUNDS = Object.freeze([
   'spend'
 ])
 
-function refusal (message) {
-  return `${JSON.stringify({ error: message })}\n`
+function refusal (message, code) {
+  return `${JSON.stringify({ error: message, ...(code === undefined ? {} : { code }) })}\n`
 }
 
 class CognitionBudgetProxy {
@@ -290,7 +290,7 @@ class CognitionBudgetProxy {
       }
       this.journal.append('cognitionRefused', refused)
       this.onRefusal(refused)
-      downstream.write(refusal('cognition request refused by experiment budget'))
+      downstream.write(refusal('cognition request refused by experiment budget', 'budgetRefused'))
       return
     }
 
