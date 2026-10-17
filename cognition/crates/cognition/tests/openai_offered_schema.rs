@@ -1008,7 +1008,10 @@ fn a_goal_review_beside_a_hunter_may_flee_from_it_with_no_goal_choice() {
     let offered = OfferedRefs::of(&seen);
     assert_eq!(offered.danger, vec!["e9".to_owned()]);
     let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
-    assert_eq!(schema["$defs"]["dangerRef"]["enum"], serde_json::json!(["e9"]));
+    assert_eq!(
+        schema["$defs"]["dangerRef"]["enum"],
+        serde_json::json!(["e9"])
+    );
     let text = schema.to_string();
     assert!(text.contains("\"#/$defs/dangerRef\""), "{text}");
     // A creature that does not hunt the agent's kind is no danger.
