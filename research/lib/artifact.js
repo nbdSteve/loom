@@ -37,7 +37,8 @@ const {
   isHistoricalMode,
   primaryBehaviorModeOf,
   configuredMode,
-  isPrimaryBehaviorMode
+  isPrimaryBehaviorMode,
+  nativeOriginOf
 } = require('./experiment-mode.js')
 const {
   canonicalJson,
@@ -1248,10 +1249,8 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
       record.source !== 'harness' ||
       !['cognitionForwarded', 'cognitionRefused'].includes(record.event)
     ) continue
-    const expected = record.trigger === 'goalReview'
-      ? 'nativeGoalReviewSchedule'
-      : 'nativeEventDriver'
-    if (record.origin !== expected) {
+    // The same rule the proxy stamps origins by, so a follow-up review is its own native source.
+    if (record.origin !== nativeOriginOf(record.trigger)) {
       errors.push(`cognition request ${record.requestKey ?? record.recordId} has no valid native origin`)
     }
   }

@@ -135,12 +135,17 @@ function postCrashReserveFor (config) {
   }
 }
 
-function requestOriginFor (config, trigger) {
-  if (!isPrimaryBehaviorMode(config)) return undefined
+/** The native source a primary-behavior request with [trigger] comes from. */
+function nativeOriginOf (trigger) {
   if (trigger === 'goalReview') return 'nativeGoalReviewSchedule'
   // The one review a settled goal step owes, from routine-v23.
   if (trigger === 'stepSettled') return 'nativeGoalFollowUp'
   return 'nativeEventDriver'
+}
+
+function requestOriginFor (config, trigger) {
+  if (!isPrimaryBehaviorMode(config)) return undefined
+  return nativeOriginOf(trigger)
 }
 
 function createInterventionSchedule (config, startedMillis) {
@@ -224,5 +229,6 @@ module.exports = {
   postCrashReserveFor,
   primaryBehaviorModeOf,
   primaryBehaviorStimulusRecord,
+  nativeOriginOf,
   requestOriginFor
 }

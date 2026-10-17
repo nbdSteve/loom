@@ -8,6 +8,7 @@ const path = require('node:path')
 
 const {
   createInterventionSchedule,
+  nativeOriginOf,
   primaryBehaviorStimulusRecord,
   requestOriginFor
 } = require('../lib/experiment-mode.js')
@@ -101,4 +102,9 @@ test('a primary behavior request names the native source that raised it, a follo
   // The one review a settled goal step owes is native, but not the schedule's.
   assert.equal(requestOriginFor(config, 'stepSettled'), 'nativeGoalFollowUp')
   assert.equal(requestOriginFor(config, 'threatSighted'), 'nativeEventDriver')
+  // The publication validator holds every forwarded request to the same rule: the third v23
+  // rehearsal's follow-up reviews were refused as having no valid native origin.
+  for (const trigger of ['goalReview', 'stepSettled', 'damaged', 'spoken']) {
+    assert.equal(nativeOriginOf(trigger), requestOriginFor(config, trigger), trigger)
+  }
 })
