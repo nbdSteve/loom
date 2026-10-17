@@ -1,1 +1,1 @@
-{"op":"craft","protocol":5,"requestId":"bad-craft","agentId":"agent-alpha","senseId":"sense-1","recipe":0,"crafts":9,"timeoutMs":8000}
+{"op":"craft","protocol":6,"requestId":"bad-craft","agentId":"agent-alpha","senseId":"sense-1","recipe":0,"crafts":9,"timeoutMs":8000}

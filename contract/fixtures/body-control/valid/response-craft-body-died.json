@@ -1,1 +1,1 @@
-{"op":"craft","protocol":5,"requestId":"res-craft-body-died","agentId":"agent-alpha","state":"ready","outcome":"bodyDied","elapsedMs":125,"attempted":true}
+{"op":"craft","protocol":6,"requestId":"res-craft-body-died","agentId":"agent-alpha","state":"ready","outcome":"bodyDied","elapsedMs":125,"attempted":true}

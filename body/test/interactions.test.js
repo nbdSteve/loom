@@ -158,8 +158,15 @@ function worldBot (bot = new EventEmitter()) {
 }
 
 /** A dig the server accepted: the block goes, and the server says so at that position. */
-function serverBroke (bot, position) {
+/** What Mineflayer does as a dig finishes: write this client's finish, and predict air locally. */
+function predicted (bot, position) {
+  bot._client.write('block_dig', { status: 2, location: { x: position.x, y: position.y, z: position.z }, face: 1 })
   bot.removeBlock(position)
+}
+
+/** This client's finish, and the server's answer that took it. */
+function serverBroke (bot, position) {
+  predicted(bot, position)
   bot._client.emit('block_change', { location: { x: position.x, y: position.y, z: position.z }, type: 0 })
 }
 
@@ -468,14 +475,14 @@ test('a dig is dug only once the server itself has removed the block', async () 
   bot.stopDigging = () => {}
 
   // Mineflayer's prediction alone: the block is air locally and nothing from the server.
-  bot.dig = async (block) => { bot.removeBlock(block.position) }
+  bot.dig = async (block) => { predicted(bot, block.position) }
   assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 100 }))).outcome,
     'libraryFailure')
 
   // The server refused the finish and put the block back.
   bot.putBlock(target)
   bot.dig = async (block) => {
-    bot.removeBlock(block.position)
+    predicted(bot, block.position)
     setImmediate(() => {
       bot.putBlock(target)
       bot._client.emit('block_change', { location: { x: 1, y: 64, z: 0 }, type: target.stateId })
@@ -486,7 +493,7 @@ test('a dig is dug only once the server itself has removed the block', async () 
 
   // The server's own answer arrives after the prediction and confirms it.
   bot.dig = async (block) => {
-    bot.removeBlock(block.position)
+    predicted(bot, block.position)
     setImmediate(() => bot._client.emit('block_change', { location: { x: 1, y: 64, z: 0 }, type: 0 }))
   }
   assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome, 'dug')
@@ -503,7 +510,7 @@ test('a server multi-block change at the offered position confirms a dig, and on
   const record = (x, y, z, state) => (state << 12) | (x << 8) | (z << 4) | y
   const section = { x: 0, y: 4, z: 0 }
   bot.dig = async (block) => {
-    bot.removeBlock(block.position)
+    predicted(bot, block.position)
     setImmediate(() => {
       // A neighbour's change first, which says nothing about the offered block.
       bot._client.emit('multi_block_change', { chunkCoordinates: section, records: [record(2, 0, 0, 0)] })
@@ -517,7 +524,7 @@ test('a server multi-block change at the offered position confirms a dig, and on
   // A neighbour's change alone leaves the prediction unconfirmed.
   bot.putBlock(target)
   bot.dig = async (block) => {
-    bot.removeBlock(block.position)
+    predicted(bot, block.position)
     setImmediate(() => bot._client.emit('multi_block_change', { chunkCoordinates: section, records: [record(2, 0, 0, 0)] }))
   }
   assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 200 }))).outcome, 'libraryFailure')
@@ -525,12 +532,51 @@ test('a server multi-block change at the offered position confirms a dig, and on
   bot.putBlock(target)
   bot.supportFeature = () => false
   bot.dig = async (block) => {
-    bot.removeBlock(block.position)
+    predicted(bot, block.position)
     setImmediate(() => bot._client.emit('multi_block_change', {
       chunkX: 0, chunkZ: 0, records: [{ horizontalPos: (1 << 4) | 0, y: 64, blockId: 0 }]
     }))
   }
   assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome, 'dug')
+})
+
+test('a block another player broke is gone, and a finish already written is not halted', async () => {
+  // The r23 rehearsal, tick 3268: iota reported dug for a block kappa broke, and kappa reported
+  // cancelled for its own break because a halt arrived before the server's answer.
+  const bot = worldBot()
+  const target = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))
+  const offered = [blockOffer(target)]
+  bot.digTime = () => 25
+  bot.stopDigging = () => {}
+  // Another player's break reaches this client before it finishes: Mineflayer resolves anyway.
+  bot.dig = async (block) => {
+    bot.removeBlock(block.position)
+    bot._client.emit('block_change', { location: { x: 1, y: 64, z: 0 }, type: 0 })
+  }
+  const taken = await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))
+  assert.equal(taken.outcome, 'blockGone')
+  assert.equal(taken.attempted, true)
+
+  // This client wrote its finish; the halt comes before the server's answer.
+  bot.putBlock(target)
+  let answer
+  bot.dig = async (block) => {
+    predicted(bot, block.position)
+    answer = () => bot._client.emit('block_change', { location: { x: 1, y: 64, z: 0 }, type: 0 })
+  }
+  const running = digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(running.cancel(), false, 'a written finish cannot be taken back')
+  answer()
+  assert.equal((await reportOf(running)).outcome, 'dug')
+
+  // Halted before its finish, the dig is cancelled as before.
+  bot.putBlock(target)
+  bot.dig = () => new Promise(() => {})
+  const halted = digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(halted.cancel(), true)
+  assert.equal((await reportOf(halted)).outcome, 'cancelled')
 })
 
 test('dig timeout, halt, and teardown all stop the same bounded task', async () => {

@@ -1,1 +1,1 @@
-{"op":"sleep","protocol":5,"requestId":"res-sleep-disconnected","agentId":"agent-alpha","state":"ready","outcome":"disconnected","elapsedMs":500,"entered":true}
+{"op":"sleep","protocol":6,"requestId":"res-sleep-disconnected","agentId":"agent-alpha","state":"ready","outcome":"disconnected","elapsedMs":500,"entered":true}

@@ -44,7 +44,7 @@
  * lists widened from 24 to 48 entries. Adding operation names alone would not have
  * moved it; widening a body-chosen answer does.
  */
-const PROTOCOL_VERSION = 5
+const PROTOCOL_VERSION = 6
 
 /**
  * Longest frame this protocol will carry, in bytes.
@@ -1344,7 +1344,11 @@ function isDigReport (raw, literals) {
     'cancelled',
     'libraryFailure'
   ]).has(raw.outcome)
-  if (raw.attempted !== handedToMineflayer) return false
+  // A block can be found gone before Mineflayer is invoked, or be broken by another player while
+  // this body is still digging it, from generation 6.
+  if (raw.outcome === 'blockGone') {
+    if (raw.attempted === false && raw.tool !== undefined) return false
+  } else if (raw.attempted !== handedToMineflayer) return false
   if (raw.tool !== undefined && (!raw.attempted || !isResourceName(raw.tool))) return false
   return true
 }

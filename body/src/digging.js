@@ -15,6 +15,14 @@
  *
  * `dug` waits for the server's own update at the offered position; see [serverUpdates] for why
  * Mineflayer's resolved dig is only a prediction.
+ *
+ * And `dug` is this body's own break only: the server's update has to answer this client's own
+ * finish packet. Mineflayer resolves a dig whenever the block turns to air, so a block another
+ * player broke while this one was still digging resolved as if this body had broken it; that is
+ * `blockGone`, attempted. A finish already written cannot be taken back, so a halt arriving
+ * while the server's answer is in flight stops nothing, and the dig answers that answer: the
+ * r23 rehearsal had one agent report `cancelled` for a break the server credited to it and the
+ * other `dug` for the same block (`test/native-dig-contest.test.js`).
  */
 
 const { performance } = require('node:perf_hooks')
@@ -79,13 +87,30 @@ function serverUpdates (bot, position) {
   if (client === null || client === undefined || typeof client.on !== 'function') return undefined
   const [x, y, z] = position
   let seen = false
+  // Whether this client wrote its own finish of the position, and whether a server update has
+  // arrived since - which is what makes that update an answer to this body's dig. An update
+  // before the finish (a server echoing the dig's start, or another player's break) is none.
+  let finished = false
+  let answered = false
   let waiting
   const heard = () => {
+    if (finished) answered = true
     seen = true
     const listener = waiting
     waiting = undefined
     listener?.()
   }
+  const originalWrite = client.write
+  const watchedWrite = typeof originalWrite === 'function'
+    ? function (name, parameters) {
+      const at = parameters?.location
+      if (name === 'block_dig' && parameters?.status === 2 && at?.x === x && at?.y === y && at?.z === z) {
+        finished = true
+      }
+      return originalWrite.call(this, name, parameters)
+    }
+    : undefined
+  if (watchedWrite !== undefined) client.write = watchedWrite
   const single = (packet) => {
     const at = packet?.location
     if (at?.x === x && at?.y === y && at?.z === z) heard()
@@ -97,6 +122,10 @@ function serverUpdates (bot, position) {
   client.on('multi_block_change', multiple)
   return {
     seen: () => seen,
+    /** Whether this client has written its own finish of the position. */
+    finished: () => finished,
+    /** Whether a server update at the position has arrived since this client's own finish. */
+    answered: () => answered,
     next (listener) {
       waiting = listener
     },
@@ -104,6 +133,7 @@ function serverUpdates (bot, position) {
       waiting = undefined
       client.off('block_change', single)
       client.off('multi_block_change', multiple)
+      if (watchedWrite !== undefined && client.write === watchedWrite) client.write = originalWrite
     }
   }
 }
@@ -182,14 +212,23 @@ function digOfferedBlock (bot, {
   // Undefined only for a bot with no client, which has no server to predict ahead of.
   const server = serverUpdates(bot, resolved.offered.position)
   let predicted = false
-  /** Whether the server itself has said the offered block is gone. */
-  const serverRemoved = () => (server === undefined || server.seen()) && removed(bot, resolved.offered)
+  /** Whether the server itself has said the offered block is gone, in answer to this body's finish. */
+  const serverRemoved = () => (server === undefined || server.answered()) && removed(bot, resolved.offered)
+  /**
+   * Whether the server removed the block before this body finished: another player's break.
+   * Mineflayer predicts air only as it writes this client's finish, so air with no finish written
+   * is the server's word, and not this body's break.
+   */
+  const takenAway = () =>
+    server !== undefined && server.seen() && !server.finished() && removed(bot, resolved.offered)
+  /** The outcome for a block found gone: this body's break, another's, or `otherwise`. */
+  const gone = (otherwise) => serverRemoved() ? 'dug' : takenAway() ? 'blockGone' : otherwise
   const promise = new Promise((resolve) => {
     const timer = setTimeout(() => {
       timedOut = true
       stopDigging()
       // A predicted finish the server has not answered by the deadline is unconfirmed.
-      complete(serverRemoved() ? 'dug' : predicted ? 'libraryFailure' : 'timedOut')
+      complete(gone(predicted ? 'libraryFailure' : 'timedOut'))
     }, timeoutMs)
 
     function stopDigging () {
@@ -217,10 +256,11 @@ function digOfferedBlock (bot, {
     }
 
     finish = () => {
-      if (settled) return false
+      // A finish already written cannot be taken back: the dig answers the server's answer.
+      if (settled || server?.finished() === true) return false
       cancelled = true
       stopDigging()
-      complete(serverRemoved() ? 'dug' : 'cancelled')
+      complete(gone('cancelled'))
       return true
     }
 
@@ -231,6 +271,7 @@ function digOfferedBlock (bot, {
           confirmed,
           () => {
             if (serverRemoved()) complete('dug')
+            else if (takenAway()) complete('blockGone')
             else if (timedOut) complete('timedOut')
             else if (cancelled) complete('cancelled')
             else complete('libraryFailure')
@@ -248,13 +289,13 @@ function digOfferedBlock (bot, {
      */
     function confirmed () {
       if (settled) return
-      if (server === undefined || server.seen()) {
-        complete(removed(bot, resolved.offered) ? 'dug' : 'libraryFailure')
+      if (server === undefined || server.answered() || !server.finished()) {
+        complete(gone('libraryFailure'))
         return
       }
       predicted = true
       server.next(() => {
-        if (!settled) complete(removed(bot, resolved.offered) ? 'dug' : 'libraryFailure')
+        if (!settled) complete(gone('libraryFailure'))
       })
     }
 

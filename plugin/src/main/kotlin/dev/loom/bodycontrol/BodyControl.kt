@@ -1591,7 +1591,8 @@ sealed interface BodyResponse {
                         DigOutcome.CANCELLED,
                         DigOutcome.LIBRARY_FAILURE,
                     )
-            require(attempted == handedToMineflayer) {
+            // From generation 6 a block another player broke mid-dig is blockGone, attempted.
+            require(attempted == handedToMineflayer || outcome == DigOutcome.BLOCK_GONE) {
                 "attempted is true exactly when the dig was handed to Mineflayer"
             }
             require(tool == null || attempted) {

@@ -1,1 +1,1 @@
-{"op":"eat","protocol":5,"requestId":"req-6","agentId":"agent-alpha","state":"ready","outcome":"eaten","vitals":{"health":19.5,"food":20,"saturation":5.5},"what":"minecraft:bread","remaining":2}
+{"op":"eat","protocol":6,"requestId":"req-6","agentId":"agent-alpha","state":"ready","outcome":"eaten","vitals":{"health":19.5,"food":20,"saturation":5.5},"what":"minecraft:bread","remaining":2}

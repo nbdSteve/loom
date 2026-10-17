@@ -35,7 +35,7 @@ import kotlin.math.sqrt
  * lists widened from 24 to 48 entries. Adding request operation names alone would not
  * have moved it; widening a body-chosen answer does.
  */
-const val BODY_CONTROL_PROTOCOL_VERSION: Int = 5
+const val BODY_CONTROL_PROTOCOL_VERSION: Int = 6
 
 /** The shortest a requestId or agentId may be, mirroring the schema's `minLength`. */
 private const val CONTROL_ID_MIN_CHARS = 1

@@ -1,1 +1,1 @@
-{"op":"attack","protocol":5,"requestId":"res-attack-library-failure","agentId":"agent-alpha","state":"ready","outcome":"libraryFailure","from":[0.5,64.5,0.5],"position":[1.5,64.5,0.5],"travelled":1,"elapsedMs":250,"attacks":1}
+{"op":"attack","protocol":6,"requestId":"res-attack-library-failure","agentId":"agent-alpha","state":"ready","outcome":"libraryFailure","from":[0.5,64.5,0.5],"position":[1.5,64.5,0.5],"travelled":1,"elapsedMs":250,"attacks":1}

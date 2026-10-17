@@ -31,8 +31,11 @@ child is still alive can mean another exclusive action owns the player. The coor
 records a refused intent and leaves the process ready; it must not turn expected action
 contention into a disconnect or terminate a healthy child.
 
-The wire is **sixteen operations at protocol generation 5**, and the split between them is
+The wire is **sixteen operations at protocol generation 6**, and the split between them is
 the split this whole package is built on.
+Generation 6 moved because a dig report may answer `blockGone` after the dig was handed to
+Mineflayer: another player broke the block while this body was still digging it, and `dug` is
+this body's own break only, the server's update answering its own finish.
 Generation 5 moved because the body-chosen entity, block, and dropped-item response lists
 widened from 24 to 48 entries. Generation 4 moved because `sense` gained body-chosen
 recipe offers and the craft, attack, and sleep reports introduced new closed outcome sets.
