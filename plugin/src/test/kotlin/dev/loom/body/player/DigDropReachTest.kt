@@ -46,6 +46,16 @@ class DigDropReachTest {
     }
 
     @Test
+    fun `the lower block of a two-high wall stays diggable, its drop in a one-high nook`() {
+        // r28 plains alpha dug dirt beside its feet with dirt above it; the body collects such a
+        // drop by a final step inside its own cell, so the dig is not refused.
+        val lower = listOf(8, 74, -7)
+        val wall = groundOf(*(floor + listOf(lower, listOf(8, 75, -7))).toTypedArray())
+        assertTrue(digLeavesDropReachable(wall, feet, lower))
+        assertTrue(digSafeAt(wall, feet, lower))
+    }
+
+    @Test
     fun `only the ground's positive answer refuses`() {
         // A block at the feet, the support itself, and a block with a solid cell over it are not
         // this rule's, and with no server to ask nothing is refused.

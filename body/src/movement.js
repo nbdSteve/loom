@@ -1202,6 +1202,100 @@ function createMovement (bot, {
     },
 
     /**
+     * Steps the body straight toward one point beside it, without the pathfinder, and answers
+     * once it has come to rest.
+     *
+     * A route ends wherever the pathfinder first stands in a goal cell, but vanilla picks an
+     * item up only inside the player's box grown by one block, so an item lying in a one-high
+     * nook beside the body can be in reach from one part of the cell it stands in and out of it
+     * from the rest: the r28 plains rehearsal's alpha stood 0.08 short of its own dirt, and no
+     * cell covered the item from every point. The caller names the point, inside a cell the
+     * body can stand in, where the body's box fits that cell whole; this only walks there. It
+     * holds the simulation and the path exactly as a route does, looks along the step and
+     * presses forward each tick until the body is within [FINAL_APPROACH_TOLERANCE_BLOCKS] of
+     * the point, has passed it, or [FINAL_APPROACH_MAX_TICKS] have run (`stalled`), then lets go
+     * and answers once the body is at rest. A point further than [FINAL_APPROACH_MAX_BLOCKS]
+     * is `outOfRange` before anything moves.
+     */
+    finalApproach ({ point, timeoutMs, owner = {} }) {
+      if (running !== undefined) return undefined
+      const from = standing()
+      if (from === undefined) return undefined
+      const apart = (here) => Math.hypot(point[0] - here[0], point[2] - here[2])
+      if (apart(from) > FINAL_APPROACH_MAX_BLOCKS) return unmoved('outOfRange')
+      const startedAt = now()
+      return new Promise((resolve) => {
+        let ticks = 0
+        let settled = false
+        let travelled = 0
+        let last = from
+        const towards = [point[0] - from[0], point[2] - from[2]]
+        const timer = setTimeout(() => finish('timedOut'), Math.max(0, timeoutMs))
+        function sample () {
+          const here = standing()
+          if (here === undefined) return last
+          travelled += blocksApart(last, here)
+          last = here
+          return here
+        }
+        function release () {
+          try {
+            bot.setControlState('forward', false)
+            bot.setControlState('sprint', false)
+          } catch {
+            // Nothing to report and nothing to log: see [walk]'s header.
+          }
+        }
+        function finish (outcome) {
+          if (settled) return
+          settled = true
+          bot.off('physicsTick', step)
+          clearTimeout(timer)
+          release()
+          simulation.drain(owner)
+          untilAtRest(bot, () => simulation.reportedStanding?.(), () => {
+            sample()
+            simulation.release(owner)
+            if (running?.owner === owner) running = undefined
+            resolve({ outcome, from, position: last, travelled, elapsedMs: elapsedSince(startedAt) })
+          })
+        }
+        function step () {
+          const here = sample()
+          ticks += 1
+          const dx = point[0] - here[0]
+          const dz = point[2] - here[2]
+          // Within the tolerance, or past the point along the step: the step is done.
+          if (Math.hypot(dx, dz) <= FINAL_APPROACH_TOLERANCE_BLOCKS || dx * towards[0] + dz * towards[1] < 0) {
+            finish('arrived')
+            return
+          }
+          if (ticks > FINAL_APPROACH_MAX_TICKS) {
+            finish('stalled')
+            return
+          }
+          try {
+            bot.entity.yaw = Math.atan2(-dx, -dz)
+            bot.entity.pitch = 0
+            bot.setControlState('sprint', false)
+            bot.setControlState('forward', true)
+          } catch {
+            finish('stalled')
+          }
+        }
+        try {
+          simulation.take(owner)
+        } catch {
+          clearTimeout(timer)
+          resolve(undefined)
+          return
+        }
+        bot.on('physicsTick', step)
+        running = { owner, halt: () => finish('cancelled') }
+      })
+    },
+
+    /**
      * Runs from one creature a named sense answer reported, and answers once the flight has
      * ended.
      *
@@ -1257,6 +1351,16 @@ function createMovement (bot, {
   }
 }
 
+/**
+ * The bounds on one final approach: at most this far, in this many simulated ticks, to within
+ * this horizontal distance of the point. A point a collect asks for lies inside the cell the body
+ * already stands in, so a straight step of under one block is all it can need, and at walking
+ * speed that takes about ten ticks; twenty is the most a step this short may stall for.
+ */
+const FINAL_APPROACH_MAX_BLOCKS = 1
+const FINAL_APPROACH_MAX_TICKS = 20
+const FINAL_APPROACH_TOLERANCE_BLOCKS = 0.08
+
 /** The one wrapper each bot has, so a second install cannot mint a second owner of one path. */
 const installations = new WeakMap()
 
@@ -1296,6 +1400,9 @@ function installMovement (bot, options) {
 
 module.exports = {
   ARRIVAL_SETTLE_TICKS,
+  FINAL_APPROACH_MAX_BLOCKS,
+  FINAL_APPROACH_MAX_TICKS,
+  FINAL_APPROACH_TOLERANCE_BLOCKS,
   REST_SETTLE_MAX_TICKS,
   releaseAtRest,
   holdSimulation,

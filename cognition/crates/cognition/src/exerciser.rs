@@ -22,6 +22,9 @@
 //!   before finishing it;
 //! - `zeta` speaks at every goal review, so an agent nearby perceives at a time no review of its
 //!   own reaches;
+//! - `iota` stands in a pit beside a one-high nook its dirt lies in, just past vanilla's pickup
+//!   reach from where it stands, and collects it with approach (r28 plains rehearsal alpha,
+//!   tick 9765: refused `collectNoRoute`, because no cell covered the item from every point);
 //! - `eta` digs dirt for a two-dirt goal beside a pocket under an overhang that its perception
 //!   must report unsafe to dig, revises the goal to the total it already has once (refused), and
 //!   once the goal is met completes it plainly beside the dirt still in sight once (refused)
@@ -113,6 +116,7 @@ impl PathExerciser {
             "delta" | "theta" => collector(perception),
             "epsilon" => explorer(perception),
             "eta" => restater(perception),
+            "iota" => fetcher(perception),
             "zeta" => answer(
                 Intent::Say {
                     text: "hello from zeta".to_owned(),
@@ -404,6 +408,42 @@ fn collector(perception: &Perception) -> Draft {
         (_, Some(_)) if met(perception) => finish(perception),
         _ => answer(Intent::Idle, None, IDLE_ROLE),
     }
+}
+
+/// iota: the first drop in route reach collected with approach, for a goal of holding it.
+fn fetcher(perception: &Perception) -> Draft {
+    if perception.goal.is_some() {
+        return if met(perception) {
+            finish(perception)
+        } else {
+            answer(Intent::Idle, None, IDLE_ROLE)
+        };
+    }
+    let offered = OfferedRefs::of(perception);
+    perception
+        .surroundings
+        .iter()
+        .find(|seen| {
+            seen.kind == ObservationKind::DroppedItem
+                && offered.route_items.contains(&seen.target_ref)
+        })
+        .map_or_else(
+            || answer(Intent::Idle, None, IDLE_ROLE),
+            |item| {
+                answer(
+                    Intent::Collect {
+                        item: item.target_ref.clone(),
+                        approach: true,
+                    },
+                    Some(target(
+                        GoalDisposition::Adopt,
+                        &item.what,
+                        held_of(perception, &item.what) + item.count.unwrap_or(1),
+                    )),
+                    "collect the drop in the nook beside my pit",
+                )
+            },
+        )
 }
 
 /// epsilon: one log, a walk east that reveals another once the second it counted on is gone, one

@@ -178,6 +178,76 @@ test('a drop in a pocket under an overhang is noRoute: no body fits into the cel
   assert.equal(taken, false)
 })
 
+/**
+ * r28 plains rehearsal alpha's pit, tick 9765: the body at x 13.357 in a one-cell pit, its only
+ * standable cell, beside a one-high nook east whose dirt lay at x 14.863, 0.08 past vanilla's
+ * grown box from where the body stood. Here the pit is cell (8, 64, 8), the nook (9, 64, 8) under
+ * stone at (9, 65, 8), and the item `offset` blocks east of the body.
+ */
+async function nookCollect (offset, nookLength = 1) {
+  const { pickupCells, pickupPoint, covers } = require('../src/collecting')
+  const given = await H.embodied()
+  const { body, bot, client, port } = given
+  openBody = body
+  H.spawned(client, FED)
+  H.clockReported(client, { timeOfDay: 6000, day: 2 })
+  const feet = { x: 8.357, y: 64, z: 8.5 }
+  client.emit('position', H.positionPacket({ ...feet, yaw: 0, pitch: 0, teleportId: 1 }))
+  const walls = []
+  for (let x = 6; x <= 11; x += 1) {
+    for (let z = 6; z <= 11; z += 1) {
+      for (const y of [64, 65, 66]) {
+        const pit = x === 8 && z === 8
+        const nook = x >= 9 && x < 9 + nookLength && z === 8 && y === 64
+        if (!pit && !nook) walls.push({ x, y, z })
+      }
+    }
+  }
+  H.ground(bot, { walls })
+  const item = { x: feet.x + offset, y: 64, z: 8.5 }
+  H.spotted(client, { id: ITEM_ID, what: 'item', ...item })
+  client.emit('entity_metadata', {
+    entityId: ITEM_ID,
+    metadata: [{ key: 8, type: 'item_stack', value: H.Item.toNotch(H.stack('dirt', 1)) }]
+  })
+  await H.settled(200)
+  const cells = pickupCells(bot, [item.x, item.y, item.z], [feet.x, feet.y, feet.z])
+  const taken = vanillaPickup(client, bot, item)
+  const peer = await H.handshaken(port)
+  // Asked for by uuid, as Loom asks for an agent's own drop, so it is reported out of sight too.
+  const uuid = `00000000-0000-4000-8000-${String(ITEM_ID).padStart(12, '0')}`
+  const sensed = await peer.answer(H.request('sense', 's1', { radius: 8, limit: 8, retainItems: [uuid] }))
+  const index = sensed.items.findIndex((offered) => offered.what === 'dirt')
+  assert.ok(index >= 0, JSON.stringify(sensed.items))
+  const report = await H.promptly(peer.answer(H.request('collect', 'c1', {
+    senseId: 's1', item: index, approach: true, timeoutMs: DEADLINE_MS, sprint: false
+  })), 'the collection', DEADLINE_MS + 3000)
+  peer.stop()
+  return { report, taken: taken(), cells, covered: covers([8, 64, 8], [item.x, item.y, item.z]), point: pickupPoint([8, 64, 8], [item.x, item.y, item.z]) }
+}
+
+test('a drop in a one-high nook beside a pit is collected by a final step inside the pit cell', async () => {
+  const { report, taken, cells, covered, point } = await nookCollect(1.506)
+  // Only the pit cell can hold the body, and it reaches the item only from its east side.
+  assert.deepEqual(cells, [[8, 64, 8]])
+  assert.equal(covered, false)
+  assert.ok(point[0] > 8.357 && point[0] <= 8.7, JSON.stringify(point))
+  assert.equal(report.outcome, 'collected', JSON.stringify(report))
+  assert.equal(taken, true)
+  // The step stayed inside the pit cell.
+  assert.ok(report.position[0] < 9 - 0.3 + 1e-9 && report.position[0] > 8, JSON.stringify(report))
+})
+
+test('a nook drop no point of the pit cell reaches is still noRoute, before anything moves', async () => {
+  // The item 2.3 east, in a nook two long: past the reach of the pit cell's east side, and the
+  // nook holds no body.
+  const { report, taken, cells } = await nookCollect(2.3, 2)
+  assert.deepEqual(cells, [])
+  assert.equal(report.outcome, 'noRoute', JSON.stringify(report))
+  assert.equal(report.travelled, 0)
+  assert.equal(taken, false)
+})
+
 test('a passive collect is admitted only inside vanilla pickup reach, and an approach only to cells that cover from anywhere', () => {
   const {
     PASSIVE_PICKUP_ABOVE_BLOCKS, PASSIVE_PICKUP_BELOW_BLOCKS, PASSIVE_PICKUP_HORIZONTAL_BLOCKS, covers, withinPickup

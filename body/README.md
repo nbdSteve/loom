@@ -605,8 +605,9 @@ when `approach` is true, gives the existing bounded movement wrapper one search 
 cells a body could stand in whose pickup box covers that entity's sensed position
 (`pickupCells`, `movement.approach`).
 Those cells are fixed by the item's position and vanilla's geometry, not chosen: vanilla picks an item up only inside the player's box grown by one block sideways and half a block vertically, a stop one cell short of an item lying far into its block arrives outside that reach, and the item's own cell may have nothing to stand on - r15's stick hung over a one-block trench from the edge of the block beside it, and five walks to its own cell were refused `noRoute`.
-A cell counts only when its box reaches the item from every point of the cell's floor, because a walk ends where the pathfinder first stands in the cell rather than at its centre (`covers`).
-`noRoute` therefore means no cell within pickup reach of the item has a route.
+A cell counts when its box reaches the item, with 0.1 to spare, from at least one collision-safe point - a centre where the body's box fits the cell whole (`pickupPoint`) - and because a walk ends where the pathfinder first stands in the cell rather than at that point, a route that ends out of reach is followed by one bounded straight step inside the cell to it (`movement.finalApproach`: under one block, at most 20 simulated ticks, the simulation held and released exactly as a route's).
+Counting only cells that reached the item from every point of their floor (`covers`) refused the r28 plains rehearsal's alpha `noRoute` for its own dirt in a one-high nook beside its pit, 0.08 past the box from where it stood and inside it from its cell's east side (`test/native-collect-terminal.test.js`).
+`noRoute` therefore means no point a body can stand at within pickup reach of the item has a route.
 `place` names one support block, one offered slot and one face; the exact offered stack must
 already be in the selected main hand, so placement never equips or searches.
 `equip` names one offered slot and one of the closed destinations `hand`, `offHand`, `head`,

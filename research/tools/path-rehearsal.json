@@ -9,7 +9,8 @@
     "tribe-epsilon",
     "tribe-zeta",
     "tribe-eta",
-    "tribe-theta"
+    "tribe-theta",
+    "tribe-iota"
   ],
   "paper": {
     "minecraftVersion": "1.21.1",
@@ -70,7 +71,10 @@
     "setblock 2 -60 -40 minecraft:oak_log",
     "setblock 14 -60 -40 minecraft:oak_log",
     "setblock -30 -59 30 minecraft:stone",
-    "fill 24 -63 34 36 -61 46 minecraft:stone"
+    "fill 24 -63 34 36 -61 46 minecraft:stone",
+    "fill 39 -60 -34 47 -58 -26 minecraft:stone",
+    "fill 43 -60 -30 43 -58 -30 minecraft:air",
+    "setblock 44 -60 -30 minecraft:air"
   ],
   "positions": {
     "tribe-alpha": [
@@ -112,12 +116,18 @@
       30.5,
       -60,
       40.5
+    ],
+    "tribe-iota": [
+      43.357,
+      -60,
+      -29.5
     ]
   },
   "afterPlacement": [
     "summon minecraft:item 34.5 -60 0.5 {Item:{id:\"minecraft:stick\",count:1},PickupDelay:450}",
     "summon minecraft:item -1.5 -60 -40.5 {Item:{id:\"minecraft:oak_log\",count:1},PickupDelay:32767,Age:5500}",
-    "summon minecraft:item 30.5 -60 40.5 {Item:{id:\"minecraft:stick\",count:1},PickupDelay:830}"
+    "summon minecraft:item 30.5 -60 40.5 {Item:{id:\"minecraft:stick\",count:1},PickupDelay:830}",
+    "summon minecraft:item 44.863 -60 -29.5 {Item:{id:\"minecraft:dirt\",count:1},PickupDelay:0}"
   ],
-  "layout": "Six groups far enough apart that only beta hears zeta's speech (24 blocks): alpha beside a three-log trunk; beta three blocks from one log, whose drop lands outside the pickup box and is left lying, with zeta four blocks off; gamma four blocks from delta, who stands on a stick vanilla may not pick up for 450 ticks; epsilon beside one log and a log item no one may pick up that despawns about 500 ticks after it is summoned, with another log twelve blocks east past what it senses; theta stands on a stick vanilla may not pick up for 830 ticks, on a stone pad that gives a bare hand nothing, so its met goal is completed plainly and owes a review; eta stands on grass beside a pocket under an overhang, the block east of its support with stone two above it."
+  "layout": "Six groups far enough apart that only beta hears zeta's speech (24 blocks): alpha beside a three-log trunk; beta three blocks from one log, whose drop lands outside the pickup box and is left lying, with zeta four blocks off; gamma four blocks from delta, who stands on a stick vanilla may not pick up for 450 ticks; epsilon beside one log and a log item no one may pick up that despawns about 500 ticks after it is summoned, with another log twelve blocks east past what it senses; theta stands on a stick vanilla may not pick up for 830 ticks, on a stone pad that gives a bare hand nothing, so its met goal is completed plainly and owes a review; eta stands on grass beside a pocket under an overhang, the block east of its support with stone two above it; iota stands at 43.357 in a one-cell pit, its only standable cell, beside a one-high nook east whose dirt lies at 44.863, 0.08 past vanilla's pickup box from where iota stands, as r28 rehearsal alpha's did at tick 9765."
 }

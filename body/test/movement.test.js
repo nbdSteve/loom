@@ -1636,3 +1636,22 @@ test('a held simulation is granted only to a bot with a wire and a free gate', a
   assert.equal(typeof again, 'function')
   again()
 })
+
+test('a final approach walks only a short straight step, and none at all past one block', async () => {
+  const { EventEmitter } = require('node:events')
+  const { Vec3 } = require('vec3')
+  const { FINAL_APPROACH_MAX_BLOCKS, createMovement: create } = require('../src/movement')
+  const bot = new EventEmitter()
+  bot.entity = { position: new Vec3(8.357, 64, 8.5), yaw: 0, pitch: 0, onGround: true }
+  const far = create(bot).finalApproach({ point: [8.357 + FINAL_APPROACH_MAX_BLOCKS + 0.01, 64, 8.5], timeoutMs: 1000 })
+  assert.equal(far.outcome, 'outOfRange')
+  assert.equal(far.travelled, 0)
+  // A body that never moves is stalled after the bounded ticks, with every control let go.
+  const controls = {}
+  bot.setControlState = (name, on) => { controls[name] = on }
+  const stuck = create(bot).finalApproach({ point: [8.7, 64, 8.5], timeoutMs: 5000 })
+  for (let tick = 0; tick < 30; tick += 1) bot.emit('physicsTick')
+  const report = await stuck
+  assert.equal(report.outcome, 'stalled')
+  assert.equal(controls.forward, false)
+})
