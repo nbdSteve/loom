@@ -491,7 +491,7 @@ impl ScriptedBackend {
             // `source` would put a creature's name where the body expects a handle
             // it issued, which the body refuses; naming nothing when nothing in
             // sight is alive is the honest answer.
-            Trigger::Damaged { amount, source } => match nearest_ref(perception) {
+            Trigger::Damaged { amount, source } => match nearest_ref(perception, source) {
                 Some(handle) => Draft {
                     goal: None,
                     intent: Intent::Flee { from: handle },
@@ -794,11 +794,20 @@ fn nearest_block_ref(perception: &Perception, block: &str) -> Option<String> {
         .map(|seen| seen.target_ref.clone())
 }
 
-fn nearest_ref(perception: &Perception) -> Option<String> {
-    perception
-        .surroundings
-        .iter()
-        .find(|seen| seen.kind == ObservationKind::Entity)
+/// The nearest creature to flee from after damage: one of the kind that dealt it, else any that
+/// hunts the agent's kind, and never a peer or a creature that hunts nothing (the v29 rehearsal:
+/// the stand-in fled the nearest thing with a ref, a peer, twice).
+fn nearest_ref(perception: &Perception, source: &str) -> Option<String> {
+    let kind = source.rsplit(['.', ':']).next().unwrap_or(source);
+    let hunters = || {
+        perception
+            .surroundings
+            .iter()
+            .filter(|seen| seen.kind == ObservationKind::Entity && seen.hunts == Some(true))
+    };
+    hunters()
+        .find(|seen| seen.what.rsplit(['.', ':']).next() == Some(kind))
+        .or_else(|| hunters().next())
         .map(|seen| seen.target_ref.clone())
 }
 
@@ -883,7 +892,7 @@ mod tests {
             yields: None,
             dig_safe: None,
             route_refused: None,
-            hunts: None,
+            hunts: (what.ends_with("zombie") || what.ends_with("skeleton")).then_some(true),
         });
         seen
     }
@@ -926,6 +935,52 @@ mod tests {
                 from: "e1".to_owned()
             }
         );
+    }
+
+    #[tokio::test]
+    async fn damage_beside_only_a_peer_never_flees_the_peer() {
+        // The v29 rehearsal: the stand-in fled the nearest thing with a ref, another player, twice.
+        let seen = in_view(
+            in_view(
+                perception(
+                    Trigger::Damaged {
+                        amount: 3,
+                        source: "minecraft:zombie".to_owned(),
+                    },
+                    DecisionImportance::Pivotal,
+                ),
+                "entity.minecraft.player",
+                "e1",
+            ),
+            "entity.minecraft.zombie",
+            "e2",
+        );
+        let draft = ScriptedBackend
+            .draft(&router().route(seen.importance), &seen)
+            .await
+            .expect("the stand-in backend always drafts");
+        assert_eq!(
+            draft.intent,
+            Intent::Flee {
+                from: "e2".to_owned()
+            }
+        );
+        let peer_only = in_view(
+            perception(
+                Trigger::Damaged {
+                    amount: 3,
+                    source: "fall".to_owned(),
+                },
+                DecisionImportance::Pivotal,
+            ),
+            "entity.minecraft.player",
+            "e1",
+        );
+        let idle = ScriptedBackend
+            .draft(&router().route(peer_only.importance), &peer_only)
+            .await
+            .expect("the stand-in backend always drafts");
+        assert_eq!(idle.intent, Intent::Idle);
     }
 
     #[test]
