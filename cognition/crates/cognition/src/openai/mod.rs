@@ -167,7 +167,10 @@ impl OpenAiBackend {
             route.model(),
             &prompt,
             self.config.max_output_tokens(),
-            wire::decision_schema_for(&OfferedRefs::of(perception)),
+            wire::decision_schema_for(
+                &OfferedRefs::of(perception),
+                wire::GoalPhase::of(perception),
+            ),
         );
         let request_bytes = serde_json::to_vec(&request).map_err(|_| {
             openai_failure(

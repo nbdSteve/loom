@@ -95,6 +95,30 @@ class DecisionJournal(
         )
     }
 
+    /**
+     * Records a decision refused before the body was asked, because it contradicts its own goal.
+     *
+     * The intentApplied record a body would have written, under the refusal's own tag, so the
+     * invariant of one intentApplied or one decisionDiscarded per decided still holds.
+     */
+    fun refused(
+        agentId: AgentId,
+        decision: Decision,
+        tag: String,
+    ) {
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.INTENT_APPLIED,
+                detail = "${describe(decision.intent)} -> refused before the body: $tag",
+                requestId = decision.requestId,
+                intent = tagOf(decision.intent),
+                outcome = tag,
+            ),
+        )
+    }
+
     private fun append(
         agentId: AgentId,
         decision: Decision,

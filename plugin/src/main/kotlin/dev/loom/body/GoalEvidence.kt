@@ -35,6 +35,12 @@ data class GoalEvidence(
     val expiredGoalId: String? = null,
     val stepResult: GoalStepResult? = null,
     val stepsWithoutProgress: Long? = null,
+    /** Whether the presented goal's typed success condition was met at this review. */
+    val conditionMet: Boolean? = null,
+    /** Whether the presented goal's success condition advanced since its last affirming review. */
+    val conditionAdvanced: Boolean? = null,
+    /** Whether the presented goal's typed step was carried out since its last affirming review. */
+    val stepAdvanced: Boolean? = null,
 ) {
     /** The tags [outcome] takes. */
     companion object {
@@ -75,6 +81,31 @@ data class GoalEvidence(
          * become a no-progress loop, reworded or not.
          */
         const val STALLED: String = "goalStalled"
+
+        /** An adopt or revise without its typed success target, the item and the count. */
+        const val SUCCESS_TARGET_MISSING: String = "goalSuccessTargetMissing"
+
+        /** An adopt, continue or revise without the typed action its step takes. */
+        const val STEP_ACTION_MISSING: String = "goalStepActionMissing"
+
+        /**
+         * A typed step whose action or ref is not the decision's own intent: refused with the
+         * intent, before it reaches the body. In r11 four agents' steps named one bush while the
+         * intent walked to another, and one named a collect while the intent idled.
+         */
+        const val STEP_MISMATCH: String = "goalStepMismatch"
+
+        /**
+         * A goal review that left a met success condition neither completed nor revised: refused
+         * with the intent. In r11 three agents held the stick their goal named and went on.
+         */
+        const val CONDITION_MET_IGNORED: String = "goalConditionMetIgnored"
+
+        /** A completion of a goal whose success condition the inventory does not show: refused with the intent. */
+        const val COMPLETION_UNMET: String = "goalCompletionUnmet"
+
+        /** The outcomes that refuse the decision's intent along with its goal choice. */
+        val REFUSING: Set<String> = setOf(STEP_MISMATCH, CONDITION_MET_IGNORED, COMPLETION_UNMET)
 
         /** A goal choice on a decision that did not answer a goal review. */
         const val NOT_REVIEWED: String = "goalNotReviewed"

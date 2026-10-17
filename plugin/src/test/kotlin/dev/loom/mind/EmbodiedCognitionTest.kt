@@ -14,11 +14,13 @@ import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.BodyPort
 import dev.loom.body.EventTag
+import dev.loom.body.GoalEvidence
 import dev.loom.body.IntentOutcome
 import dev.loom.body.describe
 import dev.loom.contract.Bearing
 import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
+import dev.loom.contract.GoalDisposition
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
@@ -434,6 +436,37 @@ class EmbodiedCognitionTest {
         // A perception and an action claim no model: only the decision was answered by one.
         assertNull(records[0].provenance)
         assertNull(records[2].provenance)
+    }
+
+    @Test
+    @DisplayName("a decision whose typed step is not its own intent is refused before the body sees it")
+    fun aDecisionIncoherentWithItsGoalNeverReachesTheBody() {
+        val records = mutableListOf<BodyEventRecord>()
+        val body = recordingBodyInto(records)
+        val applied = mutableListOf<AppliedDecision>()
+        // r11 gamma, body:00000048: the step names b140 while the intent walks to b142.
+        val stepped = goalChoice(GoalDisposition.ADOPT, "gather a stick", intent = Intent.MoveTo("b140"))
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = {
+                        p ->
+                    CompletableFuture.completedFuture(decisionFor(p, Intent.MoveTo("b142")).copy(goal = stepped))
+                },
+                mainThread = main,
+                journal = journalInto(records),
+                callbacks = CognitionCallbacks(onApplied = { applied.add(it) }),
+            )
+
+        cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+
+        assertTrue(body.applied.isEmpty(), "a refused decision must not reach the body")
+        assertEquals(listOf(BodyEvent.PERCEIVED, BodyEvent.DECIDED, BodyEvent.INTENT_APPLIED), records.map { it.event })
+        assertEquals(GoalEvidence.STEP_MISMATCH, records[1].goal?.outcome)
+        assertEquals(GoalEvidence.STEP_MISMATCH, records[2].outcome)
+        assertEquals("req-1", records[2].requestId)
+        assertEquals(GoalEvidence.STEP_MISMATCH, (applied.single().outcome as IntentOutcome.Rejected).tag)
     }
 
     @Test

@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use loom_cognition::mind::Mind;
 use loom_cognition::model::{
     ScriptedBackend, SCRIPTED_GOAL_STATEMENT, SCRIPTED_STEP, SCRIPTED_SUCCESS_CONDITION,
+    SCRIPTED_SUCCESS_ITEM,
 };
 use loom_cognition::router::{ModelCatalog, Router};
 use loom_cognition::server::serve;
@@ -132,29 +133,44 @@ async fn every_shared_perception_fixture_gets_a_routed_decision_over_a_socket() 
         }
         // The stand-in adopts where nothing is held and continues a carried goal, and
         // that choice must survive the socket exactly as the mind made it.
+        let intent = &decision.intent;
+        let step = |disposition, step_result| GoalChoice {
+            disposition,
+            statement: None,
+            success_condition: None,
+            success_item: None,
+            success_count: None,
+            step: Some(SCRIPTED_STEP.to_owned()),
+            step_action: Some(intent.action()),
+            step_ref: intent.target_ref().map(str::to_owned),
+            step_result,
+        };
         let expected = (sent.trigger == Trigger::GoalReview).then(|| match &sent.goal {
             None => GoalChoice {
-                disposition: GoalDisposition::Adopt,
                 statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
                 success_condition: Some(SCRIPTED_SUCCESS_CONDITION.to_owned()),
-                step: Some(SCRIPTED_STEP.to_owned()),
-                step_result: None,
+                success_item: Some(SCRIPTED_SUCCESS_ITEM.to_owned()),
+                success_count: Some(1),
+                ..step(GoalDisposition::Adopt, None)
             },
             Some(held) => {
-                let unchanged = held
-                    .progress
-                    .as_ref()
-                    .is_some_and(|seen| !seen.inventory_changed && !seen.moved);
-                GoalChoice {
-                    disposition: GoalDisposition::Continue,
-                    statement: None,
-                    success_condition: None,
-                    step: Some(SCRIPTED_STEP.to_owned()),
-                    step_result: Some(if unchanged {
-                        GoalStepResult::NoProgress
-                    } else {
-                        GoalStepResult::Progressing
-                    }),
+                let progress = held.progress.as_ref();
+                let result = if progress
+                    .is_some_and(|seen| !seen.condition_advanced && !seen.step_advanced)
+                {
+                    GoalStepResult::NoProgress
+                } else {
+                    GoalStepResult::Progressing
+                };
+                if progress.is_some_and(|seen| seen.condition_met) {
+                    GoalChoice {
+                        step: None,
+                        step_action: None,
+                        step_ref: None,
+                        ..step(GoalDisposition::Complete, Some(result))
+                    }
+                } else {
+                    step(GoalDisposition::Continue, Some(result))
                 }
             }
         });

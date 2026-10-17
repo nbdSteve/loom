@@ -28,7 +28,9 @@
 
 use std::sync::LazyLock;
 
-use loom_contract::{GoalChoice, GoalDisposition, Intent, MAX_GOAL_STATEMENT_CHARS};
+use loom_contract::{
+    GoalChoice, GoalDisposition, Intent, Perception, Trigger, MAX_GOAL_STATEMENT_CHARS,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -321,9 +323,21 @@ fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> 
             fields.worded,
             choice.success_condition.is_some(),
         ),
+        ("success item", fields.worded, choice.success_item.is_some()),
+        (
+            "success count",
+            fields.worded,
+            choice.success_count.is_some(),
+        ),
         ("step", fields.stepped, choice.step.is_some()),
+        ("step action", fields.stepped, choice.step_action.is_some()),
         ("step result", fields.judged, choice.step_result.is_some()),
     ];
+    // A step's ref is nullable, for an action that names none, so only its presence off a
+    // stepped disposition is a fault.
+    if !fields.stepped && choice.step_ref.is_some() {
+        return Err("the model's goal choice gave a step ref its disposition forbids".to_owned());
+    }
     for (name, required, given) in present {
         if required && !given {
             return Err(format!(
@@ -425,7 +439,7 @@ pub fn describe_json_error(e: &serde_json::Error) -> String {
 ///   malformed-answer error.
 #[must_use]
 pub fn decision_schema() -> &'static Value {
-    static SCHEMA: LazyLock<Value> = LazyLock::new(|| build_decision_schema(None));
+    static SCHEMA: LazyLock<Value> = LazyLock::new(|| build_decision_schema(None, GoalPhase::Any));
     &SCHEMA
 }
 
@@ -436,8 +450,8 @@ pub fn decision_schema() -> &'static Value {
 /// can only refuse is not one to offer. `say`, `rest` and `idle` name nothing and are
 /// always present, so the union is never empty.
 #[must_use]
-pub fn decision_schema_for(offered: &OfferedRefs) -> Value {
-    build_decision_schema(Some(offered))
+pub fn decision_schema_for(offered: &OfferedRefs, phase: GoalPhase) -> Value {
+    build_decision_schema(Some(offered), phase)
 }
 
 /// One `Intent` variant, as a closed object tagged with its `action`, or `None` when a
@@ -697,6 +711,22 @@ fn goal_variant(disposition: GoalDisposition, name: &str, description: &str) -> 
                 ),
             }),
         );
+        properties.insert(
+            "successItem".to_owned(),
+            json!({
+                "type": "string",
+                "description": "The item the goal is achieved by holding, named exactly as a stack you carry or a dropped item shows it, such as item.minecraft.stick. Your body measures it from your own inventory.",
+            }),
+        );
+        properties.insert(
+            "successCount".to_owned(),
+            json!({
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64,
+                "description": "How many of that item the goal is achieved by holding.",
+            }),
+        );
     }
     if fields.stepped {
         properties.insert(
@@ -706,6 +736,21 @@ fn goal_variant(disposition: GoalDisposition, name: &str, description: &str) -> 
                 "description": format!(
                     "The one concrete next step this decision's action takes toward the goal, {worded}."
                 ),
+            }),
+        );
+        properties.insert(
+            "stepAction".to_owned(),
+            json!({
+                "type": "string",
+                "enum": INTENT_ACTIONS,
+                "description": "The action this decision's intent takes, exactly. A step that names a different action from the intent is refused with it.",
+            }),
+        );
+        properties.insert(
+            "stepRef".to_owned(),
+            json!({
+                "type": ["string", "null"],
+                "description": "The ref this decision's intent acts on, exactly - the walk's block, the dig's block, the collect's item, the attack's target, the placement's support block - or null for an action that names none. A step that names a different ref from the intent is refused with it.",
             }),
         );
     }
@@ -734,21 +779,107 @@ fn goal_variant(disposition: GoalDisposition, name: &str, description: &str) -> 
 /// an absent field. The statement exists only on the two dispositions that word a
 /// goal, which is what keeps a statement from riding on a disposition that would
 /// discard it.
-fn goal_choice_schema() -> Value {
+/// Every intent action, in the contract's order, for a typed step.
+const INTENT_ACTIONS: [&str; 13] = [
+    "say", "moveTo", "flee", "eat", "dig", "collect", "place", "equip", "craft", "attack", "sleep",
+    "rest", "idle",
+];
+
+/// Where one perception stands with its goal, which decides the goal choices it can make.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GoalPhase {
+    /// Not a goal review, or the reference shape: every choice is offered.
+    Any,
+    /// A goal review with no goal held: adopt one, or make no choice.
+    Unheld,
+    /// A goal review whose held goal's success condition is not met.
+    Held,
+    /// A goal review whose held goal's success condition is met: complete it or revise it.
+    Met,
+}
+
+impl GoalPhase {
+    /// The phase `perception` is in.
+    #[must_use]
+    pub fn of(perception: &Perception) -> Self {
+        if !matches!(perception.trigger, Trigger::GoalReview) {
+            return Self::Any;
+        }
+        match &perception.goal {
+            None => Self::Unheld,
+            Some(goal)
+                if goal
+                    .progress
+                    .as_ref()
+                    .is_some_and(|seen| seen.condition_met) =>
+            {
+                Self::Met
+            }
+            Some(_) => Self::Held,
+        }
+    }
+}
+
+/// The goal choice: `null`, or one closed disposition shape the body would accept now.
+///
+/// Strict mode requires the key, so "no choice" is an explicit `null` rather than
+/// an absent field. The statement exists only on the two dispositions that word a
+/// goal, which is what keeps a statement from riding on a disposition that would
+/// discard it. At a review the offer narrows to what the ledger accepts: a met success
+/// condition can only be completed or revised, and an unmet one is never completed.
+fn goal_choice_schema(phase: GoalPhase) -> Value {
+    let adopt = || {
+        goal_variant(
+            GoalDisposition::Adopt,
+            "adopt",
+            "Take up a new goal when you hold none.",
+        )
+    };
+    let continued = || {
+        goal_variant(
+            GoalDisposition::Continue,
+            "continue",
+            "Keep the held goal and take its next step.",
+        )
+    };
+    let revise = || {
+        goal_variant(GoalDisposition::Revise, "revise", "Keep pursuing the held goal with new wording, success target and step; when its condition is met, a revise must name a target you do not yet hold.")
+    };
+    let complete = || {
+        goal_variant(
+            GoalDisposition::Complete,
+            "complete",
+            "The held goal's success condition is met; drop it.",
+        )
+    };
+    let abandon = || {
+        goal_variant(
+            GoalDisposition::Abandon,
+            "abandon",
+            "The held goal is no longer worth pursuing; drop it.",
+        )
+    };
+    let none = || json!({ "type": "null" });
+    let choices = match phase {
+        GoalPhase::Any => vec![
+            none(),
+            adopt(),
+            continued(),
+            revise(),
+            complete(),
+            abandon(),
+        ],
+        GoalPhase::Unheld => vec![none(), adopt()],
+        GoalPhase::Held => vec![none(), continued(), revise(), abandon()],
+        GoalPhase::Met => vec![complete(), revise()],
+    };
     json!({
         "description": "Your choice about your one short-term goal, only at a scheduled goal review; null makes no choice and leaves any held goal as it is.",
-        "anyOf": [
-            { "type": "null" },
-            goal_variant(GoalDisposition::Adopt, "adopt", "Take up a new goal when you hold none."),
-            goal_variant(GoalDisposition::Continue, "continue", "Keep the held goal and take its next step."),
-            goal_variant(GoalDisposition::Revise, "revise", "Keep pursuing the held goal with new wording, success condition and step."),
-            goal_variant(GoalDisposition::Complete, "complete", "The held goal's success condition is met; drop it."),
-            goal_variant(GoalDisposition::Abandon, "abandon", "The held goal is no longer worth pursuing; drop it."),
-        ],
+        "anyOf": choices,
     })
 }
 
-fn build_decision_schema(offered: Option<&OfferedRefs>) -> Value {
+fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Value {
     let blocks = |description: &str| ref_field(description, Namespace::Block, offered);
     let walk_targets = |description: &str| ref_field(description, Namespace::WalkTarget, offered);
     let creatures = |description: &str| ref_field(description, Namespace::Creature, offered);
@@ -817,7 +948,7 @@ fn build_decision_schema(offered: Option<&OfferedRefs>) -> Value {
                 "type": "string",
                 "description": "One or two sentences on why this action, recorded permanently.",
             },
-            "goal": goal_choice_schema(),
+            "goal": goal_choice_schema(phase),
         },
         "required": ["intent", "reasoning", "goal"],
         "additionalProperties": false,
@@ -834,7 +965,7 @@ mod tests {
 
     use super::{
         chat_request, decision_schema, decision_schema_for, draft_from_answer, ApiErrorBody,
-        ChatResponse, MAX_REASONING_CHARS, SCHEMA_NAME,
+        ChatResponse, GoalPhase, MAX_REASONING_CHARS, SCHEMA_NAME,
     };
     use crate::offered::OfferedRefs;
     use crate::openai::settings::DEFAULT_MAX_REQUEST_BYTES;
@@ -842,7 +973,9 @@ mod tests {
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
         DecisionImportance, GoalChoice, GoalDisposition, GoalProgress, GoalStep, GoalStepResult,
-        GoalSummary, Intent, Perception, Trigger, MAX_GOAL_ID_CHARS, MAX_GOAL_STATEMENT_CHARS,
+        GoalSummary, Intent, IntentAction, InventoryChange, Perception, Trigger, MAX_GOAL_ID_CHARS,
+        MAX_GOAL_STATEMENT_CHARS, MAX_INVENTORY_CHANGES, MAX_ITEM_NAME_CHARS, MAX_SUCCESS_COUNT,
+        REF_MAX_CHARS,
     };
     use serde_json::Value;
 
@@ -881,7 +1014,7 @@ mod tests {
             "fast",
             &prompt,
             2_048,
-            decision_schema_for(&OfferedRefs::of(&seen)),
+            decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen)),
         ))
         .unwrap()
         .len();
@@ -914,10 +1047,23 @@ mod tests {
                 outcome: "o".repeat(MAX_GOAL_ID_CHARS),
             }),
             success_condition: Some("c".repeat(MAX_GOAL_STATEMENT_CHARS)),
+            success_item: Some("i".repeat(MAX_ITEM_NAME_CHARS)),
+            success_count: Some(MAX_SUCCESS_COUNT),
             step: Some("t".repeat(MAX_GOAL_STATEMENT_CHARS)),
+            step_action: Some(IntentAction::MoveTo),
+            step_ref: Some("f".repeat(REF_MAX_CHARS)),
             progress: Some(GoalProgress {
-                inventory_changed: false,
-                moved: false,
+                condition_met: true,
+                condition_held: i64::MAX,
+                // Every inventory slot's item changed by the widest count.
+                inventory_delta: (0..MAX_INVENTORY_CHANGES)
+                    .map(|index| InventoryChange {
+                        what: format!("{index:0>MAX_ITEM_NAME_CHARS$}"),
+                        change: i64::MIN,
+                    })
+                    .collect(),
+                condition_advanced: true,
+                step_advanced: true,
                 steps_without_progress: i64::MAX,
             }),
         });
@@ -927,7 +1073,7 @@ mod tests {
             "fast",
             &prompt,
             2_048,
-            decision_schema_for(&OfferedRefs::of(&seen)),
+            decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen)),
         ))
         .unwrap()
         .len();
@@ -1049,12 +1195,16 @@ mod tests {
                 disposition,
                 statement: statement.map(str::to_owned),
                 success_condition: statement.map(|_| "a roof is overhead".to_owned()),
+                success_item: statement.map(|_| "item.minecraft.oak_log".to_owned()),
+                success_count: statement.map(|_| 4),
                 step: step.map(str::to_owned),
+                step_action: step.map(|_| IntentAction::Dig),
+                step_ref: step.map(|_| "b7".to_owned()),
                 step_result: result,
             };
         let cases = [
             (
-                r#"{"disposition":"adopt","statement":"find shelter","successCondition":"a roof is overhead","step":"walk to the cliff"}"#,
+                r#"{"disposition":"adopt","statement":"find shelter","successCondition":"a roof is overhead","successItem":"item.minecraft.oak_log","successCount":4,"step":"walk to the cliff","stepAction":"dig","stepRef":"b7"}"#,
                 choice(
                     GoalDisposition::Adopt,
                     Some("find shelter"),
@@ -1063,7 +1213,7 @@ mod tests {
                 ),
             ),
             (
-                r#"{"disposition":"continue","step":"dig into the cliff","stepResult":"done"}"#,
+                r#"{"disposition":"continue","step":"dig into the cliff","stepAction":"dig","stepRef":"b7","stepResult":"done"}"#,
                 choice(
                     GoalDisposition::Continue,
                     None,
@@ -1072,7 +1222,7 @@ mod tests {
                 ),
             ),
             (
-                r#"{"disposition":"revise","statement":"find shelter north","successCondition":"a roof is overhead","step":"walk north","stepResult":"noProgress"}"#,
+                r#"{"disposition":"revise","statement":"find shelter north","successCondition":"a roof is overhead","successItem":"item.minecraft.oak_log","successCount":4,"step":"walk north","stepAction":"dig","stepRef":"b7","stepResult":"noProgress"}"#,
                 choice(
                     GoalDisposition::Revise,
                     Some("find shelter north"),
@@ -1116,40 +1266,80 @@ mod tests {
 
     #[test]
     fn each_disposition_requires_its_working_goal_fields_and_forbids_the_rest() {
+        let target = r#""successItem":"item.minecraft.stick","successCount":1"#;
+        let typed = r#""stepAction":"idle","stepRef":null"#;
         for (missing, field) in [
             (
-                r#"{"disposition":"adopt","successCondition":"c","step":"s"}"#,
+                format!(
+                    r#"{{"disposition":"adopt","successCondition":"c",{target},"step":"s",{typed}}}"#
+                ),
                 "statement",
             ),
             (
-                r#"{"disposition":"adopt","statement":"g","step":"s"}"#,
+                format!(r#"{{"disposition":"adopt","statement":"g",{target},"step":"s",{typed}}}"#),
                 "success condition",
             ),
             (
-                r#"{"disposition":"adopt","statement":"g","successCondition":"c"}"#,
+                format!(
+                    r#"{{"disposition":"adopt","statement":"g","successCondition":"c","successCount":1,"step":"s",{typed}}}"#
+                ),
+                "success item",
+            ),
+            (
+                format!(
+                    r#"{{"disposition":"adopt","statement":"g","successCondition":"c","successItem":"item.minecraft.stick","step":"s",{typed}}}"#
+                ),
+                "success count",
+            ),
+            (
+                format!(
+                    r#"{{"disposition":"adopt","statement":"g","successCondition":"c",{target},{typed}}}"#
+                ),
                 "step",
             ),
-            (r#"{"disposition":"continue","stepResult":"done"}"#, "step"),
-            (r#"{"disposition":"continue","step":"s"}"#, "step result"),
             (
-                r#"{"disposition":"revise","statement":"g","successCondition":"c","step":"s"}"#,
+                format!(
+                    r#"{{"disposition":"adopt","statement":"g","successCondition":"c",{target},"step":"s"}}"#
+                ),
+                "step action",
+            ),
+            (
+                format!(r#"{{"disposition":"continue",{typed},"stepResult":"done"}}"#),
+                "step",
+            ),
+            (
+                format!(r#"{{"disposition":"continue","step":"s",{typed}}}"#),
                 "step result",
             ),
-            (r#"{"disposition":"complete"}"#, "step result"),
-            (r#"{"disposition":"abandon"}"#, "step result"),
+            (
+                format!(
+                    r#"{{"disposition":"revise","statement":"g","successCondition":"c",{target},"step":"s",{typed}}}"#
+                ),
+                "step result",
+            ),
+            (r#"{"disposition":"complete"}"#.to_owned(), "step result"),
+            (r#"{"disposition":"abandon"}"#.to_owned(), "step result"),
         ] {
-            let reason = goal_of(missing).expect_err(missing);
+            let reason = goal_of(&missing).expect_err(&missing);
             assert!(
                 reason.contains(&format!("needs a {field}")),
                 "{missing}: {reason}"
             );
         }
         for forbidden in [
-            r#"{"disposition":"continue","step":"s","stepResult":"done","statement":"sk-lookalike"}"#,
-            r#"{"disposition":"adopt","statement":"g","successCondition":"c","step":"s","stepResult":"done"}"#,
-            r#"{"disposition":"complete","stepResult":"done","step":"sk-lookalike"}"#,
+            format!(
+                r#"{{"disposition":"continue","step":"s",{typed},"stepResult":"done","statement":"sk-lookalike"}}"#
+            ),
+            format!(
+                r#"{{"disposition":"continue","step":"s",{typed},"stepResult":"done","successItem":"sk-lookalike"}}"#
+            ),
+            format!(
+                r#"{{"disposition":"adopt","statement":"g","successCondition":"c",{target},"step":"s",{typed},"stepResult":"done"}}"#
+            ),
+            r#"{"disposition":"complete","stepResult":"done","step":"sk-lookalike"}"#.to_owned(),
+            r#"{"disposition":"complete","stepResult":"done","stepRef":"b7"}"#.to_owned(),
         ] {
-            let reason = goal_of(forbidden).expect_err(forbidden);
+            let reason = goal_of(&forbidden).expect_err(&forbidden);
             assert!(reason.contains("forbids"), "{forbidden}: {reason}");
             assert!(!reason.contains("sk-lookalike"), "{reason}");
         }
@@ -1217,7 +1407,7 @@ mod tests {
         // whole run to one answer whose goal text was longer than the contract allows.
         let long = "w".repeat(MAX_GOAL_STATEMENT_CHARS * 2);
         let answer = format!(
-            r#"{{"intent":{{"action":"idle"}},"reasoning":"r","goal":{{"disposition":"adopt","statement":"{long}","successCondition":"{long}","step":"{long}"}}}}"#
+            r#"{{"intent":{{"action":"idle"}},"reasoning":"r","goal":{{"disposition":"adopt","statement":"{long}","successCondition":"{long}","successItem":"item.minecraft.stick","successCount":1,"step":"{long}","stepAction":"idle","stepRef":null}}}}"#
         );
         let goal = draft_from_answer(&answer).unwrap().goal.unwrap();
         for text in [goal.statement, goal.success_condition, goal.step] {
@@ -1226,7 +1416,7 @@ mod tests {
             assert!(text.ends_with("..."));
         }
         // A blank goal text is still a malformed answer: there is nothing to keep.
-        let blank = r#"{"intent":{"action":"idle"},"reasoning":"r","goal":{"disposition":"continue","step":"","stepResult":"done"}}"#;
+        let blank = r#"{"intent":{"action":"idle"},"reasoning":"r","goal":{"disposition":"continue","step":"","stepAction":"idle","stepRef":null,"stepResult":"done"}}"#;
         assert!(draft_from_answer(blank).is_err());
     }
 

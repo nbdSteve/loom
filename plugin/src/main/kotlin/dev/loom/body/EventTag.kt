@@ -577,6 +577,9 @@ fun tagOf(intent: Intent): String =
 val INTENT_REFUSAL_TAGS: Set<String> =
     setOf(
         EventTag.REJECTED,
+        GoalEvidence.STEP_MISMATCH,
+        GoalEvidence.CONDITION_MET_IGNORED,
+        GoalEvidence.COMPLETION_UNMET,
         EventTag.CONTROL_UNAVAILABLE,
         EventTag.CONTROL_NOT_READY,
         EventTag.EAT_SLOT_FORGOTTEN,

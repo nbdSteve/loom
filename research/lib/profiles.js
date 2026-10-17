@@ -127,6 +127,8 @@ PROFILES['working-goal-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'
 PROFILES['offered-refs-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] })
 // And under routine-v19's actionable refs, because r10 ran under the v18 name.
 PROFILES['actionable-refs-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] })
+// And under routine-v20's typed goal, because r11 ran under the v19 name.
+PROFILES['typed-goal-10m-10'] = Object.freeze({ ...PROFILES['shakedown-10m-10'] })
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

@@ -11,7 +11,8 @@ const { readinessMetrics } = require('./readiness.js')
 // attestation names it, and evidence that names none is generation 1.
 // Generation 3 adds the readiness gate: every decision valid, every action's terminal typed,
 // and every server-checked claim true, with each non-success listed by its exact record.
-const GATE_GENERATION = 3
+// Generation 4 makes goal coherence part of that verdict, measured from the typed goal.
+const GATE_GENERATION = 4
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`
 const PASSIVE_INTENTS = Object.freeze(['idle', 'rest'])
 const MOVEMENT_INTENTS = Object.freeze(['moveTo', 'flee'])
@@ -174,7 +175,7 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
     ...(generation >= 2
       ? { interactionsByOperation: Object.fromEntries(Object.entries(interactionsByOperation).sort()) }
       : {}),
-    ...(generation >= 3 ? { readiness: readinessMetrics({ bodyRecords, harnessRecords, metrics }) } : {}),
+    ...(generation >= 3 ? { readiness: readinessMetrics({ bodyRecords, harnessRecords, metrics, generation }) } : {}),
     omissionsByKind: omissions,
     nightPerceptionsByAgent: Object.fromEntries(Object.entries(nightPerceptionsByAgent).sort()),
     calls: {

@@ -12,7 +12,7 @@ use std::fs;
 use std::path::Path;
 
 use loom_cognition::offered::OfferedRefs;
-use loom_cognition::openai::wire::decision_schema_for;
+use loom_cognition::openai::wire::{decision_schema_for, GoalPhase};
 use loom_contract::{
     CraftingOption, InventoryStack, Observation, ObservationKind, Perception,
     MAX_PERCEPTION_OBSERVATIONS,
@@ -77,7 +77,10 @@ fn enum_values(schema: &Value, count: &mut usize, characters: &mut usize) {
 
 #[test]
 fn a_ref_of_the_wrong_namespace_is_refused_by_the_schema_itself() {
-    let schema = decision_schema_for(&OfferedRefs::of(&fixture("perception-threat-sighted")));
+    let schema = decision_schema_for(
+        &OfferedRefs::of(&fixture("perception-threat-sighted")),
+        GoalPhase::of(&fixture("perception-threat-sighted")),
+    );
     assert!(accepts(&schema, &json!({ "action": "flee", "from": "e1" })));
     assert!(accepts(
         &schema,
@@ -98,7 +101,10 @@ fn a_ref_of_the_wrong_namespace_is_refused_by_the_schema_itself() {
 
 #[test]
 fn the_block_underfoot_is_offered_to_dig_and_never_to_a_walk() {
-    let schema = decision_schema_for(&OfferedRefs::of(&fixture("perception-standing-on")));
+    let schema = decision_schema_for(
+        &OfferedRefs::of(&fixture("perception-standing-on")),
+        GoalPhase::of(&fixture("perception-standing-on")),
+    );
     assert_eq!(schema["$defs"]["walkTargetRef"]["enum"], json!(["b3"]));
     for here in ["b1", "b2"] {
         assert!(accepts(&schema, &json!({ "action": "dig", "block": here })));
@@ -117,11 +123,14 @@ fn the_block_underfoot_is_offered_to_dig_and_never_to_a_walk() {
 fn an_action_with_nothing_offered_to_name_is_not_offered() {
     let mut seen = fixture("perception-standing-on");
     seen.surroundings.clear();
-    let schema = decision_schema_for(&OfferedRefs::of(&seen));
+    let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     assert_eq!(actions(&schema), ["say", "rest", "idle"]);
     assert_eq!(schema["$defs"], json!({}));
 
-    let crafting = decision_schema_for(&OfferedRefs::of(&fixture("perception-crafting")));
+    let crafting = decision_schema_for(
+        &OfferedRefs::of(&fixture("perception-crafting")),
+        GoalPhase::of(&fixture("perception-crafting")),
+    );
     assert_eq!(
         actions(&crafting),
         ["say", "eat", "equip", "craft", "rest", "idle"]
@@ -139,7 +148,7 @@ fn an_action_with_nothing_offered_to_name_is_not_offered() {
 #[test]
 fn every_offered_ref_is_one_enum_once_whichever_actions_spend_it() {
     let offered = OfferedRefs::of(&fixture("perception-max-observations"));
-    let schema = decision_schema_for(&offered);
+    let schema = decision_schema_for(&offered, GoalPhase::Any);
     let mut count = 0;
     let mut characters = 0;
     enum_values(&schema["$defs"], &mut count, &mut characters);
@@ -202,7 +211,7 @@ fn the_widest_request_schema_stays_inside_the_providers_enum_limits() {
             ..option.clone()
         })
         .collect();
-    let schema = decision_schema_for(&OfferedRefs::of(&seen));
+    let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     let mut count = 0;
     let mut characters = 0;
     enum_values(&schema, &mut count, &mut characters);
@@ -227,7 +236,7 @@ fn a_collect_or_attack_names_only_what_its_own_mode_can_reach() {
         .surroundings
         .iter()
         .find(|observed| observed.kind == ObservationKind::DroppedItem && observed.distance <= 2.0);
-    let schema = decision_schema_for(&OfferedRefs::of(&seen));
+    let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     let collect = |item: &str, approach: bool| json!({ "action": "collect", "item": item, "approach": approach });
     assert!(!accepts(&schema, &collect(&far, false)));
     assert!(accepts(&schema, &collect(&far, true)));
@@ -239,4 +248,51 @@ fn a_collect_or_attack_names_only_what_its_own_mode_can_reach() {
         .filter(|action| *action == "collect")
         .count();
     assert_eq!(collects, 2, "one closed variant per approach mode");
+}
+
+/// The dispositions, `null` as "none", a schema's goal choice offers.
+fn dispositions(schema: &Value) -> Vec<String> {
+    schema["properties"]["goal"]["anyOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|variant| {
+            variant["properties"]["disposition"]["enum"][0]
+                .as_str()
+                .unwrap_or("none")
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
+    let of = |name: &str| {
+        let seen = fixture(name);
+        decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen))
+    };
+    assert_eq!(
+        dispositions(&of("perception-goal-review")),
+        ["none", "adopt"]
+    );
+    // An unmet condition is never completed.
+    assert_eq!(
+        dispositions(&of("perception-goal-carried")),
+        ["none", "continue", "revise", "abandon"]
+    );
+    // r11: delta, epsilon and zeta held the stick their goal named and went on. A met
+    // condition is completed or revised; nothing else, not even no choice, is offered.
+    let met = of("perception-goal-condition-met");
+    assert_eq!(dispositions(&met), ["complete", "revise"]);
+    let continuing = json!({ "intent": { "action": "idle" }, "reasoning": "r", "goal": {
+        "disposition": "continue", "step": "s", "stepAction": "idle", "stepRef": null, "stepResult": "done"
+    }});
+    let validator = jsonschema::validator_for(&met).unwrap();
+    assert!(!validator.is_valid(&continuing));
+    assert!(!validator.is_valid(&answer(&json!({ "action": "idle" }))));
+    // Any other trigger keeps the reference shape's whole offer.
+    assert_eq!(
+        dispositions(&of("perception-threat-sighted")),
+        ["none", "adopt", "continue", "revise", "complete", "abandon"]
+    );
 }

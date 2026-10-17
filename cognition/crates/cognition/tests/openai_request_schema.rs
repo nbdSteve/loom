@@ -151,16 +151,30 @@ fn every_goal_disposition_the_contract_names_is_one_the_provider_may_answer() {
         Value::Null,
         json!({
             "disposition": "adopt",
-            "statement": "find shelter before night",
-            "successCondition": "a solid roof is directly above me",
-            "step": "walk to the cliff to the north"
+            "statement": "gather logs before night",
+            "successCondition": "four logs are in my inventory",
+            "successItem": "item.minecraft.oak_log",
+            "successCount": 4,
+            "step": "rest by the cliff to the north",
+            "stepAction": "idle",
+            "stepRef": null
         }),
-        json!({ "disposition": "continue", "step": "dig into the cliff", "stepResult": "done" }),
+        json!({
+            "disposition": "continue",
+            "step": "dig into the cliff",
+            "stepAction": "dig",
+            "stepRef": "b4",
+            "stepResult": "done"
+        }),
         json!({
             "disposition": "revise",
-            "statement": "find shelter to the north instead",
-            "successCondition": "a solid roof is directly above me",
+            "statement": "gather logs to the north instead",
+            "successCondition": "four logs are in my inventory",
+            "successItem": "item.minecraft.oak_log",
+            "successCount": 4,
             "step": "walk north",
+            "stepAction": "idle",
+            "stepRef": null,
             "stepResult": "noProgress"
         }),
         json!({ "disposition": "complete", "stepResult": "done" }),
@@ -211,6 +225,10 @@ fn a_goal_choice_with_the_wrong_fields_is_rejected_by_the_schema() {
         json!({ "disposition": "adopt", "statement": "go", "priority": 1 }),
         json!({ "disposition": "pursue" }),
         json!({ "disposition": "adopt", "statement": 7 }),
+        // Untyped: a success condition with no item, and a step with no action.
+        json!({ "disposition": "adopt", "statement": "g", "successCondition": "c", "step": "s", "stepAction": "idle", "stepRef": null }),
+        json!({ "disposition": "continue", "step": "s", "stepResult": "done" }),
+        json!({ "disposition": "continue", "step": "s", "stepAction": "teleport", "stepRef": null, "stepResult": "done" }),
         json!("continue"),
     ];
     for goal in &refused {

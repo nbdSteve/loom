@@ -14,6 +14,8 @@ import dev.loom.contract.Provenance
 import dev.loom.contract.SelfState
 import dev.loom.contract.Trigger
 import dev.loom.contract.WorldState
+import dev.loom.contract.action
+import dev.loom.contract.targetRef
 import org.junit.jupiter.api.Assertions.assertEquals
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.time.Duration.Companion.seconds
@@ -149,14 +151,17 @@ fun decisionFor(
     )
 
 /**
- * A goal choice carrying every field [disposition] requires: a statement and success condition
- * to word a goal, the step an affirming decision takes, and a verdict on the previous step for
- * every disposition that answers a carried goal.
+ * A goal choice carrying every field [disposition] requires: a statement, a success condition
+ * and its typed target to word a goal, the step an affirming decision takes typed as [intent]'s
+ * own action and ref, and a verdict on the previous step for every disposition that answers a
+ * carried goal.
  */
 fun goalChoice(
     disposition: GoalDisposition,
     statement: String? = null,
     stepResult: GoalStepResult = GoalStepResult.PROGRESSING,
+    intent: Intent = Intent.Idle,
+    success: Pair<String, Long> = "item.minecraft.stick" to 1L,
 ): GoalChoice {
     val worded = disposition == GoalDisposition.ADOPT || disposition == GoalDisposition.REVISE
     val stepped = worded || disposition == GoalDisposition.CONTINUE
@@ -164,7 +169,11 @@ fun goalChoice(
         disposition = disposition,
         statement = statement,
         successCondition = if (worded) "the evidence shows it is done" else null,
+        successItem = if (worded) success.first else null,
+        successCount = if (worded) success.second else null,
         step = if (stepped) "the next concrete step" else null,
+        stepAction = if (stepped) intent.action else null,
+        stepRef = if (stepped) intent.targetRef else null,
         stepResult = if (disposition == GoalDisposition.ADOPT) null else stepResult,
     )
 }

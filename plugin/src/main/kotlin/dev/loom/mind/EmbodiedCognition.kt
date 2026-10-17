@@ -20,6 +20,7 @@ package dev.loom.mind
 import dev.loom.body.AgentId
 import dev.loom.body.BodyPort
 import dev.loom.body.EventTag
+import dev.loom.body.GoalEvidence
 import dev.loom.body.IntentOutcome
 import dev.loom.body.tagOf
 import dev.loom.contract.Decision
@@ -277,7 +278,18 @@ class EmbodiedCognition(
         agentId: AgentId,
         decision: Decision,
     ) {
-        journal.decided(agentId, decision, goals.resolve(agentId, decision))
+        val goal = goals.resolve(agentId, decision)
+        journal.decided(agentId, decision, goal)
+        // A decision incoherent with its own goal is refused here, before the body is asked:
+        // its typed step is not its intent, or it ignored a met success condition.
+        if (goal != null && goal.outcome in GoalEvidence.REFUSING) {
+            val refused = IntentOutcome.Rejected("the decision contradicts its own goal: ${goal.outcome}", goal.outcome)
+            journal.refused(agentId, decision, goal.outcome)
+            goals.stepped(agentId, decision.requestId, tagOf(decision.intent), goal.outcome)
+            danger.settled(agentId, decision.requestId)
+            callbacks.onApplied(AppliedDecision(decision, refused))
+            return
+        }
         bodies.apply(agentId, decision.intent, decision.requestId).whenComplete { outcome, failure ->
             mainThread.execute {
                 val applied =

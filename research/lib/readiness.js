@@ -9,6 +9,10 @@ const { isCoalesced, isShutdownEnding } = require('./danger.js')
 // race - the target went or changed, the agent's own later decision superseded it, or the
 // agent died - is classified apart from the defects the gate refuses.
 const READINESS_VERSION = 'loom-readiness-gate/1'
+// Gate generation 4: the verdict includes goal coherence, measured from the typed goal.
+const COHERENT_READINESS_VERSION = 'loom-readiness-gate/2'
+// The goal ledger's refusals of a decision that contradicts its own goal, from generation 4.
+const GOAL_INCOHERENT_TAGS = new Set(['goalStepMismatch', 'goalConditionMetIgnored', 'goalCompletionUnmet'])
 
 const PASSIVE_INTENTS = Object.freeze(['idle', 'rest'])
 const INTERACTION_INTENTS = Object.freeze(['dig', 'collect', 'place', 'equip', 'craft', 'attack', 'sleep'])
@@ -56,6 +60,7 @@ const PROTOCOL_TAGS = new Set(['rejected', 'controlUnavailable', 'unsupported', 
 
 /** The class a refusal tag ends its action in. */
 function refusalClass (tag) {
+  if (GOAL_INCOHERENT_TAGS.has(tag)) return 'goalIncoherent'
   if (tag === 'controlNotReady') return 'concurrent'
   if (tag === 'moveOwnSpot') return 'noOpTarget'
   if (/BodyDied$/.test(tag)) return 'death'
@@ -156,7 +161,60 @@ function goalCoherenceOf (bodyRecords) {
   }
 }
 
-function readinessMetrics ({ bodyRecords, harnessRecords, metrics }) {
+/**
+ * Whether the run's goals were pursued coherently, from the typed goal evidence a generation-4
+ * run carries on every decided record. A step is credited only when the ledger measured it as
+ * advancing the goal's success condition or carrying out its typed step; a multi-step goal is
+ * one whose success condition advanced at two or more steps; and every met success condition
+ * must have been completed, or revised to a new target, at the review that saw it.
+ */
+function typedGoalCoherenceOf (bodyRecords) {
+  const byGoal = new Map()
+  const counts = {
+    measuredSteps: 0,
+    conditionSteps: 0,
+    stepOnlySteps: 0,
+    unadvancedSteps: 0,
+    metConditions: 0,
+    metCompleted: 0,
+    metRevised: 0,
+    metIgnored: 0,
+    stepMismatches: 0,
+    unmetCompletions: 0,
+    stalled: 0
+  }
+  for (const record of bodyRecords) {
+    const goal = record.goal
+    if (record.event !== 'decided' || goal === undefined) continue
+    if (goal.outcome === 'goalStepMismatch') counts.stepMismatches += 1
+    if (goal.outcome === 'goalCompletionUnmet') counts.unmetCompletions += 1
+    if (goal.outcome === 'goalStalled') counts.stalled += 1
+    if (goal.conditionMet === true) {
+      counts.metConditions += 1
+      if (goal.outcome === 'goalCompleted') counts.metCompleted += 1
+      else if (goal.outcome === 'goalRevised') counts.metRevised += 1
+      else counts.metIgnored += 1
+    }
+    if (goal.presentedGoalId === undefined || typeof goal.conditionAdvanced !== 'boolean') continue
+    counts.measuredSteps += 1
+    const entry = byGoal.get(goal.presentedGoalId) ?? { condition: 0 }
+    if (goal.conditionAdvanced) {
+      counts.conditionSteps += 1
+      entry.condition += 1
+    } else if (goal.stepAdvanced === true) counts.stepOnlySteps += 1
+    else counts.unadvancedSteps += 1
+    byGoal.set(goal.presentedGoalId, entry)
+  }
+  const goals = [...byGoal.values()]
+  const multiStepGoals = goals.filter((goal) => goal.condition >= 2).length
+  const coherent = counts.stepMismatches === 0 && counts.unmetCompletions === 0 && counts.metIgnored === 0 &&
+    multiStepGoals >= 1
+  return { ...counts, goalsMeasured: goals.length, multiStepGoals, verdict: coherent ? 'coherent' : 'incoherent' }
+}
+
+function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 3 }) {
+  const typed = generation >= 4
+  const blockerClasses = typed ? [...BLOCKER_CLASSES, 'goalIncoherent'] : BLOCKER_CLASSES
   const settledAfterDeath = new Set(
     Object.values(metrics.witnessedDeaths?.byAgent ?? {}).flatMap((entry) => entry.settledAfterDeath ?? [])
   )
@@ -182,13 +240,16 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics }) {
     next.set(record.agentId, index)
   }
 
-  const byClass = Object.fromEntries([...RACE_CLASSES, 'confirmed', ...BLOCKER_CLASSES].map((name) => [name, 0]))
+  const byClass = Object.fromEntries([...RACE_CLASSES, 'confirmed', ...blockerClasses].map((name) => [name, 0]))
   const nonSuccess = []
   let total = 0
   for (const { record: decision, index } of decisions) {
-    if (PASSIVE_INTENTS.includes(decision.intent)) continue
-    total += 1
     const own = byKey.get(decision.requestKey) ?? []
+    // A passive decision is no action, unless its own goal refused it: an idle under a step that
+    // names a collect is a decision that contradicts itself (r11 delta, body:00000241).
+    const refusedForGoal = typed && own.some((entry) => entry.event === 'intentApplied' && GOAL_INCOHERENT_TAGS.has(entry.outcome))
+    if (PASSIVE_INTENTS.includes(decision.intent) && !refusedForGoal) continue
+    total += 1
     const terminals = own.filter((record) => record.event === 'intentApplied' || record.event === 'decisionDiscarded')
     let ending
     if (settledAfterDeath.has(decision.requestKey)) {
@@ -204,6 +265,7 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics }) {
     } else {
       ending = { class: refusalClass(terminals[0].outcome), evidence: terminals[0] }
     }
+    if (!Object.hasOwn(byClass, ending.class)) ending.class = 'unexplainedRefusal'
     byClass[ending.class] += 1
     if (ending.class !== 'confirmed') {
       nonSuccess.push({
@@ -226,7 +288,8 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics }) {
     !refusedKeys.has(record.requestKey))
   const answered = decisions.length + cognitionFailures.length
   const invalidDecisions = cognitionFailures.length +
-    INVALID_DECISION_CLASSES.reduce((sum, name) => sum + byClass[name], 0)
+    INVALID_DECISION_CLASSES.reduce((sum, name) => sum + byClass[name], 0) +
+    (typed ? byClass.goalIncoherent : 0)
   const untyped = UNTYPED_CLASSES.reduce((sum, name) => sum + byClass[name], 0)
   const checks = bodyRecords.filter((record) => record.event === 'worldInteraction')
   const disputes = bodyRecords.filter((record) => record.event === 'witnessDisputed')
@@ -236,14 +299,16 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics }) {
     typedTerminalAccounting: ratio(total - untyped, total),
     serverTruthfulness: ratio(confirmedChecks, checks.length + disputes.length)
   }
-  const blockers = Object.fromEntries(BLOCKER_CLASSES.map((name) => [name, byClass[name]]))
+  const blockers = Object.fromEntries(blockerClasses.map((name) => [name, byClass[name]]))
   const passes = (rate) => rate === null || rate === 1
-  const ready = Object.values(rates).every(passes) &&
+  const mechanicallyReady = Object.values(rates).every(passes) &&
     Object.values(blockers).every((count) => count === 0) &&
     cognitionFailures.length === 0 &&
     disputes.length === 0
+  const coherence = typed ? typedGoalCoherenceOf(bodyRecords) : undefined
+  const ready = mechanicallyReady && (coherence === undefined || coherence.verdict === 'coherent')
   return {
-    version: READINESS_VERSION,
+    version: typed ? COHERENT_READINESS_VERSION : READINESS_VERSION,
     actions: {
       total,
       byClass: Object.fromEntries(Object.entries(byClass).sort()),
@@ -260,13 +325,17 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics }) {
     rates,
     blockers,
     races: nonSuccess.filter((entry) => entry.race).length,
-    goalCoherence: goalCoherenceOf(bodyRecords),
+    ...(typed
+      ? { goalCoherence: coherence, mechanicalVerdict: mechanicallyReady ? 'ready' : 'notReady' }
+      : { goalCoherence: goalCoherenceOf(bodyRecords) }),
     verdict: ready ? 'ready' : 'notReady'
   }
 }
 
 module.exports = {
   BLOCKER_CLASSES,
+  COHERENT_READINESS_VERSION,
+  GOAL_INCOHERENT_TAGS,
   RACE_CLASSES,
   READINESS_VERSION,
   readinessMetrics,

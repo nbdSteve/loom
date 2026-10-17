@@ -366,7 +366,7 @@ where
 const REF_MIN_CHARS: usize = 1;
 
 /// The longest a ref may be, mirroring the schema's `maxLength`.
-const REF_MAX_CHARS: usize = 8;
+pub const REF_MAX_CHARS: usize = 8;
 
 /// Refuses a ref that is blank or longer than a ref can be.
 ///
@@ -732,6 +732,87 @@ where
     Ok(text)
 }
 
+/// Longest item name a success condition or inventory change may carry, in characters.
+pub const MAX_ITEM_NAME_CHARS: usize = 64;
+
+/// Most of one item a success condition may ask the goal to hold.
+pub const MAX_SUCCESS_COUNT: i64 = 64;
+
+/// Most inventory changes one progress reading carries: one per player inventory slot.
+pub const MAX_INVENTORY_CHANGES: usize = 46;
+
+fn bounded_optional_item_name<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let text = Option::<String>::deserialize(deserializer)?;
+    if let Some(text) = &text {
+        refuse_unbounded_text(text, MAX_ITEM_NAME_CHARS)?;
+    }
+    Ok(text)
+}
+
+fn bounded_item_name<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let text = String::deserialize(deserializer)?;
+    refuse_unbounded_text(&text, MAX_ITEM_NAME_CHARS)?;
+    Ok(text)
+}
+
+fn bounded_optional_success_count<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<i64>::deserialize(deserializer)?;
+    if let Some(value) = value {
+        if !(1..=MAX_SUCCESS_COUNT).contains(&value) {
+            return Err(de::Error::invalid_value(
+                de::Unexpected::Signed(value),
+                &"a success count from 1 to 64",
+            ));
+        }
+    }
+    Ok(value)
+}
+
+fn bounded_optional_ref<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let handle = Option::<String>::deserialize(deserializer)?;
+    if let Some(handle) = &handle {
+        refuse_unbounded_ref(handle)?;
+    }
+    Ok(handle)
+}
+
+fn nonzero_change<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = i64::deserialize(deserializer)?;
+    if value == 0 {
+        return Err(de::Error::custom("an inventory change is never zero"));
+    }
+    Ok(value)
+}
+
+fn bounded_inventory_changes<'de, D>(deserializer: D) -> Result<Vec<InventoryChange>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let changes = Vec::<InventoryChange>::deserialize(deserializer)?;
+    if changes.len() > MAX_INVENTORY_CHANGES {
+        return Err(de::Error::invalid_length(
+            changes.len(),
+            &"at most 46 inventory changes",
+        ));
+    }
+    Ok(changes)
+}
+
 fn nonnegative_goal_count<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: Deserializer<'de>,
@@ -787,6 +868,20 @@ pub struct GoalSummary {
         deserialize_with = "bounded_optional_goal_statement"
     )]
     pub success_condition: Option<String>,
+    /// The item the goal must hold, which types the success condition.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_item_name"
+    )]
+    pub success_item: Option<String>,
+    /// How many of the success item the goal must hold.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_success_count"
+    )]
+    pub success_count: Option<i64>,
     /// The step the goal's last affirming review chose to take.
     #[serde(
         default,
@@ -794,6 +889,16 @@ pub struct GoalSummary {
         deserialize_with = "bounded_optional_goal_statement"
     )]
     pub step: Option<String>,
+    /// The action that step's intent took.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_action: Option<IntentAction>,
+    /// The target ref that step's intent named, absent for an action that names none.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_ref"
+    )]
+    pub step_ref: Option<String>,
     /// Body-measured evidence about that step, once a later review can compare.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<GoalProgress>,
@@ -803,13 +908,64 @@ pub struct GoalSummary {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GoalProgress {
-    /// Whether the agent's inventory changed since that review.
-    pub inventory_changed: bool,
-    /// Whether the agent moved at least one block since that review.
-    pub moved: bool,
-    /// How many affirmed steps in a row changed neither.
+    /// Whether the inventory now holds the success count of the success item.
+    pub condition_met: bool,
+    /// How many of the success item the inventory holds now.
+    #[serde(deserialize_with = "nonnegative_goal_count")]
+    pub condition_held: i64,
+    /// Every item whose held count changed since the goal's last affirming review.
+    #[serde(deserialize_with = "bounded_inventory_changes")]
+    pub inventory_delta: Vec<InventoryChange>,
+    /// Whether the held count of the success item rose since that review.
+    pub condition_advanced: bool,
+    /// Whether the typed step was carried out: for a walk, arriving somewhere new to the goal.
+    pub step_advanced: bool,
+    /// How many affirmed steps in a row advanced neither.
     #[serde(deserialize_with = "nonnegative_goal_count")]
     pub steps_without_progress: i64,
+}
+
+/// How the held count of one item changed since the goal's last affirming review.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InventoryChange {
+    /// The item, exactly as an inventory stack names it.
+    #[serde(deserialize_with = "bounded_item_name")]
+    pub what: String,
+    /// Positive gained, negative lost; never zero.
+    #[serde(deserialize_with = "nonzero_change")]
+    pub change: i64,
+}
+
+/// The action an [`Intent`] takes, as its `action` tag.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntentAction {
+    #[serde(rename = "say")]
+    Say,
+    #[serde(rename = "moveTo")]
+    MoveTo,
+    #[serde(rename = "flee")]
+    Flee,
+    #[serde(rename = "eat")]
+    Eat,
+    #[serde(rename = "dig")]
+    Dig,
+    #[serde(rename = "collect")]
+    Collect,
+    #[serde(rename = "place")]
+    Place,
+    #[serde(rename = "equip")]
+    Equip,
+    #[serde(rename = "craft")]
+    Craft,
+    #[serde(rename = "attack")]
+    Attack,
+    #[serde(rename = "sleep")]
+    Sleep,
+    #[serde(rename = "rest")]
+    Rest,
+    #[serde(rename = "idle")]
+    Idle,
 }
 
 /// The mind's verdict on the step its previous goal review took.
@@ -858,6 +1014,20 @@ pub struct GoalChoice {
         deserialize_with = "bounded_optional_goal_statement"
     )]
     pub success_condition: Option<String>,
+    /// The item the goal must hold, typing the success condition, for adopt and revise.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_item_name"
+    )]
+    pub success_item: Option<String>,
+    /// How many of the success item the goal must hold, for adopt and revise.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_success_count"
+    )]
+    pub success_count: Option<i64>,
     /// The concrete next step this decision's intent takes, for adopt, continue and revise.
     #[serde(
         default,
@@ -865,6 +1035,16 @@ pub struct GoalChoice {
         deserialize_with = "bounded_optional_goal_statement"
     )]
     pub step: Option<String>,
+    /// The action the step takes, which must be the intent's own, for adopt, continue and revise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_action: Option<IntentAction>,
+    /// The target ref the step names, which must be the intent's own; absent for none.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_ref"
+    )]
+    pub step_ref: Option<String>,
     /// The verdict on the carried goal's previous step, for every disposition but adopt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step_result: Option<GoalStepResult>,
@@ -990,6 +1170,46 @@ pub enum Intent {
     /// Do nothing this cycle.
     #[serde(rename = "idle")]
     Idle,
+}
+
+impl Intent {
+    /// The action this intent takes, as its `action` tag.
+    #[must_use]
+    pub const fn action(&self) -> IntentAction {
+        match self {
+            Self::Say { .. } => IntentAction::Say,
+            Self::MoveTo { .. } => IntentAction::MoveTo,
+            Self::Flee { .. } => IntentAction::Flee,
+            Self::Eat { .. } => IntentAction::Eat,
+            Self::Dig { .. } => IntentAction::Dig,
+            Self::Collect { .. } => IntentAction::Collect,
+            Self::Place { .. } => IntentAction::Place,
+            Self::Equip { .. } => IntentAction::Equip,
+            Self::Craft { .. } => IntentAction::Craft,
+            Self::Attack { .. } => IntentAction::Attack,
+            Self::Sleep { .. } => IntentAction::Sleep,
+            Self::Rest => IntentAction::Rest,
+            Self::Idle => IntentAction::Idle,
+        }
+    }
+
+    /// The one target ref a goal step names for this intent: the thing it acts on, or
+    /// `None` for an action that names nothing. A placement's target is its support block
+    /// and an attack's is its creature; the stack each spends is the means, not the target.
+    #[must_use]
+    pub fn target_ref(&self) -> Option<&str> {
+        match self {
+            Self::MoveTo { onto } => Some(onto),
+            Self::Flee { from } => Some(from),
+            Self::Eat { slot_ref } => Some(slot_ref),
+            Self::Dig { block } | Self::Place { block, .. } => Some(block),
+            Self::Collect { item, .. } | Self::Equip { item, .. } => Some(item),
+            Self::Craft { recipe, .. } => Some(recipe),
+            Self::Attack { target, .. } => Some(target),
+            Self::Sleep { bed } => Some(bed),
+            Self::Say { .. } | Self::Rest | Self::Idle => None,
+        }
+    }
 }
 
 /// Reproducibility stamp attached to every decision and written to the

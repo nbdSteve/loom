@@ -27,22 +27,22 @@
 //! give a second, driftable statement of the same thing.
 
 use loom_contract::{
-    Bearing, CraftingOption, DayPhase, DecisionImportance, GoalSummary, InventoryStack,
-    Observation, ObservationKind, Perception, SelfState, Trigger, WorldState,
-    MAX_GOAL_STEPS_WITHOUT_PROGRESS, MAX_PERCEPTION_OBSERVATIONS,
+    Bearing, CraftingOption, DayPhase, DecisionImportance, GoalSummary, IntentAction,
+    InventoryChange, InventoryStack, Observation, ObservationKind, Perception, SelfState, Trigger,
+    WorldState, MAX_GOAL_STEPS_WITHOUT_PROGRESS, MAX_PERCEPTION_OBSERVATIONS,
 };
 
 use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v19";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v20";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v19";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v20";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v19";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v20";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -167,31 +167,36 @@ achievable thing rather than a plan.
 the choice, briefly and honestly.
 
 You may hold one short-term goal of your own, and only a scheduled goal review \
-can change it. Every answer also carries a goal choice, and null is always \
-allowed: it makes no choice and leaves any held goal as it is. At a goal review \
-you are shown the goal you hold, if any: its success condition, the step you last \
-chose, what your body reported about that step, and what your body measured since \
-- whether your inventory changed, whether you moved, and how many steps in a row \
-changed neither. Judge it against that evidence, not against a wish to look busy:
+can change it. Every answer also carries a goal choice; null makes no choice and \
+leaves any held goal as it is, except that a met success condition must be \
+answered. A goal is achieved by holding something: its success condition is \
+an item, named exactly as a stack or a dropped item shows it, and how many of it \
+you must carry, and your body measures that from your own inventory. At a goal \
+review you are shown the goal you hold, if any: its success condition and whether \
+it is met, how your inventory changed since your last step, the step you last \
+chose and whether your body carried it out, and how many steps in a row advanced \
+nothing. Judge it against that evidence, not against a wish to look busy:
 - adopt: take up a new goal when you hold none and the evidence gives you one \
-worth having. Word the goal, the success condition you could observe in your own \
-perception when it is achieved, and the one concrete step this answer's action \
-takes toward it. Holding no goal is a legitimate state.
+worth having. Word the goal and its success condition, name the item and count \
+that achieve it, and name the one step this answer's action takes. Holding no goal \
+is a legitimate state.
 - continue: keep the held goal, judge the previous step, and name the next step \
 this answer's action takes.
-- revise: change the goal, its success condition and its step when the evidence \
+- revise: change the goal, its success target and its step when the evidence \
 showed the old approach will not work, and judge the previous step. Revising keeps \
-the count of steps that changed nothing.
-- complete: drop the held goal because its success condition is met.
+the count of steps that advanced nothing.
+- complete: drop the held goal because your body shows its success condition met.
 - abandon: drop the held goal because it is no longer worth pursuing.
-Judge the previous step as done, progressing or noProgress from what your body \
-measured. Repeating a step that changed nothing is not progress, and rewording \
-the goal is not progress either: only a step that changes your inventory or your \
-place resets the count. After three steps in a row that changed neither, your body \
-refuses continue and revise and ends the goal, so take a step that changes \
-something before then, or abandon the goal. A goal \
-choice is separate from your action, but a step you name should be what your \
-action does.";
+A step is typed: it names the action your answer's intent takes and the ref that \
+intent acts on (null for an action that names none), and both must be your \
+intent's own. A step that says one thing while your intent does another is refused \
+with your action. Only evidence advances a goal: the held count of its item rising, \
+or the step you named being carried out - and a walk counts only when it arrives \
+somewhere the goal has not already been. Moving about, falling or walking back is \
+not progress, and rewording the goal is not progress either. After three steps in a \
+row that advanced nothing, your body refuses continue and revise and ends the goal. \
+When your success condition is met you must complete the goal, or revise it to a \
+target you do not yet hold, at that review; anything else is refused with your action.";
 
 /// The per-tier closing instruction.
 ///
@@ -340,25 +345,55 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
     if let Some(condition) = &goal.success_condition {
         parts.push(format!("It is achieved when: \"{}\".", field(condition)));
     }
-    if let Some(chosen) = &goal.step {
+    if let (Some(item), Some(count)) = (&goal.success_item, goal.success_count) {
+        let held = goal
+            .progress
+            .as_ref()
+            .map_or(0, |progress| progress.condition_held);
+        let met = goal
+            .progress
+            .as_ref()
+            .is_some_and(|progress| progress.condition_met);
         parts.push(format!(
-            "The step you chose last time: \"{}\".",
+            "Success condition: hold {count} {item}; you hold {held} now, so it is {status}.",
+            item = field(item),
+            status = if met { "MET" } else { "not met yet" }
+        ));
+        if met {
+            parts.push(
+                "Because it is met, you must complete this goal now, or revise it to a target you do not yet hold."
+                    .to_owned(),
+            );
+        }
+    }
+    if let Some(chosen) = &goal.step {
+        let typed = goal.step_action.map_or_else(String::new, |action| {
+            format!(
+                " ({action} on {target})",
+                action = action_word(action),
+                target = goal.step_ref.as_deref().map_or("nothing".to_owned(), field)
+            )
+        });
+        parts.push(format!(
+            "The step you chose last time: \"{}\"{typed}.",
             field(chosen)
         ));
     }
     if let Some(progress) = &goal.progress {
         parts.push(format!(
-            "Since then your inventory {inventory} and you {moved}; {count} step{plural} in a row \
-             changed neither (continue and revise are refused at {bound}).",
-            inventory = if progress.inventory_changed {
-                "changed"
+            "Since then your inventory {delta}; the success condition {advanced}, and your step \
+             {carried}; {count} step{plural} in a row advanced nothing (continue and revise are \
+             refused at {bound}).",
+            delta = delta_phrase(&progress.inventory_delta),
+            advanced = if progress.condition_advanced {
+                "advanced"
             } else {
-                "did not change"
+                "did not advance"
             },
-            moved = if progress.moved {
-                "moved"
+            carried = if progress.step_advanced {
+                "was carried out"
             } else {
-                "did not move"
+                "advanced nothing"
             },
             count = progress.steps_without_progress,
             plural = if progress.steps_without_progress == 1 {
@@ -370,6 +405,44 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
         ));
     }
     parts.join(" ")
+}
+
+/// How the inventory changed, item by item, or that it did not.
+fn delta_phrase(delta: &[InventoryChange]) -> String {
+    if delta.is_empty() {
+        return "did not change".to_owned();
+    }
+    let changes = delta
+        .iter()
+        .map(|change| {
+            format!(
+                "{change:+} {what}",
+                change = change.change,
+                what = field(&change.what)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("changed by {changes}")
+}
+
+/// The action tag a typed step names.
+const fn action_word(action: IntentAction) -> &'static str {
+    match action {
+        IntentAction::Say => "say",
+        IntentAction::MoveTo => "moveTo",
+        IntentAction::Flee => "flee",
+        IntentAction::Eat => "eat",
+        IntentAction::Dig => "dig",
+        IntentAction::Collect => "collect",
+        IntentAction::Place => "place",
+        IntentAction::Equip => "equip",
+        IntentAction::Craft => "craft",
+        IntentAction::Attack => "attack",
+        IntentAction::Sleep => "sleep",
+        IntentAction::Rest => "rest",
+        IntentAction::Idle => "idle",
+    }
 }
 
 /// Health, vanilla hunger, and position.
@@ -824,7 +897,11 @@ mod tests {
                 outcome: outcome.to_owned(),
             }),
             success_condition: None,
+            success_item: None,
+            success_count: None,
             step: None,
+            step_action: None,
+            step_ref: None,
             progress: None,
         }
     }
@@ -909,20 +986,56 @@ mod tests {
         goal.success_condition = Some("eight logs are in my inventory".to_owned());
         goal.step = Some("cut the oak log in reach".to_owned());
         goal.progress = Some(loom_contract::GoalProgress {
-            inventory_changed: false,
-            moved: false,
+            condition_met: false,
+            condition_held: 0,
+            inventory_delta: vec![],
+            condition_advanced: false,
+            step_advanced: false,
             steps_without_progress: 2,
         });
-        let rendered = situation(&goal_review_holding(Some(goal)));
+        let rendered = situation(&goal_review_holding(Some(goal.clone())));
         assert!(rendered.contains("It is achieved when: \"eight logs are in my inventory\"."));
         assert!(rendered.contains("The step you chose last time: \"cut the oak log in reach\"."));
         assert!(
             rendered.contains(
-                "Since then your inventory did not change and you did not move; 2 steps in a row \
-             changed neither (continue and revise are refused at 3)."
+                "Since then your inventory did not change; the success condition did not advance, \
+                 and your step advanced nothing; 2 steps in a row advanced nothing (continue and \
+                 revise are refused at 3)."
             ),
             "{rendered}"
         );
+        // Typed, the condition states its status and the step its action and ref.
+        goal.success_item = Some("item.minecraft.oak_log".to_owned());
+        goal.success_count = Some(8);
+        goal.step_action = Some(loom_contract::IntentAction::Dig);
+        goal.step_ref = Some("b4".to_owned());
+        goal.progress = Some(loom_contract::GoalProgress {
+            condition_met: true,
+            condition_held: 8,
+            inventory_delta: vec![
+                loom_contract::InventoryChange {
+                    what: "item.minecraft.oak_log".to_owned(),
+                    change: 3,
+                },
+                loom_contract::InventoryChange {
+                    what: "item.minecraft.dirt".to_owned(),
+                    change: -1,
+                },
+            ],
+            condition_advanced: true,
+            step_advanced: true,
+            steps_without_progress: 0,
+        });
+        let met = situation(&goal_review_holding(Some(goal)));
+        for expected in [
+            "Success condition: hold 8 item.minecraft.oak_log; you hold 8 now, so it is MET.",
+            "you must complete this goal now, or revise it to a target you do not yet hold",
+            "\"cut the oak log in reach\" (dig on b4).",
+            "changed by +3 item.minecraft.oak_log, -1 item.minecraft.dirt",
+            "the success condition advanced, and your step was carried out",
+        ] {
+            assert!(met.contains(expected), "missing {expected:?} in {met}");
+        }
     }
 
     #[test]
@@ -994,7 +1107,7 @@ mod tests {
         ] {
             assert!(system.contains(disposition), "missing {disposition:?}");
         }
-        assert!(system.contains("null is always"));
+        assert!(system.contains("null makes no choice"));
         assert!(system.contains("Holding no goal is a legitimate state."));
         assert!(system.contains("not against a wish to look busy"));
         assert!(system.contains("Idle is correct when no useful step is"));

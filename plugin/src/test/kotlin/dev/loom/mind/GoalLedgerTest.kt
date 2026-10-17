@@ -6,13 +6,16 @@ import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
+import dev.loom.body.tagOf
 import dev.loom.contract.Decision
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalProgress
 import dev.loom.contract.GoalStep
-import dev.loom.contract.GoalStepResult
 import dev.loom.contract.GoalSummary
+import dev.loom.contract.Intent
+import dev.loom.contract.IntentAction
+import dev.loom.contract.InventoryChange
 import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
 import dev.loom.contract.Trigger
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -90,19 +93,27 @@ class GoalLedgerTest {
     }
 
     @Test
-    fun completeAndAbandonEndTheGoal() {
-        for ((disposition, tag) in listOf(
-            GoalDisposition.COMPLETE to GoalEvidence.COMPLETED,
-            GoalDisposition.ABANDON to GoalEvidence.ABANDONED,
-        )) {
-            review(alpha, "a-$tag", 100, GoalDisposition.ADOPT, "gather wood")
-            val (ended, carried) = review(alpha, "b-$tag", 200, disposition)
-            assertEquals(true, carried)
-            assertEquals(tag, ended?.outcome)
-            assertNull(ended?.goalId)
-            assertNull(ledger.present(alpha, "c-$tag", 300))
-            ledger.forget(alpha, "c-$tag")
-        }
+    fun abandonEndsTheGoal() {
+        review(alpha, "a", 100, GoalDisposition.ADOPT, "gather wood")
+        val (ended, carried) = review(alpha, "b", 200, GoalDisposition.ABANDON)
+        assertEquals(true, carried)
+        assertEquals(GoalEvidence.ABANDONED, ended?.outcome)
+        assertNull(ended?.goalId)
+        assertNull(ledger.present(alpha, "c", 300))
+    }
+
+    @Test
+    fun completeEndsTheGoalOnlyWhenItsSuccessConditionIsMet() {
+        affirm("a", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather a stick"))
+        // Without the stick a completion is a claim the inventory does not back, refused.
+        assertEquals(
+            GoalEvidence.COMPLETION_UNMET,
+            affirm("b", 200, seen(0.0), goalChoice(GoalDisposition.COMPLETE)).second?.outcome,
+        )
+        val (met, completed) = affirm("c", 300, seen(0.0, STICK to 1L), goalChoice(GoalDisposition.COMPLETE))
+        assertEquals(true, met?.progress?.conditionMet)
+        assertEquals(GoalEvidence.COMPLETED, completed?.outcome)
+        assertNull(ledger.present(alpha, "d", 400, seen(0.0, STICK to 1L)))
     }
 
     @Test
@@ -232,115 +243,162 @@ class GoalLedgerTest {
         tick: Long,
         observed: GoalObservation,
         choice: GoalChoice?,
+        intent: Intent = Intent.Idle,
     ): Pair<GoalSummary?, GoalEvidence?> {
         val carried = ledger.present(alpha, requestId, tick, observed)
-        val decision = decisionFor(perception(requestId = requestId, agentId = alpha.value)).copy(goal = choice)
+        val decision = decisionFor(perception(requestId = requestId, agentId = alpha.value), intent).copy(goal = choice)
         return carried to ledger.resolve(alpha, decision)
     }
 
+    /**
+     * One affirmed step whose intent is [intent], which the body then answered with [outcome]. The
+     * review's tick is its request number times a hundred.
+     */
+    private fun step(
+        requestId: String,
+        observed: GoalObservation,
+        disposition: GoalDisposition,
+        intent: Intent,
+        outcome: String = EventTag.ACCEPTED,
+    ): Pair<GoalSummary?, GoalEvidence?> {
+        val tick = requestId.drop(1).toLong() * 100
+        val result =
+            affirm(requestId, tick, observed, goalChoice(disposition, "gather a stick", intent = intent), intent)
+        ledger.stepped(alpha, requestId, tagOf(intent), outcome)
+        return result
+    }
+
     @Test
-    fun aWorkingGoalNeedsItsConditionStepAndVerdict() {
+    fun aWorkingGoalNeedsItsTypedConditionStepAndVerdict() {
         val adoptBare = GoalChoice(GoalDisposition.ADOPT, statement = "gather wood", step = "walk to the tree")
         assertEquals(GoalEvidence.SUCCESS_CONDITION_MISSING, affirm("r1", 100, seen(0.0), adoptBare).second?.outcome)
-        val adoptNoStep = GoalChoice(GoalDisposition.ADOPT, statement = "gather wood", successCondition = "8 logs")
-        assertEquals(GoalEvidence.STEP_MISSING, affirm("r2", 100, seen(0.0), adoptNoStep).second?.outcome)
-        affirm("r3", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather wood"))
-        val unjudged = GoalChoice(GoalDisposition.CONTINUE, step = "cut the log")
-        assertEquals(GoalEvidence.STEP_RESULT_MISSING, affirm("r4", 200, seen(0.0), unjudged).second?.outcome)
-        val unstepped = GoalChoice(GoalDisposition.CONTINUE, stepResult = GoalStepResult.DONE)
-        assertEquals(GoalEvidence.STEP_MISSING, affirm("r5", 200, seen(0.0), unstepped).second?.outcome)
-        val carried = ledger.present(alpha, "r6", 300, seen(0.0))
-        assertEquals("the evidence shows it is done", carried?.successCondition)
-        assertEquals("the next concrete step", carried?.step)
+        val untyped = adoptBare.copy(successCondition = "8 logs")
+        assertEquals(GoalEvidence.SUCCESS_TARGET_MISSING, affirm("r2", 100, seen(0.0), untyped).second?.outcome)
+        val adoptNoStep = untyped.copy(successItem = "item.minecraft.oak_log", successCount = 8, step = null)
+        assertEquals(GoalEvidence.STEP_MISSING, affirm("r3", 100, seen(0.0), adoptNoStep).second?.outcome)
+        val adoptNoAction = adoptNoStep.copy(step = "walk to the tree")
+        assertEquals(GoalEvidence.STEP_ACTION_MISSING, affirm("r4", 100, seen(0.0), adoptNoAction).second?.outcome)
+        affirm("r5", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather wood"))
+        val unjudged = goalChoice(GoalDisposition.CONTINUE).copy(stepResult = null)
+        assertEquals(GoalEvidence.STEP_RESULT_MISSING, affirm("r6", 200, seen(0.0), unjudged).second?.outcome)
+        val carried = ledger.present(alpha, "r7", 300, seen(0.0))
+        assertEquals("item.minecraft.stick", carried?.successItem)
+        assertEquals(1L, carried?.successCount)
+        assertEquals(IntentAction.IDLE, carried?.stepAction)
+        assertNull(carried?.stepRef)
     }
 
     @Test
-    fun stepsThatChangeNothingEndTheGoalAtTheBoundAndEvidenceResetsTheCount() {
-        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather wood"))
-        // Nothing changed after the adopting step: one step without progress.
-        val (first, continued) = affirm("r2", 200, seen(0.4), goalChoice(GoalDisposition.CONTINUE))
-        assertEquals(GoalProgress(inventoryChanged = false, moved = false, stepsWithoutProgress = 1), first?.progress)
-        assertEquals(GoalEvidence.CONTINUED, continued?.outcome)
-        assertEquals(1L, continued?.stepsWithoutProgress)
-        // A move of a block or more is progress, and resets the count.
-        val (moved, _) = affirm("r3", 300, seen(2.0), goalChoice(GoalDisposition.CONTINUE))
-        assertEquals(GoalProgress(inventoryChanged = false, moved = true, stepsWithoutProgress = 0), moved?.progress)
-        // So is a change of inventory.
-        val (gained, _) =
-            affirm(
-                "r4",
-                400,
-                seen(2.0, "item.minecraft.stick" to 2L),
-                goalChoice(GoalDisposition.CONTINUE),
-            )
-        assertEquals(GoalProgress(inventoryChanged = true, moved = false, stepsWithoutProgress = 0), gained?.progress)
-        // Three affirmed steps in a row that change nothing reach the bound.
-        val still = seen(2.0, "item.minecraft.stick" to 2L)
-        assertEquals(
-            1L,
-            affirm("r5", 500, still, goalChoice(GoalDisposition.CONTINUE)).first?.progress?.stepsWithoutProgress,
+    fun aStepTypedAsAnotherActionOrRefIsRefusedWithItsIntent() {
+        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather a stick"))
+        val walk = Intent.MoveTo("bh90")
+        // The step names bh8s; the intent walks to bh90.
+        val misnamed = goalChoice(GoalDisposition.CONTINUE, intent = Intent.MoveTo("bh8s"))
+        assertEquals(GoalEvidence.STEP_MISMATCH, affirm("r2", 200, seen(0.0), misnamed, walk).second?.outcome)
+        // The step names a collect; the intent idles.
+        val collecting = goalChoice(GoalDisposition.CONTINUE, intent = Intent.Collect("d5r", approach = true))
+        assertEquals(GoalEvidence.STEP_MISMATCH, affirm("r3", 300, seen(0.0), collecting).second?.outcome)
+        // The goal is untouched by either.
+        assertEquals(IntentAction.IDLE, ledger.present(alpha, "r4", 400, seen(0.0))?.stepAction)
+    }
+
+    @Test
+    fun theConditionIsTheHeldCountOfItsItemAndTheDeltaIsEveryItemThatChanged() {
+        affirm(
+            "r1",
+            100,
+            seen(0.0, DIRT to 3L),
+            goalChoice(GoalDisposition.ADOPT, "gather sticks", success = STICK to 2L),
         )
+        val (half, _) = affirm("r2", 200, seen(0.0, DIRT to 2L, STICK to 1L), goalChoice(GoalDisposition.CONTINUE))
         assertEquals(
-            2L,
-            affirm("r6", 600, still, goalChoice(GoalDisposition.CONTINUE)).first?.progress?.stepsWithoutProgress,
+            GoalProgress(
+                conditionMet = false,
+                conditionHeld = 1,
+                inventoryDelta = listOf(InventoryChange(DIRT, -1), InventoryChange(STICK, 1)),
+                conditionAdvanced = true,
+                stepAdvanced = false,
+                stepsWithoutProgress = 0,
+            ),
+            half?.progress,
         )
-        val (atBound, refused) =
+        val (full, _) =
             affirm(
-                "r7",
-                700,
-                still,
-                goalChoice(GoalDisposition.CONTINUE, stepResult = GoalStepResult.NO_PROGRESS),
+                "r3",
+                300,
+                seen(0.0, DIRT to 2L, STICK to 2L),
+                goalChoice(GoalDisposition.REVISE, "more"),
             )
-        assertEquals(MAX_GOAL_STEPS_WITHOUT_PROGRESS, atBound?.progress?.stepsWithoutProgress)
-        assertEquals(GoalEvidence.STALLED, refused?.outcome)
-        assertEquals(GoalStepResult.NO_PROGRESS, refused?.stepResult)
-        // The goal is over: nothing is carried, and a new one may be adopted.
-        assertNull(ledger.present(alpha, "r8", 800, still))
+        assertEquals(true, full?.progress?.conditionMet)
+        assertEquals(listOf(InventoryChange(STICK, 1)), full?.progress?.inventoryDelta)
+    }
+
+    @Test
+    fun aMetConditionMustBeCompletedOrRevisedAtTheNextReview() {
+        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather a stick"))
+        val holding = seen(0.0, STICK to 1L)
+        for ((request, choice) in listOf(
+            "r2" to goalChoice(GoalDisposition.CONTINUE),
+            "r3" to goalChoice(GoalDisposition.ABANDON),
+            "r4" to null,
+        )) {
+            assertEquals(
+                GoalEvidence.CONDITION_MET_IGNORED,
+                affirm(request, 200, holding, choice).second?.outcome,
+                request,
+            )
+        }
         assertEquals(
-            GoalEvidence.ADOPTED,
-            affirm("r9", 900, still, goalChoice(GoalDisposition.ADOPT, "collect sticks")).second?.outcome,
+            GoalEvidence.REVISED,
+            affirm("r5", 300, holding, goalChoice(GoalDisposition.REVISE, "gather three sticks", success = STICK to 3L))
+                .second?.outcome,
         )
     }
 
     @Test
-    fun aRevisionKeepsTheNoProgressCountAndIsRefusedAtTheBound() {
-        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather wood"))
-        affirm("r2", 200, seen(0.0), goalChoice(GoalDisposition.CONTINUE))
-        val (stalling, revised) = affirm("r3", 300, seen(0.0), goalChoice(GoalDisposition.REVISE, "collect sticks"))
-        assertEquals(2L, stalling?.progress?.stepsWithoutProgress)
-        assertEquals(GoalEvidence.REVISED, revised?.outcome)
-        // Rewording changed nothing the body measures, so the count goes on from two.
-        val (atBound, refused) = affirm("r4", 400, seen(0.0), goalChoice(GoalDisposition.REVISE, "find sticks"))
+    fun aWalkAdvancesItsStepOnlyByArrivingWhereTheGoalHasNotBeen() {
+        step("r1", seen(0.0), GoalDisposition.ADOPT, Intent.MoveTo("b1"))
+        val (arrived, _) = step("r2", seen(3.0), GoalDisposition.CONTINUE, Intent.MoveTo("b2"))
+        assertEquals(true, arrived?.progress?.stepAdvanced)
+        assertEquals(0L, arrived?.progress?.stepsWithoutProgress)
+        // Back to the cell the goal was adopted at: no arrival anywhere new.
+        val (returned, _) = step("r3", seen(0.0), GoalDisposition.CONTINUE, Intent.MoveTo("b1"))
+        assertEquals(false, returned?.progress?.stepAdvanced)
+        assertEquals(1L, returned?.progress?.stepsWithoutProgress)
+        // And back to the cell the first walk reached: still nowhere new.
+        val (shuffled, _) =
+            step("r4", seen(3.0), GoalDisposition.CONTINUE, Intent.MoveTo("b3"), EventTag.MOVE_NO_ROUTE)
+        assertEquals(false, shuffled?.progress?.stepAdvanced)
+        assertEquals(2L, shuffled?.progress?.stepsWithoutProgress)
+        // A refused walk advances nothing, even where the body ends up somewhere new.
+        val refused = ledger.present(alpha, "r5", 500, seen(9.0))
+        assertEquals(false, refused?.progress?.stepAdvanced)
+        assertEquals(3L, refused?.progress?.stepsWithoutProgress)
+    }
+
+    @Test
+    fun aWorldStepAdvancesWhenTheBodyCarriedItOutAndIdlingNeverDoes() {
+        step("r1", seen(0.0), GoalDisposition.ADOPT, Intent.Dig("b1"))
+        val (dug, _) = step("r2", seen(0.0), GoalDisposition.CONTINUE, Intent.Idle)
+        assertEquals(true, dug?.progress?.stepAdvanced)
+        val (idled, _) = step("r3", seen(0.0), GoalDisposition.CONTINUE, Intent.Dig("b2"), EventTag.DIG_TIMED_OUT)
+        assertEquals(false, idled?.progress?.stepAdvanced)
+        assertEquals(false, ledger.present(alpha, "r4", 400, seen(0.0))?.progress?.stepAdvanced)
+    }
+
+    @Test
+    fun stepsThatAdvanceNothingEndTheGoalAtTheBoundEvenWhenRevised() {
+        step("r1", seen(0.0), GoalDisposition.ADOPT, Intent.Idle)
+        step("r2", seen(0.0), GoalDisposition.CONTINUE, Intent.Idle)
+        step("r3", seen(0.0), GoalDisposition.REVISE, Intent.Idle)
+        val (atBound, refused) = step("r4", seen(0.0), GoalDisposition.REVISE, Intent.Idle)
         assertEquals(MAX_GOAL_STEPS_WITHOUT_PROGRESS, atBound?.progress?.stepsWithoutProgress)
         assertEquals(GoalEvidence.STALLED, refused?.outcome)
-        assertNull(refused?.goalId)
         assertNull(ledger.present(alpha, "r5", 500, seen(0.0)))
     }
 
-    @Test
-    fun onlyMeasuredProgressOrANewGoalResetsTheCountARevisionDoesNot() {
-        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT, "gather wood"))
-        affirm("r2", 200, seen(0.0), goalChoice(GoalDisposition.REVISE, "gather oak"))
-        affirm("r3", 300, seen(0.0), goalChoice(GoalDisposition.REVISE, "gather birch"))
-        // A step that changed the inventory is evidence, and resets the count under a revise too.
-        val (gained, revised) =
-            affirm(
-                "r4",
-                400,
-                seen(0.0, "item.minecraft.oak_log" to 1L),
-                goalChoice(GoalDisposition.REVISE, "more logs"),
-            )
-        assertEquals(0L, gained?.progress?.stepsWithoutProgress)
-        assertEquals(GoalEvidence.REVISED, revised?.outcome)
-        assertEquals(
-            1L,
-            ledger.present(alpha, "r5", 500, seen(0.0, "item.minecraft.oak_log" to 1L))?.progress?.stepsWithoutProgress,
-        )
-        // Completion ends the run; a newly adopted goal starts with nothing counted against it.
-        ledger.resolve(alpha, answer(alpha, "r5", GoalDisposition.COMPLETE))
-        val (fresh, adopted) = affirm("r6", 600, seen(0.0), goalChoice(GoalDisposition.ADOPT, "build a shelter"))
-        assertNull(fresh)
-        assertEquals(GoalEvidence.ADOPTED, adopted?.outcome)
-        assertEquals(1L, ledger.present(alpha, "r7", 700, seen(0.0))?.progress?.stepsWithoutProgress)
+    private companion object {
+        const val STICK = "item.minecraft.stick"
+        const val DIRT = "item.minecraft.dirt"
     }
 }

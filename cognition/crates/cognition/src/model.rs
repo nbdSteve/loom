@@ -331,8 +331,9 @@ const LOW_FOOD_LEVEL: i64 = 7;
 pub const SCRIPTED_GOAL_STATEMENT: &str = "scripted stand-in goal: stay fed and unhurt";
 
 /// The stand-in's success condition and step, worded as its own for the same reason.
-pub const SCRIPTED_SUCCESS_CONDITION: &str =
-    "scripted stand-in condition: health and food stay above half";
+pub const SCRIPTED_SUCCESS_CONDITION: &str = "scripted stand-in condition: hold one stick";
+/// The item the scripted stand-in's placeholder goal is achieved by holding.
+pub const SCRIPTED_SUCCESS_ITEM: &str = "item.minecraft.stick";
 pub const SCRIPTED_STEP: &str = "scripted stand-in step: act on the trigger in front of me";
 
 /// The deterministic stand-in backend: a rule per trigger, no inference.
@@ -352,7 +353,7 @@ impl ScriptedBackend {
     #[must_use]
     pub fn draft_now(route: &ModelRoute, perception: &Perception) -> Draft {
         let mut draft = Self::step_now(route, perception);
-        draft.goal = Self::goal_now(perception);
+        draft.goal = Self::goal_now(perception, &draft.intent);
         draft
     }
 
@@ -365,42 +366,53 @@ impl ScriptedBackend {
     /// the body's progress evidence only as far as the bound requires: a step that
     /// changed nothing is judged `noProgress`, and a goal at the no-progress bound
     /// is abandoned rather than continued into the body's refusal.
-    fn goal_now(perception: &Perception) -> Option<GoalChoice> {
+    fn goal_now(perception: &Perception, intent: &Intent) -> Option<GoalChoice> {
         if !matches!(perception.trigger, Trigger::GoalReview) {
             return None;
         }
+        let step = |disposition, step_result| GoalChoice {
+            disposition,
+            statement: None,
+            success_condition: None,
+            success_item: None,
+            success_count: None,
+            step: Some(SCRIPTED_STEP.to_owned()),
+            step_action: Some(intent.action()),
+            step_ref: intent.target_ref().map(str::to_owned),
+            step_result,
+        };
         let Some(held) = &perception.goal else {
             return Some(GoalChoice {
-                disposition: GoalDisposition::Adopt,
                 statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
                 success_condition: Some(SCRIPTED_SUCCESS_CONDITION.to_owned()),
-                step: Some(SCRIPTED_STEP.to_owned()),
-                step_result: None,
+                success_item: Some(SCRIPTED_SUCCESS_ITEM.to_owned()),
+                success_count: Some(1),
+                ..step(GoalDisposition::Adopt, None)
             });
         };
         let progress = held.progress.as_ref();
         let step_result = match progress {
-            Some(seen) if !seen.inventory_changed && !seen.moved => GoalStepResult::NoProgress,
+            Some(seen) if !seen.condition_advanced && !seen.step_advanced => {
+                GoalStepResult::NoProgress
+            }
             _ => GoalStepResult::Progressing,
         };
-        let stalled = progress
-            .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS);
-        Some(if stalled {
-            GoalChoice {
-                disposition: GoalDisposition::Abandon,
-                statement: None,
-                success_condition: None,
-                step: None,
-                step_result: Some(step_result),
-            }
+        let ended = |disposition| GoalChoice {
+            step: None,
+            step_action: None,
+            step_ref: None,
+            ..step(disposition, Some(step_result))
+        };
+        // A met condition is completed, a goal at the no-progress bound abandoned rather than
+        // continued into the body's refusal, and anything else continued.
+        Some(if progress.is_some_and(|seen| seen.condition_met) {
+            ended(GoalDisposition::Complete)
+        } else if progress
+            .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS)
+        {
+            ended(GoalDisposition::Abandon)
         } else {
-            GoalChoice {
-                disposition: GoalDisposition::Continue,
-                statement: None,
-                success_condition: None,
-                step: Some(SCRIPTED_STEP.to_owned()),
-                step_result: Some(step_result),
-            }
+            step(GoalDisposition::Continue, Some(step_result))
         })
     }
 
@@ -754,7 +766,11 @@ mod tests {
             adopted_tick: 0,
             last_step: None,
             success_condition: Some(SCRIPTED_SUCCESS_CONDITION.to_owned()),
+            success_item: None,
+            success_count: None,
             step: Some(SCRIPTED_STEP.to_owned()),
+            step_action: None,
+            step_ref: None,
             progress: None,
         });
         let continued = ScriptedBackend::draft_now(&route, &later).goal.unwrap();

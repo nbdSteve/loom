@@ -15,11 +15,14 @@
  * - spawn, disconnect, despawn, death and revival clear the agent's goal and every
  *   answer still in flight for it, because a new body session is not the world the
  *   goal was chosen in;
- * - each review measures, from the agent's own perceptions, whether the step the goal's last
- *   affirming review took changed its inventory or its place, and a continue or revise past
- *   [MAX_GOAL_STEPS_WITHOUT_PROGRESS] such steps in a row is refused and ends the goal. The
- *   count survives a revise, because rewording a goal changes nothing the body can measure;
- *   only a measured change, completion, abandonment or a newly adopted goal resets it.
+ * - each review measures, from the agent's own perceptions, whether the goal's typed success
+ *   condition advanced or its typed step was carried out (`WorkingGoal.kt`), and a continue or
+ *   revise past [MAX_GOAL_STEPS_WITHOUT_PROGRESS] steps in a row that advanced neither is refused
+ *   and ends the goal. Moving about, falling and returning advance nothing, and the count
+ *   survives a revise; only real progress, completion, abandonment or a new goal resets it;
+ * - a decision whose typed step disagrees with its own intent, that leaves a met success
+ *   condition neither completed nor revised, or that completes an unmet one is refused before
+ *   its intent reaches the body (`incoherenceOf`).
  */
 package dev.loom.mind
 
@@ -67,6 +70,7 @@ class GoalLedger(
         val affirmedBy: String,
         val observed: GoalObservation?,
         val stepsWithoutProgress: Long,
+        val visited: Set<List<Int>>,
     )
 
     private data class Basis(
@@ -110,7 +114,9 @@ class GoalLedger(
         val presented =
             goals.held?.let { held ->
                 held.summary.copy(
-                    progress = progressOf(held.observed, observed, held.stepsWithoutProgress) ?: held.summary.progress,
+                    progress =
+                        progressOf(held.summary, held.observed, observed, held.visited, held.stepsWithoutProgress)
+                            ?: held.summary.progress,
                 )
             }
         goals.pending.remove(requestId)
@@ -156,12 +162,27 @@ class GoalLedger(
                 expiredGoalId = basis.expiredGoalId,
                 stepResult = choice?.stepResult,
                 stepsWithoutProgress = basis.presented?.progress?.stepsWithoutProgress,
+                conditionMet = basis.presented?.progress?.conditionMet,
+                conditionAdvanced = basis.presented?.progress?.conditionAdvanced,
+                stepAdvanced = basis.presented?.progress?.stepAdvanced,
             )
         val unchanged =
             basis.session == goals.session &&
                 current?.goalId == basis.presented?.goalId &&
                 current?.revision == basis.presented?.revision
+        val incoherent =
+            if (unchanged) {
+                incoherenceOf(
+                    basis.presented,
+                    choice,
+                    decision.intent,
+                    basis.observed,
+                )
+            } else {
+                null
+            }
         return when {
+            incoherent != null -> evidence.copy(outcome = incoherent)
             choice == null -> evidence
             !unchanged -> evidence.copy(outcome = GoalEvidence.STALE)
             else -> apply(goals, basis, choice, decision.requestId, evidence)
@@ -231,35 +252,16 @@ class GoalLedger(
             }
         }
         val presented = basis.presented
-        val next =
-            when (choice.disposition) {
-                GoalDisposition.ADOPT ->
-                    GoalSummary(
-                        goalId = requestId,
-                        statement = requireNotNull(choice.statement),
-                        revision = 0,
-                        adoptedTick = basis.capturedTick,
-                        successCondition = choice.successCondition,
-                        step = choice.step,
-                    )
-                GoalDisposition.CONTINUE ->
-                    requireNotNull(presented).copy(lastStep = null, step = choice.step, progress = null)
-                GoalDisposition.REVISE ->
-                    requireNotNull(presented).copy(
-                        statement = requireNotNull(choice.statement),
-                        revision = presented.revision + 1,
-                        lastStep = null,
-                        successCondition = choice.successCondition,
-                        step = choice.step,
-                        progress = null,
-                    )
-                GoalDisposition.COMPLETE, GoalDisposition.ABANDON -> null
-            }
+        val next = nextGoalOf(presented, choice, requestId, basis.capturedTick)
         // A continue or revise carries the run of steps that changed nothing; only an adopted
         // goal starts it again, since only a measured change is evidence of progress.
         val carriedCount =
             if (choice.disposition == GoalDisposition.ADOPT) 0 else presented?.progress?.stepsWithoutProgress ?: 0
-        goals.held = next?.let { Held(it, basis.capturedTick, requestId, basis.observed, carriedCount) }
+        // A new goal starts with only the cell it was adopted at; a kept goal remembers every cell
+        // it has been reviewed at, so a walk back to one of them is no arrival anywhere new.
+        val earlier = if (choice.disposition == GoalDisposition.ADOPT) emptySet() else goals.held?.visited.orEmpty()
+        val visited = (earlier + listOfNotNull(basis.observed?.cell)).toList().takeLast(MAX_GOAL_CELLS).toSet()
+        goals.held = next?.let { Held(it, basis.capturedTick, requestId, basis.observed, carriedCount, visited) }
         return evidence.copy(
             outcome = acceptedTag(choice.disposition),
             goalId = next?.goalId,
@@ -270,6 +272,51 @@ class GoalLedger(
 
 /** The dispositions that keep the held goal, and so the run of steps that changed nothing. */
 private val KEEPING = setOf(GoalDisposition.CONTINUE, GoalDisposition.REVISE)
+
+/** The goal [choice] leaves held after [presented], or `null` when it ends the goal. */
+private fun nextGoalOf(
+    presented: GoalSummary?,
+    choice: GoalChoice,
+    requestId: String,
+    capturedTick: Long,
+): GoalSummary? =
+    when (choice.disposition) {
+        GoalDisposition.ADOPT ->
+            GoalSummary(
+                goalId = requestId,
+                statement = requireNotNull(choice.statement),
+                revision = 0,
+                adoptedTick = capturedTick,
+                successCondition = choice.successCondition,
+                successItem = choice.successItem,
+                successCount = choice.successCount,
+                step = choice.step,
+                stepAction = choice.stepAction,
+                stepRef = choice.stepRef,
+            )
+        GoalDisposition.CONTINUE ->
+            requireNotNull(presented).copy(
+                lastStep = null,
+                step = choice.step,
+                stepAction = choice.stepAction,
+                stepRef = choice.stepRef,
+                progress = null,
+            )
+        GoalDisposition.REVISE ->
+            requireNotNull(presented).copy(
+                statement = requireNotNull(choice.statement),
+                revision = presented.revision + 1,
+                lastStep = null,
+                successCondition = choice.successCondition,
+                successItem = choice.successItem,
+                successCount = choice.successCount,
+                step = choice.step,
+                stepAction = choice.stepAction,
+                stepRef = choice.stepRef,
+                progress = null,
+            )
+        GoalDisposition.COMPLETE, GoalDisposition.ABANDON -> null
+    }
 
 /** Why [choice] cannot apply to the goal its perception carried, or `null` if it can. */
 private fun refusalOf(

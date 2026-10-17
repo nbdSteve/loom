@@ -6,12 +6,12 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v19 actionable-refs pilot,
-`research/config/first-tribe-routine-v19-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v19-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v20 typed-goal pilot,
+`research/config/first-tribe-routine-v20-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v20-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
-native event drivers. It uses the v19 prompts, which show each agent its own
+native event drivers. It uses the v20 prompts, which show each agent its own
 carried goal and let the model return an optional typed goal choice, and it
 attests `categoryFairSelection: true` because the 48-per-kind selector it runs on
 is category-fair. Since v14 a `moveTo` names an observed block by ref rather than
@@ -39,7 +39,12 @@ v19 keeps v18 and offers each action only what the body can reach with it: block
 within interaction reach to dig, place or sleep, walks only to blocks the server says a body can
 stand at (a perception's block now states `standable`), and collect and attack refs within the
 reach of the approach mode that names them, because r10's two refusals were a covered walk
-target and a collect without moving 18 blocks off. `research/lib/experiment-mode.js` owns the pins. In the
+target and a collect without moving 18 blocks off.
+v20 keeps v19 and types the working goal: the success condition is an item and count the body
+measures, the step is the intent's own action and ref, a step that disagrees with its intent or a
+met condition left neither completed nor revised is refused before the body acts, and only
+evidence that advances the condition or carries out the step resets the stall count, because the
+independent r11 audit found the run's goal progress was movement and three met conditions unseen. `research/lib/experiment-mode.js` owns the pins. In the
 scripted twin the stand-in adopts one fixed placeholder goal at each agent's
 first review and continues it at the second; that exercises the goal round
 trip and is not evidence of agency.
@@ -64,9 +69,10 @@ configurations that ran `-r1` to `-r4` are `research/config/tribe-shakedown-10m-
 and are historical, as are the v14 `research/config/tribe-grounded-walk-10m-10*.json`
 that ran `-r5` and the v15 `research/config/tribe-grounded-walk-v15-10m-10*.json` that
 ran `-r6` and the v17 `research/config/tribe-working-goal-10m-10*.json` that ran `-r8` and
-`-r9`, and the v18 `research/config/tribe-offered-refs-10m-10*.json` that ran `-r10`;
-`actionable-refs-10m-10` is the same profile under the v19 mode, configured by
-`research/config/tribe-actionable-refs-10m-10*.json`. The live one
+`-r9`, the v18 `research/config/tribe-offered-refs-10m-10*.json` that ran `-r10`, and the v19
+`research/config/tribe-actionable-refs-10m-10*.json` that ran `-r11`; `typed-goal-10m-10` is the
+same profile under the v20 mode, configured by `research/config/tribe-typed-goal-10m-10*.json`.
+The live one
 carries the next fresh `2026-10-16-openai-10-agent-10m-r<n>` id. Each id is consumed
 by its one attempt and its published artifact names the commit it ran from.
 Outside the pilot profile the mechanical pilot verdict is `notApplicable`.
@@ -80,7 +86,8 @@ primary-behavior mode), and the `first-tribe-routine-v13-agency-pilot*.json` and
 `tribe-grounded-walk-10m-10*.json` and `tribe-grounded-walk-v15-10m-10*.json` files (the
 routine-v14 and routine-v15 grounded-walk modes), and the `tribe-working-goal-10m-10*.json`
 files (the routine-v17 working-goal mode), and the `tribe-offered-refs-10m-10*.json` files (the
-routine-v18 offered-refs mode). They pin prompts the current mind no longer serves, so
+routine-v18 offered-refs mode), and the `tribe-actionable-refs-10m-10*.json` files (the
+routine-v19 actionable-refs mode). They pin prompts the current mind no longer serves, so
 preflight refuses them before anything is built, started or read; the artifacts
 committed under them still validate. `contract/fixtures/capability-support.json`
 is the one classification of which configurations, modes, intents, triggers and
@@ -99,7 +106,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v19-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v20-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -118,8 +125,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v19-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v19-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v20-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v20-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -288,6 +295,12 @@ A walk or flight's `moved` and `retreating` records carry its request id and a t
 A test reads the JVM's refusal tags and fails if any would classify as unexplained.
 `readiness.goalCoherence` counts the affirmed steps the body measured as having changed the agent's inventory or place, the goals advanced by two or more such steps, and the goals completed after at least one.
 
+Generation 4 (`loom-readiness-gate/2`) makes coherence part of the verdict, because r11 was mechanically `ready` and the independent audit found no evidence-driven multi-step pursuit.
+`goalCoherence` is then read from the typed goal: steps that advanced the success condition, steps that only carried out the typed step, steps that advanced nothing, met conditions and how each was answered, step mismatches, unmet completions and stalls.
+It is `coherent` only with no step mismatch, no unmet completion, no met condition left unanswered, and at least one goal whose condition advanced at two or more steps; `verdict` is `ready` only when the mechanical half (`mechanicalVerdict`) and coherence both pass.
+A decision the goal ledger refused is the `goalIncoherent` blocker and an invalid decision, even when its intent was passive.
+`test/readiness-coherence.test.js` holds r11's own evidence to that gate, where it is `notReady`.
+
 ## Lifecycle and cleanup
 
 Before it creates the disposable server or reads a credential, the harness refuses to start unless the run volume has at least 2 GiB free, or more when the configured log and artifact bounds need it.
@@ -431,7 +444,7 @@ An empty value or lookup failure stops before cognition starts. An HTTP 401 or
 403 from the provider stops the whole run after that refusal, with no retry and
 only a stable provider-safe error.
 
-The routine-v19 pilot routes routine and notable decisions to
+The routine-v20 pilot routes routine and notable decisions to
 `gpt-5.4-nano` and only the existing pivotal tier to `gpt-5.4`. It runs three
 agents for at most 180 wall-clock seconds or 4,000 server ticks, whichever
 comes first, and permits at most six calls per agent, twelve calls globally,

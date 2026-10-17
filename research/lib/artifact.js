@@ -1825,7 +1825,10 @@ function readinessLines (readiness) {
       `typed terminal accounting ${readiness.rates.typedTerminalAccounting ?? 'n/a'}, server truthfulness ${readiness.rates.serverTruthfulness ?? 'n/a'}.`,
     `- Actions by class: ${JSON.stringify(nonZero(readiness.actions.byClass))}; blockers: ${Object.keys(blockers).length === 0 ? 'none' : JSON.stringify(blockers)}; ` +
       `legitimate races: ${readiness.races}; cognition failures: ${JSON.stringify(readiness.cognitionFailures)}; server disputes: ${readiness.serverDisputes}.`,
-    `- Goal coherence: ${JSON.stringify(readiness.goalCoherence)}.`
+    readiness.mechanicalVerdict === undefined
+      ? `- Goal coherence: ${JSON.stringify(readiness.goalCoherence)}.`
+      : `- Goal coherence: **${readiness.goalCoherence.verdict}**, part of the verdict (mechanically ${readiness.mechanicalVerdict}); ` +
+        `${JSON.stringify(Object.fromEntries(Object.entries(readiness.goalCoherence).filter(([name]) => name !== 'verdict')))}.`
   ]
   for (const entry of readiness.actions.nonSuccess) {
     lines.push(`  - \`${entry.requestKey}\` ${entry.intent}: ${entry.class}${entry.race ? ' (race)' : ''}, ` +

@@ -595,16 +595,26 @@ data class GoalSummary(
     val lastStep: GoalStep? = null,
     /** The observable state that would mean the goal is achieved. */
     val successCondition: String? = null,
+    /** The item the goal must hold, which types the success condition. */
+    val successItem: String? = null,
+    /** How many of the success item the goal must hold. */
+    val successCount: Long? = null,
     /** The step the goal's last affirming review chose to take. */
     val step: String? = null,
-    /** Body-measured evidence about that step, once a later review can compare. */
+    /** The action that step's intent took. */
+    val stepAction: IntentAction? = null,
+    /** The target ref that step's intent named, absent for an action that names none. */
+    val stepRef: String? = null,
+    /** Body-measured evidence about the goal, once a later review can compare. */
     val progress: GoalProgress? = null,
 ) {
     init {
         requireBoundedText("goalId", goalId, MAX_GOAL_ID_CHARS)
         requireBoundedText("goal statement", statement, MAX_GOAL_STATEMENT_CHARS)
         successCondition?.let { requireBoundedText("goal success condition", it, MAX_GOAL_STATEMENT_CHARS) }
+        requireTypedSuccess(successItem, successCount)
         step?.let { requireBoundedText("goal step", it, MAX_GOAL_STATEMENT_CHARS) }
+        stepRef?.let(::requireBoundedRef)
         require(revision >= 0) { "goal revision must not be negative, got $revision" }
         require(adoptedTick >= 0) { "goal adoptedTick must not be negative, got $adoptedTick" }
     }
@@ -616,19 +626,142 @@ data class GoalSummary(
  */
 const val MAX_GOAL_STEPS_WITHOUT_PROGRESS: Long = 3
 
-/** Body-measured evidence about the step the goal's last affirming review took. */
+/** Longest item name a success condition or inventory change may carry, in characters. */
+const val MAX_ITEM_NAME_CHARS: Int = 64
+
+/** Most of one item a success condition may ask the goal to hold. */
+const val MAX_SUCCESS_COUNT: Long = 64
+
+/** Most inventory changes one progress reading carries: one per player inventory slot. */
+const val MAX_INVENTORY_CHANGES: Int = 46
+
+/** Body-measured evidence about the goal since its last affirming review. */
 @Serializable
 data class GoalProgress(
-    /** Whether the agent's inventory changed since that review. */
-    val inventoryChanged: Boolean,
-    /** Whether the agent moved at least one block since that review. */
-    val moved: Boolean,
-    /** How many affirmed steps in a row changed neither. */
+    /** Whether the inventory now holds the success count of the success item. */
+    val conditionMet: Boolean,
+    /** How many of the success item the inventory holds now. */
+    val conditionHeld: Long,
+    /** Every item whose held count changed since the goal's last affirming review. */
+    val inventoryDelta: List<InventoryChange>,
+    /** Whether the held count of the success item rose since that review. */
+    val conditionAdvanced: Boolean,
+    /** Whether the typed step was carried out: for a walk, arriving somewhere new to the goal. */
+    val stepAdvanced: Boolean,
+    /** How many affirmed steps in a row advanced neither. */
     val stepsWithoutProgress: Long,
 ) {
     init {
+        require(conditionHeld >= 0) { "conditionHeld must not be negative, got $conditionHeld" }
+        require(inventoryDelta.size <= MAX_INVENTORY_CHANGES) { "at most $MAX_INVENTORY_CHANGES inventory changes" }
         require(stepsWithoutProgress >= 0) { "stepsWithoutProgress must not be negative, got $stepsWithoutProgress" }
     }
+}
+
+/** How the held count of one item changed since the goal's last affirming review. */
+@Serializable
+data class InventoryChange(
+    /** The item, exactly as an inventory stack names it. */
+    val what: String,
+    /** Positive gained, negative lost; never zero. */
+    val change: Long,
+) {
+    init {
+        requireBoundedText("inventory change item", what, MAX_ITEM_NAME_CHARS)
+        require(change != 0L) { "an inventory change is never zero" }
+    }
+}
+
+/** The action an [Intent] takes, as its `action` tag. */
+@Serializable
+enum class IntentAction {
+    @SerialName("say")
+    SAY,
+
+    @SerialName("moveTo")
+    MOVE_TO,
+
+    @SerialName("flee")
+    FLEE,
+
+    @SerialName("eat")
+    EAT,
+
+    @SerialName("dig")
+    DIG,
+
+    @SerialName("collect")
+    COLLECT,
+
+    @SerialName("place")
+    PLACE,
+
+    @SerialName("equip")
+    EQUIP,
+
+    @SerialName("craft")
+    CRAFT,
+
+    @SerialName("attack")
+    ATTACK,
+
+    @SerialName("sleep")
+    SLEEP,
+
+    @SerialName("rest")
+    REST,
+
+    @SerialName("idle")
+    IDLE,
+}
+
+/** The action this intent takes, as its `action` tag. */
+val Intent.action: IntentAction
+    get() =
+        when (this) {
+            is Intent.Say -> IntentAction.SAY
+            is Intent.MoveTo -> IntentAction.MOVE_TO
+            is Intent.Flee -> IntentAction.FLEE
+            is Intent.Eat -> IntentAction.EAT
+            is Intent.Dig -> IntentAction.DIG
+            is Intent.Collect -> IntentAction.COLLECT
+            is Intent.Place -> IntentAction.PLACE
+            is Intent.Equip -> IntentAction.EQUIP
+            is Intent.Craft -> IntentAction.CRAFT
+            is Intent.Attack -> IntentAction.ATTACK
+            is Intent.Sleep -> IntentAction.SLEEP
+            Intent.Rest -> IntentAction.REST
+            Intent.Idle -> IntentAction.IDLE
+        }
+
+/**
+ * The one target ref a goal step names for this intent, or `null` for an action that names
+ * nothing; mirrors the Rust contract's `Intent::target_ref`. A placement's target is its support
+ * block and an attack's is its creature: the stack each spends is the means, not the target.
+ */
+val Intent.targetRef: String?
+    get() =
+        when (this) {
+            is Intent.MoveTo -> onto
+            is Intent.Flee -> from
+            is Intent.Eat -> ref
+            is Intent.Dig -> block
+            is Intent.Collect -> item
+            is Intent.Place -> block
+            is Intent.Equip -> item
+            is Intent.Craft -> recipe
+            is Intent.Attack -> target
+            is Intent.Sleep -> bed
+            is Intent.Say, Intent.Rest, Intent.Idle -> null
+        }
+
+/** A typed success condition's two halves, each bounded where it is present. */
+private fun requireTypedSuccess(
+    item: String?,
+    count: Long?,
+) {
+    item?.let { requireBoundedText("goal success item", it, MAX_ITEM_NAME_CHARS) }
+    count?.let { require(it in 1..MAX_SUCCESS_COUNT) { "goal success count must be 1..$MAX_SUCCESS_COUNT, got $it" } }
 }
 
 /** The mind's verdict on the step its previous goal review took. */
@@ -672,15 +805,25 @@ data class GoalChoice(
     val statement: String? = null,
     /** The observable state that would mean the goal is achieved, for adopt and revise. */
     val successCondition: String? = null,
+    /** The item the goal must hold, typing the success condition, for adopt and revise. */
+    val successItem: String? = null,
+    /** How many of the success item the goal must hold, for adopt and revise. */
+    val successCount: Long? = null,
     /** The concrete next step this decision's intent takes, for adopt, continue and revise. */
     val step: String? = null,
+    /** The action the step takes, which must be the intent's own. */
+    val stepAction: IntentAction? = null,
+    /** The target ref the step names, which must be the intent's own; absent for none. */
+    val stepRef: String? = null,
     /** The verdict on the carried goal's previous step, for every disposition but adopt. */
     val stepResult: GoalStepResult? = null,
 ) {
     init {
         statement?.let { requireBoundedText("goal statement", it, MAX_GOAL_STATEMENT_CHARS) }
         successCondition?.let { requireBoundedText("goal success condition", it, MAX_GOAL_STATEMENT_CHARS) }
+        requireTypedSuccess(successItem, successCount)
         step?.let { requireBoundedText("goal step", it, MAX_GOAL_STATEMENT_CHARS) }
+        stepRef?.let(::requireBoundedRef)
     }
 }
 

@@ -33,7 +33,12 @@ const GOAL_OUTCOMES = [
   'goalSuccessConditionMissing',
   'goalStepMissing',
   'goalStepResultMissing',
-  'goalStalled'
+  'goalStalled',
+  'goalSuccessTargetMissing',
+  'goalStepActionMissing',
+  'goalStepMismatch',
+  'goalConditionMetIgnored',
+  'goalCompletionUnmet'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // Outcomes that act on the very goal the answered review was handed.
@@ -268,6 +273,11 @@ function validateGoalEvidence (goal, event, label) {
   if (goal.stepsWithoutProgress !== undefined &&
     (!Number.isSafeInteger(goal.stepsWithoutProgress) || goal.stepsWithoutProgress < 0)) {
     throw new Error(`${label} goal stepsWithoutProgress must be a non-negative integer`)
+  }
+  for (const field of ['conditionMet', 'conditionAdvanced', 'stepAdvanced']) {
+    if (goal[field] !== undefined && typeof goal[field] !== 'boolean') {
+      throw new Error(`${label} goal ${field} must be a boolean`)
+    }
   }
   if ((goal.presentedGoalId === undefined) !== (goal.presentedRevision === undefined) ||
     (goal.goalId === undefined) !== (goal.revision === undefined)) {
