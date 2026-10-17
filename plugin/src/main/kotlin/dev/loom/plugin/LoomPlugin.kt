@@ -80,7 +80,7 @@ class LoomPlugin : JavaPlugin() {
     private var hearer: ((Heard) -> Unit)? = null
 
     // One schedule: the mind tells it when a goal's step settles, and the driver claims from it.
-    internal val schedule = GoalReviewSchedule()
+    internal val schedule = GoalReviewSchedule(followUpsPerReview = followUpsPerReviewOf(System.getenv(FOLLOW_UPS_ENV)))
     private var cognition: EmbodiedCognition? = null
 
     /**

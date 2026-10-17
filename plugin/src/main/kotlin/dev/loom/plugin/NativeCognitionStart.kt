@@ -11,8 +11,27 @@
  */
 package dev.loom.plugin
 
+import dev.loom.mind.MAX_FOLLOW_UPS_PER_REVIEW
+
 /** The environment setting that selects when native cognition begins. */
 const val NATIVE_COGNITION_ENV: String = "LOOM_NATIVE_COGNITION"
+
+/** The environment setting that bounds how many follow-ups each scheduled review earns. */
+const val FOLLOW_UPS_ENV: String = "LOOM_GOAL_FOLLOW_UPS_PER_REVIEW"
+
+/**
+ * The follow-ups each scheduled review earns, from [value]: absent is the schedule's own
+ * [MAX_FOLLOW_UPS_PER_REVIEW], and anything that is not a count within it stops the plugin
+ * rather than running a plan nobody configured.
+ */
+fun followUpsPerReviewOf(value: String?): Int {
+    if (value == null) return MAX_FOLLOW_UPS_PER_REVIEW
+    val count = value.trim().toIntOrNull()
+    require(count != null && count in 0..MAX_FOLLOW_UPS_PER_REVIEW) {
+        "$FOLLOW_UPS_ENV must be a count in 0..$MAX_FOLLOW_UPS_PER_REVIEW, was \"$value\""
+    }
+    return count
+}
 
 /**
  * A one-shot latch over the native cognition sources.

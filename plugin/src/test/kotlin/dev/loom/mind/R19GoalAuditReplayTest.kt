@@ -241,6 +241,21 @@ class R19GoalAuditReplayTest {
         assertEquals(listOf(delta), schedule.claimFollowUps(setOf(delta), 300 + FOLLOW_UP_DELAY_TICKS))
     }
 
+    @Test
+    fun `a schedule earning one follow-up a review keeps it for an owed review`() {
+        // r20: 50 reviews and 100 follow-ups planned against a ceiling of 150 left nothing for
+        // 49 danger calls; a night scene's plan earns one follow-up a review.
+        val schedule = GoalReviewSchedule(followUpsPerReview = 1)
+        val delta = AgentId("delta")
+        schedule.claim(setOf(delta), 0)
+        schedule.settled(delta, 100, owed = false)
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(delta), 100 + FOLLOW_UP_DELAY_TICKS))
+        schedule.settled(delta, 200, owed = true)
+        assertEquals(listOf(delta), schedule.claimFollowUps(setOf(delta), 200 + FOLLOW_UP_DELAY_TICKS))
+        schedule.settled(delta, 300, owed = true)
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(delta), 300 + FOLLOW_UP_DELAY_TICKS))
+    }
+
     private companion object {
         const val STICK = "item.minecraft.stick"
         const val LOG = "item.minecraft.oak_log"

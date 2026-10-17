@@ -112,8 +112,17 @@ fun interface StepSettlement {
 class GoalReviewSchedule(
     val cadenceTicks: Long = DEFAULT_GOAL_REVIEW_CADENCE_TICKS,
     private val slicesPerCadence: Int = DEFAULT_SLICES_PER_CADENCE,
+    /**
+     * How many follow-ups each scheduled review earns, at most [MAX_FOLLOW_UPS_PER_REVIEW]: a run
+     * whose call ceiling must leave room for the night's danger earns fewer (r20: 50 reviews and
+     * 100 follow-ups planned against a ceiling of 150 left nothing for 49 danger calls).
+     */
+    private val followUpsPerReview: Int = MAX_FOLLOW_UPS_PER_REVIEW,
 ) : StepSettlement {
     init {
+        require(followUpsPerReview in 0..MAX_FOLLOW_UPS_PER_REVIEW) {
+            "followUpsPerReview must be in 0..$MAX_FOLLOW_UPS_PER_REVIEW, was $followUpsPerReview"
+        }
         require(cadenceTicks > 0) { "cadenceTicks must be positive, was $cadenceTicks" }
         require(slicesPerCadence >= 1) { "slicesPerCadence must be at least 1, was $slicesPerCadence" }
         require(cadenceTicks >= slicesPerCadence) {
@@ -199,7 +208,7 @@ class GoalReviewSchedule(
             // A scheduled review answers whatever a follow-up was owed for, and owes one anew.
             followUpDue.remove(it)
             followUps.remove(it)
-            allowance[it] = (allowance[it] ?: 0) + MAX_FOLLOW_UPS_PER_REVIEW
+            allowance[it] = (allowance[it] ?: 0) + followUpsPerReview
         }
         return claimed
     }

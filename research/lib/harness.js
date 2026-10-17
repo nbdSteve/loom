@@ -316,6 +316,15 @@ function applyPrimaryBehaviorInitialConditions (paper, config, journal) {
  * its initial conditions are applied: the fleet starts two bodies at a time, so the first
  * agent's first scheduled review could otherwise arrive before the last agent had spawned.
  */
+/**
+ * The follow-ups each scheduled review earns, as the plan states them, for the JVM. A plan that
+ * states none leaves the JVM's own allowance in place.
+ */
+function followUpsEnvironmentOf (config) {
+  const followUps = config.primaryBehavior?.nativeGoalReviewSchedule?.followUpsPerReview
+  return Number.isInteger(followUps) ? { LOOM_GOAL_FOLLOW_UPS_PER_REVIEW: String(followUps) } : {}
+}
+
 function nativeCognitionStartOf (config) {
   return isPrimaryBehaviorMode(config) ? 'held' : 'immediate'
 }
@@ -1006,7 +1015,8 @@ async function runExperiment ({
         LOOM_COGNITION_WORKERS: String(config.runtime.cognitionBridge.workers),
         LOOM_COGNITION_QUEUE_DEPTH: String(config.runtime.cognitionBridge.queueDepth),
         LOOM_COGNITION_PENDING_PER_AGENT: String(config.runtime.cognitionBridge.perAgentPending),
-        LOOM_NATIVE_COGNITION: nativeCognitionStartOf(config)
+        LOOM_NATIVE_COGNITION: nativeCognitionStartOf(config),
+        ...followUpsEnvironmentOf(config)
       },
       logFile: path.join(runDirectory, 'paper.log'),
       stdin: true
