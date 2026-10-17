@@ -719,8 +719,14 @@ function failureDiagnostic ({
   })
 }
 
+// Most numbered names a diagnostic tries beside an earlier one for the same experiment.
+const MAX_DIAGNOSTIC_NAMES = 100
+
 // Publishes text under `file` only whole and never over an existing file: a partial
-// write stays at a temporary name, and link(2) refuses an existing target.
+// write stays at a temporary name, and link(2) refuses an existing target. A rehearsal id is
+// reused by every rehearsal, so a target an earlier failure already holds is kept and the new
+// diagnostic takes the next numbered name (`<id>.2.json`); answers the name it was published
+// under. A second rehearsal failure once lost its whole diagnostic to the first's file.
 function writeExclusiveAtomic (file, text) {
   const directory = path.dirname(file)
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
@@ -736,11 +742,26 @@ function writeExclusiveAtomic (file, text) {
     fs.closeSync(descriptor)
     descriptor = undefined
     fs.chmodSync(temporary, 0o600)
-    fs.linkSync(temporary, file)
+    return linkUnderFreeName(temporary, file)
   } finally {
     if (descriptor !== undefined) fs.closeSync(descriptor)
     fs.rmSync(temporary, { force: true })
   }
+}
+
+function linkUnderFreeName (temporary, file) {
+  const extension = path.extname(file)
+  const stem = file.slice(0, file.length - extension.length)
+  for (let attempt = 1; attempt <= MAX_DIAGNOSTIC_NAMES; attempt += 1) {
+    const target = attempt === 1 ? file : `${stem}.${attempt}${extension}`
+    try {
+      fs.linkSync(temporary, target)
+      return target
+    } catch (cause) {
+      if (cause?.code !== 'EEXIST') throw cause
+    }
+  }
+  throw new Error(`no free diagnostic name beside ${path.basename(file)}`)
 }
 
 function retainedLabel (repositoryRoot, file) {
@@ -853,8 +874,7 @@ function writeFallbackDiagnostic (options, failedStage, maxBytes) {
   if (bytes > maxBytes) throw new Error(`fallback diagnostic exceeded its ${maxBytes} byte bound`)
   // Never named after an unvalidated id: an id that fails the slug test is not a path.
   const name = diagnostic.experimentId ?? `unidentified-${crypto.randomBytes(6).toString('hex')}`
-  const file = path.join(options.diagnosticRoot, `${name}.fallback.json`)
-  writeExclusiveAtomic(file, text)
+  const file = writeExclusiveAtomic(path.join(options.diagnosticRoot, `${name}.fallback.json`), text)
   return {
     diagnostic,
     file,
@@ -902,8 +922,8 @@ function writeNormalDiagnostic (options, stages, maxBytes, progress) {
     throw new Error(`failed-run diagnostic exceeded its ${maxBytes} byte bound`)
   }
   progress.stage = 'write'
-  const file = path.join(options.diagnosticRoot, `${config.experimentId}.json`)
-  stages.write(file, text)
+  const named = path.join(options.diagnosticRoot, `${config.experimentId}.json`)
+  const file = stages.write(named, text) ?? named
   return {
     diagnostic,
     file,

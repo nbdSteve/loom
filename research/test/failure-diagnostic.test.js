@@ -506,19 +506,22 @@ test('the fallback drops unsafe identifiers and fails closed past its byte bound
   }
 })
 
-test('an existing diagnostic is never overwritten', () => {
+test('an existing diagnostic is never overwritten, and a later failure of the same id is kept beside it', () => {
+  // A rehearsal id is reused by every rehearsal: the second v23 rehearsal failure lost its whole
+  // diagnostic to the first one's file and kept only a fallback.
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-no-overwrite-'))
   try {
     const first = retain(directory)
     const original = fs.readFileSync(first.file, 'utf8')
     const second = retain(directory)
-    assert.equal(second.fallback, true)
-    assert.equal(second.failedStage, 'write')
+    assert.equal(second.fallback, false)
+    assert.notEqual(second.file, first.file)
+    assert.match(path.basename(second.file), /\.2\.json$/)
     assert.equal(fs.readFileSync(first.file, 'utf8'), original)
-    const fallback = fs.readFileSync(second.file, 'utf8')
-    assert.throws(() => retain(directory), /EEXIST/)
+    const third = retain(directory)
+    assert.match(path.basename(third.file), /\.3\.json$/)
     assert.equal(fs.readFileSync(first.file, 'utf8'), original)
-    assert.equal(fs.readFileSync(second.file, 'utf8'), fallback)
+    assert.equal(fs.readFileSync(second.file, 'utf8'), fs.readFileSync(third.file, 'utf8'))
   } finally {
     fs.rmSync(directory, { recursive: true, force: true })
   }
