@@ -28,7 +28,9 @@
 
 use std::sync::LazyLock;
 
-use loom_contract::{GoalChoice, GoalDisposition, Intent, Perception, MAX_GOAL_STATEMENT_CHARS};
+use loom_contract::{
+    GoalChoice, GoalDisposition, Intent, Perception, MAX_GOAL_STATEMENT_CHARS, MAX_SUCCESS_COUNT,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -268,28 +270,28 @@ struct Answer {
 
 /// Which goal-choice fields one disposition requires; every other field is forbidden.
 ///
-/// The working-goal shape: adopt and revise word the goal and its success condition;
+/// The working-goal shape: adopt and revise set the goal's success condition;
 /// adopt, continue and revise name the one step this decision takes toward it; and every
 /// disposition that answers a carried goal judges that goal's previous step.
 const fn goal_fields(disposition: GoalDisposition) -> GoalFields {
     match disposition {
         GoalDisposition::Adopt => GoalFields {
-            worded: true,
+            targeted: true,
             stepped: true,
             judged: false,
         },
         GoalDisposition::Continue => GoalFields {
-            worded: false,
+            targeted: false,
             stepped: true,
             judged: true,
         },
         GoalDisposition::Revise => GoalFields {
-            worded: true,
+            targeted: true,
             stepped: true,
             judged: true,
         },
         GoalDisposition::Complete | GoalDisposition::Abandon => GoalFields {
-            worded: false,
+            targeted: false,
             stepped: false,
             judged: true,
         },
@@ -298,7 +300,7 @@ const fn goal_fields(disposition: GoalDisposition) -> GoalFields {
 
 #[derive(Clone, Copy)]
 struct GoalFields {
-    worded: bool,
+    targeted: bool,
     stepped: bool,
     judged: bool,
 }
@@ -315,11 +317,14 @@ fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> 
     };
     let fields = goal_fields(choice.disposition);
     let present = [
-        ("statement", fields.worded, choice.statement.is_some()),
-        ("success item", fields.worded, choice.success_item.is_some()),
+        (
+            "success item",
+            fields.targeted,
+            choice.success_item.is_some(),
+        ),
         (
             "success count",
-            fields.worded,
+            fields.targeted,
             choice.success_count.is_some(),
         ),
         ("step", fields.stepped, choice.step.is_some()),
@@ -374,12 +379,10 @@ pub fn draft_from_answer(content: &str) -> Result<Draft, String> {
 /// shape fault still fail as a malformed answer.
 fn bounded_goal_texts(mut answer: Value) -> Value {
     if let Some(goal) = answer.get_mut("goal").and_then(Value::as_object_mut) {
-        for field in ["statement", "step"] {
-            if let Some(Value::String(text)) = goal.get_mut(field) {
-                if text.chars().count() > MAX_GOAL_STATEMENT_CHARS {
-                    let kept: String = text.chars().take(MAX_GOAL_STATEMENT_CHARS - 3).collect();
-                    *text = format!("{kept}...");
-                }
+        if let Some(Value::String(text)) = goal.get_mut("step") {
+            if text.chars().count() > MAX_GOAL_STATEMENT_CHARS {
+                let kept: String = text.chars().take(MAX_GOAL_STATEMENT_CHARS - 3).collect();
+                *text = format!("{kept}...");
             }
         }
     }
@@ -475,11 +478,10 @@ enum Namespace {
     RouteItem,
     Stack,
     Recipe,
-    SuccessItem,
 }
 
 impl Namespace {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 10] = [
         Self::Block,
         Self::DigBlock,
         Self::WalkTarget,
@@ -490,7 +492,6 @@ impl Namespace {
         Self::RouteItem,
         Self::Stack,
         Self::Recipe,
-        Self::SuccessItem,
     ];
 
     const fn name(self) -> &'static str {
@@ -505,7 +506,6 @@ impl Namespace {
             Self::RouteItem => "routeItemRef",
             Self::Stack => "stackRef",
             Self::Recipe => "recipeRef",
-            Self::SuccessItem => "successItemName",
         }
     }
 
@@ -527,7 +527,6 @@ impl Namespace {
             Self::RouteItem => "A dropped-item ref offered in this message within walking reach.",
             Self::Stack => "An inventory-stack ref offered in this message.",
             Self::Recipe => "A recipe ref offered in this message.",
-            Self::SuccessItem => "An item you can obtain now: one you hold, one dropped in sight, one a recipe offers, or one a block in sight drops when you dig it.",
         }
     }
 
@@ -543,7 +542,6 @@ impl Namespace {
             Self::RouteItem => &offered.route_items,
             Self::Stack => &offered.stacks,
             Self::Recipe => &offered.recipes,
-            Self::SuccessItem => &offered.obtainable,
         }
     }
 }
@@ -703,45 +701,67 @@ fn attack_variants(offered: Option<&OfferedRefs>) -> Vec<Option<Value>> {
         .collect()
 }
 
-/// One goal disposition, as a closed object carrying exactly the fields it requires.
-/// One goal disposition, or `None` when it words a goal and a request offers nothing it could
-/// name as a success item.
-fn goal_variant(
+/// One goal disposition, as closed objects carrying exactly the fields it requires.
+///
+/// A disposition that sets a success condition is one shape per item a request may name, each
+/// bounding its count to what that item admits now: one more than is held, and no more than is
+/// held plus what is in sight could give. The reference shape has one, with the contract's own
+/// bounds. A request that offers no success item offers no such disposition.
+fn goal_variants(
     disposition: GoalDisposition,
     name: &str,
     description: &str,
     offered: Option<&OfferedRefs>,
-) -> Option<Value> {
+) -> Vec<Value> {
     let fields = goal_fields(disposition);
-    let success_item = ref_field(
-        "The item the goal is achieved by holding, named exactly as the item is listed: only items something in sight could give you more of are offered. Your body measures it from your own inventory.",
-        Namespace::SuccessItem,
-        offered,
-    );
-    if fields.worded && success_item.is_none() {
-        return None;
-    }
+    let targets: Vec<(Value, i64, i64)> = if !fields.targeted {
+        vec![(Value::Null, 0, 0)]
+    } else if let Some(refs) = offered {
+        refs.count_bounds
+            .iter()
+            .map(|(item, fewest, most)| {
+                (json!({ "type": "string", "enum": [item] }), *fewest, *most)
+            })
+            .collect()
+    } else {
+        vec![(json!({ "type": "string" }), 1, MAX_SUCCESS_COUNT)]
+    };
+    targets
+        .into_iter()
+        .map(|(item, fewest, most)| goal_variant(fields, name, description, item, fewest, most))
+        .collect()
+}
+
+/// One closed goal shape; `item` is the success item's schema when `fields` words a goal.
+fn goal_variant(
+    fields: GoalFields,
+    name: &str,
+    description: &str,
+    item: Value,
+    fewest: i64,
+    most: i64,
+) -> Value {
     let mut properties = serde_json::Map::new();
     properties.insert(
         "disposition".to_owned(),
         json!({ "type": "string", "enum": [name], "description": description }),
     );
-    let worded = format!("one short sentence of at most {MAX_GOAL_STATEMENT_CHARS} characters");
-    if fields.worded {
-        properties.insert(
-            "statement".to_owned(),
-            json!({ "type": "string", "description": format!("The goal in your own words, {worded}.") }),
-        );
-        if let Some(field) = success_item {
-            properties.insert("successItem".to_owned(), field);
+    if fields.targeted {
+        let mut item = item;
+        if let Some(schema) = item.as_object_mut() {
+            schema.insert(
+                "description".to_owned(),
+                json!("The item the goal is achieved by holding, named exactly as the item is listed. Your body measures it from your own inventory."),
+            );
         }
+        properties.insert("successItem".to_owned(), item);
         properties.insert(
             "successCount".to_owned(),
             json!({
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 64,
-                "description": "How many of that item the goal is achieved by holding: more than you hold now, and no more than you hold plus what is in sight could give you.",
+                "minimum": fewest,
+                "maximum": most,
+                "description": "How many of that item the goal is achieved by holding in total, counting what you hold now: more than you hold, and no more than you hold plus what is in sight could give you.",
             }),
         );
     }
@@ -751,7 +771,7 @@ fn goal_variant(
             json!({
                 "type": "string",
                 "description": format!(
-                    "The one concrete next step this decision's action takes toward the goal, {worded}. Your action is the step: idle or rest is none."
+                    "The one concrete next step this decision's action takes toward the goal, in one short sentence of at most {MAX_GOAL_STATEMENT_CHARS} characters. Your action is the step: idle or rest is none."
                 ),
             }),
         );
@@ -767,12 +787,12 @@ fn goal_variant(
         );
     }
     let required: Vec<Value> = properties.keys().map(|key| json!(key)).collect();
-    Some(json!({
+    json!({
         "type": "object",
         "properties": properties,
         "required": required,
         "additionalProperties": false,
-    }))
+    })
 }
 
 /// Where one perception stands with its goal, which decides the goal choices it can make.
@@ -819,7 +839,7 @@ impl GoalPhase {
 /// condition can only be completed or revised, and an unmet one is never completed.
 fn goal_choice_schema(phase: GoalPhase, offered: Option<&OfferedRefs>) -> Value {
     let adopt = || {
-        goal_variant(
+        goal_variants(
             GoalDisposition::Adopt,
             "adopt",
             "Take up a new goal when you hold none.",
@@ -827,7 +847,7 @@ fn goal_choice_schema(phase: GoalPhase, offered: Option<&OfferedRefs>) -> Value 
         )
     };
     let continued = || {
-        goal_variant(
+        goal_variants(
             GoalDisposition::Continue,
             "continue",
             "Keep the held goal and take its next step.",
@@ -835,10 +855,15 @@ fn goal_choice_schema(phase: GoalPhase, offered: Option<&OfferedRefs>) -> Value 
         )
     };
     let revise = || {
-        goal_variant(GoalDisposition::Revise, "revise", "Keep pursuing the held goal with new wording, success target and step; when its condition is met, a revise must name a target you do not yet hold.", offered)
+        goal_variants(
+            GoalDisposition::Revise,
+            "revise",
+            "Keep pursuing the held goal with a new success target and step; when its condition is met, a revise must name a target you do not yet hold.",
+            offered,
+        )
     };
     let complete = || {
-        goal_variant(
+        goal_variants(
             GoalDisposition::Complete,
             "complete",
             "The held goal's success condition is met; drop it.",
@@ -846,15 +871,18 @@ fn goal_choice_schema(phase: GoalPhase, offered: Option<&OfferedRefs>) -> Value 
         )
     };
     let abandon = || {
-        goal_variant(
+        goal_variants(
             GoalDisposition::Abandon,
             "abandon",
             "The held goal is no longer worth pursuing; drop it.",
             offered,
         )
     };
-    let none = || Some(json!({ "type": "null" }));
-    let choices = match phase {
+    let none = || vec![json!({ "type": "null" })];
+    // A held goal the body could no longer meet from what is in sight is not offered a continue,
+    // by the rule an adopt and a revise are held to.
+    let obtainable = offered.is_none_or(|refs| refs.goal_obtainable);
+    let choices: Vec<Vec<Value>> = match phase {
         GoalPhase::Any => vec![
             none(),
             adopt(),
@@ -864,12 +892,16 @@ fn goal_choice_schema(phase: GoalPhase, offered: Option<&OfferedRefs>) -> Value 
             abandon(),
         ],
         GoalPhase::Unheld => vec![none(), adopt()],
-        GoalPhase::Held => vec![none(), continued(), revise(), abandon()],
+        // A held goal must be answered: a decision that acts while ignoring its goal is
+        // refused, so null is not offered (r15: actions taken beside a null choice were
+        // measured against the goal they ignored).
+        GoalPhase::Held if obtainable => vec![continued(), revise(), abandon()],
+        GoalPhase::Held => vec![revise(), abandon()],
         GoalPhase::Met => vec![complete(), revise()],
     };
     let choices: Vec<Value> = choices.into_iter().flatten().collect();
     json!({
-        "description": "Your choice about your one short-term goal, only at a scheduled goal review; null makes no choice and leaves any held goal as it is.",
+        "description": "Your choice about your one short-term goal, only at a goal review; null makes no choice, and is offered only when you hold no goal.",
         "anyOf": choices,
     })
 }
@@ -1069,6 +1101,15 @@ mod tests {
                 steps_without_progress: i64::MAX,
             }),
         });
+        // And the widest refusal a review can be told of.
+        seen.last_refusal = Some(loom_contract::GoalRefusal {
+            request_id: "q".repeat(MAX_GOAL_ID_CHARS),
+            outcome: "o".repeat(MAX_GOAL_ID_CHARS),
+            success_item: Some("i".repeat(MAX_ITEM_NAME_CHARS)),
+            asked: Some(MAX_SUCCESS_COUNT),
+            held: Some(i64::MAX),
+            capacity: Some(i64::MAX),
+        });
         let router = Router::new(ModelCatalog::new("fast", "deep"));
         let prompt = render(&router.route(seen.importance), &seen);
         let measured = serde_json::to_vec(&chat_request(
@@ -1192,21 +1233,19 @@ mod tests {
 
     #[test]
     fn every_disposition_parses_into_the_contract_choice_unchanged() {
-        let choice =
-            |disposition, statement: Option<&str>, step: Option<&str>, result| GoalChoice {
-                disposition,
-                statement: statement.map(str::to_owned),
-                success_item: statement.map(|_| "item.minecraft.oak_log".to_owned()),
-                success_count: statement.map(|_| 4),
-                step: step.map(str::to_owned),
-                step_result: result,
-            };
+        let choice = |disposition, targeted: bool, step: Option<&str>, result| GoalChoice {
+            disposition,
+            success_item: targeted.then(|| "item.minecraft.oak_log".to_owned()),
+            success_count: targeted.then_some(4),
+            step: step.map(str::to_owned),
+            step_result: result,
+        };
         let cases = [
             (
-                r#"{"disposition":"adopt","statement":"find shelter","successItem":"item.minecraft.oak_log","successCount":4,"step":"walk to the cliff"}"#,
+                r#"{"disposition":"adopt","successItem":"item.minecraft.oak_log","successCount":4,"step":"walk to the cliff"}"#,
                 choice(
                     GoalDisposition::Adopt,
-                    Some("find shelter"),
+                    true,
                     Some("walk to the cliff"),
                     None,
                 ),
@@ -1215,16 +1254,16 @@ mod tests {
                 r#"{"disposition":"continue","step":"dig into the cliff","stepResult":"done"}"#,
                 choice(
                     GoalDisposition::Continue,
-                    None,
+                    false,
                     Some("dig into the cliff"),
                     Some(GoalStepResult::Done),
                 ),
             ),
             (
-                r#"{"disposition":"revise","statement":"find shelter north","successItem":"item.minecraft.oak_log","successCount":4,"step":"walk north","stepResult":"noProgress"}"#,
+                r#"{"disposition":"revise","successItem":"item.minecraft.oak_log","successCount":4,"step":"walk north","stepResult":"noProgress"}"#,
                 choice(
                     GoalDisposition::Revise,
-                    Some("find shelter north"),
+                    true,
                     Some("walk north"),
                     Some(GoalStepResult::NoProgress),
                 ),
@@ -1233,7 +1272,7 @@ mod tests {
                 r#"{"disposition":"complete","stepResult":"done"}"#,
                 choice(
                     GoalDisposition::Complete,
-                    None,
+                    false,
                     None,
                     Some(GoalStepResult::Done),
                 ),
@@ -1242,7 +1281,7 @@ mod tests {
                 r#"{"disposition":"abandon","stepResult":"noProgress"}"#,
                 choice(
                     GoalDisposition::Abandon,
-                    None,
+                    false,
                     None,
                     Some(GoalStepResult::NoProgress),
                 ),
@@ -1268,22 +1307,15 @@ mod tests {
         let target = r#""successItem":"item.minecraft.stick","successCount":1"#;
         for (missing, field) in [
             (
-                format!(r#"{{"disposition":"adopt",{target},"step":"s"}}"#),
-                "statement",
-            ),
-            (
-                r#"{"disposition":"adopt","statement":"g","successCount":1,"step":"s"}"#.to_owned(),
+                r#"{"disposition":"adopt","successCount":1,"step":"s"}"#.to_owned(),
                 "success item",
             ),
             (
-                r#"{"disposition":"adopt","statement":"g","successItem":"item.minecraft.stick","step":"s"}"#
+                r#"{"disposition":"adopt","successItem":"item.minecraft.stick","step":"s"}"#
                     .to_owned(),
                 "success count",
             ),
-            (
-                format!(r#"{{"disposition":"adopt","statement":"g",{target}}}"#),
-                "step",
-            ),
+            (format!(r#"{{"disposition":"adopt",{target}}}"#), "step"),
             (
                 r#"{"disposition":"continue","stepResult":"done"}"#.to_owned(),
                 "step",
@@ -1293,7 +1325,7 @@ mod tests {
                 "step result",
             ),
             (
-                format!(r#"{{"disposition":"revise","statement":"g",{target},"step":"s"}}"#),
+                format!(r#"{{"disposition":"revise",{target},"step":"s"}}"#),
                 "step result",
             ),
             (r#"{"disposition":"complete"}"#.to_owned(), "step result"),
@@ -1306,27 +1338,24 @@ mod tests {
             );
         }
         for forbidden in [
-            r#"{"disposition":"continue","step":"s","stepResult":"done","statement":"sk-lookalike"}"#
-                .to_owned(),
             r#"{"disposition":"continue","step":"s","stepResult":"done","successItem":"item.minecraft.sk_lookalike"}"#
                 .to_owned(),
-            format!(r#"{{"disposition":"adopt","statement":"g",{target},"step":"s","stepResult":"done"}}"#),
+            format!(r#"{{"disposition":"adopt",{target},"step":"s","stepResult":"done"}}"#),
             r#"{"disposition":"complete","stepResult":"done","step":"sk-lookalike"}"#.to_owned(),
         ] {
             let reason = goal_of(&forbidden).expect_err(&forbidden);
             assert!(reason.contains("forbids"), "{forbidden}: {reason}");
             assert!(!reason.contains("sk-lookalike"), "{reason}");
         }
-        // A stated success condition or a typed step is no part of a choice from routine-v23: the
-        // body types both itself (r14 delta worded a log while naming a stick; gamma's step named a
-        // stick while its intent walked elsewhere).
+        // A stated success condition or a typed step is no part of a choice from routine-v23, and a
+        // statement none from routine-v24: the body words and types all three itself (r14 delta
+        // worded a log while naming a stick; r15 statements and counts disagreed).
         for stated in [
+            format!(r#"{{"disposition":"adopt","successCondition":"c",{target},"step":"s"}}"#),
             format!(
-                r#"{{"disposition":"adopt","statement":"g","successCondition":"c",{target},"step":"s"}}"#
+                r#"{{"disposition":"adopt",{target},"step":"s","stepAction":"dig","stepRef":"b7"}}"#
             ),
-            format!(
-                r#"{{"disposition":"adopt","statement":"g",{target},"step":"s","stepAction":"dig","stepRef":"b7"}}"#
-            ),
+            format!(r#"{{"disposition":"adopt","statement":"g",{target},"step":"s"}}"#),
         ] {
             let reason = goal_of(&stated).expect_err(&stated);
             assert!(reason.contains("wrong shape"), "{stated}: {reason}");
@@ -1337,10 +1366,10 @@ mod tests {
     fn a_malformed_goal_choice_is_a_bounded_malformed_answer() {
         // An over-long text is bounded rather than refused; see the test after this one.
         for bad in [
-            r#"{"disposition":"adopt","statement":"go","priority":1}"#,
+            r#"{"disposition":"adopt","step":"go","priority":1}"#,
             r#"{"disposition":"pursue"}"#,
-            r#"{"disposition":"adopt","statement":""}"#,
-            r#"{"disposition":"adopt","statement":7}"#,
+            r#"{"disposition":"continue","step":"","stepResult":"done"}"#,
+            r#"{"disposition":"continue","step":7,"stepResult":"done"}"#,
             r#""continue""#,
         ] {
             let reason = goal_of(bad).expect_err(bad);
@@ -1395,14 +1424,12 @@ mod tests {
         // whole run to one answer whose goal text was longer than the contract allows.
         let long = "w".repeat(MAX_GOAL_STATEMENT_CHARS * 2);
         let answer = format!(
-            r#"{{"intent":{{"action":"idle"}},"reasoning":"r","goal":{{"disposition":"adopt","statement":"{long}","successItem":"item.minecraft.stick","successCount":1,"step":"{long}"}}}}"#
+            r#"{{"intent":{{"action":"idle"}},"reasoning":"r","goal":{{"disposition":"adopt","successItem":"item.minecraft.stick","successCount":1,"step":"{long}"}}}}"#
         );
         let goal = draft_from_answer(&answer).unwrap().goal.unwrap();
-        for text in [goal.statement, goal.step] {
-            let text = text.unwrap();
-            assert_eq!(text.chars().count(), MAX_GOAL_STATEMENT_CHARS);
-            assert!(text.ends_with("..."));
-        }
+        let text = goal.step.unwrap();
+        assert_eq!(text.chars().count(), MAX_GOAL_STATEMENT_CHARS);
+        assert!(text.ends_with("..."));
         // A blank goal text is still a malformed answer: there is nothing to keep.
         let blank = r#"{"intent":{"action":"idle"},"reasoning":"r","goal":{"disposition":"continue","step":"","stepAction":"idle","stepRef":null,"stepResult":"done"}}"#;
         assert!(draft_from_answer(blank).is_err());

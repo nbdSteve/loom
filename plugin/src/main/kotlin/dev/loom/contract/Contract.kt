@@ -408,6 +408,11 @@ data class OwnDrop(
     val direction: Bearing? = null,
     /** How far above the agent a lying drop is. */
     val verticalOffset: Double? = null,
+    /**
+     * The dropped-item observation in this perception that is this drop, so a collect may name
+     * it; present only for a lying drop the body offered, in sight or not.
+     */
+    val ref: String? = null,
 ) {
     init {
         requireBoundedText("own drop requestId", requestId, MAX_GOAL_ID_CHARS)
@@ -418,6 +423,8 @@ data class OwnDrop(
             "distance, direction and verticalOffset are present exactly for a lying drop"
         }
         distance?.let { require(it >= 0.0) { "a drop's distance is never negative" } }
+        ref?.let(::requireBoundedRef)
+        require(ref == null || lying) { "only a lying drop carries a ref" }
     }
 }
 
@@ -508,9 +515,17 @@ data class Observation(
      * with no standable exit.
      */
     val digSafe: Boolean? = null,
+    /**
+     * Present, and true, only for a dropped item this agent's body has already found no route
+     * to: it is not offered to collect and gives nothing a goal may count on.
+     */
+    val routeRefused: Boolean? = null,
 ) {
     init {
         requireBoundedRef(ref)
+        require(routeRefused != false && (routeRefused == null || kind == ObservationKind.DROPPED_ITEM)) {
+            "routeRefused is present, and true, only for a dropped item"
+        }
         require((count != null) == (kind == ObservationKind.DROPPED_ITEM)) {
             "count is present exactly for a dropped-item observation"
         }
@@ -646,6 +661,11 @@ data class Perception(
     val surroundingsOmitted: Long,
     /** The agent's held short-term goal, carried into a goal review only. */
     val goal: GoalSummary? = null,
+    /**
+     * Why the body refused the agent's previous goal decision before acting on it, told once,
+     * at the next goal review or step-settled perception.
+     */
+    val lastRefusal: GoalRefusal? = null,
 ) {
     init {
         require(surroundings.size <= MAX_PERCEPTION_OBSERVATIONS) {
@@ -676,6 +696,36 @@ private fun requireBoundedText(
     require(characters in 1..max) { "$field must be 1..$max characters, got $characters" }
 }
 
+/**
+ * One goal decision the body refused before acting: which request, the countable outcome tag it
+ * was refused with, and - for a success condition it judged - the item, the total asked for, how
+ * many were held and how many more what was in sight could give.
+ */
+@Serializable
+data class GoalRefusal(
+    /** The request id of the refused decision. */
+    val requestId: String,
+    /** The outcome tag the body refused it with. */
+    val outcome: String,
+    /** The success item the refusal judged. */
+    val successItem: String? = null,
+    /** The total the refused decision asked to hold. */
+    val asked: Long? = null,
+    /** How many of the success item were held. */
+    val held: Long? = null,
+    /** How many more of it what was in sight could give. */
+    val capacity: Long? = null,
+) {
+    init {
+        requireBoundedText("goal refusal requestId", requestId, MAX_GOAL_ID_CHARS)
+        requireBoundedText("goal refusal outcome", outcome, MAX_GOAL_ID_CHARS)
+        successItem?.let(::requireItemName)
+        asked?.let { require(it in 1..MAX_SUCCESS_COUNT) { "a refused total is 1..$MAX_SUCCESS_COUNT" } }
+        held?.let { require(it >= 0) { "a held count is never negative" } }
+        capacity?.let { require(it >= 0) { "a capacity is never negative" } }
+    }
+}
+
 /** The last step taken under a held goal and the body's outcome tag for it. */
 @Serializable
 data class GoalStep(
@@ -698,7 +748,7 @@ data class GoalStep(
 data class GoalSummary(
     /** The request id of the decision that adopted the goal. */
     val goalId: String,
-    /** The goal in the agent's own words. */
+    /** The goal, worded by the body from its typed success condition. */
     val statement: String,
     /** How many times the goal has been revised since it was adopted. */
     val revision: Long,
@@ -948,11 +998,12 @@ enum class GoalDisposition {
 data class GoalChoice(
     /** What the decision does with the goal. */
     val disposition: GoalDisposition,
-    /** The goal's wording, for adopt and revise. */
-    val statement: String? = null,
     /** The item the goal must hold, its success condition with the count, for adopt and revise. */
     val successItem: String? = null,
-    /** How many of the success item the goal must hold, for adopt and revise. */
+    /**
+     * How many of the success item the goal must hold in total, counting what is already held,
+     * for adopt and revise.
+     */
     val successCount: Long? = null,
     /** The concrete next step this decision's intent takes, for adopt, continue and revise. */
     val step: String? = null,
@@ -960,7 +1011,6 @@ data class GoalChoice(
     val stepResult: GoalStepResult? = null,
 ) {
     init {
-        statement?.let { requireBoundedText("goal statement", it, MAX_GOAL_STATEMENT_CHARS) }
         requireTypedSuccess(successItem, successCount)
         step?.let { requireBoundedText("goal step", it, MAX_GOAL_STATEMENT_CHARS) }
     }

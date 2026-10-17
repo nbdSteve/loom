@@ -192,7 +192,8 @@ internal class OwnDropLedger(
         val place = if (drop.fate == DropFate.LYING) locate(drop.entity) else null
         // An entity the server no longer has, with no event saying where it went, is gone.
         if (drop.fate == DropFate.LYING && place == null) drop.fate = DropFate.GONE
-        return OwnDropReading(requireNotNull(drop.requestId), drop.what, drop.count, drop.fate, place)
+        val entity = drop.entity.takeIf { drop.fate == DropFate.LYING }
+        return OwnDropReading(requireNotNull(drop.requestId), drop.what, drop.count, drop.fate, place, entity)
     }
 
     private fun prune(queue: ArrayDeque<Drop>) {

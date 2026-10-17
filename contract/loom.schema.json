@@ -202,6 +202,21 @@
       }
     },
 
+    "GoalRefusal": {
+      "description": "One goal decision the body refused before acting: which request, the countable outcome tag it was refused with, and - for a success condition it judged - the item, the total asked for, how many were held and how many more what was in sight could give.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "outcome"],
+      "properties": {
+        "requestId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "outcome": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "successItem": { "$ref": "#/$defs/ItemName" },
+        "asked": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "held": { "type": "integer", "minimum": 0 },
+        "capacity": { "type": "integer", "minimum": 0 }
+      }
+    },
+
     "OwnDrop": {
       "description": "One stack the server dropped for one of this agent's digs. fate is what became of it: lying where the server can still see it, collected by this agent, taken by another player, or gone (merged, despawned or destroyed). distance, direction and verticalOffset place a lying drop from the agent now, measured the way an observation's are, and are present exactly when fate is lying.",
       "type": "object",
@@ -219,7 +234,11 @@
         "fate": { "$ref": "#/$defs/DropFate" },
         "distance": { "type": "number", "minimum": 0 },
         "direction": { "$ref": "#/$defs/Bearing" },
-        "verticalOffset": { "type": "number" }
+        "verticalOffset": { "type": "number" },
+        "ref": {
+          "description": "The dropped-item observation in this perception that is this drop, so a collect may name it; present only for a lying drop the body offered, in sight or not.",
+          "$ref": "#/$defs/EntityRef"
+        }
       },
       "if": { "properties": { "fate": { "const": "lying" } } },
       "then": { "required": ["distance", "direction", "verticalOffset"] },
@@ -227,7 +246,8 @@
         "allOf": [
           { "not": { "required": ["distance"] } },
           { "not": { "required": ["direction"] } },
-          { "not": { "required": ["verticalOffset"] } }
+          { "not": { "required": ["verticalOffset"] } },
+          { "not": { "required": ["ref"] } }
         ]
       }
     },
@@ -263,7 +283,12 @@
             }
           },
           "then": { "required": ["count"] },
-          "else": { "not": { "required": ["count"] } }
+          "else": {
+            "allOf": [
+              { "not": { "required": ["count"] } },
+              { "not": { "required": ["routeRefused"] } }
+            ]
+          }
         },
         {
           "if": {
@@ -308,6 +333,10 @@
           "description": "How many items the dropped-item entity currently represents. Present only when kind is droppedItem; absent for entities and blocks. The bindings enforce that relation.",
           "type": "integer",
           "minimum": 1
+        },
+        "routeRefused": {
+          "description": "Present, and true, only for a dropped item this agent's body has already found no route to: it is not offered to collect and gives nothing a goal may count on.",
+          "const": true
         },
         "yields": {
           "description": "The items digging this block with what the body holds can drop, each with the range the server's own random loot rules give: empty when it drops nothing, such as bare-hand terracotta. Never air. Present only when kind is block.",
@@ -459,6 +488,10 @@
         "goal": {
           "description": "The agent's held short-term goal, present only on a goalReview or stepSettled perception and only while one is held.",
           "$ref": "#/$defs/GoalSummary"
+        },
+        "lastRefusal": {
+          "description": "Why the body refused the agent's previous goal decision before acting on it, told once, at the next goalReview or stepSettled perception.",
+          "$ref": "#/$defs/GoalRefusal"
         }
       }
     },
@@ -660,13 +693,12 @@
     },
 
     "GoalChoice": {
-      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. statement is the goal's wording; successItem and successCount are its success condition, holding at least that many of that item, which the body measures and states in words itself. All three are for adopt and revise, and the body refuses a count the inventory already holds or one more than what is in sight could give. step words the one concrete next step this decision's intent takes toward the goal, for adopt, continue and revise; the body types that step from the intent itself. stepResult judges the carried goal's previous step, for every disposition except adopt. The body refuses a choice missing a field its disposition requires, and ignores the rest.",
+      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. successItem and successCount are the goal and its success condition: holding that many of that item in total, counting what is held now, which the body measures and words itself. Both are for adopt and revise, and the body refuses a count the inventory already holds or one more than it holds plus what is in sight could give, and applies that same bound to a continue. step words the one concrete next step this decision's intent takes toward the goal, for adopt, continue and revise; the body types that step from the intent itself, and refuses one that cannot produce the goal's item. stepResult judges the carried goal's previous step, for every disposition except adopt. The body refuses a choice missing a field its disposition requires, and ignores the rest.",
       "type": "object",
       "additionalProperties": false,
       "required": ["disposition"],
       "properties": {
         "disposition": { "$ref": "#/$defs/GoalDisposition" },
-        "statement": { "$ref": "#/$defs/GoalStatement" },
         "successItem": { "$ref": "#/$defs/ItemName" },
         "successCount": { "type": "integer", "minimum": 1, "maximum": 64 },
         "step": { "$ref": "#/$defs/GoalStatement" },

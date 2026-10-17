@@ -35,7 +35,7 @@ class OwnDropLedgerTest {
         places[stick] = listOf(17.1, 104.0, -1.5)
         val attributed = ledger.attribute(alpha, "alpha-sense-ab", listOf(16, 104, -2), sinceTick = 2_590)
         assertEquals(
-            listOf(OwnDropReading("alpha-sense-ab", STICK, 1, DropFate.LYING, listOf(17.1, 104.0, -1.5))),
+            listOf(OwnDropReading("alpha-sense-ab", STICK, 1, DropFate.LYING, listOf(17.1, 104.0, -1.5), stick)),
             attributed,
         )
         ledger.pickedUp(stick, gamma)

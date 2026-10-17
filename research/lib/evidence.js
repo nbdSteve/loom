@@ -41,7 +41,9 @@ const GOAL_OUTCOMES = [
   'goalCompletionUnmet',
   'goalSuccessUnobtainable',
   'goalAlreadyMet',
-  'goalStepIdle'
+  'goalStepIdle',
+  'goalChoiceMissing',
+  'goalStepUnproductive'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // What a measured step showed, from routine-v22: the exact target reached, an item gained, a

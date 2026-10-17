@@ -28,6 +28,7 @@ internal data class SceneOffer(
     val standable: Boolean? = null,
     val yields: List<BlockYield>? = null,
     val digSafe: Boolean? = null,
+    val routeRefused: Boolean? = null,
 ) {
     val key: Pair<ObservationKind, Int> = kind to sourceIndex
 }

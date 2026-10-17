@@ -52,12 +52,23 @@ const ROUTINE_V22_OBTAINABLE_GOAL_MODE = 'routine-v22-obtainable-goal'
 // follow-up review, because the r14 audit found three completions of goals met when set, a credit
 // for another agent's drop, and goals that could advance at most once per two-minute review.
 const ROUTINE_V23_OWN_EVIDENCE_MODE = 'routine-v23-own-evidence'
+// v24 keeps v23 and makes a held goal answerable only by evidence it can produce: a collect walks
+// to a cell whose pickup box covers the item, an item the body found no route to is marked and
+// counted on by nothing, the agent's own drops are reported and offered even out of sight, a goal
+// refusal is told with its numbers at the next review, continue is held to the obtainability rule
+// adopt and revise are and the count bounds are in the request schema, a drop is credited once and
+// is no progress until held, a step is measured once, a held goal must be answered and its dig or
+// collect must be able to give its item, a stalled answer does not act, and the wording is the
+// body's from the typed total, because the r15 audit found five noRoute collects of one stick, eight
+// unobtainable refusals the mind never heard of, and a drop credit loop that kept the stall bound
+// from firing.
+const ROUTINE_V24_ANSWERED_GOAL_MODE = 'routine-v24-answered-goal'
 // The two native-scheduler pilots share every condition except what each mode pins here.
 // Category fairness is a fact about the JVM selector a run used, so v12 stays false for
 // its committed evidence and v13, which runs on the 48-per-kind selector, attests true.
 // The prompt versions the mind serves today (`cognition/crates/cognition/src/prompt.rs`).
 // A configuration pinning any other version can only fail after it has run.
-const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v23', notable: 'notable-v23', pivotal: 'pivotal-v23' })
+const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v24', notable: 'notable-v24', pivotal: 'pivotal-v24' })
 // Modes kept only so artifacts committed under them still validate; no run may select one.
 const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V12_PRIMARY_BEHAVIOR_MODE]: Object.freeze({
@@ -100,11 +111,16 @@ const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V22_OBTAINABLE_GOAL_MODE]: Object.freeze({
     prompts: Object.freeze({ routine: 'routine-v22', notable: 'notable-v22', pivotal: 'pivotal-v22' }),
     categoryFairSelection: true
+  }),
+  [ROUTINE_V23_OWN_EVIDENCE_MODE]: Object.freeze({
+    prompts: Object.freeze({ routine: 'routine-v23', notable: 'notable-v23', pivotal: 'pivotal-v23' }),
+    categoryFairSelection: true,
+    followUpsPerReview: 1
   })
 })
 const PRIMARY_BEHAVIOR_MODES = Object.freeze({
-  [ROUTINE_V23_OWN_EVIDENCE_MODE]: Object.freeze({
-    prompts: Object.freeze({ routine: 'routine-v23', notable: 'notable-v23', pivotal: 'pivotal-v23' }),
+  [ROUTINE_V24_ANSWERED_GOAL_MODE]: Object.freeze({
+    prompts: Object.freeze({ routine: 'routine-v24', notable: 'notable-v24', pivotal: 'pivotal-v24' }),
     categoryFairSelection: true,
     followUpsPerReview: 1
   })
@@ -221,6 +237,7 @@ module.exports = {
   ROUTINE_V21_GROUNDED_STEP_MODE,
   ROUTINE_V22_OBTAINABLE_GOAL_MODE,
   ROUTINE_V23_OWN_EVIDENCE_MODE,
+  ROUTINE_V24_ANSWERED_GOAL_MODE,
   SERVED_PROMPTS,
   configuredMode,
   createInterventionSchedule,

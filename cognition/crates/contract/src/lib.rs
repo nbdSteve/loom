@@ -526,6 +526,10 @@ pub struct OwnDrop {
     /// How far above the agent a lying drop is; present exactly when lying.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vertical_offset: Option<f64>,
+    /// The dropped-item observation in this perception that is this drop, so a collect may
+    /// name it; present only for a lying drop the body offered, in sight or not.
+    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
+    pub drop_ref: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -544,6 +548,8 @@ struct OwnDropWire {
     direction: Option<Bearing>,
     #[serde(default)]
     vertical_offset: Option<f64>,
+    #[serde(rename = "ref", default, deserialize_with = "bounded_optional_ref")]
+    drop_ref: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for OwnDrop {
@@ -564,6 +570,9 @@ impl<'de> Deserialize<'de> for OwnDrop {
         if raw.distance.is_some_and(|distance| distance < 0.0) {
             return Err(de::Error::custom("a drop's distance is never negative"));
         }
+        if raw.drop_ref.is_some() && !lying {
+            return Err(de::Error::custom("only a lying drop carries a ref"));
+        }
         Ok(Self {
             request_id: raw.request_id,
             what: raw.what,
@@ -572,6 +581,7 @@ impl<'de> Deserialize<'de> for OwnDrop {
             distance: raw.distance,
             direction: raw.direction,
             vertical_offset: raw.vertical_offset,
+            drop_ref: raw.drop_ref,
         })
     }
 }
@@ -693,6 +703,10 @@ pub struct Observation {
     /// [`ObservationKind::Block`]; false only for the support block of a body with no exit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dig_safe: Option<bool>,
+    /// Present, and true, only for a dropped item this agent's body has already found no
+    /// route to: it is not offered to collect and gives nothing a goal may count on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_refused: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -714,6 +728,8 @@ struct ObservationWire {
     yields: Option<Vec<BlockYield>>,
     #[serde(default)]
     dig_safe: Option<bool>,
+    #[serde(default)]
+    route_refused: Option<bool>,
 }
 
 impl<'de> Deserialize<'de> for Observation {
@@ -736,6 +752,13 @@ impl<'de> Deserialize<'de> for Observation {
                 "standable, yields and digSafe are present exactly for a block observation",
             ));
         }
+        if raw.route_refused == Some(false)
+            || (raw.route_refused.is_some() && raw.kind != ObservationKind::DroppedItem)
+        {
+            return Err(de::Error::custom(
+                "routeRefused is present, and true, only for a dropped item",
+            ));
+        }
         if raw.count.is_some_and(|count| count < 1) {
             return Err(de::Error::custom(
                 "a dropped-item observation must hold at least one item",
@@ -753,6 +776,7 @@ impl<'de> Deserialize<'de> for Observation {
             standable: raw.standable,
             yields: raw.yields,
             dig_safe: raw.dig_safe,
+            route_refused: raw.route_refused,
         })
     }
 }
@@ -863,6 +887,52 @@ pub struct Perception {
     /// The agent's held short-term goal, carried into a goal review only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal: Option<GoalSummary>,
+    /// Why the body refused the agent's previous goal decision before acting on it, told
+    /// once, at the next goal review or step-settled perception.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_refusal: Option<GoalRefusal>,
+}
+
+/// One goal decision the body refused before acting: which request, the countable outcome tag
+/// it was refused with, and - for a success condition it judged - the item, the total asked
+/// for, how many were held and how many more what was in sight could give.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GoalRefusal {
+    /// The request id of the refused decision.
+    #[serde(deserialize_with = "bounded_goal_id")]
+    pub request_id: String,
+    /// The outcome tag the body refused it with.
+    #[serde(deserialize_with = "bounded_goal_id")]
+    pub outcome: String,
+    /// The success item the refusal judged.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_item_name"
+    )]
+    pub success_item: Option<String>,
+    /// The total the refused decision asked to hold.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_success_count"
+    )]
+    pub asked: Option<i64>,
+    /// How many of the success item were held.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nonnegative_optional_goal_count"
+    )]
+    pub held: Option<i64>,
+    /// How many more of it what was in sight could give.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nonnegative_optional_goal_count"
+    )]
+    pub capacity: Option<i64>,
 }
 
 /// Affirmed steps in a row that may change neither the agent's inventory nor its place
@@ -1056,6 +1126,20 @@ where
     Ok(changes)
 }
 
+fn nonnegative_optional_goal_count<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<i64>::deserialize(deserializer)?;
+    if let Some(value) = value.filter(|value| *value < 0) {
+        return Err(de::Error::invalid_value(
+            de::Unexpected::Signed(value),
+            &"a non-negative integer",
+        ));
+    }
+    Ok(value)
+}
+
 fn nonnegative_goal_count<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: Deserializer<'de>,
@@ -1092,7 +1176,7 @@ pub struct GoalSummary {
     /// The request id of the decision that adopted the goal.
     #[serde(deserialize_with = "bounded_goal_id")]
     pub goal_id: String,
-    /// The goal in the agent's own words.
+    /// The goal, worded by the body from its typed success condition.
     #[serde(deserialize_with = "bounded_goal_statement")]
     pub statement: String,
     /// How many times the goal has been revised since it was adopted.
@@ -1255,13 +1339,6 @@ pub enum GoalDisposition {
 pub struct GoalChoice {
     /// What the decision does with the goal.
     pub disposition: GoalDisposition,
-    /// The goal's wording, for adopt and revise.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "bounded_optional_goal_statement"
-    )]
-    pub statement: Option<String>,
     /// The item the goal must hold, its success condition with the count, for adopt and revise.
     #[serde(
         default,
@@ -1269,7 +1346,8 @@ pub struct GoalChoice {
         deserialize_with = "bounded_optional_item_name"
     )]
     pub success_item: Option<String>,
-    /// How many of the success item the goal must hold, for adopt and revise.
+    /// How many of the success item the goal must hold in total, counting what is already
+    /// held, for adopt and revise.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

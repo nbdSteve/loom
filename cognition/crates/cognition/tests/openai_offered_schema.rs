@@ -185,7 +185,6 @@ fn every_offered_ref_is_one_enum_once_whichever_actions_spend_it() {
             + offered.pursuit_targets.len()
             + offered.pickup_items.len()
             + offered.route_items.len()
-            + offered.obtainable.len()
     );
     for variant in schema["properties"]["intent"]["anyOf"].as_array().unwrap() {
         for (name, field) in variant["properties"].as_object().unwrap() {
@@ -217,6 +216,7 @@ fn the_widest_request_schema_stays_inside_the_providers_enum_limits() {
         standable: Some(true),
         yields: None,
         dig_safe: Some(true),
+        route_refused: None,
     };
     // Each block yields eight items of the contract's longest name, and one is unsafe to dig.
     seen.surroundings = (0..MAX_PERCEPTION_OBSERVATIONS)
@@ -232,6 +232,7 @@ fn the_widest_request_schema_stays_inside_the_providers_enum_limits() {
                     .collect(),
             ),
             dig_safe: Some(index != 0),
+            route_refused: None,
             ..block.clone()
         })
         .collect();
@@ -321,6 +322,7 @@ fn with_bush(mut seen: Perception) -> Perception {
             most: 2,
         }]),
         dig_safe: Some(true),
+        route_refused: None,
     });
     seen
 }
@@ -333,12 +335,24 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     let review = fixture("perception-goal-review");
     assert_eq!(dispositions(&of(&review)), ["none"]);
     assert_eq!(dispositions(&of(&with_bush(review))), ["none", "adopt"]);
-    // An unmet condition is never completed.
+    // An unmet condition is never completed, and a held goal is always answered. Eight oak logs
+    // with nothing in sight to give one cannot be met, so it is not offered a continue (r15: a
+    // continue was the one disposition the obtainability rule did not reach), and with a bush in
+    // sight it may be revised to sticks.
     let carried = fixture("perception-goal-carried");
-    assert_eq!(dispositions(&of(&carried)), ["none", "continue", "abandon"]);
+    assert_eq!(dispositions(&of(&carried)), ["abandon"]);
     assert_eq!(
-        dispositions(&of(&with_bush(carried))),
-        ["none", "continue", "revise", "abandon"]
+        dispositions(&of(&with_bush(carried.clone()))),
+        ["revise", "abandon"]
+    );
+    let mut sticks = carried;
+    let goal = sticks.goal.as_mut().unwrap();
+    goal.success_item = Some("item.minecraft.stick".to_owned());
+    goal.success_count = Some(2);
+    assert_eq!(dispositions(&of(&sticks)), ["abandon"]);
+    assert_eq!(
+        dispositions(&of(&with_bush(sticks))),
+        ["continue", "revise", "abandon"]
     );
     // r11: delta, epsilon and zeta held the stick their goal named and went on. A met
     // condition is completed or revised; nothing else, not even no choice, is offered.
@@ -361,4 +375,91 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
         dispositions(&of(&fixture("perception-threat-sighted"))),
         ["none", "continue", "complete", "abandon"]
     );
+}
+
+/// The count bounds a request's goal shapes give `item` under `disposition`.
+fn count_bounds(schema: &Value, disposition: &str, item: &str) -> Vec<(i64, i64)> {
+    schema["properties"]["goal"]["anyOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|variant| variant["properties"]["disposition"]["enum"][0] == disposition)
+        .filter(|variant| variant["properties"]["successItem"]["enum"][0] == item)
+        .map(|variant| {
+            let count = &variant["properties"]["successCount"];
+            (
+                count["minimum"].as_i64().unwrap(),
+                count["maximum"].as_i64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_success_count_is_the_total_to_hold_bounded_by_what_is_held_and_what_sight_could_give() {
+    let stick = "item.minecraft.stick";
+    let mut seen = with_bush(fixture("perception-goal-review"));
+    seen.self_state.inventory_summary.push(InventoryStack {
+        slot_ref: "i9".to_owned(),
+        what: stick.to_owned(),
+        count: 3,
+    });
+    let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
+    // Three held and a bush that gives up to two: a total of four or five (r15: counts were read
+    // as more to gather, and eight goals asked for more than sight could give).
+    assert_eq!(count_bounds(&schema, "adopt", stick), [(4, 5)]);
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let adopt = |count: i64| {
+        json!({ "intent": { "action": "dig", "block": "b9" }, "reasoning": "r", "goal": {
+            "disposition": "adopt", "successItem": stick, "successCount": count, "step": "s"
+        }})
+    };
+    assert!(validator.is_valid(&adopt(5)));
+    assert!(!validator.is_valid(&adopt(3)));
+    assert!(!validator.is_valid(&adopt(6)));
+}
+
+#[test]
+fn a_held_goal_offers_dig_and_collect_only_for_what_can_give_its_item() {
+    let mut seen = with_bush(fixture("perception-goal-carried"));
+    let goal = seen.goal.as_mut().unwrap();
+    goal.success_item = Some("item.minecraft.stick".to_owned());
+    goal.success_count = Some(2);
+    // Terracotta beside the bush drops nothing: no dig of it can be the goal's step.
+    seen.surroundings.push(Observation {
+        target_ref: "b8".to_owned(),
+        what: "block.minecraft.terracotta".to_owned(),
+        yields: Some(vec![]),
+        ..seen.surroundings[0].clone()
+    });
+    // A drop of something else is not the goal's item, and a stick the body found no route to
+    // is offered to nothing and counted on by nothing.
+    let bush = seen.surroundings[0].clone();
+    let drop = |handle: &str, what: &str, refused: Option<bool>| Observation {
+        kind: ObservationKind::DroppedItem,
+        what: what.to_owned(),
+        target_ref: handle.to_owned(),
+        count: Some(1),
+        standable: None,
+        yields: None,
+        dig_safe: None,
+        route_refused: refused,
+        ..bush.clone()
+    };
+    seen.surroundings
+        .push(drop("d1", "item.minecraft.wheat_seeds", None));
+    seen.surroundings
+        .push(drop("d2", "item.minecraft.stick", None));
+    seen.surroundings
+        .push(drop("d3", "item.minecraft.stick", Some(true)));
+    let offered = OfferedRefs::of(&seen);
+    assert_eq!(offered.pursued.as_deref(), Some("item.minecraft.stick"));
+    assert_eq!(offered.dig_blocks, ["b9"]);
+    assert_eq!(offered.route_items, ["d2"]);
+    assert_eq!(offered.capacity_of("item.minecraft.stick"), 3);
+    // Without the goal every handle in reach is offered again, but never the refused route.
+    seen.goal = None;
+    let free = OfferedRefs::of(&seen);
+    assert_eq!(free.dig_blocks, ["b9", "b8"]);
+    assert_eq!(free.route_items, ["d1", "d2"]);
 }

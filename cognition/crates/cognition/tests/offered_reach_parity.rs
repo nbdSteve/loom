@@ -58,6 +58,11 @@ fn every_reach_bound_is_the_one_the_body_or_jvm_enforces() {
             MOVE_REACH_BLOCKS,
         ),
         (
+            "plugin/src/main/kotlin/dev/loom/mind/WorkingGoal.kt",
+            "COLLECT_REACH_BLOCKS",
+            MOVE_REACH_BLOCKS,
+        ),
+        (
             "body/src/combat.js",
             "ATTACK_REACH_BLOCKS",
             ATTACK_REACH_BLOCKS,

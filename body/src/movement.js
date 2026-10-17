@@ -1186,6 +1186,22 @@ function createMovement (bot, {
     },
 
     /**
+     * Walks until the body's feet are in any one of `cells`, and answers once the route has
+     * ended. The cells are the caller's, already chosen: a collect names every standable cell
+     * from which vanilla would pick its one item up, so the walk ends wherever the route first
+     * reaches one, and no cell at all is `noRoute` before anything is searched for.
+     */
+    approach ({ cells, timeoutMs, sprint, owner }) {
+      if (running !== undefined) return undefined
+      const from = standing()
+      if (from === undefined) return undefined
+      if (cells.length === 0) return unmoved('noRoute')
+      if (cells.every((cell) => blocksApart(from, cell) > MOVE_REACH_BLOCKS)) return unmoved('outOfRange')
+      const goal = new goals.GoalCompositeAny(cells.map(([x, y, z]) => new goals.GoalBlock(x, y, z)))
+      return walk({ goal, sprint, timeoutMs, owner })
+    },
+
+    /**
      * Runs from one creature a named sense answer reported, and answers once the flight has
      * ended.
      *

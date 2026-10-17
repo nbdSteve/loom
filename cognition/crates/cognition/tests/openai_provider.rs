@@ -367,6 +367,7 @@ fn perception(importance: DecisionImportance) -> Perception {
         surroundings: vec![],
         surroundings_omitted: 0,
         goal: None,
+        last_refusal: None,
     }
 }
 
@@ -460,7 +461,6 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
         "reasoning": "the held goal is still worth it and nothing to step toward",
         "goal": {
             "disposition": "revise",
-            "statement": "gather wood nearer the hill",
             "successItem": "item.minecraft.birch_log",
             "successCount": 8,
             "step": "walk to the birch on the hill",
@@ -474,7 +474,6 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
         decision.goal,
         Some(GoalChoice {
             disposition: GoalDisposition::Revise,
-            statement: Some("gather wood nearer the hill".to_owned()),
             success_item: Some("item.minecraft.birch_log".to_owned()),
             success_count: Some(8),
             step: Some("walk to the birch on the hill".to_owned()),
@@ -483,7 +482,7 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
     );
     assert_eq!(decision.intent, Intent::Idle);
     assert_eq!(decision.provenance.model, FAST_MODEL);
-    assert_eq!(decision.provenance.prompt_version, "routine-v23");
+    assert_eq!(decision.provenance.prompt_version, "routine-v24");
 }
 
 #[tokio::test]

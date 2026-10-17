@@ -15,7 +15,9 @@ const { readinessMetrics } = require('./readiness.js')
 // Generation 5 credits a step only on its evidence and refuses unobtainable success items.
 // Generation 6 counts a review action as meaningful only when it is a step of a goal, counts the
 // follow-up reviews a settled step owes, and refuses goals already met or pursued by idling.
-const GATE_GENERATION = 6
+// Generation 7 refuses an answer that ignores its held goal, a step that cannot give the goal's
+// item and an answer past the stall bound, and reads a body's noRoute as the ground's answer.
+const GATE_GENERATION = 7
 // The goal outcomes of a decision whose action was a step of a goal it held or took up.
 const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`

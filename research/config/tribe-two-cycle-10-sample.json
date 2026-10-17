@@ -1,7 +1,7 @@
 {
   "experimentId": "2026-10-15-scripted-two-cycle-10-agent-sample",
   "title": "Credential-free 10-agent two-cycle real-time calibration sample",
-  "mode": "routine-v23-own-evidence",
+  "mode": "routine-v24-answered-goal",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -60,9 +60,9 @@
       "pivotal": "scripted-stand-in"
     },
     "prompts": {
-      "routine": "routine-v23",
-      "notable": "notable-v23",
-      "pivotal": "pivotal-v23"
+      "routine": "routine-v24",
+      "notable": "notable-v24",
+      "pivotal": "pivotal-v24"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,

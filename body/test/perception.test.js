@@ -302,6 +302,26 @@ test('a dropped item on open ground is offered and one behind a wall is not offe
   assert.deepEqual(hidden.itemOffers, [])
 })
 
+test('an item behind a wall is reported out of sight only when the controller named it', async () => {
+  // r15 iota: its own stick lay 5.4 blocks off out of sight, told of and never collectable.
+  const seeds = { id: 77, what: 'wheat_seeds', x: 11.5, y: FEET.y, z: 8.5 }
+  const walled = await standing({ walls: [{ x: 10, y: FEET.y, z: 8 }] })
+  droppedAt(walled.client, seeds)
+  await settled()
+  const uuid = walled.bot.entities[77].uuid
+  assert.equal(typeof uuid, 'string')
+  const named = senseReading(walled.bot, { radius: RADIUS, limit: LIMIT, retainItems: [uuid] })
+  assert.deepEqual(named.reading.items, [
+    { what: 'wheat_seeds', count: 1, position: [11.5, FEET.y, 8.5], visible: false }
+  ])
+  assert.equal(named.itemOffers.length, 1)
+  // Another uuid names nothing here, and the unseen item stays unlisted.
+  const other = senseReading(walled.bot, {
+    radius: RADIUS, limit: LIMIT, retainItems: ['00000000-0000-4000-8000-000000000999']
+  })
+  assert.deepEqual(other.reading.items, [])
+})
+
 test('open floor blocks are seen through their top faces and a buried block is not listed', async () => {
   const { bot } = await standing({ walls: [{ x: 12, y: GROUND_LEVEL + 1, z: 8 }] })
   const sensed = senseReading(bot, { radius: RADIUS, limit: 48 })

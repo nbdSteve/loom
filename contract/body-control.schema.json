@@ -664,7 +664,14 @@
             "agentId": { "$ref": "#/$defs/ControlId" },
             "op": { "const": "sense" },
             "radius": { "$ref": "#/$defs/SenseRadius" },
-            "limit": { "$ref": "#/$defs/SenseLimit" }
+            "limit": { "$ref": "#/$defs/SenseLimit" },
+            "retainItems": {
+              "description": "Dropped-item entities, by the uuid the server spawned each with, to report inside the radius even when no ray reaches them, with visible false. The controller names them, so the body chooses nothing: Loom names an agent's own dig drops, which the agent was told of and could otherwise not name back to collect. Unique, and at most eight.",
+              "type": "array",
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
+            }
           }
         },
         {

@@ -26,6 +26,7 @@ import dev.loom.mind.GoalReviewSchedule
 import dev.loom.mind.PerAgentCognitionBridge
 import dev.loom.mind.StepSettlement
 import dev.loom.mind.tcp.TcpCognitionTransport
+import dev.loom.mind.watching
 import dev.loom.observe.Observatory
 import dev.loom.observe.ObservedEventLog
 import dev.loom.witness.ClaimAudit

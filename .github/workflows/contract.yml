@@ -177,14 +177,16 @@ jobs:
           name: coverage-jvm
           path: plugin/build/reports/jacoco/
           if-no-files-found: ignore
-      - name: Fail if the offline speech acceptance was skipped
-        # It runs only where node and body deps exist, so a skip here proves nothing.
+      - name: Fail if an offline end-to-end acceptance was skipped
+        # They run only where node and body deps exist, so a skip here proves nothing.
         run: |
-          report=build/test-results/test/TEST-dev.loom.plugin.SpeechEndToEndTest.xml
-          grep -q 'skipped="0"' "$report" || {
-            echo "the offline speech acceptance did not run: $report" >&2
-            exit 1
-          }
+          for suite in SpeechEndToEndTest GoalScenarioEndToEndTest; do
+            report=build/test-results/test/TEST-dev.loom.plugin.$suite.xml
+            grep -q 'skipped="0"' "$report" || {
+              echo "the offline acceptance $suite did not run: $report" >&2
+              exit 1
+            }
+          done
       - name: assemble the plugin jar
         # Proves the shipped artifact still builds, not just that sources compile.
         run: ./gradlew shadowJar --no-daemon --console=plain

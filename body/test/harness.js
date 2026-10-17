@@ -498,6 +498,7 @@ function spotted (client, { id, what, x, y, z }) {
   client.emit('spawn_entity', {
     entityId: id,
     entityUUID: `00000000-0000-4000-8000-${String(id).padStart(12, '0')}`,
+    objectUUID: `00000000-0000-4000-8000-${String(id).padStart(12, '0')}`,
     type: registry.entitiesByName[what].id,
     x,
     y,

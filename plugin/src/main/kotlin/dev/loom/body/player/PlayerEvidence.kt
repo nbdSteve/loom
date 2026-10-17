@@ -56,6 +56,10 @@ internal class PlayerEvidenceRecorder(
             } else {
                 execution.outcome
             }
+        (execution.interaction as? ServerInteractionClaim.Collect)
+            ?.takeIf { it.report.outcome == CollectOutcome.NO_ROUTE }
+            ?.itemSubject
+            ?.let(context.routeRefusals::refused)
         recordAction(agentId, intent, requestId, outcome)
         recordWalk(runtime, requestId, execution)
         recordFlight(runtime, requestId, execution)
@@ -260,7 +264,11 @@ internal fun collectOutcome(report: BodyResponse.CollectReport): IntentOutcome =
         CollectOutcome.ITEM_CHANGED -> rejected("collect item changed", EventTag.COLLECT_ITEM_CHANGED)
         CollectOutcome.OUT_OF_RANGE ->
             rejected("collect item out of range", EventTag.COLLECT_OUT_OF_RANGE)
-        CollectOutcome.NO_ROUTE -> rejected("collect route unavailable", EventTag.COLLECT_NO_ROUTE)
+        CollectOutcome.NO_ROUTE ->
+            rejected(
+                "no standable cell within pickup reach of the item has a route",
+                EventTag.COLLECT_NO_ROUTE,
+            )
         CollectOutcome.SEARCH_OVER_BUDGET ->
             rejected("collect search over budget", EventTag.COLLECT_SEARCH_OVER_BUDGET)
         CollectOutcome.STALLED -> rejected("collect approach stalled", EventTag.COLLECT_STALLED)

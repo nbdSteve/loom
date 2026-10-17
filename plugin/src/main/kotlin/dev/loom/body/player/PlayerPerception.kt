@@ -13,6 +13,7 @@ import dev.loom.body.completedBodyOperation
 import dev.loom.bodycontrol.BODY_CONTROL_PROTOCOL_VERSION
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
+import dev.loom.bodycontrol.MAX_RETAINED_ITEMS
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 import java.util.concurrent.CompletableFuture
@@ -89,6 +90,14 @@ internal class PlayerPerception(
                 agentId = runtime.identity.agentId.value,
                 radius = PERCEPTION_RADIUS_BLOCKS.toInt(),
                 limit = BODY_SENSE_MAX_OFFERS_PER_KIND,
+                // The agent's own drops are reported even out of sight, so it can collect them.
+                retainItems =
+                    context.authority.ownDrops
+                        .of(runtime.identity)
+                        .mapNotNull { it.entity?.toString() }
+                        .distinct()
+                        .take(MAX_RETAINED_ITEMS)
+                        .ifEmpty { null },
             )
         val capturedTick = context.authority.currentTick()
         val auditSnapshot = context.authority.serverState.captureSenseAudit(runtime.identity)

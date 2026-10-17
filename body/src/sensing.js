@@ -325,7 +325,8 @@ function droppedStack (entity) {
  *
  * Only an item in sight is offered, because every offer is a handle a `collect` may name
  * and an item behind a wall or under the ground is one the body cannot reach by any
- * route it would take. An unseen item is skipped rather than counted as omitted: the
+ * route it would take - unless the controller named it in `retainItems`, as Loom names an
+ * agent's own dig drops. An unseen item is skipped rather than counted as omitted: the
  * omission count means "seen and did not fit the limit". Sight is aimed at the item's
  * centre, as it is for a creature, because a ray to the point the item rests on meets
  * the floor under it and would call every item on open ground unseen.
@@ -334,7 +335,8 @@ function droppedStack (entity) {
  * Mineflayer id and exact object as well, because ids are reused after despawn and a later
  * object under the same number is not the item this sense offered.
  */
-function nearestItems (bot, eyes, { radius, limit }) {
+function nearestItems (bot, eyes, { radius, limit, retainItems = [] }) {
+  const retained = new Set(retainItems)
   const within = []
   for (const entity of Object.values(bot.entities)) {
     if (entity === null || entity === undefined || entity.id === bot.entity.id) continue
@@ -344,17 +346,20 @@ function nearestItems (bot, eyes, { radius, limit }) {
     if (position === undefined) continue
     const away = entity.position.distanceTo(eyes)
     if (!realWithin(away, 0, radius)) continue
-    if (!inSight(bot, eyes, itemAim(entity))) continue
-    within.push({ entity, stack, position, away })
+    // An item out of sight is reported only when the controller named it, and said to be out
+    // of sight: Loom names the agent's own dig drops, so an agent told of one can collect it.
+    const visible = inSight(bot, eyes, itemAim(entity))
+    if (!visible && !retained.has(entity.uuid)) continue
+    within.push({ entity, stack, position, away, visible })
   }
   within.sort((one, other) => one.away - other.away || one.entity.id - other.entity.id)
   const reported = within.slice(0, Math.min(limit, MAX_SENSE_ITEMS))
   return {
-    items: reported.map(({ stack, position }) => ({
+    items: reported.map(({ stack, position, visible }) => ({
       what: stack.what,
       count: stack.count,
       position,
-      visible: true
+      visible
     })),
     itemsOmitted: within.length - reported.length,
     itemOffers: reported.map(({ entity, stack }) => ({
@@ -469,7 +474,7 @@ function inventoryOf (bot) {
  * answer to an encoder. The contract's frames are built field by field from named properties.
  * One reading, two consumers, and no way to hand the wrong one to the wrong one by accident.
  */
-function senseReading (bot, { radius, limit }) {
+function senseReading (bot, { radius, limit, retainItems }) {
   const standing = bot.entity === null || bot.entity === undefined
     ? undefined
     : bot.entity.position
@@ -484,7 +489,7 @@ function senseReading (bot, { radius, limit }) {
   const { entities, entitiesOmitted, entityOffers } = nearest(bot, eyes, { radius, limit })
   const { blocks, blocksOmitted, blockOffers } =
     nearestBlocks(bot, eyes, standing, { radius, limit })
-  const { items, itemsOmitted, itemOffers } = nearestItems(bot, eyes, { radius, limit })
+  const { items, itemsOmitted, itemOffers } = nearestItems(bot, eyes, { radius, limit, retainItems })
   const reading = {
     position,
     vitals,

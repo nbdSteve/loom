@@ -920,11 +920,21 @@ sealed interface BodyRequest {
         override val agentId: String,
         val radius: Int,
         val limit: Int,
+        /**
+         * Dropped-item entities, by server uuid, to report even when out of sight: the caller
+         * names them, as Loom names an agent's own dig drops, so the body chooses nothing.
+         */
+        val retainItems: List<String>? = null,
     ) : BodyRequest {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireWithin("radius", radius, 1..MAX_SENSE_RADIUS)
             requireWithin("limit", limit, 1..MAX_SENSE_OFFERS_PER_KIND)
+            retainItems?.let { uuids ->
+                require(uuids.size <= MAX_RETAINED_ITEMS) { "retainItems names at most $MAX_RETAINED_ITEMS items" }
+                require(uuids.toSet().size == uuids.size) { "retainItems names each item once" }
+                require(uuids.all(ENTITY_UUID::matches)) { "retainItems names entity uuids" }
+            }
         }
     }
 
@@ -1918,3 +1928,9 @@ data class BodyError(
         requireBoundedControlId("agentId", agentId)
     }
 }
+
+/** Most dropped items one sense may ask to have reported out of sight. */
+const val MAX_RETAINED_ITEMS = 8
+
+/** An entity uuid as the server spawns it: lower-case and hyphenated. */
+private val ENTITY_UUID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")

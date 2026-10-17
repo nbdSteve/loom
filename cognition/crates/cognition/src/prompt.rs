@@ -27,23 +27,25 @@
 //! give a second, driftable statement of the same thing.
 
 use loom_contract::{
-    Bearing, CraftingOption, DayPhase, DecisionImportance, DropFate, GoalSummary, IntentAction,
-    InventoryChange, InventoryStack, Observation, ObservationKind, OwnDrop, Perception, SelfState,
-    StepEvidence, Trigger, WorldState, MAX_GOAL_STEPS_WITHOUT_PROGRESS, MAX_OWN_DROPS,
-    MAX_PERCEPTION_OBSERVATIONS,
+    Bearing, CraftingOption, DayPhase, DecisionImportance, DropFate, GoalRefusal, GoalSummary,
+    IntentAction, InventoryChange, InventoryStack, Observation, ObservationKind, OwnDrop,
+    Perception, SelfState, StepEvidence, Trigger, WorldState, MAX_GOAL_STEPS_WITHOUT_PROGRESS,
+    MAX_OWN_DROPS, MAX_PERCEPTION_OBSERVATIONS,
 };
+
+use std::fmt::Write as _;
 
 use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v23";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v24";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v23";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v24";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v23";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v24";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -169,41 +171,43 @@ achievable thing rather than a plan.
 the choice, briefly and honestly.
 
 You may hold one short-term goal of your own, and only a goal review can change it: a \
-scheduled one, or the one that follows soon after a step your goal took has ended. Every \
-answer also carries a goal choice; null makes no choice and leaves any held goal as it is, \
-except that a met success condition must be answered. A goal is achieved by holding \
-something: its success condition is an item, named exactly as a stack or a dropped item shows \
-it, and how many of it you must carry, and your body measures that from your own inventory. \
-At a goal review you are shown the goal you hold, if any: its success condition and whether it \
-is met, how your inventory changed since your last step, the step you last took and what \
-showed for it, and how many steps in a row advanced nothing. Judge it against that evidence, \
-not against a wish to look busy:
-- adopt: take up a new goal when you hold none and the evidence gives you one worth having. \
-Word the goal, name the item and how many of it you must hold, and word the step this \
-answer's action takes. The count must be more than you hold and no more than you hold plus \
-what is in sight could give you, as you are told; only items something in sight could give \
-are offered. A one-item goal ends at its first pickup; where sight could give several, a \
-count of several makes it a plan of several steps. Holding no goal is a legitimate state.
-- continue: keep the held goal, judge the previous step, and word the next step this \
-answer's action takes.
-- revise: change the goal, its success target and its step when the evidence showed the old \
-approach will not work, and judge the previous step. Revising keeps the count of steps that \
-advanced nothing.
+scheduled one, or the one that follows soon after a step your goal took has ended. A goal is \
+achieved by holding something: its success condition is an item, named exactly as a stack or a \
+dropped item shows it, and the total of it you must carry, counting what you carry already; your \
+body words the goal from those two and measures it from your own inventory. At a goal review you \
+are shown the goal you hold, if any: its success condition and whether it is met, how your \
+inventory changed since your last step, the step you last took and what showed for it, and how \
+many steps in a row advanced nothing. If your body refused your last goal decision, you are told \
+why, once. Judge it against that evidence, not against a wish to look busy:
+- adopt: take up a new goal when you hold none and the evidence gives you one worth having. Name \
+the item and the total of it you must hold, and word the step this answer's action takes. The \
+total must be more than you hold and no more than you hold plus what is in sight could give you, \
+as you are told; only items something in sight could give are offered. A one-more goal ends at \
+its first pickup; where sight could give several, a total of several makes it a plan of several \
+steps. Holding no goal is a legitimate state. With none held you may make no goal choice.
+- continue: keep the held goal, judge the previous step, and word the next step this answer's \
+action takes. It is offered only while what you hold plus what is in sight could still meet it.
+- revise: change the held goal's total, and its step, when the evidence showed the old target \
+will not work, and judge the previous step. Revising keeps the count of steps that advanced \
+nothing.
 - complete: drop the held goal because your body shows its success condition met.
-- abandon: drop the held goal because it is no longer worth pursuing.
-Your answer's own action is the goal's step: adopt, continue or revise beside idle or rest \
-takes no step and is refused with your action, as is a count you already hold or one beyond \
-what sight could give. There is something to collect only when a dropped item is listed. \
-Only evidence advances a goal: the held count of its item rising, or the step you took \
-carried out with evidence - an action after which you hold more, a dig the server saw drop \
-something for you, wherever that drop went after, or a walk that reaches a target in sight \
-somewhere the goal has not already been. What a block drops is random within the range you \
-are told: a dig may drop none of it, and another such block is a fresh chance. A dig that \
-drops nothing, moving about, falling or walking back is not progress, and rewording the goal \
-is not progress either. After three steps in a row that advanced nothing, your body refuses \
-continue and revise and ends the goal. When your success condition is met you must complete \
-the goal, or revise it to a target you do not yet hold, at that review; anything else is \
-refused with your action.";
+- abandon: drop the held goal because it is no longer worth pursuing, or to pursue another item.
+While you hold a goal every answer must say what it does with it, and your action is the goal's \
+step: dig and collect are offered only for what can give the goal's item, and adopt, continue or \
+revise beside idle or rest takes no step and is refused with your action, as is a total you \
+already hold or one beyond what sight could give. There is something to collect only when a \
+dropped item is listed, and a dropped item your body found no route to is not offered. Only \
+evidence advances a goal: the held count of its item rising, or the step you took carried out \
+with evidence - an action after which you hold more, or a walk that reaches a target in sight \
+somewhere the goal has not already been. A dig the server saw drop something for you is told to \
+you with where that drop is now, and a drop of yours still lying is offered to collect by its \
+ref, in sight or not; the drop itself is not progress until you hold it. What a block drops is \
+random within the range you are told: a dig may drop none of it, and another such block is a \
+fresh chance. A dig that drops nothing, a drop someone else takes, moving about, falling or \
+walking back is not progress, and revising is not progress either. After three steps in a row \
+that advanced nothing, your body refuses continue and revise, ends the goal, and acts on none of \
+that answer. When your success condition is met you must complete the goal, or revise it to a \
+total you do not yet hold, at that review; anything else is refused with your action.";
 
 /// The per-tier closing instruction.
 ///
@@ -275,6 +279,7 @@ fn situation_of(perception: &Perception) -> String {
     lines.extend(own_drops_line(&perception.self_state.own_drops, last_step));
     if perception.trigger.reviews_goal() {
         lines.push(capacity_line(perception));
+        lines.extend(perception.last_refusal.as_ref().map(refusal_line));
         lines.push(goal_line(perception.goal.as_ref()));
     }
     lines.join("\n")
@@ -350,21 +355,12 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
     };
     let step = goal.last_step.as_ref().map_or_else(
         || "no step under it has been answered yet".to_owned(),
-        |step| match step.outcome.as_str() {
-            "goalStepIdle" => "your last decision was refused before your body acted, because \
-                 it pursued the goal while idling or resting, which is no step"
-                .to_owned(),
-            "goalConditionMetIgnored" => "your last decision was refused before your body acted, \
-                 because it neither completed nor revised a goal whose condition was met"
-                .to_owned(),
-            "goalCompletionUnmet" => "your last decision was refused before your body acted, \
-                 because it completed a goal your inventory did not show met"
-                .to_owned(),
-            outcome => format!(
+        |step| {
+            format!(
                 "your last step under it was {action} and your body reported {outcome}",
                 action = field(&step.action),
-                outcome = field(outcome)
-            ),
+                outcome = field(&step.outcome)
+            )
         },
     );
     let mut parts = vec![format!(
@@ -383,7 +379,7 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
             .as_ref()
             .is_some_and(|progress| progress.condition_met);
         parts.push(format!(
-            "Success condition: hold {count} {item}; you hold {held} now, so it is {status}.",
+            "Success condition: hold {count} {item} in total; you hold {held} now, so it is {status}.",
             item = field(item),
             status = if met { "MET" } else { "not met yet" }
         ));
@@ -421,7 +417,9 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
             carried = match progress.step_evidence {
                 StepEvidence::Arrived => "reached the target you named",
                 StepEvidence::Gained => "gained you an item",
-                StepEvidence::Dropped => "made a drop the server saw your dig make",
+                StepEvidence::Dropped => {
+                    "made a drop the server saw your dig make, which is not progress until you hold it"
+                }
                 StepEvidence::None => "showed no evidence and advanced nothing",
             },
             count = progress.steps_without_progress,
@@ -434,6 +432,42 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
         ));
     }
     parts.join(" ")
+}
+
+/// Why the body refused the agent's previous goal decision, with the numbers it judged by, so the
+/// next answer can correct the decision rather than repeat it (r15: eight success counts were
+/// refused as unobtainable and the next review was told nothing of it).
+fn refusal_line(refusal: &GoalRefusal) -> String {
+    let why = match refusal.outcome.as_str() {
+        "goalSuccessUnobtainable" => "its total was more than you held plus what sight could give",
+        "goalAlreadyMet" => "its total was one you already held",
+        "goalStepIdle" => "it pursued the goal while idling or resting, which is no step",
+        "goalConditionMetIgnored" => {
+            "it neither completed nor revised a goal whose condition was met"
+        }
+        "goalCompletionUnmet" => "it completed a goal your inventory did not show met",
+        "goalChoiceMissing" => "it acted while you held a goal and said nothing of the goal",
+        "goalStepUnproductive" => "its action could not give the goal's item",
+        "goalStalled" => "the goal had advanced nothing for three steps in a row, so it ended",
+        "goalSuccessTargetMissing" => "it set a goal without its item and total",
+        "goalStepMissing" => "it gave no step for the goal",
+        "goalStepResultMissing" => "it did not judge the previous step",
+        _ => "it broke a goal rule",
+    };
+    let mut line = format!(
+        "Your body refused your last goal decision before acting, because {why} ({outcome}).",
+        outcome = field(&refusal.outcome)
+    );
+    if let (Some(item), Some(asked)) = (&refusal.success_item, refusal.asked) {
+        let _ = write!(
+            line,
+            " It asked to hold {asked} {item} in total; you held {held}, and sight could give {capacity} more.",
+            item = field(item),
+            held = refusal.held.unwrap_or(0),
+            capacity = refusal.capacity.unwrap_or(0),
+        );
+    }
+    line
 }
 
 /// How the inventory changed, item by item, or that it did not.
@@ -689,12 +723,16 @@ fn own_drops_line(drops: &[OwnDrop], last_step: Option<&str>) -> Option<String> 
             };
             let fate = match drop.fate {
                 DropFate::Lying => format!(
-                    "still lying {}",
-                    whereabouts(
+                    "still lying {place}{offered}",
+                    place = whereabouts(
                         drop.distance.unwrap_or(0.0),
                         drop.direction.unwrap_or(Bearing::Here),
                         drop.vertical_offset.unwrap_or(0.0)
-                    )
+                    ),
+                    offered = drop
+                        .drop_ref
+                        .as_deref()
+                        .map_or_else(String::new, |handle| format!(" (ref {})", field(handle)))
                 ),
                 DropFate::Collected => "which you picked up".to_owned(),
                 DropFate::Taken => "which another player picked up".to_owned(),
@@ -794,9 +832,10 @@ fn no_dropped_item_line(surroundings: &[Observation]) -> Option<String> {
     let none = !surroundings
         .iter()
         .take(MAX_OBSERVATIONS)
-        .any(|seen| seen.kind == ObservationKind::DroppedItem);
+        .any(|seen| seen.kind == ObservationKind::DroppedItem && seen.route_refused != Some(true));
     none.then(|| {
-        "No dropped item is in your surroundings, so there is nothing to collect.".to_owned()
+        "No dropped item you can reach is in your surroundings, so there is nothing to collect."
+            .to_owned()
     })
 }
 
@@ -902,7 +941,7 @@ fn own_column_phrase(vertical_offset: f64) -> String {
 /// about the rest as their absence, which is the opposite of what the body meant.
 fn observation_phrase(seen: &Observation) -> String {
     format!(
-        "{count}{kind} {what} (ref {handle}) {place}, {sight}{cover}",
+        "{count}{kind} {what} (ref {handle}) {place}, {sight}{cover}{route}",
         count = seen
             .count
             .map_or_else(String::new, |count| format!("{count} ")),
@@ -918,6 +957,12 @@ fn observation_phrase(seen: &Observation) -> String {
         // The server's word on a block's top: a face in sight can still be covered.
         cover = if seen.standable == Some(false) {
             ", covered with no room to stand on it"
+        } else {
+            ""
+        },
+        // r15: five collects were refused as noRoute, and the items stood on offer after.
+        route = if seen.route_refused == Some(true) {
+            ", which your body found no route to, so it is not offered"
         } else {
             ""
         }
@@ -1020,9 +1065,9 @@ mod tests {
     };
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
-        Bearing, CraftingOption, DayPhase, DecisionImportance, DropFate, GoalStep, GoalSummary,
-        InventoryStack, Observation, ObservationKind, OwnDrop, Perception, SelfState, Trigger,
-        WorldState,
+        Bearing, CraftingOption, DayPhase, DecisionImportance, DropFate, GoalRefusal, GoalStep,
+        GoalSummary, InventoryStack, Observation, ObservationKind, OwnDrop, Perception, SelfState,
+        Trigger, WorldState, MAX_OWN_DROPS,
     };
 
     fn router() -> Router {
@@ -1073,9 +1118,11 @@ mod tests {
                 standable: None,
                 yields: None,
                 dig_safe: None,
+                route_refused: None,
             }],
             surroundings_omitted: 0,
             goal: None,
+            last_refusal: None,
         }
     }
 
@@ -1103,6 +1150,7 @@ mod tests {
                 standable: Some(true),
                 yields: Some(vec![]),
                 dig_safe: Some(true),
+                route_refused: None,
             },
             Observation {
                 kind: ObservationKind::Block,
@@ -1116,6 +1164,7 @@ mod tests {
                 standable: Some(true),
                 yields: Some(vec![]),
                 dig_safe: Some(true),
+                route_refused: None,
             },
         ];
         seen.surroundings_omitted = 117;
@@ -1264,7 +1313,7 @@ mod tests {
         });
         let met = situation(&goal_review_holding(Some(goal)));
         for expected in [
-            "Success condition: hold 8 item.minecraft.oak_log; you hold 8 now, so it is MET.",
+            "Success condition: hold 8 item.minecraft.oak_log in total; you hold 8 now, so it is MET.",
             "you must complete this goal now, or revise it to a target you do not yet hold",
             "\"cut the oak log in reach\" (dig on b4).",
             "changed by +3 item.minecraft.oak_log, -1 item.minecraft.dirt",
@@ -1349,6 +1398,7 @@ mod tests {
                 distance: None,
                 direction: None,
                 vertical_offset: None,
+                drop_ref: None,
             },
             OwnDrop {
                 request_id: "req-earlier".to_owned(),
@@ -1358,6 +1408,7 @@ mod tests {
                 distance: Some(3.5),
                 direction: Some(Bearing::East),
                 vertical_offset: Some(0.0),
+                drop_ref: None,
             },
         ];
         let rendered = situation(&seen);
@@ -1396,6 +1447,7 @@ mod tests {
                 most: 2,
             }]),
             dig_safe: Some(true),
+            route_refused: None,
         });
         assert!(situation(&seen)
             .contains("What is in sight could give you at most 2 more item.minecraft.stick, beyond what you hold."));
@@ -1421,7 +1473,9 @@ mod tests {
         ))
         .unwrap();
         assert!(situation(&seen)
-            .contains("No dropped item is in your surroundings, so there is nothing to collect."));
+            .contains(
+            "No dropped item you can reach is in your surroundings, so there is nothing to collect."
+        ));
         let mut with_one = seen.clone();
         with_one.surroundings.push(Observation {
             kind: ObservationKind::DroppedItem,
@@ -1435,18 +1489,46 @@ mod tests {
             standable: None,
             yields: None,
             dig_safe: None,
+            route_refused: None,
         });
         assert!(!situation(&with_one).contains("No dropped item"));
     }
 
     #[test]
-    fn a_refused_decision_is_explained_beside_the_goal_it_answered() {
-        let goal = held("gather sticks", 0, Some(("idle", "goalStepIdle")));
-        let rendered = situation(&goal_review_holding(Some(goal)));
+    fn a_refused_decision_is_explained_once_with_the_numbers_it_was_judged_by() {
+        // r15: iota's revise to four sticks was refused three times as unobtainable, and no
+        // review after it said so.
+        let mut seen = goal_review_holding(Some(held("hold 4 item.minecraft.stick", 0, None)));
+        seen.last_refusal = Some(GoalRefusal {
+            request_id: "req-203".to_owned(),
+            outcome: "goalSuccessUnobtainable".to_owned(),
+            success_item: Some("item.minecraft.stick".to_owned()),
+            asked: Some(4),
+            held: Some(0),
+            capacity: Some(3),
+        });
+        let rendered = situation(&seen);
         assert!(
-            rendered.contains("was refused before your body acted, because it pursued the goal while idling or resting, which is no step"),
+            rendered.contains(
+                "Your body refused your last goal decision before acting, because its total was more \
+                 than you held plus what sight could give (goalSuccessUnobtainable). It asked to hold 4 \
+                 item.minecraft.stick in total; you held 0, and sight could give 3 more."
+            ),
             "{rendered}"
         );
+        seen.last_refusal = Some(GoalRefusal {
+            request_id: "req-204".to_owned(),
+            outcome: "goalStepIdle".to_owned(),
+            success_item: None,
+            asked: None,
+            held: None,
+            capacity: None,
+        });
+        assert!(situation(&seen).contains(
+            "because it pursued the goal while idling or resting, which is no step (goalStepIdle)."
+        ));
+        seen.last_refusal = None;
+        assert!(!situation(&seen).contains("refused your last goal decision"));
     }
 
     #[test]
@@ -1518,7 +1600,7 @@ mod tests {
         ] {
             assert!(system.contains(disposition), "missing {disposition:?}");
         }
-        assert!(system.contains("null makes no choice"));
+        assert!(system.contains("With none held you may make no goal choice."));
         assert!(system.contains("Holding no goal is a legitimate state."));
         assert!(system.contains("not against a wish to look busy"));
         assert!(system.contains("Idle is correct when no useful step is"));
@@ -1696,6 +1778,7 @@ mod tests {
                 distance: Some(48.0),
                 direction: Some(Bearing::North),
                 vertical_offset: Some(-384.0),
+                drop_ref: Some(format!("d{index:07}")),
             })
             .collect();
         seen.self_state.crafting_options = (0..MAX_CRAFTING_LINES)
@@ -1713,8 +1796,9 @@ mod tests {
 
         assert_eq!(
             prompt.situation.matches("(ref ").count(),
-            MAX_OBSERVATIONS + MAX_INVENTORY_LINES + MAX_CRAFTING_LINES,
-            "every observation and every shown inventory and recipe offer must render once"
+            MAX_OBSERVATIONS + MAX_INVENTORY_LINES + MAX_CRAFTING_LINES + MAX_OWN_DROPS,
+            "every observation, every shown inventory and recipe offer, and every own drop's ref \
+             must render once"
         );
         for last_in_kind in ["e1b", "b1b", "d1b"] {
             assert!(
@@ -2173,6 +2257,7 @@ mod tests {
                 standable: None,
                 yields: None,
                 dig_safe: None,
+                route_refused: None,
             })
             .collect();
         seen.surroundings_omitted = 7;
@@ -2208,6 +2293,7 @@ mod tests {
                 standable: None,
                 yields: None,
                 dig_safe: None,
+                route_refused: None,
             })
             .collect();
         seen.surroundings_omitted = -1_000;
@@ -2293,6 +2379,7 @@ mod tests {
                 standable: None,
                 yields: None,
                 dig_safe: None,
+                route_refused: None,
             })
             .collect();
         let prompt = render(&router().route(seen.importance), &seen);

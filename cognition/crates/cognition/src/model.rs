@@ -326,10 +326,6 @@ impl BackendChoice {
 /// weighs resting against whatever else the agent is doing.
 const LOW_FOOD_LEVEL: i64 = 7;
 
-/// The one goal the stand-in ever adopts, worded as the stand-in's own so no
-/// record reads it as a model's choice.
-pub const SCRIPTED_GOAL_STATEMENT: &str = "scripted stand-in goal: stay fed and unhurt";
-
 /// The item the scripted stand-in prefers its placeholder goal to be achieved by holding.
 pub const SCRIPTED_SUCCESS_ITEM: &str = "item.minecraft.stick";
 /// The stand-in's step, worded as its own for the same reason.
@@ -372,7 +368,6 @@ impl ScriptedBackend {
         }
         let step = |disposition, step_result| GoalChoice {
             disposition,
-            statement: None,
             success_item: None,
             success_count: None,
             step: Some(SCRIPTED_STEP.to_owned()),
@@ -387,7 +382,6 @@ impl ScriptedBackend {
             let have = held_count(perception, &item);
             return (crate::offered::OfferedRefs::of(perception).capacity_of(&item) >= 1).then(
                 || GoalChoice {
-                    statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
                     success_item: Some(item),
                     success_count: Some(have + 1),
                     ..step(GoalDisposition::Adopt, None)
@@ -405,11 +399,15 @@ impl ScriptedBackend {
             step: None,
             ..step(disposition, Some(step_result))
         };
-        // A met condition is completed; a goal at the no-progress bound, or with nothing in reach
-        // to dig for it, is abandoned rather than continued into the body's refusal.
+        // A met condition is completed; a goal at the no-progress bound, with nothing in reach to
+        // dig for it, or that what is in sight could no longer meet, is abandoned rather than
+        // continued into the body's refusal.
+        let unobtainable = held.success_item.is_some()
+            && !crate::offered::OfferedRefs::of(perception).goal_obtainable;
         Some(if progress.is_some_and(|seen| seen.condition_met) {
             ended(GoalDisposition::Complete)
         } else if !digging
+            || unobtainable
             || progress
                 .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS)
         {
@@ -651,8 +649,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, LOW_FOOD_LEVEL,
-        SCRIPTED_GOAL_STATEMENT, SCRIPTED_STEP,
+        BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, LOW_FOOD_LEVEL, SCRIPTED_STEP,
     };
     use crate::config::{ConfigError, Env};
     use crate::router::{ModelCatalog, Router};
@@ -691,6 +688,7 @@ mod tests {
             surroundings: vec![],
             surroundings_omitted: 0,
             goal: None,
+            last_refusal: None,
         }
     }
 
@@ -724,6 +722,7 @@ mod tests {
             standable: None,
             yields: None,
             dig_safe: None,
+            route_refused: None,
         });
         seen
     }
@@ -842,6 +841,7 @@ mod tests {
                 most: 2,
             }]),
             dig_safe: Some(true),
+            route_refused: None,
         }];
         let digging = ScriptedBackend::draft_now(&route, &first);
         assert_eq!(
@@ -852,7 +852,6 @@ mod tests {
         );
         let adopted = digging.goal.unwrap();
         assert_eq!(adopted.disposition, GoalDisposition::Adopt);
-        assert_eq!(adopted.statement.as_deref(), Some(SCRIPTED_GOAL_STATEMENT));
         assert_eq!(
             adopted.success_item.as_deref(),
             Some(super::SCRIPTED_SUCCESS_ITEM)
@@ -869,7 +868,7 @@ mod tests {
         let mut later = perception(Trigger::GoalReview, DecisionImportance::Routine);
         later.goal = Some(GoalSummary {
             goal_id: "req-1".to_owned(),
-            statement: SCRIPTED_GOAL_STATEMENT.to_owned(),
+            statement: "hold 1 item.minecraft.stick".to_owned(),
             revision: 0,
             adopted_tick: 0,
             last_step: None,
@@ -886,8 +885,8 @@ mod tests {
         later.surroundings.clone_from(&first.surroundings);
         let continued = ScriptedBackend::draft_now(&route, &later).goal.unwrap();
         assert_eq!(continued.disposition, GoalDisposition::Continue);
-        assert_eq!(continued.statement, None);
-        assert!(SCRIPTED_GOAL_STATEMENT.starts_with("scripted stand-in"));
+        assert_eq!(continued.success_item, None);
+        assert!(SCRIPTED_STEP.starts_with("scripted stand-in"));
     }
 
     #[test]
@@ -1101,6 +1100,7 @@ mod tests {
                 standable: Some(true),
                 yields: Some(vec![]),
                 dig_safe: Some(true),
+                route_refused: None,
             });
         }
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);

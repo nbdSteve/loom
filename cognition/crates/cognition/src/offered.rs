@@ -28,6 +28,7 @@
 
 use loom_contract::{
     is_item_name, Bearing, Intent, Observation, ObservationKind, Perception, Trigger, AIR_ITEM,
+    MAX_SUCCESS_COUNT,
 };
 
 use crate::prompt::{MAX_CRAFTING_LINES, MAX_INVENTORY_LINES, MAX_OBSERVATIONS};
@@ -51,9 +52,9 @@ pub const ATTACK_REACH_BLOCKS: f64 = 3.1;
 pub const MAX_PURSUIT_BLOCKS: f64 = 7.5;
 
 /// Most items a success condition may be offered: craftable first, then the nearest dropped and
-/// dug ones. Every block in sight may yield its own eight items, and a request schema may carry no
-/// more than 500 enum values in all.
-pub const MAX_OBTAINABLE_ITEMS: usize = 48;
+/// dug ones. Each is its own closed goal shape per disposition that names a success item, with
+/// the count bounds that item admits, so the bound keeps the request schema small.
+pub const MAX_OBTAINABLE_ITEMS: usize = 16;
 
 /// The handles one perception offers, each list in the order the prompt shows it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -87,6 +88,31 @@ pub struct OfferedRefs {
     /// How many more of each of [`Self::obtainable`] what is in sight could give at most, in the
     /// same order: the bound a success count may reach beyond what is held.
     pub capacity: Vec<(String, i64)>,
+    /// For each item a success condition may name now, the fewest and most of it the count may
+    /// ask: one more than is held, and what is held plus [`Self::capacity`], never above
+    /// [`MAX_SUCCESS_COUNT`]. A count is the total to hold, counting what is held already.
+    pub count_bounds: Vec<(String, i64, i64)>,
+    /// The held goal's success item, while a goal review carries a goal that is not met and that
+    /// what is in sight could still meet: dig and collect are then offered only for what can give
+    /// that item, and a revise may change only its count (r15: digs of blocks that could never
+    /// drop the goal's item were taken as its steps).
+    pub pursued: Option<String>,
+    /// Whether the held goal at a goal review could still be met from what is in sight - its
+    /// count no more than what is held plus what sight could give. A continue is offered only
+    /// then, by the same rule the body holds an adopt and a revise to.
+    pub goal_obtainable: bool,
+}
+
+/// How many of `item` the agent's whole inventory holds, as the body counts a success condition.
+#[must_use]
+pub fn held_of(perception: &Perception, item: &str) -> i64 {
+    perception
+        .self_state
+        .inventory_summary
+        .iter()
+        .filter(|stack| stack.what == item)
+        .map(|stack| stack.count)
+        .sum()
 }
 
 /// Appends `handle` unless the list already holds it.
@@ -108,6 +134,8 @@ impl OfferedRefs {
     pub fn of(perception: &Perception) -> Self {
         let mut offered = Self::default();
         let mut sources: Vec<(&String, i64)> = Vec::new();
+        // What each dig and collect handle can give, for a held goal's restriction below.
+        let mut gives: Vec<(&str, &String)> = Vec::new();
         for seen in perception.surroundings.iter().take(MAX_OBSERVATIONS) {
             let handle = seen.target_ref.as_str();
             match seen.kind {
@@ -124,6 +152,7 @@ impl OfferedRefs {
                     if seen.visible && dig_safe {
                         for item in seen.yields.iter().flatten() {
                             sources.push((&item.what, item.most));
+                            gives.push((handle, &item.what));
                         }
                     }
                     if seen.direction != Bearing::Here && seen.standable == Some(true) {
@@ -131,15 +160,19 @@ impl OfferedRefs {
                     }
                 }
                 ObservationKind::Entity => offered.creature(handle, seen.distance),
-                ObservationKind::DroppedItem => {
-                    sources.push((&seen.what, seen.count.unwrap_or(1)));
+                // A drop the body already found no route to is neither offered nor counted on
+                // (r15: five collects were refused as noRoute while their items stood in capacity).
+                ObservationKind::DroppedItem if seen.route_refused != Some(true) => {
                     if seen.distance <= PASSIVE_PICKUP_REACH_BLOCKS {
                         offer(&mut offered.pickup_items, handle);
                     }
                     if seen.distance <= MOVE_REACH_BLOCKS {
                         offer(&mut offered.route_items, handle);
+                        sources.push((&seen.what, seen.count.unwrap_or(1)));
+                        gives.push((handle, &seen.what));
                     }
                 }
+                ObservationKind::DroppedItem => {}
             }
         }
         // The sighted threat's handle travels with the trigger and names a creature.
@@ -166,23 +199,76 @@ impl OfferedRefs {
             .iter()
             .take(MAX_CRAFTING_LINES)
             .map(|option| (&option.what, option.result_count * option.max_crafts));
+        // Every item's whole capacity, uncut, so a held goal is judged by the rule the body uses.
+        let mut totals: Vec<(String, i64)> = Vec::new();
         for (item, count) in crafted.chain(sources) {
             // Only an item name can be held, so anything else in a description is no condition.
             if !is_item_name(item) || item == AIR_ITEM || count < 1 {
                 continue;
             }
-            if let Some((_, total)) = offered.capacity.iter_mut().find(|(name, _)| name == item) {
+            if let Some((_, total)) = totals.iter_mut().find(|(name, _)| name == item) {
                 *total = total.saturating_add(count);
-            } else if offered.capacity.len() < MAX_OBTAINABLE_ITEMS {
-                offered.capacity.push((item.clone(), count));
+            } else {
+                totals.push((item.clone(), count));
             }
         }
-        offered.obtainable = offered
+        offered.pursue(perception, &totals, &gives);
+        offered.capacity = totals.into_iter().take(MAX_OBTAINABLE_ITEMS).collect();
+        let pursued = offered.pursued.clone();
+        offered.count_bounds = offered
             .capacity
             .iter()
-            .map(|(item, _)| item.clone())
+            .filter(|(item, _)| pursued.as_ref().is_none_or(|goal| goal == item))
+            .filter_map(|(item, capacity)| {
+                let held = held_of(perception, item);
+                let fewest = held.saturating_add(1);
+                let most = held.saturating_add(*capacity).min(MAX_SUCCESS_COUNT);
+                (fewest <= most).then(|| (item.clone(), fewest, most))
+            })
+            .collect();
+        offered.obtainable = offered
+            .count_bounds
+            .iter()
+            .map(|(item, ..)| item.clone())
             .collect();
         offered
+    }
+
+    /// Judges the held goal a goal review carries, and while it is unmet and still obtainable
+    /// narrows dig and collect to the handles that can give its item.
+    fn pursue(
+        &mut self,
+        perception: &Perception,
+        totals: &[(String, i64)],
+        gives: &[(&str, &String)],
+    ) {
+        if !perception.trigger.reviews_goal() {
+            return;
+        }
+        let Some(goal) = &perception.goal else {
+            return;
+        };
+        let (Some(item), Some(count)) = (&goal.success_item, goal.success_count) else {
+            return;
+        };
+        let held = held_of(perception, item);
+        let capacity = totals
+            .iter()
+            .find(|(name, _)| name == item)
+            .map_or(0, |(_, total)| *total);
+        self.goal_obtainable = count <= held.saturating_add(capacity);
+        if held >= count || !self.goal_obtainable {
+            return;
+        }
+        let gives_goal = |handle: &String| {
+            gives
+                .iter()
+                .any(|(given, what)| given == handle && *what == item)
+        };
+        self.dig_blocks.retain(gives_goal);
+        self.pickup_items.retain(gives_goal);
+        self.route_items.retain(gives_goal);
+        self.pursued = Some(item.clone());
     }
 
     /// How many more of `item` what is in sight could give at most.
@@ -192,6 +278,15 @@ impl OfferedRefs {
             .iter()
             .find(|(name, _)| name == item)
             .map_or(0, |(_, count)| *count)
+    }
+
+    /// The fewest and most of `item` a success count may ask now, if it may name it at all.
+    #[must_use]
+    pub fn count_bounds_of(&self, item: &str) -> Option<(i64, i64)> {
+        self.count_bounds
+            .iter()
+            .find(|(name, ..)| name == item)
+            .map(|(_, fewest, most)| (*fewest, *most))
     }
 
     /// Offers one creature to flight, and to each attack mode whose bound it is within.
@@ -294,6 +389,7 @@ mod tests {
             standable: (kind == ObservationKind::Block).then_some(true),
             yields: (kind == ObservationKind::Block).then(Vec::new),
             dig_safe: (kind == ObservationKind::Block).then_some(true),
+            route_refused: None,
         }
     }
 

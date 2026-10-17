@@ -84,7 +84,7 @@ class GoalContinuityTest {
         val mind =
             cognition(
                 IntentOutcome.Accepted("standing still"),
-                listOf(goalChoice(GoalDisposition.ADOPT, "find shelter"), goalChoice(GoalDisposition.CONTINUE)),
+                listOf(goalChoice(GoalDisposition.ADOPT), goalChoice(GoalDisposition.CONTINUE)),
             )
         mind.consider(agent, Trigger.GoalReview)
         main.drain()
@@ -94,7 +94,7 @@ class GoalContinuityTest {
         assertNull(seen[0].goal)
         val carried = seen[1].goal
         assertEquals("r1", carried?.goalId)
-        assertEquals("find shelter", carried?.statement)
+        assertEquals("hold 1 item.minecraft.stick", carried?.statement)
         assertEquals(GoalStep("r1", EventTag.DIG, EventTag.ACCEPTED), carried?.lastStep)
 
         val (first, second) = decidedGoals()
@@ -108,7 +108,7 @@ class GoalContinuityTest {
         val mind =
             cognition(
                 IntentOutcome.Rejected("busy", EventTag.CONTROL_NOT_READY),
-                listOf(goalChoice(GoalDisposition.ADOPT, "find shelter"), goalChoice(GoalDisposition.ABANDON)),
+                listOf(goalChoice(GoalDisposition.ADOPT), goalChoice(GoalDisposition.ABANDON)),
             )
         repeat(2) {
             mind.consider(agent, Trigger.GoalReview)
@@ -123,7 +123,7 @@ class GoalContinuityTest {
         val mind =
             cognition(
                 IntentOutcome.Accepted("ok"),
-                listOf(goalChoice(GoalDisposition.ADOPT, "find shelter"), null),
+                listOf(goalChoice(GoalDisposition.ADOPT), null),
             )
         mind.consider(agent, Trigger.GoalReview)
         main.drain()

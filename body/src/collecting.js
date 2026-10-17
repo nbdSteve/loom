@@ -10,6 +10,7 @@
  */
 
 const { performance } = require('node:perf_hooks')
+const { Vec3 } = require('vec3')
 const { blocksApart } = require('./movement')
 const { elapsedSince, offeredItem } = require('./interaction')
 const { droppedStack, positionOf } = require('./sensing')
@@ -17,8 +18,63 @@ const { droppedStack, positionOf } = require('./sensing')
 /** How near an item must already be when the request forbids approach movement. */
 const PASSIVE_PICKUP_REACH_BLOCKS = 2
 
-/** An approach ends in the item's own cell; see the approach in [collectOfferedItem]. */
+/** A movement wrapper with no `approach`, as a test double may be, walks into the item's own cell. */
 const ITEM_CELL_TOLERANCE = 0
+
+/** Vanilla's player box: 0.6 wide and 1.8 tall, grown by 1, 0.5 and 1 to pick an item up. */
+const PLAYER_HALF_WIDTH = 0.3
+const PLAYER_HEIGHT = 1.8
+const PICKUP_GROWTH = Object.freeze({ x: 1, y: 0.5, z: 1 })
+/** A dropped item's box: 0.25 wide and 0.25 tall, centred on its position horizontally. */
+const ITEM_HALF_WIDTH = 0.125
+const ITEM_HEIGHT = 0.25
+
+/**
+ * Every cell a body can stand in from which vanilla would pick the item at `position` up,
+ * nearest the body first: its feet and head cells free of collision, a collision box under its
+ * feet, and its grown pickup box overlapping the item's box. The item's own floored cell is
+ * one only when it has ground under it; r15's stick hung over a one-block trench from the edge
+ * of the block beside it, so its own cell had air under it, no route to it could exist, and
+ * five collects were refused for it while two cells beside it would have picked it up.
+ */
+function pickupCells (bot, position, from) {
+  const [ix, iy, iz] = position
+  const cells = []
+  for (let cx = Math.floor(ix) - 1; cx <= Math.floor(ix) + 1; cx += 1) {
+    for (let cy = Math.floor(iy) - 2; cy <= Math.floor(iy) + 1; cy += 1) {
+      for (let cz = Math.floor(iz) - 1; cz <= Math.floor(iz) + 1; cz += 1) {
+        if (covers([cx, cy, cz], position) && standsAt(bot, cx, cy, cz)) cells.push([cx, cy, cz])
+      }
+    }
+  }
+  const centre = ([x, y, z]) => [x + 0.5, y, z + 0.5]
+  return cells.sort((a, b) => blocksApart(from, centre(a)) - blocksApart(from, centre(b)))
+}
+
+/** Whether a body standing in `cell` would pick up an item lying at `position`. */
+function covers ([cx, cy, cz], [ix, iy, iz]) {
+  const overlaps = (low, high, itemLow, itemHigh) => low < itemHigh && itemLow < high
+  return overlaps(cx + 0.5 - PLAYER_HALF_WIDTH - PICKUP_GROWTH.x, cx + 0.5 + PLAYER_HALF_WIDTH + PICKUP_GROWTH.x,
+    ix - ITEM_HALF_WIDTH, ix + ITEM_HALF_WIDTH) &&
+    overlaps(cy - PICKUP_GROWTH.y, cy + PLAYER_HEIGHT + PICKUP_GROWTH.y, iy, iy + ITEM_HEIGHT) &&
+    overlaps(cz + 0.5 - PLAYER_HALF_WIDTH - PICKUP_GROWTH.z, cz + 0.5 + PLAYER_HALF_WIDTH + PICKUP_GROWTH.z,
+      iz - ITEM_HALF_WIDTH, iz + ITEM_HALF_WIDTH)
+}
+
+/** Whether a body can stand with its feet in the cell: free feet and head, ground beneath. */
+function standsAt (bot, x, y, z) {
+  const at = (dy) => {
+    try {
+      return bot.blockAt(new Vec3(x, y + dy, z))
+    } catch {
+      return null
+    }
+  }
+  const feet = at(0)
+  const head = at(1)
+  const ground = at(-1)
+  return feet?.boundingBox === 'empty' && head?.boundingBox === 'empty' && ground?.boundingBox === 'block'
+}
 
 /** A no-movement journey for an answer settled before pathing. */
 function unmoved (outcome, position, startedAt, now) {
@@ -190,17 +246,23 @@ function collectOfferedItem (bot, movement, {
     bot._client?.on?.('collect', sawCollectPacket)
 
     if (approach) {
-      // The item's own cell, not a cell beside it: vanilla picks an item up only inside the
-      // player's box grown by one block sideways, and a stop one cell short of an item lying
-      // far into its block leaves it outside that reach, so the walk would arrive and then
-      // wait out the deadline for a pickup the server never makes.
-      route = movement?.moveTo({
-        destination: resolved.position,
-        tolerance: ITEM_CELL_TOLERANCE,
-        timeoutMs,
-        sprint,
-        owner
-      })
+      // Any cell a body can stand in whose grown pickup box covers the item, not just the item's
+      // own cell: vanilla picks an item up only inside the player's box grown by one block
+      // sideways, and the item's own cell can have no ground to stand on. See [pickupCells].
+      route = movement?.approach === undefined
+        ? movement?.moveTo({
+          destination: resolved.position,
+          tolerance: ITEM_CELL_TOLERANCE,
+          timeoutMs,
+          sprint,
+          owner
+        })
+        : movement.approach({
+          cells: pickupCells(bot, resolved.position, from),
+          timeoutMs,
+          sprint,
+          owner
+        })
       if (route === undefined) {
         cleanup()
         settled = true
@@ -232,5 +294,6 @@ function collectOfferedItem (bot, movement, {
 module.exports = {
   ITEM_CELL_TOLERANCE,
   PASSIVE_PICKUP_REACH_BLOCKS,
-  collectOfferedItem
+  collectOfferedItem,
+  pickupCells
 }

@@ -63,7 +63,7 @@ class R14GoalAuditReplayTest {
     private fun sticks(
         disposition: GoalDisposition,
         count: Long,
-    ) = goalChoice(disposition, "gather sticks", success = STICK to count)
+    ) = goalChoice(disposition, success = STICK to count)
 
     @Test
     fun `three goals met when they were adopted are refused, not completed`() {
@@ -121,7 +121,7 @@ class R14GoalAuditReplayTest {
             review(
                 "delta-107",
                 Scene(capacity = mapOf(STICK to 2L), dropped = setOf("beta-103")),
-                goalChoice(GoalDisposition.REVISE, "collect the stick", success = STICK to 1L),
+                goalChoice(GoalDisposition.REVISE, success = STICK to 1L),
                 Intent.Collect("d6", approach = true),
             )
         assertEquals(StepEvidence.NONE, others?.progress?.stepEvidence)
@@ -147,7 +147,10 @@ class R14GoalAuditReplayTest {
         val (yielded, _) =
             review("beta-150", Scene(dropped = setOf("beta-103")), goalChoice(GoalDisposition.ABANDON), Intent.Idle)
         assertEquals(StepEvidence.DROPPED, yielded?.progress?.stepEvidence)
-        assertEquals(0L, yielded?.progress?.stepsWithoutProgress)
+        assertEquals(true, yielded?.progress?.stepAdvanced)
+        // From routine-v24 a drop not yet held is no progress: it counts toward the stall bound
+        // (r15 iota was credited five drops and never held a stick).
+        assertEquals(2L, yielded?.progress?.stepsWithoutProgress)
     }
 
     @Test

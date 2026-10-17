@@ -72,9 +72,9 @@ class R11GoalAuditReplayTest {
         return carried to evidence
     }
 
-    private fun adopt() = goalChoice(GoalDisposition.ADOPT, "gather a stick")
+    private fun adopt() = goalChoice(GoalDisposition.ADOPT)
 
-    private fun revise() = goalChoice(GoalDisposition.REVISE, "gather a stick")
+    private fun revise() = goalChoice(GoalDisposition.REVISE)
 
     /** The step the ledger holds for [agent] after its last review: its action and ref. */
     private fun heldStep(agent: String): Pair<IntentAction?, String?> {
@@ -217,11 +217,7 @@ class R11GoalAuditReplayTest {
             review(
                 "zeta-211",
                 Scene(zeta, mapOf(STICK to 1L)),
-                goalChoice(
-                    GoalDisposition.REVISE,
-                    "gather four sticks",
-                    success = STICK to 4L,
-                ),
+                goalChoice(GoalDisposition.REVISE, success = STICK to 4L),
                 Intent.Dig("bfbd"),
             )
         assertEquals(GoalEvidence.REVISED, raised?.outcome)
@@ -315,7 +311,7 @@ class R11GoalAuditReplayTest {
         assertEquals(GoalEvidence.COMPLETED, completed?.outcome)
         // body:00000193: "my position changes to stand near bewu" types as no held item at all.
         val positional =
-            goalChoice(GoalDisposition.ADOPT, "stand near bewu")
+            goalChoice(GoalDisposition.ADOPT)
                 .copy(successItem = null, successCount = null)
         val (_, refused) =
             review(

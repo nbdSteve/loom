@@ -65,7 +65,7 @@ class R13GoalAuditReplayTest {
     private fun goal(
         disposition: GoalDisposition,
         success: Pair<String, Long> = STICK to 4L,
-    ) = goalChoice(disposition, "gather sticks", success = success)
+    ) = goalChoice(disposition, success = success)
 
     @Test
     fun `alpha's four barren terracotta digs advance nothing and stall the goal`() {

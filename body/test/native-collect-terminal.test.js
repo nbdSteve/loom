@@ -86,3 +86,42 @@ test('an approaching collection ends within vanilla pickup reach of the item, no
   assert.equal(after.op, 'sense', JSON.stringify(after))
   peer.stop()
 })
+
+test('an item hanging over a trench is collected from a cell beside it, not refused as noRoute', async () => {
+  // r15 beta and delta: five approaching collects of one stick were refused `noRoute`, because
+  // the walk aimed at the stick's own floored cell, which had air under it.
+  const { Vec3 } = require('vec3')
+  const { pickupCells } = require('../src/collecting')
+  const given = await H.embodied()
+  const { body, bot, client, port } = given
+  openBody = body
+  H.spawned(client, FED)
+  H.clockReported(client, { timeOfDay: 6000, day: 2 })
+  client.emit('position', H.positionPacket({ x: 8.5, y: 64, z: 8.5, yaw: 0, pitch: 0, teleportId: 1 }))
+  H.ground(bot, { walls: [{ x: 11, y: 62, z: 7 }, { x: 12, y: 62, z: 7 }, { x: 13, y: 62, z: 7 }] })
+  // A one-block trench east of the body, the stick resting on the edge of the block beside it.
+  for (const x of [11, 12, 13]) bot.world.setBlockStateId(new Vec3(x, 63, 7), H.registry.blocksByName.air.defaultState)
+  const item = { x: 13.25, y: 64, z: 7.06 }
+  H.spotted(client, { id: ITEM_ID, what: 'item', ...item })
+  client.emit('entity_metadata', {
+    entityId: ITEM_ID,
+    metadata: [{ key: 8, type: 'item_stack', value: H.Item.toNotch(H.stack('stick', 1)) }]
+  })
+  await H.settled(200)
+  const cells = pickupCells(bot, [item.x, item.y, item.z], [8.5, 64, 8.5])
+  assert.equal(cells.some(([x, y, z]) => x === 13 && y === 64 && z === 7), false, 'its own cell has no ground')
+  assert.ok(cells.some(([x, y, z]) => x === 13 && y === 64 && z === 6), JSON.stringify(cells))
+  const taken = vanillaPickup(client, bot, item)
+  const peer = await H.handshaken(port)
+  const sensed = await peer.answer(H.request('sense', 's1', { radius: 8, limit: 8 }))
+  const index = sensed.items.findIndex((offered) => offered.what === 'stick')
+  assert.ok(index >= 0, JSON.stringify(sensed.items))
+
+  const report = await H.promptly(peer.answer(H.request('collect', 'c1', {
+    senseId: 's1', item: index, approach: true, timeoutMs: DEADLINE_MS * 2, sprint: false
+  })), 'the collection', DEADLINE_MS * 2 + 3000)
+
+  assert.equal(report.outcome, 'collected', JSON.stringify(report))
+  assert.equal(taken(), true)
+  peer.stop()
+})

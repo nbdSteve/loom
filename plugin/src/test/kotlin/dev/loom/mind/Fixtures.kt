@@ -183,14 +183,13 @@ fun decisionFor(
     )
 
 /**
- * A goal choice carrying every field [disposition] requires: a statement and its typed success
- * target to word a goal, the step an affirming decision takes, and a verdict on the previous step
- * for every disposition that answers a carried goal. The step's type is the decision's own
- * intent, which the ledger reads from the decision.
+ * A goal choice carrying every field [disposition] requires: its typed success target to set a
+ * goal, the step an affirming decision takes, and a verdict on the previous step for every
+ * disposition that answers a carried goal. The step's type is the decision's own intent, and the
+ * goal's wording its success target, which the ledger reads for itself.
  */
 fun goalChoice(
     disposition: GoalDisposition,
-    statement: String? = null,
     stepResult: GoalStepResult = GoalStepResult.PROGRESSING,
     success: Pair<String, Long> = "item.minecraft.stick" to 1L,
 ): GoalChoice {
@@ -198,7 +197,6 @@ fun goalChoice(
     val stepped = worded || disposition == GoalDisposition.CONTINUE
     return GoalChoice(
         disposition = disposition,
-        statement = statement,
         successItem = if (worded) success.first else null,
         successCount = if (worded) success.second else null,
         step = if (stepped) "the next concrete step" else null,

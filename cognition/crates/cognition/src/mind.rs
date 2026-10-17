@@ -162,6 +162,7 @@ mod tests {
             surroundings: vec![],
             surroundings_omitted: 0,
             goal: None,
+            last_refusal: None,
         }
     }
 
@@ -218,7 +219,7 @@ mod tests {
         assert!(decided.reasoning.contains(DEEP));
         assert_eq!(decided.provenance.model, FAST);
         assert_eq!(decided.provenance.tier, DecisionImportance::Routine);
-        assert_eq!(decided.provenance.prompt_version, "routine-v23");
+        assert_eq!(decided.provenance.prompt_version, "routine-v24");
     }
 
     /// A backend that answers with one fixed intent, whatever it was offered.
@@ -253,6 +254,7 @@ mod tests {
             standable: None,
             yields: None,
             dig_safe: None,
+            route_refused: None,
         });
         for wrong in [
             Intent::Dig {
@@ -311,13 +313,8 @@ mod tests {
             GoalDisposition::Complete,
             GoalDisposition::Abandon,
         ] {
-            let worded = matches!(
-                disposition,
-                GoalDisposition::Adopt | GoalDisposition::Revise
-            );
             let choice = GoalChoice {
                 disposition,
-                statement: worded.then(|| "keep watch by the trees".to_owned()),
                 success_item: None,
                 success_count: None,
                 step: (disposition != GoalDisposition::Complete
@@ -334,7 +331,7 @@ mod tests {
             assert_eq!(decided.goal, Some(choice));
             assert_eq!(decided.intent, Intent::Idle);
             assert_eq!(decided.provenance.model, FAST);
-            assert_eq!(decided.provenance.prompt_version, "routine-v23");
+            assert_eq!(decided.provenance.prompt_version, "routine-v24");
         }
     }
 

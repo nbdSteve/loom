@@ -165,21 +165,21 @@ Drive it over the control channel, on one connection, since a handshake is per
 connection and each `requestId` may be used once:
 
 ```sh
-{ printf '{"op":"handshake","protocol":5,"requestId":"h1","agentId":"loom.demo.body"}\n'
+{ printf '{"op":"handshake","protocol":6,"requestId":"h1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"status","protocol":5,"requestId":"s1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"status","protocol":6,"requestId":"s1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"sense","protocol":5,"requestId":"n1","agentId":"loom.demo.body","radius":24,"limit":48}\n'
+  printf '{"op":"sense","protocol":6,"requestId":"n1","agentId":"loom.demo.body","radius":24,"limit":48}\n'
   sleep 1
-  printf '{"op":"eat","protocol":5,"requestId":"e1","agentId":"loom.demo.body","senseId":"n1","slot":36}\n'
+  printf '{"op":"eat","protocol":6,"requestId":"e1","agentId":"loom.demo.body","senseId":"n1","slot":36}\n'
   sleep 1
-  printf '{"op":"flee","protocol":5,"requestId":"f1","agentId":"loom.demo.body","senseId":"n1","entity":0,"distance":16,"timeoutMs":10000,"sprint":true}\n'
+  printf '{"op":"flee","protocol":6,"requestId":"f1","agentId":"loom.demo.body","senseId":"n1","entity":0,"distance":16,"timeoutMs":10000,"sprint":true}\n'
   sleep 12
-  printf '{"op":"moveTo","protocol":5,"requestId":"m1","agentId":"loom.demo.body","destination":[12,64,12],"tolerance":0,"timeoutMs":10000,"sprint":false}\n'
+  printf '{"op":"moveTo","protocol":6,"requestId":"m1","agentId":"loom.demo.body","destination":[12,64,12],"tolerance":0,"timeoutMs":10000,"sprint":false}\n'
   sleep 1
-  printf '{"op":"halt","protocol":5,"requestId":"z1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"halt","protocol":6,"requestId":"z1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"shutdown","protocol":5,"requestId":"x1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"shutdown","protocol":6,"requestId":"x1","agentId":"loom.demo.body"}\n'
   sleep 1
 } | nc 127.0.0.1 25585
 ```
@@ -193,7 +193,11 @@ world-observation lists up to 48 entries each. Recipes retain their independent 
 ceiling and use the smaller of that ceiling and the requested limit.
 Only dropped items and blocks the body can see are listed, because each one is a handle a
 `collect`, `dig` or `place` may name and those refuse what the body cannot see; anything behind
-a wall or under the ground is skipped, not counted as omitted. Sight to an item is aimed at its
+a wall or under the ground is skipped, not counted as omitted. The one exception is a dropped item
+the controller names by its server uuid in the request's optional `retainItems`, at most eight:
+it is listed with `visible` false, because Loom names an agent's own dig drops so the agent can
+collect what its own dig dropped, and naming it chooses nothing the controller did not ask for.
+Sight to an item is aimed at its
 centre, as it is to a creature, because a ray to the point it rests on meets the floor. Sight to
 a block is aimed at its centre and then at each face turned toward the eyes, because a centre
 ray meets a nearer floor block first and would call open ground more than two blocks away
@@ -594,9 +598,11 @@ it.
 **The seven native world interactions are one-shot applications of retained authority.**
 `dig` names one offered block and uses only the item already in the main hand.
 `collect` names one exact dropped-item entity and either waits within passive pickup reach or,
-when `approach` is true, gives the existing bounded movement wrapper that entity's sensed
-position as its single fixed destination.
-That destination is the item's own cell with no tolerance, because vanilla picks an item up only inside the player's box grown by one block sideways, and a stop one cell short of an item lying far into its block arrives outside that reach and waits out the deadline.
+when `approach` is true, gives the existing bounded movement wrapper one search for any of the
+cells a body could stand in whose pickup box covers that entity's sensed position
+(`pickupCells`, `movement.approach`).
+Those cells are fixed by the item's position and vanilla's geometry, not chosen: vanilla picks an item up only inside the player's box grown by one block sideways and half a block vertically, a stop one cell short of an item lying far into its block arrives outside that reach, and the item's own cell may have nothing to stand on - r15's stick hung over a one-block trench from the edge of the block beside it, and five walks to its own cell were refused `noRoute`.
+`noRoute` therefore means no cell within pickup reach of the item has a route.
 `place` names one support block, one offered slot and one face; the exact offered stack must
 already be in the selected main hand, so placement never equips or searches.
 `equip` names one offered slot and one of the closed destinations `hand`, `offHand`, `head`,

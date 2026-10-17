@@ -65,9 +65,6 @@ data class GoalEvidence(
         /** An adopt answered a perception that already carried a goal. */
         const val ALREADY_HELD: String = "goalAlreadyHeld"
 
-        /** An adopt or revise without a statement. */
-        const val STATEMENT_MISSING: String = "goalStatementMissing"
-
         /** An adopt, continue or revise without the step its action takes. */
         const val STEP_MISSING: String = "goalStepMissing"
 
@@ -76,9 +73,10 @@ data class GoalEvidence(
 
         /**
          * A continue or revise of a goal whose last
-         * [dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS] affirmed steps changed neither the
-         * agent's inventory nor its place: refused, and the goal ended, so a held goal can never
-         * become a no-progress loop, reworded or not.
+         * [dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS] affirmed steps advanced nothing:
+         * refused with the intent, and the goal ended, so a held goal can never become a
+         * no-progress loop, reworded or not, and the answer that reached the bound does not act
+         * (r15: beta's stalled dig ran with no goal and fed another agent's).
          */
         const val STALLED: String = "goalStalled"
 
@@ -95,11 +93,11 @@ data class GoalEvidence(
         const val COMPLETION_UNMET: String = "goalCompletionUnmet"
 
         /**
-         * An adopt or revise whose success count is more than the agent holds plus everything in
-         * sight could give it - dropped in sight, craftable, or the most a visible block it may
-         * dig with what it holds can drop: refused with the intent. In r13 five agents chased
-         * items nothing in sight could give for half the run, and in r14 kappa raised a stick goal
-         * with no bush or drop in sight.
+         * An adopt, continue or revise whose success count is more than the agent holds plus
+         * everything in sight could give it - a reachable drop, craftable, or the most a visible
+         * block it may dig with what it holds can drop: refused with the intent. In r13 five
+         * agents chased items nothing in sight could give for half the run, and in r14 kappa
+         * raised a stick goal with no bush or drop in sight.
          */
         const val SUCCESS_UNOBTAINABLE: String = "goalSuccessUnobtainable"
 
@@ -117,9 +115,36 @@ data class GoalEvidence(
          */
         const val STEP_IDLE: String = "goalStepIdle"
 
+        /**
+         * A decision that acts at a goal review while a goal is held, without saying what it does
+         * with that goal: refused with the intent, since its step would be measured against a
+         * goal it ignored (r15 kappa).
+         */
+        const val CHOICE_MISSING: String = "goalChoiceMissing"
+
+        /**
+         * An adopt, continue or revise whose dig or collect cannot give the goal's item, by what
+         * the perception showed of its target: refused with the intent (r15: terracotta, which
+         * drops nothing by hand, was dug as the step of four stick goals).
+         */
+        const val STEP_UNPRODUCTIVE: String = "goalStepUnproductive"
+
         /** The outcomes that refuse the decision's intent along with its goal choice. */
         val REFUSING: Set<String> =
-            setOf(CONDITION_MET_IGNORED, COMPLETION_UNMET, SUCCESS_UNOBTAINABLE, ALREADY_MET, STEP_IDLE)
+            setOf(
+                CONDITION_MET_IGNORED,
+                COMPLETION_UNMET,
+                SUCCESS_UNOBTAINABLE,
+                ALREADY_MET,
+                STEP_IDLE,
+                STALLED,
+                CHOICE_MISSING,
+                STEP_UNPRODUCTIVE,
+            )
+
+        /** The outcomes that settle a decision with nothing its next review needs to be told. */
+        val TOLD_NOTHING: Set<String> =
+            setOf(ADOPTED, CONTINUED, REVISED, COMPLETED, ABANDONED, UNADDRESSED, STALE, NOT_REVIEWED)
 
         /** A goal choice on a decision that did not answer a goal review. */
         const val NOT_REVIEWED: String = "goalNotReviewed"

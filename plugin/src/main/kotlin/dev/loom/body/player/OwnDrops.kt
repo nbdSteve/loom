@@ -4,10 +4,12 @@
 package dev.loom.body.player
 
 import dev.loom.contract.DropFate
+import java.util.UUID
 
 /**
  * One stack the server dropped for one of an agent's digs: the perception request whose dig
- * dropped it, the item, how many, what became of it, and - while it is still lying - where.
+ * dropped it, the item, how many, what became of it, and - while it is still lying - where, and
+ * the server's uuid for the item entity, which the body names it by and Loom offers it by.
  */
 data class OwnDropReading(
     val requestId: String,
@@ -15,6 +17,7 @@ data class OwnDropReading(
     val count: Long,
     val fate: DropFate,
     val position: List<Double>?,
+    val entity: UUID? = null,
 )
 
 /**

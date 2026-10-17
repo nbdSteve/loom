@@ -151,7 +151,6 @@ fn every_goal_disposition_the_contract_names_is_one_the_provider_may_answer() {
         Value::Null,
         json!({
             "disposition": "adopt",
-            "statement": "gather logs before night",
             "successItem": "item.minecraft.oak_log",
             "successCount": 4,
             "step": "rest by the cliff to the north"
@@ -163,7 +162,6 @@ fn every_goal_disposition_the_contract_names_is_one_the_provider_may_answer() {
         }),
         json!({
             "disposition": "revise",
-            "statement": "gather logs to the north instead",
             "successItem": "item.minecraft.oak_log",
             "successCount": 4,
             "step": "walk north",

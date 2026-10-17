@@ -445,7 +445,7 @@ class EmbodiedCognitionTest {
         val body = recordingBodyInto(records)
         val applied = mutableListOf<AppliedDecision>()
         // r14 eta, body:00000197: a goal adopted with an idle step.
-        val adopting = goalChoice(GoalDisposition.ADOPT, "gather a stick")
+        val adopting = goalChoice(GoalDisposition.ADOPT)
         val cognition =
             EmbodiedCognition(
                 body,
@@ -476,7 +476,7 @@ class EmbodiedCognitionTest {
                     // A goal adopted with a dig: its step settles.
                     {
                             p: Perception ->
-                        decisionFor(p, Intent.Dig("bush")).copy(goal = goalChoice(GoalDisposition.ADOPT, "a stick"))
+                        decisionFor(p, Intent.Dig("bush")).copy(goal = goalChoice(GoalDisposition.ADOPT))
                     },
                     // A walk with no goal choice: no step of the goal, nothing settles.
                     { p: Perception -> decisionFor(p, Intent.MoveTo("bush")) },

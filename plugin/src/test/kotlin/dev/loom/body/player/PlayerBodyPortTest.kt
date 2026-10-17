@@ -59,6 +59,7 @@ import dev.loom.witness.subjectOf
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -2642,6 +2643,87 @@ class PlayerWalkResolutionTest {
         assertEquals(Bearing.EAST, lying.direction)
         assertEquals(5.0, requireNotNull(lying.distance), 1e-9)
         assertEquals(0.0, lying.verticalOffset)
+    }
+
+    @Test
+    fun `an own lying drop is asked for by its server uuid and offered back by its ref`() {
+        // r15 kappa body:00000080: its own dig dropped a stick it never saw, and iota's own stick
+        // lay out of sight five blocks off; neither could be named to collect.
+        val agent = AgentId("agent-retained")
+        // The fake server names the sensed apple by this uuid, so it is the own drop's entity.
+        val apple = UUID.nameUUIDFromBytes("item:0:minecraft:apple:1".toByteArray(StandardCharsets.UTF_8))
+        val drops =
+            object : OwnDrops {
+                override fun attribute(
+                    identity: PlayerIdentity,
+                    requestId: String,
+                    block: List<Int>,
+                    sinceTick: Long,
+                ): List<OwnDropReading> = emptyList()
+
+                override fun of(identity: PlayerIdentity): List<OwnDropReading> =
+                    listOf(
+                        OwnDropReading(
+                            "req-dug",
+                            "item.minecraft.apple",
+                            1,
+                            DropFate.LYING,
+                            listOf(3.5, 64.0, 2.5),
+                            apple,
+                        ),
+                        OwnDropReading("req-dug", "item.minecraft.stick", 1, DropFate.TAKEN, null),
+                    )
+            }
+        val senses = CopyOnWriteArrayList<BodyRequest.Sense>()
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let {
+                            senses += it
+                            interactionSense(it)
+                        }
+                    },
+                    ownDrops = drops,
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        assertEquals(listOf(apple.toString()), senses.single().retainItems)
+        val item = perception.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }
+        val (lying, taken) = perception.selfState.ownDrops
+        assertEquals(item.ref, lying.ref)
+        assertNull(taken.ref)
+    }
+
+    @Test
+    fun `an item the body found no route to is said so and offered to nothing after`() {
+        // r15: one stick hanging over a trench drew five noRoute collects from two agents.
+        val agent = AgentId("agent-no-route")
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        when (request) {
+                            is BodyRequest.Sense -> interactionSense(request)
+                            is BodyRequest.Collect ->
+                                fakeCollect(request).copy(outcome = CollectOutcome.NO_ROUTE, what = null, count = null)
+                            else -> null
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val first = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val item = first.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }
+        assertNull(item.routeRefused)
+        val refused =
+            harness.port.apply(agent, Intent.Collect(item.ref, approach = true), first.requestId).await()
+        assertEquals(EventTag.COLLECT_NO_ROUTE, (refused as IntentOutcome.Rejected).tag)
+        val next = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        assertEquals(true, next.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }.routeRefused)
     }
 
     @Test

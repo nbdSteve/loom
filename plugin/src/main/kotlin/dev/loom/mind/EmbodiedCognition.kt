@@ -163,6 +163,7 @@ class EmbodiedCognition(
                             perception.capturedTick,
                             GoalObservation.of(perception),
                         ),
+                    lastRefusal = goals.takeRefusal(agentId),
                 )
             } else {
                 perception

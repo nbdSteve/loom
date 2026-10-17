@@ -83,7 +83,7 @@ internal class PlayerSceneTranslator(
             surroundingsOmitted = omittedByBody + omittedBySceneBound,
             perceptionAudit = perceptionAuditOf(raw, entityOffers.size, blockOffers.size, itemOffers.size),
             candidates = candidatesOf(selected, surroundings),
-            selfState = selfStateOf(raw, slotBindings, recipeBindings),
+            selfState = selfStateOf(raw, slotBindings, recipeBindings, itemRefsOf(itemOffers, droppedItemBindings)),
         )
     }
 
@@ -205,6 +205,7 @@ internal class PlayerSceneTranslator(
                     visible = item.visible,
                     subject = itemSubjects.getOrNull(index),
                     count = item.count.toLong(),
+                    routeRefused = itemSubjects.getOrNull(index)?.let { it in context.routeRefusals }?.takeIf { it },
                 )
             }
         return entities + blocks + items
@@ -229,6 +230,7 @@ internal class PlayerSceneTranslator(
             standable = offer.standable,
             yields = offer.yields,
             digSafe = offer.digSafe,
+            routeRefused = offer.routeRefused,
         )
     }
 
@@ -253,6 +255,7 @@ internal class PlayerSceneTranslator(
         raw: RawSense,
         bindings: List<InventorySlotBinding>,
         recipeBindings: List<WorldTargetRefBinding>,
+        itemRefs: Map<UUID, String>,
     ): SelfState =
         SelfState(
             health = raw.report.vitals.health,
@@ -278,7 +281,7 @@ internal class PlayerSceneTranslator(
                     )
                 },
             craftingOptionsOmitted = raw.report.recipesOmitted,
-            ownDrops = ownDropsOf(context.authority.ownDrops.of(raw.identity), raw.report.position),
+            ownDrops = ownDropsOf(context.authority.ownDrops.of(raw.identity), raw.report.position, itemRefs),
             world =
                 WorldState(
                     dayPhase = WorldClock.phaseOf(raw.report.time.timeOfDay.toLong()),
@@ -289,10 +292,25 @@ internal class PlayerSceneTranslator(
         )
 }
 
-/** What the server saw an agent's own digs drop, a lying one placed from [position], where it stands now. */
+/** Each offered dropped item's server entity, by the ref this perception gave it. */
+private fun itemRefsOf(
+    offers: List<SceneOffer>,
+    bindings: List<WorldTargetRefBinding>,
+): Map<UUID, String> =
+    offers.zip(bindings).mapNotNull {
+            (offer, binding) ->
+        offer.subject?.let { it to binding.handle }
+    }.toMap()
+
+/**
+ * What the server saw an agent's own digs drop, a lying one placed from [position], where it
+ * stands now, and named by the ref [itemRefs] gives the observation of its server entity, when
+ * this perception offers one.
+ */
 internal fun ownDropsOf(
     readings: List<OwnDropReading>,
     position: List<Double>,
+    itemRefs: Map<UUID, String> = emptyMap(),
 ): List<OwnDrop> =
     readings.take(MAX_OWN_DROPS).map { drop ->
         val at = drop.position
@@ -304,6 +322,7 @@ internal fun ownDropsOf(
             distance = at?.let { blocksApart(position, it) },
             direction = at?.let { horizontalBearing(it[0] - position[0], it[2] - position[2]) },
             verticalOffset = at?.let { it[1] - position[1] },
+            ref = drop.entity?.takeIf { at != null }?.let(itemRefs::get),
         )
     }
 

@@ -46,6 +46,12 @@
  */
 const PROTOCOL_VERSION = 6
 
+/** Most dropped items one sense may ask to have reported out of sight. */
+const MAX_RETAINED_ITEMS = 8
+
+/** An entity uuid as the server spawns it and Mineflayer stores it: lower-case, hyphenated. */
+const ENTITY_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
 /**
  * Longest frame this protocol will carry, in bytes.
  *
@@ -1511,7 +1517,14 @@ function requestPayload (raw, literals) {
       spellsWholeNumber(literals, 'radius') &&
       isBoundedInteger(raw.limit, 1, MAX_SENSE_OFFERS_PER_KIND) &&
       spellsWholeNumber(literals, 'limit')
-    return bounded ? { radius: raw.radius, limit: raw.limit } : undefined
+    if (!bounded) return undefined
+    if (raw.retainItems === undefined) return { radius: raw.radius, limit: raw.limit }
+    // The controller's own dropped items to report out of sight: unique entity uuids, at most eight.
+    const retained = Array.isArray(raw.retainItems) &&
+      raw.retainItems.length <= MAX_RETAINED_ITEMS &&
+      raw.retainItems.every((uuid) => typeof uuid === 'string' && ENTITY_UUID.test(uuid)) &&
+      new Set(raw.retainItems).size === raw.retainItems.length
+    return retained ? { radius: raw.radius, limit: raw.limit, retainItems: [...raw.retainItems] } : undefined
   }
   if (raw.op === 'eat') {
     const bounded = isControlId(raw.senseId) &&

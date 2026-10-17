@@ -13,7 +13,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 
 use loom_cognition::mind::Mind;
-use loom_cognition::model::{ScriptedBackend, SCRIPTED_GOAL_STATEMENT, SCRIPTED_STEP};
+use loom_cognition::model::{ScriptedBackend, SCRIPTED_STEP};
 use loom_cognition::offered::OfferedRefs;
 use loom_cognition::router::{ModelCatalog, Router};
 use loom_cognition::server::serve;
@@ -137,7 +137,6 @@ async fn every_shared_perception_fixture_gets_a_routed_decision_over_a_socket() 
             // An adopted goal names one more than is held of what the dug block can drop.
             if let Some(goal) = &decision.goal {
                 assert_eq!(goal.disposition, GoalDisposition::Adopt);
-                assert_eq!(goal.statement.as_deref(), Some(SCRIPTED_GOAL_STATEMENT));
                 assert_eq!(goal.step.as_deref(), Some(SCRIPTED_STEP));
                 let item = goal.success_item.as_deref().unwrap();
                 assert!(OfferedRefs::of(&sent).capacity_of(item) >= 1);
