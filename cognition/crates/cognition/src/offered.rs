@@ -83,6 +83,16 @@ pub const MAX_STEP_REFS_PER_ITEM: usize = 4;
 /// perception radius, inside which a sighting is already news.
 pub const DANGER_SIGHT_BLOCKS: f64 = 16.0;
 
+/// The most creatures, nearest first as sight lists them, offered to flee or attack: each is up to
+/// three enum values (flight, strike, pursuit), and 48 creatures in reach took a contract-legal
+/// goal review's schema to 539 of the provider's 500.
+pub const MAX_CREATURE_REFS: usize = 16;
+
+/// The most hunters a goal review is offered a flight from, nearest first as sight lists them: a
+/// flight from the nearest few is the answer, and every one more is an enum value the provider
+/// counts against its 500 (48 hunters in view took a goal review's schema to 594).
+pub const MAX_DANGER_REFS: usize = 4;
+
 /// How near a hunter out of sight must be to be offered for a flight at a goal review: the
 /// JVM's `THREAT_NEAR_BLOCKS`, inside which an unseen hunter is news.
 pub const DANGER_UNSEEN_BLOCKS: f64 = 8.0;
@@ -355,17 +365,7 @@ impl OfferedRefs {
                         offer(&mut offered.walk_targets, handle);
                     }
                 }
-                ObservationKind::Entity => {
-                    offered.creature(handle, seen.distance);
-                    let near = if seen.visible {
-                        DANGER_SIGHT_BLOCKS
-                    } else {
-                        DANGER_UNSEEN_BLOCKS
-                    };
-                    if seen.hunts == Some(true) && seen.distance <= near {
-                        offer(&mut offered.danger, handle);
-                    }
-                }
+                ObservationKind::Entity => offered.sighted(seen),
                 // A drop the body already found no route to is neither offered nor counted on
                 // (r15: five collects were refused as noRoute while their items stood in capacity).
                 ObservationKind::DroppedItem if seen.route_refused != Some(true) => {
@@ -629,6 +629,26 @@ impl OfferedRefs {
             .iter()
             .find(|(name, ..)| name == item)
             .map(|(_, fewest, most)| (*fewest, *most))
+    }
+
+    /// Offers one creature in sight: to a goal review's flight when it hunts the agent's kind and is
+    /// near ([`Self::danger`]), and to flight and attack while [`MAX_CREATURE_REFS`] allow - always,
+    /// for a hunter offered to flee from.
+    fn sighted(&mut self, seen: &Observation) {
+        let near = if seen.visible {
+            DANGER_SIGHT_BLOCKS
+        } else {
+            DANGER_UNSEEN_BLOCKS
+        };
+        let danger = seen.hunts == Some(true)
+            && seen.distance <= near
+            && self.danger.len() < MAX_DANGER_REFS;
+        if danger {
+            offer(&mut self.danger, &seen.target_ref);
+        }
+        if danger || self.creatures.len() < MAX_CREATURE_REFS {
+            self.creature(&seen.target_ref, seen.distance);
+        }
     }
 
     /// Offers one creature to flight, and to each attack mode whose bound it is within.

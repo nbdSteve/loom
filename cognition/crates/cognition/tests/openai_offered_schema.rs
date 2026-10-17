@@ -868,8 +868,8 @@ fn an_unheld_review_beside_cells_to_look_from_is_offered_no_idle() {
     .contains(&"idle".to_owned()));
 }
 
-#[test]
-fn the_widest_goal_review_schema_stays_inside_the_providers_enum_limits() {
+/// The widest goal review the contract admits: sixteen items each offered its own steps.
+fn widest_goal_review() -> Perception {
     // Every observation a block yielding eight distinct items, every cell at the edge of sight,
     // full inventory and recipe lists, at a goal review with no goal held: sixteen items each
     // offered its own steps.
@@ -929,11 +929,80 @@ fn the_widest_goal_review_schema_stays_inside_the_providers_enum_limits() {
             ..stack.clone()
         })
         .collect();
+    seen
+}
+
+#[test]
+fn the_widest_goal_review_schema_stays_inside_the_providers_enum_limits() {
+    let seen = widest_goal_review();
     let offered = OfferedRefs::of(&seen);
     assert_eq!(
         offered.item_steps.len(),
         loom_cognition::offered::MAX_OBTAINABLE_ITEMS
     );
+    let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
+    let mut count = 0;
+    let mut characters = 0;
+    enum_values(&schema, &mut count, &mut characters);
+    assert!(count <= 500, "{count} enum values");
+    assert!(characters <= 7_500, "{characters} enum characters");
+}
+
+#[test]
+fn the_widest_goal_review_beside_hunters_and_recalled_sources_stays_inside_the_enum_limits() {
+    let mut seen = widest_goal_review();
+    // v29: the last 48 observations are hunters in sight, the nearest few offered to flee, beside
+    // eight recalled sources and eight cells at the edge of sight.
+    let total = seen.surroundings.len();
+    for (index, observed) in seen.surroundings.iter_mut().enumerate().skip(total - 48) {
+        *observed = Observation {
+            kind: ObservationKind::Entity,
+            what: "entity.minecraft.zombie".to_owned(),
+            distance: 3.0,
+            direction: loom_contract::Bearing::East,
+            vertical_offset: 0.0,
+            visible: true,
+            target_ref: format!("e{index:03}"),
+            count: None,
+            standable: None,
+            yields: None,
+            dig_safe: None,
+            route_refused: None,
+            hunts: Some(true),
+        };
+    }
+    seen.explore = (0..8)
+        .map(|index| loom_contract::ExploreTarget {
+            target_ref: format!("x{index}"),
+            distance: 12.0,
+            direction: [
+                loom_contract::Bearing::North,
+                loom_contract::Bearing::East,
+                loom_contract::Bearing::South,
+                loom_contract::Bearing::West,
+            ][index % 4],
+            vertical_offset: 0.0,
+        })
+        .collect();
+    seen.recalled = (0..8)
+        .map(|index| loom_contract::RecalledSource {
+            what: format!("item.minecraft.recalled_{index:0>40}"),
+            distance: 20.0,
+            direction: loom_contract::Bearing::North,
+            vertical_offset: 0.0,
+            per_hundred: 6400,
+        })
+        .collect();
+    let offered = OfferedRefs::of(&seen);
+    assert_eq!(
+        offered.danger.len(),
+        loom_cognition::offered::MAX_DANGER_REFS
+    );
+    // Every hunter offered to flee from is a creature a flight may name.
+    assert!(offered
+        .danger
+        .iter()
+        .all(|hunter| offered.creatures.contains(hunter)));
     let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
     let mut count = 0;
     let mut characters = 0;
