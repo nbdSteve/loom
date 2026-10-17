@@ -39,6 +39,20 @@ const MAX_RECIPE_CANDIDATES = 2048
  */
 const CRAFT_CLEANUP_GRACE_MS = 500
 
+/**
+ * How long one application's result may take to reach Mineflayer's inventory.
+ *
+ * Mineflayer's craft resolves once its last click is written, and a real server's restated
+ * slots can trail it: in r19 two crafts of two applications (theta body:00000310, epsilon
+ * 352) judged the second application before the first one's result had arrived, saw a log
+ * consumed and no planks gained, and ended libraryFailure. Ten vanilla ticks is generous on a
+ * loopback server; a delta still unmatched after it is a real failure.
+ */
+const CRAFT_SETTLE_MS = 500
+
+/** How often a settling inventory is read again. */
+const CRAFT_SETTLE_POLL_MS = 25
+
 /** The packet Mineflayer's crafting primitive writes for every inventory click. */
 const CRAFT_PACKET = 'window_click'
 
@@ -221,6 +235,26 @@ function inventoryState (bot) {
     })
   }
   return { fingerprint: JSON.stringify(held), totals }
+}
+
+/**
+ * The inventory once it shows exactly one `delta` since `before`, read again every
+ * [CRAFT_SETTLE_POLL_MS] for at most `settleMs`, or undefined when it never does or cannot be
+ * read. `stopped` ends the wait early for a request that has already reached a terminal.
+ */
+async function settledApplication (bot, before, delta, {
+  settleMs = CRAFT_SETTLE_MS,
+  pollMs = CRAFT_SETTLE_POLL_MS,
+  now = () => performance.now(),
+  stopped = () => false
+} = {}) {
+  const deadline = now() + settleMs
+  for (;;) {
+    const after = inventoryState(bot)
+    if (after !== undefined && inventoryMatchesRecipeDelta(before, after, delta)) return after
+    if (stopped() || now() >= deadline) return undefined
+    await delay(pollMs)
+  }
 }
 
 /** The exact slot fingerprint retained by a sense offer. */
@@ -586,12 +620,12 @@ function craftOfferedRecipe (bot, {
           return
         }
         activeCraft = undefined
-        const resultingInventory = inventoryState(bot)
+        const resultingInventory = await settledApplication(bot, inventory, offer.delta, {
+          now,
+          stopped: () => settled || terminal !== undefined
+        })
+        if (settled || terminal !== undefined) break
         if (resultingInventory === undefined) {
-          terminal = 'libraryFailure'
-          break
-        }
-        if (!inventoryMatchesRecipeDelta(inventory, resultingInventory, offer.delta)) {
           terminal = 'libraryFailure'
           break
         }
@@ -621,10 +655,13 @@ function craftOfferedRecipe (bot, {
 
 module.exports = {
   CRAFT_CLEANUP_GRACE_MS,
+  CRAFT_SETTLE_MS,
   MAX_RECIPE_CANDIDATES,
   craftOfferedRecipe,
   installCrafting,
   inventoryFingerprint,
+  inventoryState,
   recipeFingerprint,
-  recipeReading
+  recipeReading,
+  settledApplication
 }

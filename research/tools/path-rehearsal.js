@@ -8,9 +8,9 @@
 // as the path exerciser (`LOOM_COGNITION_BACKEND=scripted-paths`, `cognition/src/exerciser.rs`).
 // Each agent walks one path; the server witnesses what each body did, and the run's own evidence,
 // normalized and judged by readiness gate generation 10, must show every path as the exerciser
-// drove it: a craft and a goal completed and the next adopted in one answer, an own drop ignored
-// and refused, an own drop still told lying past 4800 ticks, a
-// flight from a peer classed as one, a collect without moving that vanilla's own pickup ends, a
+// drove it: a craft of two applications and a goal completed and the next adopted in one answer,
+// an own drop ignored and refused, an own drop still told lying past 4800 ticks, a flight from a
+// peer classed as one, a collect without moving that vanilla's own pickup ends, a
 // walk to the edge of sight credited as revealing a source, and a revise to another item refused.
 //
 // It is not a research run: its world is built for the paths, its mind is scripted, and nothing
@@ -97,7 +97,9 @@ function pathsOf (records, readiness) {
     record.event === 'worldInteraction' && record.outcome === 'serverEffectConfirmed')
   const applied = (agent, outcome) => of(agent, 'intentApplied').find((record) => record.outcome === outcome)
   const evidence = (record) => record === undefined ? null : record.recordId
-  const crafted = of('tribe-alpha', 'decided').find((record) => record.intent === 'craft' && confirmed(record))
+  const crafted = of('tribe-alpha', 'decided').find((record) =>
+    record.intent === 'craft' && (record.decision?.intent?.crafts ?? 1) >= 2 && confirmed(record) &&
+    byKey(record.requestKey).some((entry) => entry.event === 'intentApplied' && entry.outcome === 'accepted'))
   const completedAdopted = of('tribe-alpha', 'decided').find((record) => record.goal?.outcome === 'goalCompletedAdopted')
   const passive = of('tribe-delta', 'decided').find((record) =>
     record.intent === 'collect' && record.decision?.intent?.approach === false && confirmed(record))
@@ -114,7 +116,7 @@ function pathsOf (records, readiness) {
       (record.perception?.selfState?.ownDrops ?? []).some((drop) =>
         drop.requestId === firstDig.requestId && drop.fate === 'lying'))
   return {
-    craftConfirmed: evidence(crafted),
+    craftOfTwoApplicationsConfirmed: evidence(crafted),
     completedAndAdopted: evidence(completedAdopted),
     ownDropIgnoredRefused: evidence(applied('tribe-beta', 'goalOwnDropIgnored')),
     ownDropToldLyingPastRetention: evidence(retained),

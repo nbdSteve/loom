@@ -22,6 +22,7 @@ const {
   offeredTarget
 } = require('../src/combat')
 const {
+  CRAFT_SETTLE_MS,
   craftOfferedRecipe,
   recipeReading
 } = require('../src/crafting')
@@ -1061,7 +1062,11 @@ test('craft refuses a missing, changed, remote, or hidden retained workstation',
   }))).outcome, 'workstationNotVisible')
 })
 
+const SETTLE_DEADLINE_MS = CRAFT_SETTLE_MS + 1500
+
 test('craft confirms the exact recipe inventory delta before reporting success', async () => {
+  // A mismatch is a failure only once the server's late slots have had the settle bound to
+  // arrive, so each request outlives it.
   const unchangedBot = worldBot()
   const unchanged = craftingSetup(unchangedBot)
   unchangedBot.craft = async () => {}
@@ -1069,7 +1074,7 @@ test('craft confirms the exact recipe inventory delta before reporting success',
     offered: unchanged.reading.recipeOffers,
     recipe: 0,
     crafts: 1,
-    timeoutMs: 100
+    timeoutMs: SETTLE_DEADLINE_MS
   }))).outcome, 'libraryFailure')
 
   const collateralBot = worldBot()
@@ -1082,7 +1087,7 @@ test('craft confirms the exact recipe inventory delta before reporting success',
     offered: collateral.reading.recipeOffers,
     recipe: 0,
     crafts: 1,
-    timeoutMs: 100
+    timeoutMs: SETTLE_DEADLINE_MS
   }))).outcome, 'libraryFailure')
 
   const mutatedBot = worldBot()
@@ -1096,7 +1101,7 @@ test('craft confirms the exact recipe inventory delta before reporting success',
     offered: mutated.reading.recipeOffers,
     recipe: 0,
     crafts: 1,
-    timeoutMs: 100
+    timeoutMs: SETTLE_DEADLINE_MS
   }))).outcome, 'libraryFailure')
 })
 

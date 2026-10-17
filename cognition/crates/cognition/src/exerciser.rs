@@ -9,8 +9,8 @@
 //!
 //! Each agent's role is fixed by its id's last segment, and every rule reads only the perception
 //! in hand, so the exerciser keeps no state:
-//! - `alpha` digs two logs, collects its own drops, then crafts planks and sticks, each completing
-//!   the met goal and adopting the next in one answer;
+//! - `alpha` digs two logs, collects its own drops, then crafts planks in two applications and
+//!   sticks, each completing the met goal and adopting the next in one answer;
 //! - `beta` digs a log, walks away from its lying drop once (refused as an ignored own drop), and
 //!   then leaves the drop lying, so a perception past retention still tells it;
 //! - `gamma` flees the nearest other player in sight;
@@ -160,14 +160,21 @@ fn drop_of(perception: &Perception, item: &str) -> Option<(String, bool)> {
         })
 }
 
-/// The offered recipe that makes `item`, and how many one application makes.
-fn recipe_of(perception: &Perception, item: &str) -> Option<(String, i64)> {
+/// The offered recipe that makes `item`, how many one application makes, and how many
+/// applications it offers.
+fn recipe_of(perception: &Perception, item: &str) -> Option<(String, i64, i64)> {
     perception
         .self_state
         .crafting_options
         .iter()
         .find(|option| option.what == item)
-        .map(|option| (option.recipe_ref.clone(), option.result_count))
+        .map(|option| {
+            (
+                option.recipe_ref.clone(),
+                option.result_count,
+                option.max_crafts,
+            )
+        })
 }
 
 /// The cell at the edge of sight straight toward `direction` - the farthest of those bearing that
@@ -213,7 +220,7 @@ fn pursue(perception: &Perception, item: &str) -> Option<Draft> {
             "collect my own drop of the goal's item",
         ));
     }
-    if let Some((recipe, _)) = recipe_of(perception, item) {
+    if let Some((recipe, ..)) = recipe_of(perception, item) {
         return Some(answer(
             Intent::Craft { recipe, crafts: 1 },
             continuing(),
@@ -256,10 +263,13 @@ fn crafter(perception: &Perception) -> Draft {
     let item = goal.success_item.as_deref().unwrap_or(LOG);
     if met(perception) {
         let next = if item == LOG { PLANKS } else { STICK };
-        if let Some((recipe, makes)) = recipe_of(perception, next) {
-            let count = held_of(perception, next) + makes;
+        if let Some((recipe, makes, most)) = recipe_of(perception, next) {
+            // Every application the recipe offers, at most two, so a craft of several
+            // applications meets a real server (r19 theta body:00000310, epsilon 352).
+            let crafts = most.clamp(1, 2);
+            let count = held_of(perception, next) + makes * crafts;
             return answer(
-                Intent::Craft { recipe, crafts: 1 },
+                Intent::Craft { recipe, crafts },
                 Some(target(GoalDisposition::Replace, next, count)),
                 "complete the met goal and adopt the next by crafting it",
             );
@@ -570,13 +580,13 @@ mod tests {
             next.intent,
             Intent::Craft {
                 recipe: "r1".to_owned(),
-                crafts: 1
+                crafts: 2
             }
         );
         let replace = next.goal.unwrap();
         assert_eq!(replace.disposition, GoalDisposition::Replace);
         assert_eq!(replace.success_item.as_deref(), Some(PLANKS));
-        assert_eq!(replace.success_count, Some(4));
+        assert_eq!(replace.success_count, Some(8));
     }
 
     #[test]
