@@ -46,7 +46,8 @@ internal class PlayerPerception(
     fun senseThreat(agentId: AgentId): CompletionStage<Perception?> =
         capture(agentId, "threat scan").thenApplyOn(context.authority.main) { raw ->
             raw?.let { sceneFor(agentId, it) }?.let { scene ->
-                val outcome = context.threatWatch.consider(agentId, scene.candidates) { false }
+                // The player body makes no route search toward a threat, so it states none.
+                val outcome = context.threatWatch.consider(agentId, scene.candidates) { null }
                 outcome.suppressed.forEach { context.journal.recordSuppressedThreat(agentId, it) }
                 outcome.sighted?.let { trigger -> commit(scene, trigger) }
                     ?: run {

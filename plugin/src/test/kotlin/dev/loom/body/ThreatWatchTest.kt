@@ -51,7 +51,7 @@ class ThreatWatchTest {
         assertEquals("entity.minecraft.zombie", sighted.threat)
         assertEquals(3.0, sighted.distance)
         assertTrue(sighted.visible)
-        assertTrue(sighted.reachable, "the engine's own answer is carried across, not re-derived")
+        assertEquals(true, sighted.reachable, "the engine's own answer is carried across, not re-derived")
         assertEquals(emptyList(), outcome.suppressed)
     }
 

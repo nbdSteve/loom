@@ -1173,6 +1173,9 @@ class PlayerSceneSelectionIntegrationTest {
 
         assertEquals("entity.minecraft.zombie", trigger.threat)
         assertEquals(entity.ref, trigger.ref)
+        // The player body makes no route search toward a threat, so it states none (r20: a
+        // constant false read as no route to flee).
+        assertEquals(null, trigger.reachable)
         assertEquals(
             BODY_SENSE_MAX_OFFERS_PER_KIND,
             perception.surroundings.count { it.kind == ObservationKind.BLOCK },

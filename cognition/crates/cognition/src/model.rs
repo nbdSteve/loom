@@ -1250,7 +1250,7 @@ mod tests {
                     distance: 4.0,
                     direction: Bearing::South,
                     visible: true,
-                    reachable: true,
+                    reachable: Some(true),
                 },
                 DecisionImportance::Pivotal,
             ),

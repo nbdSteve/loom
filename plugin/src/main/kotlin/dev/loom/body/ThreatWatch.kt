@@ -228,7 +228,7 @@ interface ThreatClock {
 private data class ThreatMemory(
     val firedTick: Long,
     val visible: Boolean,
-    val reachable: Boolean,
+    val reachable: Boolean?,
     val insidePivotal: Boolean,
 )
 
@@ -306,7 +306,7 @@ class ThreatWatch(
     fun consider(
         agent: AgentId,
         candidates: List<ThreatCandidate>,
-        reachable: (ThreatCandidate) -> Boolean,
+        reachable: (ThreatCandidate) -> Boolean?,
     ): ThreatOutcome {
         val hunters = candidates.filter { hunts(it.what) }
         val memories = remembered.getOrPut(agent) { mutableMapOf() }
@@ -360,7 +360,7 @@ class ThreatWatch(
         agent: AgentId,
         candidate: ThreatCandidate,
         last: ThreatMemory?,
-        reachable: (ThreatCandidate) -> Boolean,
+        reachable: (ThreatCandidate) -> Boolean?,
     ): Examination {
         val now = clock.tick()
         val insidePivotal = candidate.distance <= pivotalDistanceBlocks

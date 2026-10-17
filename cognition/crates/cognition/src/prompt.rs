@@ -332,7 +332,7 @@ fn trigger_line(trigger: &Trigger) -> String {
             reachable,
         } => format!(
             "you caught sight of {threat} (ref {entity_ref}) that hunts your kind, \
-{place}, {sight}, and {reach}",
+{place}, {sight}{reach}",
             threat = field(threat),
             entity_ref = field(entity_ref),
             place = if *direction == Bearing::Here {
@@ -346,11 +346,13 @@ fn trigger_line(trigger: &Trigger) -> String {
                 "out of sight behind something"
             },
             // Said as the search that produced it: the body asked whether it could
-            // walk to the threat, not whether the threat can walk to the body.
-            reach = if *reachable {
-                "there is walkable ground between you"
-            } else {
-                "no walkable path between you was found"
+            // walk to the threat, not whether the threat can walk to the body. A body
+            // that made no search says nothing about it (r20: a constant false read as
+            // no route to flee).
+            reach = match reachable {
+                Some(true) => ", and there is walkable ground between you",
+                Some(false) => ", and no walkable path between you was found",
+                None => "",
             }
         ),
         Trigger::BlockSighted { block } => {
@@ -1969,7 +1971,7 @@ mod tests {
         // creature has to reach the model, because `flee` accepts nothing else and
         // the brief forbids inventing one. A sighting that described the threat
         // without its ref would leave the model no way to act on it.
-        let sighting = |reachable: bool| Trigger::ThreatSighted {
+        let sighting = |reachable: Option<bool>| Trigger::ThreatSighted {
             threat: "zombie".to_owned(),
             entity_ref: "e7".to_owned(),
             distance: 5.5,
@@ -1978,7 +1980,7 @@ mod tests {
             reachable,
         };
 
-        let seen = perception(sighting(true), DecisionImportance::Pivotal);
+        let seen = perception(sighting(Some(true)), DecisionImportance::Pivotal);
         let prompt = render(&router().route(seen.importance), &seen);
         for expected in [
             "ref e7",
@@ -1998,7 +2000,7 @@ mod tests {
 
         // Unreachable is said outright rather than left off, so a model cannot read
         // silence as a route.
-        let walled = perception(sighting(false), DecisionImportance::Pivotal);
+        let walled = perception(sighting(Some(false)), DecisionImportance::Pivotal);
         let refused = render(&router().route(walled.importance), &walled);
         assert!(
             refused
@@ -2006,6 +2008,20 @@ mod tests {
                 .contains("no walkable path between you was found"),
             "an unreachable sighting must say so, got {situation}",
             situation = refused.situation
+        );
+        // A body that made no route search says nothing of one (r20: the player body's
+        // constant false read as no route to flee in six flights).
+        let unsearched = perception(sighting(None), DecisionImportance::Pivotal);
+        let silent = render(&router().route(unsearched.importance), &unsearched);
+        assert!(
+            !silent.situation.contains("walkable"),
+            "{}",
+            silent.situation
+        );
+        assert!(
+            silent.situation.contains("in sight"),
+            "{}",
+            silent.situation
         );
     }
 

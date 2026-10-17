@@ -388,7 +388,7 @@
           "description": "A living thing that hunts this agent's kind came into the body's view. Everything the body already verified about it travels with the trigger, so the mind never has to ask a second question to decide whether to run: which thing it is (as a ref it can name back), how far and in which direction it lies, whether the body can actually see it, and whether the engine's own bounded ground search found a route to it.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["event", "threat", "ref", "distance", "direction", "visible", "reachable"],
+          "required": ["event", "threat", "ref", "distance", "direction", "visible"],
           "properties": {
             "event": { "const": "threatSighted" },
             "threat": {
@@ -406,7 +406,7 @@
               "type": "boolean"
             },
             "reachable": {
-              "description": "Whether the engine's own bounded ground search found a route that reaches the threat. It is the search the body made from itself toward the threat, not the threat's toward the body, so false means no walkable route was found within the body's own budgeted search - a fenced-off or cliff-separated threat, and not a promise that nothing is coming. It is the result of a search the body already paid for, not an invitation for the mind to ask for another.",
+              "description": "Whether the engine's own bounded ground search found a route that reaches the threat. It is the search the body made from itself toward the threat, not the threat's toward the body, so false means no walkable route was found within the body's own budgeted search - a fenced-off or cliff-separated threat, and not a promise that nothing is coming. It is the result of a search the body already paid for, not an invitation for the mind to ask for another. Absent when the body made no such search, which is the player body's case: it was a constant false there, and the mind read it as no route to flee (r20).",
               "type": "boolean"
             }
           }

@@ -611,9 +611,11 @@ sealed interface Trigger {
          *
          * Evidence for the mind, and the result of a search the body already paid for -
          * not an invitation to ask for another. Deliberately not part of what makes a
-         * sighting expensive: see `dev.loom.mind.importanceOf`.
+         * sighting expensive: see `dev.loom.mind.importanceOf`. `null` when the body made
+         * no such search, which is the player body's case: a constant `false` there read as
+         * no route to flee (r20).
          */
-        val reachable: Boolean,
+        val reachable: Boolean? = null,
     ) : Trigger {
         init {
             requireBoundedRef(ref)
