@@ -6,12 +6,12 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v26 pursued-goal pilot,
-`research/config/first-tribe-routine-v26-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v26-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v27 wooded-goal pilot,
+`research/config/first-tribe-routine-v27-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v27-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
-native event drivers. It uses the v26 prompts, which show each agent its own
+native event drivers. It uses the v27 prompts, which show each agent its own
 carried goal and let the model return an optional typed goal choice, and it
 attests `categoryFairSelection: true` because the 48-per-kind selector it runs on
 is category-fair. Since v14 a `moveTo` names an observed block by ref rather than
@@ -88,6 +88,14 @@ A replace of the same item at the same or a lower total keeps the stall count, a
 A step that leaves the agent's own drop of its goal's item lying owes one more follow-up review, so each configuration from v26 on states `followUpsPerReview: 2`.
 A threat out of sight and more than 16 blocks off is not sighted.
 The r17 audit found trivial goals, 27 of 50 scheduled reviews ending idle, nine flights from mobs out of sight 22 blocks off, and a replace that relabelled a stalled goal.
+v27 keeps v26 and holds a goal to its own item.
+A drop of the goal's item still lying in reach neither advances nor stalls the goal, a replace of the same item carries the stall count at any total, and a stalled goal may be replaced only by a goal for another item.
+A held goal sight cannot meet is continued by a walk to the edge of sight, credited only when that walk brings a source into sight.
+At a goal review beside such a cell no idle or rest is offered, so a completion travels with an action.
+Each goal item is offered only its own steps, and a dig, collect, craft or walk that cannot give it, or a revise that changes it, is refused.
+An unseen hunter is news only within eight blocks, and follow-ups are earned per scheduled review and spent over the run, so one is owed while an own drop of the goal's item lies and any earned one remains.
+The live profile stands in a forest, where wood can be dug and crafted.
+The r18 audit found every stall fired on a dig that had just dropped two sticks, all eleven completions idled, five goals abandoned to look further, and 21 of 22 goals for sticks.
 `research/lib/experiment-mode.js` owns the pins. In the
 scripted twin the stand-in digs the nearest block in reach that can drop something, walks onto a source of its goal's item out of reach or to the edge of sight when none is in reach, adopts one placeholder goal of holding one more of what it drops, continues it while it digs and completes it once met; that exercises the goal round
 trip, the follow-up review and the own-drop evidence, and is not evidence of agency.
@@ -119,10 +127,14 @@ ran `-r6` and the v17 `research/config/tribe-working-goal-10m-10*.json` that ran
 `research/config/tribe-obtainable-goal-10m-10*.json` that ran `-r14`, and the v23
 `research/config/tribe-own-evidence-10m-10*.json` that ran `-r15`, and the v24
 `research/config/tribe-answered-goal-10m-10*.json` that ran `-r16`, and the v25
-`research/config/tribe-collected-goal-10m-10*.json` that ran `-r17`; `pursued-goal-10m-10` is the
-same profile under the v26 mode with its plan cut to the five scheduled reviews a run can finish
-(the sixth is due at tick 12,000 itself) and its coherence bars pre-registered beside it, configured by
-`research/config/tribe-pursued-goal-10m-10*.json`.
+`research/config/tribe-collected-goal-10m-10*.json` that ran `-r17`, and the v26
+`research/config/tribe-pursued-goal-10m-10*.json` that ran `-r18`; `wooded-goal-10m-10` is the
+same profile under the v27 mode, in the `f1-forest-ring` scene, with its plan cut to the five
+scheduled reviews a run can finish (the sixth is due at tick 12,000 itself) and its generation-10
+coherence bars pre-registered beside it, configured by `research/config/tribe-wooded-goal-10m-10*.json`.
+The forest scene is seed `10001`, the first seed from 10001 whose ring around the origin is dry
+land among trees, with its ten slots surveyed by `research/tools/survey-ring.js` from a fresh
+world under the rule the profile states; the survey reproduces them exactly.
 The live one
 carries the next fresh `2026-10-16-openai-10-agent-10m-r<n>` id. Each id is consumed
 by its one attempt and its published artifact names the commit it ran from.
@@ -141,8 +153,8 @@ routine-v18 offered-refs mode), and the `tribe-actionable-refs-10m-10*.json` fil
 routine-v19 actionable-refs mode), and the `tribe-typed-goal-10m-10*.json` files (the routine-v20
 typed-goal mode), and the `tribe-grounded-step-10m-10*.json` files (the routine-v21 grounded-step
 mode), and the `tribe-obtainable-goal-10m-10*.json` files (the routine-v22 obtainable-goal mode), and the
-`tribe-own-evidence-10m-10*.json`, `tribe-answered-goal-10m-10*.json` and `tribe-collected-goal-10m-10*.json`
-files (the routine-v23, routine-v24 and routine-v25 modes). They pin prompts the current mind no longer serves, so
+`tribe-own-evidence-10m-10*.json`, `tribe-answered-goal-10m-10*.json`, `tribe-collected-goal-10m-10*.json`
+and `tribe-pursued-goal-10m-10*.json` files (the routine-v23 to routine-v26 modes). They pin prompts the current mind no longer serves, so
 preflight refuses them before anything is built, started or read; the artifacts
 committed under them still validate. `contract/fixtures/capability-support.json`
 is the one classification of which configurations, modes, intents, triggers and
@@ -161,7 +173,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v26-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v27-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -180,8 +192,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v26-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v26-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v27-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v27-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -387,6 +399,14 @@ A safe flight from another managed player is the `peerFlight` blocker, and one f
 An abandon of a goal that what is held and seen can still meet (`goalAbandonedAchievable`) is the `goalIncoherent` blocker and an invalid decision.
 Generation 8 is frozen, so r17 re-derives exactly as published; `test/readiness-pursuit.test.js` holds r17's evidence to generation 9, where it is `notReady` with nine needless flights, one peer flight and its pursuit bars not cleared.
 
+Generation 10 (`loom-readiness-gate/8`) answers the r18 audit, which found the generation-9 measures miscounted what they named.
+A flight counts only when it answered damage, a threat in view, or one out of sight within eight blocks; the separation it then gained no longer rescues it.
+A revise that changes the goal's item (`goalReviseItemChanged`) is the `goalIncoherent` blocker and an invalid decision.
+The pursuit bars add the least agent's share of goal-active reviews, the fleet's and the least agent's share of time holding a goal, the kinds of item goals were set for, and accepted goal steps that crafted.
+An idle or rest beside a cell at the edge of sight counts whatever its goal choice, an original-target completion needs two condition advances and two beyond what was held or lay as the agent's own drop when the goal was set, a cut sight forced (the old total above what the review held plus what sight could give, from `targetHeld` and `targetCapacity`) is no cut, and a revise to another item is one.
+A complete-and-adopt answers a met condition.
+Generation 9 is frozen, so r18 re-derives exactly as published; `test/readiness-wooded.test.js` holds r18's evidence to generation 10, where it is `notReady` with four needless flights and its pursuit bars not cleared.
+
 ## Lifecycle and cleanup
 
 Before it creates the disposable server or reads a credential, the harness refuses to start unless the run volume has at least 2 GiB free, or more when the configured log and artifact bounds need it.
@@ -530,7 +550,7 @@ An empty value or lookup failure stops before cognition starts. An HTTP 401 or
 403 from the provider stops the whole run after that refusal, with no retry and
 only a stable provider-safe error.
 
-The routine-v26 pilot routes routine and notable decisions to
+The routine-v27 pilot routes routine and notable decisions to
 `gpt-5.4-nano` and only the existing pivotal tier to `gpt-5.4`. It runs three
 agents for at most 180 wall-clock seconds or 4,000 server ticks, whichever
 comes first, and permits at most six calls per agent, eighteen calls globally,

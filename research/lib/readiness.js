@@ -42,6 +42,16 @@ const COLLECTED_GOAL_INCOHERENT_TAGS = new Set([...TOLD_GOAL_INCOHERENT_TAGS, 'g
 // once the schema withheld every answer its counters count.
 const PURSUED_READINESS_VERSION = 'loom-readiness-gate/7'
 const PURSUED_GOAL_INCOHERENT_TAGS = new Set([...COLLECTED_GOAL_INCOHERENT_TAGS, 'goalAbandonedAchievable'])
+// Gate generation 10: a revise that changes the goal's item is refused with its intent; a flight
+// counts only when it answered damage, a threat in view, or one out of sight within
+// UNSEEN_NEAR_THREAT_BLOCKS, because r18's four flights all ran from mobs out of sight at 15 to 16
+// blocks and the separation they gained rescued them; and the pursuit bars measure what the r18
+// audit found the generation-9 measures miscounted - completions that needed two advances, forced
+// cuts apart from chosen ones, idling beside any goal choice, per-agent and time-weighted goal
+// holding, the kinds of item pursued, and goal steps that crafted.
+const WOODED_READINESS_VERSION = 'loom-readiness-gate/8'
+const WOODED_GOAL_INCOHERENT_TAGS = new Set([...PURSUED_GOAL_INCOHERENT_TAGS, 'goalReviseItemChanged'])
+const UNSEEN_NEAR_THREAT_BLOCKS = 8
 // A flight is worth its decision only from a threat in view or within this many blocks...
 const NEAR_THREAT_BLOCKS = 16
 // ...or when it gained at least this much separation.
@@ -52,6 +62,7 @@ const COMPLETING_OUTCOMES = new Set(['goalCompleted', 'goalCompletedAdopted'])
 
 /** The goal ledger refusals gate [generation] counts as incoherent decisions. */
 function goalIncoherentTagsOf (generation) {
+  if (generation >= 10) return WOODED_GOAL_INCOHERENT_TAGS
   if (generation >= 9) return PURSUED_GOAL_INCOHERENT_TAGS
   if (generation >= 8) return COLLECTED_GOAL_INCOHERENT_TAGS
   if (generation >= 7) return TOLD_GOAL_INCOHERENT_TAGS
@@ -59,7 +70,7 @@ function goalIncoherentTagsOf (generation) {
   return generation >= 5 ? EVIDENCED_GOAL_INCOHERENT_TAGS : GOAL_INCOHERENT_TAGS
 }
 // The evidence that may credit a step; `none`, or no evidence stated at all, never does.
-const CREDITING_STEP_EVIDENCE = new Set(['arrived', 'gained', 'dropped'])
+const CREDITING_STEP_EVIDENCE = new Set(['arrived', 'gained', 'dropped', 'revealed'])
 
 const PASSIVE_INTENTS = Object.freeze(['idle', 'rest'])
 const INTERACTION_INTENTS = Object.freeze(['dig', 'collect', 'place', 'equip', 'craft', 'attack', 'sleep'])
@@ -115,7 +126,7 @@ const INAPPLICABLE_TAGS = new Set([
 const PROTOCOL_TAGS = new Set(['rejected', 'controlUnavailable', 'unsupported', 'noSuchBody'])
 
 /** The class a refusal tag ends its action in, under gate [generation] (the current one by default). */
-function refusalClass (tag, generation = 9) {
+function refusalClass (tag, generation = 10) {
   if (goalIncoherentTagsOf(generation).has(tag)) return 'goalIncoherent'
   if (generation >= 7 && TERRAIN_TAGS.has(tag)) return TERRAIN_CLASS
   if (generation >= 5 && tag === 'digWouldTrap') return 'inapplicable'
@@ -155,7 +166,7 @@ const RETREAT_CLASSES = Object.freeze({
  * was decided, or when the flight gained [MEASURED_SEPARATION_GAIN] or more; otherwise it is a
  * `needlessFlight` (r17: nine flights from mobs out of sight 22 blocks off gained under six).
  */
-function flightClass (decision, own, retreat) {
+function flightClass (decision, own, retreat, generation = 9) {
   const perception = own('perceived')[0]?.perception
   const from = decision.decision?.intent?.from
   const target = perception?.surroundings?.find((seen) => seen.ref === from)
@@ -164,6 +175,12 @@ function flightClass (decision, own, retreat) {
   const threat = trigger?.event === 'threatSighted' && trigger.ref === from
     ? { visible: trigger.visible, distance: trigger.distance }
     : target === undefined ? undefined : { visible: target.visible, distance: target.distance }
+  if (generation >= 10) {
+    // The reason for a flight is the threat, not what the flight then gained (r18 body:00000309).
+    const warranted = trigger?.event === 'damaged' ||
+      (threat !== undefined && (threat.visible === true || threat.distance <= UNSEEN_NEAR_THREAT_BLOCKS))
+    return warranted ? 'confirmed' : 'needlessFlight'
+  }
   const near = trigger?.event === 'damaged' ||
     (threat !== undefined && (threat.visible === true || threat.distance <= NEAR_THREAT_BLOCKS))
   const gained = retreat.retreat?.separationGained ?? 0
@@ -190,7 +207,9 @@ function acceptedClass (decision, byKey, window, generation = 3) {
     const retreat = own('retreating')[0]
     if (retreat === undefined) return { class: 'untypedTerminal' }
     const ended = RETREAT_CLASSES[retreat.outcome] ?? 'untypedTerminal'
-    if (generation >= 9 && ended === 'confirmed') return { class: flightClass(decision, own, retreat), evidence: retreat }
+    if (generation >= 9 && ended === 'confirmed') {
+      return { class: flightClass(decision, own, retreat, generation), evidence: retreat }
+    }
     return { class: ended, evidence: retreat }
   }
   if (decision.intent === 'eat') {
@@ -283,7 +302,8 @@ function typedGoalCoherenceOf (bodyRecords, generation = 4, bars = undefined) {
     if (generation >= 8 && goal.outcome === 'goalOwnDropIgnored') counts.ignoredOwnDrops += 1
     if (goal.conditionMet === true) {
       counts.metConditions += 1
-      if (goal.outcome === 'goalCompleted') counts.metCompleted += 1
+      // A replace of a met goal completes it and adopts the next in one answer (routine-v26).
+      if (COMPLETING_OUTCOMES.has(goal.outcome)) counts.metCompleted += 1
       else if (goal.outcome === 'goalRevised') counts.metRevised += 1
       else counts.metIgnored += 1
     }
@@ -303,7 +323,9 @@ function typedGoalCoherenceOf (bodyRecords, generation = 4, bars = undefined) {
   }
   const goals = [...byGoal.values()]
   const multiStepGoals = goals.filter((goal) => goal.condition >= 2).length
-  const pursuit = generation >= 9 ? pursuitOf(bodyRecords, byGoal, bars) : undefined
+  const pursuit = generation >= 10
+    ? woodedPursuitOf(bodyRecords, byGoal, bars)
+    : generation >= 9 ? pursuitOf(bodyRecords, byGoal, bars) : undefined
   const coherent = (pursuit === undefined || pursuit.verdict === 'cleared') && counts.stepMismatches === 0 && counts.unmetCompletions === 0 && counts.metIgnored === 0 &&
     multiStepGoals >= 1 &&
     (!evidenced || (counts.unevidencedCredits === 0 && counts.unobtainableConditions === 0)) &&
@@ -378,6 +400,143 @@ function pursuitOf (bodyRecords, byGoal, bars) {
     multiStepAgents.size >= bars.multiStepAgentsAtOriginalTarget &&
     originalTargetCompletions >= bars.originalTargetCompletions
   return { bars: bars ?? null, measured, verdict: cleared ? 'cleared' : 'notCleared' }
+}
+
+/**
+ * The generation-10 pursuit bars and what the run measured against each (the r18 audit): the
+ * fleet's and every agent's share of goal reviews that held or took up a goal and stepped toward
+ * it; the fleet's and every agent's share of time from its first perception to the run's end
+ * spent holding a goal; the goal reviews that idled or rested beside offered cells at the edge of
+ * sight, whatever their goal choice; the agents with a goal whose condition advanced at two or
+ * more steps at its original target, where a cut that sight forced is no cut and a revise to
+ * another item is; the completions at an original target that advanced at two or more steps and
+ * needed two or more beyond what was held, or lay as the agent's own drop in reach, when adopted;
+ * the kinds of item goals were set for; and the accepted goal steps that crafted.
+ */
+function woodedPursuitOf (bodyRecords, byGoal, bars) {
+  const perceptionOf = new Map(bodyRecords
+    .filter((record) => record.event === 'perceived' && record.requestKey !== undefined)
+    .map((record) => [record.requestKey, record.perception]))
+  const appliedOf = new Map(bodyRecords
+    .filter((record) => record.event === 'intentApplied' && record.requestKey !== undefined)
+    .map((record) => [record.requestKey, record.outcome]))
+  const reviews = bodyRecords.filter((record) =>
+    record.event === 'decided' && record.goal !== undefined && record.goal.outcome !== 'goalNotReviewed')
+  const active = (record) => GOAL_ACTIVE_OUTCOMES.has(record.goal.outcome)
+  const byAgent = new Map()
+  for (const record of reviews) {
+    const entry = byAgent.get(record.agentId) ?? { reviews: 0, active: 0 }
+    entry.reviews += 1
+    if (active(record)) entry.active += 1
+    byAgent.set(record.agentId, entry)
+  }
+  const idleBesideExploration = reviews.filter((record) =>
+    PASSIVE_INTENTS.includes(record.intent) &&
+    (perceptionOf.get(record.requestKey)?.explore?.length ?? 0) > 0).length
+  const original = new Map()
+  const items = new Set()
+  for (const record of reviews) {
+    const goal = record.goal
+    const choice = record.decision?.goal
+    if (['goalAdopted', 'goalReplaced', 'goalCompletedAdopted'].includes(goal.outcome) && goal.goalId !== undefined) {
+      const item = choice?.successItem
+      items.add(item)
+      const self = perceptionOf.get(record.requestKey)?.selfState
+      const carried = (self?.inventorySummary ?? []).filter((stack) => stack.what === item)
+        .reduce((sum, stack) => sum + stack.count, 0)
+      const lying = (self?.ownDrops ?? []).filter((drop) => drop.what === item && drop.fate === 'lying')
+        .reduce((sum, drop) => sum + drop.count, 0)
+      original.set(goal.goalId, { agentId: record.agentId, item, count: choice?.successCount, held: carried + lying, cut: false })
+    } else if (goal.outcome === 'goalRevised' && original.has(goal.goalId)) {
+      const entry = original.get(goal.goalId)
+      const count = choice?.successCount
+      const forced = Number.isInteger(goal.targetHeld) && Number.isInteger(goal.targetCapacity) &&
+        goal.targetHeld + goal.targetCapacity < entry.count
+      if (choice?.successItem !== undefined && choice.successItem !== entry.item) entry.cut = true
+      else if (Number.isInteger(count) && count < entry.count) {
+        if (forced) entry.count = count
+        else entry.cut = true
+      }
+    }
+  }
+  const atOriginal = (goalId) => original.has(goalId) && !original.get(goalId).cut
+  const advances = (goalId) => byGoal.get(goalId)?.condition ?? 0
+  const multiStepAgents = new Set([...original.entries()]
+    .filter(([goalId]) => advances(goalId) >= 2 && atOriginal(goalId))
+    .map(([, entry]) => entry.agentId))
+  const originalTargetCompletions = reviews.filter((record) => {
+    const goalId = record.goal.presentedGoalId
+    if (!COMPLETING_OUTCOMES.has(record.goal.outcome) || record.goal.conditionMet !== true || !atOriginal(goalId)) return false
+    const entry = original.get(goalId)
+    return entry.count - entry.held >= 2 && advances(goalId) >= 2
+  }).length
+  const craftSteps = reviews.filter((record) =>
+    record.intent === 'craft' && active(record) && appliedOf.get(record.requestKey) === 'accepted').length
+  const held = heldTimeOf(bodyRecords)
+  const shares = [...byAgent.values()].map((entry) => entry.active / entry.reviews)
+  const measured = {
+    goalActiveReviewShare: ratio(reviews.filter(active).length, reviews.length),
+    minAgentGoalActiveReviewShare: shares.length === 0 ? null : Number(Math.min(...shares).toFixed(6)),
+    goalHeldTimeShare: held.fleet,
+    minAgentGoalHeldTimeShare: held.minAgent,
+    idleBesideExploration,
+    multiStepAgentsAtOriginalTarget: multiStepAgents.size,
+    originalTargetCompletions,
+    distinctGoalItems: [...items].filter((item) => typeof item === 'string').length,
+    craftSteps
+  }
+  const at = (value, bar) => (value ?? 0) >= bar
+  const cleared = bars !== undefined &&
+    at(measured.goalActiveReviewShare, bars.goalActiveReviewShare) &&
+    at(measured.minAgentGoalActiveReviewShare, bars.minAgentGoalActiveReviewShare) &&
+    at(measured.goalHeldTimeShare, bars.goalHeldTimeShare) &&
+    at(measured.minAgentGoalHeldTimeShare, bars.minAgentGoalHeldTimeShare) &&
+    idleBesideExploration <= bars.maxIdleBesideExploration &&
+    at(measured.multiStepAgentsAtOriginalTarget, bars.multiStepAgentsAtOriginalTarget) &&
+    at(originalTargetCompletions, bars.originalTargetCompletions) &&
+    at(measured.distinctGoalItems, bars.distinctGoalItems) &&
+    at(craftSteps, bars.craftSteps)
+  return { bars: bars ?? null, measured, verdict: cleared ? 'cleared' : 'notCleared' }
+}
+
+/**
+ * The fleet's and the least-holding agent's share of server time spent holding a goal: for each
+ * agent, from its first perception to the run's last record, the time after each decided record
+ * whose resolution left a goal held, up to its next decided record.
+ */
+function heldTimeOf (bodyRecords) {
+  const end = maximumTick(bodyRecords)
+  const agents = new Map()
+  for (const record of bodyRecords) {
+    if (record.agentId === undefined || !Number.isInteger(record.tick)) continue
+    const entry = agents.get(record.agentId) ?? { start: record.tick, held: 0, since: null }
+    if (record.event === 'decided' && record.goal !== undefined) {
+      if (entry.since !== null) entry.held += record.tick - entry.since
+      entry.since = record.goal.goalId !== undefined ? record.tick : null
+    }
+    agents.set(record.agentId, entry)
+  }
+  let held = 0
+  let span = 0
+  const shares = []
+  for (const entry of agents.values()) {
+    const total = entry.held + (entry.since === null ? 0 : end - entry.since)
+    const window = end - entry.start
+    if (window <= 0) continue
+    held += total
+    span += window
+    shares.push(total / window)
+  }
+  return {
+    fleet: ratio(held, span),
+    minAgent: shares.length === 0 ? null : Number(Math.min(...shares).toFixed(6))
+  }
+}
+
+function maximumTick (records) {
+  let most = 0
+  for (const record of records) if (Number.isInteger(record.tick) && record.tick > most) most = record.tick
+  return most
 }
 
 function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 3, bars }) {
@@ -487,8 +646,9 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       GROUNDED_READINESS_VERSION,
       TOLD_READINESS_VERSION,
       COLLECTED_READINESS_VERSION,
-      PURSUED_READINESS_VERSION
-    ][Math.min(Math.max(generation - 3, 0), 6)],
+      PURSUED_READINESS_VERSION,
+      WOODED_READINESS_VERSION
+    ][Math.min(Math.max(generation - 3, 0), 7)],
     actions: {
       total,
       byClass: Object.fromEntries(Object.entries(byClass).sort()),
@@ -519,6 +679,8 @@ module.exports = {
   COLLECTED_READINESS_VERSION,
   PURSUED_GOAL_INCOHERENT_TAGS,
   PURSUED_READINESS_VERSION,
+  WOODED_GOAL_INCOHERENT_TAGS,
+  WOODED_READINESS_VERSION,
   EVIDENCED_GOAL_INCOHERENT_TAGS,
   EVIDENCED_READINESS_VERSION,
   GOAL_INCOHERENT_TAGS,

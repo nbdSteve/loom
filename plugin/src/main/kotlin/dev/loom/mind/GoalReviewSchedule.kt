@@ -23,8 +23,12 @@
  * One more review is owed outside the cadence: when the step a held goal took settles, the
  * agent reviews that goal again shortly after rather than waiting out the cadence, because a
  * goal advanced at most once per two-minute review can barely be pursued over several steps
- * (r14: 18 of 19 goals needed one item at most). That follow-up is bounded to one per scheduled
- * review, so an agent costs at most twice its scheduled reviews whatever its steps do.
+ * (r14: 18 of 19 goals needed one item at most). Each scheduled review earns the agent
+ * [MAX_FOLLOW_UPS_PER_REVIEW] follow-ups to spend: any settled step may spend one of them per
+ * scheduled review, and a step that leaves the agent's own drop of its goal's item lying may spend
+ * every one it has earned, so an agent costs at most that many follow-ups per scheduled review
+ * over a run whatever its steps do (r18 delta's third drop in one review lay unreviewed, and
+ * epsilon took it).
  */
 package dev.loom.mind
 
@@ -63,10 +67,13 @@ private const val DEFAULT_SLICES_PER_CADENCE = 24
  */
 const val FOLLOW_UP_DELAY_TICKS: Long = 40
 
-/** Follow-up reviews one scheduled review may be followed by. */
+/** Follow-up reviews each scheduled review earns, spent over the run rather than within it. */
 const val MAX_FOLLOW_UPS_PER_REVIEW: Int = 2
 
-/** Follow-ups any settled step owes; the rest are owed only while an own goal-item drop lies. */
+/**
+ * Follow-ups any settled step may spend per scheduled review; past it, one is spent only while a
+ * step leaves an own goal-item drop lying.
+ */
 const val ORDINARY_FOLLOW_UPS_PER_REVIEW: Int = 1
 
 /** What hears that a held goal's step settled. Main thread only. */
@@ -113,10 +120,12 @@ class GoalReviewSchedule(
 
     private val lastReview = mutableMapOf<AgentId, Long>()
 
-    // When each owed follow-up review is due, and how many each agent's latest scheduled review
-    // has been followed by.
+    // When each owed follow-up review is due, how many each agent's latest scheduled review has
+    // been followed by, and how many follow-ups its scheduled reviews have earned and it has not
+    // yet spent.
     private val followUpDue = mutableMapOf<AgentId, Long>()
     private val followUps = mutableMapOf<AgentId, Int>()
+    private val allowance = mutableMapOf<AgentId, Int>()
 
     /**
      * Longest-waiting first, so a population that outgrows one slice's share
@@ -176,6 +185,7 @@ class GoalReviewSchedule(
         lastReview.keys.retainAll(living)
         followUpDue.keys.retainAll(living)
         followUps.keys.retainAll(living)
+        allowance.keys.retainAll(living)
         val claimed =
             living
                 .filter { isDue(it, now) && ready(it) }
@@ -186,25 +196,28 @@ class GoalReviewSchedule(
             // A scheduled review answers whatever a follow-up was owed for, and owes one anew.
             followUpDue.remove(it)
             followUps.remove(it)
+            allowance[it] = (allowance[it] ?: 0) + MAX_FOLLOW_UPS_PER_REVIEW
         }
         return claimed
     }
 
     /**
      * Owes [agent] one follow-up review [FOLLOW_UP_DELAY_TICKS] after [tick], when its held goal's
-     * step settled - unless its latest scheduled review has already been followed up
-     * [ORDINARY_FOLLOW_UPS_PER_REVIEW] times, or [MAX_FOLLOW_UPS_PER_REVIEW] times when the step
-     * left the agent's own drop of the goal's item lying ([owed]), or it has never had a scheduled
-     * review at all. r17 beta's dig at its one follow-up dropped two sticks with no review owed
-     * until 2255 ticks later, and gamma took them.
+     * step settled - unless it has spent every follow-up its scheduled reviews earned, or its
+     * latest scheduled review has already been followed up [ORDINARY_FOLLOW_UPS_PER_REVIEW] times
+     * and the step did not leave the agent's own drop of the goal's item lying ([owed]), or it has
+     * never had a scheduled review at all. r17 beta's dig at its one follow-up dropped two sticks
+     * with no review owed until 2255 ticks later, and gamma took them.
      */
     override fun settled(
         agent: AgentId,
         tick: Long,
         owed: Boolean,
     ) {
-        val bound = if (owed) MAX_FOLLOW_UPS_PER_REVIEW else ORDINARY_FOLLOW_UPS_PER_REVIEW
-        if (agent !in lastReview || (followUps[agent] ?: 0) >= bound) return
+        val spentHere = followUps[agent] ?: 0
+        val earned = allowance[agent] ?: 0
+        val ordinarySpent = !owed && spentHere >= ORDINARY_FOLLOW_UPS_PER_REVIEW
+        if (agent !in lastReview || earned <= 0 || ordinarySpent) return
         followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS)
     }
 
@@ -227,6 +240,7 @@ class GoalReviewSchedule(
         claimed.forEach {
             followUpDue.remove(it)
             followUps[it] = (followUps[it] ?: 0) + 1
+            allowance[it] = (allowance[it] ?: 0) - 1
         }
         return claimed
     }

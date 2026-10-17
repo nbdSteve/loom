@@ -865,6 +865,10 @@ enum class StepEvidence {
     @SerialName("dropped")
     DROPPED,
 
+    /** A walk to the edge of sight arrived where a source of the goal's item was then in sight. */
+    @SerialName("revealed")
+    REVEALED,
+
     /** Nothing showed it: a dig that dropped nothing, a walk that did not arrive. */
     @SerialName("none")
     NONE,

@@ -1,11 +1,18 @@
 {
-  "experimentId": "2026-10-16-openai-routine-v26-agency-pilot-proposal",
-  "title": "Routine-v26 three-agent goal-continuity pilot",
-  "mode": "routine-v26-pursued-goal",
+  "experimentId": "2026-10-16-openai-10-agent-10m-r19",
+  "title": "10-agent ten-minute routine-v27 wooded-goal live shakedown",
+  "mode": "routine-v27-wooded-goal",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
-    "tribe-gamma"
+    "tribe-gamma",
+    "tribe-delta",
+    "tribe-epsilon",
+    "tribe-zeta",
+    "tribe-eta",
+    "tribe-theta",
+    "tribe-iota",
+    "tribe-kappa"
   ],
   "paper": {
     "minecraftVersion": "1.21.1",
@@ -14,7 +21,7 @@
     "sha256": "39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9"
   },
   "world": {
-    "seed": "76192346017",
+    "seed": "10001",
     "difficulty": "normal",
     "mobSpawning": true,
     "maxWorldSizeBlocks": 256,
@@ -30,7 +37,7 @@
     "cognitionUpstreamPort": 8643
   },
   "runtime": {
-    "paperMemoryMiB": 1024,
+    "paperMemoryMiB": 2048,
     "body": {
       "startupRetryMillis": 250,
       "healthCheckIntervalTicks": 100,
@@ -40,7 +47,7 @@
     "cognitionBridge": {
       "timeoutMillis": 30000,
       "connectTimeoutMillis": 500,
-      "workers": 3,
+      "workers": 6,
       "queueDepth": 16,
       "perAgentPending": 2
     }
@@ -53,20 +60,20 @@
       "pivotal": "gpt-5.4"
     },
     "prompts": {
-      "routine": "routine-v26",
-      "notable": "notable-v26",
-      "pivotal": "pivotal-v26"
+      "routine": "routine-v27",
+      "notable": "notable-v27",
+      "pivotal": "pivotal-v27"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,
     "providerEndpoint": "https://api.openai.com/v1",
     "providerTimeoutMillis": 12000,
     "maxRequestBytes": 65536,
-    "perAgentCallCeiling": 6,
-    "globalCallCeiling": 18,
-    "globalOutstandingCeiling": 3,
+    "perAgentCallCeiling": 24,
+    "globalCallCeiling": 150,
+    "globalOutstandingCeiling": 6,
     "maxOutputTokens": 2048,
-    "maxExternalSpendUsd": 3.51,
+    "maxExternalSpendUsd": 29.19,
     "pricing": {
       "currency": "USD",
       "effectiveDate": "2026-10-12",
@@ -87,31 +94,66 @@
   },
   "bounds": {
     "startupConcurrency": 2,
-    "startupSeconds": 120,
-    "runDurationSeconds": 180,
-    "simulationTickCeiling": 4000,
+    "startupSeconds": 300,
+    "runDurationSeconds": 600,
+    "simulationTickCeiling": 12000,
     "startupAttempts": 2,
     "shutdownSeconds": 20,
-    "logBytes": 4194304,
-    "artifactBytes": 2097152,
-    "evidenceRecords": 20000
+    "logBytes": 16777216,
+    "artifactBytes": 16777216,
+    "evidenceRecords": 8000
   },
   "primaryBehavior": {
-    "profile": "pilot-180s",
+    "profile": "wooded-goal-10m-10",
     "initialPositions": {
       "tribe-alpha": [
-        10.5,
-        68.0,
-        3.5
+        12.5,
+        72,
+        0.5
       ],
       "tribe-beta": [
-        1.5,
-        68.0,
-        1.5
+        9.5,
+        68,
+        7.5
       ],
       "tribe-gamma": [
+        3.5,
+        67,
+        11.5
+      ],
+      "tribe-delta": [
+        -4.5,
+        66,
+        14.5
+      ],
+      "tribe-epsilon": [
         -9.5,
-        68.0,
+        68,
+        7.5
+      ],
+      "tribe-zeta": [
+        -11.5,
+        69,
+        0.5
+      ],
+      "tribe-eta": [
+        -9.5,
+        72,
+        -7.5
+      ],
+      "tribe-theta": [
+        -3.5,
+        77,
+        -11.5
+      ],
+      "tribe-iota": [
+        3.5,
+        79,
+        -11.5
+      ],
+      "tribe-kappa": [
+        9.5,
+        78,
         -7.5
       ]
     },
@@ -123,7 +165,7 @@
     "nativeGoalReviewSchedule": {
       "cadenceTicks": 2400,
       "sliceTicks": 100,
-      "expectedReviewsPerAgent": 2,
+      "expectedReviewsPerAgent": 5,
       "followUpsPerReview": 2
     },
     "externalCognitionStimuli": "none",
@@ -137,7 +179,7 @@
       "conflict": false,
       "scriptedObjectives": false
     },
-    "scene": "r5-neutral",
+    "scene": "f1-forest-ring",
     "categoryFairSelection": true
   },
   "featureFlags": {

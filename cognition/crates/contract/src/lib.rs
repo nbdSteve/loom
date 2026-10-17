@@ -1301,6 +1301,9 @@ pub enum StepEvidence {
     /// The server saw the step's own dig drop something for this agent, wherever it went.
     #[serde(rename = "dropped")]
     Dropped,
+    /// A walk to the edge of sight arrived where a source of the goal's item was then in sight.
+    #[serde(rename = "revealed")]
+    Revealed,
     /// Nothing showed it: a dig that dropped nothing, a walk that did not arrive.
     #[serde(rename = "none")]
     None,

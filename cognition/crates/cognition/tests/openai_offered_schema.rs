@@ -56,7 +56,8 @@ fn intent_variants(schema: &Value) -> Vec<Value> {
     if coupled(schema) {
         ["activeIntent", "passiveIntent"]
             .iter()
-            .flat_map(|name| schema["$defs"][name]["anyOf"].as_array().unwrap().clone())
+            .filter_map(|name| schema["$defs"][name]["anyOf"].as_array().cloned())
+            .flatten()
             .collect()
     } else {
         schema["properties"]["intent"]["anyOf"]
@@ -178,7 +179,7 @@ fn an_action_with_nothing_offered_to_name_is_not_offered() {
     assert_eq!(actions(&schema), ["say", "rest", "idle"]);
     // Only the intent groups a goal review pairs its choices with; no ref namespace.
     let defs: Vec<&String> = schema["$defs"].as_object().unwrap().keys().collect();
-    assert_eq!(defs, ["activeIntent", "passiveIntent", "steppingIntent"]);
+    assert_eq!(defs, ["activeIntent", "passiveIntent"]);
 
     let crafting = decision_schema_for(
         &OfferedRefs::of(&fixture("perception-crafting")),
@@ -389,14 +390,12 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     assert_eq!(dispositions(&of(&with_bush(review))), ["adopt", "none"]);
     // An unmet condition is never completed, and a held goal is always answered. Eight oak logs
     // with nothing in sight to give one cannot be met, so it is not offered a continue (r15: a
-    // continue was the one disposition the obtainability rule did not reach), and with a bush in
-    // sight it may be revised to sticks.
+    // continue was the one disposition the obtainability rule did not reach). A revise never
+    // changes the item, so a bush in sight offers no revise of a log goal to sticks (r18 zeta
+    // body:00000569 revised a scute goal into sticks under the same goal).
     let carried = fixture("perception-goal-carried");
     assert_eq!(dispositions(&of(&carried)), ["abandon"]);
-    assert_eq!(
-        dispositions(&of(&with_bush(carried.clone()))),
-        ["revise", "abandon"]
-    );
+    assert_eq!(dispositions(&of(&with_bush(carried.clone()))), ["abandon"]);
     let mut sticks = carried;
     let goal = sticks.goal.as_mut().unwrap();
     goal.success_item = Some("item.minecraft.stick".to_owned());
@@ -415,7 +414,8 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     let met = with_bush(fixture("perception-goal-condition-met"));
     // A replace on a met goal completes it and adopts the next in one answer (r17: every one of
     // eleven completes idled for a full cycle).
-    assert_eq!(dispositions(&of(&met)), ["revise", "replace", "complete"]);
+    // The bush gives sticks, not the held goal's logs, so no revise is offered.
+    assert_eq!(dispositions(&of(&met)), ["replace", "complete"]);
     let schema = of(&met);
     let validator = jsonschema::validator_for(&schema).unwrap();
     let continuing = answer_in(
@@ -429,13 +429,29 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
         &json!({ "action": "idle" }),
         &json!(null)
     )));
-    // A complete travels with any intent, idle included.
+    // A complete travels with any intent, idle included, while nowhere is offered to look.
     let completing = answer_in(
         &schema,
         &json!({ "action": "idle" }),
         &json!({ "disposition": "complete", "stepResult": "done" }),
     );
     assert!(validator.is_valid(&completing));
+    // Beside a cell at the edge of sight it travels with an action (r18: all eleven completes
+    // idled, and six waited a whole cadence for the next goal).
+    let mut looking = met.clone();
+    looking.explore.push(loom_contract::ExploreTarget {
+        target_ref: "x1".to_owned(),
+        distance: 12.0,
+        direction: loom_contract::Bearing::East,
+        vertical_offset: 0.0,
+    });
+    let beside = jsonschema::validator_for(&of(&looking)).unwrap();
+    assert!(!beside.is_valid(&completing));
+    assert!(beside.is_valid(&answer_in(
+        &of(&looking),
+        &json!({ "action": "moveTo", "onto": "x1" }),
+        &json!({ "disposition": "complete", "stepResult": "done" }),
+    )));
     // A settled step reviews the goal just as a scheduled review does.
     let mut settled = fixture("perception-goal-carried");
     settled.trigger = loom_contract::Trigger::StepSettled;
@@ -583,19 +599,38 @@ fn a_goal_at_the_stall_bound_is_offered_only_a_replace_beside_an_action() {
     assert_eq!(GoalPhase::of(&seen), GoalPhase::Stalled);
     let bare = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     assert_eq!(dispositions(&bare), ["abandon"]);
+    // r17 alpha body:00000163 replaced "hold 2 stick" with "hold 2 stick", and r18's three
+    // replaces set the stalled stick goal again at one more: the same item is never offered.
     seen.surroundings.push(stick_drop("d7", 6.0));
+    let sticks = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
+    assert_eq!(dispositions(&sticks), ["abandon"]);
+    assert!(count_bounds(&sticks, "replace", "item.minecraft.stick").is_empty());
+    // A block in reach that drops dirt gives a goal for another item.
+    let mut dirt = seen.surroundings[0].clone();
+    dirt.what = "block.minecraft.dirt".to_owned();
+    dirt.target_ref = "b8".to_owned();
+    dirt.yields = Some(vec![loom_contract::BlockYield {
+        what: "item.minecraft.dirt".to_owned(),
+        least: 1,
+        most: 1,
+    }]);
+    seen.surroundings.push(dirt);
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     assert_eq!(dispositions(&schema), ["replace"]);
-    // r17 alpha body:00000163 replaced "hold 2 stick" with "hold 2 stick" and cleared its stall
-    // count; the same item may only be set again at a higher total.
     assert_eq!(
-        count_bounds(&schema, "replace", "item.minecraft.stick"),
-        [(2, 3)]
+        count_bounds(&schema, "replace", "item.minecraft.dirt"),
+        [(1, 1)]
     );
     let validator = jsonschema::validator_for(&schema).unwrap();
-    let replace = json!({ "disposition": "replace", "successItem": "item.minecraft.stick",
-        "successCount": 2, "stepResult": "noProgress" });
-    let dig = json!({ "action": "dig", "block": "b9" });
+    let replace = json!({ "disposition": "replace", "successItem": "item.minecraft.dirt",
+        "successCount": 1, "stepResult": "noProgress" });
+    let dig = json!({ "action": "dig", "block": "b8" });
+    // Its step is one of its own item's: the bush cannot give dirt.
+    assert!(!validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "dig", "block": "b9" }),
+        &replace
+    )));
     assert!(validator.is_valid(&answer_in(&schema, &dig, &replace)));
     for passive in ["idle", "rest"] {
         assert!(!validator.is_valid(&answer_in(&schema, &json!({ "action": passive }), &replace)));
@@ -651,4 +686,236 @@ fn an_own_drop_of_the_goal_item_in_reach_is_collected_before_any_dig() {
     // An achievable goal is not abandoned either (r17 theta body:00000333).
     let abandon = json!({ "disposition": "abandon", "stepResult": "noProgress" });
     assert!(!validator.is_valid(&answer_in(&schema, &walk, &abandon)));
+}
+
+/// [`seen`] with a block in reach of `what` that drops `item` from `least` to `most`.
+fn with_block(
+    mut seen: Perception,
+    handle: &str,
+    what: &str,
+    item: Option<(&str, i64, i64)>,
+) -> Perception {
+    seen.surroundings.push(Observation {
+        kind: ObservationKind::Block,
+        what: format!("block.minecraft.{what}"),
+        distance: 1.2,
+        direction: loom_contract::Bearing::South,
+        vertical_offset: 0.0,
+        visible: true,
+        target_ref: handle.to_owned(),
+        count: None,
+        standable: Some(true),
+        yields: Some(
+            item.map(|(name, least, most)| loom_contract::BlockYield {
+                what: name.to_owned(),
+                least,
+                most,
+            })
+            .into_iter()
+            .collect(),
+        ),
+        dig_safe: Some(true),
+        route_refused: None,
+    });
+    seen
+}
+
+/// One cell at the edge of sight, `x1`, twelve blocks east.
+fn with_edge(mut seen: Perception) -> Perception {
+    seen.explore.push(loom_contract::ExploreTarget {
+        target_ref: "x1".to_owned(),
+        distance: 12.0,
+        direction: loom_contract::Bearing::East,
+        vertical_offset: 0.0,
+    });
+    seen
+}
+
+#[test]
+fn an_adopted_goal_is_stepped_only_by_its_own_items_sources() {
+    // r18 epsilon body:00000046: it adopted a stick goal standing in a dead bush and dug
+    // terracotta, which gives nothing, refused as goalStepUnproductive at body:00000047.
+    let seen = with_block(
+        with_bush(fixture("perception-goal-review")),
+        "bqr",
+        "terracotta",
+        None,
+    );
+    let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let adopt =
+        json!({ "disposition": "adopt", "successItem": "item.minecraft.stick", "successCount": 1 });
+    assert!(validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "dig", "block": "b9" }),
+        &adopt
+    )));
+    assert!(!validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "dig", "block": "bqr" }),
+        &adopt
+    )));
+    // With no goal choice the terracotta may still be dug.
+    assert!(validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "dig", "block": "bqr" }),
+        &json!(null)
+    )));
+    // A dirt block gives dirt, and dirt's own goal steps only by it.
+    let both = with_block(seen, "b8", "dirt", Some(("item.minecraft.dirt", 1, 1)));
+    let schema = decision_schema_for(&OfferedRefs::of(&both), GoalPhase::of(&both));
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let dirt =
+        json!({ "disposition": "adopt", "successItem": "item.minecraft.dirt", "successCount": 1 });
+    assert!(validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "dig", "block": "b8" }),
+        &dirt
+    )));
+    assert!(!validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "dig", "block": "b9" }),
+        &dirt
+    )));
+}
+
+#[test]
+fn a_held_goal_sight_cannot_meet_continues_only_by_looking_further() {
+    // r18 gamma body:00000069, delta 127 and 485: each abandoned its goal to walk to the edge of
+    // sight. The walk now continues the goal, and nothing passive is offered beside it.
+    let seen = with_edge(fixture("perception-goal-carried"));
+    assert_eq!(
+        dispositions(&decision_schema_for(
+            &OfferedRefs::of(&seen),
+            GoalPhase::of(&seen)
+        )),
+        ["continue", "abandon"]
+    );
+    let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let continuing = json!({ "disposition": "continue", "stepResult": "noProgress" });
+    let abandon = json!({ "disposition": "abandon", "stepResult": "noProgress" });
+    let walk = json!({ "action": "moveTo", "onto": "x1" });
+    assert!(validator.is_valid(&answer_in(&schema, &walk, &continuing)));
+    assert!(validator.is_valid(&answer_in(&schema, &walk, &abandon)));
+    assert!(!validator.is_valid(&answer_in(&schema, &json!({ "action": "idle" }), &abandon)));
+    assert!(!validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "idle" }),
+        &continuing
+    )));
+    // With nowhere offered to look, only the abandon remains, idle beside it.
+    let blind = fixture("perception-goal-carried");
+    let schema = decision_schema_for(&OfferedRefs::of(&blind), GoalPhase::of(&blind));
+    assert_eq!(dispositions(&schema), ["abandon"]);
+    assert!(jsonschema::validator_for(&schema)
+        .unwrap()
+        .is_valid(&answer_in(&schema, &json!({ "action": "idle" }), &abandon)));
+}
+
+#[test]
+fn an_unheld_review_beside_cells_to_look_from_is_offered_no_idle() {
+    // r18 alpha body:00000467, delta 190, eta 051 and zeta 174 and 253 idled with cells offered.
+    let seen = with_edge(fixture("perception-goal-review"));
+    let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
+    assert_eq!(dispositions(&schema), ["none"]);
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    for passive in ["idle", "rest"] {
+        assert!(
+            !validator.is_valid(&answer_in(
+                &schema,
+                &json!({ "action": passive }),
+                &json!(null)
+            )),
+            "{passive}"
+        );
+    }
+    assert!(validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "moveTo", "onto": "x1" }),
+        &json!(null)
+    )));
+    // A reply to speech is no goal review, and may still idle.
+    let mut spoken = seen;
+    spoken.trigger = loom_contract::Trigger::Spoken {
+        from: "LoomBeta".to_owned(),
+        text: "hello".to_owned(),
+    };
+    assert!(actions(&decision_schema_for(
+        &OfferedRefs::of(&spoken),
+        GoalPhase::of(&spoken)
+    ))
+    .contains(&"idle".to_owned()));
+}
+
+#[test]
+fn the_widest_goal_review_schema_stays_inside_the_providers_enum_limits() {
+    // Every observation a block yielding eight distinct items, every cell at the edge of sight,
+    // full inventory and recipe lists, at a goal review with no goal held: sixteen items each
+    // offered its own steps.
+    let mut seen = fixture("perception-goal-review");
+    let block = Observation {
+        kind: ObservationKind::Block,
+        what: "block.minecraft.dirt".to_owned(),
+        distance: 3.0,
+        direction: loom_contract::Bearing::North,
+        vertical_offset: 0.0,
+        visible: true,
+        target_ref: String::new(),
+        count: None,
+        standable: Some(true),
+        yields: None,
+        dig_safe: Some(true),
+        route_refused: None,
+    };
+    seen.surroundings = (0..MAX_PERCEPTION_OBSERVATIONS)
+        .map(|index| Observation {
+            target_ref: format!("b{index:03}"),
+            yields: Some(
+                (0..loom_contract::MAX_BLOCK_YIELDS)
+                    .map(|item| loom_contract::BlockYield {
+                        what: format!("item.minecraft.{:0>49}", (index + item) % 24),
+                        least: 0,
+                        most: 64,
+                    })
+                    .collect(),
+            ),
+            ..block.clone()
+        })
+        .collect();
+    seen.explore = (0..loom_contract::MAX_EXPLORE_TARGETS)
+        .map(|index| loom_contract::ExploreTarget {
+            target_ref: format!("x{index}"),
+            distance: 12.0,
+            direction: loom_contract::Bearing::North,
+            vertical_offset: 0.0,
+        })
+        .collect();
+    let crafting = fixture("perception-crafting");
+    let option = crafting.self_state.crafting_options[0].clone();
+    seen.self_state.crafting_options = (0..48)
+        .map(|index| CraftingOption {
+            recipe_ref: format!("r{index:02}"),
+            what: format!("item.minecraft.{:0>49}", index % 24),
+            ..option.clone()
+        })
+        .collect();
+    let stack = crafting.self_state.inventory_summary[0].clone();
+    seen.self_state.inventory_summary = (0..46)
+        .map(|index| InventoryStack {
+            slot_ref: format!("i{index:02}"),
+            ..stack.clone()
+        })
+        .collect();
+    let offered = OfferedRefs::of(&seen);
+    assert_eq!(
+        offered.item_steps.len(),
+        loom_cognition::offered::MAX_OBTAINABLE_ITEMS
+    );
+    let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
+    let mut count = 0;
+    let mut characters = 0;
+    enum_values(&schema, &mut count, &mut characters);
+    assert!(count <= 500, "{count} enum values");
+    assert!(characters <= 7_500, "{characters} enum characters");
 }

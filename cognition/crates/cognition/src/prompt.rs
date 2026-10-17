@@ -39,13 +39,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v26";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v27";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v26";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v27";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v26";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v27";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -186,22 +186,27 @@ give you, as you are told; only items something in sight could give are offered.
 ends at its first pickup; where sight can give several, a total of several makes it a plan of \
 several steps. Holding no goal is a legitimate state. With none held you may make no goal choice.
 - continue: keep the held goal, judge the previous step, and take its next step with this \
-answer's action. It is offered only while what you hold plus what is in sight could still meet it.
-- revise: change the held goal's total, and its step, when the evidence showed the old target \
-will not work, and judge the previous step. Revising keeps the count of steps that advanced \
-nothing.
+answer's action. While what you hold plus what is in sight could still meet it, the step is one \
+toward a source of its item; while nothing in sight could, the step is a walk to the edge of sight \
+to look for one, which advances the goal only when it brings a source into sight.
+- revise: change the held goal's total, never its item, and its step, when the evidence showed \
+the old target will not work, and judge the previous step. Revising keeps the count of steps \
+that advanced nothing.
 - replace: drop the held goal and take up a new one in the same answer - name the new item and \
 total, take its step with this answer's action, and judge the previous step. Once the held goal \
-has advanced nothing for three steps in a row, replace is the only way to keep acting toward a \
-goal, and the same item may then be set again only at a higher total. When the held goal's \
-condition is met, replace completes it and adopts the next in one answer.
+has advanced nothing for three steps in a row, replace with a goal for a different item is the \
+only way to keep acting toward a goal. When the held goal's condition is met, replace completes \
+it and adopts the next in one answer, so finishing one goal need not cost a review.
 - complete: drop the held goal because your body shows its success condition met.
-- abandon: drop the held goal because sight can no longer meet it. A goal sight can still meet \
-is pursued, not abandoned.
+- abandon: drop the held goal because sight can no longer meet it and looking further has not \
+found a source. A goal sight can still meet is pursued, not abandoned.
 While you hold a goal every answer must say what it does with it, and your action is the goal's \
-step: dig and collect are offered only for what can give the goal's item, and adopt, continue, \
-revise or replace beside idle or rest takes no step and is not offered, as is a total you \
-already hold or one beyond what sight can be counted on to give. There is something to collect \
+step. Each goal item is offered only its own steps: digging a block in reach that can drop it, \
+collecting a drop of it, crafting it, or walking onto a block out of dig reach that can drop it. \
+Adopt, continue, revise or replace beside idle or rest takes no step and is not offered, as is a \
+total you already hold or one beyond what sight can be counted on to give. At a goal review \
+with cells at the edge of sight offered, idle and rest are not offered at all: when nothing in \
+sight is worth doing, walk to look further. There is something to collect \
 only when a dropped item is listed, and a dropped item your body found no route to is not \
 offered. Your body sees only the nearest blocks; when nothing in sight is worth doing, you are \
 offered cells at the edge of sight to walk to, so you can look further. A dig the server saw drop something for you is told to you with where that drop is now, \
@@ -209,17 +214,21 @@ and a drop of yours still lying is offered to collect by its ref, in sight or no
 drop of the goal's item lies in reach, the goal's next step is to collect it, with approach true \
 when it is not beside you; digging for more is not offered until you hold it, because a drop left \
 lying is one another agent can take. Only evidence advances a goal: the held count of its item \
-rising, or the step you took carried out with evidence - an action after which you hold more, or \
-a walk onto a block that drops the goal's item, reaching it somewhere the goal has not already \
-been. A drop is not progress until you hold it, and a walk to anything else is no step. What a \
+rising, or the step you took carried out with evidence - an action after which you hold more, a \
+walk onto a block out of dig reach that drops the goal's item, reaching it somewhere the goal has \
+not already been, or a walk to the edge of sight that brings a source of the item into a sight \
+that showed none. A drop is not progress until you hold it, but while it lies in reach it does \
+not count toward the three steps either, because its collect is the next step; a walk to \
+anything else is no step. What a \
 block drops is random within the range you are told: the most is its best case, a dig may drop \
 none of it, and another such block is a fresh chance, so what sight can be counted on to give is \
 each block's expected yield, the middle of its range, not its most. A dig that drops nothing, a \
 drop someone else takes, moving about, falling or walking back is not progress, and revising is \
 not progress either. After three steps in a row that advanced nothing, your body refuses \
-continue and revise; only replace, or complete when met, is offered then. When your success \
-condition is met you must complete the goal, or revise it to a total you do not yet hold, at \
-that review; anything else is refused with your action.";
+continue and revise; only replace with a different item, abandon, or complete when met, is \
+offered then. When your success condition is met you must complete the goal, replace it with \
+the next, or revise it to a total you do not yet hold, at that review; anything else is refused \
+with your action.";
 
 /// The per-tier closing instruction.
 ///
@@ -232,8 +241,9 @@ const fn tier_brief(tier: DecisionImportance) -> &'static str {
             "Keep this routine decision simple and cheap. If one safe, reversible \
              action can advance a self-chosen short-term goal or reduce relevant \
              uncertainty, take that action. An empty inventory still permits movement \
-             and any offered block-ref dig. Idle is correct when no useful step is \
-             justified. Never act only to stay busy."
+             and any offered block-ref dig. When nothing in sight is worth doing, \
+             look further; idle is correct only when nowhere is offered to look. \
+             Never act only to stay busy."
         }
         DecisionImportance::Notable => {
             "This moment involves someone or something outside yourself, and what \
@@ -398,7 +408,7 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
         ));
         if met {
             parts.push(
-                "Because it is met, you must complete this goal now, or revise it to a target you do not yet hold."
+                "Because it is met, you must complete this goal now, replace it with your next goal in this same answer, or revise it to a target you do not yet hold."
                     .to_owned(),
             );
         }
@@ -433,6 +443,9 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
                 StepEvidence::Dropped => {
                     "made a drop the server saw your dig make, which is not progress until you hold it"
                 }
+                StepEvidence::Revealed => {
+                    "walked to the edge of sight and brought a source of the goal's item into sight"
+                }
                 StepEvidence::None => "showed no evidence and advanced nothing",
             },
             count = progress.steps_without_progress,
@@ -466,6 +479,9 @@ fn refusal_line(refusal: &GoalRefusal) -> String {
         }
         "goalAbandonedAchievable" => {
             "it abandoned a goal that what you held and saw could still meet"
+        }
+        "goalReviseItemChanged" => {
+            "it revised the goal to a different item, which is a new goal: replace instead"
         }
         "goalStalled" => "the goal had advanced nothing for three steps in a row, so it ended",
         "goalSuccessTargetMissing" => "it set a goal without its item and total",
@@ -772,10 +788,13 @@ fn capacity_line(perception: &Perception) -> String {
     let offered = crate::offered::OfferedRefs::of(perception);
     let mut lines = Vec::new();
     if offered.capacity.is_empty() {
-        lines.push(
+        lines.push(if offered.explore_targets.is_empty() {
             "Nothing in sight can be counted on to give you more of any item, so no goal can be set now."
-                .to_owned(),
-        );
+                .to_owned()
+        } else {
+            "Nothing in sight can be counted on to give you more of any item, so no goal can be set now: walk to the edge of sight to look further."
+                .to_owned()
+        });
     } else {
         let shown = offered
             .capacity
@@ -813,7 +832,13 @@ fn capacity_line(perception: &Perception) -> String {
     }
     if offered.stalled {
         lines.push(
-            "Your goal advanced nothing for three steps in a row: replace it with a new goal in this answer, whose step is your action, or abandon it."
+            "Your goal advanced nothing for three steps in a row: replace it with a goal for a different item in this answer, whose step is your action, or abandon it."
+                .to_owned(),
+        );
+    }
+    if offered.explore_continue() {
+        lines.push(
+            "Nothing in sight can give the rest of your goal's item: continue the goal by walking to the edge of sight to look for a source, or abandon it."
                 .to_owned(),
         );
     }
@@ -1385,7 +1410,7 @@ mod tests {
         let met = situation(&goal_review_holding(Some(goal)));
         for expected in [
             "Success condition: hold 8 item.minecraft.oak_log in total; you hold 8 now, so it is MET.",
-            "you must complete this goal now, or revise it to a target you do not yet hold",
+            "you must complete this goal now, replace it with your next goal in this same answer, or revise it to a target you do not yet hold",
             "\"cut the oak log in reach\" (dig on b4).",
             "changed by +3 item.minecraft.oak_log, -1 item.minecraft.dirt",
             "the success condition advanced, and your step gained you an item",
@@ -1674,7 +1699,7 @@ mod tests {
         assert!(system.contains("With none held you may make no goal choice."));
         assert!(system.contains("Holding no goal is a legitimate state."));
         assert!(system.contains("not against a wish to look busy"));
-        assert!(system.contains("Idle is correct when no useful step is"));
+        assert!(system.contains("idle is correct only when nowhere is offered to look"));
     }
 
     #[test]
@@ -1728,9 +1753,11 @@ mod tests {
         let seen = r5_goal_review_perception();
         let prompt = render(&router().route(seen.importance), &seen);
 
+        // Idle stays valid where there is nowhere to look; beside cells to look from it is not
+        // offered at a goal review (r18: nine scheduled reviews idled beside them).
         assert!(prompt
             .system
-            .contains("Idle is correct when no useful step is justified."));
+            .contains("idle is correct only when nowhere is offered to look."));
         assert!(prompt.system.contains("Never act only to stay busy."));
     }
 

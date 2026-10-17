@@ -373,21 +373,32 @@ impl ScriptedBackend {
             step: Some(SCRIPTED_STEP.to_owned()),
             step_result,
         };
-        let digging = matches!(intent, Intent::Dig { .. } | Intent::Collect { .. });
+        let digging = matches!(
+            intent,
+            Intent::Dig { .. } | Intent::Collect { .. } | Intent::Craft { .. }
+        );
         let acting = digging || matches!(intent, Intent::MoveTo { .. });
+        let offered = crate::offered::OfferedRefs::of(perception);
         let Some(held) = &perception.goal else {
-            let Intent::Dig { block } = intent else {
-                return None;
+            // One more of what the dig drops, or one craft's worth of what the recipe makes.
+            let (item, more) = match intent {
+                Intent::Dig { block } => (yield_of(perception, block, None)?, 1),
+                Intent::Craft { recipe, .. } => {
+                    let option = perception
+                        .self_state
+                        .crafting_options
+                        .iter()
+                        .find(|option| &option.recipe_ref == recipe)?;
+                    (option.what.clone(), option.result_count)
+                }
+                _ => return None,
             };
-            let item = yield_of(perception, block, None)?;
             let have = held_count(perception, &item);
-            return (crate::offered::OfferedRefs::of(perception).capacity_of(&item) >= 1).then(
-                || GoalChoice {
-                    success_item: Some(item),
-                    success_count: Some(have + 1),
-                    ..step(GoalDisposition::Adopt, None)
-                },
-            );
+            return offered.count_bounds_of(&item).map(|(_, most)| GoalChoice {
+                success_item: Some(item),
+                success_count: Some((have + more).min(most)),
+                ..step(GoalDisposition::Adopt, None)
+            });
         };
         let progress = held.progress.as_ref();
         let step_result = match progress {
@@ -404,12 +415,15 @@ impl ScriptedBackend {
         // it, or that what is in sight could no longer meet, is abandoned rather than continued
         // into the body's refusal. One sight can still meet is walked toward instead, because the
         // body refuses its abandon (the v26 rehearsal's three `goalAbandonedAchievable`).
-        let unobtainable = held.success_item.is_some()
-            && !crate::offered::OfferedRefs::of(perception).goal_obtainable;
+        let unobtainable = held.success_item.is_some() && !offered.goal_obtainable;
+        // A goal sight cannot meet is continued by a walk to the edge of sight, as the body
+        // accepts, and abandoned only once nowhere is offered to look or it stalls.
+        let exploring =
+            matches!(intent, Intent::MoveTo { onto } if offered.explore_targets.contains(onto));
         Some(if progress.is_some_and(|seen| seen.condition_met) {
             ended(GoalDisposition::Complete)
         } else if !acting
-            || unobtainable
+            || (unobtainable && !exploring)
             || progress
                 .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS)
         {
@@ -556,6 +570,21 @@ impl ScriptedBackend {
             .goal
             .as_ref()
             .and_then(|goal| goal.success_item.as_deref());
+        let offered = crate::offered::OfferedRefs::of(perception);
+        // A held goal sight cannot meet looks further for a source, rather than dig for another.
+        if wanted.is_some() && !offered.goal_obtainable && offered.held_item.is_some() {
+            return Self::look_further(route, perception);
+        }
+        if let Some((recipe, item)) = offered_craft(perception, wanted) {
+            return Draft {
+                goal: None,
+                intent: Intent::Craft { recipe, crafts: 1 },
+                reasoning: format!(
+                    "reviewed goals at the {tier:?} tier; I can craft {item} from what I hold, so craft it",
+                    tier = route.tier()
+                ),
+            };
+        }
         match nearest_yielding_dig(perception, wanted) {
             Some((block, item)) => Draft {
                 goal: None,
@@ -626,8 +655,21 @@ fn nearest_source_walk(perception: &Perception, wanted: Option<&str>) -> Option<
         .map(|seen| (seen.target_ref.clone(), wanted.to_owned()))
 }
 
+/// The first offered recipe and what it makes: one for [`wanted`] while a goal names it, else
+/// any, while no goal is held.
+fn offered_craft(perception: &Perception, wanted: Option<&str>) -> Option<(String, String)> {
+    let offered = crate::offered::OfferedRefs::of(perception);
+    perception
+        .self_state
+        .crafting_options
+        .iter()
+        .filter(|option| offered.recipes.contains(&option.recipe_ref))
+        .find(|option| wanted.is_none_or(|item| option.what == item))
+        .map(|option| (option.recipe_ref.clone(), option.what.clone()))
+}
+
 /// The nearest block offered to dig that can drop something, and the item it is dug for:
-/// [`wanted`] where it can drop that, else the stick, else the first it can drop.
+/// [`wanted`] only while a goal names it, else the stick, else the first it can drop.
 fn nearest_yielding_dig(perception: &Perception, wanted: Option<&str>) -> Option<(String, String)> {
     let offered = crate::offered::OfferedRefs::of(perception);
     let diggable = |seen: &&Observation| offered.dig_blocks.contains(&seen.target_ref);
@@ -639,10 +681,10 @@ fn nearest_yielding_dig(perception: &Perception, wanted: Option<&str>) -> Option
                 .map(|item| (seen.target_ref.clone(), item))
         })
     };
-    wanted
-        .and_then(|want| pick(Some(want)))
-        .or_else(|| pick(Some(SCRIPTED_SUCCESS_ITEM)))
-        .or_else(|| pick(None))
+    match wanted {
+        Some(want) => pick(Some(want)),
+        None => pick(Some(SCRIPTED_SUCCESS_ITEM)).or_else(|| pick(None)),
+    }
 }
 
 /// The ref of the agent's own drop of its held goal's item that the body requires it to collect,

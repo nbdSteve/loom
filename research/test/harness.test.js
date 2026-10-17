@@ -348,11 +348,11 @@ test('a full run refuses low disk before any build, listener, Paper start or cre
 })
 
 function goalContinuityConfigFile () {
-  return path.join(__dirname, '..', 'config', 'first-tribe-routine-v26-agency-pilot-scripted.json')
+  return path.join(__dirname, '..', 'config', 'first-tribe-routine-v27-agency-pilot-scripted.json')
 }
 
 function openAiGoalContinuityConfigFile () {
-  return path.join(__dirname, '..', 'config', 'first-tribe-routine-v26-agency-pilot.json')
+  return path.join(__dirname, '..', 'config', 'first-tribe-routine-v27-agency-pilot.json')
 }
 
 test('a busy host is refused before startup and a quiet one is admitted', async () => {

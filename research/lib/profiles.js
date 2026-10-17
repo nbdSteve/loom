@@ -26,6 +26,20 @@ const SCENES = Object.freeze({
     ]),
     // Disclosed after the strict survey: three slots' feet cells hold a dead_bush.
     coverRule: 'A collision-free, non-fluid cover block (dead_bush, short_grass, fern, snow layer 1) in the feet cell counts as passable. Nothing is cleared or placed.'
+  }),
+  // The first seed of the sequence from 10001 whose ring around the origin is dry land among trees
+  // with wood to dig and craft (r18's terracotta badlands gave only sticks): an oak and birch
+  // forest. Surveyed by `research/tools/survey-ring.js` from a fresh Paper 1.21.1 world, slot by
+  // slot at ten even bearings: each slot is the first radius from 12 to 16 whose column's highest
+  // non-leaf collision block is ground, not a log, with two passable cells above it. Every body
+  // stands on grass with 90 to 135 logs within sixteen blocks.
+  'f1-forest-ring': Object.freeze({
+    seed: '10001',
+    positions: Object.freeze([
+      [12.5, 72, 0.5], [9.5, 68, 7.5], [3.5, 67, 11.5], [-4.5, 66, 14.5], [-9.5, 68, 7.5],
+      [-11.5, 69, 0.5], [-9.5, 72, -7.5], [-3.5, 77, -11.5], [3.5, 79, -11.5], [9.5, 78, -7.5]
+    ]),
+    coverRule: 'A collision-free, non-fluid cover block (short_grass, a peony) in the feet cell counts as passable; leaves above a slot are passed through to the ground beneath them. Nothing is cleared or placed.'
   })
 })
 
@@ -166,6 +180,30 @@ PROFILES['pursued-goal-10m-10'] = Object.freeze({
     maxIdleWithExploration: 0,
     multiStepAgentsAtOriginalTarget: 2,
     originalTargetCompletions: 3
+  })
+})
+// Under routine-v27 in the forest scene, with the same window, envelope and five-review plan. Its
+// bars are pre-registered here, before the run, and are the generation-10 gate's positive half
+// (the r18 audit): three in five goal reviews, and two in five of every agent's, hold or take up a
+// goal and step toward it; the fleet holds a goal half its time and every agent a quarter of its
+// own; no goal review idles or rests beside a cell at the edge of sight; three agents advance one
+// goal at two or more steps at its original total; three goals are completed at their original
+// total after two or more advances, two or more above what was held or lay as the agent's own drop
+// when adopted; goals are set for at least two kinds of item; and at least one goal step crafts.
+PROFILES['wooded-goal-10m-10'] = Object.freeze({
+  ...PROFILES['shakedown-10m-10'],
+  scene: 'f1-forest-ring',
+  expectedReviewsPerAgent: 5,
+  coherenceBars: Object.freeze({
+    goalActiveReviewShare: 0.6,
+    minAgentGoalActiveReviewShare: 0.4,
+    goalHeldTimeShare: 0.5,
+    minAgentGoalHeldTimeShare: 0.25,
+    maxIdleBesideExploration: 0,
+    multiStepAgentsAtOriginalTarget: 3,
+    originalTargetCompletions: 3,
+    distinctGoalItems: 2,
+    craftSteps: 1
   })
 })
 Object.freeze(PROFILES)

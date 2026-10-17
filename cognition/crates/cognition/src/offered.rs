@@ -75,6 +75,55 @@ pub const MAX_PURSUIT_BLOCKS: f64 = 7.5;
 /// the count bounds that item admits, so the bound keeps the request schema small.
 pub const MAX_OBTAINABLE_ITEMS: usize = 16;
 
+/// Most refs one goal item's steps may name, nearest kinds first, so a request offering every
+/// obtainable item its own steps stays inside the provider's enum limits.
+pub const MAX_STEP_REFS_PER_ITEM: usize = 4;
+
+/// The steps one goal item may be pursued by, by action: what in sight can give that item.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ItemSteps {
+    /// The item these steps give.
+    pub item: String,
+    /// Blocks in dig reach that can drop it.
+    pub dig: Vec<String>,
+    /// Drops of it within pickup reach.
+    pub pickup: Vec<String>,
+    /// Drops of it within route reach.
+    pub route: Vec<String>,
+    /// Recipes that make it.
+    pub recipes: Vec<String>,
+    /// Standable blocks out of dig reach that can drop it: a walk onto one reaches a source a dig
+    /// could not already reach (r18: all seven credited walks were onto bushes already in reach).
+    pub walks: Vec<String>,
+}
+
+impl ItemSteps {
+    /// Whether nothing in sight gives the item.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.dig.is_empty()
+            && self.pickup.is_empty()
+            && self.route.is_empty()
+            && self.recipes.is_empty()
+            && self.walks.is_empty()
+    }
+
+    /// Whether `intent` is one of these steps.
+    #[must_use]
+    pub fn admits(&self, intent: &Intent) -> bool {
+        let held = |list: &[String], handle: &str| list.iter().any(|offered| offered == handle);
+        match intent {
+            Intent::Dig { block } => held(&self.dig, block),
+            Intent::Collect { item, approach } => {
+                held(if *approach { &self.route } else { &self.pickup }, item)
+            }
+            Intent::Craft { recipe, .. } => held(&self.recipes, recipe),
+            Intent::MoveTo { onto } => held(&self.walks, onto),
+            _ => false,
+        }
+    }
+}
+
 /// The handles one perception offers, each list in the order the prompt shows it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OfferedRefs {
@@ -132,9 +181,15 @@ pub struct OfferedRefs {
     /// drop the goal's item were taken as its steps).
     pub pursued: Option<String>,
     /// Whether the held goal at a goal review could still be met from what is in sight - its
-    /// count no more than what is held plus what sight could give. A continue is offered only
-    /// then, by the same rule the body holds an adopt and a revise to.
+    /// count no more than what is held plus what sight could give. A continue toward a source is
+    /// offered only then, by the same rule the body holds an adopt and a revise to.
     pub goal_obtainable: bool,
+    /// The steps each item a goal review may set or pursue can be stepped toward by, in the order
+    /// of [`Self::count_bounds`], the held goal's item first when it is pursued: a goal's step is
+    /// one of its own item's (r18 epsilon adopted a stick goal and dug terracotta).
+    pub item_steps: Vec<ItemSteps>,
+    /// The held goal's success item at a goal review, whatever phase it is in.
+    pub held_item: Option<String>,
 }
 
 /// Every item's whole capacity, uncut, so a held goal is judged by the rule the body uses: in
@@ -324,7 +379,74 @@ impl OfferedRefs {
             .iter()
             .map(|(item, ..)| item.clone())
             .collect();
+        offered.item_steps = offered.item_steps_for(perception, &gives);
         offered
+    }
+
+    /// The steps of each item a goal review may set or pursue: its own dig, collect, craft and
+    /// walk refs, each at most [`MAX_STEP_REFS_PER_ITEM`] in all. While the agent's own drop of the
+    /// held goal's item lies in reach, that item's steps are its collects alone.
+    fn item_steps_for(&self, perception: &Perception, gives: &[(&str, &String)]) -> Vec<ItemSteps> {
+        if !perception.trigger.reviews_goal() {
+            return Vec::new();
+        }
+        let gives_item = |handle: &String, item: &str| {
+            gives
+                .iter()
+                .any(|(given, what)| given == handle && *what == item)
+        };
+        let mut items: Vec<&String> = self.pursued.iter().collect();
+        for (item, ..) in &self.count_bounds {
+            if !items.contains(&item) {
+                items.push(item);
+            }
+        }
+        items
+            .into_iter()
+            .map(|item| {
+                let mut budget = MAX_STEP_REFS_PER_ITEM;
+                let mut take = |list: &[String], keep: &dyn Fn(&String) -> bool| {
+                    let kept: Vec<String> = list
+                        .iter()
+                        .filter(|handle| keep(handle))
+                        .take(budget)
+                        .cloned()
+                        .collect();
+                    budget -= kept.len();
+                    kept
+                };
+                let collecting = self.collect_required && self.pursued.as_ref() == Some(item);
+                let source = |handle: &String| gives_item(handle, item);
+                let none = |_: &String| false;
+                let dig = take(&self.dig_blocks, if collecting { &none } else { &source });
+                let pickup = take(&self.pickup_items, &source);
+                let route = take(&self.route_items, &source);
+                let recipe = |handle: &String| {
+                    !collecting
+                        && perception
+                            .self_state
+                            .crafting_options
+                            .iter()
+                            .any(|option| &option.recipe_ref == handle && &option.what == item)
+                };
+                let recipes = take(&self.recipes, &recipe);
+                let walk = |handle: &String| {
+                    !collecting
+                        && !self.blocks.contains(handle)
+                        && !self.explore_targets.contains(handle)
+                        && source(handle)
+                };
+                let walks = take(&self.walk_targets, &walk);
+                ItemSteps {
+                    item: item.clone(),
+                    dig,
+                    pickup,
+                    route,
+                    recipes,
+                    walks,
+                }
+            })
+            .collect()
     }
 
     /// For each item [`Self::capacity`] names, the fewest and most a success count may ask now.
@@ -334,12 +456,12 @@ impl OfferedRefs {
             .filter(|(item, _)| self.pursued.as_ref().is_none_or(|goal| goal == item))
             .filter_map(|(item, capacity)| {
                 let held = held_of(perception, item);
-                // A replace of a stalled goal may not set the same item again at the same or a
-                // lower total, which would only clear the stall count (r17 alpha body:00000163).
-                let stalled_total = goal_total(perception, item).filter(|_| self.stalled);
-                let fewest = held
-                    .saturating_add(1)
-                    .max(stalled_total.map_or(0, |total| total.saturating_add(1)));
+                // A replace of a stalled goal may not set the same item again, at any total, which
+                // would only relabel it (r17 alpha body:00000163; r18: three replaces at one more).
+                if self.stalled && goal_total(perception, item).is_some() {
+                    return None;
+                }
+                let fewest = held.saturating_add(1);
                 let most = held.saturating_add(*capacity).min(MAX_SUCCESS_COUNT);
                 (fewest <= most).then(|| (item.clone(), fewest, most))
             })
@@ -363,6 +485,7 @@ impl OfferedRefs {
         let (Some(item), Some(count)) = (&goal.success_item, goal.success_count) else {
             return;
         };
+        self.held_item = Some(item.clone());
         let held = held_of(perception, item);
         let capacity = totals
             .iter()
@@ -396,6 +519,23 @@ impl OfferedRefs {
             self.collect_required = true;
             self.dig_blocks.clear();
         }
+    }
+
+    /// Whether a held, unmet goal sight cannot meet may be continued by a walk to the edge of
+    /// sight, to look for a source rather than abandon it (r18: five goals abandoned to look).
+    #[must_use]
+    pub fn explore_continue(&self) -> bool {
+        self.held_item.is_some()
+            && !self.goal_obtainable
+            && !self.stalled
+            && !self.explore_targets.is_empty()
+    }
+
+    /// Whether a goal review may answer with an idle or a rest: only when no cell at the edge of
+    /// sight is offered to look further from (r18: nine scheduled reviews idled beside them).
+    #[must_use]
+    pub fn passive_allowed(&self) -> bool {
+        self.explore_targets.is_empty()
     }
 
     /// How many more of `item` what is in sight could give at most.

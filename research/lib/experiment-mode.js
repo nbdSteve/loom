@@ -80,12 +80,21 @@ const ROUTINE_V25_COLLECTED_GOAL_MODE = 'routine-v25-collected-goal'
 // step's wording is the body's, from the intent; a hunter out of sight and far off raises no flight;
 // and the gate's coherence must clear the profile's pre-registered bars.
 const ROUTINE_V26_PURSUED_GOAL_MODE = 'routine-v26-pursued-goal'
+// v27 keeps v26 and answers the r18 audit: a drop of the goal's item still lying in reach is no
+// stall, and a replace of the same item keeps the count at any total; a held goal sight cannot meet
+// is continued by a walk to the edge of sight, credited only when it brings a source into sight;
+// a goal review idles or rests only where nowhere is offered to look, so a completion travels with
+// an action; each goal item is offered only its own steps; a revise never changes the item; a
+// hunter out of sight is news only within eight blocks; follow-ups owed while an own drop lies
+// draw on the run's allowance; a walk onto a source already in dig reach is no arrival; and the
+// run stands in a forest, where wood can be dug and crafted.
+const ROUTINE_V27_WOODED_GOAL_MODE = 'routine-v27-wooded-goal'
 // The two native-scheduler pilots share every condition except what each mode pins here.
 // Category fairness is a fact about the JVM selector a run used, so v12 stays false for
 // its committed evidence and v13, which runs on the 48-per-kind selector, attests true.
 // The prompt versions the mind serves today (`cognition/crates/cognition/src/prompt.rs`).
 // A configuration pinning any other version can only fail after it has run.
-const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v26', notable: 'notable-v26', pivotal: 'pivotal-v26' })
+const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v27', notable: 'notable-v27', pivotal: 'pivotal-v27' })
 // Modes kept only so artifacts committed under them still validate; no run may select one.
 const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V12_PRIMARY_BEHAVIOR_MODE]: Object.freeze({
@@ -143,11 +152,16 @@ const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
     prompts: Object.freeze({ routine: 'routine-v25', notable: 'notable-v25', pivotal: 'pivotal-v25' }),
     categoryFairSelection: true,
     followUpsPerReview: 1
+  }),
+  [ROUTINE_V26_PURSUED_GOAL_MODE]: Object.freeze({
+    prompts: Object.freeze({ routine: 'routine-v26', notable: 'notable-v26', pivotal: 'pivotal-v26' }),
+    categoryFairSelection: true,
+    followUpsPerReview: 2
   })
 })
 const PRIMARY_BEHAVIOR_MODES = Object.freeze({
-  [ROUTINE_V26_PURSUED_GOAL_MODE]: Object.freeze({
-    prompts: Object.freeze({ routine: 'routine-v26', notable: 'notable-v26', pivotal: 'pivotal-v26' }),
+  [ROUTINE_V27_WOODED_GOAL_MODE]: Object.freeze({
+    prompts: Object.freeze({ routine: 'routine-v27', notable: 'notable-v27', pivotal: 'pivotal-v27' }),
     categoryFairSelection: true,
     followUpsPerReview: 2
   })
@@ -267,6 +281,7 @@ module.exports = {
   ROUTINE_V24_ANSWERED_GOAL_MODE,
   ROUTINE_V25_COLLECTED_GOAL_MODE,
   ROUTINE_V26_PURSUED_GOAL_MODE,
+  ROUTINE_V27_WOODED_GOAL_MODE,
   SERVED_PROMPTS,
   configuredMode,
   createInterventionSchedule,

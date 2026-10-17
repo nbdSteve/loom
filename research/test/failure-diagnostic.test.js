@@ -415,7 +415,7 @@ test('a primary-behavior budget refusal retains the exact typed refusal and usag
     const diagnostic = retained.diagnostic
     assert.equal(diagnostic.schemaVersion, FAILURE_DIAGNOSTIC_VERSION)
     assert.deepEqual(diagnostic.failure, { code: 'cognitionBudgetRefused', stopReason: 'cognitionFailed' })
-    assert.equal(diagnostic.configuredConditions.mode, 'routine-v26-pursued-goal')
+    assert.equal(diagnostic.configuredConditions.mode, 'routine-v27-wooded-goal')
     assert.equal(diagnostic.configuredConditions.controlledCrash, null)
     assert.equal(diagnostic.crashContainment, null)
     assert.deepEqual(diagnostic.cognition.harness.refusals, [{
@@ -464,7 +464,7 @@ test('every ordinary diagnostic stage failure falls back to the minimal diagnost
       assert.equal(fallback.schemaVersion, FALLBACK_DIAGNOSTIC_VERSION)
       assert.equal(fallback.failedStage, stage)
       assert.deepEqual(fallback.failure, { code: 'cognitionBudgetRefused', stopReason: 'cognitionFailed' })
-      assert.equal(fallback.mode, 'routine-v26-pursued-goal')
+      assert.equal(fallback.mode, 'routine-v27-wooded-goal')
       assert.equal(fallback.proxy.forwardedCalls, 11)
       assert.deepEqual(fallback.proxy.refusedByBound, { perAgentCall: 1 })
       assert.equal(fallback.providerUsage.status, 'aggregated')
@@ -552,7 +552,7 @@ test('every configuration mode and terminal fault enters the diagnostic path wit
     .filter((name) => name.endsWith('.json'))
     .map(configNamed)
   assert.ok(configs.some((config) => config.mode === 'routine-v12-primary-behavior'))
-  assert.ok(configs.some((config) => config.mode === 'routine-v26-pursued-goal'))
+  assert.ok(configs.some((config) => config.mode === 'routine-v27-wooded-goal'))
   const faults = [
     [new Failure('cognitionFailed', 'drain', 'cognitionDrainTimedOut'), 'cognitionDrainTimedOut'],
     [new Failure('cognitionFailed', 'auth', 'providerAuthenticationRejected'), 'providerAuthenticationRejected'],

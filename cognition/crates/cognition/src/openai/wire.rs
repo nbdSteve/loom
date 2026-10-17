@@ -36,7 +36,7 @@ use serde_json::{json, Value};
 
 use crate::config::bounded_to;
 use crate::model::Draft;
-use crate::offered::OfferedRefs;
+use crate::offered::{ItemSteps, OfferedRefs};
 use crate::prompt::Prompt;
 
 /// Name the response schema is registered under in the request.
@@ -839,54 +839,47 @@ impl GoalPhase {
     }
 }
 
-/// The goal choices one phase offers, split by what each may travel with: the ones that take
-/// the decision's intent as the goal's step, which an idle or rest intent cannot be, and the
-/// rest, which travel with any intent.
+/// The goal choices one phase offers, split by what each may travel with: for each goal item,
+/// the choices that take one of that item's own steps as the goal's step; the choices that take
+/// a walk to the edge of sight as it; and the rest, which travel with any intent.
 struct GoalOffer {
-    stepping: Vec<Value>,
+    by_item: Vec<(String, Vec<Value>)>,
+    exploring: Vec<Value>,
     any: Vec<Value>,
 }
+
+impl GoalOffer {
+    /// Every choice, for a schema that couples none of them to an intent.
+    fn all(self) -> Vec<Value> {
+        let mut choices: Vec<Value> = self
+            .by_item
+            .into_iter()
+            .flat_map(|(_, choices)| choices)
+            .collect();
+        choices.extend(self.exploring);
+        choices.extend(self.any);
+        choices
+    }
+}
+
+const ADOPT: &str = "Take up a new goal when you hold none.";
+const CONTINUE: &str = "Keep the held goal and take its next step.";
+const REVISE: &str = "Keep pursuing the held goal's item with a new total and step; when its condition is met, a revise must name a total you do not yet hold.";
+const REPLACE: &str = "End the held goal - one that advanced nothing for three steps, or one whose condition is met - and take up a new one in this same answer, whose step is this answer's action.";
 
 /// The goal choices one phase offers: `null`, or one closed disposition shape the body would
 /// accept now.
 ///
 /// Strict mode requires the key, so "no choice" is an explicit `null` rather than an absent
 /// field, offered only while no goal is held. At a review the offer narrows to what the ledger
-/// accepts: a met success condition can only be completed or revised, an unmet one is never
-/// completed, a goal sight could no longer meet is never continued, and a goal at the stall
-/// bound may only be replaced by a new one in the same answer (r16: four answers past the bound
-/// continued or revised, and two of them lost a review cycle with the right collect refused).
+/// accepts: a met success condition can only be completed, replaced by the next goal or revised,
+/// an unmet one is never completed, a goal sight could no longer meet is continued only by a walk
+/// to look further, a revise never changes the item, and a goal at the stall bound may only be
+/// replaced by a goal for another item in the same answer (r16: four answers past the bound
+/// continued or revised; r18: three replaces relabelled the stalled goal at one more).
 fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
     let variants =
         |disposition, name, description| goal_variants(disposition, name, description, offered);
-    let adopt = || {
-        variants(
-            GoalDisposition::Adopt,
-            "adopt",
-            "Take up a new goal when you hold none.",
-        )
-    };
-    let continued = || {
-        variants(
-            GoalDisposition::Continue,
-            "continue",
-            "Keep the held goal and take its next step.",
-        )
-    };
-    let revise = || {
-        variants(
-            GoalDisposition::Revise,
-            "revise",
-            "Keep pursuing the held goal with a new success target and step; when its condition is met, a revise must name a target you do not yet hold.",
-        )
-    };
-    let replace = || {
-        variants(
-            GoalDisposition::Replace,
-            "replace",
-            "End the held goal - one that advanced nothing for three steps, or one whose condition is met - and take up a new one in this same answer, whose step is this answer's action.",
-        )
-    };
     let complete = || {
         variants(
             GoalDisposition::Complete,
@@ -901,38 +894,149 @@ fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
             "The held goal is no longer worth pursuing; drop it.",
         )
     };
+    let continued = || variants(GoalDisposition::Continue, "continue", CONTINUE);
     let none = || vec![json!({ "type": "null" })];
-    // A held goal the body could no longer meet from what is in sight is not offered a continue,
-    // by the rule an adopt and a revise are held to.
-    let obtainable = offered.is_none_or(|refs| refs.goal_obtainable);
-    let (stepping, any): (Vec<Vec<Value>>, Vec<Vec<Value>>) = match phase {
-        GoalPhase::Any => (
-            vec![adopt(), continued(), revise(), replace()],
-            vec![none(), complete(), abandon()],
-        ),
-        GoalPhase::Unheld => (vec![adopt()], vec![none()]),
+    let Some(refs) = offered.filter(|_| phase.coupled()) else {
+        let by_item = vec![(
+            String::new(),
+            [
+                variants(GoalDisposition::Adopt, "adopt", ADOPT),
+                continued(),
+                variants(GoalDisposition::Revise, "revise", REVISE),
+                variants(GoalDisposition::Replace, "replace", REPLACE),
+            ]
+            .concat(),
+        )];
+        return GoalOffer {
+            by_item,
+            exploring: Vec::new(),
+            any: [none(), complete(), abandon()].concat(),
+        };
+    };
+    coupled_offer(phase, refs, continued, complete, abandon, none)
+}
+
+/// [`goal_offer`] for a goal review, whose choices narrow to what the ledger accepts.
+fn coupled_offer(
+    phase: GoalPhase,
+    refs: &OfferedRefs,
+    continued: impl Fn() -> Vec<Value>,
+    complete: impl Fn() -> Vec<Value>,
+    abandon: impl Fn() -> Vec<Value>,
+    none: impl Fn() -> Vec<Value>,
+) -> GoalOffer {
+    let held = refs.held_item.clone();
+    // One item's targeted shapes of `disposition`, when a count for that item is offered.
+    let shaped = |disposition, name, description, item: &str| {
+        refs.count_bounds_of(item)
+            .map(|(fewest, most)| {
+                goal_variant(
+                    goal_fields(disposition),
+                    name,
+                    description,
+                    json!({ "type": "string", "enum": [item] }),
+                    fewest,
+                    most,
+                )
+            })
+            .into_iter()
+            .collect::<Vec<Value>>()
+    };
+    let each_item = |disposition, name, description| -> Vec<(String, Vec<Value>)> {
+        refs.count_bounds
+            .iter()
+            .map(|(item, ..)| (item.clone(), shaped(disposition, name, description, item)))
+            .filter(|(_, choices)| !choices.is_empty())
+            .collect()
+    };
+    let revise_held = || -> Vec<(String, Vec<Value>)> {
+        held.iter()
+            .map(|item| {
+                (
+                    item.clone(),
+                    shaped(GoalDisposition::Revise, "revise", REVISE, item),
+                )
+            })
+            .filter(|(_, choices)| !choices.is_empty())
+            .collect()
+    };
+    match phase {
+        GoalPhase::Any => unreachable_any(),
+        GoalPhase::Unheld => GoalOffer {
+            by_item: each_item(GoalDisposition::Adopt, "adopt", ADOPT),
+            exploring: Vec::new(),
+            any: none(),
+        },
         // A held goal must be answered: a decision that acts while ignoring its goal is refused,
-        // so null is not offered (r15 kappa).
-        // A goal sight can still meet is not abandoned: it is pursued, or its total revised (r17
-        // theta body:00000333 abandoned a goal one stick short with a bush in sight).
-        GoalPhase::Held if obtainable => (vec![continued(), revise()], vec![]),
-        GoalPhase::Held => (vec![revise()], vec![abandon()]),
-        // A met goal is completed, or completed and a new one adopted in the same answer by a
-        // replace, so a completion need not cost an idle review (r17: 11 of 11 completes idled).
-        GoalPhase::Met => (vec![revise(), replace()], vec![complete()]),
-        // With nothing in sight to give a new goal, the stalled one can only be dropped.
-        GoalPhase::Stalled => {
-            let replacing = replace();
-            if replacing.is_empty() {
-                (vec![], vec![abandon()])
-            } else {
-                (vec![replacing], vec![])
+        // so null is not offered (r15 kappa). One sight can still meet is not abandoned (r17
+        // theta); one it cannot is continued by a walk to look further, or abandoned (r18: five
+        // goals abandoned to look).
+        GoalPhase::Held if refs.goal_obtainable => {
+            let mut by_item = revise_held();
+            if let Some(item) = &held {
+                match by_item.iter_mut().find(|(name, _)| name == item) {
+                    Some((_, choices)) => {
+                        let mut first = continued();
+                        first.append(choices);
+                        *choices = first;
+                    }
+                    None => by_item.insert(0, (item.clone(), continued())),
+                }
+            }
+            GoalOffer {
+                by_item,
+                exploring: Vec::new(),
+                any: Vec::new(),
             }
         }
-    };
+        GoalPhase::Held => GoalOffer {
+            by_item: revise_held(),
+            exploring: if refs.explore_continue() {
+                continued()
+            } else {
+                Vec::new()
+            },
+            any: abandon(),
+        },
+        // A met goal is completed, or completed and the next adopted in one answer by a replace,
+        // or revised to a total not yet held (r17 and r18: every completion idled).
+        GoalPhase::Met => {
+            let mut by_item = each_item(GoalDisposition::Replace, "replace", REPLACE);
+            for (item, choices) in revise_held() {
+                match by_item.iter_mut().find(|(name, _)| *name == item) {
+                    Some((_, existing)) => existing.extend(choices),
+                    None => by_item.push((item, choices)),
+                }
+            }
+            GoalOffer {
+                by_item,
+                exploring: Vec::new(),
+                any: complete(),
+            }
+        }
+        // With nothing in sight to give a goal for another item, the stalled one can only go.
+        GoalPhase::Stalled => {
+            let by_item = each_item(GoalDisposition::Replace, "replace", REPLACE);
+            let any = if by_item.is_empty() {
+                abandon()
+            } else {
+                Vec::new()
+            };
+            GoalOffer {
+                by_item,
+                exploring: Vec::new(),
+                any,
+            }
+        }
+    }
+}
+
+/// The reference shape is never coupled, so the coupled offer never meets it.
+const fn unreachable_any() -> GoalOffer {
     GoalOffer {
-        stepping: stepping.into_iter().flatten().collect(),
-        any: any.into_iter().flatten().collect(),
+        by_item: Vec::new(),
+        exploring: Vec::new(),
+        any: Vec::new(),
     }
 }
 
@@ -1025,11 +1129,10 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
     });
     let offer = goal_offer(phase, offered);
     let mut defs = offered.map_or_else(|| json!({}), namespace_defs);
-    let mut schema = if phase.coupled() {
-        coupled_schema(variants, offer, offered, &reasoning, &mut defs)
+    let mut schema = if let Some(refs) = offered.filter(|_| phase.coupled()) {
+        coupled_schema(variants, &offer, refs, &reasoning, &mut defs)
     } else {
-        let mut choices = offer.stepping;
-        choices.extend(offer.any);
+        let choices = offer.all();
         json!({
             "type": "object",
             "properties": {
@@ -1052,57 +1155,85 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
 const INTENT_DESCRIPTION: &str = "The single action the body should take now.";
 
 /// A goal review's answer: one `decision` that pairs an intent with a goal choice it may travel
-/// with. A choice that takes the intent as the goal's step is offered only beside an action, and
-/// beside a collect alone while the agent's own drop of the goal's item lies in reach; the rest
-/// travel with any intent. The intent variants are defined once under `$defs` and referenced by
-/// each pairing (r16: four adopts and revises beside idle were refused, and the schema offered
-/// every one of them).
+/// with. A choice that takes the intent as the goal's step is offered only beside one of its own
+/// item's steps - a dig of a block in reach that can drop it, a collect of a drop of it, a craft of
+/// it, or a walk onto a block out of dig reach that can drop it, and a collect alone while the
+/// agent's own drop of the goal's item lies in reach - and a continue of a goal sight cannot meet
+/// only beside a walk to the edge of sight. The rest travel with any action, and with an idle or a
+/// rest only when no cell at the edge of sight is offered (r16: four adopts and revises beside
+/// idle; r18: an adopted stick goal dug terracotta, and nine reviews idled beside offered cells).
 fn coupled_schema(
     variants: Vec<Value>,
-    offer: GoalOffer,
-    offered: Option<&OfferedRefs>,
+    offer: &GoalOffer,
+    offered: &OfferedRefs,
     reasoning: &Value,
     defs: &mut Value,
 ) -> Value {
-    let collect_only = offered.is_some_and(|refs| refs.collect_required);
     let (passive, active): (Vec<Value>, Vec<Value>) = variants
         .into_iter()
         .partition(|variant| names_action(variant, &PASSIVE_ACTIONS));
-    let stepping: Vec<Value> = active
-        .iter()
-        .filter(|variant| !collect_only || names_action(variant, &["collect"]))
-        .cloned()
-        .collect();
-    let steps = !stepping.is_empty();
     let reference = |name: &str| json!({ "$ref": format!("#/$defs/{name}") });
     let mut pairings = Vec::new();
-    if let Some(table) = defs.as_object_mut() {
-        table.insert("activeIntent".to_owned(), json!({ "anyOf": active }));
-        table.insert("passiveIntent".to_owned(), json!({ "anyOf": passive }));
-        table.insert("steppingIntent".to_owned(), json!({ "anyOf": stepping }));
-    }
-    let pairing = |intent: Value, choices: Vec<Value>| {
+    let pairing = |intent: Value, choices: &[Value]| {
         json!({
             "type": "object",
             "properties": {
                 "intent": { "description": INTENT_DESCRIPTION, "anyOf": intent },
-                "goal": goal_field(&choices),
+                "goal": goal_field(choices),
             },
             "required": ["intent", "goal"],
             "additionalProperties": false,
         })
     };
-    if steps && !offer.stepping.is_empty() {
+    let Some(table) = defs.as_object_mut() else {
+        return json!({});
+    };
+    for (index, (item, choices)) in offer.by_item.iter().enumerate() {
+        let Some(steps) = offered.item_steps.iter().find(|steps| &steps.item == item) else {
+            continue;
+        };
+        let intents = item_step_variants(index, steps, table);
+        if intents.is_empty() || choices.is_empty() {
+            continue;
+        }
+        let name = format!("stepsFor{index}");
+        table.insert(name.clone(), json!({ "anyOf": intents }));
+        pairings.push(pairing(json!([reference(&name)]), choices));
+    }
+    if !offer.exploring.is_empty() && !offered.explore_targets.is_empty() {
+        table.insert(
+            "exploreTargetRef".to_owned(),
+            json!({
+                "type": "string",
+                "enum": offered.explore_targets,
+                "description": "A cell at the edge of sight offered in this message, to look further from.",
+            }),
+        );
+        let walk = intent_variant(
+            "moveTo",
+            vec![(
+                "onto",
+                Some(json!({
+                    "description": "The ref of the cell at the edge of sight to walk to.",
+                    "anyOf": [reference("exploreTargetRef")],
+                })),
+            )],
+        );
         pairings.push(pairing(
-            json!([reference("steppingIntent")]),
-            offer.stepping,
+            json!(walk.into_iter().collect::<Vec<_>>()),
+            &offer.exploring,
         ));
     }
+    table.insert("activeIntent".to_owned(), json!({ "anyOf": active }));
+    if offered.passive_allowed() {
+        table.insert("passiveIntent".to_owned(), json!({ "anyOf": passive }));
+    }
     if !offer.any.is_empty() {
-        pairings.push(pairing(
-            json!([reference("activeIntent"), reference("passiveIntent")]),
-            offer.any,
-        ));
+        let mut intents = vec![reference("activeIntent")];
+        if offered.passive_allowed() {
+            intents.push(reference("passiveIntent"));
+        }
+        pairings.push(pairing(json!(intents), &offer.any));
     }
     json!({
         "type": "object",
@@ -1116,6 +1247,80 @@ fn coupled_schema(
         "required": ["decision", "reasoning"],
         "additionalProperties": false,
     })
+}
+
+/// One goal item's own step intents, each ref list defined once under `$defs` as item `index`'s.
+fn item_step_variants(
+    index: usize,
+    steps: &ItemSteps,
+    table: &mut serde_json::Map<String, Value>,
+) -> Vec<Value> {
+    let mut named = |kind: &str, handles: &[String], description: &str| -> Option<Value> {
+        if handles.is_empty() {
+            return None;
+        }
+        let name = format!("item{index}{kind}Ref");
+        table.insert(
+            name.clone(),
+            json!({ "type": "string", "enum": handles, "description": description }),
+        );
+        Some(
+            json!({ "description": description, "anyOf": [{ "$ref": format!("#/$defs/{name}") }] }),
+        )
+    };
+    let dig = named(
+        "Dig",
+        &steps.dig,
+        "A block in reach that can drop this goal's item.",
+    );
+    let pickup = named(
+        "Pickup",
+        &steps.pickup,
+        "A drop of this goal's item within pickup reach.",
+    );
+    let route = named(
+        "Route",
+        &steps.route,
+        "A drop of this goal's item within walking reach.",
+    );
+    let recipe = named(
+        "Recipe",
+        &steps.recipes,
+        "A recipe that makes this goal's item.",
+    );
+    let walk = named(
+        "Walk",
+        &steps.walks,
+        "A block out of dig reach that can drop this goal's item, to walk to.",
+    );
+    [
+        dig.map(|block| intent_variant("dig", vec![("block", Some(block))])),
+        pickup.map(|item| {
+            intent_variant("collect", vec![("item", Some(item)), ("approach", approach_field(COLLECT_APPROACH, Some(false)))])
+        }),
+        route.map(|item| {
+            intent_variant("collect", vec![("item", Some(item)), ("approach", approach_field(COLLECT_APPROACH, Some(true)))])
+        }),
+        recipe.map(|recipe| {
+            intent_variant(
+                "craft",
+                vec![
+                    ("recipe", Some(recipe)),
+                    ("crafts", plain(json!({
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 8,
+                        "description": "How many bounded applications of that offered recipe to request."
+                    }))),
+                ],
+            )
+        }),
+        walk.map(|onto| intent_variant("moveTo", vec![("onto", Some(onto))])),
+    ]
+    .into_iter()
+    .flatten()
+    .flatten()
+    .collect()
 }
 
 #[cfg(test)]

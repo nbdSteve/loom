@@ -47,12 +47,14 @@ const GOAL_OUTCOMES = [
   'goalOwnDropIgnored',
   'goalReplaced',
   'goalCompletedAdopted',
-  'goalAbandonedAchievable'
+  'goalAbandonedAchievable',
+  'goalReviseItemChanged'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // What a measured step showed, from routine-v22: the exact target reached, an item gained, a
 // new drop in sight, or nothing.
-const GOAL_STEP_EVIDENCE = ['arrived', 'gained', 'dropped', 'none']
+// From routine-v27 a walk to the edge of sight that brought a source of the item into sight.
+const GOAL_STEP_EVIDENCE = ['arrived', 'gained', 'dropped', 'revealed', 'none']
 // Outcomes that act on the very goal the answered review was handed.
 const GOAL_CONTINUING_OUTCOMES = ['goalContinued', 'goalRevised', 'goalCompleted']
 
@@ -282,9 +284,10 @@ function validateGoalEvidence (goal, event, label) {
   if (goal.stepResult !== undefined && !GOAL_STEP_RESULTS.includes(goal.stepResult)) {
     throw new Error(`${label} has an unknown goal step result`)
   }
-  if (goal.stepsWithoutProgress !== undefined &&
-    (!Number.isSafeInteger(goal.stepsWithoutProgress) || goal.stepsWithoutProgress < 0)) {
-    throw new Error(`${label} goal stepsWithoutProgress must be a non-negative integer`)
+  for (const field of ['stepsWithoutProgress', 'targetHeld', 'targetCapacity']) {
+    if (goal[field] !== undefined && (!Number.isSafeInteger(goal[field]) || goal[field] < 0)) {
+      throw new Error(`${label} goal ${field} must be a non-negative integer`)
+    }
   }
   if (goal.stepEvidence !== undefined && !GOAL_STEP_EVIDENCE.includes(goal.stepEvidence)) {
     throw new Error(`${label} has an unknown goal step evidence`)

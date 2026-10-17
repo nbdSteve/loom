@@ -39,6 +39,7 @@ class R16GoalAuditReplayTest {
         val dropped: Set<String> = emptySet(),
         val gives: Map<String, Set<String>> = mapOf("bush" to setOf(STICK)),
         val at: List<Double> = listOf(0.5, 100.0, 0.5),
+        val inReach: Set<String> = emptySet(),
     )
 
     private fun review(
@@ -58,6 +59,7 @@ class R16GoalAuditReplayTest {
                 dropped = scene.dropped,
                 gives = scene.gives,
                 ownDrops = scene.ownDrops,
+                inReach = scene.inReach,
             )
         val carried = ledger.present(agent, review, review.substringAfter('-').toLong(), observed)
         val decision = decisionFor(perception(requestId = review, agentId = agent.value), intent).copy(goal = choice)
@@ -95,29 +97,22 @@ class R16GoalAuditReplayTest {
     }
 
     @Test
-    fun `kappa at the stall bound replaces its goal and collects in the same answer`() {
-        // kappa body:00000077, 086 and 141 dug for nothing, then dropped two own sticks; the
-        // continue at body:00000148 that collected them was refused as goalStalled, and kappa
-        // collected the same entity a full cycle later at body:00000204.
+    fun `kappa's dig that dropped two sticks is no stall while they lie, and the collect is the step`() {
+        // kappa body:00000077, 086 and 141 dug, the last dropping two own sticks; under r16's rules
+        // that third dig reached the stall bound and the continue that collected them at
+        // body:00000148 was refused as goalStalled. A drop still lying in reach is no stall (r18:
+        // all three stalls fired on such a dig), so the collect is taken.
         review("kappa-77", Scene(), sticks(GoalDisposition.ADOPT, 2), dig)
         review("kappa-86", Scene(), goalChoice(GoalDisposition.CONTINUE), dig)
         review("kappa-141", Scene(), goalChoice(GoalDisposition.CONTINUE), dig)
         val lying = Scene(ownDrops = mapOf("d7" to STICK), dropped = setOf("kappa-141"), gives = GIVES)
         val collect = Intent.Collect("d7", approach = true)
-        val (stalled, _) = review("kappa-148", lying, goalChoice(GoalDisposition.CONTINUE), collect)
-        assertEquals(MAX_STEPS, stalled?.progress?.stepsWithoutProgress)
-        // The continue the r16 mind gave is refused as before; a replace in one answer is not.
-        val held = ledger.present(AgentId("kappa"), "kappa-149", 149, null)
-        assertEquals(null, held)
-        val fresh = GoalLedger()
-        replay(fresh, lying)
-        val (_, replaced) = reviewIn(fresh, "kappa-148", lying, sticks(GoalDisposition.REPLACE, 2), collect)
-        assertEquals(GoalEvidence.REPLACED, replaced?.outcome)
-        assertEquals("kappa-77", replaced?.presentedGoalId)
-        assertEquals("kappa-148", replaced?.goalId)
+        val (pending, collecting) = review("kappa-148", lying, goalChoice(GoalDisposition.CONTINUE), collect)
+        assertEquals(StepEvidence.DROPPED, pending?.progress?.stepEvidence)
+        assertEquals(MAX_STEPS - 1, pending?.progress?.stepsWithoutProgress)
+        assertEquals(GoalEvidence.CONTINUED, collecting?.outcome)
         val (gained, completed) =
-            reviewIn(
-                fresh,
+            review(
                 "kappa-150",
                 Scene(inventory = mapOf(STICK to 2L)),
                 goalChoice(GoalDisposition.COMPLETE),
@@ -127,69 +122,17 @@ class R16GoalAuditReplayTest {
         assertEquals(GoalEvidence.COMPLETED, completed?.outcome)
     }
 
-    /** kappa's three barren digs, replayed into [ledger]. */
-    private fun replay(
-        ledger: GoalLedger,
-        lying: Scene,
-    ) {
-        reviewIn(ledger, "kappa-77", Scene(), sticks(GoalDisposition.ADOPT, 2), dig)
-        reviewIn(ledger, "kappa-86", Scene(), goalChoice(GoalDisposition.CONTINUE), dig)
-        reviewIn(ledger, "kappa-141", Scene(), goalChoice(GoalDisposition.CONTINUE), dig)
-        assertTrue(lying.ownDrops.isNotEmpty())
-    }
-
-    private fun reviewIn(
-        other: GoalLedger,
-        review: String,
-        scene: Scene,
-        choice: GoalChoice?,
-        intent: Intent,
-    ): Pair<GoalSummary?, GoalEvidence?> {
-        val agent = AgentId(review.substringBefore('-'))
-        val observed =
-            GoalObservation(
-                scene.inventory,
-                scene.at,
-                capacity = mapOf(STICK to 8L),
-                visible = scene.gives.keys,
-                dropped = scene.dropped,
-                gives = scene.gives,
-                ownDrops = scene.ownDrops,
-            )
-        val carried = other.present(agent, review, review.substringAfter('-').toLong(), observed)
-        val decision = decisionFor(perception(requestId = review, agentId = agent.value), intent).copy(goal = choice)
-        val evidence = other.resolve(agent, decision)
-        val applied =
-            if (evidence?.outcome in GoalEvidence.REFUSING) requireNotNull(evidence).outcome else EventTag.ACCEPTED
-        other.stepped(agent, review, tagOf(intent), applied)
-        return carried to evidence
-    }
-
     @Test
-    fun `delta's one-block walks onto terracotta are no arrival and reset nothing`() {
+    fun `delta's walk onto terracotta is refused, and a walk onto a bush counts only out of reach`() {
         // delta body:00000178 walked 0.8 block onto terracotta and body:00000184 credited the
-        // arrival and reset the stall count; it walked 0.8 block back.
+        // arrival; a walk onto what cannot give the goal's item is no step (r18 theta
+        // body:00000240 walked onto terracotta with four bushes in sight).
         val terracotta = mapOf("b00" to emptySet<String>(), "b01" to emptySet(), "bush" to setOf(STICK))
         val start = Scene(inventory = mapOf(STICK to 2L), gives = terracotta, at = listOf(8.97, 100.0, 7.01))
-        review("delta-178", start, sticks(GoalDisposition.ADOPT, 3), Intent.MoveTo("b00"))
-        val (walked, _) =
-            review(
-                "delta-184",
-                start.copy(at = listOf(9.8, 100.0, 7.01)),
-                goalChoice(GoalDisposition.CONTINUE),
-                Intent.MoveTo("b01"),
-            )
-        assertEquals(StepEvidence.NONE, walked?.progress?.stepEvidence)
-        assertEquals(1L, walked?.progress?.stepsWithoutProgress)
-        // A walk onto the bush that drops the goal's sticks, somewhere new, is the arrival.
-        val (back, _) =
-            review(
-                "delta-238",
-                start.copy(at = listOf(8.97, 100.0, 7.01)),
-                goalChoice(GoalDisposition.CONTINUE),
-                Intent.MoveTo("bush"),
-            )
-        assertEquals(StepEvidence.NONE, back?.progress?.stepEvidence)
+        val (_, refused) = review("delta-178", start, sticks(GoalDisposition.ADOPT, 3), Intent.MoveTo("b00"))
+        assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, refused?.outcome)
+        // A walk onto the bush out of dig reach, somewhere new, is the arrival.
+        review("delta-184", start, sticks(GoalDisposition.ADOPT, 3), Intent.MoveTo("bush"))
         val (bush, _) =
             review(
                 "delta-239",
@@ -198,6 +141,18 @@ class R16GoalAuditReplayTest {
                 Intent.Idle,
             )
         assertEquals(StepEvidence.ARRIVED, bush?.progress?.stepEvidence)
+        // r18: all seven arrivals were onto bushes already in dig reach; such a walk is none.
+        val near = start.copy(inReach = setOf("bush"))
+        review("theta-504", near, sticks(GoalDisposition.ADOPT, 3), Intent.MoveTo("bush"))
+        val (walked, _) =
+            review(
+                "theta-512",
+                near.copy(at = listOf(12.5, 100.0, 3.5)),
+                goalChoice(GoalDisposition.CONTINUE),
+                Intent.Idle,
+            )
+        assertEquals(StepEvidence.NONE, walked?.progress?.stepEvidence)
+        assertEquals(1L, walked?.progress?.stepsWithoutProgress)
     }
 
     @Test

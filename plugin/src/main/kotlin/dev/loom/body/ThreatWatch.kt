@@ -150,13 +150,18 @@ enum class ThreatSuppressionReason(
     /**
      * The hunter is out of sight and further than [THREAT_NEAR_BLOCKS]: nothing a flight could
      * measurably escape. In r17 nine flights ran from mobs behind walls 22 to 24 blocks off,
-     * moved under six blocks and ended about as far away as they began.
+     * moved under six blocks and ended about as far away as they began; in r18 all four flights
+     * ran from mobs out of sight 15 to 16 blocks off.
      */
     DISTANT_UNSEEN(EventTag.THREAT_DISTANT_UNSEEN),
 }
 
-/** How near an out-of-sight hunter must be before its sighting is worth an agent's decision. */
-const val THREAT_NEAR_BLOCKS: Double = 16.0
+/**
+ * How near an out-of-sight hunter must be before its sighting is worth an agent's decision. r18's
+ * sixteen let every flight run from a mob out of sight at 15 to 16 blocks; half that leaves a
+ * hunter behind a wall news only once it is close enough to round it.
+ */
+const val THREAT_NEAR_BLOCKS: Double = 8.0
 
 /** One hostile in view, as the threat rule needs it. */
 data class ThreatCandidate(

@@ -38,12 +38,14 @@ import dev.loom.contract.IntentAction
 import dev.loom.contract.InventoryChange
 import dev.loom.contract.MAX_GOAL_STATEMENT_CHARS
 import dev.loom.contract.MAX_INVENTORY_CHANGES
+import dev.loom.contract.Observation
 import dev.loom.contract.ObservationKind
 import dev.loom.contract.Perception
 import dev.loom.contract.SelfState
 import dev.loom.contract.StepEvidence
 import dev.loom.contract.isItemName
 import kotlin.math.floor
+import kotlin.math.sqrt
 
 /** Distinct cells one goal remembers having been reviewed at; the oldest is forgotten past it. */
 const val MAX_GOAL_CELLS: Int = 64
@@ -53,6 +55,12 @@ const val MAX_GOAL_CELLS: Int = 64
  * `body/src/movement.js`: a drop further off gives nothing a goal may count on.
  */
 const val COLLECT_REACH_BLOCKS = 32.0
+
+/** `INTERACTION_REACH_BLOCKS` in `body/src/sensing.js`: eyes to a block's centre. */
+const val INTERACTION_REACH_BLOCKS = 5.1
+
+/** Mineflayer's player eye height, from which interaction reach is measured. */
+const val EYE_HEIGHT_BLOCKS = 1.62
 
 /** Steps carried out by moving the body, credited only on arrival somewhere new to the goal. */
 private val MOVEMENT_STEPS = setOf(IntentAction.MOVE_TO, IntentAction.FLEE)
@@ -87,6 +95,10 @@ data class GoalObservation(
     val gives: Map<String, Set<String>> = emptyMap(),
     /** The agent's own lying drops a collect can route to, by ref, with the item each holds. */
     val ownDrops: Map<String, String> = emptyMap(),
+    /** The cells at the edge of sight this perception offered to walk to, by ref. */
+    val explore: Set<String> = emptySet(),
+    /** The blocks within the body's interaction reach of the eyes, by ref: dug where it stands. */
+    val inReach: Set<String> = emptySet(),
 ) {
     /** The block cell the agent stood in. */
     val cell: List<Int> get() = position.map { floor(it).toInt() }
@@ -121,13 +133,31 @@ data class GoalObservation(
                 gives =
                     seen
                         .filter { it.kind != ObservationKind.ENTITY }
-                        .associate { seen -> seen.ref to (seen.yields?.map { it.what } ?: listOf(seen.what)).toSet() },
+                        .associate { seen -> seen.ref to (seen.yields?.map { it.what } ?: listOf(seen.what)).toSet() } +
+                        perception.selfState.craftingOptions.associate { it.ref to setOf(it.what) },
                 ownDrops =
                     perception.selfState.ownDrops
                         .filter { it.fate == DropFate.LYING }
                         .mapNotNull { drop -> drop.ref?.takeIf { it in reachable }?.let { it to drop.what } }
                         .toMap(),
+                explore = perception.explore.map { it.ref }.toSet(),
+                inReach =
+                    seen
+                        .filter { it.kind == ObservationKind.BLOCK && it.visible }
+                        .filter { fromEyes(it) <= INTERACTION_REACH_BLOCKS }
+                        .map { it.ref }
+                        .toSet(),
             )
+        }
+
+        /** The distance from the eyes to [seen], from its feet-relative reading, as the mind measures it. */
+        private fun fromEyes(seen: Observation): Double {
+            val horizontal =
+                (seen.distance * seen.distance - seen.verticalOffset * seen.verticalOffset).coerceAtLeast(
+                    0.0,
+                )
+            val rise = seen.verticalOffset - EYE_HEIGHT_BLOCKS
+            return sqrt(horizontal + rise * rise)
         }
 
         private fun inventoryOf(state: SelfState): Map<String, Long> =
@@ -143,8 +173,13 @@ internal data class StepRecord(
     val visible: Boolean,
     /** For a walk or flight, whether the body reported arriving. */
     val reached: Boolean?,
-    /** Whether the step's target is itself a source of the goal's item, as a walk must be. */
+    /**
+     * Whether the step's target is itself a source of the goal's item out of dig reach, as a walk
+     * must be to arrive anywhere a dig could not already reach.
+     */
     val towardSource: Boolean = false,
+    /** Whether the step walked to a cell at the edge of sight. */
+    val explored: Boolean = false,
 )
 
 /**
@@ -168,6 +203,9 @@ internal fun progressOf(
     val stepAdvanced = evidence != StepEvidence.NONE
     // A drop is the step's evidence, but not progress until it is held.
     val progressed = conditionAdvanced || (stepAdvanced && evidence != StepEvidence.DROPPED)
+    // A drop of the goal's item still lying in reach is neither progress nor a stall: the next
+    // step must collect it (r18: all three stalls fired on a dig that had just dropped two sticks).
+    val awaitingCollect = evidence == StepEvidence.DROPPED && item != null && observed.ownDrops.containsValue(item)
     return GoalProgress(
         conditionMet = item != null && held >= (goal.successCount ?: Long.MAX_VALUE),
         conditionHeld = held,
@@ -175,9 +213,21 @@ internal fun progressOf(
         conditionAdvanced = conditionAdvanced,
         stepAdvanced = stepAdvanced,
         stepEvidence = evidence,
-        stepsWithoutProgress = if (progressed) 0 else priorCount + 1,
+        stepsWithoutProgress = stallCountOf(progressed, awaitingCollect, priorCount),
     )
 }
+
+/** The run of steps that advanced nothing after one that [progressed], or awaits its own collect. */
+private fun stallCountOf(
+    progressed: Boolean,
+    awaitingCollect: Boolean,
+    priorCount: Long,
+): Long =
+    when {
+        progressed -> 0
+        awaitingCollect -> priorCount
+        else -> priorCount + 1
+    }
 
 /**
  * What showed the goal's typed step was carried out, by the body's own outcome for it and what
@@ -197,15 +247,38 @@ private fun stepEvidenceOf(
     val accepted = goal.lastStep?.outcome == EventTag.ACCEPTED
     val gained = observed.inventory.any { (what, count) -> count > (before.inventory[what] ?: 0) }
     val dropped = goal.lastStep?.requestId?.let { it in observed.dropped } == true
-    // A walk is evidence only onto a block that is itself a source of the goal's item (r16: two
-    // one-block walks onto terracotta were credited and reset the stall count).
-    val arrived = step.reached == true && step.visible && step.towardSource && observed.cell !in step.visited
     return when {
         !accepted -> StepEvidence.NONE
-        goal.stepAction in MOVEMENT_STEPS -> if (arrived) StepEvidence.ARRIVED else StepEvidence.NONE
+        goal.stepAction in MOVEMENT_STEPS -> movementEvidenceOf(goal, before, observed, step)
         goal.stepAction !in WORLD_STEPS -> StepEvidence.NONE
         gained -> StepEvidence.GAINED
         dropped -> StepEvidence.DROPPED
+        else -> StepEvidence.NONE
+    }
+}
+
+/**
+ * What showed a walk or flight step was carried out. A walk is evidence only onto a block that is
+ * itself a source of the goal's item out of dig reach (r16: two one-block walks onto terracotta
+ * were credited and reset the stall count; r18: all seven arrivals were onto bushes already in dig
+ * reach), and a walk to the edge of sight only when it brought a source of the item into a sight
+ * that showed none (r18: five goals were abandoned to look further).
+ */
+private fun movementEvidenceOf(
+    goal: GoalSummary,
+    before: GoalObservation,
+    observed: GoalObservation,
+    step: StepRecord,
+): StepEvidence {
+    val reached = step.reached == true
+    val arrived = reached && step.visible && step.towardSource && observed.cell !in step.visited
+    val item = goal.successItem
+    val revealed =
+        reached && step.explored && item != null &&
+            (before.capacity[item] ?: 0) == 0L && (observed.capacity[item] ?: 0) > 0
+    return when {
+        arrived -> StepEvidence.ARRIVED
+        revealed -> StepEvidence.REVEALED
         else -> StepEvidence.NONE
     }
 }

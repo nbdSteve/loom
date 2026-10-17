@@ -4,6 +4,7 @@ import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
+import dev.loom.contract.Bearing
 import dev.loom.contract.DropFate
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
@@ -11,6 +12,7 @@ import dev.loom.contract.GoalStepResult
 import dev.loom.contract.Intent
 import dev.loom.contract.ObservationKind
 import dev.loom.contract.Perception
+import dev.loom.contract.StepEvidence
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -39,7 +41,9 @@ import java.nio.file.Path
  * - a collect without approach of an item a block below the feet is refused by the body, because
  *   vanilla would never pick it up from there;
  * - an own drop still lying past the 4800-tick retention is still told and offered, then told as
- *   taken when a peer takes it, and forgotten a retention after that.
+ *   taken when a peer takes it, and forgotten a retention after that;
+ * - a goal sight cannot meet is continued by a walk to the edge of sight, credited as revealed
+ *   when the walk brings a bush into sight, and a revise to another item is refused.
  */
 class GoalPursuitEndToEndTest {
     @TempDir
@@ -117,16 +121,23 @@ class GoalPursuitEndToEndTest {
 
     @Test
     fun `a stalled goal with nothing to replace it by is abandoned, and an achievable one may not be`() {
-        val terracotta = (0..2).map { Cell(8 + 2 * it, 64, 11, "terracotta") }
-        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(BUSH) + terracotta))
+        // Every bush stands in dig reach, so a walk onto one is no arrival anywhere a dig could not
+        // already reach (r18: all seven credited walks were onto bushes in reach).
+        val bushes = listOf(BUSH, Cell(7, 64, 10, "dead_bush"), Cell(10, 64, 10, "dead_bush"))
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = bushes))
         world.mind.answer = { seen, index ->
-            val nth = seen.surroundings.filter { it.what == "block.minecraft.terracotta" }.sortedBy { it.ref }
+            val bush =
+                seen.surroundings
+                    .filter { it.what == "block.minecraft.dead_bush" && it.direction != Bearing.HERE }
+                    .sortedBy { it.ref }
+                    .let { it[index % it.size] }
             when (index) {
-                0 -> Intent.MoveTo(nth[0].ref) to target(GoalDisposition.ADOPT, STICK, 1)
+                0 -> Intent.MoveTo(bush.ref) to target(GoalDisposition.ADOPT, STICK, 1)
                 // An abandon of a goal the bush can still meet is refused.
                 1 -> Intent.Idle to GoalChoice(GoalDisposition.ABANDON, stepResult = GoalStepResult.NO_PROGRESS)
-                2, 3 -> Intent.MoveTo(nth[index - 1].ref) to continuing()
-                // At the bound the bush's one stick cannot raise the total, so nothing replaces it.
+                2, 3 -> Intent.MoveTo(bush.ref) to continuing()
+                // At the bound only sticks are in sight, and a stalled stick goal may not be set
+                // again, so nothing replaces it.
                 else -> Intent.Idle to GoalChoice(GoalDisposition.ABANDON, stepResult = GoalStepResult.NO_PROGRESS)
             }
         }
@@ -203,6 +214,72 @@ class GoalPursuitEndToEndTest {
         assertEquals(emptyList<DropFate>(), world.mind.seen[2].selfState.ownDrops.map { it.fate })
     }
 
+    @Test
+    fun `a goal sight cannot meet is continued by a walk to look, credited when it reveals a bush`() {
+        // r18 gamma body:00000069, delta 127 and 485 abandoned their goals to walk to the edge of
+        // sight. The near bush is broken by the first dig; the far one lies past what is sensed,
+        // beside the cell east at the edge of sight.
+        val far = Cell(22, 64, 8, "dead_bush")
+        val scene = Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(BUSH, far), serveBreaks = true)
+        val world = world(scene)
+        world.mind.answer = { seen, index ->
+            when (index) {
+                0 ->
+                    Intent.Dig(seen.surroundings.single { it.what == "block.minecraft.dead_bush" }.ref) to
+                        target(GoalDisposition.ADOPT, STICK, 1)
+                1 -> Intent.MoveTo(seen.explore.single { it.direction == Bearing.EAST }.ref) to continuing()
+                else -> Intent.MoveTo(seen.explore.first().ref) to continuing()
+            }
+        }
+        for (review in 1..3) {
+            world.review(ALPHA)
+            world.awaitDecided(review)
+            world.awaitApplied(review)
+            if (review == 2) world.awaitRecord { it.event == BodyEvent.MOVED }
+        }
+        val seen = world.mind.seen
+        assertTrue(seen[1].surroundings.none { it.what == "block.minecraft.dead_bush" }, "the near bush is gone")
+        assertTrue(seen[2].surroundings.any { it.what == "block.minecraft.dead_bush" }, "the far bush is in sight")
+        val decided = world.records.filter { it.event == BodyEvent.DECIDED }.map { it.goal }
+        assertEquals(GoalEvidence.CONTINUED, decided[1]?.outcome)
+        assertEquals(StepEvidence.REVEALED, decided[2]?.stepEvidence)
+        assertEquals(0L, decided[2]?.stepsWithoutProgress)
+        // The gate reads both walks as goal steps, and no review idled beside a cell to look from.
+        val pursuit =
+            world.readiness(WOODED_GENERATION).getValue("goalCoherence").jsonObject.getValue("pursuit").jsonObject
+        val measured = pursuit.getValue("measured").jsonObject
+        assertEquals(0, measured.getValue("idleBesideExploration").jsonPrimitive.int)
+        assertEquals("1", measured.getValue("goalActiveReviewShare").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `a revise to another item is refused before the body acts, and the gate counts it`() {
+        // r18 zeta body:00000569 revised a scute goal into sticks under the same goal.
+        val dirt = Cell(10, 64, 6, "dirt")
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(BUSH, dirt)))
+        world.mind.answer = { seen, index ->
+            when (index) {
+                0 ->
+                    Intent.MoveTo(seen.surroundings.first { it.what == "block.minecraft.dead_bush" }.ref) to
+                        target(GoalDisposition.ADOPT, STICK, 1)
+                else ->
+                    Intent.MoveTo(seen.surroundings.first { it.what == "block.minecraft.dirt" }.ref) to
+                        target(GoalDisposition.REVISE, "item.minecraft.dirt", 1)
+            }
+        }
+        for (review in 1..2) {
+            world.review(ALPHA)
+            world.awaitDecided(review)
+            world.awaitApplied(review)
+        }
+        val refused = world.records.filter { it.event == BodyEvent.INTENT_APPLIED }[1]
+        assertEquals(GoalEvidence.REVISE_ITEM_CHANGED, refused.outcome)
+        assertTrue(world.records.none { it.event == BodyEvent.MOVED && it.requestId == refused.requestId })
+        val classes =
+            world.readiness(WOODED_GENERATION).getValue("actions").jsonObject.getValue("byClass").jsonObject
+        assertEquals(1, classes.getValue("goalIncoherent").jsonPrimitive.int)
+    }
+
     private fun world(scene: Scene): ScenarioWorld {
         val node = nodeOrNull()
         assumeTrue(node != null && Files.isDirectory(REPO.resolve("body/node_modules")), "node and body deps")
@@ -211,6 +288,7 @@ class GoalPursuitEndToEndTest {
 
     private companion object {
         const val GATE_GENERATION = 9
+        const val WOODED_GENERATION = 10
         const val STICK_ID = 70
         const val STICK = "item.minecraft.stick"
         const val PLANKS = "item.minecraft.oak_planks"

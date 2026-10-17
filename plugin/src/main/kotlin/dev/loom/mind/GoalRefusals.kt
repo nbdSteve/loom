@@ -39,12 +39,28 @@ internal fun incoherenceOf(
     observed: GoalObservation?,
 ): String? {
     val stepping = choice?.disposition in STEPPING
-    return conditionRefusalOf(presented, choice, intent, observed)
-        ?: successRefusalOf(presented, choice, observed)
+    return reviseItemOf(presented, choice)
+        ?: conditionRefusalOf(presented, choice, intent, observed)
+        ?: successRefusalOf(presented, choice, intent, observed)
         ?: GoalEvidence.STEP_IDLE.takeIf { stepping && intent.action in PASSIVE }
         ?: GoalEvidence.STEP_UNPRODUCTIVE.takeIf { stepping && !canGive(presented, choice, intent, observed) }
         ?: GoalEvidence.OWN_DROP_IGNORED.takeIf { ownDropIgnored(presented, choice, intent, observed) }
 }
+
+/**
+ * A revise that names an item other than the held goal's: a new goal, which is a replace, not a
+ * revise (r18 zeta body:00000569 revised a scute goal into sticks under the same goal).
+ */
+private fun reviseItemOf(
+    presented: GoalSummary?,
+    choice: GoalChoice?,
+): String? =
+    GoalEvidence.REVISE_ITEM_CHANGED.takeIf {
+        choice?.disposition == GoalDisposition.REVISE &&
+            presented?.successItem != null &&
+            choice.successItem != null &&
+            choice.successItem != presented.successItem
+    }
 
 /** The dispositions that keep pursuing the held goal's item, rather than set a new goal. */
 private val PURSUING = setOf(GoalDisposition.CONTINUE, GoalDisposition.REVISE)
@@ -133,24 +149,31 @@ private fun targetOf(
 private fun successRefusalOf(
     presented: GoalSummary?,
     choice: GoalChoice?,
+    intent: Intent,
     observed: GoalObservation?,
 ): String? {
     val disposition = choice?.disposition
     val judged = disposition in STEPPING && choice?.let(::missingFieldOf) == null
     val (item, count) = targetOf(presented, choice)?.takeIf { judged } ?: return null
     val held = observed?.inventory?.get(item) ?: 0
+    // A held goal sight cannot meet may be continued by walking to the edge of sight to look for
+    // a source, rather than be lost to a walk (r18: five goals abandoned to look further).
+    val exploring =
+        disposition == GoalDisposition.CONTINUE && intent is Intent.MoveTo &&
+            intent.onto in observed?.explore.orEmpty()
     return when {
         observed == null -> null
         disposition != GoalDisposition.CONTINUE && held >= count -> GoalEvidence.ALREADY_MET
-        count > held + (observed.capacity[item] ?: 0) -> GoalEvidence.SUCCESS_UNOBTAINABLE
+        !exploring && count > held + (observed.capacity[item] ?: 0) -> GoalEvidence.SUCCESS_UNOBTAINABLE
         else -> null
     }
 }
 
 /**
- * Whether [intent], a dig or collect, can give the goal's item by what [observed] showed of its
- * target; any other step is judged by its evidence afterwards. r15 dug terracotta, which drops
- * nothing by hand, as the step of four stick goals.
+ * Whether [intent], a dig, collect, craft or walk, can give the goal's item by what [observed]
+ * showed of its target - a walk onto a source of it - or walks to the edge of sight; any other
+ * step is judged by its evidence afterwards. r15 dug terracotta, which drops nothing by hand, as
+ * the step of four stick goals, and r18 theta walked onto terracotta with four bushes in sight.
  */
 private fun canGive(
     presented: GoalSummary?,
@@ -162,6 +185,8 @@ private fun canGive(
         when (intent) {
             is Intent.Dig -> intent.block
             is Intent.Collect -> intent.item
+            is Intent.Craft -> intent.recipe
+            is Intent.MoveTo -> intent.onto.takeIf { it !in observed?.explore.orEmpty() }
             else -> null
         }
     val item = targetOf(presented, choice)?.first

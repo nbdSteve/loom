@@ -746,9 +746,9 @@
     },
 
     "StepEvidence": {
-      "description": "What showed the goal's last step was carried out: arrived for a walk that reached its visible target somewhere new to the goal, gained for an action after which the inventory held more of an item, dropped for a dig the server saw drop something for this agent's own request, wherever it went after, none when nothing did. Only a step with evidence advances.",
+      "description": "What showed the goal's last step was carried out: arrived for a walk that reached its visible target somewhere new to the goal, gained for an action after which the inventory held more of an item, dropped for a dig the server saw drop something for this agent's own request, wherever it went after, revealed for a walk to the edge of sight that arrived where a source of the goal's item was then in sight, none when nothing did. Only a step with evidence advances.",
       "type": "string",
-      "enum": ["arrived", "gained", "dropped", "none"]
+      "enum": ["arrived", "gained", "dropped", "revealed", "none"]
     },
 
     "InventoryChange": {

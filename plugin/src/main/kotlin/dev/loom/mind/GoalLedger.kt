@@ -92,6 +92,7 @@ class GoalLedger(
         val reached: Boolean? = null,
         val measured: Boolean = false,
         val towardSource: Boolean = false,
+        val explored: Boolean = false,
     ) {
         /**
          * This goal as [now] shows it, and the goal to hold after: its settled step measured, once.
@@ -103,7 +104,7 @@ class GoalLedger(
             if (measured && earlier != null) {
                 return summary.copy(progress = remeasured(summary, earlier, now)) to this
             }
-            val step = StepRecord(visited, stepVisible, reached, towardSource)
+            val step = StepRecord(visited, stepVisible, reached, towardSource, explored)
             val progress = progressOf(summary, observed, now, step, stepsWithoutProgress) ?: earlier
             val shown = summary.copy(progress = progress)
             val settled = summary.lastStep != null && progress != null
@@ -118,7 +119,37 @@ class GoalLedger(
         val expiredGoalId: String?,
         val observed: GoalObservation?,
         val fresh: Boolean,
-    )
+    ) {
+        /**
+         * The evidence a decision's goal [choice] starts from: what this basis presented and
+         * measured, and the goal held now, [current].
+         */
+        fun evidence(
+            choice: GoalChoice?,
+            current: GoalSummary?,
+        ): GoalEvidence {
+            // What a review measured is evidence only at the review that measured it.
+            val measured = presented?.progress?.takeIf { fresh }
+            val item = presented?.successItem
+            return GoalEvidence(
+                outcome = GoalEvidence.UNADDRESSED,
+                disposition = choice?.disposition,
+                presentedGoalId = presented?.goalId,
+                presentedRevision = presented?.revision,
+                goalId = current?.goalId,
+                revision = current?.revision,
+                expiredGoalId = expiredGoalId,
+                stepResult = choice?.stepResult,
+                stepsWithoutProgress = measured?.stepsWithoutProgress,
+                conditionMet = presented?.progress?.conditionMet,
+                conditionAdvanced = measured?.conditionAdvanced,
+                stepAdvanced = measured?.stepAdvanced,
+                stepEvidence = measured?.stepEvidence,
+                targetHeld = item?.let { observed?.inventory?.get(it) ?: 0 },
+                targetCapacity = item?.let { observed?.capacity?.get(it) ?: 0 },
+            )
+        }
+    }
 
     private class AgentGoals(
         val session: Long,
@@ -198,24 +229,7 @@ class GoalLedger(
             return choice?.let { GoalEvidence(GoalEvidence.NOT_REVIEWED, it.disposition) }
         }
         val current = goals.held?.summary
-        // What a review measured is evidence only at the review that measured it.
-        val measured = basis.presented?.progress?.takeIf { basis.fresh }
-        val evidence =
-            GoalEvidence(
-                outcome = GoalEvidence.UNADDRESSED,
-                disposition = choice?.disposition,
-                presentedGoalId = basis.presented?.goalId,
-                presentedRevision = basis.presented?.revision,
-                goalId = current?.goalId,
-                revision = current?.revision,
-                expiredGoalId = basis.expiredGoalId,
-                stepResult = choice?.stepResult,
-                stepsWithoutProgress = measured?.stepsWithoutProgress,
-                conditionMet = basis.presented?.progress?.conditionMet,
-                conditionAdvanced = measured?.conditionAdvanced,
-                stepAdvanced = measured?.stepAdvanced,
-                stepEvidence = measured?.stepEvidence,
-            )
+        val evidence = basis.evidence(choice, current)
         val unchanged =
             basis.session == goals.session &&
                 current?.goalId == basis.presented?.goalId &&
@@ -313,7 +327,10 @@ class GoalLedger(
         val target = decision.intent.targetRef
         val stepVisible = target != null && basis.observed?.visible?.contains(target) == true
         val item = next?.successItem
-        val towardSource = item != null && target != null && item in basis.observed?.gives?.get(target).orEmpty()
+        val inReach = target != null && target in basis.observed?.inReach.orEmpty()
+        val towardSource =
+            item != null && target != null && !inReach && item in basis.observed?.gives?.get(target).orEmpty()
+        val explored = target != null && target in basis.observed?.explore.orEmpty()
         goals.held =
             next?.let {
                 Held(
@@ -325,6 +342,7 @@ class GoalLedger(
                     visited,
                     stepVisible,
                     towardSource = towardSource,
+                    explored = explored,
                 )
             }
         return evidence.copy(
@@ -420,8 +438,8 @@ private fun stalledOf(
 
 /**
  * The run of steps that advanced nothing [choice] carries on from [presented]: none for a goal it
- * starts afresh, except a replace that sets the same item again at the same or a lower total,
- * which is the old goal relabelled (r17 alpha body:00000163).
+ * starts afresh, except a replace of an unmet goal that sets the same item again, at any total,
+ * which is the old goal relabelled (r17 alpha body:00000163; r18: three replaces at one more).
  */
 private fun carriedCountOf(
     presented: GoalSummary?,
@@ -430,8 +448,7 @@ private fun carriedCountOf(
     val relabelled =
         choice.disposition == GoalDisposition.REPLACE &&
             presented?.progress?.conditionMet != true &&
-            choice.successItem == presented?.successItem &&
-            (choice.successCount ?: 0) <= (presented?.successCount ?: 0)
+            choice.successItem == presented?.successItem
     val fresh = choice.disposition in STARTING && !relabelled
     return if (fresh) 0 else presented?.progress?.stepsWithoutProgress ?: 0
 }

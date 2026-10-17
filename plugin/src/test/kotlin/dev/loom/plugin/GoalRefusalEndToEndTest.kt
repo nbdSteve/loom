@@ -5,6 +5,7 @@ import dev.loom.body.BodyEvent
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
 import dev.loom.body.ShownGoal
+import dev.loom.contract.Bearing
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalStepResult
@@ -34,8 +35,8 @@ import java.nio.file.Path
  * - a collect that finds no route is the ground's answer, `terrain`, and the item is marked so it
  *   is never offered again;
  * - a continue that walks away from the agent's own lying drop of its goal's item is refused;
- * - a goal at the stall bound is replaced, in one answer, by a walk onto a source of its item,
- *   which is credited as the new goal's arrival.
+ * - a goal at the stall bound is replaced, in one answer, by a goal for another item, whose
+ *   run of steps that advanced nothing starts afresh.
  */
 class GoalRefusalEndToEndTest {
     @TempDir
@@ -150,7 +151,8 @@ class GoalRefusalEndToEndTest {
         val world = world(scene)
         world.mind.answer = { seen, index ->
             when (index) {
-                0 -> walkTo(seen, "terracotta") to sticks(GoalDisposition.ADOPT, 2)
+                // A walk onto the bush is a step toward sticks, though no arrival.
+                0 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 2)
                 1 -> walkTo(seen, "dead_bush") to goalChoice(GoalDisposition.CONTINUE)
                 else -> Intent.Idle to GoalChoice(GoalDisposition.ABANDON, stepResult = GoalStepResult.NO_PROGRESS)
             }
@@ -169,17 +171,23 @@ class GoalRefusalEndToEndTest {
     }
 
     @Test
-    fun `a goal at the stall bound is replaced by a walk onto a source of its item`() {
-        // r16 alpha body:00000113 and kappa body:00000148 lost a review cycle at the bound.
-        val terracotta = (0..2).map { Cell(8 + 2 * it, 64, 11, "terracotta") }
-        val scene = Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(BUSH) + terracotta)
+    fun `a goal at the stall bound is replaced by a goal for another item, with a run of its own`() {
+        // r16 alpha body:00000113 and kappa body:00000148 lost a review cycle at the bound; r18's
+        // three replaces set the stalled stick goal again at one more. Walks onto bushes already
+        // in dig reach are no arrival, so they stall the goal; the replace names dirt instead.
+        val bushes = listOf(BUSH, Cell(7, 64, 10, "dead_bush"), Cell(10, 64, 10, "dead_bush"))
+        val scene = Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = bushes + DIRT)
         val world = world(scene)
         world.mind.answer = { seen, index ->
-            val nth = seen.surroundings.filter { it.what == "block.minecraft.terracotta" }.sortedBy { it.ref }
+            val bush =
+                seen.surroundings
+                    .filter { it.what == "block.minecraft.dead_bush" && it.direction != Bearing.HERE }
+                    .sortedBy { it.ref }
+                    .let { it[index % it.size] }
             when (index) {
-                0 -> Intent.MoveTo(nth[0].ref) to sticks(GoalDisposition.ADOPT, 1)
-                1, 2 -> Intent.MoveTo(nth[index].ref) to goalChoice(GoalDisposition.CONTINUE)
-                3 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.REPLACE, 1)
+                0 -> Intent.MoveTo(bush.ref) to sticks(GoalDisposition.ADOPT, 1)
+                1, 2 -> Intent.MoveTo(bush.ref) to goalChoice(GoalDisposition.CONTINUE)
+                3 -> walkTo(seen, "dirt") to dirt(GoalDisposition.REPLACE)
                 else -> Intent.Idle to GoalChoice(GoalDisposition.ABANDON, stepResult = GoalStepResult.NO_PROGRESS)
             }
         }
@@ -192,11 +200,12 @@ class GoalRefusalEndToEndTest {
         assertEquals(
             listOf(1L, 2L, 3L),
             decided.subList(1, 4).map { it?.stepsWithoutProgress },
-            "walks onto terracotta are no step toward sticks",
+            "walks onto bushes already in reach are no arrival",
         )
         assertEquals(GoalEvidence.REPLACED, decided[3]?.outcome)
-        assertEquals(StepEvidence.ARRIVED, decided[4]?.stepEvidence)
-        assertEquals(0L, decided[4]?.stepsWithoutProgress)
+        // The dirt goal's own first step: a walk onto dirt in reach, no arrival, its count one.
+        assertEquals(StepEvidence.NONE, decided[4]?.stepEvidence)
+        assertEquals(1L, decided[4]?.stepsWithoutProgress)
     }
 
     private fun world(scene: Scene): ScenarioWorld {
@@ -211,6 +220,16 @@ class GoalRefusalEndToEndTest {
         val ALPHA = AgentId("agent-alpha")
         val BUSH = Cell(10, 64, 8, "dead_bush")
         val TERRACOTTA = Cell(8, 64, 11, "terracotta")
+        val DIRT = Cell(10, 64, 6, "dirt")
+
+        /** A goal choice holding one dirt, under [disposition]. */
+        fun dirt(disposition: GoalDisposition) =
+            GoalChoice(
+                disposition = disposition,
+                successItem = "item.minecraft.dirt",
+                successCount = 1,
+                stepResult = GoalStepResult.NO_PROGRESS,
+            )
 
         fun sticks(
             disposition: GoalDisposition,

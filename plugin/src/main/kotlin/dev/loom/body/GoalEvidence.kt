@@ -44,6 +44,13 @@ data class GoalEvidence(
     val stepAdvanced: Boolean? = null,
     /** What showed it, from the presented goal's progress. */
     val stepEvidence: StepEvidence? = null,
+    /** How many of the presented goal's item the agent held at this review. */
+    val targetHeld: Long? = null,
+    /**
+     * How many more of it what was in sight could give at this review, so a cut to a lower total
+     * reads as forced by sight or chosen.
+     */
+    val targetCapacity: Long? = null,
 ) {
     /** The tags [outcome] takes. */
     companion object {
@@ -126,9 +133,9 @@ data class GoalEvidence(
         const val CHOICE_MISSING: String = "goalChoiceMissing"
 
         /**
-         * An adopt, continue or revise whose dig or collect cannot give the goal's item, by what
-         * the perception showed of its target: refused with the intent (r15: terracotta, which
-         * drops nothing by hand, was dug as the step of four stick goals).
+         * An adopt, continue, revise or replace whose dig, collect, craft or walk cannot give the
+         * goal's item, by what the perception showed of its target: refused with the intent (r15:
+         * terracotta, which drops nothing by hand, was dug as the step of four stick goals).
          */
         const val STEP_UNPRODUCTIVE: String = "goalStepUnproductive"
 
@@ -146,6 +153,12 @@ data class GoalEvidence(
          */
         const val ABANDONED_ACHIEVABLE: String = "goalAbandonedAchievable"
 
+        /**
+         * A revise that names an item other than the held goal's, which is a new goal rather than
+         * a new total: refused with its intent (r18 zeta revised a scute goal into sticks).
+         */
+        const val REVISE_ITEM_CHANGED: String = "goalReviseItemChanged"
+
         /** The outcomes that refuse the decision's intent along with its goal choice. */
         val REFUSING: Set<String> =
             setOf(
@@ -159,6 +172,7 @@ data class GoalEvidence(
                 STEP_UNPRODUCTIVE,
                 OWN_DROP_IGNORED,
                 ABANDONED_ACHIEVABLE,
+                REVISE_ITEM_CHANGED,
             )
 
         /** The outcomes that settle a decision with nothing its next review needs to be told. */

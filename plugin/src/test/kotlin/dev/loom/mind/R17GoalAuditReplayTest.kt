@@ -95,11 +95,13 @@ class R17GoalAuditReplayTest {
     }
 
     @Test
-    fun `a replace that raises the total starts its own run of steps`() {
+    fun `a replace of the same item at a higher total carries the stall count too`() {
+        // r18 beta body:00000282, epsilon 203 and kappa 241 each replaced a stalled stick goal at
+        // one more stick, which reset the count r17's fix kept only for the same or a lower total.
         stallAlpha()
         review("alpha-163", Scene(), sticks(GoalDisposition.REPLACE, 3), dig)
         val (after, _) = review("alpha-164", Scene(), judged(GoalDisposition.CONTINUE), dig)
-        assertEquals(1L, after?.progress?.stepsWithoutProgress)
+        assertEquals(MAX_GOAL_STEPS_WITHOUT_PROGRESS + 1, after?.progress?.stepsWithoutProgress)
     }
 
     @Test
