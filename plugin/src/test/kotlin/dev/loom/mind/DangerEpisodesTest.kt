@@ -84,6 +84,20 @@ class DangerEpisodesTest {
     }
 
     @Test
+    fun `damage after a flight settled is asked about, and reopens the episode`() {
+        // v29 rehearsal eta fled a spider safely, was bitten 58 ticks later inside the cooldown,
+        // and died with the bite never asked about.
+        assertTrue(episodes.admit(alpha, damage("r1", "spider")))
+        tick = 6412
+        episodes.settled(alpha, "r1", fled = true)
+        tick = 6470
+        assertFalse(episodes.admit(alpha, sighting("r2", "entity.minecraft.spider")), "a sighting still cools down")
+        assertTrue(episodes.admit(alpha, damage("r3", "spider")))
+        // The reopened episode coalesces the next bite while its decision is open.
+        assertFalse(episodes.admit(alpha, damage("r4", "spider")))
+    }
+
+    @Test
     fun `an episode stays open until every admitted decision about it settles, and forget drops it`() {
         assertTrue(episodes.admit(alpha, damage("r1")))
         episodes.settled(alpha, "unknown")

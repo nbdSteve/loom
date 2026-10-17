@@ -9,6 +9,9 @@ import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 import java.util.concurrent.CompletableFuture
 
+/** The calls each agent's share keeps for damage beyond its scheduled reviews still due. */
+const val DAMAGE_CALL_RESERVE: Int = 2
+
 /**
  * Keeps each agent's calls inside its share of a run's ceiling with room for every scheduled
  * review still due: a perception that is not a scheduled review is sent only when, after it,
@@ -18,8 +21,11 @@ import java.util.concurrent.CompletableFuture
  * r20 the night's 49 danger calls and the follow-ups spent all 150 by tick 8465, and the v29
  * rehearsal's 80 by tick 8964, so the last scheduled reviews never ran. With [callsPerAgent] the
  * global ceiling divided among the agents and [scheduledPerAgent] the plan's reviews, no agent's
- * events can cost another agent - or itself - a scheduled review. A run without a plan is
- * [UNBOUNDED]. Main thread only.
+ * events can cost another agent - or itself - a scheduled review. Inside what is left, damage
+ * comes before every other event: a sighting or a follow-up is sent only while it also leaves
+ * [DAMAGE_CALL_RESERVE] calls for damage, because in the v29 rehearsal gamma's sightings and
+ * follow-ups spent its share and the zombie villager's bites that killed it were refused. A run
+ * without a plan is [UNBOUNDED]. Main thread only.
  */
 class CallReserve(
     private val callsPerAgent: Int,
@@ -41,7 +47,8 @@ class CallReserve(
         val review = perception.trigger == Trigger.GoalReview
         val calls = sent[agentId] ?: 0
         val owed = (scheduledPerAgent - (scheduled[agentId] ?: 0)).coerceAtLeast(0)
-        val admitted = if (review) calls < callsPerAgent else calls + 1 + owed <= callsPerAgent
+        val kept = if (perception.trigger is Trigger.Damaged) owed else owed + DAMAGE_CALL_RESERVE
+        val admitted = if (review) calls < callsPerAgent else calls + 1 + kept <= callsPerAgent
         if (admitted) {
             sent[agentId] = calls + 1
             if (review) scheduled[agentId] = (scheduled[agentId] ?: 0) + 1

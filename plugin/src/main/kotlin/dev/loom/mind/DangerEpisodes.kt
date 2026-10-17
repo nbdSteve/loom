@@ -11,13 +11,17 @@
  * body could only refuse a second flight as not ready.
  *
  * So an episode opens when a threat or damage perception about one threat is sent to the
- * mind. Until that decision has settled - answered and applied, or lost - and for
- * [DANGER_EPISODE_COOLDOWN_TICKS] after, another threat or damage perception about the same
- * threat for the same agent is coalesced into it rather than sent. A different threat is new
+ * mind. Until that decision has settled, and for [DANGER_EPISODE_COOLDOWN_TICKS] after a flight
+ * settles, another threat or damage perception about the same threat for the same agent is
+ * coalesced into it rather than sent; a decision lost or answered by anything but a flight ends
+ * the episode at once. A different threat is new
  * information and is sent, unless it is further off than a threat whose decision is still open:
  * in r20, eta's flight from a zombie 6.8 blocks off was preempted by one from a skeleton 23.1 off.
- * Damage is nearest of all. Nothing here decides how to act; it decides only whether a second
- * question is worth a model call.
+ * Damage is nearest of all, and damage after the episode's answer has settled is always sent:
+ * the answer did not keep the threat off, which is news. In the v29 rehearsal eta fled a spider
+ * safely, was bitten 58 ticks later inside the cooldown, and died with that bite never asked
+ * about. Nothing here decides how to act; it decides only whether a second question is worth a
+ * model call.
  *
  * Engine-free and main-thread only, like the rest of the cognition seam.
  */
@@ -75,7 +79,8 @@ class DangerEpisodes(
         // Whatever survived the sweep is open or still cooling down.
         val distance = (perception.trigger as? Trigger.ThreatSighted)?.distance ?: 0.0
         val nearerOpen = byThreat.values.any { it.open.isNotEmpty() && it.distance < distance }
-        val admitted = key !in byThreat && !nearerOpen
+        val answered = byThreat[key]?.open?.isEmpty() == true && perception.trigger is Trigger.Damaged
+        val admitted = (key !in byThreat || answered) && !nearerOpen
         if (admitted) byThreat[key] = Episode(distance).also { it.open += perception.requestId }
         return admitted
     }

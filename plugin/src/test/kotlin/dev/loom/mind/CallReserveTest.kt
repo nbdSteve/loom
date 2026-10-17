@@ -33,6 +33,23 @@ class CallReserveTest {
     }
 
     @Test
+    fun `damage comes before sightings and follow-ups inside what the reviews leave`() {
+        // v29 rehearsal gamma: sightings and follow-ups spent its share, and the bites were refused.
+        val reserve = CallReserve(callsPerAgent = 15, scheduledPerAgent = 5)
+        val sighting =
+            Trigger.ThreatSighted("entity.minecraft.zombie", "e1", 6.0, dev.loom.contract.Bearing.NORTH, true)
+        repeat(
+            8,
+        ) { assertTrue(reserve.admit(alpha, perception(requestId = "t$it", agentId = "alpha", trigger = sighting))) }
+        assertFalse(reserve.admit(alpha, perception(requestId = "t8", agentId = "alpha", trigger = sighting)))
+        assertFalse(reserve.admit(alpha, perception(requestId = "s", agentId = "alpha", trigger = Trigger.StepSettled)))
+        assertTrue(reserve.admit(alpha, damage("d1")))
+        assertTrue(reserve.admit(alpha, damage("d2")))
+        assertFalse(reserve.admit(alpha, damage("d3")), "the reviews still due keep their calls")
+        assertEquals(2, DAMAGE_CALL_RESERVE)
+    }
+
+    @Test
     fun `a review done frees nothing, and an unbounded run sends everything`() {
         val reserve = CallReserve(callsPerAgent = 3, scheduledPerAgent = 2)
         assertTrue(reserve.admit(alpha, review("r1")))

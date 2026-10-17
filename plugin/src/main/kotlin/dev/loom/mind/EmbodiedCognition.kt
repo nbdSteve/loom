@@ -274,7 +274,10 @@ class EmbodiedCognition(
         failure: Throwable,
     ) {
         goals.forget(agentId, perception.requestId)
-        danger.settled(agentId, perception.requestId)
+        // Nothing was done about the threat, so its next report is asked about again rather than
+        // cooled down as if answered: v29 rehearsal zeta's danger call was refused for its review
+        // reserve and the three bites that followed, the last one fatal, were all coalesced.
+        danger.settled(agentId, perception.requestId, fled = false)
         bodies.held.release(agentId, perception.requestId)
         val classified = failureOf(failure)
         journal.unavailable(agentId, perception, classified.tag, failure.message ?: classified.toString())
