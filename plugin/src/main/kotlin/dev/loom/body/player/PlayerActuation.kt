@@ -119,13 +119,14 @@ internal class PlayerActuation(
             registry.ready(pending.agentId) !== pending.runtime || execution == null ->
                 pending.answer.complete(IntentOutcome.NoSuchBody)
             else -> {
-                evidence.auditAndRecord(
-                    pending.runtime,
-                    pending.intent,
-                    pending.requestId,
-                    execution,
+                pending.answer.complete(
+                    evidence.auditAndRecord(
+                        pending.runtime,
+                        pending.intent,
+                        pending.requestId,
+                        execution,
+                    ),
                 )
-                pending.answer.complete(execution.outcome)
             }
         }
     }

@@ -36,18 +36,32 @@ internal data class ActionExecution(
 internal class PlayerEvidenceRecorder(
     private val context: PlayerBodyContext,
 ) {
+    /**
+     * Audits [execution] against the server, records it, and answers its outcome as the server
+     * attributes it: a claimed dig the server credits to another managed player is that player's
+     * break, so this one's is the lost race, never a dug.
+     */
     fun auditAndRecord(
         runtime: PlayerRuntime,
         intent: Intent,
         requestId: String?,
         execution: ActionExecution,
-    ) {
+    ): IntentOutcome {
         val agentId = runtime.identity.agentId
-        recordAction(agentId, intent, requestId, execution.outcome)
+        val audited =
+            execution.interaction?.let { it to context.authority.serverState.auditInteraction(runtime.identity, it) }
+        val outcome =
+            if (audited?.second?.brokenByOther == true) {
+                IntentOutcome.Rejected("the server credits the dug block to another player", EventTag.DIG_CONTEST_GONE)
+            } else {
+                execution.outcome
+            }
+        recordAction(agentId, intent, requestId, outcome)
         recordWalk(runtime, requestId, execution)
         recordFlight(runtime, requestId, execution)
         recordMeal(agentId, execution)
-        execution.interaction?.let { recordInteraction(runtime, intent, requestId, it) }
+        audited?.let { (claim, audit) -> recordInteraction(runtime, intent, requestId, claim, audit) }
+        return outcome
     }
 
     private fun recordWalk(
@@ -108,10 +122,11 @@ internal class PlayerEvidenceRecorder(
         intent: Intent,
         requestId: String?,
         claim: ServerInteractionClaim,
+        audit: ServerInteractionAudit,
     ) {
         val controlRequest = claim.controlRequest
-        val audit = context.authority.serverState.auditInteraction(runtime.identity, claim)
-        val dropped = dropsOf(runtime, requestId, claim)
+        // Only this body's own break dropped anything for it.
+        val dropped = if (audit.brokenByOther) "; dropped nothing of its own" else dropsOf(runtime, requestId, claim)
         val senseId =
             when (controlRequest) {
                 is BodyRequest.Dig -> controlRequest.senseId

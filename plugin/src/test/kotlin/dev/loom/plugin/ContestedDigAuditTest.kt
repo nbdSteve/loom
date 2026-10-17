@@ -57,11 +57,34 @@ class ContestedDigAuditTest {
     @Test
     fun `the break is the breaker's alone, and each body's claim is held to its own player's events`() {
         // What the fixed bodies claim: confirmed on both sides.
-        assertTrue(auditorWithKappasBreak().audit(kappa, claim("kappa", DigOutcome.DUG)).confirmed)
+        val auditor = auditorWithKappasBreak()
+        val kappas = auditor.audit(kappa, claim("kappa", DigOutcome.DUG))
+        assertTrue(kappas.confirmed)
+        assertFalse(kappas.brokenByOther)
         assertTrue(auditorWithKappasBreak().audit(iota, claim("iota", DigOutcome.BLOCK_GONE)).confirmed)
-        // What the r23 bodies claimed: both are still disputes, so the witness gave nothing up.
+        // A halt cannot cancel a break the server took: still a dispute.
         assertFalse(auditorWithKappasBreak().audit(kappa, claim("kappa", DigOutcome.CANCELLED)).confirmed)
-        assertFalse(auditorWithKappasBreak().audit(iota, claim("iota", DigOutcome.DUG)).confirmed)
+    }
+
+    @Test
+    fun `crossed finishes are the server's to attribute, even after the winner's own audit`() {
+        // The second v23 rehearsal, tick 3262: iota's finish on an instant-break bush crossed
+        // kappa's in the server. iota's client saw the block go after its own finish, exactly as
+        // kappa's did; only the server's break event says it was kappa's.
+        val auditor = auditorWithKappasBreak()
+        assertTrue(auditor.audit(kappa, claim("kappa", DigOutcome.DUG)).confirmed)
+        val iotas = auditor.audit(iota, claim("iota", DigOutcome.DUG))
+        assertTrue(iotas.confirmed, iotas.detail)
+        assertTrue(iotas.brokenByOther)
+        // A dug claim with no break by anyone is still a dispute.
+        val nobody = BukkitInteractionAuditor(serverAt(3268), BukkitInteractionEvents(serverAt(3268), setOf(iota.uuid)))
+        val lie = nobody.audit(iota, claim("iota", DigOutcome.DUG))
+        assertFalse(lie.confirmed)
+        assertFalse(lie.brokenByOther)
+        // And a break of another block, or one before the dig began, is no contest.
+        val elsewhere = auditorWithKappasBreak()
+        val earlier = claim("iota", DigOutcome.DUG).copy(startedTick = 3269)
+        assertFalse(elsewhere.audit(iota, earlier).confirmed)
     }
 }
 

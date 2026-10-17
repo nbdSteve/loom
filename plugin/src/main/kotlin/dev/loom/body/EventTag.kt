@@ -342,6 +342,13 @@ object EventTag {
 
     const val DIG_BLOCK_UNNAMED: String = "digBlockUnnamed"
     const val DIG_BLOCK_GONE: String = "digBlockGone"
+
+    /**
+     * A dig whose finish crossed another managed player's in the server: the body saw the block
+     * go after its own finish, and the server's break event names the other player. Neither client
+     * can tell the two apart, so the server's attribution is the outcome (r23 rehearsal, iota).
+     */
+    const val DIG_CONTEST_GONE: String = "digContestGone"
     const val DIG_BLOCK_CHANGED: String = "digBlockChanged"
     const val DIG_OUT_OF_REACH: String = "digOutOfReach"
     const val DIG_NOT_VISIBLE: String = "digNotVisible"
@@ -619,6 +626,7 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.DIG_BLOCK_UNNAMED,
         EventTag.DIG_WOULD_TRAP,
         EventTag.DIG_BLOCK_GONE,
+        EventTag.DIG_CONTEST_GONE,
         EventTag.DIG_BLOCK_CHANGED,
         EventTag.DIG_OUT_OF_REACH,
         EventTag.DIG_NOT_VISIBLE,

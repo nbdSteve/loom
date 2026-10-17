@@ -370,8 +370,12 @@ private class FakePlayerServerState : PlayerServerState {
                 is ServerInteractionClaim.Sleep ->
                     "bed ${claim.offeredBed.position} entered ${claim.report.entered}"
             }
-        return ServerInteractionAudit(true, detail)
+        return ServerInteractionAudit(true, detail, brokenByOther = claim is ServerInteractionClaim.Dig && digsLost)
     }
+
+    /** Whether the fake server credits every dug block to another managed player. */
+    @Volatile
+    var digsLost = false
 }
 
 private data class FakeSenseAuditSnapshot(
@@ -2638,6 +2642,52 @@ class PlayerWalkResolutionTest {
         assertEquals(Bearing.EAST, lying.direction)
         assertEquals(5.0, requireNotNull(lying.distance), 1e-9)
         assertEquals(0.0, lying.verticalOffset)
+    }
+
+    @Test
+    fun `a dig the server credits to another player is that player's break, not this one's`() {
+        // The second v23 rehearsal, tick 3262: two finishes on one instant-break bush crossed in
+        // the server, and both bodies saw the block go after their own finish.
+        val agent = AgentId("agent-contest")
+        val attributed = mutableListOf<String>()
+        val drops =
+            object : OwnDrops {
+                override fun attribute(
+                    identity: PlayerIdentity,
+                    requestId: String,
+                    block: List<Int>,
+                    sinceTick: Long,
+                ): List<OwnDropReading> {
+                    attributed += requestId
+                    return emptyList()
+                }
+
+                override fun of(identity: PlayerIdentity): List<OwnDropReading> = emptyList()
+            }
+        val server = FakePlayerServerState().apply { digsLost = true }
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    server = server,
+                    intercept = { request -> (request as? BodyRequest.Sense)?.let(::interactionSense) },
+                    ownDrops = drops,
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val stone = perception.surroundings.single { it.what == "block.minecraft.stone" }
+        val outcome = harness.port.apply(agent, Intent.Dig(stone.ref), perception.requestId).await()
+
+        assertEquals(EventTag.DIG_CONTEST_GONE, (outcome as IntentOutcome.Rejected).tag)
+        val applied = harness.records.single { it.event == BodyEvent.INTENT_APPLIED }
+        assertEquals(EventTag.DIG_CONTEST_GONE, applied.outcome)
+        val interaction = harness.records.single { it.event == BodyEvent.WORLD_INTERACTION }
+        assertEquals(EventTag.SERVER_EFFECT_CONFIRMED, interaction.outcome)
+        assertTrue(interaction.detail.contains("body dug"), interaction.detail)
+        assertTrue(interaction.detail.endsWith("; dropped nothing of its own"), interaction.detail)
+        // Its drops are the winner's: nothing is attributed to this dig.
+        assertEquals(emptyList<String>(), attributed)
     }
 
     @Test

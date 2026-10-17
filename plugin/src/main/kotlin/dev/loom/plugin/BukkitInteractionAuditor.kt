@@ -64,8 +64,26 @@ internal class BukkitInteractionAuditor(
         val exact =
             event != null &&
                 canonicalResource(event.what) == canonicalResource(claim.offered.what)
+        val claimed = claim.report.outcome == DigOutcome.DUG
+        // Two finishes crossed in the server: this body saw the block go after its own finish, and
+        // the server's break names another managed player. The server's attribution stands.
+        val other =
+            if (claimed && event == null) {
+                events?.evidence?.brokenByAnother(identity.uuid, claim.startedTick, claim.offered.position.point())
+            } else {
+                null
+            }
+        if (other != null && canonicalResource(other.what) == canonicalResource(claim.offered.what)) {
+            return ServerInteractionAudit(
+                confirmed = true,
+                detail =
+                    "blockBreak ${other.what} at ${other.block.words()} on tick ${other.tick} " +
+                        "by another managed player",
+                brokenByOther = true,
+            )
+        }
         return interactionEventAudit(
-            claimed = claim.report.outcome == DigOutcome.DUG,
+            claimed = claimed,
             eventFound = event != null,
             exact = exact,
             foundDetail =

@@ -17,6 +17,8 @@ import java.util.UUID
 data class ServerInteractionAudit(
     val confirmed: Boolean,
     val detail: String,
+    /** A claimed dig whose block the server's break event credits to another managed player. */
+    val brokenByOther: Boolean = false,
 )
 
 /**

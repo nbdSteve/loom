@@ -243,12 +243,31 @@ class BukkitInteractionEvents(
 }
 
 internal class BoundedInteractionEvidence(
-    server: Server,
+    private val server: Server,
 ) {
     private val journal = BoundedInteractionEventJournal(server)
 
+    // Every managed break, kept apart from the consumable journal, so one player's audit can see
+    // that another player broke its block even after that player's own audit took the event.
+    private val breaks = ArrayDeque<VanillaInteractionEvent.Broke>()
+
     fun remember(event: VanillaInteractionEvent) {
         journal.remember(event)
+        if (event is VanillaInteractionEvent.Broke) {
+            while (breaks.size >= MAX_EVENTS_PER_PLAYER * MAX_CONFIGURED_AGENTS) breaks.removeFirst()
+            breaks.addLast(event)
+        }
+    }
+
+    /** The managed break of [block] since [sinceTick] by a player other than [player], if any. */
+    fun brokenByAnother(
+        player: UUID,
+        sinceTick: Long,
+        block: BlockPoint,
+    ): VanillaInteractionEvent.Broke? {
+        val now = server.currentTick.toLong()
+        while (breaks.isNotEmpty() && now - breaks.first.tick > EVENT_RETENTION_TICKS) breaks.removeFirst()
+        return breaks.firstOrNull { it.player != player && it.block == block && it.tick >= sinceTick }
     }
 
     fun takeBreak(
