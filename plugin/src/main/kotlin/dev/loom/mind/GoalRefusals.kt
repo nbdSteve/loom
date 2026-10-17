@@ -41,7 +41,7 @@ internal fun incoherenceOf(
     val stepping = choice?.disposition in STEPPING
     return reviseItemOf(presented, choice)
         ?: conditionRefusalOf(presented, choice, intent, observed)
-        ?: successRefusalOf(presented, choice, intent, observed)
+        ?: successRefusalOf(presented, choice, observed)
         ?: GoalEvidence.STEP_IDLE.takeIf { stepping && intent.action in PASSIVE }
         ?: GoalEvidence.STEP_UNPRODUCTIVE.takeIf { stepping && !canGive(presented, choice, intent, observed) }
         ?: GoalEvidence.OWN_DROP_IGNORED.takeIf { ownDropIgnored(presented, choice, intent, observed) }
@@ -140,31 +140,31 @@ private fun targetOf(
 }
 
 /**
- * Why the success condition [choice] sets, or the held one a continue keeps, cannot be a goal
- * now, by [observed]: the inventory already holds a count being set, or the count is more than
- * the inventory plus everything in sight could give. One rule for adopt, continue and revise
- * (r15: a revise keeping theta's held target was refused where a continue of it would have
- * passed). A choice missing a field is refused for that first; this is a question about a whole one.
+ * Why the success condition [choice] sets cannot be a goal now, by [observed]: the inventory
+ * already holds the count, or the count is more than the inventory plus everything in sight could
+ * give. One rule for adopt, revise and replace (r15: a revise keeping theta's held target was
+ * refused). A continue keeps a target set when it was obtainable, and is held to a productive step
+ * and the stall bound instead. A choice missing a field is refused for that first; this is a
+ * question about a whole one.
  */
 private fun successRefusalOf(
     presented: GoalSummary?,
     choice: GoalChoice?,
-    intent: Intent,
     observed: GoalObservation?,
 ): String? {
     val disposition = choice?.disposition
     val judged = disposition in STEPPING && choice?.let(::missingFieldOf) == null
     val (item, count) = targetOf(presented, choice)?.takeIf { judged } ?: return null
     val held = observed?.inventory?.get(item) ?: 0
-    // A held goal sight cannot meet may be continued by walking to the edge of sight to look for
-    // a source, rather than be lost to a walk (r18: five goals abandoned to look further).
-    val exploring =
-        disposition == GoalDisposition.CONTINUE && intent is Intent.MoveTo &&
-            intent.onto in observed?.explore.orEmpty()
+    // A continue keeps a target set when it was obtainable, and is held to a productive step
+    // instead: what sight can give advances it, a walk to the edge of sight looks for the rest,
+    // and the stall bound ends a goal nothing advances (the path rehearsal: a goal one log short
+    // was refused the collect of the agent's own lying log).
+    val continuing = disposition == GoalDisposition.CONTINUE
     return when {
         observed == null -> null
-        disposition != GoalDisposition.CONTINUE && held >= count -> GoalEvidence.ALREADY_MET
-        !exploring && count > held + (observed.capacity[item] ?: 0) -> GoalEvidence.SUCCESS_UNOBTAINABLE
+        !continuing && held >= count -> GoalEvidence.ALREADY_MET
+        !continuing && count > held + (observed.capacity[item] ?: 0) -> GoalEvidence.SUCCESS_UNOBTAINABLE
         else -> null
     }
 }

@@ -503,9 +503,9 @@ impl OfferedRefs {
             self.stalled = true;
             return;
         }
-        if !self.goal_obtainable {
-            return;
-        }
+        // Whether or not sight can meet all of it, a goal is stepped only toward its own item, and
+        // its own lying drop is collected first (the path rehearsal: a goal one log short could only
+        // walk away from its own log).
         let gives_goal = |handle: &String| {
             gives
                 .iter()
@@ -528,6 +528,7 @@ impl OfferedRefs {
         self.held_item.is_some()
             && !self.goal_obtainable
             && !self.stalled
+            && !self.collect_required
             && !self.explore_targets.is_empty()
     }
 

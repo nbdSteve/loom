@@ -406,9 +406,14 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
         dispositions(&of(&with_bush(sticks.clone()))),
         ["continue", "revise"]
     );
-    // Two sticks are one more than a bush's expected yield: not continued (r16 calibration).
+    // Two sticks are one more than a bush's expected yield (r16 calibration): the bush is still
+    // dug toward the goal, and the goal may be revised to what sight gives, or abandoned (the
+    // path rehearsal: a goal one log short was refused the collect of its own lying log).
     sticks.goal.as_mut().unwrap().success_count = Some(2);
-    assert_eq!(dispositions(&of(&with_bush(sticks))), ["revise", "abandon"]);
+    assert_eq!(
+        dispositions(&of(&with_bush(sticks))),
+        ["continue", "revise", "abandon"]
+    );
     // r11: delta, epsilon and zeta held the stick their goal named and went on. A met
     // condition is completed or revised; nothing else, not even no choice, is offered.
     let met = with_bush(fixture("perception-goal-condition-met"));
@@ -918,4 +923,62 @@ fn the_widest_goal_review_schema_stays_inside_the_providers_enum_limits() {
     enum_values(&schema, &mut count, &mut characters);
     assert!(count <= 500, "{count} enum values");
     assert!(characters <= 7_500, "{characters} enum characters");
+}
+
+#[test]
+fn a_goal_sight_cannot_meet_still_collects_its_own_lying_drop_before_looking_further() {
+    // The path rehearsal: epsilon held no log of a two-log goal with its own log lying in reach
+    // and nothing else in sight; the collect was refused as unobtainable, three reviews running.
+    let mut seen = with_edge(fixture("perception-goal-carried"));
+    let mut log = stick_drop("d7", 2.5);
+    log.what = "item.minecraft.oak_log".to_owned();
+    seen.surroundings.push(log);
+    seen.self_state.own_drops.push(loom_contract::OwnDrop {
+        request_id: "req-dig".to_owned(),
+        what: "item.minecraft.oak_log".to_owned(),
+        count: 1,
+        fate: loom_contract::DropFate::Lying,
+        distance: Some(2.5),
+        direction: Some(loom_contract::Bearing::North),
+        vertical_offset: Some(0.0),
+        drop_ref: Some("d7".to_owned()),
+    });
+    let offered = OfferedRefs::of(&seen);
+    assert!(!offered.goal_obtainable);
+    assert!(offered.collect_required);
+    assert!(!offered.explore_continue());
+    let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let continuing = json!({ "disposition": "continue", "stepResult": "progressing" });
+    assert!(validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "collect", "item": "d7", "approach": true }),
+        &continuing
+    )));
+    assert!(!validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "moveTo", "onto": "x1" }),
+        &continuing
+    )));
+}
+
+#[test]
+fn a_goal_for_a_craftable_or_dropped_item_is_stepped_by_its_craft_or_its_collect() {
+    // Three logs and a planks recipe at a goal review: a planks goal is stepped by the craft.
+    let mut seen = fixture("perception-crafting");
+    seen.surroundings.push(stick_drop("d1", 1.0));
+    seen.surroundings.push(stick_drop("d2", 6.0));
+    let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let planks = json!({ "disposition": "adopt", "successItem": "item.minecraft.oak_planks", "successCount": 4 });
+    let sticks =
+        json!({ "disposition": "adopt", "successItem": "item.minecraft.stick", "successCount": 1 });
+    let craft = json!({ "action": "craft", "recipe": "r1", "crafts": 1 });
+    let beside = json!({ "action": "collect", "item": "d1", "approach": false });
+    let walking = json!({ "action": "collect", "item": "d2", "approach": true });
+    assert!(validator.is_valid(&answer_in(&schema, &craft, &planks)));
+    assert!(!validator.is_valid(&answer_in(&schema, &craft, &sticks)));
+    assert!(validator.is_valid(&answer_in(&schema, &beside, &sticks)));
+    assert!(validator.is_valid(&answer_in(&schema, &walking, &sticks)));
+    assert!(!validator.is_valid(&answer_in(&schema, &walking, &planks)));
 }

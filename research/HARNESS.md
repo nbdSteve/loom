@@ -407,6 +407,20 @@ An idle or rest beside a cell at the edge of sight counts whatever its goal choi
 A complete-and-adopt answers a met condition.
 Generation 9 is frozen, so r18 re-derives exactly as published; `test/readiness-wooded.test.js` holds r18's evidence to generation 10, where it is `notReady` with four needless flights and its pursuit bars not cleared.
 
+## The path rehearsal
+
+`research/tools/path-rehearsal.js` is a deterministic live rehearsal of the goal paths no research run has reached by itself, and it is not a research run.
+It starts one real Paper server with the Loom plugin and six real bodies on a flat world laid out by the console commands in `research/tools/path-rehearsal.json`, with the cognition service answering as the path exerciser (`LOOM_COGNITION_BACKEND=scripted-paths`).
+Each agent walks one path, and the run's own evidence, normalized and judged by readiness gate generation 10, must show each one as the server witnessed it.
+The paths are: a confirmed craft and a goal completed and the next adopted in one answer; an own drop ignored and refused; that drop still told lying more than 4,800 ticks after the dig; a flight from a peer classed `peerFlight`; a collect without moving that vanilla's own pickup ends; a walk to the edge of sight credited `revealed`; and a revise to another item refused.
+No other decision may fail, no claim may be disputed, and no action may end in a class the paths do not explain.
+Vanilla picks up an item inside the pickup box within half a second and despawns a lying one after 6,000 ticks, which is why a collect without moving uses a summoned item with a pickup delay, and why a peer's spoken line, timed by the review stagger, gives the dropping agent a perception between 4,800 and 6,000 ticks after its dig.
+Its world is built for the paths, its mind is scripted, and nothing is published: it writes one report under `.scratch/path-rehearsal/` and exits non-zero unless every path is covered.
+
+```sh
+node research/tools/path-rehearsal.js --skip-build
+```
+
 ## Lifecycle and cleanup
 
 Before it creates the disposable server or reads a credential, the harness refuses to start unless the run volume has at least 2 GiB free, or more when the configured log and artifact bounds need it.

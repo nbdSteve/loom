@@ -25,6 +25,7 @@ That line is the fastest way to tell a running service apart from another one, a
 | --- | --- | --- |
 | `scripted` (default) | A deterministic stand-in. No network, no inference. | No |
 | `openai` | The OpenAI API, at the two configured model tiers. | Yes |
+| `scripted-paths` | The path rehearsal's exerciser (`src/exerciser.rs`): a deterministic role per agent, several of them wrong on purpose so the body, the ledger and the gate must refuse or class them. Stamped `scripted-path-exerciser`. Only `research/tools/path-rehearsal.js` selects it. | No |
 
 The default is `scripted` on purpose, and it is the safe local and test fallback:
 a fresh checkout runs with no credentials at all, the whole test suite is hermetic, and CI's cross-runtime round trip proves the wire without buying an inference.

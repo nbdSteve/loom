@@ -146,7 +146,7 @@ class R15GoalAuditReplayTest {
     }
 
     @Test
-    fun `continue and revise are held to one obtainability rule, and the refusal is told with its numbers`() {
+    fun `a revise is held to obtainability, the refusal is told with its numbers, and a continue steps on`() {
         // theta body:00000263: held 3 of 8 sticks with sight able to give 4; the revise keeping the
         // held target was refused while a continue of it would have passed.
         val scene = Scene(inventory = mapOf(STICK to 3L), capacity = mapOf(STICK to 4L))
@@ -164,8 +164,11 @@ class R15GoalAuditReplayTest {
         )
         // Told once.
         assertNull(ledger.takeRefusal(AgentId("theta")))
+        // From routine-v27 a continue keeps the target it set and is held to a productive step and
+        // the stall bound instead (the path rehearsal: a goal one log short was refused the
+        // collect of the agent's own lying log), so the dig toward it stands.
         val (_, continued) = review("theta-295", scene, goalChoice(GoalDisposition.CONTINUE), dig)
-        assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, continued?.outcome)
+        assertEquals(GoalEvidence.CONTINUED, continued?.outcome)
         // A revise to a total sight can still give stands.
         val (_, lowered) = review("theta-296", scene, sticks(GoalDisposition.REVISE, 7), dig)
         assertEquals(GoalEvidence.REVISED, lowered?.outcome)

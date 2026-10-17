@@ -31,6 +31,7 @@
 //! documentation for it and for everything [`openai`] reads is `cognition/README.md`.
 
 pub mod config;
+pub mod exerciser;
 pub mod mind;
 pub mod model;
 pub mod offered;

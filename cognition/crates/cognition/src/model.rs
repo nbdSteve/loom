@@ -275,6 +275,8 @@ pub enum BackendChoice {
     Scripted,
     /// The `OpenAI` API. See [`crate::openai`].
     OpenAi,
+    /// The path rehearsal's deterministic exerciser. See [`crate::exerciser`].
+    PathExerciser,
 }
 
 impl BackendChoice {
@@ -283,7 +285,7 @@ impl BackendChoice {
 
     /// The values [`BackendChoice::from_env`] accepts, for error messages and
     /// for the operator documentation to quote.
-    pub const ACCEPTED: &'static str = "'scripted' or 'openai'";
+    pub const ACCEPTED: &'static str = "'scripted', 'scripted-paths' or 'openai'";
 
     /// Reads the choice from `env`.
     ///
@@ -299,6 +301,7 @@ impl BackendChoice {
         match raw.to_ascii_lowercase().as_str() {
             "scripted" => Ok(Self::Scripted),
             "openai" => Ok(Self::OpenAi),
+            "scripted-paths" => Ok(Self::PathExerciser),
             _ => Err(ConfigError::NotAChoice {
                 var: BACKEND_VAR,
                 value: bounded(&raw),
@@ -313,6 +316,7 @@ impl BackendChoice {
         match self {
             Self::Scripted => "scripted",
             Self::OpenAi => "openai",
+            Self::PathExerciser => "scripted-paths",
         }
     }
 }

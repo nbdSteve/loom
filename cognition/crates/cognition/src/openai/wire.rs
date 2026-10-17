@@ -961,17 +961,22 @@ fn coupled_offer(
             .collect()
     };
     match phase {
-        GoalPhase::Any => unreachable_any(),
+        // The reference shape is never coupled, so it never reaches here; it offers nothing.
+        GoalPhase::Any => GoalOffer {
+            by_item: Vec::new(),
+            exploring: Vec::new(),
+            any: Vec::new(),
+        },
         GoalPhase::Unheld => GoalOffer {
             by_item: each_item(GoalDisposition::Adopt, "adopt", ADOPT),
             exploring: Vec::new(),
             any: none(),
         },
         // A held goal must be answered: a decision that acts while ignoring its goal is refused,
-        // so null is not offered (r15 kappa). One sight can still meet is not abandoned (r17
-        // theta); one it cannot is continued by a walk to look further, or abandoned (r18: five
-        // goals abandoned to look).
-        GoalPhase::Held if refs.goal_obtainable => {
+        // so null is not offered (r15 kappa). It is stepped toward its own item whether or not
+        // sight can meet all of it; one sight can meet is not abandoned (r17 theta), and one it
+        // cannot may instead look further, or be abandoned (r18: five goals abandoned to look).
+        GoalPhase::Held => {
             let mut by_item = revise_held();
             if let Some(item) = &held {
                 match by_item.iter_mut().find(|(name, _)| name == item) {
@@ -983,21 +988,17 @@ fn coupled_offer(
                     None => by_item.insert(0, (item.clone(), continued())),
                 }
             }
+            let short = !refs.goal_obtainable;
             GoalOffer {
                 by_item,
-                exploring: Vec::new(),
-                any: Vec::new(),
+                exploring: if refs.explore_continue() {
+                    continued()
+                } else {
+                    Vec::new()
+                },
+                any: if short { abandon() } else { Vec::new() },
             }
         }
-        GoalPhase::Held => GoalOffer {
-            by_item: revise_held(),
-            exploring: if refs.explore_continue() {
-                continued()
-            } else {
-                Vec::new()
-            },
-            any: abandon(),
-        },
         // A met goal is completed, or completed and the next adopted in one answer by a replace,
         // or revised to a total not yet held (r17 and r18: every completion idled).
         GoalPhase::Met => {
@@ -1028,15 +1029,6 @@ fn coupled_offer(
                 any,
             }
         }
-    }
-}
-
-/// The reference shape is never coupled, so the coupled offer never meets it.
-const fn unreachable_any() -> GoalOffer {
-    GoalOffer {
-        by_item: Vec::new(),
-        exploring: Vec::new(),
-        any: Vec::new(),
     }
 }
 
