@@ -79,6 +79,14 @@ pub const MAX_OBTAINABLE_ITEMS: usize = 16;
 /// obtainable item its own steps stays inside the provider's enum limits.
 pub const MAX_STEP_REFS_PER_ITEM: usize = 4;
 
+/// How near a hunter in sight must be to be offered for a flight at a goal review: the body's
+/// perception radius, inside which a sighting is already news.
+pub const DANGER_SIGHT_BLOCKS: f64 = 16.0;
+
+/// How near a hunter out of sight must be to be offered for a flight at a goal review: the
+/// JVM's `THREAT_NEAR_BLOCKS`, inside which an unseen hunter is news.
+pub const DANGER_UNSEEN_BLOCKS: f64 = 8.0;
+
 /// The steps one goal item may be pursued by, by action: what in sight can give that item.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ItemSteps {
@@ -141,6 +149,11 @@ pub struct OfferedRefs {
     pub explore_targets: Vec<String>,
     /// Shown living things, and a sighted threat: what `flee` may name.
     pub creatures: Vec<String>,
+    /// Creatures that hunt the agent's kind and are near enough to flee from at a goal review:
+    /// in sight within [`DANGER_SIGHT_BLOCKS`], or out of sight within [`DANGER_UNSEEN_BLOCKS`]
+    /// (r20: kappa reviewed at health 7.7 beside a zombie and a skeleton, was offered only dirt
+    /// digs, and died 28 ticks later).
+    pub danger: Vec<String>,
     /// Creatures within attack reach: what an `attack` without approach may name.
     pub strike_targets: Vec<String>,
     /// Creatures within the pursuit bound: what an approaching `attack` may name.
@@ -322,7 +335,17 @@ impl OfferedRefs {
                         offer(&mut offered.walk_targets, handle);
                     }
                 }
-                ObservationKind::Entity => offered.creature(handle, seen.distance),
+                ObservationKind::Entity => {
+                    offered.creature(handle, seen.distance);
+                    let near = if seen.visible {
+                        DANGER_SIGHT_BLOCKS
+                    } else {
+                        DANGER_UNSEEN_BLOCKS
+                    };
+                    if seen.hunts == Some(true) && seen.distance <= near {
+                        offer(&mut offered.danger, handle);
+                    }
+                }
                 // A drop the body already found no route to is neither offered nor counted on
                 // (r15: five collects were refused as noRoute while their items stood in capacity).
                 ObservationKind::DroppedItem if seen.route_refused != Some(true) => {
@@ -675,6 +698,7 @@ mod tests {
             yields: (kind == ObservationKind::Block).then(Vec::new),
             dig_safe: (kind == ObservationKind::Block).then_some(true),
             route_refused: None,
+            hunts: None,
         }
     }
 

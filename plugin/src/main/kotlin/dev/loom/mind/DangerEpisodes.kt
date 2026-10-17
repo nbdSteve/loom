@@ -73,14 +73,23 @@ class DangerEpisodes(
         return admitted
     }
 
-    /** Marks the decision for [requestId] settled, which starts its episode's cooldown. */
+    /**
+     * Marks the decision for [requestId] settled. A flight starts its episode's cooldown; any
+     * other answer ends the episode at once, so the next sighting of that threat is asked about
+     * again (r20 kappa answered a skeleton 2.4 blocks off with a one-block walk, its next sighting
+     * was coalesced into the cooldown, and it died beside that skeleton).
+     */
     fun settled(
         agentId: AgentId,
         requestId: String,
+        fled: Boolean = true,
     ) {
         val now = currentTick()
-        episodes[agentId]?.values?.forEach { episode ->
-            if (episode.open.remove(requestId) && episode.open.isEmpty()) episode.settledTick = now
+        val byThreat = episodes[agentId] ?: return
+        byThreat.entries.removeIf { (_, episode) ->
+            val ended = episode.open.remove(requestId) && episode.open.isEmpty()
+            if (ended) episode.settledTick = now
+            ended && !fled
         }
     }
 

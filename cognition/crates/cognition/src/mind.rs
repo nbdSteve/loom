@@ -256,6 +256,7 @@ mod tests {
             yields: None,
             dig_safe: None,
             route_refused: None,
+            hunts: None,
         });
         for wrong in [
             Intent::Dig {

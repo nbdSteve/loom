@@ -882,6 +882,7 @@ mod tests {
             yields: None,
             dig_safe: None,
             route_refused: None,
+            hunts: None,
         });
         seen
     }
@@ -1002,6 +1003,7 @@ mod tests {
             }]),
             dig_safe: Some(true),
             route_refused: None,
+            hunts: None,
         }];
         let digging = ScriptedBackend::draft_now(&route, &first);
         assert_eq!(
@@ -1086,6 +1088,7 @@ mod tests {
             }]),
             dig_safe: Some(true),
             route_refused: None,
+            hunts: None,
         };
         seen.surroundings = vec![bush("b9", 9.0), bush("b7", 7.0)];
         let walking = ScriptedBackend::draft_now(&route, &seen);
@@ -1325,6 +1328,7 @@ mod tests {
                 yields: Some(vec![]),
                 dig_safe: Some(true),
                 route_refused: None,
+                hunts: None,
             });
         }
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);

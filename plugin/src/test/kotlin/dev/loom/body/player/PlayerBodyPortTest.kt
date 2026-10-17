@@ -1176,6 +1176,8 @@ class PlayerSceneSelectionIntegrationTest {
         // The player body makes no route search toward a threat, so it states none (r20: a
         // constant false read as no route to flee).
         assertEquals(null, trigger.reachable)
+        // The hunter is marked as one, so a goal review may flee from it (r20 kappa).
+        assertEquals(true, entity.hunts)
         assertEquals(
             BODY_SENSE_MAX_OFFERS_PER_KIND,
             perception.surroundings.count { it.kind == ObservationKind.BLOCK },

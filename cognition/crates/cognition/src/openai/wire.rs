@@ -1250,6 +1250,9 @@ fn coupled_schema(
             &offer.exploring,
         ));
     }
+    if let Some(flee) = danger_flee(offered, table) {
+        pairings.push(pairing(flee, &[json!({ "type": "null" })]));
+    }
     table.insert("activeIntent".to_owned(), json!({ "anyOf": active }));
     if offered.passive_allowed() {
         table.insert("passiveIntent".to_owned(), json!({ "anyOf": passive }));
@@ -1273,6 +1276,35 @@ fn coupled_schema(
         "required": ["decision", "reasoning"],
         "additionalProperties": false,
     })
+}
+
+/// The flight a goal review may take from a hunter near enough to matter, with no goal choice:
+/// it steps aside from the goal, which stays held (r20: kappa reviewed at health 7.7 beside a
+/// zombie and a skeleton, was offered only dirt digs, and died 28 ticks later). Its refs are
+/// defined once under `$defs` as `dangerRef`; none when no hunter is near.
+fn danger_flee(offered: &OfferedRefs, table: &mut serde_json::Map<String, Value>) -> Option<Value> {
+    if offered.danger.is_empty() {
+        return None;
+    }
+    table.insert(
+        "dangerRef".to_owned(),
+        json!({
+            "type": "string",
+            "enum": offered.danger,
+            "description": "A creature in this message that hunts your kind and is near enough to flee from.",
+        }),
+    );
+    let flee = intent_variant(
+        "flee",
+        vec![(
+            "from",
+            Some(json!({
+                "description": "The ref of the hunter to flee from.",
+                "anyOf": [{ "$ref": "#/$defs/dangerRef" }],
+            })),
+        )],
+    );
+    Some(json!(flee.into_iter().collect::<Vec<_>>()))
 }
 
 /// One goal item's own step intents, each ref list defined once under `$defs` as item `index`'s.

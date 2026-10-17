@@ -90,7 +90,9 @@ private fun conditionRefusalOf(
         disposition == GoalDisposition.ABANDON && achievable(presented, observed) ->
             GoalEvidence.ABANDONED_ACHIEVABLE
         disposition == GoalDisposition.COMPLETE -> completionRefusalOf(met, observed)
-        presented != null && choice == null && intent.action !in PASSIVE -> GoalEvidence.CHOICE_MISSING
+        // A flight from a hunter steps aside from the goal, which stays held (r20 kappa).
+        presented != null && choice == null && intent.action !in PASSIVE && intent !is Intent.Flee ->
+            GoalEvidence.CHOICE_MISSING
         else -> null
     }
 }

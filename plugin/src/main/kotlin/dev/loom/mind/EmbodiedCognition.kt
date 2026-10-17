@@ -25,6 +25,7 @@ import dev.loom.body.IntentOutcome
 import dev.loom.body.ShownGoal
 import dev.loom.body.tagOf
 import dev.loom.contract.Decision
+import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 import dev.loom.contract.reviewsGoal
@@ -294,7 +295,7 @@ class EmbodiedCognition(
             val refused = IntentOutcome.Rejected("the decision contradicts its own goal: ${goal.outcome}", goal.outcome)
             journal.refused(agentId, decision, goal.outcome)
             goals.stepped(agentId, decision.requestId, tagOf(decision.intent), goal.outcome)
-            danger.settled(agentId, decision.requestId)
+            danger.settled(agentId, decision.requestId, fled = decision.intent is Intent.Flee)
             bodies.held.release(agentId, decision.requestId)
             callbacks.onApplied(AppliedDecision(decision, refused))
             return
@@ -336,7 +337,7 @@ class EmbodiedCognition(
                         owed = dropped || goal?.ownGoalDropLying == true,
                     )
                 }
-                danger.settled(agentId, decision.requestId)
+                danger.settled(agentId, decision.requestId, fled = decision.intent is Intent.Flee)
                 if (applied == IntentOutcome.NoSuchBody) danger.forget(agentId)
                 if (applied == IntentOutcome.NoSuchBody) {
                     journal.discarded(agentId, decision)

@@ -248,6 +248,7 @@ fn the_widest_request_schema_stays_inside_the_providers_enum_limits() {
         yields: None,
         dig_safe: Some(true),
         route_refused: None,
+        hunts: None,
     };
     // Each block yields eight items of the contract's longest name, and one is unsafe to dig.
     seen.surroundings = (0..MAX_PERCEPTION_OBSERVATIONS)
@@ -265,6 +266,7 @@ fn the_widest_request_schema_stays_inside_the_providers_enum_limits() {
             ),
             dig_safe: Some(index != 0),
             route_refused: None,
+            hunts: None,
             ..block.clone()
         })
         .collect();
@@ -378,6 +380,7 @@ fn with_bush(mut seen: Perception) -> Perception {
         }]),
         dig_safe: Some(true),
         route_refused: None,
+        hunts: None,
     });
     seen
 }
@@ -552,6 +555,7 @@ fn a_held_goal_offers_dig_and_collect_only_for_what_can_give_its_item() {
         yields: None,
         dig_safe: None,
         route_refused: refused,
+        hunts: None,
         ..bush.clone()
     };
     seen.surroundings
@@ -587,6 +591,7 @@ fn stick_drop(handle: &str, distance: f64) -> Observation {
         yields: None,
         dig_safe: None,
         route_refused: None,
+        hunts: None,
     }
 }
 
@@ -730,6 +735,7 @@ fn with_block(
         ),
         dig_safe: Some(true),
         route_refused: None,
+        hunts: None,
     });
     seen
 }
@@ -881,6 +887,7 @@ fn the_widest_goal_review_schema_stays_inside_the_providers_enum_limits() {
         yields: None,
         dig_safe: Some(true),
         route_refused: None,
+        hunts: None,
     };
     seen.surroundings = (0..MAX_PERCEPTION_OBSERVATIONS)
         .map(|index| Observation {
@@ -991,4 +998,23 @@ fn a_goal_for_a_craftable_or_dropped_item_is_stepped_by_its_craft_or_its_collect
     assert!(validator.is_valid(&answer_in(&schema, &beside, &sticks)));
     assert!(validator.is_valid(&answer_in(&schema, &walking, &sticks)));
     assert!(!validator.is_valid(&answer_in(&schema, &walking, &planks)));
+}
+
+#[test]
+fn a_goal_review_beside_a_hunter_may_flee_from_it_with_no_goal_choice() {
+    // r20 kappa body:00000823: health 7.7, a zombie 3.3 off and a skeleton 2.1 off, and the
+    // review offered only dirt digs; kappa dug and died 28 ticks later.
+    let seen = fixture("perception-goal-review-hunted");
+    let offered = OfferedRefs::of(&seen);
+    assert_eq!(offered.danger, vec!["e9".to_owned()]);
+    let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
+    assert_eq!(schema["$defs"]["dangerRef"]["enum"], serde_json::json!(["e9"]));
+    let text = schema.to_string();
+    assert!(text.contains("\"#/$defs/dangerRef\""), "{text}");
+    // A creature that does not hunt the agent's kind is no danger.
+    let mut calm = seen.clone();
+    calm.surroundings[0].hunts = None;
+    assert!(OfferedRefs::of(&calm).danger.is_empty());
+    let calm_schema = decision_schema_for(&OfferedRefs::of(&calm), GoalPhase::of(&calm));
+    assert!(calm_schema["$defs"].get("dangerRef").is_none());
 }

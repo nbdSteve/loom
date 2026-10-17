@@ -720,6 +720,10 @@ pub struct Observation {
     /// route to: it is not offered to collect and gives nothing a goal may count on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_refused: Option<bool>,
+    /// Present, and true, only for a creature that hunts the agent's kind, by the body's own
+    /// list of player hunters: what a goal review may flee from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hunts: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -743,6 +747,8 @@ struct ObservationWire {
     dig_safe: Option<bool>,
     #[serde(default)]
     route_refused: Option<bool>,
+    #[serde(default)]
+    hunts: Option<bool>,
 }
 
 impl<'de> Deserialize<'de> for Observation {
@@ -772,6 +778,12 @@ impl<'de> Deserialize<'de> for Observation {
                 "routeRefused is present, and true, only for a dropped item",
             ));
         }
+        if raw.hunts == Some(false) || (raw.hunts.is_some() && raw.kind != ObservationKind::Entity)
+        {
+            return Err(de::Error::custom(
+                "hunts is present, and true, only for a creature",
+            ));
+        }
         if raw.count.is_some_and(|count| count < 1) {
             return Err(de::Error::custom(
                 "a dropped-item observation must hold at least one item",
@@ -790,6 +802,7 @@ impl<'de> Deserialize<'de> for Observation {
             yields: raw.yields,
             dig_safe: raw.dig_safe,
             route_refused: raw.route_refused,
+            hunts: raw.hunts,
         })
     }
 }

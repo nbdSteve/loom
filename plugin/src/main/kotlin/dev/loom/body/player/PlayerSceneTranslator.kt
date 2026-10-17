@@ -12,6 +12,7 @@ import dev.loom.body.WorldClock
 import dev.loom.body.WorldTargetRefBinding
 import dev.loom.body.blocksApart
 import dev.loom.body.horizontalBearing
+import dev.loom.body.huntsPlayers
 import dev.loom.contract.CraftingOption
 import dev.loom.contract.ExploreTarget
 import dev.loom.contract.InventoryStack
@@ -233,6 +234,7 @@ internal class PlayerSceneTranslator(
             yields = offer.yields,
             digSafe = offer.digSafe,
             routeRefused = offer.routeRefused,
+            hunts = huntsPlayers(offer.what).takeIf { it && offer.kind == ObservationKind.ENTITY },
         )
     }
 

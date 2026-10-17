@@ -582,6 +582,7 @@ mod tests {
             }]),
             dig_safe: Some(true),
             route_refused: None,
+            hunts: None,
         }
     }
 
@@ -599,6 +600,7 @@ mod tests {
             yields: None,
             dig_safe: None,
             route_refused: None,
+            hunts: None,
         }
     }
 

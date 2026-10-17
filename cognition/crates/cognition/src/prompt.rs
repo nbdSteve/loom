@@ -296,6 +296,9 @@ fn situation_of(perception: &Perception) -> String {
     lines.push(yields_line(&perception.surroundings));
     lines.extend(own_spot_line(&perception.surroundings));
     lines.extend(explore_line(&perception.explore));
+    if perception.trigger.reviews_goal() {
+        lines.extend(danger_line(perception));
+    }
     lines.extend(no_dropped_item_line(&perception.surroundings));
     let last_step = perception
         .goal
@@ -924,6 +927,24 @@ fn own_spot_line(surroundings: &[Observation]) -> Option<String> {
     })
 }
 
+/// The hunters near enough to flee from at a goal review, or nothing (r20: kappa reviewed at
+/// health 7.7 beside a zombie and a skeleton, was offered only dirt digs, and died).
+fn danger_line(perception: &Perception) -> Option<String> {
+    let danger = crate::offered::OfferedRefs::of(perception).danger;
+    if danger.is_empty() {
+        return None;
+    }
+    let named = danger
+        .iter()
+        .map(|handle| field(handle))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "Something that hunts your kind is near ({named}): you may flee from it now with no goal \
+choice, and any goal you hold stays held."
+    ))
+}
+
 /// The cells at the edge of sight a walk can reach to look further, or nothing when none is offered
 /// (r17: eta idled three reviews with a dead bush 5.4 blocks off, just past what its body saw).
 fn explore_line(targets: &[ExploreTarget]) -> Option<String> {
@@ -1240,6 +1261,7 @@ mod tests {
                 yields: None,
                 dig_safe: None,
                 route_refused: None,
+                hunts: None,
             }],
             surroundings_omitted: 0,
             goal: None,
@@ -1273,6 +1295,7 @@ mod tests {
                 yields: Some(vec![]),
                 dig_safe: Some(true),
                 route_refused: None,
+                hunts: None,
             },
             Observation {
                 kind: ObservationKind::Block,
@@ -1287,6 +1310,7 @@ mod tests {
                 yields: Some(vec![]),
                 dig_safe: Some(true),
                 route_refused: None,
+                hunts: None,
             },
         ];
         seen.surroundings_omitted = 117;
@@ -1571,6 +1595,7 @@ mod tests {
             }]),
             dig_safe: Some(true),
             route_refused: None,
+            hunts: None,
         });
         assert!(situation(&seen)
             .contains("What is in sight can be counted on to give you 1 more item.minecraft.stick (at best 2), beyond what you hold; a goal may count only on the first number."));
@@ -1613,6 +1638,7 @@ mod tests {
             yields: None,
             dig_safe: None,
             route_refused: None,
+            hunts: None,
         });
         assert!(!situation(&with_one).contains("No dropped item"));
     }
@@ -2398,6 +2424,7 @@ mod tests {
                 yields: None,
                 dig_safe: None,
                 route_refused: None,
+                hunts: None,
             })
             .collect();
         seen.surroundings_omitted = 7;
@@ -2434,6 +2461,7 @@ mod tests {
                 yields: None,
                 dig_safe: None,
                 route_refused: None,
+                hunts: None,
             })
             .collect();
         seen.surroundings_omitted = -1_000;
@@ -2520,6 +2548,7 @@ mod tests {
                 yields: None,
                 dig_safe: None,
                 route_refused: None,
+                hunts: None,
             })
             .collect();
         let prompt = render(&router().route(seen.importance), &seen);

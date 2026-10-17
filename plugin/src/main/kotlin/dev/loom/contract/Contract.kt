@@ -533,9 +533,17 @@ data class Observation(
      * to: it is not offered to collect and gives nothing a goal may count on.
      */
     val routeRefused: Boolean? = null,
+    /**
+     * Present, and true, only for a creature that hunts the agent's kind, by the body's own
+     * list of player hunters: what a goal review may flee from.
+     */
+    val hunts: Boolean? = null,
 ) {
     init {
         requireBoundedRef(ref)
+        require(hunts != false && (hunts == null || kind == ObservationKind.ENTITY)) {
+            "hunts is present, and true, only for a creature"
+        }
         require(routeRefused != false && (routeRefused == null || kind == ObservationKind.DROPPED_ITEM)) {
             "routeRefused is present, and true, only for a dropped item"
         }

@@ -52,6 +52,21 @@ class DangerEpisodesTest {
     }
 
     @Test
+    fun `an answer that is no flight ends the episode at once, so the next sighting is asked about`() {
+        // r20 kappa body:00000777 answered a skeleton 2.4 off with a one-block walk; its next
+        // sighting (body:00000806) was coalesced into the cooldown, and it died beside it.
+        assertTrue(episodes.admit(alpha, sighting("r1", "entity.minecraft.skeleton")))
+        tick = 10
+        episodes.settled(alpha, "r1", fled = false)
+        tick = 11
+        assertTrue(episodes.admit(alpha, sighting("r2", "entity.minecraft.skeleton")))
+        // A flight still cools down.
+        episodes.settled(alpha, "r2", fled = true)
+        tick = 12
+        assertFalse(episodes.admit(alpha, sighting("r3", "entity.minecraft.skeleton")))
+    }
+
+    @Test
     fun `an episode stays open until every admitted decision about it settles, and forget drops it`() {
         assertTrue(episodes.admit(alpha, damage("r1")))
         episodes.settled(alpha, "unknown")
