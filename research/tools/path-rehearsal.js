@@ -146,9 +146,12 @@ function pathsOf (records, readiness) {
     byKey(record.requestKey).some((entry) => entry.event === 'intentApplied' && entry.outcome === 'accepted'))
   // kappa stands against the world border's north face: its flight runs along the border and
   // arrives, and no perception offers it a walk past the border (v29 rehearsal theta).
-  const alongBorder = hunted === undefined
-    ? undefined
-    : byKey(hunted.requestKey).find((entry) => entry.event === 'moved' && entry.outcome === 'movementArrived')
+  // Any of its flights may be the one that arrives: a later perception's answer can halt one.
+  const alongBorder = of('tribe-kappa', 'decided')
+    .filter((record) => record.intent === 'flee')
+    .flatMap((record) => byKey(record.requestKey))
+    .find((entry) => entry.event === 'moved' && entry.outcome === 'movementArrived' &&
+      Number((entry.summary ?? entry.detail).split(' to ')[1].split(';')[0].split(',')[2]) >= -63.7 - 1e-6)
   const bordered = of('tribe-kappa', 'perceived').find((record) =>
     (record.perception?.explore ?? []).length > 0 &&
     record.perception.explore.every((cell) => cell.direction !== 'north'))
@@ -255,6 +258,9 @@ async function main () {
       }
     })
     for (const line of config.setup) command(line)
+    // The world border the configuration states, as a research run sets it: kappa's flight runs
+    // against its north face, and a rehearsal without it proved nothing about the border.
+    command(`worldborder set ${config.world.worldBorderDiameterBlocks}`)
     for (const agent of configuredAgents(config)) {
       command(`clear ${agent.username}`)
       command(`tp ${agent.username} ${config.positions[agent.agentId].join(' ')}`)
@@ -312,7 +318,11 @@ async function main () {
   process.exitCode = report.verdict === 'covered' ? 0 : 1
 }
 
-main().catch((fault) => {
-  process.stderr.write(`${fault.stack ?? fault}\n`)
-  process.exitCode = 1
-})
+if (require.main === module) {
+  main().catch((fault) => {
+    process.stderr.write(`${fault.stack ?? fault}\n`)
+    process.exitCode = 1
+  })
+}
+
+module.exports = { faultsOf, pathsOf }
