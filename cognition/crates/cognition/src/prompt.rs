@@ -2721,20 +2721,14 @@ mod tests {
                 frontier: false,
             },
         ];
-        let situation = situation(&seen);
+        let shown = situation(&seen);
         assert!(
-            situation.contains("Goals you may set past what sight alone gives"),
-            "{situation}"
+            shown.contains("Goals you may set past what sight alone gives"),
+            "{shown}"
         );
-        assert!(situation.contains("up to 13 in all, from a source you saw recently, the rest beyond the edge of sight"), "{situation}");
-        assert!(
-            situation.contains("up to 8 in all, made from"),
-            "{situation}"
-        );
-        assert!(
-            situation.contains("the dirt under your feet"),
-            "{situation}"
-        );
+        assert!(shown.contains("up to 13 in all, from a source you saw recently, the rest beyond the edge of sight"), "{shown}");
+        assert!(shown.contains("up to 8 in all, made from"), "{shown}");
+        assert!(shown.contains("the dirt under your feet"), "{shown}");
         let mut event = seen.clone();
         event.trigger = Trigger::Damaged {
             amount: 2,
