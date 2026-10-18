@@ -34,7 +34,7 @@ const { readinessMetrics } = require('../lib/readiness.js')
 
 const REPO = path.resolve(__dirname, '..', '..')
 const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'path-rehearsal.json'), 'utf8'))
-const GENERATION = 12
+const GENERATION = 13
 const RETENTION_TICKS = 4800
 const POLL_MS = 500
 
@@ -155,7 +155,14 @@ function pathsOf (records, readiness) {
   const bordered = of('tribe-kappa', 'perceived').find((record) =>
     (record.perception?.explore ?? []).length > 0 &&
     record.perception.explore.every((cell) => cell.direction !== 'north'))
+  // epsilon's log goal asked past the one log in sight and was met through the log the walk east
+  // revealed: a horizon goal advanced past what sight guaranteed at its adoption (r22).
+  const discovered = (readiness.goalCoherence?.pursuit?.measured?.discoveredGoals ?? 0) > 0
+    ? of('tribe-epsilon', 'decided').find((record) => record.goal?.conditionMet === true)
+    : undefined
   return {
+    localGoalCrowdingRefused: evidence(applied('tribe-eta', 'goalCrowdsExploration')),
+    horizonGoalAdvancedPastSight: evidence(discovered),
     reviewFleesAHunterWithNoGoalChoice: evidence(hunted),
     flightAlongTheBorderArrived: evidence(alongBorder),
     noWalkOfferedPastTheBorder: evidence(bordered),
@@ -195,7 +202,8 @@ function faultsOf (records, readiness, windowEnd) {
       .filter((entry) => entry.class === 'goalIncoherent')
       .map((entry) => entry.evidence?.outcome)
       .filter((outcome) => ![
-        'goalOwnDropIgnored', 'goalReviseItemChanged', 'goalReviseUnchanged', 'goalCompletedWithoutNext'
+        'goalOwnDropIgnored', 'goalReviseItemChanged', 'goalReviseUnchanged', 'goalCompletedWithoutNext',
+        'goalCrowdsExploration'
       ].includes(outcome))
   }
 }

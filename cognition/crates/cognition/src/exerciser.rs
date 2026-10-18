@@ -29,10 +29,11 @@
 //!   review, flees from it with no goal choice, as a review beside a hunter now may (r20: kappa
 //!   reviewed beside a zombie and a skeleton, was offered only dirt digs, and died), along the
 //!   border rather than over it (v29 rehearsal theta stalled against it);
-//! - `eta` digs dirt for a two-dirt goal beside a pocket under an overhang that its perception
-//!   must report unsafe to dig, revises the goal to the total it already has once (refused), and
-//!   once the goal is met completes it plainly beside the dirt still in sight once (refused)
-//!   before replacing it.
+//! - `eta` is refused a dirt goal while the frontier is offered (r22: the dirt underfoot crowded
+//!   out looking for wood), then digs logs for a two-log goal beside a pocket under an overhang
+//!   that its perception must report unsafe to dig, revises the goal to the total it already has
+//!   once (refused), and once the goal is met completes it plainly beside the log still in sight
+//!   once (refused) before replacing it.
 //!
 //! Any other agent is answered by [`ScriptedBackend`].
 
@@ -515,22 +516,35 @@ fn refused_as(perception: &Perception, outcome: &str) -> bool {
         .is_some_and(|refusal| refusal.outcome == outcome)
 }
 
-/// eta: a two-dirt goal, one revise to the same total (refused), and once met one plain
-/// completion beside the dirt in sight (refused) before the replace it owed.
+/// eta: first a one-dirt goal beside a cell to look from, which the dirt underfoot may not crowd
+/// out (refused), then a two-log goal, one revise to the same total (refused), and once met one
+/// plain completion beside the log still in sight (refused) before the replace it owed.
 fn restater(perception: &Perception) -> Draft {
     let Some(goal) = &perception.goal else {
-        return dig_of(perception, DIRT).map_or_else(
+        let crowding = !refused_as(perception, "goalCrowdsExploration")
+            && perception.last_refusal.is_none()
+            && !perception.explore.is_empty();
+        if crowding {
+            if let Some(block) = dig_of(perception, DIRT) {
+                return answer(
+                    Intent::Dig { block },
+                    Some(target(GoalDisposition::Adopt, DIRT, 1)),
+                    "dig the dirt underfoot for a goal while there is ground to look at, which the body must refuse",
+                );
+            }
+        }
+        return dig_of(perception, LOG).map_or_else(
             || answer(Intent::Idle, None, IDLE_ROLE),
             |block| {
                 answer(
                     Intent::Dig { block },
-                    Some(target(GoalDisposition::Adopt, DIRT, 2)),
-                    "dig dirt for a two-dirt goal",
+                    Some(target(GoalDisposition::Adopt, LOG, 2)),
+                    "dig a log for a two-log goal",
                 )
             },
         );
     };
-    let item = goal.success_item.as_deref().unwrap_or(DIRT);
+    let item = goal.success_item.as_deref().unwrap_or(LOG);
     if met(perception) {
         if refused_as(perception, "goalCompletedWithoutNext") {
             return finish(perception);
@@ -833,8 +847,8 @@ mod tests {
     }
 
     #[test]
-    fn eta_restates_its_total_once_and_completes_beside_dirt_once_before_replacing() {
-        let grass = || Observation {
+    fn eta_is_refused_dirt_beside_the_frontier_then_restates_and_completes_beside_a_log() {
+        let grass = Observation {
             what: "block.minecraft.grass_block".to_owned(),
             yields: Some(vec![BlockYield {
                 what: super::DIRT.to_owned(),
@@ -846,19 +860,42 @@ mod tests {
             ..log("g1")
         };
         let mut first = review("eta");
-        first.surroundings = vec![grass()];
-        let adopted = draft(&first);
+        first.surroundings = vec![grass, log("b1"), log("b2"), log("b3")];
+        first.explore = vec![edge("x1", Bearing::East, 12.0)];
+        // The horizon the JVM grounds in the logs in sight; the dirt underfoot grounds none.
+        first.horizon = vec![loom_contract::HorizonGoal {
+            what: LOG.to_owned(),
+            grounding: loom_contract::HorizonGrounding::Sight,
+            via: None,
+            most: 11,
+            frontier: true,
+        }];
+        let crowding = draft(&first);
         assert_eq!(
-            adopted.intent,
+            crowding.intent,
             Intent::Dig {
                 block: "g1".to_owned()
             }
         );
+        assert_eq!(
+            crowding.goal.unwrap().success_item.as_deref(),
+            Some(super::DIRT)
+        );
+        first.last_refusal = Some(refusal("goalCrowdsExploration"));
+        let adopted = draft(&first);
+        assert_eq!(
+            adopted.intent,
+            Intent::Dig {
+                block: "b1".to_owned()
+            }
+        );
         let adopt = adopted.goal.unwrap();
         assert_eq!(adopt.disposition, GoalDisposition::Adopt);
+        assert_eq!(adopt.success_item.as_deref(), Some(LOG));
         assert_eq!(adopt.success_count, Some(2));
         let mut second = first.clone();
-        holding(&mut second, super::DIRT, 0, 2, StepEvidence::None);
+        second.last_refusal = None;
+        holding(&mut second, LOG, 0, 2, StepEvidence::None);
         let restated = draft(&second).goal.unwrap();
         assert_eq!(restated.disposition, GoalDisposition::Revise);
         assert_eq!(restated.success_count, Some(2));
@@ -868,7 +905,8 @@ mod tests {
             GoalDisposition::Continue
         );
         let mut met = first.clone();
-        holding(&mut met, super::DIRT, 2, 2, StepEvidence::Gained);
+        met.last_refusal = None;
+        holding(&mut met, LOG, 2, 2, StepEvidence::Gained);
         let plain = draft(&met);
         assert_eq!(plain.intent, Intent::Idle);
         assert_eq!(plain.goal.unwrap().disposition, GoalDisposition::Complete);

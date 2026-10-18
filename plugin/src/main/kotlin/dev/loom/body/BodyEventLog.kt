@@ -18,6 +18,7 @@ package dev.loom.body
 import dev.loom.contract.Decision
 import dev.loom.contract.GoalRefusal
 import dev.loom.contract.GoalSummary
+import dev.loom.contract.HorizonGoal
 import dev.loom.contract.LoomJson
 import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
@@ -178,6 +179,8 @@ data class ShownGoal(
     val goal: GoalSummary? = null,
     /** Why the agent's previous goal decision was refused, told once, or `null`. */
     val lastRefusal: GoalRefusal? = null,
+    /** The horizon goals the review was offered, past what sight alone gives (r22). */
+    val horizon: List<HorizonGoal> = emptyList(),
 )
 
 /**

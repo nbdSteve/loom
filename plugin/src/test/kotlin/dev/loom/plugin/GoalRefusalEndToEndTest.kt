@@ -97,7 +97,7 @@ class GoalRefusalEndToEndTest {
         assertEquals(GoalEvidence.CHOICE_MISSING, told[4]?.outcome)
         // Exactly what each review showed the mind, on its own decided record.
         val shown = world.records.filter { it.event == BodyEvent.DECIDED }.map { it.shown }
-        assertEquals(world.mind.seen.map { ShownGoal(it.goal, it.lastRefusal) }, shown)
+        assertEquals(world.mind.seen.map { ShownGoal(it.goal, it.lastRefusal, it.horizon) }, shown)
         // Four of the five answers are refused, and no refusal reached the body.
         val readiness = world.readiness(GATE_GENERATION)
         val classes = readiness.getValue("actions").jsonObject.getValue("byClass").jsonObject

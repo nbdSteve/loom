@@ -285,6 +285,50 @@ class GoalPursuitEndToEndTest {
         assertEquals(1, classes.getValue("goalIncoherent").jsonPrimitive.int)
     }
 
+    @Test
+    fun `a horizon goal asks past the one log in sight while the dirt beside the feet may not crowd out looking`() {
+        // r22: every goal was dirt from underfoot or a single seed, and no agent looked for wood.
+        val dirt = Cell(9, 64, 8, "dirt")
+        val log = Cell(11, 64, 10, "oak_log")
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(dirt, log)))
+
+        fun refOf(
+            seen: Perception,
+            what: String,
+        ) = seen.surroundings.first { it.what == "block.minecraft.$what" }.ref
+        world.mind.answer = { seen, index ->
+            when (index) {
+                0 -> Intent.Dig(refOf(seen, "dirt")) to target(GoalDisposition.ADOPT, DIRT, 1)
+                1 -> Intent.Dig(refOf(seen, "oak_log")) to target(GoalDisposition.ADOPT, LOG, 4)
+                else -> Intent.MoveTo(seen.explore.first().ref) to continuing()
+            }
+        }
+        for (review in 1..3) {
+            world.review(ALPHA)
+            world.awaitDecided(review)
+            world.awaitApplied(review)
+        }
+        val horizon = world.mind.seen[0].horizon.associateBy { it.what }
+        assertEquals(setOf(LOG), horizon.keys, "the dirt beside the feet grounds nothing: $horizon")
+        assertEquals(1L + dev.loom.mind.HORIZON_SPAN, horizon.getValue(LOG).most)
+        assertTrue(horizon.getValue(LOG).frontier)
+        val outcomes = world.records.filter { it.event == BodyEvent.DECIDED }.map { it.goal?.outcome }
+        assertEquals(listOf(GoalEvidence.CROWDS_EXPLORATION, GoalEvidence.ADOPTED, GoalEvidence.CONTINUED), outcomes)
+        val readiness = world.readiness(HORIZON_GENERATION)
+        val measured =
+            readiness
+                .getValue("goalCoherence")
+                .jsonObject
+                .getValue("pursuit")
+                .jsonObject
+                .getValue("measured")
+                .jsonObject
+        assertEquals(1, measured.getValue("horizonGoals").jsonPrimitive.int)
+        assertEquals(1, measured.getValue("crowdedGoals").jsonPrimitive.int)
+        val classes = readiness.getValue("actions").jsonObject.getValue("byClass").jsonObject
+        assertEquals(1, classes.getValue("goalIncoherent").jsonPrimitive.int)
+    }
+
     private fun world(scene: Scene): ScenarioWorld {
         val node = nodeOrNull()
         assumeTrue(node != null && Files.isDirectory(REPO.resolve("body/node_modules")), "node and body deps")
@@ -294,6 +338,9 @@ class GoalPursuitEndToEndTest {
     private companion object {
         const val GATE_GENERATION = 9
         const val WOODED_GENERATION = 10
+        const val HORIZON_GENERATION = 13
+        const val DIRT = "item.minecraft.dirt"
+        const val LOG = "item.minecraft.oak_log"
         const val STICK_ID = 70
         const val STICK = "item.minecraft.stick"
         const val PLANKS = "item.minecraft.oak_planks"

@@ -399,4 +399,4 @@ class EmbodiedCognition(
 }
 
 /** What this perception showed cognition of its goal, when it reviews one. */
-private fun Perception.shownGoal(): ShownGoal? = ShownGoal(goal, lastRefusal).takeIf { trigger.reviewsGoal }
+private fun Perception.shownGoal(): ShownGoal? = ShownGoal(goal, lastRefusal, horizon).takeIf { trigger.reviewsGoal }

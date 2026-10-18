@@ -178,7 +178,7 @@ internal data class Scene(
             !floor && (block == null || block.name in PASSABLE)
         }
 
-    /** What digging each block with a bare hand drops: a dead bush nought to two sticks, dirt one dirt. */
+    /** What digging each block with a bare hand drops: a dead bush nought to two sticks, dirt or a log one. */
     val yields: BlockYields =
         BlockYields { position, _ ->
             val (x, y, z) = position
@@ -186,6 +186,7 @@ internal data class Scene(
             when (block?.name) {
                 "dead_bush" -> listOf(BlockYield("item.minecraft.stick", 0, 2, 100))
                 "dirt" -> listOf(BlockYield("item.minecraft.dirt", 1, 1, 100))
+                "oak_log" -> listOf(BlockYield("item.minecraft.oak_log", 1, 1, 100))
                 else -> emptyList()
             }
         }

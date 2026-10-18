@@ -900,7 +900,7 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
         guaranteed: held + guaranteedCountOf(perception, item),
         chained: goal.chainedFrom !== undefined,
         chainedFromGoal: goal.chainedFrom,
-        horizon: (perception?.horizon ?? []).some((entry) => entry.what === item)
+        horizon: (record.shown?.horizon ?? perception?.horizon ?? []).some((entry) => entry.what === item)
       })
     } else if (goal.outcome === 'goalRevised' && original.has(goal.goalId)) {
       const entry = original.get(goal.goalId)
