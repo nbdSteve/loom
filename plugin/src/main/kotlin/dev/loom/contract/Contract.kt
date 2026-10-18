@@ -700,9 +700,16 @@ data class Perception(
      * the edge of sight in its direction.
      */
     val recalled: List<RecalledSource> = emptyList(),
+    /**
+     * Goal items the agent may set a total for beyond what sight alone guarantees, each grounded
+     * in a source seen now or remembered, or in a known recipe whose input is so grounded, with
+     * the most a goal of it may ask.
+     */
+    val horizon: List<HorizonGoal> = emptyList(),
 ) {
     init {
         require(recalled.size <= MAX_RECALLED_SOURCES) { "at most $MAX_RECALLED_SOURCES recalled sources" }
+        require(horizon.size <= MAX_HORIZON_GOALS) { "at most $MAX_HORIZON_GOALS horizon goals" }
         require(surroundings.size <= MAX_PERCEPTION_OBSERVATIONS) {
             "surroundings must state at most $MAX_PERCEPTION_OBSERVATIONS observations, " +
                 "got ${surroundings.size}"
@@ -740,6 +747,48 @@ const val MAX_RECALLED_SOURCES: Int = 8
 
 /** The most a hundred digs of one block can drop of one item: 64 a dig. */
 const val MAX_PER_HUNDRED: Long = 6400
+
+/** Most horizon goal items one perception carries. */
+const val MAX_HORIZON_GOALS: Int = 8
+
+/** What grounds a horizon goal. */
+@Serializable
+enum class HorizonGrounding {
+    /** A source in sight now. */
+    @SerialName("sight")
+    SIGHT,
+
+    /** A source remembered out of sight. */
+    @SerialName("recalled")
+    RECALLED,
+
+    /** A known recipe whose input is grounded by sight or memory. */
+    @SerialName("recipe")
+    RECIPE,
+}
+
+/** One goal item the agent may set a total for beyond what sight guarantees. */
+@Serializable
+data class HorizonGoal(
+    /** The item, exactly as an inventory stack names it. */
+    val what: String,
+    /** What grounds the goal. */
+    val grounding: HorizonGrounding,
+    /** For a recipe-grounded goal, the grounded input its recipe is made from. */
+    val via: String? = null,
+    /** The largest total a goal of this item may ask, counting what is held. */
+    val most: Long,
+    /** Whether that total reaches past what the grounding gives, onto ground beyond the edge of sight. */
+    val frontier: Boolean,
+) {
+    init {
+        require(most in 1..MAX_SUCCESS_COUNT) { "a horizon goal asks 1 to $MAX_SUCCESS_COUNT" }
+        require(what != AIR_ITEM && via != AIR_ITEM) { "a horizon goal is never air" }
+        require((grounding == HorizonGrounding.RECIPE) == (via != null)) {
+            "a horizon goal names its input exactly when a recipe grounds it"
+        }
+    }
+}
 
 /** Where the body last saw a source of an item it does not see now. */
 @Serializable

@@ -49,7 +49,10 @@ class R20GoalAuditReplayTest {
     @Test
     fun `kappa's tree out of sight is a goal it can set, and the walk that finds it reveals it`() {
         val tree = RecalledSource(LOG, 18.0, Bearing.EAST, 0.0, 300)
-        val first = seen("kappa-761", listOf(12.5, 67.0, 0.5), recalled = listOf(tree))
+        // The review is shown its horizon, as every goal review is: the recalled tree grounds a log goal.
+        val first =
+            seen("kappa-761", listOf(12.5, 67.0, 0.5), recalled = listOf(tree))
+                .let { it.copy(horizon = horizonOf(it, RecipeInputs.NONE)) }
         val observed = GoalObservation.of(first)
         assertEquals(3L, observed.capacity[LOG])
         assertEquals(0L, observed.inSight(LOG), "a recalled source is no source in sight")

@@ -80,7 +80,8 @@ private val CLEARING_EVENTS =
  */
 class GoalLedger(
     private val lifetimeTicks: Long = GOAL_LIFETIME_TICKS,
-    private val recipes: RecipeInputs = RecipeInputs.NONE,
+    /** The server's recipe registry, which chains, steps and horizon goals are judged by. */
+    val recipes: RecipeInputs = RecipeInputs.NONE,
 ) {
     private data class Held(
         val summary: GoalSummary,
@@ -372,7 +373,8 @@ class GoalLedger(
                     stepVisible,
                     towardSource = towardSource,
                     explored = explored,
-                    inputs = item?.let(recipes::inputsOf).orEmpty(),
+                    inputs =
+                        item?.let { recipes.inputsOf(it) + basis.observed?.horizon.orEmpty().pathOf(it) }.orEmpty(),
                 )
             }
         return evidence.copy(

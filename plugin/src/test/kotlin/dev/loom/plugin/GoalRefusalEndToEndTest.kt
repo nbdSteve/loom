@@ -60,8 +60,9 @@ class GoalRefusalEndToEndTest {
         val world = world(scene)
         world.mind.answer = { seen, index ->
             when (index) {
-                // Five sticks: two held and a bush expected to give one cannot reach it.
-                0 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 5)
+                // Twelve sticks: two held, a bush expected to give one, and the eight a horizon may
+                // reach past it onto the frontier cannot reach it.
+                0 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 12)
                 // Two sticks are already held.
                 1 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 2)
                 2 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 3)
@@ -90,7 +91,7 @@ class GoalRefusalEndToEndTest {
         val told = world.mind.seen.map { it.lastRefusal }
         assertEquals(null, told[0])
         assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, told[1]?.outcome)
-        assertEquals(listOf(5L, 2L, 1L), listOf(told[1]?.asked, told[1]?.held, told[1]?.capacity))
+        assertEquals(listOf(12L, 2L, 1L), listOf(told[1]?.asked, told[1]?.held, told[1]?.capacity))
         assertEquals(GoalEvidence.ALREADY_MET, told[2]?.outcome)
         assertEquals(null, told[3])
         assertEquals(GoalEvidence.CHOICE_MISSING, told[4]?.outcome)

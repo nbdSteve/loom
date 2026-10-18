@@ -27,6 +27,34 @@ class BukkitRecipeInputs(
 
     override fun inputsOf(item: String): Set<String> = known.getOrPut(item) { read(item) }
 
+    /** Every sole-input recipe's result, by its one input, read once from the whole registry. */
+    private val soleInput: Map<String, List<String>> by lazy {
+        val made = mutableMapOf<String, MutableMap<String, Int>>()
+        server.recipeIterator().forEach { recipe ->
+            val slots =
+                when (recipe) {
+                    is ShapedRecipe -> recipe.choiceMap.values.filterNotNull()
+                    is ShapelessRecipe -> recipe.choiceList
+                    else -> emptyList()
+                }
+            val result = recipe.result.type
+            // Sole input: every slot accepts the same materials, so one item fills the recipe.
+            val accepted = slots.map { materialsOf(it).toSet() }.distinct()
+            if (slots.isEmpty() || accepted.size != 1 || result.isAir) return@forEach
+            for (material in accepted.single().filter { it != result && !it.isAir }) {
+                val outputs = made.getOrPut(itemNameOf(material)) { mutableMapOf() }
+                val name = itemNameOf(result)
+                outputs[name] = minOf(outputs[name] ?: Int.MAX_VALUE, slots.size)
+            }
+        }
+        made.mapValues {
+                (_, outputs) ->
+            outputs.entries.sortedWith(compareBy({ it.value }, { it.key })).map { it.key }
+        }
+    }
+
+    override fun madeFrom(input: String): List<String> = soleInput[input].orEmpty()
+
     private fun read(item: String): Set<String> {
         val material = materialOf(item) ?: return emptySet()
         return server

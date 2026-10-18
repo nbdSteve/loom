@@ -184,6 +184,13 @@ data class GoalEvidence(
          */
         const val COMPLETED_WITHOUT_NEXT: String = "goalCompletedWithoutNext"
 
+        /**
+         * A goal for an item no horizon goal is grounded in or made from, set while cells at the
+         * edge of sight are offered: what sight hands over whole may not crowd out looking further
+         * (r22: every goal was dirt from underfoot, and no agent looked for wood).
+         */
+        const val CROWDS_EXPLORATION: String = "goalCrowdsExploration"
+
         /** The outcomes that refuse the decision's intent along with its goal choice. */
         val REFUSING: Set<String> =
             setOf(
@@ -200,6 +207,7 @@ data class GoalEvidence(
                 REVISE_ITEM_CHANGED,
                 REVISE_UNCHANGED,
                 COMPLETED_WITHOUT_NEXT,
+                CROWDS_EXPLORATION,
             )
 
         /** The outcomes that settle a decision with nothing its next review needs to be told. */

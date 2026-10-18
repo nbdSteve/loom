@@ -33,6 +33,7 @@ import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalProgress
 import dev.loom.contract.GoalSummary
+import dev.loom.contract.HorizonGoal
 import dev.loom.contract.Intent
 import dev.loom.contract.IntentAction
 import dev.loom.contract.InventoryChange
@@ -106,7 +107,19 @@ data class GoalObservation(
     val inReach: Set<String> = emptySet(),
     /** The items [capacity] counts only from a source recalled out of sight, not from sight. */
     val recalledOnly: Set<String> = emptySet(),
+    /** The horizon goals the perception offered, by item: what may be asked beyond [capacity]. */
+    val horizon: Map<String, HorizonGoal> = emptyMap(),
 ) {
+    /** The most of [item] a goal may ask: what is held and sight gives, or its horizon's most. */
+    fun reachOf(item: String): Long = maxOf((inventory[item] ?: 0) + (capacity[item] ?: 0), horizon[item]?.most ?: 0)
+
+    /**
+     * Whether a goal of [item] would crowd out looking further: cells at the edge of sight are
+     * offered, and no horizon goal is grounded in [item] or made from it.
+     */
+    fun crowdsExploration(item: String): Boolean =
+        explore.isNotEmpty() && item !in horizon && horizon.values.none { it.via == item }
+
     /** The block cell the agent stood in. */
     val cell: List<Int> get() = position.map { floor(it).toInt() }
 
@@ -169,6 +182,7 @@ data class GoalObservation(
                 recalledOnly =
                     recalled.map { it.first }.toSet() -
                         (drops.map { it.what } + crafted.map { it.first } + dug.map { it.first }).toSet(),
+                horizon = perception.horizon.associateBy { it.what },
             )
         }
 

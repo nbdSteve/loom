@@ -15,6 +15,13 @@ package dev.loom.mind
 fun interface RecipeInputs {
     fun inputsOf(item: String): Set<String>
 
+    /**
+     * The items a recipe makes from [input] alone, every slot of it [input] (oak planks from an oak
+     * log, sticks or a crafting table from planks), the fewest slots first: a typed recipe path a
+     * horizon goal may be grounded in. None unless the registry is asked.
+     */
+    fun madeFrom(input: String): List<String> = emptyList()
+
     companion object {
         /** No registry to ask: nothing is known to be made from anything. */
         val NONE: RecipeInputs = RecipeInputs { emptySet() }

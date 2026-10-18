@@ -161,13 +161,15 @@ class EmbodiedCognition(
         }
         val carried =
             if (perception.trigger.reviewsGoal) {
-                perception.copy(
+                // The horizon goes on first, so the ledger judges the answer against what was shown.
+                val horizoned = perception.copy(horizon = horizonOf(perception, goals.recipes))
+                horizoned.copy(
                     goal =
                         goals.present(
                             agentId,
                             perception.requestId,
                             perception.capturedTick,
-                            GoalObservation.of(perception),
+                            GoalObservation.of(horizoned),
                         ),
                     lastRefusal = goals.takeRefusal(agentId),
                 )

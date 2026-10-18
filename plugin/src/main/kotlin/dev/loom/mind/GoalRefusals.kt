@@ -108,9 +108,13 @@ private fun completionRefusalOf(
 ): String? =
     when {
         !met -> GoalEvidence.COMPLETION_UNMET
-        observed?.capacity.orEmpty().isNotEmpty() -> GoalEvidence.COMPLETED_WITHOUT_NEXT
+        observed != null && nextGoalOffered(observed) -> GoalEvidence.COMPLETED_WITHOUT_NEXT
         else -> null
     }
+
+/** Whether a replace could adopt a next goal: one with a horizon, or one that crowds out nothing. */
+private fun nextGoalOffered(observed: GoalObservation): Boolean =
+    observed.horizon.isNotEmpty() || observed.capacity.keys.any { !observed.crowdsExploration(it) }
 
 /**
  * Whether the goal [presented] carries could still be met from what [observed] holds and sees,
@@ -129,6 +133,9 @@ private fun achievable(
     return observed != null && count != null && reach != null && progress?.conditionMet != true && !atBound &&
         count <= reach
 }
+
+/** The dispositions that set a new goal's target, as a revise of the held item does not. */
+private val NEW_TARGET = setOf(GoalDisposition.ADOPT, GoalDisposition.REPLACE)
 
 /** The dispositions that set a success condition of their own. */
 private val SETTING = setOf(GoalDisposition.ADOPT, GoalDisposition.REVISE, GoalDisposition.REPLACE)
@@ -169,7 +176,9 @@ private fun successRefusalOf(
     return when {
         observed == null -> null
         !continuing && held >= count -> GoalEvidence.ALREADY_MET
-        !continuing && count > held + (observed.capacity[item] ?: 0) -> GoalEvidence.SUCCESS_UNOBTAINABLE
+        !continuing && count > observed.reachOf(item) -> GoalEvidence.SUCCESS_UNOBTAINABLE
+        // A new target may not hand over whole what looking further would not (r22).
+        disposition in NEW_TARGET && observed.crowdsExploration(item) -> GoalEvidence.CROWDS_EXPLORATION
         else -> null
     }
 }
@@ -199,7 +208,7 @@ private fun canGive(
     // A handle the perception never described is not judged here; the body refuses it. An equip
     // gives nothing, so it is no step of a goal (r19: two equips stood in as a goal's step).
     val given = target?.let { observed?.gives?.get(it) }
-    val toward = item?.let { recipes.inputsOf(it) + it }.orEmpty()
+    val toward = item?.let { recipes.inputsOf(it) + it + observed?.horizon.orEmpty().pathOf(it) }.orEmpty()
     return item == null || (intent !is Intent.Equip && (given == null || given.any { it in toward }))
 }
 

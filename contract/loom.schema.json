@@ -518,6 +518,12 @@
           "type": "array",
           "maxItems": 8,
           "items": { "$ref": "#/$defs/RecalledSource" }
+        },
+        "horizon": {
+          "description": "Goal items the agent may set a total for beyond what sight alone guarantees, each grounded in a source seen now or remembered, or in a known recipe whose input is so grounded, with the most a goal of it may ask: past what the grounding gives only onto ground beyond the edge of sight. Nothing the agent's own footing guarantees grounds one (r22: every goal was dirt from underfoot, and no agent looked for wood).",
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/HorizonGoal" }
         }
       }
     },
@@ -534,6 +540,29 @@
         "verticalOffset": { "type": "number" },
         "perHundred": { "type": "integer", "minimum": 1, "maximum": 6400 }
       }
+    },
+
+    "HorizonGoal": {
+      "description": "One goal item the agent may set a total for beyond what sight guarantees, what grounds it, and the most a goal of it may ask.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "grounding", "most", "frontier"],
+      "properties": {
+        "what": { "allOf": [{ "$ref": "#/$defs/ItemName" }, { "not": { "const": "item.minecraft.air" } }] },
+        "grounding": {
+          "description": "What grounds the goal: a source in sight now, a source remembered out of sight, or a known recipe whose input `via` is grounded by either.",
+          "enum": ["sight", "recalled", "recipe"]
+        },
+        "via": {
+          "description": "For a recipe-grounded goal, the grounded input its recipe is made from; absent otherwise.",
+          "allOf": [{ "$ref": "#/$defs/ItemName" }, { "not": { "const": "item.minecraft.air" } }]
+        },
+        "most": { "description": "The largest total a goal of this item may ask, counting what is held.", "type": "integer", "minimum": 1, "maximum": 64 },
+        "frontier": { "description": "Whether that total reaches past what the grounding gives, onto ground beyond the edge of sight.", "type": "boolean" }
+      },
+      "if": { "properties": { "grounding": { "const": "recipe" } } },
+      "then": { "required": ["via"] },
+      "else": { "not": { "required": ["via"] } }
     },
 
     "ExploreTarget": {

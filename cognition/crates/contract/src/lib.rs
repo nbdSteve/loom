@@ -936,10 +936,73 @@ pub struct Perception {
         deserialize_with = "bounded_recalled"
     )]
     pub recalled: Vec<RecalledSource>,
+    /// Goal items the agent may set a total for beyond what sight alone guarantees, each
+    /// grounded in a source seen now or remembered, or in a known recipe whose input is so
+    /// grounded, with the most a goal of it may ask.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "bounded_horizon"
+    )]
+    pub horizon: Vec<HorizonGoal>,
 }
 
 /// Most recalled sources one perception carries.
 pub const MAX_RECALLED_SOURCES: usize = 8;
+
+/// Most horizon goal items one perception carries.
+pub const MAX_HORIZON_GOALS: usize = 8;
+
+fn bounded_horizon<'de, D>(deserializer: D) -> Result<Vec<HorizonGoal>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let goals = Vec::<HorizonGoal>::deserialize(deserializer)?;
+    if goals.len() > MAX_HORIZON_GOALS {
+        return Err(de::Error::custom("at most 8 horizon goals"));
+    }
+    if goals.iter().any(|goal| {
+        !(1..=MAX_SUCCESS_COUNT).contains(&goal.most)
+            || goal.what == "item.minecraft.air"
+            || (goal.grounding == HorizonGrounding::Recipe) != goal.via.is_some()
+            || goal.via.as_deref() == Some("item.minecraft.air")
+    }) {
+        return Err(de::Error::custom(
+            "a horizon goal asks 1 to 64, is never air, and names its input exactly when a recipe grounds it",
+        ));
+    }
+    Ok(goals)
+}
+
+/// What grounds a horizon goal.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum HorizonGrounding {
+    /// A source in sight now.
+    Sight,
+    /// A source remembered out of sight.
+    Recalled,
+    /// A known recipe whose input is grounded by sight or memory.
+    Recipe,
+}
+
+/// One goal item the agent may set a total for beyond what sight guarantees.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HorizonGoal {
+    /// The item, exactly as an inventory stack names it.
+    pub what: String,
+    /// What grounds the goal.
+    pub grounding: HorizonGrounding,
+    /// For a recipe-grounded goal, the grounded input its recipe is made from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
+    /// The largest total a goal of this item may ask, counting what is held.
+    pub most: i64,
+    /// Whether that total reaches past what the grounding gives, onto ground beyond the edge of
+    /// sight.
+    pub frontier: bool,
+}
 
 fn bounded_recalled<'de, D>(deserializer: D) -> Result<Vec<RecalledSource>, D::Error>
 where

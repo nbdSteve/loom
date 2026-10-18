@@ -165,6 +165,7 @@ mod tests {
             last_refusal: None,
             explore: vec![],
             recalled: vec![],
+            horizon: vec![],
         }
     }
 
