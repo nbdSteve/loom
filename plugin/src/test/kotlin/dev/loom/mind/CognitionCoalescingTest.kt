@@ -142,4 +142,34 @@ class CognitionCoalescingTest {
         assertEquals(3, body.applied.size, "two reviews and one event were decided and applied")
         assertTrue(records.none { it.outcome == "agentBudgetExhausted" })
     }
+
+    @Test
+    @DisplayName("an answer that arrives after its agent died is discarded and never recorded as decided")
+    fun anAnswerAfterDeathIsDiscardedNotDecided() {
+        // r21 gamma: a damaged perception at tick 6683 was answered 2.3 s later, after the
+        // death, and the decided record written for it stopped the run.
+        val agent = AgentId("agent-alpha")
+        val body = OneBody(agent)
+        val mind = SlowMind()
+        val records = mutableListOf<BodyEventRecord>()
+        val main = FakeMainThread()
+        var dead = false
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind,
+                main,
+                DecisionJournal(BodyEventLog(records::add)) { 6683L },
+                CognitionCallbacks(isDead = { it == agent && dead }),
+            )
+        cognition.consider(agent, Trigger.Damaged(amount = 4L, source = "minecraft:zombie_villager"))
+        main.drain()
+        val asked = mind.held.keys.single()
+        dead = true
+        mind.answer(asked)
+        main.drain()
+        val chain = records.filter { it.requestId == asked }.map { it.event }
+        assertEquals(listOf(BodyEvent.DECISION_DISCARDED), chain, "no decided record, only the discard")
+        assertEquals(emptyList<String>(), body.applied, "nothing is asked of a dead body")
+    }
 }

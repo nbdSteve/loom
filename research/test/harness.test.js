@@ -453,3 +453,28 @@ test('the JVM is told the plan its call reserve keeps each agent\'s share for', 
     LOOM_EXPECTED_REVIEWS_PER_AGENT: '5'
   })
 })
+
+test('a perception answered after its agent died ends once with a discard or an unavailable answer', () => {
+  // r21 gamma: its damaged perception at tick 6683 was answered 2.3 s later, after the death,
+  // and the decision recorded for it stopped the run. The JVM now records no decision for a
+  // dead agent, only the discard or the unavailable answer that ends the perception.
+  const { deathViolation } = require('../lib/witnessed-death.js')
+  const died = { event: 'died', agentId: 'tribe-alpha', tick: 900 }
+  const perceived = (requestId) => ({ event: 'perceived', agentId: 'tribe-alpha', requestId })
+  const ended = (event, requestId, outcome) => ({ event, agentId: 'tribe-alpha', requestId, outcome })
+  const orderings = [
+    [[perceived('p1'), died, ended('decisionDiscarded', 'p1')], null],
+    [[perceived('p1'), died, ended('cognitionUnavailable', 'p1', 'agentDead')], null],
+    [[perceived('p1'), died, { event: 'decided', agentId: 'tribe-alpha', requestId: 'p1' }], /recorded decided after its witnessed death/],
+    [[perceived('p1'), died, ended('decisionDiscarded', 'p1'), ended('cognitionUnavailable', 'p1')],
+      /recorded cognitionUnavailable after its witnessed death/],
+    [[perceived('p1'), ended('cognitionUnavailable', 'p1', 'dangerCoalesced'), died, ended('decisionDiscarded', 'p1')],
+      /recorded decisionDiscarded after its witnessed death/],
+    [[died, ended('cognitionUnavailable', 'p9')], /recorded cognitionUnavailable after its witnessed death/]
+  ]
+  for (const [records, expected] of orderings) {
+    const violation = deathViolation(records)
+    if (expected === null) assert.equal(violation, null, JSON.stringify(records))
+    else assert.match(violation ?? '', expected, JSON.stringify(records))
+  }
+})

@@ -15,6 +15,11 @@ const AFTER_DEATH_DAMAGE_OUTCOMES = Object.freeze(['damageDiedBeforeCognition', 
 // such request, because a flight in progress reports how it ended. A server effect first
 // recorded after the death (worldInteraction), a new perception, decision or cognition, and
 // any record for a request not pending at the death stay fatal.
+//
+// A perception the agent took before it died whose answer came after is pending too, and may
+// end once with the JVM's decisionDiscarded or cognitionUnavailable and nothing else: the JVM
+// records no decision for a dead agent. In r21 gamma's damaged perception at tick 6683 was
+// answered 2.3 s later, after the death, and its decided record stopped the run.
 const SETTLEMENT_REPORTS = Object.freeze(['moved', 'retreating'])
 
 function allowedAfterDeath (record) {
@@ -25,6 +30,7 @@ function allowedAfterDeath (record) {
 class DeathSettlement {
   constructor () {
     this.pending = new Map()
+    this.perceived = new Map()
     this.reportsLeft = new Map()
     this.settled = new Map()
   }
@@ -34,13 +40,24 @@ class DeathSettlement {
     return this.pending.get(agentId)
   }
 
+  perceivedOf (agentId) {
+    if (!this.perceived.has(agentId)) this.perceived.set(agentId, new Set())
+    return this.perceived.get(agentId)
+  }
+
   /** Answers why a record is inadmissible after its agent's death, or null. */
   observe (record, dead) {
     const agentId = record.agentId
     const key = `${agentId}:${record.requestId}`
     const pending = this.pendingOf(agentId)
+    const perceived = this.perceivedOf(agentId)
     if (!dead) {
-      if (record.event === 'decided') pending.add(key)
+      if (record.event === 'perceived') perceived.add(key)
+      if (record.event === 'decided') {
+        perceived.delete(key)
+        pending.add(key)
+      }
+      if (['intentApplied', 'decisionDiscarded', 'cognitionUnavailable'].includes(record.event)) perceived.delete(key)
       if (record.event === 'intentApplied' || record.event === 'decisionDiscarded') pending.delete(key)
       if (record.event === 'died') {
         this.reportsLeft.set(agentId, Object.fromEntries(SETTLEMENT_REPORTS.map((event) => [event, pending.size])))
@@ -50,6 +67,12 @@ class DeathSettlement {
     if (allowedAfterDeath(record) && record.event !== 'decisionDiscarded') return null
     if (['intentApplied', 'decisionDiscarded'].includes(record.event) && pending.has(key)) {
       pending.delete(key)
+      if (!this.settled.has(agentId)) this.settled.set(agentId, [])
+      this.settled.get(agentId).push(key)
+      return null
+    }
+    if (['decisionDiscarded', 'cognitionUnavailable'].includes(record.event) && perceived.has(key)) {
+      perceived.delete(key)
       if (!this.settled.has(agentId)) this.settled.set(agentId, [])
       this.settled.get(agentId).push(key)
       return null

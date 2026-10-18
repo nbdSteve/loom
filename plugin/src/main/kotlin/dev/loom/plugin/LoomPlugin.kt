@@ -124,7 +124,7 @@ class LoomPlugin : JavaPlugin() {
         val port = createPlayerBody(witnessed, witness)
         bodyPort = port
 
-        val mind = connectMind(port, witnessed, goals, schedule)
+        val mind = connectMind(port, witnessed, goals, schedule, witness.permadeath::isDead)
         cognition = mind
         hearer = hearerOf(port, mind)
         val native =
@@ -278,6 +278,7 @@ class LoomPlugin : JavaPlugin() {
         eventLog: BodyEventLog,
         goals: GoalLedger,
         settlement: StepSettlement,
+        isDead: (dev.loom.body.AgentId) -> Boolean,
     ): EmbodiedCognition {
         val settings = CognitionSettings.fromEnvironment()
         val wire =
@@ -324,6 +325,7 @@ class LoomPlugin : JavaPlugin() {
             callbacks =
                 CognitionCallbacks(
                     onStepSettled = settlement,
+                    isDead = isDead,
                     onApplied = ::reportApplied,
                     onUnavailable = { perception, failure ->
                         logger.warning(

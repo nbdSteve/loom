@@ -54,6 +54,8 @@ data class CognitionCallbacks(
     val onBodyUnavailable: (AgentId, Throwable) -> Unit = { _, _ -> },
     /** Told when a step the held goal took was carried out and settled, so a follow-up review is owed. */
     val onStepSettled: StepSettlement = StepSettlement.NONE,
+    /** Durable permadeath, consulted when an answer arrives: a dead agent's answer is discarded. */
+    val isDead: (AgentId) -> Boolean = { false },
 )
 
 /**
@@ -178,10 +180,18 @@ class EmbodiedCognition(
             mainThread.execute {
                 // A shutdown already ended this chain; nothing may be recorded twice.
                 if (inFlight.remove(carried.requestId) == null) return@execute
-                if (decision == null) {
-                    lost(agentId, carried, failure ?: missingBoth(carried))
-                } else {
-                    actOn(agentId, decision, carried.shownGoal())
+                when {
+                    decision == null -> lost(agentId, carried, failure ?: missingBoth(carried))
+                    // An answer for an agent that died while the mind was deciding is no decision
+                    // of a living agent: it is discarded, never recorded as decided (r21 gamma).
+                    callbacks.isDead(agentId) -> {
+                        goals.forget(agentId, decision.requestId)
+                        danger.forget(agentId)
+                        bodies.held.release(agentId, decision.requestId)
+                        journal.discarded(agentId, decision)
+                        callbacks.onApplied(AppliedDecision(decision, IntentOutcome.NoSuchBody))
+                    }
+                    else -> actOn(agentId, decision, carried.shownGoal())
                 }
             }
         }
