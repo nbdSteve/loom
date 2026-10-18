@@ -32,7 +32,9 @@ const { readinessMetrics } = require('./readiness.js')
 // Generation 12 holds goals to substance a one-step goal cannot fake, counts chains only past
 // their adopting craft, ends held time at death, counts danger in answered episodes, and classes a
 // no-route flight from the agent's own dug hole as the selfTrapped blocker.
-const GATE_GENERATION = 12
+// Generation 13 holds goals to substance through resources sight did not guarantee, lets horizon
+// goals ask past sight when grounded, and refuses a goal that crowds out offered exploration.
+const GATE_GENERATION = 13
 // The goal outcomes of a decision whose action was a step of a goal it held or took up.
 const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised', 'goalReplaced', 'goalCompletedAdopted'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`

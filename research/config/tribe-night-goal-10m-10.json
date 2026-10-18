@@ -1,7 +1,7 @@
 {
-  "experimentId": "2026-10-16-openai-10-agent-10m-r22",
-  "title": "10-agent ten-minute routine-v29 night-goal live shakedown",
-  "mode": "routine-v29-night-goal",
+  "experimentId": "2026-10-16-openai-10-agent-10m-r23",
+  "title": "10-agent ten-minute routine-v30 horizon-goal live shakedown",
+  "mode": "routine-v30-horizon-goal",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -60,9 +60,9 @@
       "pivotal": "gpt-5.4"
     },
     "prompts": {
-      "routine": "routine-v29",
-      "notable": "notable-v29",
-      "pivotal": "pivotal-v29"
+      "routine": "routine-v30",
+      "notable": "notable-v30",
+      "pivotal": "pivotal-v30"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,

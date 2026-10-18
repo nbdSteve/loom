@@ -328,3 +328,86 @@ test('a flight that stalled against the world border is a blocker, ended at the 
     assert.ok(Math.abs(touching - 64) < 0.05, moved.summary)
   }
 })
+
+test('under generation 13 a horizon goal counts only once it advances past what sight guaranteed at its adoption', () => {
+  const bars13 = { ...BARS, dangerEpisodes: 1 }
+  const gate13 = (bodyRecords) => readinessMetrics({ bodyRecords, harnessRecords: [], metrics: {}, generation: 13, bars: bars13 })
+  const horizon = [{ what: LOG, grounding: 'sight', most: 9, frontier: true }]
+  // One log in sight, guaranteed one dig at a time: a goal of four asks past it.
+  const logs = (count, extra = {}) => ({
+    selfState: { inventorySummary: count === 0 ? [] : [{ ref: 'i1', what: LOG, count }], ownDrops: [] },
+    surroundings: [{
+      kind: 'block',
+      ref: 'b1',
+      what: 'block.minecraft.oak_log',
+      distance: 1.5,
+      verticalOffset: 0.5,
+      visible: true,
+      digSafe: true,
+      yields: [{ what: LOG, least: 1, most: 1, perHundred: 100 }]
+    }],
+    explore: [{ ref: 'x1' }],
+    horizon,
+    ...extra
+  })
+  const pursued = (agentId, heldLater) => [
+    ...review(agentId, `${agentId}1`, {
+      goal: { outcome: 'goalAdopted', disposition: 'adopt', goalId: agentId, revision: 0 },
+      choice: { disposition: 'adopt', successItem: LOG, successCount: 4 },
+      perception: logs(0)
+    }),
+    ...review(agentId, `${agentId}2`, { goal: stepped(agentId, true), perception: logs(1) }),
+    ...review(agentId, `${agentId}3`, { goal: stepped(agentId, true), perception: logs(heldLater) })
+  ]
+  // Only the one guaranteed log was ever held: two advances, but nothing found beyond sight.
+  const guaranteedOnly = gate13(pursued('alpha', 1)).goalCoherence.pursuit.measured
+  assert.equal(guaranteedOnly.substantiveMultiStepAgents, 0)
+  assert.equal(guaranteedOnly.horizonGoals, 1)
+  assert.equal(guaranteedOnly.discoveredGoals, 0)
+  // Three held: two came from logs sight did not show when the goal was set.
+  const found = gate13(pursued('alpha', 3)).goalCoherence.pursuit.measured
+  assert.equal(found.substantiveMultiStepAgents, 1)
+  assert.equal(found.discoveredGoals, 1)
+  // Generation 12 is frozen: there the same goal counts whatever it found.
+  const twelve = readinessMetrics({ bodyRecords: pursued('alpha', 1), harnessRecords: [], metrics: {}, generation: 12, bars: bars13 })
+  assert.equal(twelve.goalCoherence.pursuit.measured.substantiveMultiStepAgents, 1)
+  assert.equal(twelve.version, 'loom-readiness-gate/10')
+})
+
+test('under generation 13 local dirt counts only when a later goal of another item chained from it advanced, and crowding is refused', () => {
+  const bars13 = { ...BARS, dangerEpisodes: 1 }
+  const gate13 = (bodyRecords) => readinessMetrics({ bodyRecords, harnessRecords: [], metrics: {}, generation: 13, bars: bars13 })
+  const dirtGoal = (agentId, chained) => [
+    ...review(agentId, `${agentId}1`, {
+      goal: { outcome: 'goalAdopted', disposition: 'adopt', goalId: agentId, revision: 0 },
+      choice: { disposition: 'adopt', successItem: DIRT, successCount: 3 },
+      perception: { ...sight(DIRT, 0), surroundings: [...sight(DIRT, 0).surroundings, ...sight(DIRT, 0).surroundings, ...sight(DIRT, 0).surroundings] }
+    }),
+    ...review(agentId, `${agentId}2`, { goal: stepped(agentId, true), perception: sight(DIRT, 2) }),
+    ...review(agentId, `${agentId}3`, {
+      goal: {
+        ...stepped(agentId, true, 'goalCompletedAdopted', { conditionMet: true }),
+        goalId: `${agentId}-next`,
+        ...(chained ? { chainedFrom: agentId } : {})
+      },
+      choice: { disposition: 'replace', successItem: 'item.minecraft.coarse_dirt', successCount: 4 },
+      perception: sight(DIRT, 3)
+    }),
+    ...(chained
+      ? review(agentId, `${agentId}4`, { intent: 'craft', goal: stepped(`${agentId}-next`, true), perception: sight(DIRT, 1) })
+      : [])
+  ]
+  assert.equal(gate13(dirtGoal('zeta', false)).goalCoherence.pursuit.measured.substantiveMultiStepAgents, 0)
+  assert.equal(gate13(dirtGoal('zeta', true)).goalCoherence.pursuit.measured.substantiveMultiStepAgents, 1)
+  // A goal that crowds out offered exploration is a refused, incoherent decision.
+  const crowded = review('kappa', 'k1', {
+    goal: { outcome: 'goalCrowdsExploration' },
+    choice: { disposition: 'adopt', successItem: DIRT, successCount: 1 },
+    applied: 'goalCrowdsExploration',
+    perception: { ...sight(DIRT, 0), explore: [{ ref: 'x1' }] }
+  })
+  const result = gate13(crowded)
+  assert.equal(result.actions.byClass.goalIncoherent, 1)
+  assert.equal(result.goalCoherence.pursuit.measured.crowdedGoals, 1)
+  assert.equal(result.version, 'loom-readiness-gate/11')
+})

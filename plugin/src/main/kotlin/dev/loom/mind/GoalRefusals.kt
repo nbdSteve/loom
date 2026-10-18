@@ -112,9 +112,13 @@ private fun completionRefusalOf(
         else -> null
     }
 
-/** Whether a replace could adopt a next goal: one with a horizon, or one that crowds out nothing. */
+/**
+ * Whether a replace could adopt a next goal from what sight gives without crowding out looking
+ * further. A horizon alone does not refuse a plain completion: its goal may have no step now, and
+ * the schema offers a plain completion only when it offers no replace at all.
+ */
 private fun nextGoalOffered(observed: GoalObservation): Boolean =
-    observed.horizon.isNotEmpty() || observed.capacity.keys.any { !observed.crowdsExploration(it) }
+    observed.capacity.keys.any { !observed.crowdsExploration(it) }
 
 /**
  * Whether the goal [presented] carries could still be met from what [observed] holds and sees,

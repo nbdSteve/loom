@@ -1,7 +1,7 @@
 {
   "experimentId": "2026-10-15-scripted-two-cycle-10-agent-rehearsal",
   "title": "Credential-free 10-agent two-cycle rehearsal",
-  "mode": "routine-v29-night-goal",
+  "mode": "routine-v30-horizon-goal",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -60,9 +60,9 @@
       "pivotal": "scripted-stand-in"
     },
     "prompts": {
-      "routine": "routine-v29",
-      "notable": "notable-v29",
-      "pivotal": "pivotal-v29"
+      "routine": "routine-v30",
+      "notable": "notable-v30",
+      "pivotal": "pivotal-v30"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,

@@ -50,6 +50,7 @@ const GOAL_OUTCOMES = [
   'goalAbandonedAchievable',
   'goalReviseItemChanged',
   'goalCompletedWithoutNext',
+  'goalCrowdsExploration',
   'goalReviseUnchanged'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']

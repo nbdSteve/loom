@@ -39,13 +39,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v29";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v30";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v29";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v30";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v29";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v30";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -298,6 +298,10 @@ fn situation_of(perception: &Perception) -> String {
     lines.extend(explore_line(&perception.explore));
     lines.extend(recalled_line(&perception.recalled));
     if perception.trigger.reviews_goal() {
+        lines.extend(horizon_line(
+            &perception.horizon,
+            !perception.explore.is_empty(),
+        ));
         lines.extend(danger_line(perception));
     }
     lines.extend(no_dropped_item_line(&perception.surroundings));
@@ -497,6 +501,9 @@ fn refusal_line(refusal: &GoalRefusal) -> String {
         }
         "goalReviseUnchanged" => {
             "it revised the goal to the total it already had, which changes nothing: continue instead"
+        }
+        "goalCrowdsExploration" => {
+            "it set a goal sight hands over whole while there was ground to look further at: set a goal past what sight gives, or walk to look"
         }
         "goalCompletedWithoutNext" => {
             "it completed a met goal while sight gave a next one: replace it with the next instead"
@@ -949,6 +956,48 @@ fn recalled_line(sources: &[loom_contract::RecalledSource]) -> Option<String> {
         .join("; ");
     Some(format!(
         "Out of sight now, you recently saw sources of: {named}. A goal for one of them is walked toward by the cell at the edge of sight in its direction."
+    ))
+}
+
+/// The goals a review may set past what sight alone gives, each with what grounds it and the most
+/// it may ask, or nothing (r22: every goal was dirt from underfoot, and no agent looked for wood).
+fn horizon_line(goals: &[loom_contract::HorizonGoal], exploring: bool) -> Option<String> {
+    if goals.is_empty() {
+        return None;
+    }
+    let named = goals
+        .iter()
+        .take(loom_contract::MAX_HORIZON_GOALS)
+        .map(|goal| {
+            let ground = match (goal.grounding, goal.via.as_deref()) {
+                (loom_contract::HorizonGrounding::Recipe, Some(via)) => {
+                    format!("made from {}", field(via))
+                }
+                (loom_contract::HorizonGrounding::Recalled, _) => {
+                    "from a source you saw recently".to_owned()
+                }
+                _ => "from what you see".to_owned(),
+            };
+            let past = if goal.frontier {
+                ", the rest beyond the edge of sight"
+            } else {
+                ""
+            };
+            format!(
+                "{} up to {} in all, {ground}{past}",
+                field(&goal.what),
+                goal.most
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let crowd = if exploring {
+        " While there is ground to look further at, a goal sight hands you whole - the dirt under your feet - is offered only when one of these is made from it."
+    } else {
+        ""
+    };
+    Some(format!(
+        "Goals you may set past what sight alone gives: {named}. Take one step toward it now - a dig, a collect, a craft, or a walk to look further - and keep its total: it counts when what you find, or make, carries it there.{crowd}"
     ))
 }
 

@@ -921,6 +921,16 @@ fn widest_goal_review() -> Perception {
             ..option.clone()
         })
         .collect();
+    // Eight horizon goals each made from another item, so sixteen items crowd out nothing.
+    seen.horizon = (0..loom_contract::MAX_HORIZON_GOALS)
+        .map(|index| loom_contract::HorizonGoal {
+            what: format!("item.minecraft.{index:0>49}"),
+            grounding: loom_contract::HorizonGrounding::Recipe,
+            via: Some(format!("item.minecraft.{:0>49}", index + 8)),
+            most: 64,
+            frontier: false,
+        })
+        .collect();
     let stack = crafting.self_state.inventory_summary[0].clone();
     seen.self_state.inventory_summary = (0..46)
         .map(|index| InventoryStack {
@@ -1116,6 +1126,14 @@ fn a_source_recalled_out_of_sight_can_be_a_goal_walked_toward_by_its_edge_of_sig
         vertical_offset: 1.0,
         per_hundred: 500,
     }];
+    // The horizon the JVM grounds in the recalled tree: past its five logs onto the frontier.
+    seen.horizon = vec![loom_contract::HorizonGoal {
+        what: "item.minecraft.oak_log".to_owned(),
+        grounding: loom_contract::HorizonGrounding::Recalled,
+        via: None,
+        most: 13,
+        frontier: true,
+    }];
     let offered = OfferedRefs::of(&seen);
     assert_eq!(offered.capacity_of("item.minecraft.oak_log"), 5);
     let logs = offered
@@ -1139,4 +1157,107 @@ fn a_source_recalled_out_of_sight_can_be_a_goal_walked_toward_by_its_edge_of_sig
         !validator.is_valid(&toward("x2")),
         "a walk away from the source is no step toward it"
     );
+}
+
+fn horizon_goal(
+    what: &str,
+    grounding: loom_contract::HorizonGrounding,
+    via: Option<&str>,
+    most: i64,
+) -> loom_contract::HorizonGoal {
+    loom_contract::HorizonGoal {
+        what: what.to_owned(),
+        grounding,
+        via: via.map(str::to_owned),
+        most,
+        frontier: grounding != loom_contract::HorizonGrounding::Recipe,
+    }
+}
+
+#[test]
+fn guaranteed_dirt_does_not_crowd_out_looking_further_unless_a_horizon_goal_is_made_from_it() {
+    // r22: every goal was dirt from underfoot, and no agent looked for wood.
+    const DIRT: &str = "item.minecraft.dirt";
+    let ground = with_block(
+        fixture("perception-goal-review"),
+        "g1",
+        "grass_block",
+        Some((DIRT, 1, 1)),
+    );
+    // With nowhere further to look, the dirt is a goal as it always was.
+    assert_eq!(
+        count_bounds(
+            &decision_schema_for(&OfferedRefs::of(&ground), GoalPhase::of(&ground)),
+            "adopt",
+            DIRT
+        ),
+        vec![(1, 1)]
+    );
+    // Beside a cell at the edge of sight, it is not: the review may only look further.
+    let looking = with_edge(ground.clone());
+    let schema = decision_schema_for(&OfferedRefs::of(&looking), GoalPhase::of(&looking));
+    assert_eq!(dispositions(&schema), ["none"]);
+    // Unless a horizon goal is made from it: then it feeds a later typed goal.
+    let mut feeding = looking.clone();
+    feeding.horizon = vec![horizon_goal(
+        "item.minecraft.coarse_dirt",
+        loom_contract::HorizonGrounding::Recipe,
+        Some(DIRT),
+        8,
+    )];
+    let schema = decision_schema_for(&OfferedRefs::of(&feeding), GoalPhase::of(&feeding));
+    assert_eq!(count_bounds(&schema, "adopt", DIRT), vec![(1, 1)]);
+    assert_eq!(
+        count_bounds(&schema, "adopt", "item.minecraft.coarse_dirt"),
+        vec![(1, 8)]
+    );
+}
+
+#[test]
+fn a_horizon_goal_asks_past_what_sight_gives_and_is_stepped_now_by_a_dig_or_a_look_further() {
+    const LOG: &str = "item.minecraft.oak_log";
+    const PLANKS: &str = "item.minecraft.oak_planks";
+    let mut seen = with_edge(with_block(
+        fixture("perception-goal-review"),
+        "b1",
+        "oak_log",
+        Some((LOG, 1, 1)),
+    ));
+    seen.horizon = vec![
+        horizon_goal(
+            PLANKS,
+            loom_contract::HorizonGrounding::Recipe,
+            Some(LOG),
+            8,
+        ),
+        horizon_goal(LOG, loom_contract::HorizonGrounding::Sight, None, 9),
+    ];
+    let offered = OfferedRefs::of(&seen);
+    let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
+    // One log in sight, and eight more the frontier may hold: the cap, not the sky.
+    assert_eq!(count_bounds(&schema, "adopt", LOG), vec![(1, 9)]);
+    assert_eq!(count_bounds(&schema, "adopt", PLANKS), vec![(1, 8)]);
+    let steps = |item: &str| {
+        offered
+            .item_steps
+            .iter()
+            .find(|steps| steps.item == item)
+            .unwrap()
+            .clone()
+    };
+    // The rolling step is executable now: the log in reach, or the cell to look further from.
+    assert_eq!(steps(LOG).dig, vec!["b1".to_owned()]);
+    assert_eq!(steps(LOG).toward, vec!["x1".to_owned()]);
+    // Planks are stepped toward through the log they are made from.
+    assert_eq!(steps(PLANKS).dig, vec!["b1".to_owned()]);
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let dig = json!({ "action": "dig", "block": "b1" });
+    let adopt = |item: &str, count: i64| json!({ "disposition": "adopt", "successItem": item, "successCount": count });
+    assert!(validator.is_valid(&answer_in(&schema, &dig, &adopt(PLANKS, 8))));
+    assert!(validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "moveTo", "onto": "x1" }),
+        &adopt(LOG, 9)
+    )));
+    assert!(!validator.is_valid(&answer_in(&schema, &dig, &adopt(LOG, 10))));
 }

@@ -318,6 +318,38 @@ fn recalled_sources(perception: &Perception) -> impl Iterator<Item = (&String, i
         })
 }
 
+/// The items `item`'s horizon recipe path is made from, nearest first: its `via`, then that one's.
+fn path_of(perception: &Perception, item: &str) -> Vec<String> {
+    let via_of = |name: &str| {
+        perception
+            .horizon
+            .iter()
+            .find(|goal| goal.what == name)
+            .and_then(|goal| goal.via.clone())
+    };
+    let mut path = Vec::new();
+    let mut next = via_of(item);
+    while let Some(input) = next {
+        if path.len() >= 2 || path.contains(&input) {
+            break;
+        }
+        next = via_of(&input);
+        path.push(input);
+    }
+    path
+}
+
+/// Whether a goal of `item` would crowd out looking further: cells at the edge of sight are
+/// offered, and no horizon goal is grounded in `item` or made from it (r22: every goal was dirt
+/// from underfoot, and no agent looked for wood). The JVM's `crowdsExploration`.
+fn crowds_exploration(perception: &Perception, item: &str) -> bool {
+    !perception.explore.is_empty()
+        && !perception
+            .horizon
+            .iter()
+            .any(|goal| goal.what == item || goal.via.as_deref() == Some(item))
+}
+
 /// Appends `handle` unless the list already holds it.
 fn offer(list: &mut Vec<String>, handle: &str) {
     if !list.iter().any(|held| held == handle) {
@@ -471,7 +503,12 @@ impl OfferedRefs {
                     kept
                 };
                 let collecting = self.collect_required && self.pursued.as_ref() == Some(item);
-                let source = |handle: &String| gives_item(handle, item);
+                // A horizon goal made by a recipe is stepped toward through what it is made from.
+                let path = path_of(perception, item);
+                let horizon = perception.horizon.iter().any(|goal| &goal.what == item);
+                let source = |handle: &String| {
+                    gives_item(handle, item) || path.iter().any(|input| gives_item(handle, input))
+                };
                 let none = |_: &String| false;
                 // A craft that makes the item outright comes first, then its drops, then the blocks
                 // whose sampled rolls give most of it, so the budget is never spent on rare drops
@@ -479,11 +516,10 @@ impl OfferedRefs {
                 // out behind four leaves eight times).
                 let recipe = |handle: &String| {
                     !collecting
-                        && perception
-                            .self_state
-                            .crafting_options
-                            .iter()
-                            .any(|option| &option.recipe_ref == handle && &option.what == item)
+                        && perception.self_state.crafting_options.iter().any(|option| {
+                            &option.recipe_ref == handle
+                                && (&option.what == item || path.contains(&option.what))
+                        })
                 };
                 let recipes = take(&self.recipes, &recipe);
                 let pickup = take(&self.pickup_items, &source);
@@ -499,13 +535,21 @@ impl OfferedRefs {
                         && source(handle)
                 };
                 let walks = take(&self.walk_targets, &walk);
+                // Toward where a source of it, or of what it is made from, was last seen; a horizon
+                // goal with none remembered may look further every way, as its total reaches past
+                // what sight gives.
+                let remembered: Vec<Bearing> = perception
+                    .recalled
+                    .iter()
+                    .filter(|source| &source.what == item || path.contains(&source.what))
+                    .map(|source| source.direction)
+                    .collect();
                 let recalled_toward = |handle: &String| {
                     !collecting
                         && perception.explore.iter().any(|cell| {
                             &cell.target_ref == handle
-                                && perception.recalled.iter().any(|source| {
-                                    &source.what == item && source.direction == cell.direction
-                                })
+                                && (remembered.contains(&cell.direction)
+                                    || (horizon && remembered.is_empty()))
                         })
                 };
                 let toward = take(&self.explore_targets, &recalled_toward);
@@ -522,11 +566,32 @@ impl OfferedRefs {
             .collect()
     }
 
-    /// For each item [`Self::capacity`] names, the fewest and most a success count may ask now.
+    /// For each item [`Self::capacity`] or the perception's horizon names, the fewest and most a
+    /// success count may ask now: one more than is held, up to what is held plus capacity or the
+    /// horizon's most, whichever is more. While cells at the edge of sight are offered, an item no
+    /// horizon goal is grounded in or made from is not offered at all.
     fn count_bounds_for(&self, perception: &Perception) -> Vec<(String, i64, i64)> {
-        self.capacity
+        let horizon_most = |item: &str| {
+            perception
+                .horizon
+                .iter()
+                .find(|goal| goal.what == item)
+                .map_or(0, |goal| goal.most)
+        };
+        let mut items: Vec<(String, i64)> = self.capacity.clone();
+        for goal in perception
+            .horizon
+            .iter()
+            .take(loom_contract::MAX_HORIZON_GOALS)
+        {
+            if !items.iter().any(|(item, _)| *item == goal.what) {
+                items.push((goal.what.clone(), 0));
+            }
+        }
+        items
             .iter()
             .filter(|(item, _)| self.pursued.as_ref().is_none_or(|goal| goal == item))
+            .filter(|(item, _)| self.pursued.is_some() || !crowds_exploration(perception, item))
             .filter_map(|(item, capacity)| {
                 let held = held_of(perception, item);
                 // A replace of a stalled goal may not set the same item again, at any total, which
@@ -535,9 +600,13 @@ impl OfferedRefs {
                     return None;
                 }
                 let fewest = held.saturating_add(1);
-                let most = held.saturating_add(*capacity).min(MAX_SUCCESS_COUNT);
+                let most = held
+                    .saturating_add(*capacity)
+                    .max(horizon_most(item))
+                    .min(MAX_SUCCESS_COUNT);
                 (fewest <= most).then(|| (item.clone(), fewest, most))
             })
+            .take(MAX_OBTAINABLE_ITEMS)
             .collect()
     }
 
@@ -580,10 +649,11 @@ impl OfferedRefs {
         // Whether or not sight can meet all of it, a goal is stepped only toward its own item, and
         // its own lying drop is collected first (the path rehearsal: a goal one log short could only
         // walk away from its own log).
+        let path = path_of(perception, item);
         let gives_goal = |handle: &String| {
-            gives
-                .iter()
-                .any(|(given, what)| given == handle && *what == item)
+            gives.iter().any(|(given, what)| {
+                given == handle && (*what == item || path.iter().any(|input| input == *what))
+            })
         };
         self.dig_blocks.retain(gives_goal);
         self.pickup_items.retain(gives_goal);
