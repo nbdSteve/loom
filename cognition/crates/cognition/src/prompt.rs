@@ -2694,4 +2694,52 @@ mod tests {
             "the bound must cut: {situation}"
         );
     }
+
+    #[test]
+    fn a_goal_review_names_its_horizon_goals_and_what_grounds_each_and_an_event_names_none() {
+        // r22: every goal was dirt from underfoot, and no agent looked for wood.
+        let mut seen = goal_review_holding(None);
+        seen.explore = vec![ExploreTarget {
+            target_ref: "x1".to_owned(),
+            distance: 12.0,
+            direction: Bearing::East,
+            vertical_offset: 0.0,
+        }];
+        seen.horizon = vec![
+            loom_contract::HorizonGoal {
+                what: "item.minecraft.oak_log".to_owned(),
+                grounding: loom_contract::HorizonGrounding::Recalled,
+                via: None,
+                most: 13,
+                frontier: true,
+            },
+            loom_contract::HorizonGoal {
+                what: "item.minecraft.oak_planks".to_owned(),
+                grounding: loom_contract::HorizonGrounding::Recipe,
+                via: Some("item.minecraft.oak_log".to_owned()),
+                most: 8,
+                frontier: false,
+            },
+        ];
+        let situation = situation(&seen);
+        assert!(
+            situation.contains("Goals you may set past what sight alone gives"),
+            "{situation}"
+        );
+        assert!(situation.contains("up to 13 in all, from a source you saw recently, the rest beyond the edge of sight"), "{situation}");
+        assert!(
+            situation.contains("up to 8 in all, made from"),
+            "{situation}"
+        );
+        assert!(
+            situation.contains("the dirt under your feet"),
+            "{situation}"
+        );
+        let mut event = seen.clone();
+        event.trigger = Trigger::Damaged {
+            amount: 2,
+            source: "zombie".to_owned(),
+        };
+        assert!(!situation(&event).contains("Goals you may set"));
+    }
 }

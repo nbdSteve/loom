@@ -6,9 +6,9 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v29 night-goal pilot,
-`research/config/first-tribe-routine-v29-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v29-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v30 horizon-goal pilot,
+`research/config/first-tribe-routine-v30-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v30-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
 native event drivers. It uses the v29 prompts, which show each agent its own
@@ -446,7 +446,7 @@ Generation 11 is frozen, so r20 re-derives exactly as published; the same test h
 
 `research/tools/path-rehearsal.js` is a deterministic live rehearsal of the goal paths no research run has reached by itself, and it is not a research run.
 It starts one real Paper server with the Loom plugin and ten real bodies on a flat world laid out by the console commands in `research/tools/path-rehearsal.json`, with the cognition service answering as the path exerciser (`LOOM_COGNITION_BACKEND=scripted-paths`).
-Each agent walks one path, and the run's own evidence, normalized and judged by readiness gate generation 12, must show each one as the server witnessed it.
+Each agent walks one path, and the run's own evidence, normalized and judged by readiness gate generation 13, must show each one as the server witnessed it.
 The paths are: a craft of two applications accepted and confirmed, and a goal completed and the next adopted in one answer, chained to the goal whose item its recipe uses; an own drop ignored and refused; that drop still told lying more than 4,800 ticks after the dig; a flight from a peer classed `peerFlight`; a collect without moving that vanilla's own pickup ends; a walk to the edge of sight credited `revealed`; a revise to another item refused; a revise to the held total refused; a plain completion beside a source refused; a plain completion with nothing in sight accepted and followed by the review it owed; a block beside the support under an overhang reported unsafe to dig; a drop in a one-high nook beside a one-cell pit, just past vanilla's reach from where the agent stands, collected by a final step inside the pit cell; and a goal review beside a creeper that cannot move fleeing it with no goal choice.
 No other decision may fail, no claim may be disputed, and no action may end in a class the paths do not explain.
 Vanilla picks up an item inside the pickup box within half a second and despawns a lying one after 6,000 ticks, which is why a collect without moving uses a summoned item with a pickup delay, and why a peer's spoken line, timed by the review stagger, gives the dropping agent a perception between 4,800 and 6,000 ticks after its dig.
