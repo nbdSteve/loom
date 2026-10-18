@@ -326,16 +326,17 @@ function followUpsEnvironmentOf (config) {
   const agents = Array.isArray(config.agents) ? config.agents.length : 0
   const global = config.cognition?.globalCallCeiling
   const perAgent = config.cognition?.perAgentCallCeiling
-  // Each agent's share of the run's calls, kept by the JVM for the scheduled reviews still due:
-  // the night's danger spent r20's whole ceiling before its last reviews (`CallReserve`).
-  const share = agents > 0 && Number.isInteger(global) && Number.isInteger(perAgent)
-    ? Math.min(perAgent, Math.floor(global / agents))
-    : undefined
+  // The run's ceilings, kept by the JVM for the scheduled reviews the living still owe: the
+  // night's danger spent r20's whole ceiling before its last reviews, and r22's fixed shares
+  // stranded the calls of the dead (`CallReserve`).
+  const bounded = agents > 0 && Number.isInteger(global) && Number.isInteger(perAgent)
   return {
     ...(Number.isInteger(followUps) ? { LOOM_GOAL_FOLLOW_UPS_PER_REVIEW: String(followUps) } : {}),
-    ...(share !== undefined && Number.isInteger(schedule?.expectedReviewsPerAgent)
+    ...(bounded && Number.isInteger(schedule?.expectedReviewsPerAgent)
       ? {
-          LOOM_COGNITION_CALLS_PER_AGENT: String(share),
+          LOOM_COGNITION_CALLS_PER_AGENT: String(perAgent),
+          LOOM_COGNITION_CALLS_GLOBAL: String(global),
+          LOOM_COGNITION_AGENTS: String(agents),
           LOOM_EXPECTED_REVIEWS_PER_AGENT: String(schedule.expectedReviewsPerAgent)
         }
       : {})

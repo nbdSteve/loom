@@ -365,6 +365,22 @@ class ThreatWatch(
         remembered.remove(agent)
     }
 
+    /**
+     * Gives back the pivotal allowance a sighting spent when its perception never reached the
+     * mind - coalesced into a danger episode, or refused for the run's call reserve - because the
+     * cap bounds calls and that sighting cost none. In r22 beta, gamma and theta were capped after
+     * one or two real calls, and 25 later sightings at health 1.5 to 3.3 were suppressed.
+     */
+    fun refund(
+        agent: AgentId,
+        sighted: Trigger.ThreatSighted,
+    ) {
+        rollBudgetToToday()
+        if (!sighted.visible || sighted.distance > pivotalDistanceBlocks) return
+        val spent = spentBy(agent)
+        if (spent > 0) pivotalCalls[agent] = spent - 1
+    }
+
     /** What one candidate amounted to: a sighting to report, or a bound that refused it. */
     private sealed interface Examination {
         data class Report(

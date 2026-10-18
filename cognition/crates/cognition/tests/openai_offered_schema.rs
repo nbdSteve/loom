@@ -471,12 +471,11 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     let mut settled = fixture("perception-goal-carried");
     settled.trigger = loom_contract::Trigger::StepSettled;
     assert_eq!(GoalPhase::of(&settled), GoalPhase::Held);
-    // Any other trigger keeps the reference shape's whole flat offer, less the worded choices
-    // when, as here, nothing obtainable is in sight for a success item to name.
-    assert_eq!(
-        dispositions(&of(&fixture("perception-threat-sighted"))),
-        ["continue", "none", "complete", "abandon"]
-    );
+    // Any other trigger is offered no goal choice at all: the ledger reads none outside a review
+    // (r22: three event answers adopted goals that were dropped as goalNotReviewed).
+    let sighted = fixture("perception-threat-sighted");
+    assert_eq!(GoalPhase::of(&sighted), GoalPhase::Event);
+    assert_eq!(dispositions(&of(&sighted)), ["none"]);
 }
 
 /// The count bounds a request's goal shapes give `item` under `disposition`.

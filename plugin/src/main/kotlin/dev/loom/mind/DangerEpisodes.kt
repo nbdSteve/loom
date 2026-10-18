@@ -17,17 +17,18 @@
  * the episode at once. A different threat is new
  * information and is sent, unless it is further off than a threat whose decision is still open:
  * in r20, eta's flight from a zombie 6.8 blocks off was preempted by one from a skeleton 23.1 off.
- * Damage is nearest of all, and damage after the episode's answer has settled is always sent:
- * the answer did not keep the threat off, which is news. In the v29 rehearsal eta fled a spider
- * safely, was bitten 58 ticks later inside the cooldown, and died with that bite never asked
- * about. Nothing here decides how to act; it decides only whether a second question is worth a
- * model call.
+ * Damage is nearest of all. Damage, or a sighting back within pivotal range, after the episode's
+ * answer has settled is always sent: the answer did not keep the threat off, which is news. In
+ * the v29 rehearsal eta fled a spider safely, was bitten 58 ticks later inside the cooldown, and
+ * died with that bite never asked about. Nothing here decides how to act; it decides only whether
+ * a second question is worth a model call.
  *
  * Engine-free and main-thread only, like the rest of the cognition seam.
  */
 package dev.loom.mind
 
 import dev.loom.body.AgentId
+import dev.loom.body.PIVOTAL_THREAT_DISTANCE_BLOCKS
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 
@@ -79,7 +80,7 @@ class DangerEpisodes(
         // Whatever survived the sweep is open or still cooling down.
         val distance = (perception.trigger as? Trigger.ThreatSighted)?.distance ?: 0.0
         val nearerOpen = byThreat.values.any { it.open.isNotEmpty() && it.distance < distance }
-        val answered = byThreat[key]?.open?.isEmpty() == true && perception.trigger is Trigger.Damaged
+        val answered = byThreat[key]?.open?.isEmpty() == true && closedAgain(perception.trigger)
         val admitted = (key !in byThreat || answered) && !nearerOpen
         if (admitted) byThreat[key] = Episode(distance).also { it.open += perception.requestId }
         return admitted
@@ -123,6 +124,16 @@ class DangerEpisodes(
     fun forget(agentId: AgentId) {
         episodes.remove(agentId)
     }
+
+    /**
+     * Whether a repeat after the episode's answer settled is news: damage always is, and so is a
+     * sighting back inside [PIVOTAL_THREAT_DISTANCE_BLOCKS], because the flight did not keep the
+     * threat off (r22: the last warnings of alpha at health 1.2, beta, epsilon and zeta were
+     * coalesced into the cooldown of a flight the threat had already closed).
+     */
+    private fun closedAgain(trigger: Trigger): Boolean =
+        trigger is Trigger.Damaged ||
+            (trigger is Trigger.ThreatSighted && trigger.distance <= PIVOTAL_THREAT_DISTANCE_BLOCKS)
 
     private fun Episode.expiredAt(now: Long): Boolean {
         val settled = settledTick ?: return false

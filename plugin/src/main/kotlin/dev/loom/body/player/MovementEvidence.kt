@@ -90,9 +90,18 @@ internal fun movementTag(outcome: MoveOutcome): String =
         -> EventTag.MOVEMENT_REFUSED
     }
 
-internal fun retreatTag(outcome: MoveOutcome): String =
+internal fun retreatTag(
+    outcome: MoveOutcome,
+    separation: Double? = null,
+    distance: Int? = null,
+): String =
     when (outcome) {
-        MoveOutcome.ARRIVED -> EventTag.RETREAT_SAFE
+        MoveOutcome.ARRIVED ->
+            if (separation != null && distance != null && separation < distance) {
+                EventTag.RETREAT_SHORT
+            } else {
+                EventTag.RETREAT_SAFE
+            }
         MoveOutcome.CANCELLED -> EventTag.RETREAT_SUPERSEDED
         MoveOutcome.SENSE_FORGOTTEN -> EventTag.RETREAT_THREAT_FORGOTTEN
         MoveOutcome.THREAT_UNNAMED -> EventTag.RETREAT_THREAT_UNNAMED

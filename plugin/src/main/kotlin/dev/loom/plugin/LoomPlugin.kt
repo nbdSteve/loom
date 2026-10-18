@@ -318,7 +318,7 @@ class LoomPlugin : JavaPlugin() {
         )
         return EmbodiedCognition(
             bodies = bodies,
-            mind = ReservingCognitionBridge(fair, CallReserve.fromEnvironment()),
+            mind = ReservingCognitionBridge(fair, CallReserve.fromEnvironment(isDead = isDead)),
             mainThread = BukkitMainThread(this),
             journal = DecisionJournal(eventLog, currentTick = { server.currentTick.toLong() }),
             goals = goals,

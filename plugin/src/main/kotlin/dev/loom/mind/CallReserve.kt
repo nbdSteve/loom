@@ -13,26 +13,34 @@ import java.util.concurrent.CompletableFuture
 const val DAMAGE_CALL_RESERVE: Int = 2
 
 /**
- * Keeps each agent's calls inside its share of a run's ceiling with room for every scheduled
- * review still due: a perception that is not a scheduled review is sent only when, after it,
- * the agent's remaining share still holds its remaining scheduled reviews.
+ * Keeps a run's calls inside its two ceilings - [perAgentCeiling] for one agent and
+ * [globalCeiling] for all [agents] - with room for every scheduled review still due: a
+ * perception that is not a scheduled review is sent only when, after it, the agent's own
+ * ceiling still holds its own reviews still due and the global ceiling still holds every
+ * living agent's.
  *
- * The research harness refuses calls only at its own global ceiling, and the run ends there: in
- * r20 the night's 49 danger calls and the follow-ups spent all 150 by tick 8465, and the v29
- * rehearsal's 80 by tick 8964, so the last scheduled reviews never ran. With [callsPerAgent] the
- * global ceiling divided among the agents and [scheduledPerAgent] the plan's reviews, no agent's
- * events can cost another agent - or itself - a scheduled review. Inside what is left, damage
- * comes before every other event: a sighting or a follow-up is sent only while it also leaves
- * [DAMAGE_CALL_RESERVE] calls for damage, because in the v29 rehearsal gamma's sightings and
- * follow-ups spent its share and the zombie villager's bites that killed it were refused. A run
- * without a plan is [UNBOUNDED]. Main thread only.
+ * The research harness refuses calls at its ceilings, and the run ends there: in r20 the night's
+ * 49 danger calls and the follow-ups spent all 150 by tick 8465, so the last scheduled reviews
+ * never ran. Inside what is left, damage comes before every other event: a sighting or a
+ * follow-up is sent only while it also leaves [DAMAGE_CALL_RESERVE] calls for damage.
+ *
+ * The reserve is pooled, and a dead agent owes nothing: r22 split the global ceiling into fixed
+ * shares of 15, refused 21 danger calls (four of them damage, the last of theta's at health 1.5)
+ * while 22 of the 150 went unused, and alpha's and iota's unspent shares were stranded. So an
+ * agent may spend up to its own ceiling, and what the global ceiling keeps is only the reviews
+ * the living still owe. A run without a plan is [UNBOUNDED].
  */
 class CallReserve(
-    private val callsPerAgent: Int,
+    private val perAgentCeiling: Int,
     private val scheduledPerAgent: Int,
+    private val globalCeiling: Int = Int.MAX_VALUE,
+    private val agents: Int = 0,
+    private val isDead: (AgentId) -> Boolean = { false },
 ) {
     init {
-        require(callsPerAgent >= 0 && scheduledPerAgent >= 0) { "a call reserve counts calls, never fewer than none" }
+        require(perAgentCeiling >= 0 && scheduledPerAgent >= 0 && globalCeiling >= 0 && agents >= 0) {
+            "a call reserve counts calls, never fewer than none"
+        }
     }
 
     private val sent = mutableMapOf<AgentId, Int>()
@@ -46,9 +54,15 @@ class CallReserve(
     ): Boolean {
         val review = perception.trigger == Trigger.GoalReview
         val calls = sent[agentId] ?: 0
-        val owed = (scheduledPerAgent - (scheduled[agentId] ?: 0)).coerceAtLeast(0)
-        val kept = if (perception.trigger is Trigger.Damaged) owed else owed + DAMAGE_CALL_RESERVE
-        val admitted = if (review) calls < callsPerAgent else calls + 1 + kept <= callsPerAgent
+        val total = sent.values.sum()
+        val kept = if (perception.trigger is Trigger.Damaged) 0 else DAMAGE_CALL_RESERVE
+        val admitted =
+            if (review) {
+                calls < perAgentCeiling && total < globalCeiling
+            } else {
+                calls + 1 + owedBy(agentId) + kept <= perAgentCeiling &&
+                    total.toLong() + 1 + owedByTheLiving(agentId) + kept <= globalCeiling
+            }
         if (admitted) {
             sent[agentId] = calls + 1
             if (review) scheduled[agentId] = (scheduled[agentId] ?: 0) + 1
@@ -56,22 +70,48 @@ class CallReserve(
         return admitted
     }
 
+    private fun owedBy(agentId: AgentId): Int =
+        if (isDead(agentId)) 0 else (scheduledPerAgent - (scheduled[agentId] ?: 0)).coerceAtLeast(0)
+
+    /** The reviews every living agent still owes, counting configured agents not yet heard from. */
+    private fun owedByTheLiving(asking: AgentId): Long {
+        val known = sent.keys + asking
+        val unheard = (agents - known.size).coerceAtLeast(0).toLong() * scheduledPerAgent
+        return known.sumOf { owedBy(it).toLong() } + unheard
+    }
+
     companion object {
         /** No plan to keep a reserve for: every perception is sent. */
         val UNBOUNDED: CallReserve = CallReserve(Int.MAX_VALUE, 0)
 
-        /** The environment setting for one agent's share of the run's calls. */
+        /** The environment setting for one agent's ceiling on the run's calls. */
         const val CALLS_ENV: String = "LOOM_COGNITION_CALLS_PER_AGENT"
+
+        /** The environment setting for the run's global ceiling on calls. */
+        const val GLOBAL_ENV: String = "LOOM_COGNITION_CALLS_GLOBAL"
+
+        /** The environment setting for how many agents share the global ceiling. */
+        const val AGENTS_ENV: String = "LOOM_COGNITION_AGENTS"
 
         /** The environment setting for the scheduled reviews the plan expects of each agent. */
         const val SCHEDULED_ENV: String = "LOOM_EXPECTED_REVIEWS_PER_AGENT"
 
         /** The reserve [environment] states, or [UNBOUNDED] when it states none. */
-        fun fromEnvironment(environment: Map<String, String> = System.getenv()): CallReserve {
+        fun fromEnvironment(
+            environment: Map<String, String> = System.getenv(),
+            isDead: (AgentId) -> Boolean = { false },
+        ): CallReserve {
             val calls = environment[CALLS_ENV]?.trim() ?: return UNBOUNDED
-            val share = requireNotNull(calls.toIntOrNull()) { "$CALLS_ENV must be a count, was \"$calls\"" }
-            val reviews = environment[SCHEDULED_ENV]?.trim()?.toIntOrNull() ?: 0
-            return CallReserve(share, reviews)
+            val ceiling = requireNotNull(calls.toIntOrNull()) { "$CALLS_ENV must be a count, was \"$calls\"" }
+
+            fun count(name: String) = environment[name]?.trim()?.toIntOrNull()
+            return CallReserve(
+                perAgentCeiling = ceiling,
+                scheduledPerAgent = count(SCHEDULED_ENV) ?: 0,
+                globalCeiling = count(GLOBAL_ENV) ?: Int.MAX_VALUE,
+                agents = count(AGENTS_ENV) ?: 0,
+                isDead = isDead,
+            )
         }
     }
 }

@@ -442,14 +442,16 @@ test('a primary behavior run holds native cognition until its initial conditions
   assert.deepEqual(journalled, ['initialConditionsAttested'])
 })
 
-test('the JVM is told the plan its call reserve keeps each agent\'s share for', () => {
+test('the JVM is told the ceilings and plan its call reserve keeps the living\'s reviews within', () => {
   const { followUpsEnvironmentOf } = require('../lib/harness.js')
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'tribe-night-goal-10m-10.json'), 'utf8'))
-  // r20 spent its whole ceiling of 150 on the night's danger before its last reviews: each of
-  // ten agents keeps 15 calls, five of them for its scheduled reviews.
+  // r20 spent its whole ceiling of 150 on the night's danger before its last reviews, and r22's
+  // fixed shares of 15 stranded the dead's calls: the JVM keeps the pooled ceilings instead.
   assert.deepEqual(followUpsEnvironmentOf(config), {
     LOOM_GOAL_FOLLOW_UPS_PER_REVIEW: '1',
-    LOOM_COGNITION_CALLS_PER_AGENT: '15',
+    LOOM_COGNITION_CALLS_PER_AGENT: '24',
+    LOOM_COGNITION_CALLS_GLOBAL: '150',
+    LOOM_COGNITION_AGENTS: '10',
     LOOM_EXPECTED_REVIEWS_PER_AGENT: '5'
   })
 })

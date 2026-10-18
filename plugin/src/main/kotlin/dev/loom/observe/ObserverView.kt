@@ -375,6 +375,7 @@ class ObserverView(
         fun retreatNote(outcome: String?): Note =
             when (outcome) {
                 EventTag.RETREAT_SAFE -> Note("got away from the threat", ObserverLevel.CALM)
+                EventTag.RETREAT_SHORT -> Note("ran, but the threat kept pace", ObserverLevel.CONCERN)
                 // Worded to hold for a flight that never started as well as one that did:
                 // this tag is also what a Flee naming a creature the world no longer holds
                 // is filed under, and there the agent was never running from anything.

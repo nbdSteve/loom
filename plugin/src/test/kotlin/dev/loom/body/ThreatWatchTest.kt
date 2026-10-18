@@ -1,6 +1,7 @@
 package dev.loom.body
 
 import dev.loom.contract.Bearing
+import dev.loom.contract.Trigger
 import org.junit.jupiter.api.Test
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -178,6 +179,24 @@ class ThreatWatchTest {
             ninth.suppressed,
             "and the record says Loom stopped paying, not that the agent decided to stand there",
         )
+    }
+
+    @Test
+    fun `a pivotal sighting that never reached the mind gives its allowance back`() {
+        // r22: beta, gamma and theta were capped after one or two real calls, because the cap
+        // was charged for sightings coalesced into a danger episode or refused for the reserve.
+        spendTheNight(alpha, handles = "a")
+        assertEquals(0, watch.pivotalCallsRemaining(alpha))
+        val near = Trigger.ThreatSighted(ZOMBIE, "e-near", 4.0, Bearing.NORTH, true)
+        watch.refund(alpha, near)
+        assertEquals(1, watch.pivotalCallsRemaining(alpha))
+        // A sighting that was never pivotal spent nothing, so gives nothing back.
+        watch.refund(alpha, near.copy(distance = 12.0))
+        watch.refund(alpha, near.copy(visible = false))
+        assertEquals(1, watch.pivotalCallsRemaining(alpha))
+        // Nor is more given back than was spent.
+        repeat(MAX_PIVOTAL_THREAT_CALLS_PER_NIGHT + 2) { watch.refund(beta, near) }
+        assertEquals(MAX_PIVOTAL_THREAT_CALLS_PER_NIGHT, watch.pivotalCallsRemaining(beta))
     }
 
     @Test

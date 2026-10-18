@@ -166,6 +166,8 @@ function refusalClass (tag, generation = 12) {
   if (generation >= 5 && tag === 'digWouldTrap') return 'inapplicable'
   if (generation >= 11 && tag === 'digDropUnreachable') return 'inapplicable'
   if (tag === 'controlNotReady') return 'concurrent'
+  // A strike landed and the target then left range (r22 delta): a race with the target.
+  if (tag === 'attackTargetEscaped') return 'targetRace'
   if (tag === 'moveOwnSpot') return 'noOpTarget'
   if (/BodyDied$/.test(tag)) return 'death'
   if (/Cancelled$/.test(tag)) return 'superseded'
@@ -188,6 +190,8 @@ const MOVED_CLASSES = Object.freeze({
 })
 const RETREAT_CLASSES = Object.freeze({
   retreatSafe: 'confirmed',
+  // Arrived, with the threat keeping pace (r22): judged as a flight that ran, like a safe one.
+  retreatShort: 'confirmed',
   retreatSuperseded: 'superseded',
   retreatThreatGone: 'targetRace',
   retreatThreatForgotten: 'staleRef',

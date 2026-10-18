@@ -210,6 +210,13 @@ object EventTag {
     const val RETREAT_SAFE: String = "retreatSafe"
 
     /**
+     * The flight reached ground beyond the requested distance from where the threat stood, but
+     * the threat kept pace: the live separation at its end is short of that distance (r22: eight
+     * "safe" flights ended under 12 of the 24 asked for, and the bites resumed 40 ticks later).
+     */
+    const val RETREAT_SHORT: String = "retreatShort"
+
+    /**
      * The threat died, despawned, or left the world. The running was not what ended it.
      *
      * Filed for a flight that never started as well as for one that did. A `Flee` whose
@@ -445,6 +452,9 @@ object EventTag {
     const val ATTACK_SLOT_CHANGED: String = "attackSlotChanged"
     const val ATTACK_HEALTH_BOUND: String = "attackHealthBound"
     const val ATTACK_OUT_OF_RANGE: String = "attackOutOfRange"
+
+    /** A strike landed and the target was then out of range: it was knocked or walked off (r22 delta). */
+    const val ATTACK_TARGET_ESCAPED: String = "attackTargetEscaped"
     const val ATTACK_NO_ROUTE: String = "attackNoRoute"
     const val ATTACK_SEARCH_OVER_BUDGET: String = "attackSearchOverBudget"
     const val ATTACK_STALLED: String = "attackStalled"
@@ -713,6 +723,7 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.ATTACK_SLOT_CHANGED,
         EventTag.ATTACK_HEALTH_BOUND,
         EventTag.ATTACK_OUT_OF_RANGE,
+        EventTag.ATTACK_TARGET_ESCAPED,
         EventTag.ATTACK_NO_ROUTE,
         EventTag.ATTACK_SEARCH_OVER_BUDGET,
         EventTag.ATTACK_STALLED,

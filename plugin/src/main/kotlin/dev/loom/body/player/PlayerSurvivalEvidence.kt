@@ -96,11 +96,15 @@ internal fun craftOutcome(report: BodyResponse.CraftReport): IntentOutcome =
     }
 
 internal fun attackOutcome(report: BodyResponse.AttackReport): IntentOutcome =
-    when (report.outcome) {
-        AttackOutcome.ATTACKED ->
+    when {
+        report.outcome == AttackOutcome.ATTACKED ->
             IntentOutcome.Accepted("completed ${report.attacks} bounded attack(s)")
-        AttackOutcome.TARGET_DIED ->
+        report.outcome == AttackOutcome.TARGET_DIED ->
             IntentOutcome.Accepted("target died after ${report.attacks} bounded attack(s)")
+        // The body re-checks range before every strike, so out of range after one landed is the
+        // target leaving it, not a target that was never in reach (r22 delta, tick 7743).
+        report.outcome == AttackOutcome.OUT_OF_RANGE && report.attacks > 0 ->
+            rejected("attack target escaped after ${report.attacks} strike(s)", EventTag.ATTACK_TARGET_ESCAPED)
         else -> requireNotNull(ATTACK_REFUSALS[report.outcome])
     }
 

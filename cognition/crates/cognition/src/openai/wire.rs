@@ -793,8 +793,12 @@ fn goal_variant(
 /// Where one perception stands with its goal, which decides the goal choices it can make.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GoalPhase {
-    /// Not a goal review, or the reference shape: every choice is offered.
+    /// The reference shape: every choice is offered.
     Any,
+    /// Not a goal review: the ledger reads no goal choice outside a review, so only `null` is
+    /// offered (r22: three event answers adopted goals that were dropped as `goalNotReviewed`,
+    /// theta's oak log the run's only log goal among them).
+    Event,
     /// A goal review with no goal held: adopt one, or make no choice.
     Unheld,
     /// A goal review whose held goal's success condition is not met.
@@ -810,7 +814,7 @@ impl GoalPhase {
     #[must_use]
     pub fn of(perception: &Perception) -> Self {
         if !perception.trigger.reviews_goal() {
-            return Self::Any;
+            return Self::Event;
         }
         match &perception.goal {
             None => Self::Unheld,
@@ -835,7 +839,7 @@ impl GoalPhase {
 
     /// Whether a goal review in this phase couples its goal choice to its intent.
     const fn coupled(self) -> bool {
-        !matches!(self, Self::Any)
+        !matches!(self, Self::Any | Self::Event)
     }
 }
 
@@ -896,6 +900,13 @@ fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
     };
     let continued = || variants(GoalDisposition::Continue, "continue", CONTINUE);
     let none = || vec![json!({ "type": "null" })];
+    if phase == GoalPhase::Event {
+        return GoalOffer {
+            by_item: Vec::new(),
+            exploring: Vec::new(),
+            any: none(),
+        };
+    }
     let Some(refs) = offered.filter(|_| phase.coupled()) else {
         let by_item = vec![(
             String::new(),
@@ -979,8 +990,8 @@ fn coupled_offer(
             .collect()
     };
     match phase {
-        // The reference shape is never coupled, so it never reaches here; it offers nothing.
-        GoalPhase::Any => GoalOffer {
+        // The reference shape and an event are never coupled, so never reach here.
+        GoalPhase::Any | GoalPhase::Event => GoalOffer {
             by_item: Vec::new(),
             exploring: Vec::new(),
             any: Vec::new(),

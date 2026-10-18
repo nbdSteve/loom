@@ -248,7 +248,8 @@ class EmbodiedCognitionTest {
                 mainThread = main,
                 journal = journalInto(records),
             )
-        val zombie = Trigger.ThreatSighted("entity.minecraft.zombie", "e1", 6.0, Bearing.NORTH, true, true)
+        // Beyond pivotal range, where a repeat after the flight still cools down.
+        val zombie = Trigger.ThreatSighted("entity.minecraft.zombie", "e1", 12.0, Bearing.NORTH, true, true)
         val first = perception(requestId = "danger-1", agentId = agent.value, trigger = zombie)
         val repeat = perception(requestId = "danger-2", agentId = agent.value, trigger = Trigger.Damaged(3, "zombie"))
         cognition.submit(agent, first)

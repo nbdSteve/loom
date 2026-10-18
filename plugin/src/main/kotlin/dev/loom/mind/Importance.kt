@@ -18,6 +18,7 @@ import dev.loom.body.PIVOTAL_THREAT_DISTANCE_BLOCKS
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
+import dev.loom.contract.reviewsGoal
 
 /**
  * The tier [Trigger] warrants.
@@ -81,4 +82,14 @@ private fun threatImportance(sighting: Trigger.ThreatSighted): DecisionImportanc
  * This is applied on the way to the mind so the tier stamped on the resulting
  * decision's provenance is the one the event actually earned.
  */
-fun Perception.classified(): Perception = copy(importance = importanceOf(trigger))
+fun Perception.classified(): Perception =
+    copy(importance = if (trigger.reviewsGoal && huntedNearby()) DecisionImportance.PIVOTAL else importanceOf(trigger))
+
+/**
+ * Whether a creature that hunts this agent's kind is in sight inside
+ * [PIVOTAL_THREAT_DISTANCE_BLOCKS] - the threat sighting's own pivotal conjunction, read off a
+ * goal review's surroundings. A review beside such a creature is answered by the frontier model:
+ * in r22 four of four routine reviews beside a hunter chose a dig, one at health 1.0.
+ */
+private fun Perception.huntedNearby(): Boolean =
+    surroundings.any { it.hunts == true && it.visible && it.distance <= PIVOTAL_THREAT_DISTANCE_BLOCKS }

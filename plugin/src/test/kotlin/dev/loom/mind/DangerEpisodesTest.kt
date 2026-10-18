@@ -19,7 +19,8 @@ class DangerEpisodesTest {
     private fun sighting(
         requestId: String,
         threat: String = "entity.minecraft.zombie",
-    ) = perceptionWith(requestId, Trigger.ThreatSighted(threat, "e1", 6.0, Bearing.NORTH, true, true))
+        distance: Double = 12.0,
+    ) = perceptionWith(requestId, Trigger.ThreatSighted(threat, "e1", distance, Bearing.NORTH, true, true))
 
     private fun damage(
         requestId: String,
@@ -95,6 +96,19 @@ class DangerEpisodesTest {
         assertTrue(episodes.admit(alpha, damage("r3", "spider")))
         // The reopened episode coalesces the next bite while its decision is open.
         assertFalse(episodes.admit(alpha, damage("r4", "spider")))
+    }
+
+    @Test
+    fun `a sighting back inside pivotal range after a settled flight is asked about`() {
+        // r22 alpha: its last sighting, a zombie 6.5 off at health 1.2, was coalesced into the
+        // cooldown of a flight the zombie had already closed.
+        assertTrue(episodes.admit(alpha, sighting("r1")))
+        tick = 6000
+        episodes.settled(alpha, "r1", fled = true)
+        tick = 6094
+        assertFalse(episodes.admit(alpha, sighting("r2", distance = 9.0)), "still beyond pivotal range")
+        assertTrue(episodes.admit(alpha, sighting("r3", distance = 6.5)))
+        assertFalse(episodes.admit(alpha, sighting("r4", distance = 4.0)), "the reopened episode is open")
     }
 
     @Test

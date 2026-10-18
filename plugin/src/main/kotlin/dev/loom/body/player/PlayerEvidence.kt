@@ -113,7 +113,7 @@ internal class PlayerEvidenceRecorder(
             agentId,
             "flight ended ${report.outcome.name.lowercase()}, " +
                 "separation ${report.separation ?: "unread"}",
-            retreatTag(report.outcome),
+            retreatTag(report.outcome, report.separation, request.distance),
             requestId,
             RetreatEvidence(report.separation, report.separationGained),
         )

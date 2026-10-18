@@ -44,6 +44,9 @@ test('every refusal tag the body can file is classified, none as unexplained', (
     assert.notEqual(refusalClass(tag), 'unexplainedRefusal', tag)
   }
   assert.equal(refusalClass('somethingNobodyFiles'), 'unexplainedRefusal')
+  // r22 delta body:00002116: its first strike landed and the skeleton then left range.
+  assert.equal(refusalClass('attackTargetEscaped'), 'targetRace')
+  assert.equal(refusalClass('attackOutOfRange'), 'inapplicable')
 })
 
 test('a run whose every action succeeded or lost a legitimate race is ready', () => {
@@ -51,6 +54,8 @@ test('a run whose every action succeeded or lost a legitimate race is ready', ()
     ...action('r1', 'dig', applied('accepted'), checked()),
     ...action('r2', 'moveTo', applied('accepted'), { event: 'moved', outcome: 'movementArrived' }),
     ...action('r3', 'flee', applied('accepted'), { event: 'retreating', outcome: 'retreatSafe' }),
+    // A flight the threat kept pace with still ran (r22).
+    ...action('r3b', 'flee', applied('accepted'), { event: 'retreating', outcome: 'retreatShort' }),
     ...action('r4', 'eat', applied('accepted')),
     record({ event: 'energyChanged' }),
     ...action('r5', 'idle', applied('accepted')),
@@ -63,8 +68,8 @@ test('a run whose every action succeeded or lost a legitimate race is ready', ()
   ]
   const result = readiness(records)
   assert.equal(result.verdict, 'ready', JSON.stringify(result, null, 2))
-  assert.equal(result.actions.total, 9)
-  assert.equal(result.actions.byClass.confirmed, 4)
+  assert.equal(result.actions.total, 10)
+  assert.equal(result.actions.byClass.confirmed, 5)
   assert.equal(result.races, 5)
   assert.deepEqual(result.rates, { decisionValidity: 1, typedTerminalAccounting: 1, serverTruthfulness: 1 })
   assert.ok(result.actions.nonSuccess.every((entry) => entry.race))

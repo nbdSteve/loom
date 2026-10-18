@@ -187,6 +187,15 @@ fun interface HeldPerceptions {
         requestId: String,
     )
 
+    /**
+     * Told that [perception] never reached the mind, so whatever its trigger spent on being asked
+     * is given back. Main thread only; a no-op by default.
+     */
+    fun unsent(
+        agentId: AgentId,
+        perception: Perception,
+    ) = Unit
+
     companion object {
         /** A body that holds nothing between a perception and its decision. */
         val NONE: HeldPerceptions = HeldPerceptions { _, _ -> }

@@ -156,6 +156,7 @@ class EmbodiedCognition(
             // The perception still ends its chain, and gives back what its request holds.
             journal.unavailable(agentId, perception, coalesced.first, coalesced.second)
             bodies.held.release(agentId, perception.requestId)
+            bodies.held.unsent(agentId, perception)
             return
         }
         val carried =
@@ -290,6 +291,7 @@ class EmbodiedCognition(
         danger.settled(agentId, perception.requestId, fled = false)
         bodies.held.release(agentId, perception.requestId)
         val classified = failureOf(failure)
+        if (classified == CognitionFailure.CallReserved) bodies.held.unsent(agentId, perception)
         journal.unavailable(agentId, perception, classified.tag, failure.message ?: classified.toString())
         callbacks.onUnavailable(perception, failure)
     }
