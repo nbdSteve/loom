@@ -78,7 +78,8 @@ const GROUNDED_GOAL_READINESS_VERSION = 'loom-readiness-gate/10'
 // guarantee at its adoption - more of its item held than was held and guaranteed then, or a gained
 // input of its recipe path - at its original target; a local goal counts only when a later goal of
 // another item, chained from it, advanced; and a goal set beside offered exploration that sight
-// hands over whole is refused as goalCrowdsExploration.
+// hands over whole is refused as goalCrowdsExploration. A no-route flight is the agent's own hole
+// only when it dug beneath itself where the flight began.
 const HORIZON_READINESS_VERSION = 'loom-readiness-gate/11'
 const HORIZON_GOAL_INCOHERENT_TAGS = new Set([...SUBSTANTIVE_GOAL_INCOHERENT_TAGS, 'goalCrowdsExploration'])
 // From generation 12, a no-route flight from inside a hole the agent dug under itself.
@@ -260,16 +261,26 @@ const DUG_BENEATH_REACH_BLOCKS = 1.6
  * stood, its support or the block beside it (r20: all 13 flights refused for no route came from
  * shafts and pits the four agents had dug themselves; delta's by digging beside its support).
  */
-function dugOwnSupport (bodyRecords, flight) {
+function dugOwnSupport (bodyRecords, flight, generation = 12) {
   const perceptionOf = new Map(bodyRecords
     .filter((record) => record.event === 'perceived' && record.agentId === flight.agentId)
     .map((record) => [record.requestKey, record.perception]))
+  const fledFrom = perceptionOf.get(flight.requestKey)?.selfState?.position
   return bodyRecords.some((record) => {
     if (record.event !== 'decided' || record.agentId !== flight.agentId || record.intent !== 'dig') return false
     if (!(record.tick < flight.tick)) return false
+    const perception = perceptionOf.get(record.requestKey)
     const block = record.decision?.intent?.block
-    const seen = (perceptionOf.get(record.requestKey)?.surroundings ?? []).find((entry) => entry.ref === block)
+    const seen = (perception?.surroundings ?? []).find((entry) => entry.ref === block)
     if (seen === undefined || seen.verticalOffset >= 0) return false
+    // From generation 13 the dig must be where the flight began: r22's v30 rehearsal delta dug
+    // grass under itself at tick 2772, fled 50 blocks into a ravine at tick 7057, and its no-route
+    // flights out of the ravine were filed as its own hole.
+    const dugAt = perception?.selfState?.position
+    if (generation >= 13 && (!Array.isArray(dugAt) || !Array.isArray(fledFrom) ||
+        Math.hypot(dugAt[0] - fledFrom[0], dugAt[1] - fledFrom[1], dugAt[2] - fledFrom[2]) > DUG_BENEATH_REACH_BLOCKS + 1)) {
+      return false
+    }
     const horizontal = Math.sqrt(Math.max(0, seen.distance ** 2 - seen.verticalOffset ** 2))
     return seen.direction === 'here' || horizontal <= DUG_BENEATH_REACH_BLOCKS
   })
@@ -1154,7 +1165,7 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
         ending.class = 'ownDropUnreached'
       }
       if (generation >= 12 && ending.class === TERRAIN_CLASS && decision.intent === 'flee' &&
-          dugOwnSupport(bodyRecords, decision)) {
+          dugOwnSupport(bodyRecords, decision, generation)) {
         ending.class = 'selfTrapped'
       }
     }

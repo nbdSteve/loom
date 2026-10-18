@@ -135,7 +135,7 @@ function pathsOf (records, readiness) {
     (record.perception?.surroundings ?? []).some((seen) =>
       seen.kind === 'block' && seen.direction === 'east' && seen.verticalOffset === -0.5 &&
       seen.distance < 1.6 && seen.digSafe === false))
-  // iota's dirt in the nook beside its pit, collected with approach (r28 plains alpha, tick 9765).
+  // iota's log in the nook beside its pit, collected with approach (r28 plains alpha, tick 9765).
   const nook = of('tribe-iota', 'decided').find((record) =>
     record.intent === 'collect' && record.decision?.intent?.approach === true && confirmed(record) &&
     byKey(record.requestKey).some((entry) => entry.event === 'intentApplied' && entry.outcome === 'accepted'))
@@ -161,7 +161,7 @@ function pathsOf (records, readiness) {
     ? of('tribe-epsilon', 'decided').find((record) => record.goal?.conditionMet === true)
     : undefined
   return {
-    localGoalCrowdingRefused: evidence(applied('tribe-eta', 'goalCrowdsExploration')),
+    localGoalCrowdingRefused: evidence(applied('tribe-gamma', 'goalCrowdsExploration')),
     horizonGoalAdvancedPastSight: evidence(discovered),
     reviewFleesAHunterWithNoGoalChoice: evidence(hunted),
     flightAlongTheBorderArrived: evidence(alongBorder),

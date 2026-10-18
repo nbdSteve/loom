@@ -411,3 +411,24 @@ test('under generation 13 local dirt counts only when a later goal of another it
   assert.equal(result.goalCoherence.pursuit.measured.crowdedGoals, 1)
   assert.equal(result.version, 'loom-readiness-gate/11')
 })
+
+test('under generation 13 a no-route flight is the agent own hole only where it dug beneath itself', () => {
+  // The v30 rehearsal: delta dug grass under itself at tick 2772, fled fifty blocks into a ravine
+  // at tick 7057, and its no-route flights out of the ravine were filed as its own hole.
+  const at = (position) => ({ selfState: { position, inventorySummary: [], ownDrops: [] } })
+  const underfoot = { kind: 'block', ref: 'g1', what: 'block.minecraft.grass_block', direction: 'here', distance: 0.5, verticalOffset: -0.5, visible: true }
+  const records = (fleeFrom) => [
+    record('delta', { event: 'perceived', requestId: 'd1', requestKey: 'delta:d1', perception: { requestId: 'd1', ...at([0.5, 66, 0.5]), surroundings: [underfoot] } }),
+    record('delta', { event: 'decided', requestId: 'd1', requestKey: 'delta:d1', intent: 'dig', decision: { intent: { action: 'dig', block: 'g1' } } }),
+    record('delta', { event: 'intentApplied', requestId: 'd1', requestKey: 'delta:d1', intent: 'dig', outcome: 'accepted' }),
+    record('delta', { event: 'worldInteraction', requestId: 'd1', requestKey: 'delta:d1', outcome: 'serverEffectConfirmed' }),
+    record('delta', { event: 'perceived', requestId: 'f1', requestKey: 'delta:f1', perception: { requestId: 'f1', ...at(fleeFrom), trigger: { event: 'threatSighted' } } }),
+    record('delta', { event: 'decided', requestId: 'f1', requestKey: 'delta:f1', intent: 'flee', decision: { intent: { action: 'flee' } } }),
+    record('delta', { event: 'intentApplied', requestId: 'f1', requestKey: 'delta:f1', intent: 'flee', outcome: 'retreatNoRoute' })
+  ]
+  const classOf = (generation, fleeFrom) => readinessMetrics({ bodyRecords: records(fleeFrom), harnessRecords: [], metrics: {}, generation })
+    .actions.nonSuccess.find((entry) => entry.requestKey === 'delta:f1').class
+  assert.equal(classOf(12, [-41.6, 48, -58.4]), 'selfTrapped')
+  assert.equal(classOf(13, [-41.6, 48, -58.4]), 'terrain')
+  assert.equal(classOf(13, [0.5, 65, 0.5]), 'selfTrapped')
+})
