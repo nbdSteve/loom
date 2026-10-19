@@ -470,11 +470,11 @@ class GoalPursuitEndToEndTest {
         world.review(ALPHA)
         world.awaitDecided(1)
         world.awaitApplied(1)
-        val pickup = world.awaitRecord { it.event == BodyEvent.OWN_DROP_PICKUP }
-        assertEquals(world.records.first { it.event == BodyEvent.DECIDED }.requestId, pickup.requestId)
-        assertTrue(pickup.outcome != null, "a typed terminal: ${pickup.detail}")
         // One attempt only, then the mind is asked again at once.
         world.awaitDecided(2)
+        val pickup = world.records.single { it.event == BodyEvent.OWN_DROP_PICKUP }
+        assertEquals(world.records.first { it.event == BodyEvent.DECIDED }.requestId, pickup.requestId)
+        assertTrue(pickup.outcome != null, "a typed terminal: ${pickup.detail}")
         assertEquals(dev.loom.contract.Trigger.StepSettled, world.mind.seen[1].trigger)
         assertEquals(1, world.records.count { it.event == BodyEvent.OWN_DROP_PICKUP })
     }
