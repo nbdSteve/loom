@@ -254,6 +254,31 @@ function describable (bot, eyes) {
  * are reported, and the exact type/state snapshot is retained beside the wire offer so a
  * later action can distinguish a changed block from the one the controller chose.
  */
+/**
+ * The nearest `bound` of `within`, already sorted nearest first, taken fairly across block kinds:
+ * each kind's nearest, then each kind's second nearest, and so on, the kinds in order of their
+ * nearest, and the chosen ones returned nearest first. On plains the grass around the feet filled
+ * every one of the 48 places by 4.15 blocks, so a tree trunk 3.8 blocks off was never reported
+ * (r24 eta). The cut is still a bounded count, and every kind in reach is reported before a kind
+ * gets its second entry.
+ */
+function fairBlocks (within, bound) {
+  const byKind = new Map()
+  for (const entry of within) {
+    if (!byKind.has(entry.block.name)) byKind.set(entry.block.name, [])
+    byKind.get(entry.block.name).push(entry)
+  }
+  const kinds = [...byKind.values()]
+  const chosen = new Set()
+  for (let rank = 0; chosen.size < bound && kinds.some((queue) => queue.length > rank); rank += 1) {
+    for (const queue of kinds) {
+      if (chosen.size >= bound) break
+      if (queue.length > rank) chosen.add(queue[rank])
+    }
+  }
+  return within.filter((entry) => chosen.has(entry))
+}
+
 function nearestBlocks (bot, eyes, standing, { radius, limit }) {
   const reach = Math.min(radius, INTERACTION_REACH_BLOCKS)
   const span = Math.ceil(reach)
@@ -279,7 +304,7 @@ function nearestBlocks (bot, eyes, standing, { radius, limit }) {
     one.block.position.y - other.block.position.y ||
     one.block.position.z - other.block.position.z
   )
-  const reported = within.slice(0, Math.min(limit, MAX_SENSE_BLOCKS))
+  const reported = fairBlocks(within, Math.min(limit, MAX_SENSE_BLOCKS))
   return {
     blocks: reported.map(({ block }) => ({
       what: block.name,

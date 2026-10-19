@@ -2128,3 +2128,19 @@ test('conflicting requests are refused and halt, death, and shutdown clean an ow
     await body.stop()
   }
 })
+
+test('a block kind is never hidden behind the grass around the feet (r24 eta: a trunk 3.8 off went unreported)', () => {
+  const bot = worldBot()
+  for (let x = -5; x <= 5; x += 1) {
+    for (let z = -5; z <= 5; z += 1) bot.putBlock(solidBlock(new Vec3(x, 63, z), 'grass_block', { type: 9 }))
+  }
+  bot.putBlock(solidBlock(new Vec3(3, 64, 2), 'oak_log', { type: 46 }))
+  const sensed = senseReading(bot, { radius: 24, limit: MAX_SENSE_OFFERS_PER_KIND })
+  assert.equal(sensed.reading.blocks.length, MAX_SENSE_OFFERS_PER_KIND)
+  assert.ok(sensed.reading.blocksOmitted > 0, 'the grass still fills the rest and is cut')
+  assert.ok(sensed.reading.blocks.some((block) => block.what === 'oak_log'), 'the trunk is reported')
+  // Still nearest first.
+  const eyes = new Vec3(0.5, 64 + 1.62, 0.5)
+  const away = sensed.reading.blocks.map(({ position: [x, y, z] }) => new Vec3(x + 0.5, y + 0.5, z + 0.5).distanceTo(eyes))
+  assert.deepEqual(away, [...away].sort((one, other) => one - other))
+})
