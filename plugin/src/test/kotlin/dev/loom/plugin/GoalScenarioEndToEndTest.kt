@@ -4,6 +4,7 @@ import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
+import dev.loom.contract.DecisionImportance
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
 import dev.loom.contract.Intent
@@ -172,6 +173,47 @@ class GoalScenarioEndToEndTest {
                 it.outcome == EventTag.SERVER_EFFECT_CONFIRMED
             },
         )
+    }
+
+    @Test
+    fun `beside an immediate hunter a dig is withheld before the body is asked, and a flight is taken`() {
+        // r24: seven reviews beside a near hunter dug, crafted or walked; delta's crafted beside a spider.
+        val zombie =
+            buildJsonObject {
+                put("id", ZOMBIE_ID)
+                put("what", "zombie")
+                put("x", 8.5)
+                put("y", 64.0)
+                put("z", 12.5)
+            }
+        val scene =
+            Scene(
+                listOf(Stand(ALPHA, 8.5, 64.0, 8.5)),
+                blocks = listOf(Cell(9, 64, 8, "dirt")),
+                entities = listOf(zombie),
+                timeOfDay = NIGHT,
+            )
+        val world = world(scene)
+        world.mind.answer = { perception, index ->
+            val hunter = perception.surroundings.first { it.what == "entity.minecraft.zombie" }
+            if (index == 0) {
+                Intent.Dig(perception.surroundings.first { it.what == "block.minecraft.dirt" }.ref) to null
+            } else {
+                Intent.Flee(hunter.ref) to null
+            }
+        }
+        world.review(ALPHA)
+        val refused = world.awaitRecord { it.event == BodyEvent.INTENT_APPLIED }
+        assertEquals(GoalEvidence.SURVIVAL_REQUIRED, refused.outcome)
+        assertTrue(world.digWrites().isEmpty(), "the body was never asked to dig")
+        assertEquals(DecisionImportance.PIVOTAL, world.mind.seen[0].importance)
+        world.review(ALPHA)
+        world.awaitDecided(2)
+        world.awaitApplied(2)
+        val fled = world.records.filter { it.event == BodyEvent.INTENT_APPLIED }[1]
+        assertEquals(EventTag.ACCEPTED, fled.outcome)
+        val answered = world.records.filter { it.event == BodyEvent.DECIDED }[1].goal?.outcome
+        assertTrue(answered !in GoalEvidence.REFUSING, "the flight is taken: $answered")
     }
 
     private fun world(scene: Scene): ScenarioWorld {
