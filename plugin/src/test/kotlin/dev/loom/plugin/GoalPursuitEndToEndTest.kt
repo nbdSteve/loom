@@ -480,6 +480,26 @@ class GoalPursuitEndToEndTest {
         assertEquals(1, world.records.count { it.event == BodyEvent.OWN_DROP_PICKUP })
     }
 
+    @Test
+    fun `a tree among a floor of more blocks than the body reports is still in the perception`() {
+        // r24 eta: on plains 48 grass blocks hid a trunk 3.8 blocks off. Here the stone floor and
+        // a ring of dirt fill far more than the body's 48 places, and the one log still reaches
+        // the mind through the real body, the JVM's cut and the perception.
+        val dirt =
+            (5..12).flatMap {
+                    x ->
+                (5..12).map { z -> Cell(x, 64, z, "dirt") }
+            }.filter { it.x != 8 || it.z != 8 }
+        val log = Cell(11, 65, 8, "oak_log")
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 65.0, 8.5)), blocks = dirt + log))
+        world.mind.answer = { _, _ -> Intent.Idle to null }
+        world.review(ALPHA)
+        world.awaitDecided(1)
+        val seen = world.mind.seen[0]
+        assertTrue(seen.surroundingsOmitted > 0, "the cut is still a bounded count")
+        assertTrue(seen.surroundings.any { it.what == "block.minecraft.oak_log" }, "the trunk is reported")
+    }
+
     private fun world(scene: Scene): ScenarioWorld {
         val node = nodeOrNull()
         assumeTrue(node != null && Files.isDirectory(REPO.resolve("body/node_modules")), "node and body deps")
