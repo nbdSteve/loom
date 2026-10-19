@@ -52,6 +52,11 @@ internal class PlayerInteractionPreparer(
                         "digging the block underfoot would leave no way out",
                         EventTag.DIG_WOULD_TRAP,
                     )
+                } else if (floodsBody(context.authority.ground, sense, resolved.index)) {
+                    rejectedInteraction(
+                        "digging the block would let water flood where the body stands",
+                        EventTag.DIG_FLOODS_BODY,
+                    )
                 } else if (strandsDrop(context.authority.ground, sense, resolved.index)) {
                     rejectedInteraction(
                         "the block's drop would land where no body can step down to collect it",
@@ -372,6 +377,17 @@ private fun trapsBody(
     val report = sense?.raw?.report
     val block = report?.blocks?.getOrNull(index)
     return report != null && block != null && !digLeavesExit(ground, report.position, block.position)
+}
+
+/** Whether digging the sensed block at [index] would let water flood a cell the body occupies. */
+private fun floodsBody(
+    ground: BlockGround,
+    sense: HeldSense?,
+    index: Int,
+): Boolean {
+    val report = sense?.raw?.report
+    val block = report?.blocks?.getOrNull(index)
+    return report != null && block != null && !digLeavesBodyDry(ground, report.position, block.position)
 }
 
 /** Whether the sensed block at [index] would drop where no body can step down to collect it. */

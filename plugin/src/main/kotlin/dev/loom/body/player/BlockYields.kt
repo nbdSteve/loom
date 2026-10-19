@@ -5,6 +5,7 @@
 package dev.loom.body.player
 
 import dev.loom.contract.BlockYield
+import kotlin.math.abs
 import kotlin.math.floor
 
 /**
@@ -73,7 +74,32 @@ internal fun digSafeAt(
     ground: BlockGround,
     position: List<Double>,
     block: List<Int>,
-): Boolean = digLeavesExit(ground, position, block) && digLeavesDropReachable(ground, position, block)
+): Boolean =
+    digLeavesExit(ground, position, block) && digLeavesDropReachable(ground, position, block) &&
+        digLeavesBodyDry(ground, position, block)
+
+/**
+ * Whether digging [block] leaves the cells a body at [position] occupies dry: the opened cell
+ * floods when water lies beside it or above it, and the flood reaches the body when that cell is
+ * one it occupies - its support, which it falls into - or lies beside one. r27 epsilon dug the
+ * sand under its feet beneath water, the pit filled to above its head, and it drowned.
+ */
+internal fun digLeavesBodyDry(
+    ground: BlockGround,
+    position: List<Double>,
+    block: List<Int>,
+): Boolean {
+    val (x, y, z) = block
+    val floods =
+        listOf(listOf(x + 1, y, z), listOf(x - 1, y, z), listOf(x, y, z + 1), listOf(x, y, z - 1), listOf(x, y + 1, z))
+            .any(ground::holdsWater)
+    if (!floods) return true
+    val support = supportCellOf(position)
+    val feet = listOf(support[0], support[1] + 1, support[2])
+    val head = listOf(support[0], support[1] + 2, support[2])
+    val occupied = if (block == support) listOf(support, feet) else listOf(feet, head)
+    return occupied.none { cell -> cell == block || (cell[1] == y && abs(cell[0] - x) + abs(cell[2] - z) == 1) }
+}
 
 /**
  * Whether the drop of digging [block] below the feet of a body at [position] lands where a body

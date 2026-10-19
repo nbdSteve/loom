@@ -381,6 +381,12 @@ object EventTag {
      */
     const val DIG_DROP_UNREACHABLE: String = "digDropUnreachable"
 
+    /**
+     * A dig that would let water flood a cell the body occupies: refused before the body is asked,
+     * and never offered, because the observation says digSafe false (r27 epsilon drowned).
+     */
+    const val DIG_FLOODS_BODY: String = "digFloodsBody"
+
     const val DIG_BLOCK_UNNAMED: String = "digBlockUnnamed"
     const val DIG_BLOCK_GONE: String = "digBlockGone"
 
@@ -670,6 +676,7 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.DIG_BLOCK_UNNAMED,
         EventTag.DIG_WOULD_TRAP,
         EventTag.DIG_DROP_UNREACHABLE,
+        EventTag.DIG_FLOODS_BODY,
         EventTag.DIG_BLOCK_GONE,
         EventTag.DIG_CONTEST_GONE,
         EventTag.DIG_BLOCK_CHANGED,

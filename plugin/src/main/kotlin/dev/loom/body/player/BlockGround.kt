@@ -21,6 +21,12 @@ package dev.loom.body.player
 fun interface BlockGround {
     fun standsIn(position: List<Int>): Boolean
 
+    /**
+     * Whether the cell at [position] holds water, which a body passes but cannot stand in dry and
+     * which floods any cell opened beside it (r27 epsilon). `false` where the ground cannot say.
+     */
+    fun holdsWater(position: List<Int>): Boolean = false
+
     /** Where a body stands on the block at [position], or `null` when no body can. */
     fun standCell(position: List<Int>): List<Int>? = standCellOn(this, position)
 
@@ -49,6 +55,10 @@ internal fun standCellOn(
         position.takeIf { !ground.standsIn(position.offsetY(-1)) && ground.standsIn(position.offsetY(1)) }
     } else {
         position.offsetY(1).takeIf { ground.standsIn(it) && ground.standsIn(it.offsetY(1)) }
+    }?.takeIf { cell ->
+        // A cell holding water is no place to stand: a body starting dry treats water as a wall,
+        // so a walk into one could never start (r27 epsilon's walks onto drowned sand).
+        !ground.holdsWater(cell) && !ground.holdsWater(cell.offsetY(1))
     }
 
 /** Half a player's width: a body's box reaches this far either side of where it stands. */
