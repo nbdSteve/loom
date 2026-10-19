@@ -112,6 +112,7 @@ internal data class Scene(
     val columns: Int = 2,
     val serveCrafts: Boolean = false,
     val trackDrops: Boolean = false,
+    val servePickups: Boolean = false,
 ) {
     /** The scene as the peers script reads it. */
     fun json(identities: Map<AgentId, PlayerIdentity>): String =
@@ -133,6 +134,7 @@ internal data class Scene(
             "serveBreaks" to serveBreaks,
             "columns" to columns,
             "serveCrafts" to serveCrafts,
+            "servePickups" to servePickups,
             "items" to
                 JsonArray(
                     items.map {

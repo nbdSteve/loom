@@ -106,6 +106,19 @@ async function main () {
     const peer = await embodied({ agentId, username })
     const write = peer.client.write
     peer.client.write = (name, parameters) => {
+      // A server picks up a dropped item a body comes within reach of, as vanilla does.
+      if (scene.servePickups && ['position', 'position_look'].includes(name) && Number.isFinite(parameters?.x)) {
+        for (const item of scene.items ?? []) {
+          if (item.taken || Math.hypot(parameters.x - item.x, parameters.z - item.z) > 1.5 ||
+            Math.abs(parameters.y - item.y) > 1) continue
+          item.taken = true
+          const collector = peer.bot.entity?.id
+          setTimeout(() => {
+            peer.client.emit('collect', { collectedEntityId: item.id, collectorEntityId: collector, pickupItemCount: item.count })
+            peer.client.emit('entity_destroy', { entityIds: [item.id] })
+          }, SERVER_ANSWER_MS)
+        }
+      }
       if (name === 'block_dig') {
         const { location, status } = parameters
         emit({ wrote: { agentId, status, x: location.x, y: location.y, z: location.z } })

@@ -1143,7 +1143,7 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
     measured,
     ...(discoveryRule ? { descriptive: DESCRIPTIVE_MEASURES } : {}),
     // From generation 15 what describes the run sits apart from the evidence the verdict reads.
-    ...(survivalRule ? { description: descriptionOf(measured) } : {}),
+    ...(survivalRule ? { description: descriptionOf(measured, bodyRecords) } : {}),
     // The two review shares are close to fixed by the request schema, which offers no idle or
     // rest while a goal is held: they are reported beside the behaviour, not as it (r20).
     schemaShaped: ['goalActiveReviewShare', 'minAgentGoalActiveReviewShare'],
@@ -1217,10 +1217,19 @@ function progressingTimeOf (bodyRecords, { endAtDeath = false, fromAdvance = fal
 }
 
 /** The measures that describe a run and decide nothing, apart from the verdict evidence. */
-function descriptionOf (measured) {
+function descriptionOf (measured, bodyRecords = []) {
   const described = ['distinctGoalItems', 'exploringAgents', 'dangerEpisodes', 'deaths', 'horizonGoals', 'crowdedGoals',
     'discoveryGoals', 'discoveryReveals', 'discoveryTransitions', 'deferredReviews']
-  return Object.fromEntries(described.filter((name) => name in measured).map((name) => [name, measured[name]]))
+  // A dig's one pickup of its own goal item, by body terminal: a peer's pickup first is
+  // `collectItemGone`, the vanilla race; none is a decision, so none is an action class.
+  const pickups = {}
+  for (const record of bodyRecords) {
+    if (record.event === 'ownDropPickup') pickups[record.outcome] = (pickups[record.outcome] ?? 0) + 1
+  }
+  return {
+    ...Object.fromEntries(described.filter((name) => name in measured).map((name) => [name, measured[name]])),
+    ownDropPickups: pickups
+  }
 }
 
 /** The health the perception a decision answered showed, or -Infinity when none was recorded. */

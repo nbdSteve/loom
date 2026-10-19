@@ -598,5 +598,22 @@ test('r24, judged under gate generation 15, keeps its schema blocker and reads t
   assert.ok(fifteen.goalCoherence.pursuit.measured.chainedGoals >= 1)
   // What describes the run sits apart from the verdict evidence.
   assert.equal(fifteen.goalCoherence.pursuit.description.deaths, 10)
+  assert.deepEqual(fifteen.goalCoherence.pursuit.description.ownDropPickups, {}, 'r24 made no body pickup')
   assert.equal(fifteen.goalCoherence.pursuit.verdict, 'notCleared')
+})
+
+test('under generation 15 a dig\'s one pickup is described by its terminal and is never an action', () => {
+  const records = [
+    ...review('epsilon', 'e1', {
+      goal: { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'epsilon', revision: 0 },
+      choice: { disposition: 'adopt', successItem: LOG, successCount: 2 },
+      perception: sight(LOG, 0)
+    }),
+    record('epsilon', { event: 'ownDropPickup', requestId: 'e1', requestKey: 'epsilon:e1', outcome: 'collectItemGone' })
+  ]
+  const result = gate14(records, { ...BARS14 })
+  const fifteen = readinessMetrics({ bodyRecords: records, harnessRecords: [], metrics: {}, generation: 15, bars: BARS14 })
+  assert.deepEqual(fifteen.goalCoherence.pursuit.description.ownDropPickups, { collectItemGone: 1 })
+  assert.equal(fifteen.actions.total, result.actions.total, 'the pickup is no decision of its own')
+  assert.equal(fifteen.actions.byClass.untypedTerminal, 0)
 })
