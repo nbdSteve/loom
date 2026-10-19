@@ -167,7 +167,11 @@ function pathsOf (records, readiness) {
   const discoveryBecameResourceGoal = of('tribe-kappa', 'decided').find((record) =>
     record.goal?.discoveredFrom !== undefined && byKey(record.requestKey).some((entry) =>
       entry.event === 'worldInteraction' && entry.outcome === 'serverEffectConfirmed'))
+  // A dig that dropped its goal's own item made its one body pickup, which the server confirmed.
+  const pickedUp = records.find((record) => record.source === 'body' && record.event === 'ownDropPickup' &&
+    record.outcome === 'accepted')
   return {
+    ownGoalDropPickedUpOnce: evidence(pickedUp),
     discoverySetWithNothingGrounded: evidence(of('tribe-kappa', 'decided').find((record) =>
       record.goal?.discovery === true && record.goal?.outcome === 'goalAdopted')),
     discoveryRevealed: evidence(discoveryRevealed),
