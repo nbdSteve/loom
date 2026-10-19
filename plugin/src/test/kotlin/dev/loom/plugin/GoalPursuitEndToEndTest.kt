@@ -443,6 +443,42 @@ class GoalPursuitEndToEndTest {
         assertEquals(0, measured.getValue("discoveryReveals").jsonPrimitive.int)
     }
 
+    @Test
+    fun `a dig that drops its goal's own item makes one bounded pickup through the body, then asks the mind`() {
+        // r24: all three of epsilon's logs were taken by idle peers before its follow-up came.
+        val stick = SceneItem(STICK_ID, "stick", 1, 10.5, 64.0, 8.5)
+        val scene =
+            Scene(
+                listOf(Stand(ALPHA, 8.5, 64.0, 8.5)),
+                blocks = listOf(BUSH),
+                items = listOf(stick),
+                serveBreaks = true,
+                trackDrops = true,
+            )
+        val world = world(scene)
+        world.mind.answer = { seen, index ->
+            if (index == 0) {
+                // The server's drop for this very dig, attributed to its request.
+                // Off the thread answering, which may be the main thread the drop is filed on.
+                Thread { world.droppedAt(ALPHA, stick, listOf(10, 64, 8)) }.start()
+                Intent.Dig(seen.surroundings.first { it.what == "block.minecraft.dead_bush" }.ref) to
+                    target(GoalDisposition.ADOPT, STICK, 2)
+            } else {
+                Intent.Idle to null
+            }
+        }
+        world.review(ALPHA)
+        world.awaitDecided(1)
+        world.awaitApplied(1)
+        val pickup = world.awaitRecord { it.event == BodyEvent.OWN_DROP_PICKUP }
+        assertEquals(world.records.first { it.event == BodyEvent.DECIDED }.requestId, pickup.requestId)
+        assertTrue(pickup.outcome != null, "a typed terminal: ${pickup.detail}")
+        // One attempt only, then the mind is asked again at once.
+        world.awaitDecided(2)
+        assertEquals(dev.loom.contract.Trigger.StepSettled, world.mind.seen[1].trigger)
+        assertEquals(1, world.records.count { it.event == BodyEvent.OWN_DROP_PICKUP })
+    }
+
     private fun world(scene: Scene): ScenarioWorld {
         val node = nodeOrNull()
         assumeTrue(node != null && Files.isDirectory(REPO.resolve("body/node_modules")), "node and body deps")

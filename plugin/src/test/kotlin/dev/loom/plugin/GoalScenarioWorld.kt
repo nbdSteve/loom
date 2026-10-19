@@ -357,6 +357,17 @@ internal class ScenarioWorld(
         dropLedger.attribute(owner, requestId, block, sinceTick = 0)
     }
 
+    /** The server dropped [item] for [agent]'s break of [block], for the dig's own audit to attribute. */
+    fun droppedAt(
+        agent: AgentId,
+        item: SceneItem,
+        block: List<Int>,
+    ) = onMain {
+        val owner = identities.getValue(agent).uuid
+        lying[item.uuid] = listOf(item.x, item.y, item.z)
+        dropLedger.dropped(owner, item.uuid, "item.minecraft.${item.what}", item.count.toLong(), block)
+    }
+
     /** [picker] took [item], as Paper's pickup event reports it. */
     fun taken(
         item: SceneItem,
