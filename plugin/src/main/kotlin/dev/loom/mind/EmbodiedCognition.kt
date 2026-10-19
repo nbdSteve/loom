@@ -388,9 +388,12 @@ class EmbodiedCognition(
             return
         }
         // The dig's one pickup of its own goal item, then the mind is asked at once.
-        bodies.pickups.attempt(agentId, requestId, item).whenComplete { _, _ ->
+        bodies.pickups.attempt(agentId, requestId, item).whenComplete { tried, _ ->
             mainThread.execute {
-                if (canReview(agentId)) {
+                // After a pickup the review waits the follow-up delay, so the client's inventory has
+                // heard what the server gave (the path rehearsal: an immediate sense lagged the
+                // server by the logs just picked up, and the witness disputed it).
+                if (tried == null && canReview(agentId)) {
                     tell(agentId, Trigger.StepSettled)
                 } else {
                     callbacks.onStepSettled.settled(agentId, journal.tick(), owed = true)

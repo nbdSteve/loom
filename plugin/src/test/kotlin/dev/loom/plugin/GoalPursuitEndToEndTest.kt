@@ -477,12 +477,15 @@ class GoalPursuitEndToEndTest {
         world.review(ALPHA)
         world.awaitDecided(1)
         world.awaitApplied(1)
-        // One attempt only, then the mind is asked again at once.
-        world.awaitDecided(2)
+        // One attempt only, then a review is owed once the client has heard the inventory change.
+        val until = System.nanoTime() + SETTLE_WAIT_NANOS
+        while (world.settlements.none { it.first == ALPHA && it.third } && System.nanoTime() < until) Thread.sleep(
+            POLL_MILLIS,
+        )
+        assertTrue(world.settlements.any { (agent, _, owed) -> agent == ALPHA && owed }, "${world.settlements}")
         val pickup = world.records.single { it.event == BodyEvent.OWN_DROP_PICKUP }
         assertEquals(world.records.first { it.event == BodyEvent.DECIDED }.requestId, pickup.requestId)
         assertEquals(EventTag.ACCEPTED, pickup.outcome, "the server picked it up: ${pickup.detail}")
-        assertEquals(dev.loom.contract.Trigger.StepSettled, world.mind.seen[1].trigger)
         assertEquals(1, world.records.count { it.event == BodyEvent.OWN_DROP_PICKUP })
         // Generation 15 describes it by its terminal, and counts it as no action of its own.
         val pursuit =
