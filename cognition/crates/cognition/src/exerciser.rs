@@ -11,8 +11,8 @@
 //! in hand, so the exerciser keeps no state:
 //! - `alpha` digs two logs, collects its own drops, then crafts planks in two applications and
 //!   sticks, each completing the met goal and adopting the next in one answer;
-//! - `beta` digs a log, walks away from its lying drop once (refused as an ignored own drop), and
-//!   then leaves the drop lying, so a perception past retention still tells it;
+//! - `beta` digs a log atop a three-high pillar, whose one body pickup finds no route, and then
+//!   leaves the drop lying, so a perception past retention still tells it;
 //! - `gamma` flees the nearest other player in sight;
 //! - `delta` collects, without moving, an item lying at its feet that vanilla delays picking up,
 //!   and `theta` does the same where nothing else in sight gives anything, so its met goal is
@@ -649,8 +649,12 @@ fn restater(perception: &Perception) -> Draft {
             "nothing gives it",
         );
     };
-    let unrevised =
-        goal.revision == 0 && perception.last_refusal.is_none() && held_of(perception, item) == 0;
+    // Restated once while the goal is unmet, whatever its own pickup has already brought in.
+    let unrevised = goal.revision == 0
+        && perception.last_refusal.is_none()
+        && goal
+            .success_count
+            .is_some_and(|total| held_of(perception, item) < total);
     match goal.success_count {
         Some(total) if unrevised => answer(
             step.intent,

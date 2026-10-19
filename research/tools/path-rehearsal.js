@@ -189,7 +189,10 @@ function pathsOf (records, readiness) {
     plainCompletionOwedItsReview: evidence(owed),
     pocketUnderAnOverhangUnsafe: evidence(pocket),
     completedAndAdopted: evidence(completedAdopted),
-    ownDropIgnoredRefused: evidence(applied('tribe-beta', 'goalOwnDropIgnored')),
+    // beta's log stands on a three-high pillar: its one pickup finds no route, typed, and the drop
+    // stays lying where no route reaches, so a later collect is never asked for it.
+    ownGoalDropPickupNoRoute: evidence(records.find((record) => record.source === 'body' &&
+      record.agentId === 'tribe-beta' && record.event === 'ownDropPickup' && record.outcome === 'collectNoRoute')),
     ownDropToldLyingPastRetention: evidence(retained),
     peerFlightClassed: peerFlight?.evidence?.recordId ?? null,
     collectWithoutApproachConfirmed: evidence(passive),
