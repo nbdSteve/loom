@@ -136,6 +136,20 @@ class GoalLedgerTest {
     }
 
     @Test
+    fun aFlightStepsAsideFromAMetGoalToo() {
+        // The v32 rehearsal: gamma's review beside a zombie at 4.5 blocks, its dye goal met, was
+        // offered a flight alone with no goal choice, and its flight was refused as met-ignored.
+        affirm("a", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT))
+        val (met, fled) = affirm("b", 200, seen(0.0, STICK to 1L), null, Intent.Flee("e9"))
+        assertEquals(true, met?.progress?.conditionMet)
+        assertEquals(GoalEvidence.DEFERRED, fled?.outcome)
+        assertNull(ledger.takeRefusal(alpha))
+        // An action that is no survival response still answers the met goal.
+        val (_, dug) = affirm("c", 300, seen(0.0, STICK to 1L), null)
+        assertEquals(GoalEvidence.CONDITION_MET_IGNORED, dug?.outcome)
+    }
+
+    @Test
     fun idleWithoutAChoiceLeavesTheGoalHeldButAgeing() {
         review(alpha, "r1", 100, GoalDisposition.ADOPT)
         // An agent that acts at a review must say what it does with the goal it holds (r15 kappa).

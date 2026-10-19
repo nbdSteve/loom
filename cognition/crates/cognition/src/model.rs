@@ -633,11 +633,12 @@ impl ScriptedBackend {
             .as_ref()
             .and_then(|goal| goal.progress.as_ref())
             .is_some_and(|progress| progress.condition_met);
-        // A met discovery goal is stepped toward the first item it revealed, which replaces it.
-        let revealed = (offered.discovering() && met)
+        // A met goal is stepped toward the first item sight offers, which replaces it, rather than
+        // toward the met item (the v32 rehearsal's three met goals walked off from logs in reach).
+        let next = met
             .then(|| offered.count_bounds.first().map(|(item, ..)| item.as_str()))
             .flatten();
-        let wanted = revealed.or_else(|| {
+        let wanted = next.or_else(|| {
             perception
                 .goal
                 .as_ref()
@@ -646,7 +647,10 @@ impl ScriptedBackend {
         // A held goal sight cannot meet looks further for a source, rather than dig for another;
         // so does a discovery goal not yet met, and a review that can set one.
         let discovering = offered.discovering() && !offered.stalled && !met;
-        if (wanted.is_some() && !offered.goal_obtainable && offered.held_item.is_some())
+        if (next.is_none()
+            && wanted.is_some()
+            && !offered.goal_obtainable
+            && offered.held_item.is_some())
             || discovering
             || (perception.goal.is_none() && offered.discovery_offered())
         {
@@ -1369,6 +1373,70 @@ mod tests {
         assert_eq!(
             choice.success_item.as_deref(),
             Some("item.minecraft.oak_log")
+        );
+    }
+
+    #[test]
+    fn a_met_item_goal_digs_the_log_in_reach_it_replaces_itself_with_not_a_walk_away() {
+        // The v32 plains rehearsal: gamma's met dye goal, nothing more of it in sight, walked to
+        // the edge of sight beside a birch log in reach and was refused as unproductive.
+        let path = format!(
+            "{}/../../../contract/fixtures/valid/perception-goal-discovery-held.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut seen: Perception =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        seen.surroundings = vec![Observation {
+            kind: ObservationKind::Block,
+            what: "block.minecraft.birch_log".to_owned(),
+            distance: 2.3,
+            direction: Bearing::East,
+            vertical_offset: 0.5,
+            visible: true,
+            target_ref: "b1".to_owned(),
+            count: None,
+            standable: Some(false),
+            yields: Some(vec![loom_contract::BlockYield {
+                what: "item.minecraft.birch_log".to_owned(),
+                least: 1,
+                most: 1,
+                per_hundred: 100,
+            }]),
+            dig_safe: Some(true),
+            route_refused: None,
+            hunts: None,
+        }];
+        seen.horizon = vec![loom_contract::HorizonGoal {
+            what: "item.minecraft.birch_log".to_owned(),
+            grounding: loom_contract::HorizonGrounding::Sight,
+            via: None,
+            most: 11,
+            frontier: true,
+        }];
+        seen.self_state.inventory_summary = vec![InventoryStack {
+            slot_ref: "i1".to_owned(),
+            what: "item.minecraft.light_gray_dye".to_owned(),
+            count: 1,
+        }];
+        let goal = seen.goal.as_mut().unwrap();
+        goal.discovery = false;
+        goal.success_item = Some("item.minecraft.light_gray_dye".to_owned());
+        goal.success_count = Some(1);
+        if let Some(progress) = goal.progress.as_mut() {
+            progress.condition_met = true;
+        }
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        assert_eq!(
+            draft.intent,
+            Intent::Dig {
+                block: "b1".to_owned()
+            }
+        );
+        let choice = draft.goal.unwrap();
+        assert_eq!(choice.disposition, GoalDisposition::Replace);
+        assert_eq!(
+            choice.success_item.as_deref(),
+            Some("item.minecraft.birch_log")
         );
     }
 
