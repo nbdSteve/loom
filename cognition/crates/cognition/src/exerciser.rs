@@ -76,7 +76,14 @@ impl ModelBackend for PathExerciser {
         route: &ModelRoute,
         perception: &Perception,
     ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
-        std::future::ready(Ok(Self::draft_now(route, perception)))
+        // As the scripted stand-in does: a request schema the provider would refuse fails here.
+        std::future::ready(
+            if crate::openai::wire::request_offers_an_answer(perception) {
+                Ok(Self::draft_now(route, perception))
+            } else {
+                Err(BackendError::new(crate::model::NO_ANSWER_OFFERED))
+            },
+        )
     }
 }
 

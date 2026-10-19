@@ -458,6 +458,21 @@ pub fn decision_schema() -> &'static Value {
     &SCHEMA
 }
 
+/// Whether the request schema `perception` produces offers the model any answer at all. A schema
+/// with an empty answer union is one the provider refuses as an invalid request, so the stand-ins
+/// a rehearsal runs ask this of every perception and fail the rehearsal rather than the paid run
+/// (r25 stopped on a met goal's review whose schema offered nothing).
+#[must_use]
+pub fn request_offers_an_answer(perception: &Perception) -> bool {
+    let schema = decision_schema_for(&OfferedRefs::of(perception), GoalPhase::of(perception));
+    let answers = |field: &str| {
+        schema["properties"][field]["anyOf"]
+            .as_array()
+            .is_some_and(|union| !union.is_empty())
+    };
+    answers("decision") || answers("intent")
+}
+
 /// The schema one request sends: every ref an `enum` of the handles this perception
 /// offers in that action's own namespace.
 ///
@@ -1012,6 +1027,19 @@ fn revise_choices(refs: &OfferedRefs, item: &str) -> Vec<Value> {
         .collect()
 }
 
+/// Whether any of `by_item`'s choices, or a walk to look further, can be paired with a step: an
+/// item with no step is no answer at all, and the schema must always offer one (r25 stopped on the
+/// provider refusing a met goal's review whose every item had no step).
+fn pairable(refs: &OfferedRefs, by_item: &[(String, Vec<Value>)], exploring: &[Value]) -> bool {
+    by_item.iter().any(|(item, choices)| {
+        !choices.is_empty()
+            && refs
+                .item_steps
+                .iter()
+                .any(|steps| &steps.item == item && !steps.is_empty())
+    }) || (!exploring.is_empty() && !refs.explore_targets.is_empty())
+}
+
 fn coupled_offer(
     phase: GoalPhase,
     refs: &OfferedRefs,
@@ -1085,14 +1113,16 @@ fn coupled_offer(
             // A discovery goal with somewhere to look is walked until its stall bound, never
             // abandoned first (r24: six of nine were abandoned after one or two walks).
             let looking = refs.discovering() && refs.explore_continue();
-            let short = !refs.goal_obtainable && !looking;
+            let exploring = if refs.explore_continue() {
+                continued()
+            } else {
+                Vec::new()
+            };
+            let short =
+                (!refs.goal_obtainable && !looking) || !pairable(refs, &by_item, &exploring);
             GoalOffer {
                 by_item,
-                exploring: if refs.explore_continue() {
-                    continued()
-                } else {
-                    Vec::new()
-                },
+                exploring,
                 any: short.then(&abandon).unwrap_or_default(),
             }
         }
@@ -1110,10 +1140,7 @@ fn coupled_offer(
             // next item in sight becomes a discovery goal; a plain complete only when neither can
             // be set (r19: eight plain completes, two beside a filler equip).
             let exploring = discovery_replace(refs);
-            let any = match (
-                by_item.is_empty() && exploring.is_empty(),
-                refs.discovering(),
-            ) {
+            let any = match (!pairable(refs, &by_item, &exploring), refs.discovering()) {
                 (false, _) => Vec::new(),
                 (true, false) => complete(),
                 (true, true) => abandon(),
@@ -1129,7 +1156,9 @@ fn coupled_offer(
         GoalPhase::Stalled => {
             let by_item = each_item(GoalDisposition::Replace, "replace", REPLACE);
             let exploring = discovery_replace(refs);
-            let any = by_item.is_empty().then(&abandon).unwrap_or_default();
+            let any = (!pairable(refs, &by_item, &exploring))
+                .then(&abandon)
+                .unwrap_or_default();
             GoalOffer {
                 by_item,
                 exploring,

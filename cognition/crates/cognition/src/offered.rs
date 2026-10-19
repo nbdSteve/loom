@@ -682,12 +682,19 @@ impl OfferedRefs {
                     .filter(|source| &source.what == item || path.contains(&source.what))
                     .map(|source| source.direction)
                     .collect();
+                // Nor, when no cell is offered the way it was remembered, may it be left with no step:
+                // it looks further every way, as the body accepts (v32 plains rehearsal 17: two met
+                // goals' next logs lay where no cell was offered, and their review could not be answered).
+                let offered_toward = perception.explore.iter().any(|cell| {
+                    self.explore_targets.contains(&cell.target_ref)
+                        && remembered.contains(&cell.direction)
+                });
                 let recalled_toward = |handle: &String| {
                     !collecting
                         && perception.explore.iter().any(|cell| {
                             &cell.target_ref == handle
                                 && (remembered.contains(&cell.direction)
-                                    || (horizon && remembered.is_empty()))
+                                    || (horizon && !offered_toward))
                         })
                 };
                 // No walk to look further while a source can already be stepped to (r23: epsilon

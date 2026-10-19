@@ -815,6 +815,9 @@ fn held_count(perception: &Perception, item: &str) -> i64 {
         .sum()
 }
 
+/// Why a stand-in refuses a perception whose request schema would offer the model no answer.
+pub const NO_ANSWER_OFFERED: &str = "the request schema for this perception offers no answer";
+
 impl ModelBackend for ScriptedBackend {
     fn draft(
         &self,
@@ -822,8 +825,15 @@ impl ModelBackend for ScriptedBackend {
         perception: &Perception,
     ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
         // Ready rather than `async fn`: there is nothing to await, and a future
-        // that is already complete says so to its caller.
-        std::future::ready(Ok(Self::draft_now(route, perception)))
+        // that is already complete says so to its caller. A perception whose request schema the
+        // provider would refuse is refused here too, so a rehearsal meets it before a paid run.
+        std::future::ready(
+            if crate::openai::wire::request_offers_an_answer(perception) {
+                Ok(Self::draft_now(route, perception))
+            } else {
+                Err(BackendError::new(NO_ANSWER_OFFERED))
+            },
+        )
     }
 }
 

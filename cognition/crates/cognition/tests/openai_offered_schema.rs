@@ -1593,3 +1593,44 @@ fn the_creature_that_hurt_the_agent_is_offered_to_flee_and_strike_past_the_creat
         assert!(accepts(&schema, intent), "{distance}: {schema}");
     }
 }
+
+/// A perception from `tests/fixtures`, as its mind received it.
+fn local_fixture(name: &str) -> Perception {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(format!("{name}.json"));
+    serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[test]
+fn a_met_goal_whose_next_source_lies_where_no_cell_is_offered_still_has_an_answer() {
+    // r25 stopped a minute in on the provider refusing a met goal's follow-up review: every item
+    // it could replace the goal with was a remembered log lying where no edge-of-sight cell was
+    // offered, so no item had a step and the answer schema offered nothing. The v32 plains
+    // rehearsal held two such reviews, each answered by a walk to the edge of sight that the body
+    // accepted as a replace.
+    for (name, item) in [
+        (
+            "v32-met-discovery-next-log-unwalkable",
+            "item.minecraft.oak_log",
+        ),
+        (
+            "v32-met-table-next-logs-unwalkable",
+            "item.minecraft.birch_log",
+        ),
+    ] {
+        let seen = local_fixture(name);
+        let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
+        let pairings = schema["properties"]["decision"]["anyOf"]
+            .as_array()
+            .unwrap();
+        assert!(!pairings.is_empty(), "{name}");
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        let answer = answer_in(
+            &schema,
+            &json!({ "action": "moveTo", "onto": "x1" }),
+            &json!({ "disposition": "replace", "stepResult": "progressing", "successItem": item, "successCount": 1 }),
+        );
+        assert!(validator.is_valid(&answer), "{name}: {schema}");
+    }
+}
