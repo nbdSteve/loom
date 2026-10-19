@@ -802,6 +802,11 @@ The ability is not a flag at all: `Movements` has no swim setting, so the mechan
 in `blocksToAvoid`, which makes a route through it cost more than the search will pay.
 A body that falls in still floats, because that is Prismarine physics doing what vanilla
 does rather than a policy of Loom's.
+**A walk that starts in water may swim out of it, and only such a walk.**
+r27 epsilon drowned at the bottom of its own flooded pit: every walk onto the dry floor two blocks above its feet was refused `noRoute`, because the search had no move at all from a water cell.
+For a walk whose body stands in water, `EscapeMovements` lets water be passed and adds the moves the library lacks: straight up through water while the head is under it, then out along an axis onto a block whose top is at most one above the feet, with the library's own jump measured from the water rather than from the block under it, and a node floating over the water treated as the top water cell it is.
+A body that starts dry still treats water as a wall.
+`test/native-water-escape.test.js` replays the pit offline, and the same walks out of epsilon's real pit on seed 20011 arrive on Paper.
 
 **The server's world border is a wall, and the one step exclusion a route is searched under.**
 Mineflayer keeps no border state and Prismarine's physics collides with blocks alone, so a search that did not know the border routed over it, and the server put the player back on every step until the stall bound ended the request.

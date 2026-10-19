@@ -73,6 +73,9 @@
  * and `getMoveForward` then abandons any move whose cost passed a hundred - so a water
  * block in `blocksToAvoid` is a wall to the search. The body still floats if it falls in,
  * because that is Prismarine physics doing what vanilla does and not a policy of Loom's.
+ * The one exception is a walk that starts in water, which may swim out of it ([EscapeMovements]):
+ * r27 epsilon drowned at the bottom of its own flooded pit while every walk onto the dry floor two
+ * blocks above was refused `noRoute`, because the search had no move at all from a water cell.
  *
  * **Sprinting is the one ability a request decides, and it is off unless the request says
  * so.** Sprinting spends food, so a body allowed to sprint whenever it could would be
@@ -108,6 +111,7 @@
 const { performance } = require('node:perf_hooks')
 const physics = require('mineflayer/lib/plugins/physics')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
+const Move = require('mineflayer-pathfinder/lib/move')
 const { Vec3 } = require('vec3')
 const { installVanillaCollision } = require('./collision')
 const { borderExclusion, columnInside, trackWorldBorder, worldBorderOf } = require('./border')
@@ -593,7 +597,7 @@ function blocksApart (one, other) {
  * why that is the mechanism and not a flag. The id is read straight from the registry
  * because the library's own `inject` already requires it to be there.
  */
-function movementPolicyFor (movements, { sprint, border }) {
+function movementPolicyFor (movements, { sprint, border, swim = false }) {
   const water = movements.bot.registry.blocksByName.water.id
   return {
     // Abilities. Every one of these is a thing a later explicit skill would own.
@@ -621,8 +625,9 @@ function movementPolicyFor (movements, { sprint, border }) {
     // Bounds that are read whatever else is disabled.
     maxDropDown: MAX_DROP_BLOCKS,
     infiniteLiquidDropdownDistance: false,
-    // The library's own water, plus water, which is what makes water a wall.
-    blocksToAvoid: new Set(movements.blocksToAvoid).add(water),
+    // The library's own, plus water, which is what makes water a wall - except for a walk that
+    // starts in water, which may swim out of it (see [EscapeMovements]).
+    blocksToAvoid: swim ? new Set(movements.blocksToAvoid) : new Set(movements.blocksToAvoid).add(water),
     // Registry vocabularies, kept exactly as the library derived them for this version.
     blocksCantBreak: movements.blocksCantBreak,
     liquids: movements.liquids,
@@ -640,8 +645,61 @@ function movementPolicyFor (movements, { sprint, border }) {
 }
 
 /** Applies [movementPolicyFor] to `movements`, and answers it. */
-function applyMovementPolicy (movements, { sprint, border }) {
-  return Object.assign(movements, movementPolicyFor(movements, { sprint, border }))
+function applyMovementPolicy (movements, { sprint, border, swim = false }) {
+  return Object.assign(movements, movementPolicyFor(movements, { sprint, border, swim }))
+}
+
+/** Whether the body's feet or head cell holds water, so a walk from where it stands must swim. */
+function standsInWater (bot) {
+  const at = bot.entity?.position
+  if (at === undefined || at === null || typeof bot.blockAt !== 'function') return false
+  const water = bot.registry.blocksByName.water.id
+  return [0, 1].some((dy) => bot.blockAt(at.floored().offset(0, dy, 0))?.type === water)
+}
+
+/**
+ * The library's moves, and one it has no notion of: swimming straight up out of water, into a
+ * cell whose own and head cells a body may pass. Used only for a walk that starts in water, whose
+ * policy also lets water be passed: r27 epsilon drowned at the bottom of its own flooded pit,
+ * every walk onto the dry floor two blocks above its feet refused `noRoute` because the search
+ * had no move at all from a water cell. The executor already swims, holding jump in water.
+ */
+class EscapeMovements extends Movements {
+  getNeighbors (node) {
+    // A body bobbing at the surface floors into the air over the water, and a replan from there
+    // walked it onto the water as onto ground, into the side of the bank with no jump; it is in the
+    // top water cell, and moves from there.
+    if (!this.getBlock(node, 0, 0, 0).liquid && this.getBlock(node, 0, -1, 0).liquid) {
+      return this.getNeighbors(new Move(node.x, node.y - 1, node.z, node.remainingBlocks, node.cost))
+    }
+    // Up only into water: a body bobbing at the surface is in the top water cell, not standing on
+    // the air above it, and a route that rose into that air jumped from where no body stands.
+    const up = this.getBlock(node, 0, 0, 0).liquid && this.getBlock(node, 0, 1, 0).liquid &&
+      this.getBlock(node, 0, 1, 0).safe && this.getBlock(node, 0, 2, 0).safe
+    const surfacing = up ? [new Move(node.x, node.y + 1, node.z, node.remainingBlocks, 1 + this.liquidCost)] : []
+    // A body under water to its head swims up before anything else: on real Paper a jump-up from
+    // the bottom of epsilon's pit against its sand wall never rose, while one from the surface did.
+    if (this.getBlock(node, 0, 1, 0).liquid) return surfacing
+    if (!this.getBlock(node, 0, 0, 0).liquid) return [...super.getNeighbors(node), ...surfacing]
+    // At the surface it leaves water along an axis, by climbing onto a block whose top is at most
+    // one above its feet: the library measures a jump from the block under the feet, which in
+    // water is the water, so every climb out read as two high; and a diagonal jump out stuck
+    // against the corner of epsilon's pit on real Paper, while one straight out arrived.
+    const straight = super.getNeighbors(node).filter((move) => move.x === node.x || move.z === node.z)
+    return [...straight, ...this.climbsOut(node), ...surfacing]
+  }
+
+  climbsOut (node) {
+    const out = []
+    if (!this.getBlock(node, 0, 2, 0).safe) return out
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const step = this.getBlock(node, dx, 0, dz)
+      if (!step.physical || step.height > node.y + 1 + 1e-6) continue
+      if (!this.getBlock(node, dx, 1, dz).safe || !this.getBlock(node, dx, 2, dz).safe) continue
+      out.push(new Move(node.x + dx, node.y + 1, node.z + dz, node.remainingBlocks, 2 + this.liquidCost))
+    }
+    return out
+  }
 }
 
 /**
@@ -799,7 +857,12 @@ function createMovement (bot, {
     let movements
     try {
       applyPathfinderPolicy(finder)
-      movements = applyMovementPolicy(new Movements(bot), { sprint, border: worldBorderOf(bot) })
+      const swim = standsInWater(bot)
+      movements = applyMovementPolicy(swim ? new EscapeMovements(bot) : new Movements(bot), {
+        sprint,
+        border: worldBorderOf(bot),
+        swim
+      })
     } catch {
       return undefined
     }
