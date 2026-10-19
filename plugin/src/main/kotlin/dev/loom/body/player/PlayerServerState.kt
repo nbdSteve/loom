@@ -152,6 +152,9 @@ interface PlayerServerState {
     /** Captures the server half of a sense audit immediately before the request is sent. */
     fun captureSenseAudit(identity: PlayerIdentity): SenseAuditSnapshot? = null
 
+    /** Run once per server tick on the main thread, for readings that need a short history. */
+    val onTick: () -> Unit get() = {}
+
     fun auditSense(
         identity: PlayerIdentity,
         snapshot: SenseAuditSnapshot?,

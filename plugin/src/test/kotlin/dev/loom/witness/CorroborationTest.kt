@@ -134,13 +134,29 @@ class CorroborationTest {
         assertIs<Corroboration.Disputed>(corroborate(claimed, emptyList(), before, emptyList()))
         assertEquals(
             Corroboration.Agreed,
-            corroborate(claimed, emptyList(), before, emptyList(), at(after)),
+            corroborate(claimed, emptyList(), before, emptyList(), Around(at(after))),
         )
         // Outside the whole span, plus the tolerance, is still a body contradicting the server.
         val invented = SensedVitals(health = 8.0, food = 20, saturation = 5.0)
         assertIs<Corroboration.Disputed>(
-            corroborate(invented, emptyList(), before, emptyList(), at(after)),
+            corroborate(invented, emptyList(), before, emptyList(), Around(at(after))),
         )
+    }
+
+    @Test
+    fun aClientNotYetToldOfAPickupAgreesWithTheServerAMomentEarlier() {
+        // r26 stopped on gamma's claim: the server held a pickup at both ends of the round trip,
+        // and the client, told of it only when that tick's packets went out, did not yet.
+        val vitals = SensedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val observed = ObservedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val logs = listOf(ObservedStack(slot = 36, what = "oak_log", count = 2))
+        val atAnswer = ServerReading(observed, logs)
+        assertIs<Corroboration.Disputed>(corroborate(vitals, emptyList(), observed, logs, Around(atAnswer)))
+        val earlier = listOf(emptyList<ObservedStack>(), logs)
+        assertEquals(Corroboration.Agreed, corroborate(vitals, emptyList(), observed, logs, Around(atAnswer, earlier)))
+        // A stack the server held at no moment of the window is still invented.
+        val invented = listOf(SensedStack(slot = 36, what = "oak_log", count = 3))
+        assertIs<Corroboration.Disputed>(corroborate(vitals, invented, observed, logs, Around(atAnswer, earlier)))
     }
 
     @Test
@@ -153,10 +169,10 @@ class CorroborationTest {
         val held = listOf(ObservedStack(slot = 36, what = "stick", count = 1))
         assertIs<Corroboration.Disputed>(corroborate(vitals, stick, observed, emptyList()))
         val atAnswer = ServerReading(observed, held)
-        assertEquals(Corroboration.Agreed, corroborate(vitals, stick, observed, emptyList(), atAnswer))
+        assertEquals(Corroboration.Agreed, corroborate(vitals, stick, observed, emptyList(), Around(atAnswer)))
         // A stack the server held at neither end is still invented.
         val two = listOf(SensedStack(slot = 36, what = "stick", count = 2))
-        assertIs<Corroboration.Disputed>(corroborate(vitals, two, observed, emptyList(), atAnswer))
+        assertIs<Corroboration.Disputed>(corroborate(vitals, two, observed, emptyList(), Around(atAnswer)))
     }
 
     @Test
@@ -168,22 +184,22 @@ class CorroborationTest {
         val drained = ObservedVitals(health = 20.0, food = 20, saturation = 3.0)
         assertEquals(
             Corroboration.Agreed,
-            corroborate(stale, emptyList(), drained, emptyList(), at(drained)),
+            corroborate(stale, emptyList(), drained, emptyList(), Around(at(drained))),
         )
         // A peaceful world raised the server to 7.0 with no resend either.
         val raised = ObservedVitals(health = 20.0, food = 20, saturation = 7.0)
         assertEquals(
             Corroboration.Agreed,
-            corroborate(stale, emptyList(), raised, emptyList(), at(raised)),
+            corroborate(stale, emptyList(), raised, emptyList(), Around(at(raised))),
         )
         // Zero-ness is what vanilla keeps in step, so disagreeing about it is a contradiction.
         val empty = ObservedVitals(health = 20.0, food = 20, saturation = 0.0)
         assertIs<Corroboration.Disputed>(
-            corroborate(stale, emptyList(), empty, emptyList(), at(empty)),
+            corroborate(stale, emptyList(), empty, emptyList(), Around(at(empty))),
         )
         val starved = SensedVitals(health = 20.0, food = 20, saturation = 0.0)
         assertIs<Corroboration.Disputed>(
-            corroborate(starved, emptyList(), drained, emptyList(), at(drained)),
+            corroborate(starved, emptyList(), drained, emptyList(), Around(at(drained))),
         )
     }
 

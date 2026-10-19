@@ -134,6 +134,7 @@ class PlayerBodyPort(
         }
 
     override fun tick(tick: Long) {
+        authority.serverState.onTick()
         instances.values.forEach { it.tick(tick) }
     }
 

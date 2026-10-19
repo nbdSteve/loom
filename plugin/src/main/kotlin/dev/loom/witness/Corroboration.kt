@@ -28,7 +28,10 @@
  * so they are compared exactly. Reading either rule as the other's gives a check that is
  * useless in one direction and a false alarm in the other. Exactly, but not as *written*:
  * the contract makes an item's namespace optional and the two sides reach the comparison
- * spelled differently, so both are normalised first - `ItemNames.kt`.
+ * spelled differently, so both are normalised first - `ItemNames.kt`. And a client is told
+ * of an inventory change only once the tick that made it has sent its packets, so an item claim
+ * also agrees with the server as it stood at any of the last [WITNESS_LAG_TICKS] ticks before the
+ * request ([Around.earlier]); a stack the server held at no moment of that window is still a lie.
  *
  * **The comparison covers the slots the server can address, and says so.** Bukkit's
  * `PlayerInventory` numbers the armour, the main inventory, the hotbar and the offhand,
@@ -130,6 +133,23 @@ data class BodyClaim(val vitals: SensedVitals, val inventory: List<SensedStack>)
 
 /** What the server itself read about that player at the sense request's capture boundary. */
 data class ServerReading(val vitals: ObservedVitals, val inventory: List<ObservedStack>)
+
+/**
+ * The server's readings around one claim besides the one taken as the request was sent: the one
+ * taken when its answer is audited, and the inventory at each of the last [WITNESS_LAG_TICKS]
+ * ticks before the request, which a client not yet told of a change still describes.
+ */
+data class Around(
+    val after: ServerReading? = null,
+    val earlier: List<List<ObservedStack>> = emptyList(),
+)
+
+/**
+ * How many server ticks before a sense request a client's inventory may still describe: a change
+ * reaches the client only once the tick that made it has sent its packets, and a loaded server
+ * can send them a tick or two late.
+ */
+const val WITNESS_LAG_TICKS: Int = 4
 
 /** Whether a body's account of itself stands up against the server's own reading. */
 sealed interface Corroboration {
@@ -237,8 +257,10 @@ fun corroborate(
     claimedInventory: List<SensedStack>,
     observed: ObservedVitals,
     observedInventory: List<ObservedStack>,
-    after: ServerReading? = null,
+    around: Around = Around(),
 ): Corroboration {
+    val after = around.after
+    val recent = around.earlier
     val vitals = vitalFaults(claimed, observed, after?.vitals ?: observed)
     val checkable = claimedInventory.filter { isCorroborableSlot(it.slot) }
     // The claim is one moment inside the round trip, so it agrees when it matches the server at
@@ -250,7 +272,18 @@ fun corroborate(
                 reading ->
             inventoryFaults(checkable, reading.inventory.filter { isCorroborableSlot(it.slot) })
         }
-    val inventory = if (before.isNotEmpty() && atAnswer?.isEmpty() == true) atAnswer else before
+    // Nor can a client be told of a change before the tick that made it has sent its packets, so
+    // the claim also agrees with the server as it stood up to [WITNESS_LAG_TICKS] ticks earlier
+    // (r26 stopped on gamma's claim that matched the server a moment before a pickup).
+    val lagged =
+        recent.any { earlier -> inventoryFaults(checkable, earlier.filter { isCorroborableSlot(it.slot) }).isEmpty() }
+    val inventory =
+        when {
+            before.isEmpty() -> before
+            atAnswer?.isEmpty() == true -> atAnswer
+            lagged -> emptyList()
+            else -> before
+        }
     val outside = claimedInventory.size - checkable.size
     if (vitals.isEmpty() && inventory.isEmpty()) {
         return if (outside == 0) Corroboration.Agreed else Corroboration.PartlyChecked(outside)
