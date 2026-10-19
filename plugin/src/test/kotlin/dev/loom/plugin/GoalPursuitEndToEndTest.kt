@@ -484,6 +484,16 @@ class GoalPursuitEndToEndTest {
         assertEquals(EventTag.ACCEPTED, pickup.outcome, "the server picked it up: ${pickup.detail}")
         assertEquals(dev.loom.contract.Trigger.StepSettled, world.mind.seen[1].trigger)
         assertEquals(1, world.records.count { it.event == BodyEvent.OWN_DROP_PICKUP })
+        // Generation 15 describes it by its terminal, and counts it as no action of its own.
+        val pursuit =
+            world
+                .readiness(SURVIVAL_GENERATION)
+                .getValue("goalCoherence")
+                .jsonObject
+                .getValue("pursuit")
+                .jsonObject
+        val pickups = pursuit.getValue("description").jsonObject.getValue("ownDropPickups").jsonObject
+        assertEquals(1, pickups.getValue(EventTag.ACCEPTED).jsonPrimitive.int)
     }
 
     @Test
@@ -517,6 +527,7 @@ class GoalPursuitEndToEndTest {
         const val WOODED_GENERATION = 10
         const val HORIZON_GENERATION = 13
         const val DISCOVERY_GENERATION = 14
+        const val SURVIVAL_GENERATION = 15
         const val DIRT = "item.minecraft.dirt"
         const val LOG = "item.minecraft.oak_log"
         const val STICK_ID = 70

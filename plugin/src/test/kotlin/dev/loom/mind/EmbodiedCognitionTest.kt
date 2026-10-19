@@ -746,4 +746,43 @@ class EmbodiedCognitionTest {
         assertEquals(listOf<Trigger>(Trigger.GoalReview, Trigger.StepSettled), triggers.take(2))
         assertEquals(emptyList<Boolean>(), settled, "nothing owed: the review was taken now")
     }
+
+    @Test
+    @DisplayName("urgent damage is sent ahead of the reviews still due, and a follow-up is held for them")
+    fun urgentDamagePreemptsTheReviewsStillDue() {
+        // r24: theta's damage at health 1 was refused to keep calls for reviews it never lived to hold.
+        val records = mutableListOf<BodyEventRecord>()
+        val body =
+            RecordingBody(
+                { trigger -> perceptionNearBush(agentId = agent.value).copy(trigger = trigger) },
+                main::drainingThread,
+                events = BodyEventLog { records.add(it) },
+                currentTick = { tick },
+            )
+        val asked = mutableListOf<Trigger>()
+        val reserve = CallReserve(perAgentCeiling = 4, scheduledPerAgent = 2)
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind =
+                    ReservingCognitionBridge(
+                        { p ->
+                            asked.add(p.trigger)
+                            CompletableFuture.completedFuture(decisionFor(p, Intent.Idle))
+                        },
+                        reserve,
+                    ),
+                mainThread = main,
+                journal = journalInto(records),
+            )
+        cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+        cognition.consider(agent, Trigger.StepSettled)
+        main.drain()
+        cognition.consider(agent, Trigger.Damaged(3, "zombie"))
+        main.drain()
+        assertEquals(listOf(Trigger.GoalReview, Trigger.Damaged(3, "zombie")), asked)
+        val held = records.single { it.event == BodyEvent.COGNITION_UNAVAILABLE }
+        assertEquals("callReserved", held.outcome, "the follow-up, not the damage, is held for the review still due")
+    }
 }
