@@ -330,6 +330,22 @@ internal class ScenarioWorld(
                 ),
             )
         ids.forEach { port.spawn(it).toCompletableFuture().await() }
+        // The body's per-tick hook, as Paper's timer calls it, at the world's own tick: the tests
+        // move time themselves, so this advances nothing.
+        val ticker =
+            Executors.newSingleThreadScheduledExecutor {
+                Thread(
+                    it,
+                    "fake-server-tick",
+                ).apply { isDaemon = true }
+            }
+        ticker.scheduleAtFixedRate(
+            { runCatching { mainExecutor.execute { port.tick(tick.get()) } } },
+            SERVER_TICK_MILLIS,
+            SERVER_TICK_MILLIS,
+            java.util.concurrent.TimeUnit.MILLISECONDS,
+        )
+        closers += { ticker.shutdownNow() }
         closers += { mainExecutor.shutdownNow() }
     }
 
@@ -584,3 +600,6 @@ private fun jsonOf(vararg fields: Pair<String, Any?>): JsonObject =
 /** The uuid the peers spawn scene entity [id] with (`body/test/harness.js` `spotted`). */
 internal fun sceneEntityUuid(id: Int): UUID =
     UUID.fromString("00000000-0000-4000-8000-${id.toString().padStart(12, '0')}")
+
+/** Vanilla's tick, at which the fake server drives the body's per-tick hook. */
+private const val SERVER_TICK_MILLIS = 50L

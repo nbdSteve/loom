@@ -229,6 +229,7 @@ private class PlayerBodyInstance(
 
     fun tick(tick: Long) {
         lifecycle.tick(tick)
+        pickup.tick(tick)
     }
 
     fun liveBodies(): Set<AgentId> = registry.liveBodies()

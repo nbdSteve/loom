@@ -6,6 +6,11 @@
  * most one explicit collect of exactly that drop, approaching it, on a fresh sense answer, and
  * then returns control to the mind: there is no loop, no other item, and no second attempt.
  * Vanilla's own competition stands, so a peer's pickup first is the body's `itemGone`, a race.
+ *
+ * The attempt waits for the drop to come to rest, by the server's own position for it, before it
+ * senses: a dug block's drop is thrown, and a sense taken while it flew sent the body to where it
+ * had been, to time out where it was no longer (path rehearsal 20: eta's pickups were accepted in
+ * one run and timed out in two, the same drops collected without trouble once at rest).
  */
 package dev.loom.body.player
 
@@ -23,21 +28,74 @@ import java.util.concurrent.CompletionStage
 /** How long the one pickup may take, approach included: an interaction's own deadline. */
 private const val PICKUP_DEADLINE_MS = 20_000
 
+/** The most server ticks a pickup waits for its drop to come to rest before it senses anyway. */
+internal const val PICKUP_SETTLE_MAX_TICKS = 40L
+
+/** One pickup waiting for its drop to come to rest. */
+private class PendingPickup(
+    val agentId: AgentId,
+    val requestId: String,
+    val item: String,
+    val since: Long,
+    val answer: CompletableFuture<String?>,
+) {
+    var lastPosition: List<Double>? = null
+}
+
 internal class OwnDropPickup(
     private val context: PlayerBodyContext,
     private val registry: PlayerRuntimeRegistry,
     private val sessions: PlayerSenseSessions,
     private val perception: PlayerPerception,
 ) {
-    /** Tries once to pick up the [item] dig [requestId] left lying; answers the terminal tag recorded. */
+    private val pending = mutableListOf<PendingPickup>()
+
+    /**
+     * Tries once to pick up the [item] dig [requestId] left lying, once the drop is at rest; answers
+     * the terminal tag recorded, or `null` when no pickup was tried because the drop is gone.
+     */
     fun attempt(
         agentId: AgentId,
         requestId: String,
         item: String,
     ): CompletionStage<String?> {
         val runtime = registry.ready(agentId)
-        val drop = runtime?.let { ownDropOf(it, requestId, item) } ?: return CompletableFuture.completedFuture(null)
+        runtime?.let { ownDropOf(it, requestId, item) } ?: return CompletableFuture.completedFuture(null)
         val answer = CompletableFuture<String?>()
+        pending += PendingPickup(agentId, requestId, item, context.authority.currentTick(), answer)
+        return answer
+    }
+
+    /**
+     * Starts each waiting pickup whose drop the server shows at rest - the same position on two
+     * ticks running - or that has waited [PICKUP_SETTLE_MAX_TICKS]; one whose drop is gone is
+     * answered `null`. Main thread only, once per server tick.
+     */
+    fun tick(now: Long) {
+        pending.removeAll { waiting ->
+            val runtime = registry.ready(waiting.agentId)
+            val drop = runtime?.let { ownDropOf(it, waiting.requestId, waiting.item) }
+            val position = drop?.position
+            val ready = position != null && position == waiting.lastPosition
+            waiting.lastPosition = position
+            when {
+                runtime == null || drop == null -> waiting.answer.complete(null)
+                ready || now - waiting.since >= PICKUP_SETTLE_MAX_TICKS -> start(runtime, waiting)
+                else -> return@removeAll false
+            }
+            true
+        }
+    }
+
+    private fun start(
+        runtime: PlayerRuntime,
+        waiting: PendingPickup,
+    ) {
+        val agentId = waiting.agentId
+        val requestId = waiting.requestId
+        val item = waiting.item
+        val answer = waiting.answer
+        val drop = ownDropOf(runtime, requestId, item) ?: return run { answer.complete(null) }
         perception.senseForPickup(agentId).whenComplete { sense, failure ->
             context.authority.main.execute {
                 val index = sense?.droppedItemSubjects?.entries?.firstOrNull { it.value == drop.entity }?.key
@@ -50,7 +108,6 @@ internal class OwnDropPickup(
                 }
             }
         }
-        return answer
     }
 
     private fun ownDropOf(
