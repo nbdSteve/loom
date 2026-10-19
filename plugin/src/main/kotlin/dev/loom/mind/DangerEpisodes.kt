@@ -97,6 +97,8 @@ class DangerEpisodes(
                 pending.merge(agentId, damage) { earlier, later ->
                     Trigger.Damaged(earlier.amount + later.amount, later.source)
                 }
+                // The latest attacker is the one told of, so the flight can name it.
+                if (subject != null) pendingAttacker[agentId] = subject else pendingAttacker.remove(agentId)
             }
         }
         return admitted
@@ -130,6 +132,9 @@ class DangerEpisodes(
     /** The damage each agent took while one of its danger answers ran, owed once one settles. */
     private val pending = mutableMapOf<AgentId, Trigger.Damaged>()
 
+    /** The server uuid of the creature that dealt each agent's latest held damage, when one did. */
+    private val pendingAttacker = mutableMapOf<AgentId, String>()
+
     /**
      * Marks the decision for [requestId] settled. A flight starts its episode's cooldown; any
      * other answer ends the episode at once, so the next sighting of that threat is asked about
@@ -140,7 +145,14 @@ class DangerEpisodes(
         agentId: AgentId,
         requestId: String,
         fled: Boolean = true,
-    ): Trigger.Damaged? {
+    ): Trigger.Damaged? = settledDamage(agentId, requestId, fled)?.trigger
+
+    /** As [settled], with the server uuid of the creature that dealt the damage it owes, if any. */
+    fun settledDamage(
+        agentId: AgentId,
+        requestId: String,
+        fled: Boolean = true,
+    ): HeldDamage? {
         val now = currentTick()
         episodes[agentId]?.entries?.removeIf { (_, episode) ->
             val ended = episode.open.remove(requestId) && episode.open.isEmpty()
@@ -149,7 +161,9 @@ class DangerEpisodes(
         }
         // Damage held behind an answer is owed once no answer of the agent's is still open.
         val open = episodes[agentId]?.values?.any { it.open.isNotEmpty() } == true
-        return if (open) null else pending.remove(agentId)
+        if (open) return null
+        val attacker = pendingAttacker.remove(agentId)
+        return pending.remove(agentId)?.let { HeldDamage(it, attacker) }
     }
 
     /**
@@ -169,6 +183,7 @@ class DangerEpisodes(
     /** Drops every episode for an agent whose body has gone, so nothing outlives it. */
     fun forget(agentId: AgentId) {
         pending.remove(agentId)
+        pendingAttacker.remove(agentId)
         episodes.remove(agentId)
     }
 
@@ -187,3 +202,9 @@ class DangerEpisodes(
         return open.isEmpty() && now - settled > DANGER_EPISODE_COOLDOWN_TICKS
     }
 }
+
+/** Damage held behind a danger answer, and the server uuid of the creature that dealt it, if any. */
+data class HeldDamage(
+    val trigger: Trigger.Damaged,
+    val attacker: String?,
+)

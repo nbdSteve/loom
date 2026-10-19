@@ -105,7 +105,7 @@ class DamageDriver(
             return
         }
         episodeOpenedAt[report.agentId] = report.tick
-        captured(report, trigger, bodies.perceive(report.agentId, trigger))
+        captured(report, trigger, bodies.damage.perceive(report.agentId, trigger, report.attacker))
     }
 
     /** Stops new damage cognition. In-flight perceptions are recorded and dropped. */

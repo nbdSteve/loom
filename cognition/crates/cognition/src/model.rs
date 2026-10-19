@@ -504,7 +504,15 @@ impl ScriptedBackend {
             // `source` would put a creature's name where the body expects a handle
             // it issued, which the body refuses; naming nothing when nothing in
             // sight is alive is the honest answer.
-            Trigger::Damaged { amount, source } => match nearest_ref(perception, source) {
+            // The attacker the body named is fled first; it is always offered.
+            Trigger::Damaged {
+                amount,
+                source,
+                attacker_ref,
+            } => match attacker_ref
+                .clone()
+                .or_else(|| nearest_ref(perception, source))
+            {
                 Some(handle) => Draft {
                     goal: None,
                     intent: Intent::Flee { from: handle },
@@ -972,6 +980,7 @@ mod tests {
                 Trigger::Damaged {
                     amount: 6,
                     source: "zombie".to_owned(),
+                    attacker_ref: None,
                 },
                 DecisionImportance::Pivotal,
             ),
@@ -999,6 +1008,7 @@ mod tests {
                     Trigger::Damaged {
                         amount: 3,
                         source: "minecraft:zombie".to_owned(),
+                        attacker_ref: None,
                     },
                     DecisionImportance::Pivotal,
                 ),
@@ -1023,6 +1033,7 @@ mod tests {
                 Trigger::Damaged {
                     amount: 3,
                     source: "fall".to_owned(),
+                    attacker_ref: None,
                 },
                 DecisionImportance::Pivotal,
             ),
@@ -1046,6 +1057,7 @@ mod tests {
             Trigger::Damaged {
                 amount: 6,
                 source: "zombie".to_owned(),
+                attacker_ref: None,
             },
             DecisionImportance::Pivotal,
         );
@@ -1082,6 +1094,7 @@ mod tests {
             Trigger::Damaged {
                 amount: 3,
                 source: "skeleton".to_owned(),
+                attacker_ref: None,
             },
             DecisionImportance::Pivotal,
         );
@@ -1103,6 +1116,20 @@ mod tests {
                 from: "e90".to_owned()
             }
         );
+        // And the skeleton the body names as the one that hurt it is fled, past the cut.
+        seen.trigger = Trigger::Damaged {
+            amount: 3,
+            source: "skeleton".to_owned(),
+            attacker_ref: Some("e91".to_owned()),
+        };
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        assert!(crate::offered::OfferedRefs::of(&seen).admits(&draft.intent));
+        assert_eq!(
+            draft.intent,
+            Intent::Flee {
+                from: "e91".to_owned()
+            }
+        );
     }
 
     #[test]
@@ -1115,6 +1142,7 @@ mod tests {
             Trigger::Damaged {
                 amount: 1,
                 source: "cactus".to_owned(),
+                attacker_ref: None,
             },
             Trigger::BlockSighted {
                 block: "diamond_ore".to_owned(),
@@ -1527,6 +1555,7 @@ mod tests {
             Trigger::Damaged {
                 amount: 4,
                 source: "zombie".to_owned(),
+                attacker_ref: None,
             },
             DecisionImportance::Pivotal,
         );
@@ -1583,6 +1612,7 @@ mod tests {
                     Trigger::Damaged {
                         amount: 6,
                         source: "zombie".to_owned(),
+                        attacker_ref: None,
                     },
                     DecisionImportance::Pivotal,
                 ),

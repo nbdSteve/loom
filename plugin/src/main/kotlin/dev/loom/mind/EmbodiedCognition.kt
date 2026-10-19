@@ -111,9 +111,20 @@ class EmbodiedCognition(
     fun consider(
         agentId: AgentId,
         trigger: Trigger,
+        attacker: String? = null,
     ): CompletionStage<Perception?> {
         val considered = CompletableFuture<Perception?>()
-        bodies.perceive(agentId, trigger).whenComplete { perception, failure ->
+        val perceived =
+            if (trigger is Trigger.Damaged) {
+                bodies.damage.perceive(
+                    agentId,
+                    trigger,
+                    attacker,
+                )
+            } else {
+                bodies.perceive(agentId, trigger)
+            }
+        perceived.whenComplete { perception, failure ->
             mainThread.execute {
                 if (failure != null) {
                     val cause = underlying(failure)
@@ -123,7 +134,7 @@ class EmbodiedCognition(
                 }
                 val classified = perception?.classified()
                 if (classified != null) {
-                    submit(agentId, classified)
+                    submit(agentId, classified, attacker)
                 }
                 considered.complete(classified)
             }
@@ -295,7 +306,11 @@ class EmbodiedCognition(
         // Nothing was done about the threat, so its next report is asked about again rather than
         // cooled down as if answered: v29 rehearsal zeta's danger call was refused for its review
         // reserve and the three bites that followed, the last one fatal, were all coalesced.
-        danger.settled(agentId, perception.requestId, fled = false)?.let { tell(agentId, it) }
+        danger.settledDamage(
+            agentId,
+            perception.requestId,
+            fled = false,
+        )?.let { tell(agentId, it.trigger, it.attacker) }
         bodies.held.release(agentId, perception.requestId)
         val classified = failureOf(failure)
         if (classified == CognitionFailure.CallReserved) bodies.held.unsent(agentId, perception)
@@ -328,11 +343,11 @@ class EmbodiedCognition(
             val refused = IntentOutcome.Rejected("the decision contradicts its own goal or danger: $refusing", refusing)
             journal.refused(agentId, decision, refusing)
             goals.stepped(agentId, decision.requestId, tagOf(decision.intent), refusing)
-            danger.settled(
+            danger.settledDamage(
                 agentId,
                 decision.requestId,
                 fled = decision.intent is Intent.Flee,
-            )?.let { tell(agentId, it) }
+            )?.let { tell(agentId, it.trigger, it.attacker) }
             bodies.held.release(agentId, decision.requestId)
             callbacks.onApplied(AppliedDecision(decision, refused))
             return
@@ -370,8 +385,14 @@ class EmbodiedCognition(
                 goals.settledAt(agentId, decision.requestId, journal.tick())
                 // One immediate review owed to the goal item a step left lying, then control returns.
                 followUp(agentId, decision.requestId, goal, goalStep, applied)
-                val held = danger.settled(agentId, decision.requestId, fled = decision.intent is Intent.Flee)
-                if (applied == IntentOutcome.NoSuchBody) danger.forget(agentId) else held?.let { tell(agentId, it) }
+                val held = danger.settledDamage(agentId, decision.requestId, fled = decision.intent is Intent.Flee)
+                if (applied == IntentOutcome.NoSuchBody) {
+                    danger.forget(agentId)
+                } else {
+                    held?.let {
+                        tell(agentId, it.trigger, it.attacker)
+                    }
+                }
                 if (applied == IntentOutcome.NoSuchBody) {
                     journal.discarded(agentId, decision)
                 }
@@ -417,8 +438,9 @@ class EmbodiedCognition(
     private fun tell(
         agentId: AgentId,
         trigger: Trigger,
+        attacker: String? = null,
     ) {
-        if (!callbacks.isDead(agentId) && !shutDown) consider(agentId, trigger)
+        if (!callbacks.isDead(agentId) && !shutDown) consider(agentId, trigger, attacker)
     }
 }
 

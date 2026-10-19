@@ -552,15 +552,7 @@ impl OfferedRefs {
                 ObservationKind::DroppedItem => {}
             }
         }
-        // The sighted threat's handle travels with the trigger and names a creature.
-        if let Trigger::ThreatSighted {
-            entity_ref,
-            distance,
-            ..
-        } = &perception.trigger
-        {
-            offered.creature(entity_ref, *distance);
-        }
+        offered.named_by_trigger(perception);
         // Cells at the edge of sight are walks like any other, offered so an agent that sees nothing
         // worth doing can look further (r17: eta idled three reviews with a bush 5.4 blocks off).
         for target in perception
@@ -929,6 +921,38 @@ impl OfferedRefs {
         }
         if danger || self.creatures.len() < MAX_CREATURE_REFS {
             self.creature(&seen.target_ref, seen.distance);
+        }
+    }
+
+    /// Offers the creatures `perception`'s trigger names: a sighted threat, whose handle travels
+    /// with the trigger, and the creature that just hurt the agent, which is danger and is offered
+    /// to flee and to attack within reach whatever lies nearer (v32 plains rehearsal 15: a skeleton
+    /// shooting from past the sixteen nearest creatures could not be named).
+    fn named_by_trigger(&mut self, perception: &Perception) {
+        match &perception.trigger {
+            Trigger::Damaged {
+                attacker_ref: Some(attacker),
+                ..
+            } => {
+                if let Some(seen) =
+                    perception
+                        .surroundings
+                        .iter()
+                        .take(MAX_OBSERVATIONS)
+                        .find(|seen| {
+                            seen.kind == ObservationKind::Entity && &seen.target_ref == attacker
+                        })
+                {
+                    offer(&mut self.danger, attacker);
+                    self.creature(attacker, seen.distance);
+                }
+            }
+            Trigger::ThreatSighted {
+                entity_ref,
+                distance,
+                ..
+            } => self.creature(entity_ref, *distance),
+            _ => {}
         }
     }
 

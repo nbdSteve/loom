@@ -1045,7 +1045,12 @@ function createBody (options) {
   function senseAnswer (request, requestId) {
     if (state !== 'ready') return undefined
     try {
-      const read = senseReading(bot, { radius: request.radius, limit: request.limit, retainItems: request.retainItems })
+      const read = senseReading(bot, {
+        radius: request.radius,
+        limit: request.limit,
+        retainItems: request.retainItems,
+        retainEntities: request.retainEntities
+      })
       if (read === undefined) return undefined
       const { reading, entityOffers, blockOffers, itemOffers, slotOffers } = read
       const recipes = recipeReading(bot, { blockOffers, limit: request.limit })

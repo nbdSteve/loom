@@ -200,6 +200,11 @@ a wall or under the ground is skipped, not counted as omitted. The one exception
 the controller names by its server uuid in the request's optional `retainItems`, at most eight:
 it is listed with `visible` false, because Loom names an agent's own dig drops so the agent can
 collect what its own dig dropped, and naming it chooses nothing the controller did not ask for.
+The entity list's one exception is the same kind of ask: an entity the controller names by its
+server uuid in `retainEntities`, at most four, is listed inside the radius even when nearer ones
+fill the limit, in place of the farthest one the limit would have kept, and the omission count
+still counts what was cut. Loom names the creature that has just hurt the agent, so a skeleton
+shooting from past a crowd can still be fled from or struck (v32 plains rehearsal 15).
 Sight to an item is aimed at its
 centre, as it is to a creature, because a ray to the point it rests on meets the floor. Sight to
 a block is aimed at its centre and then at each face turned toward the eyes, because a centre

@@ -42,6 +42,8 @@ internal data class PlayerScene(
     val entitySubjects: Map<Int, UUID>,
     val droppedItemSubjects: Map<Int, UUID>,
     val surroundings: List<Observation>,
+    /** The ref of the creature that just hurt the agent, when this scene was asked to keep it. */
+    val attackerRef: String? = null,
     val surroundingsOmitted: Long,
     val perceptionAudit: PerceptionAudit,
     val candidates: List<ThreatCandidate>,

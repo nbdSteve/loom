@@ -86,6 +86,11 @@ class PlayerBodyPort(
         trigger: Trigger,
     ): CompletionStage<Perception?> = instances[agentId]?.perceive(agentId, trigger) ?: completedBodyOperation(null)
 
+    override val damage: dev.loom.body.DamagePerception =
+        dev.loom.body.DamagePerception { agentId, trigger, attacker ->
+            instances[agentId]?.perceive(agentId, trigger, attacker?.let(::uuidOrNull)) ?: completedBodyOperation(null)
+        }
+
     override fun senseThreat(agentId: AgentId): CompletionStage<Perception?> =
         instances[agentId]?.senseThreat(agentId) ?: completedBodyOperation(null)
 
@@ -204,7 +209,8 @@ private class PlayerBodyInstance(
     fun perceive(
         agentId: AgentId,
         trigger: Trigger,
-    ): CompletionStage<Perception?> = perception.perceive(agentId, trigger)
+        attacker: java.util.UUID? = null,
+    ): CompletionStage<Perception?> = perception.perceive(agentId, trigger, attacker)
 
     fun senseThreat(agentId: AgentId): CompletionStage<Perception?> = perception.senseThreat(agentId)
 
@@ -277,3 +283,6 @@ private class FleetStarter(
         }
     }
 }
+
+/** [text] as a uuid, or `null` when it is not one. */
+private fun uuidOrNull(text: String): java.util.UUID? = runCatching { java.util.UUID.fromString(text) }.getOrNull()

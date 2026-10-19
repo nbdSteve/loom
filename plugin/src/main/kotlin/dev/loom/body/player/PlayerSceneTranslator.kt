@@ -30,7 +30,15 @@ private const val BLOCK_CENTER_OFFSET = 0.5
 internal class PlayerSceneTranslator(
     private val context: PlayerBodyContext,
 ) {
-    fun sceneOf(raw: RawSense): PlayerScene {
+    /**
+     * The scene [raw] reports. An [attacker] the server named - the creature that just hurt the
+     * agent - keeps its place in the scene however many offers stand nearer, and its ref is the
+     * scene's [PlayerScene.attackerRef].
+     */
+    fun sceneOf(
+        raw: RawSense,
+        attacker: UUID? = null,
+    ): PlayerScene {
         context.authority.serverState.auditSense(raw.identity, raw.auditSnapshot, raw.report)
         val serverSubjects =
             context.authority.serverState.subjectsOf(
@@ -39,7 +47,7 @@ internal class PlayerSceneTranslator(
             )
         val subjects = subjectsOf(raw, serverSubjects)
         val itemSubjects = context.authority.serverState.itemSubjectsOf(raw.identity, raw.report.items)
-        val selected = selectedOffers(raw, subjects, itemSubjects)
+        val selected = selectedOffers(raw, subjects, itemSubjects, attacker)
         val entityOffers = selected.filter { it.kind == ObservationKind.ENTITY }
         val blockOffers = selected.filter { it.kind == ObservationKind.BLOCK }
         val itemOffers = selected.filter { it.kind == ObservationKind.DROPPED_ITEM }
@@ -57,10 +65,6 @@ internal class PlayerSceneTranslator(
                 itemOffers to droppedItemBindings.map { it.handle },
             )
         val surroundings = selected.map { observationOf(raw, it, requireNotNull(refs[it.key])) }
-        val omittedByBody =
-            raw.report.entitiesOmitted + raw.report.blocksOmitted + raw.report.itemsOmitted
-        val omittedBySceneBound =
-            raw.report.entities.size + raw.report.blocks.size + raw.report.items.size - selected.size
         return PlayerScene(
             raw = raw,
             creatureBindings = creatureBindings,
@@ -81,7 +85,8 @@ internal class PlayerSceneTranslator(
                     offer.subject?.let { offer.sourceIndex to it }
                 }.toMap(),
             surroundings = surroundings,
-            surroundingsOmitted = omittedByBody + omittedBySceneBound,
+            attackerRef = refOfSubject(attacker, entityOffers, refs),
+            surroundingsOmitted = omittedOf(raw, selected.size),
             perceptionAudit = perceptionAuditOf(raw, entityOffers.size, blockOffers.size, itemOffers.size),
             candidates = candidatesOf(selected, surroundings),
             selfState = selfStateOf(raw, slotBindings, recipeBindings, itemRefsOf(itemOffers, droppedItemBindings)),
@@ -94,11 +99,12 @@ internal class PlayerSceneTranslator(
         raw: RawSense,
         subjects: List<UUID>,
         itemSubjects: List<UUID?>,
-    ): List<SceneOffer> =
-        PlayerSceneSelector.select(
-            raw.report.position,
-            offersOf(raw, subjects, itemSubjects),
-        )
+        attacker: UUID?,
+    ): List<SceneOffer> {
+        val offers = offersOf(raw, subjects, itemSubjects)
+        val reserved = offers.filter { attacker != null && it.subject == attacker }.map(SceneOffer::key).toSet()
+        return PlayerSceneSelector.select(raw.report.position, offers, reserved)
+    }
 
     private fun perceptionAuditOf(
         raw: RawSense,
@@ -348,4 +354,20 @@ private fun itemDescriptionId(resource: String): String {
 private fun splitResource(resource: String): Pair<String, String> {
     val split = resource.split(':', limit = 2)
     return if (split.size == 2) split[0] to split[1] else "minecraft" to split[0]
+}
+
+/** The ref minted for the entity offer whose server subject is [subject], if one was selected. */
+private fun refOfSubject(
+    subject: UUID?,
+    entityOffers: List<SceneOffer>,
+    refs: Map<Pair<dev.loom.contract.ObservationKind, Int>, String>,
+): String? = subject?.let { creature -> entityOffers.firstOrNull { it.subject == creature }?.let { refs[it.key] } }
+
+/** How many observations the body and the scene bound left out of a scene of [selected]. */
+private fun omittedOf(
+    raw: RawSense,
+    selected: Int,
+): Long {
+    val byBody = raw.report.entitiesOmitted + raw.report.blocksOmitted + raw.report.itemsOmitted
+    return byBody + raw.report.entities.size + raw.report.blocks.size + raw.report.items.size - selected
 }

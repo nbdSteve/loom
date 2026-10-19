@@ -1476,6 +1476,7 @@ fn immediate_danger_withholds_every_non_survival_action_and_a_weak_body_is_offer
         event.trigger = loom_contract::Trigger::Damaged {
             amount: 2,
             source: "zombie".to_owned(),
+            attacker_ref: None,
         };
         event
     }] {
@@ -1520,4 +1521,75 @@ fn a_ranged_hunter_in_bow_range_is_immediate_where_a_melee_one_is_not() {
     skeleton.what = "entity.minecraft.zombie".to_owned();
     *seen.surroundings.last_mut().unwrap() = skeleton;
     assert!(!OfferedRefs::of(&seen).in_immediate_danger());
+}
+
+/// The ranged-attacker fixture with its skeleton moved to `distance`, holding one stack to strike with.
+fn attacked_from(distance: f64, named: bool) -> Perception {
+    let mut seen = fixture("perception-damaged-ranged-attacker");
+    if let Some(attacker) = seen
+        .surroundings
+        .iter_mut()
+        .find(|seen| seen.target_ref == "e40")
+    {
+        attacker.distance = distance;
+    }
+    seen.surroundings
+        .sort_by(|one, other| one.distance.total_cmp(&other.distance));
+    if let loom_contract::Trigger::Damaged { attacker_ref, .. } = &mut seen.trigger {
+        if !named {
+            *attacker_ref = None;
+        }
+    }
+    seen.self_state.inventory_summary = vec![loom_contract::InventoryStack {
+        slot_ref: "i1".to_owned(),
+        what: "item.minecraft.stick".to_owned(),
+        count: 1,
+    }];
+    seen
+}
+
+#[test]
+fn the_creature_that_hurt_the_agent_is_offered_to_flee_and_strike_past_the_creature_cut() {
+    // v32 plains rehearsal 15: epsilon was shot by a skeleton standing past the sixteen nearest
+    // creatures, and no flight from it could be named.
+    let flee = json!({ "action": "flee", "from": "e40" });
+    let strike = json!({ "action": "attack", "target": "e40", "weapon": "i1", "attacks": 1, "approach": false });
+    let pursue = json!({ "action": "attack", "target": "e40", "weapon": "i1", "attacks": 1, "approach": true });
+    // Shooting from 20.5 blocks with seventeen creatures nearer: fled, and too far to strike.
+    let ranged = attacked_from(20.5, true);
+    let offered = OfferedRefs::of(&ranged);
+    assert!(offered.creatures.len() > loom_cognition::offered::MAX_CREATURE_REFS);
+    assert!(
+        offered.danger.contains(&"e40".to_owned()),
+        "{:?}",
+        offered.danger
+    );
+    assert!(offered.in_immediate_danger());
+    let schema = decision_schema_for(&offered, GoalPhase::of(&ranged));
+    assert!(accepts(&schema, &flee), "{schema}");
+    assert!(!accepts(&schema, &strike));
+    // Without the body naming it, the same skeleton is past the cut and cannot be named at all.
+    let unnamed = attacked_from(20.5, false);
+    assert!(
+        !OfferedRefs::of(&unnamed).admits(&loom_contract::Intent::Flee {
+            from: "e40".to_owned()
+        })
+    );
+    // Close enough to strike and to pursue, it is offered both, past the same seventeen.
+    for (distance, intent) in [(3.0, &strike), (7.0, &pursue)] {
+        let mut near = attacked_from(distance, true);
+        for (index, other) in near
+            .surroundings
+            .iter_mut()
+            .filter(|seen| seen.target_ref != "e40")
+            .enumerate()
+        {
+            other.distance = 1.0 + 0.1 * f64::from(u32::try_from(index).unwrap());
+        }
+        near.surroundings
+            .sort_by(|one, other| one.distance.total_cmp(&other.distance));
+        let schema = decision_schema_for(&OfferedRefs::of(&near), GoalPhase::of(&near));
+        assert!(accepts(&schema, &flee), "{distance}");
+        assert!(accepts(&schema, intent), "{distance}: {schema}");
+    }
 }

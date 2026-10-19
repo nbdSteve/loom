@@ -925,16 +925,19 @@ sealed interface BodyRequest {
          * names them, as Loom names an agent's own dig drops, so the body chooses nothing.
          */
         val retainItems: List<String>? = null,
+        /**
+         * Entities, by server uuid, to report however many nearer ones fill the limit: the
+         * caller names them, as Loom names the creature that just hurt the agent, so the body
+         * chooses nothing.
+         */
+        val retainEntities: List<String>? = null,
     ) : BodyRequest {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireWithin("radius", radius, 1..MAX_SENSE_RADIUS)
             requireWithin("limit", limit, 1..MAX_SENSE_OFFERS_PER_KIND)
-            retainItems?.let { uuids ->
-                require(uuids.size <= MAX_RETAINED_ITEMS) { "retainItems names at most $MAX_RETAINED_ITEMS items" }
-                require(uuids.toSet().size == uuids.size) { "retainItems names each item once" }
-                require(uuids.all(ENTITY_UUID::matches)) { "retainItems names entity uuids" }
-            }
+            retainItems?.let { requireRetained("retainItems", it, MAX_RETAINED_ITEMS) }
+            retainEntities?.let { requireRetained("retainEntities", it, MAX_RETAINED_ENTITIES) }
         }
     }
 
@@ -1940,6 +1943,20 @@ data class BodyError(
 
 /** Most dropped items one sense may ask to have reported out of sight. */
 const val MAX_RETAINED_ITEMS = 8
+
+/** Most entities one sense may ask to have reported however many stand nearer. */
+const val MAX_RETAINED_ENTITIES = 4
+
+/** Refuses a [field] naming more than [most] uuids, one twice, or anything but an entity uuid. */
+private fun requireRetained(
+    field: String,
+    uuids: List<String>,
+    most: Int,
+) {
+    require(uuids.size <= most) { "$field names at most $most entities" }
+    require(uuids.toSet().size == uuids.size) { "$field names each entity once" }
+    require(uuids.all(ENTITY_UUID::matches)) { "$field names entity uuids" }
+}
 
 /** Most other creatures a flight may be asked to end clear of; `MAX_FLIGHT_AVOID` in the body. */
 const val MAX_FLIGHT_AVOID = 16

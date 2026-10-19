@@ -817,7 +817,21 @@ pub enum Trigger {
     Spoken { from: String, text: String },
     /// The agent's body took damage.
     #[serde(rename = "damaged")]
-    Damaged { amount: i64, source: String },
+    Damaged {
+        amount: i64,
+        source: String,
+        /// The creature that dealt the damage, a projectile's shooter first, by the ref this
+        /// perception's surroundings name it: always shown and always offered to flee and to
+        /// attack within reach, however many nearer creatures there are. Absent when no
+        /// creature dealt it or the body could not report the attacker.
+        #[serde(
+            rename = "attackerRef",
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "bounded_optional_ref"
+        )]
+        attacker_ref: Option<String>,
+    },
     /// A living thing that hunts this agent's kind came into the body's view.
     ///
     /// Everything the body already verified about it travels with the trigger, so

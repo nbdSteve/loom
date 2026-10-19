@@ -27,6 +27,21 @@ class PlayerSceneSelectorTest {
     }
 
     @Test
+    fun `the creature that hurt the agent keeps its place past any number of nearer offers`() {
+        // v32 plains rehearsal 15: the skeleton that shot epsilon stood past the creatures nearer.
+        val nearer = (0 until PERCEPTION_MAX_OBSERVATIONS).map { offer(ObservationKind.ENTITY, it, 1.0 + it * 0.01) }
+        val attacker = offer(ObservationKind.ENTITY, PERCEPTION_MAX_OBSERVATIONS, 20.0)
+        val offers = nearer + blocks(PERCEPTION_MAX_OBSERVATIONS) + attacker
+        assertTrue(attacker.key !in PlayerSceneSelector.select(ORIGIN, offers).map { it.key })
+        val selected = PlayerSceneSelector.select(ORIGIN, offers, setOf(attacker.key))
+        assertTrue(attacker.key in selected.map { it.key })
+        // It takes the place of the farthest creature the bound would have kept, and no bound grows.
+        assertEquals(BODY_SENSE_MAX_OFFERS_PER_KIND, selected.count { it.kind == ObservationKind.ENTITY })
+        assertTrue(selected.size <= PERCEPTION_MAX_OBSERVATIONS)
+        assertEquals(selected.sortedBy { dev.loom.body.blocksApart(ORIGIN, it.position) }, selected)
+    }
+
+    @Test
     fun `future oversized block input cannot reduce a non-empty entity category to zero`() {
         val selected =
             PlayerSceneSelector.select(

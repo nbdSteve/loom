@@ -393,7 +393,11 @@
           "properties": {
             "event": { "const": "damaged" },
             "amount": { "type": "integer" },
-            "source": { "type": "string" }
+            "source": { "type": "string" },
+            "attackerRef": {
+              "description": "The creature that dealt the damage - a projectile's shooter, not the projectile - as the ref this perception's own surroundings name it by, so a flight or a strike can name the one creature that hurt the agent rather than the nearest of its kind. Present only when the server identified the attacker and this perception shows it; such an attacker is always among the surroundings and always offered to flee and to attack within reach, however many nearer creatures there are. Absent for damage no creature dealt, and for an attacker the body could not see or report.",
+              "$ref": "#/$defs/EntityRef"
+            }
           }
         },
         {

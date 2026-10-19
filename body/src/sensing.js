@@ -398,6 +398,24 @@ function nearestItems (bot, eyes, { radius, limit, retainItems = [] }) {
 }
 
 /**
+ * The nearest `bound` of the distance-ordered `within`, except that every entity whose uuid is in
+ * `retained` is kept and takes the place of the farthest one the bound would otherwise have kept.
+ * The controller names them - Loom names the creature that has just hurt the agent - so the body
+ * chooses nothing, and the order stays the distance order.
+ */
+function retainedNearest (within, bound, retained) {
+  const kept = within.filter((candidate) => retained.has(candidate.entity.uuid)).slice(0, bound)
+  const keptSet = new Set(kept)
+  let room = bound - kept.length
+  return within.filter((candidate) => {
+    if (keptSet.has(candidate)) return true
+    if (room === 0) return false
+    room -= 1
+    return true
+  })
+}
+
+/**
  * The nearest entities within `radius`, cut to `limit`, and how many the cut dropped.
  *
  * Distance is measured once per candidate, from the body's eyes, and that one reading is
@@ -421,11 +439,11 @@ function nearestItems (bot, eyes, { radius, limit, retainItems = [] }) {
  * by the same slice, the offers are the handles the coordinator resolves through; see
  * `senses.js` for how long one lasts.
  */
-function nearest (bot, eyes, { radius, limit }) {
+function nearest (bot, eyes, { radius, limit, retainEntities = [] }) {
   const within = describable(bot, eyes)
     .filter((candidate) => candidate.away <= radius)
     .sort((earlier, later) => earlier.away - later.away)
-  const reported = within.slice(0, Math.min(limit, MAX_SENSE_ENTITIES))
+  const reported = retainedNearest(within, Math.min(limit, MAX_SENSE_ENTITIES), new Set(retainEntities))
   const entities = reported.map((candidate) => ({
     what: candidate.entity.name,
     position: candidate.position,
@@ -499,7 +517,7 @@ function inventoryOf (bot) {
  * answer to an encoder. The contract's frames are built field by field from named properties.
  * One reading, two consumers, and no way to hand the wrong one to the wrong one by accident.
  */
-function senseReading (bot, { radius, limit, retainItems }) {
+function senseReading (bot, { radius, limit, retainItems, retainEntities }) {
   const standing = bot.entity === null || bot.entity === undefined
     ? undefined
     : bot.entity.position
@@ -511,7 +529,7 @@ function senseReading (bot, { radius, limit, retainItems }) {
   if (time === undefined || inventoryRead === undefined) return undefined
   if (!realWithin(bot.entity.eyeHeight, 0, MAX_WORLD_COORDINATE)) return undefined
   const eyes = standing.offset(0, bot.entity.eyeHeight, 0)
-  const { entities, entitiesOmitted, entityOffers } = nearest(bot, eyes, { radius, limit })
+  const { entities, entitiesOmitted, entityOffers } = nearest(bot, eyes, { radius, limit, retainEntities })
   const { blocks, blocksOmitted, blockOffers } =
     nearestBlocks(bot, eyes, standing, { radius, limit })
   const { items, itemsOmitted, itemOffers } = nearestItems(bot, eyes, { radius, limit, retainItems })

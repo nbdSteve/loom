@@ -269,6 +269,7 @@ internal class ScenarioWorld(
     val mind = ScenarioMind()
     val records: List<BodyEventRecord> get() = kept.toList()
     val cognition: EmbodiedCognition
+    private val bodies: PlayerBodyPort
 
     init {
         val ids = scene.stands.map { it.agent }
@@ -303,7 +304,7 @@ internal class ScenarioWorld(
             PlayerBodyAuthority(
                 main = mainExecutor,
                 registerIdentity = {},
-                serverState = SceneServer(broke, scene.items),
+                serverState = SceneServer(broke, scene.items, scene.entities),
                 eventLog = log,
                 currentTick = tick::get,
                 ground = scene.ground,
@@ -317,6 +318,7 @@ internal class ScenarioWorld(
                 startupConcurrency = 1,
             )
         closers += { port.close() }
+        bodies = port
         cognition =
             EmbodiedCognition(
                 port,
@@ -337,6 +339,33 @@ internal class ScenarioWorld(
 
     /** Every follow-up review the cognition owed, by agent, server tick and whether it was owed past the allowance. */
     val settlements = java.util.concurrent.CopyOnWriteArrayList<Triple<AgentId, Long, Boolean>>()
+
+    /**
+     * The server witnessing [amount] damage to [agent] from [attacker], a scene entity's uuid,
+     * through the real [dev.loom.mind.DamageDriver] as Paper's damage listener feeds it.
+     */
+    fun damaged(
+        agent: AgentId,
+        amount: Double,
+        source: String,
+        attacker: UUID,
+    ) {
+        val identity = identities.getValue(agent)
+        onMain {
+            dev.loom.mind
+                .DamageDriver(bodies, cognition, main, { false }, log, tick::get)
+                .witnessed(
+                    dev.loom.mind.DamageReport(
+                        agentId = agent,
+                        finalDamage = amount,
+                        source = source,
+                        tick = tick.get(),
+                        witness = dev.loom.body.WitnessedPlayer(identity.uuid.toString(), identity.username),
+                        attacker = attacker.toString(),
+                    ),
+                )
+        }
+    }
 
     /** A scheduled goal review for [agent], a tick after the last so every review is its own. */
     fun review(agent: AgentId) {
@@ -469,6 +498,7 @@ internal class ScenarioWorld(
 internal class SceneServer(
     private val broke: List<String>,
     private val items: List<SceneItem>,
+    private val entities: List<kotlinx.serialization.json.JsonObject> = emptyList(),
 ) : PlayerServerState {
     /** Each sensed item correlated to the scene item it lies within a block of, as Paper does. */
     override fun itemSubjectsOf(
@@ -489,10 +519,20 @@ internal class SceneServer(
 
     override fun dayOrdinal(): Long = 1
 
+    /** Each sensed entity correlated to the scene entity of its kind standing within a block of it, as Paper does. */
     override fun subjectsOf(
         identity: PlayerIdentity,
         entities: List<SensedEntity>,
-    ): List<UUID?> = List(entities.size) { null }
+    ): List<UUID?> =
+        entities.map { sensed ->
+            this.entities
+                .firstOrNull { entity ->
+                    val (x, y, z) = sensed.position
+                    val at = listOf("x", "y", "z").map { entity.getValue(it).jsonPrimitive.content.toDouble() }
+                    entity.getValue("what").jsonPrimitive.content == sensed.what &&
+                        abs(at[0] - x) <= 1.0 && abs(at[1] - y) <= 1.0 && abs(at[2] - z) <= 1.0
+                }?.let { sceneEntityUuid(it.getValue("id").jsonPrimitive.int) }
+        }
 
     override fun auditSense(
         identity: PlayerIdentity,
@@ -540,3 +580,7 @@ private fun jsonOf(vararg fields: Pair<String, Any?>): JsonObject =
             }
         }
     }
+
+/** The uuid the peers spawn scene entity [id] with (`body/test/harness.js` `spotted`). */
+internal fun sceneEntityUuid(id: Int): UUID =
+    UUID.fromString("00000000-0000-4000-8000-${id.toString().padStart(12, '0')}")

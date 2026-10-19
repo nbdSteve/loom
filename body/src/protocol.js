@@ -49,6 +49,16 @@ const PROTOCOL_VERSION = 7
 /** Most dropped items one sense may ask to have reported out of sight. */
 const MAX_RETAINED_ITEMS = 8
 
+/** Most entities one sense may ask to have reported whatever stands nearer. */
+const MAX_RETAINED_ENTITIES = 4
+
+/** Whether `uuids` is absent, or at most `most` unique entity uuids. */
+function retainedUuids (uuids, most) {
+  return uuids === undefined || (Array.isArray(uuids) && uuids.length <= most &&
+    uuids.every((uuid) => typeof uuid === 'string' && ENTITY_UUID.test(uuid)) &&
+    new Set(uuids).size === uuids.length)
+}
+
 /** Most other creatures a flight may be asked to end clear of. */
 const MAX_FLIGHT_AVOID = 16
 
@@ -353,14 +363,16 @@ const MAX_MOVE_DEADLINE_MS = 20000
 const MAX_RETREAT_DISTANCE = 32
 
 /**
- * Highest entity index a flee may name.
+ * Highest entity index a flee or an attack may name.
  *
  * One below [MAX_SENSE_ENTITIES], so every index this codec admits could name an entity
  * of some legal sense answer. An index past the end of the answer that was in fact named
  * is a `threatUnnamed` outcome rather than a malformed field, which is the same division
- * of labour a slot index and `slotUnnamed` already have.
+ * of labour a slot index and `slotUnnamed` already have. Derived rather than written down:
+ * it stayed 23 when generation 5 widened the list to 48, so a creature listed at 24 or later
+ * could be sensed and never fled from or struck (v32 plains rehearsal 15's end-to-end case).
  */
-const MAX_ENTITY_INDEX = 23
+const MAX_ENTITY_INDEX = MAX_SENSE_ENTITIES - 1
 
 /** Highest request-local block index an interaction may name. */
 const MAX_BLOCK_INDEX = MAX_SENSE_BLOCKS - 1
@@ -1530,13 +1542,16 @@ function requestPayload (raw, literals) {
       isBoundedInteger(raw.limit, 1, MAX_SENSE_OFFERS_PER_KIND) &&
       spellsWholeNumber(literals, 'limit')
     if (!bounded) return undefined
-    if (raw.retainItems === undefined) return { radius: raw.radius, limit: raw.limit }
-    // The controller's own dropped items to report out of sight: unique entity uuids, at most eight.
-    const retained = Array.isArray(raw.retainItems) &&
-      raw.retainItems.length <= MAX_RETAINED_ITEMS &&
-      raw.retainItems.every((uuid) => typeof uuid === 'string' && ENTITY_UUID.test(uuid)) &&
-      new Set(raw.retainItems).size === raw.retainItems.length
-    return retained ? { radius: raw.radius, limit: raw.limit, retainItems: [...raw.retainItems] } : undefined
+    // The controller's own dropped items to report out of sight, and the entities to report
+    // whatever stands nearer: unique entity uuids, at most eight and four.
+    if (!retainedUuids(raw.retainItems, MAX_RETAINED_ITEMS)) return undefined
+    if (!retainedUuids(raw.retainEntities, MAX_RETAINED_ENTITIES)) return undefined
+    return {
+      radius: raw.radius,
+      limit: raw.limit,
+      ...(raw.retainItems === undefined ? {} : { retainItems: [...raw.retainItems] }),
+      ...(raw.retainEntities === undefined ? {} : { retainEntities: [...raw.retainEntities] })
+    }
   }
   if (raw.op === 'eat') {
     const bounded = isControlId(raw.senseId) &&

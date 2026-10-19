@@ -10,6 +10,7 @@ package dev.loom.mind
 import dev.loom.contract.Intent
 import dev.loom.contract.ObservationKind
 import dev.loom.contract.Perception
+import dev.loom.contract.Trigger
 
 /** The vanilla food level at or below which a goal review may eat before any goal step. */
 const val HUNGRY_FOOD_LEVEL: Long = 7
@@ -43,20 +44,23 @@ data class SurvivalOffer(
         }
 
     companion object {
-        fun of(perception: Perception): SurvivalOffer =
-            SurvivalOffer(
+        fun of(perception: Perception): SurvivalOffer {
+            // The creature that just hurt the agent is immediate danger wherever it stands, as the
+            // mind offers it (`OfferedRefs::of`, v32 plains rehearsal 15).
+            val attacker = attackerOf(perception)
+            return SurvivalOffer(
                 immediate =
                     perception.surroundings
                         .filter { it.kind == ObservationKind.ENTITY && it.hunts == true }
                         .filter { it.distance <= immediateReachOf(it, perception) }
                         .map { it.ref }
-                        .toSet(),
+                        .toSet() + attacker,
                 hunters =
                     perception.surroundings
                         .filter { it.kind == ObservationKind.ENTITY && it.hunts == true }
                         .filter { it.distance <= if (it.visible) DANGER_SIGHT_BLOCKS else DANGER_UNSEEN_BLOCKS }
                         .map { it.ref }
-                        .toSet(),
+                        .toSet() + attacker,
                 meals =
                     perception.selfState.inventorySummary
                         .takeIf { perception.selfState.food <= HUNGRY_FOOD_LEVEL }
@@ -64,6 +68,15 @@ data class SurvivalOffer(
                         .map { it.ref }
                         .toSet(),
             )
+        }
+
+        /** The attacker a damage trigger names, as a set of at most the one ref the scene shows. */
+        private fun attackerOf(perception: Perception): Set<String> {
+            val ref = (perception.trigger as? Trigger.Damaged)?.attackerRef ?: return emptySet()
+            return setOfNotNull(
+                ref.takeIf { perception.surroundings.any { it.kind == ObservationKind.ENTITY && it.ref == ref } },
+            )
+        }
     }
 }
 

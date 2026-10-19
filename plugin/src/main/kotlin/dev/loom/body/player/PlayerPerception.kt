@@ -16,9 +16,11 @@ import dev.loom.body.tagOf
 import dev.loom.bodycontrol.BODY_CONTROL_PROTOCOL_VERSION
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
+import dev.loom.bodycontrol.MAX_RETAINED_ENTITIES
 import dev.loom.bodycontrol.MAX_RETAINED_ITEMS
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.TimeUnit
@@ -36,12 +38,22 @@ internal class PlayerPerception(
     private val transitions: PlayerLifecycleTransitions,
     private val translator: PlayerSceneTranslator,
 ) {
+    /**
+     * Perceives [trigger]; for damage an [attacker] names, that creature is reported however many
+     * stand nearer, and the trigger carries the ref this perception gives it.
+     */
     fun perceive(
         agentId: AgentId,
         trigger: Trigger,
+        attacker: UUID? = null,
     ): CompletionStage<Perception?> =
-        capture(agentId, tagOf(trigger)).thenApplyOn(context.authority.main) { raw ->
-            raw?.let { sceneFor(agentId, it) }?.let { scene -> commit(scene, trigger) }
+        capture(agentId, tagOf(trigger), listOfNotNull(attacker)).thenApplyOn(context.authority.main) { raw ->
+            raw?.let { sceneFor(agentId, it, attacker) }?.let { scene ->
+                commit(
+                    scene,
+                    scene.attackerRef?.let { (trigger as? Trigger.Damaged)?.copy(attackerRef = it) } ?: trigger,
+                )
+            }
         }
 
     fun senseThreat(agentId: AgentId): CompletionStage<Perception?> =
@@ -75,13 +87,14 @@ internal class PlayerPerception(
     private fun sceneFor(
         agentId: AgentId,
         raw: RawSense,
+        attacker: UUID? = null,
     ): PlayerScene? {
         val runtime = registry.ready(agentId)
         if (runtime == null || runtime.identity != raw.identity) {
             raw.connection.close()
             return null
         }
-        return runCatching { translator.sceneOf(raw) }
+        return runCatching { translator.sceneOf(raw, attacker) }
             .getOrElse { failure ->
                 raw.connection.close()
                 throw failure
@@ -91,6 +104,7 @@ internal class PlayerPerception(
     private fun capture(
         agentId: AgentId,
         asked: String,
+        retainEntities: List<UUID> = emptyList(),
     ): CompletionStage<RawSense?> {
         val runtime = registry.ready(agentId)
         val atCapacity =
@@ -106,11 +120,14 @@ internal class PlayerPerception(
         }
         return when {
             runtime == null || atCapacity -> completedBodyOperation(null)
-            else -> startCapture(runtime)
+            else -> startCapture(runtime, retainEntities)
         }
     }
 
-    private fun startCapture(runtime: PlayerRuntime): CompletionStage<RawSense?> {
+    private fun startCapture(
+        runtime: PlayerRuntime,
+        retainEntities: List<UUID>,
+    ): CompletionStage<RawSense?> {
         runtime.sensesInFlight += 1
         val request =
             BodyRequest.Sense(
@@ -127,6 +144,8 @@ internal class PlayerPerception(
                         .distinct()
                         .take(MAX_RETAINED_ITEMS)
                         .ifEmpty { null },
+                // The creature that just hurt the agent is reported however many stand nearer.
+                retainEntities = retainEntities.map(UUID::toString).take(MAX_RETAINED_ENTITIES).ifEmpty { null },
             )
         val capturedTick = context.authority.currentTick()
         val auditSnapshot = context.authority.serverState.captureSenseAudit(runtime.identity)

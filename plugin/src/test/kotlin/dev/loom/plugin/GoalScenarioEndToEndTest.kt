@@ -144,6 +144,56 @@ class GoalScenarioEndToEndTest {
     }
 
     @Test
+    fun `a ranged attacker past a full crowd is reported, named, and fled from`() {
+        // v32 plains rehearsal 15: epsilon was shot by a skeleton standing past the creatures it
+        // could name. Fifty sheep fill the body's 48-entity list nearer than the skeleton 20
+        // blocks off; the server's witness names the skeleton as the attacker.
+        val sheep =
+            (0 until CROWD).map { index ->
+                buildJsonObject {
+                    put("id", CROWD_FIRST_ID + index)
+                    put("what", "sheep")
+                    put("x", 4.5 + index % 10)
+                    put("y", 64.0)
+                    put("z", 3.5 + index / 10)
+                }
+            }
+        val skeleton =
+            buildJsonObject {
+                put("id", SKELETON_ID)
+                put("what", "skeleton")
+                put("x", 8.5)
+                put("y", 64.0)
+                put("z", 28.5)
+            }
+        val scene = Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), entities = sheep + skeleton, timeOfDay = NIGHT)
+        val world = world(scene)
+        world.mind.answer = { perception, _ ->
+            val attacker = (perception.trigger as? Trigger.Damaged)?.attackerRef
+            (attacker?.let { Intent.Flee(it) } ?: Intent.Idle) to null
+        }
+        // Damage the witness cannot attribute is perceived as before: the crowd fills the list.
+        world.onMain { world.cognition.consider(ALPHA, Trigger.Damaged(2, "skeleton")) }
+        world.awaitDecided(1)
+        val unnamed = world.mind.seen[0]
+        assertTrue(unnamed.surroundings.none { it.what == "entity.minecraft.skeleton" }, "cut by the crowd")
+        assertEquals(null, (unnamed.trigger as Trigger.Damaged).attackerRef)
+        // Witnessed with its attacker, the skeleton is reported past the crowd, named, and fled from.
+        world.damaged(ALPHA, 3.0, "skeleton", sceneEntityUuid(SKELETON_ID))
+        world.awaitDecided(2)
+        val named = world.mind.seen[1]
+        val attacker = requireNotNull((named.trigger as Trigger.Damaged).attackerRef)
+        val shown = named.surroundings.single { it.ref == attacker }
+        assertEquals("entity.minecraft.skeleton", shown.what)
+        assertTrue(named.surroundings.count { it.kind == dev.loom.contract.ObservationKind.ENTITY } > CREATURE_CUT)
+        assertTrue(attacker in dev.loom.mind.SurvivalOffer.of(named).immediate, "the attacker is immediate danger")
+        val retreat = world.awaitRecord { it.event == BodyEvent.RETREATING && it.requestId == named.requestId }
+        assertEquals(EventTag.RETREAT_SAFE, retreat.outcome, "$retreat")
+        val applied = world.records.single { it.event == BodyEvent.INTENT_APPLIED && it.requestId == named.requestId }
+        assertEquals(EventTag.ACCEPTED, applied.outcome, "$applied")
+    }
+
+    @Test
     fun `damage taken while a flight runs is told as one perception once it settles`() {
         // r24: 43 of 68 damage perceptions were coalesced behind open answers and never told.
         val zombie =
@@ -292,3 +342,13 @@ class GoalScenarioEndToEndTest {
         val IOTA = AgentId("agent-iota")
     }
 }
+
+/** A crowd past the body's 48-entity list, and the first id it is spawned under. */
+private const val CROWD = 50
+private const val CROWD_FIRST_ID = 500
+
+/** The skeleton that shoots from past the crowd. */
+private const val SKELETON_ID = 900
+
+/** The nearest creatures the mind offers a flight from (`MAX_CREATURE_REFS` in `offered.rs`). */
+private const val CREATURE_CUT = 16

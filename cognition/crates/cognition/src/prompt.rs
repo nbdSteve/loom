@@ -328,10 +328,21 @@ fn trigger_line(trigger: &Trigger) -> String {
             who = field(from),
             what = field(text)
         ),
-        Trigger::Damaged { amount, source } => format!(
-            "you took {amount} damage from {source}",
-            source = field(source)
-        ),
+        Trigger::Damaged {
+            amount,
+            source,
+            attacker_ref,
+        } => match attacker_ref {
+            Some(attacker) => format!(
+                "you took {amount} damage from {source}; the one that hurt you is {attacker}",
+                source = field(source),
+                attacker = field(attacker)
+            ),
+            None => format!(
+                "you took {amount} damage from {source}",
+                source = field(source)
+            ),
+        },
         Trigger::ThreatSighted {
             threat,
             entity_ref,
@@ -1742,6 +1753,7 @@ mod tests {
         seen.trigger = Trigger::Damaged {
             amount: 2,
             source: "zombie".to_owned(),
+            attacker_ref: None,
         };
         assert!(!situation(&seen).contains("counted on to give you"));
     }
@@ -1844,6 +1856,7 @@ mod tests {
             Trigger::Damaged {
                 amount: 2,
                 source: "zombie".to_owned(),
+                attacker_ref: None,
             },
             DecisionImportance::Pivotal,
         );
@@ -2104,6 +2117,7 @@ mod tests {
             Trigger::Damaged {
                 amount: 7,
                 source: "zombie".to_owned(),
+                attacker_ref: None,
             },
             DecisionImportance::Pivotal,
         );
@@ -2790,6 +2804,7 @@ mod tests {
         event.trigger = Trigger::Damaged {
             amount: 2,
             source: "zombie".to_owned(),
+            attacker_ref: None,
         };
         assert!(!situation(&event).contains("Goals you may set"));
     }

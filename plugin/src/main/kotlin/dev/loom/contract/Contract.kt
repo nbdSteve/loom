@@ -574,7 +574,21 @@ sealed interface Trigger {
     /** The agent's body took damage. */
     @Serializable
     @SerialName("damaged")
-    data class Damaged(val amount: Long, val source: String) : Trigger
+    data class Damaged(
+        val amount: Long,
+        val source: String,
+        /**
+         * The creature that dealt the damage, a projectile's shooter first, by the ref this
+         * perception's surroundings name it: always shown and always offered to flee and to
+         * attack within reach, however many nearer creatures there are. Absent when no creature
+         * dealt it or the body could not report the attacker.
+         */
+        val attackerRef: String? = null,
+    ) : Trigger {
+        init {
+            attackerRef?.let(::requireBoundedRef)
+        }
+    }
 
     /**
      * A living thing that hunts this agent's kind came into the body's view.

@@ -23,12 +23,24 @@ import java.util.concurrent.CompletableFuture
 private val ALPHA = AgentId("agent-alpha")
 private val BETA = AgentId("agent-beta")
 
+/** The server uuid of a skeleton that shot the agent. */
+private const val SKELETON = "00000000-0000-4000-8000-000000000900"
+
 /** A body whose perceptions the test completes by hand. */
 private class DamagedBodies(
     val living: MutableSet<AgentId> = mutableSetOf(ALPHA, BETA),
 ) : BodyPort {
     val perceived = mutableListOf<Pair<AgentId, Trigger>>()
     val pending = mutableListOf<CompletableFuture<Perception?>>()
+
+    /** The attacker each damage perception was asked to name, in order. */
+    val attackers = mutableListOf<String?>()
+
+    override val damage: dev.loom.body.DamagePerception =
+        dev.loom.body.DamagePerception { agent, trigger, attacker ->
+            attackers += attacker
+            perceive(agent, trigger)
+        }
     private var sequence = 0
 
     override fun spawn(agentId: AgentId) = fail("damage never spawns")
@@ -86,10 +98,15 @@ private class DamageRig(
         amount: Double = 6.0,
         tick: Long = 100,
         source: String = "zombie",
-        playerDead: Boolean = false,
-    ) = driver.witnessed(
-        DamageReport(agent, amount, source, tick, WitnessedPlayer("uuid-${agent.value}", agent.value), playerDead),
-    )
+        attacker: String? = null,
+    ) = driver.witnessed(reportOf(agent, amount, tick, source).copy(attacker = attacker))
+
+    fun reportOf(
+        agent: AgentId,
+        amount: Double = 6.0,
+        tick: Long = 100,
+        source: String = "zombie",
+    ) = DamageReport(agent, amount, source, tick, WitnessedPlayer("uuid-${agent.value}", agent.value))
 
     fun outcomes(): List<String?> = records.filter { it.event == BodyEvent.DAMAGE_WITNESSED }.map { it.outcome }
 }
@@ -113,6 +130,34 @@ class DamageDriverTest {
         assertEquals(requestId, record.requestId)
         assertEquals(EventTag.DAMAGED, record.trigger)
         assertEquals(WitnessedPlayer("uuid-agent-alpha", "agent-alpha"), record.witness)
+    }
+
+    @Test
+    fun `the creature the server names as the attacker is handed to the body's damage perception`() {
+        // v32 plains rehearsal 15: without it, a skeleton shooting from past the nearer creatures
+        // could not be named back to flee from.
+        val rig = DamageRig()
+        rig.damage(source = "skeleton", attacker = SKELETON)
+        rig.damage(agent = BETA, source = "fall")
+        assertEquals(listOf(SKELETON, null), rig.bodies.attackers)
+    }
+
+    @Test
+    fun `damage held behind an answer is told naming its latest attacker`() {
+        val answer = CompletableFuture<Decision>()
+        val rig = DamageRig { answer }
+        rig.damage(source = "skeleton", attacker = SKELETON)
+        rig.bodies.capture(0)
+        rig.main.drain()
+        // A second hit while the first answer is open is held, then told once it settles.
+        rig.damage(tick = 140, source = "skeleton", attacker = SKELETON)
+        rig.bodies.capture(1)
+        rig.main.drain()
+        val first = rig.submitted.single()
+        answer.complete(decisionFor(first, Intent.Flee("e1")))
+        rig.main.drain()
+        assertEquals(listOf(SKELETON, SKELETON, SKELETON), rig.bodies.attackers)
+        assertEquals(Trigger.Damaged(6, "skeleton"), rig.bodies.perceived.last().second)
     }
 
     @Test
@@ -208,7 +253,7 @@ class DamageDriverTest {
     @Test
     fun `an already dead agent or dead player is refused, breach or not`() {
         val rig = DamageRig()
-        rig.damage(ALPHA, playerDead = true)
+        rig.driver.witnessed(rig.reportOf(ALPHA).copy(playerDead = true))
         rig.dead += BETA
         rig.damage(BETA)
         assertTrue(rig.bodies.perceived.isEmpty())

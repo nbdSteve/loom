@@ -322,6 +322,32 @@ test('an item behind a wall is reported out of sight only when the controller na
   assert.deepEqual(other.reading.items, [])
 })
 
+test('an entity the controller named is reported past nearer ones that fill the limit', async () => {
+  // v32 plains rehearsal 15: the skeleton that shot epsilon stood past the creatures it could
+  // name. Three pigs fill a limit of three; the skeleton farther off is cut unless it is named.
+  const given = await standing()
+  for (const [index, x] of [9.5, 10.5, 11.5].entries()) {
+    spotted(given.client, { id: 50 + index, what: 'pig', x, y: FEET.y, z: 8.5 })
+  }
+  spotted(given.client, { id: 60, what: 'skeleton', x: 12.5, y: FEET.y, z: 8.5 })
+  await settled()
+  const uuid = given.bot.entities[60].uuid
+  const cut = senseReading(given.bot, { radius: RADIUS, limit: LIMIT })
+  assert.deepEqual(cut.reading.entities.map((entity) => entity.what), ['pig', 'pig', 'pig'])
+  assert.equal(cut.reading.entitiesOmitted, 1)
+  const named = senseReading(given.bot, { radius: RADIUS, limit: LIMIT, retainEntities: [uuid] })
+  // It takes the place of the farthest pig, the order stays the distance order, and the omission
+  // count still says one was cut.
+  assert.deepEqual(named.reading.entities.map((entity) => entity.what), ['pig', 'pig', 'skeleton'])
+  assert.equal(named.reading.entitiesOmitted, 1)
+  assert.equal(named.entityOffers[2].entity, given.bot.entities[60])
+  // A uuid naming nothing here changes nothing.
+  const other = senseReading(given.bot, {
+    radius: RADIUS, limit: LIMIT, retainEntities: ['00000000-0000-4000-8000-000000000999']
+  })
+  assert.deepEqual(other.reading.entities, cut.reading.entities)
+})
+
 test('open floor blocks are seen through their top faces and a buried block is not listed', async () => {
   const { bot } = await standing({ walls: [{ x: 12, y: GROUND_LEVEL + 1, z: 8 }] })
   const sensed = senseReading(bot, { radius: RADIUS, limit: 48 })

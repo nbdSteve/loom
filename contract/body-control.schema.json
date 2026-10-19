@@ -671,6 +671,13 @@
               "maxItems": 8,
               "uniqueItems": true,
               "items": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
+            },
+            "retainEntities": {
+              "description": "Entities, by the uuid the server spawned each with, to report inside the radius even when the nearer ones fill the limit: each takes the place of the farthest entity the limit would otherwise have kept, and the omission count still says how many were cut. The controller names them, so the body chooses nothing: Loom names the creature that has just hurt the agent, which the agent must be able to name back to flee from or strike, however many creatures stand nearer. Unique, and at most four.",
+              "type": "array",
+              "maxItems": 4,
+              "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
             }
           }
         },
