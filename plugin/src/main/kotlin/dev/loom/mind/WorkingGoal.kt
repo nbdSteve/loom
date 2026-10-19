@@ -33,6 +33,7 @@ import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalProgress
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.HorizonGoal
+import dev.loom.contract.HorizonGrounding
 import dev.loom.contract.Intent
 import dev.loom.contract.IntentAction
 import dev.loom.contract.InventoryChange
@@ -116,6 +117,15 @@ data class GoalObservation(
 ) {
     /** Whether a discovery goal may be set: cells at the edge of sight, and no horizon goal at all. */
     val discoveryOffered: Boolean get() = explore.isNotEmpty() && horizon.isEmpty()
+
+    /**
+     * Whether a discovery goal is met: sight shows a useful resource, or a source remembered out of
+     * sight now grounds a goal (r24 zeta held a discovery goal beside a log recalled 6.1 blocks off).
+     */
+    val discoveryMet: Boolean
+        get() =
+            revealed.isNotEmpty() ||
+                horizon.values.any { it.grounding == HorizonGrounding.RECALLED && it.what !in footing }
 
     /**
      * The useful resources sight shows: items no footing gives that sight can give now and that a
@@ -250,6 +260,8 @@ internal data class StepRecord(
     val explored: Boolean = false,
     /** The direct inputs of a recipe for the goal's item, whose gain is a typed step toward it. */
     val inputs: Set<String> = emptySet(),
+    /** Whether this review comes straight after the step settled, as a reveal must. */
+    val fresh: Boolean = true,
 )
 
 /**
@@ -415,7 +427,7 @@ internal fun remeasured(
     return when {
         // A discovery goal is met by whatever sight shows now, however it came into view; only the
         // walk that revealed it was ever credited, so nothing here is.
-        goal.discovery -> measured.copy(conditionMet = observed?.revealed?.isNotEmpty() ?: measured.conditionMet)
+        goal.discovery -> measured.copy(conditionMet = observed?.discoveryMet ?: measured.conditionMet)
         item == null -> measured
         else -> {
             val held = observed?.inventory?.get(item) ?: measured.conditionHeld

@@ -93,6 +93,7 @@ class DiscoveryTest {
         assertEquals(GoalEvidence.ADOPTED, adopted?.outcome)
         assertEquals(true, adopted?.discovery)
         ledger.stepped(agent, "r1", "moveTo", EventTag.ACCEPTED, reached = true)
+        ledger.settledAt(agent, "r1", 250)
         // The walk revealed a tree: the condition is met, and the step typed as revealed.
         val after = scene("r2", 300, 12.0, underfoot, tree)
         val shown = ledger.present(agent, after.requestId, after.capturedTick, GoalObservation.of(after))
@@ -113,6 +114,32 @@ class DiscoveryTest {
         assertEquals(true, replaced?.presentedDiscovery)
         assertEquals("r1", replaced?.discoveredFrom)
         assertNull(replaced?.discovery)
+    }
+
+    @Test
+    fun `a reveal is the walk's own, seen straight after it settled, and a recalled source meets the goal`() {
+        // r24 eta 9u was credited for a peer's drop 2300 ticks after its walk ended.
+        val ledger = GoalLedger(recipes = recipes)
+        val bare = scene("r1", 100, 0.0, underfoot)
+        assertEquals(GoalEvidence.ADOPTED, ledger.answer(bare, Intent.MoveTo("x1"), discover)?.outcome)
+        ledger.stepped(agent, "r1", "moveTo", EventTag.ACCEPTED, reached = true)
+        ledger.settledAt(agent, "r1", 200)
+        val late = scene("r2", 200 + REVEAL_WINDOW_TICKS + 1, 12.0, underfoot, tree)
+        val shown = ledger.present(agent, late.requestId, late.capturedTick, GoalObservation.of(late))
+        assertEquals(true, shown?.progress?.conditionMet)
+        assertEquals(StepEvidence.NONE, shown?.progress?.stepEvidence, "no credit for what a later review saw")
+        // r24 zeta: a log remembered out of sight meets the discovery, which may then become a log goal.
+        val remembered =
+            dev.loom.contract.HorizonGoal(LOG, dev.loom.contract.HorizonGrounding.RECALLED, null, 9, true)
+        val recalling = GoalObservation.of(bare).copy(horizon = mapOf(LOG to remembered))
+        assertTrue(recalling.discoveryMet)
+        // And a held discovery with somewhere to look is never abandoned before its stall bound.
+        val other = GoalLedger(recipes = recipes)
+        assertEquals(GoalEvidence.ADOPTED, other.answer(bare, Intent.MoveTo("x1"), discover)?.outcome)
+        other.stepped(agent, "r1", "moveTo", EventTag.ACCEPTED, reached = true)
+        val again = scene("r3", 300, 12.0, underfoot)
+        val abandon = GoalChoice(GoalDisposition.ABANDON, stepResult = GoalStepResult.NO_PROGRESS)
+        assertEquals(GoalEvidence.ABANDONED_ACHIEVABLE, other.answer(again, Intent.MoveTo("x1"), abandon)?.outcome)
     }
 
     @Test

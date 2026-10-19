@@ -43,6 +43,7 @@ internal fun incoherenceOf(
     val stepping = choice?.disposition in STEPPING
     return GoalEvidence.SURVIVAL_REQUIRED.takeIf { observed?.survival?.withholds(intent) == true }
         ?: discoveryRefusalOf(presented, choice, intent, observed)
+        ?: discoveryAbandonOf(presented, choice, observed)
         ?: reviseItemOf(presented, choice)
         ?: conditionRefusalOf(presented, choice, intent, observed)
         ?: successRefusalOf(presented, choice, observed)

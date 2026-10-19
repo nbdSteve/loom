@@ -1321,12 +1321,13 @@ fn a_discovery_goal_is_walked_to_the_edge_of_sight_and_replaced_by_what_it_revea
     let walk = json!({ "action": "moveTo", "onto": "x1" });
     let continuing = json!({ "disposition": "continue", "stepResult": "noProgress" });
     assert!(validator.is_valid(&answer_in(&schema, &walk, &continuing)));
-    assert!(validator.is_valid(&answer_in(
+    // Never abandoned before its stall bound while there is somewhere to look (r24: six of nine
+    // were abandoned after one or two walks), never completed, revised, or set again over itself.
+    assert!(!validator.is_valid(&answer_in(
         &schema,
         &walk,
         &json!({ "disposition": "abandon", "stepResult": "noProgress" })
     )));
-    // Never completed, never revised, and never set again over itself.
     for refused in [
         json!({ "disposition": "complete", "stepResult": "done" }),
         json!({ "disposition": "replace", "discover": true, "stepResult": "noProgress" }),

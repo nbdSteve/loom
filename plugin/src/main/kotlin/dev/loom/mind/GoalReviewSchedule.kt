@@ -76,6 +76,9 @@ const val MAX_FOLLOW_UPS_PER_REVIEW: Int = 2
  */
 const val ORDINARY_FOLLOW_UPS_PER_REVIEW: Int = 1
 
+/** Follow-ups a discovery's walks and transition may claim per scheduled review, outside the allowance. */
+const val MAX_DISCOVERY_FOLLOW_UPS: Int = 3
+
 /** Earned follow-ups an ordinary step leaves unspent, for a review owed to a lying drop or a completion. */
 const val OWED_RESERVE: Int = 1
 
@@ -90,6 +93,15 @@ fun interface StepSettlement {
         tick: Long,
         owed: Boolean,
     )
+
+    /**
+     * [agent]'s discovery goal's step - a walk to the edge of sight, or the first step of the
+     * resource goal it became - settled at [tick], owed a review outside the ordinary allowance.
+     */
+    fun discovered(
+        agent: AgentId,
+        tick: Long,
+    ) = settled(agent, tick, owed = true)
 
     companion object {
         /** Nothing follows a step up. */
@@ -208,6 +220,7 @@ class GoalReviewSchedule(
             // A scheduled review answers whatever a follow-up was owed for, and owes one anew.
             followUpDue.remove(it)
             followUps.remove(it)
+            discoveryFollowUps.remove(it)
             allowance[it] = (allowance[it] ?: 0) + followUpsPerReview
         }
         return claimed
@@ -234,6 +247,26 @@ class GoalReviewSchedule(
         if (agent !in lastReview || earned <= 0 || ordinarySpent) return
         followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS)
     }
+
+    /**
+     * Owes [agent] a follow-up [FOLLOW_UP_DELAY_TICKS] after [tick] for a discovery step, from its
+     * own bounded chain of [MAX_DISCOVERY_FOLLOW_UPS] rather than the earned allowance (r24: all
+     * seven first-cycle discovery walks waited about 2300 ticks for their next review).
+     */
+    override fun discovered(
+        agent: AgentId,
+        tick: Long,
+    ) {
+        val spent = discoveryFollowUps[agent] ?: 0
+        if (agent !in lastReview || spent >= MAX_DISCOVERY_FOLLOW_UPS) return
+        if (followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS) == null) {
+            discoveryFollowUps[agent] = spent + 1
+            // Spent from its own chain, not the allowance the claim charges.
+            allowance[agent] = (allowance[agent] ?: 0) + 1
+        }
+    }
+
+    private val discoveryFollowUps = mutableMapOf<AgentId, Int>()
 
     /**
      * The owed follow-up reviews due by [now], out of [living], in agent order. A due one [ready]

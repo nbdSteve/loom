@@ -1082,7 +1082,10 @@ fn coupled_offer(
                     shaped(GoalDisposition::Replace, "replace", REPLACE, item),
                 ));
             }
-            let short = !refs.goal_obtainable;
+            // A discovery goal with somewhere to look is walked until its stall bound, never
+            // abandoned first (r24: six of nine were abandoned after one or two walks).
+            let looking = refs.discovering() && refs.explore_continue();
+            let short = !refs.goal_obtainable && !looking;
             GoalOffer {
                 by_item,
                 exploring: if refs.explore_continue() {

@@ -96,18 +96,24 @@ class GoalLedger(
         val towardSource: Boolean = false,
         val explored: Boolean = false,
         val inputs: Set<String> = emptySet(),
+        val settledTick: Long? = null,
     ) {
         /**
          * This goal as [now] shows it, and the goal to hold after: its settled step measured, once.
          * A step an earlier review measured is not measured again, and one still in flight is
          * measured when it settles.
          */
-        fun measuredFor(now: GoalObservation?): Pair<GoalSummary, Held> {
+        fun measuredFor(
+            now: GoalObservation?,
+            at: Long,
+        ): Pair<GoalSummary, Held> {
             val earlier = summary.progress
             if (measured && earlier != null) {
                 return summary.copy(progress = remeasured(summary, earlier, now)) to this
             }
-            val step = StepRecord(visited, stepVisible, reached, towardSource, explored, inputs)
+            // A reveal is the walk's own: seen at the review right after it, never at a later one.
+            val fresh = settledTick != null && at - settledTick <= REVEAL_WINDOW_TICKS
+            val step = StepRecord(visited, stepVisible, reached, towardSource, explored, inputs, fresh)
             val progress = progressOf(summary, observed, now, step, stepsWithoutProgress) ?: earlier
             val shown = summary.copy(progress = progress)
             val settled = summary.lastStep != null && progress != null
@@ -228,7 +234,7 @@ class GoalLedger(
         val fresh = goals.held?.measured != true
         val presented =
             goals.held?.let { held ->
-                val (summary, measured) = held.measuredFor(observed)
+                val (summary, measured) = held.measuredFor(observed, capturedTick)
                 goals.held = measured
                 summary
             }
@@ -322,6 +328,18 @@ class GoalLedger(
         return summary
     }
 
+    /** Stamps the server tick [requestId], the held goal's latest step, settled at; a reveal is read against it. */
+    @Synchronized
+    fun settledAt(
+        agentId: AgentId,
+        requestId: String,
+        tick: Long,
+    ) {
+        val goals = agents[agentId] ?: return
+        val held = goals.held?.takeIf { it.affirmedBy == requestId } ?: return
+        goals.held = held.copy(settledTick = tick)
+    }
+
     /** Drops the record of a review the mind never answered. */
     @Synchronized
     fun forget(
@@ -335,11 +353,6 @@ class GoalLedger(
     @Synchronized
     fun clear(agentId: AgentId) {
         agents.remove(agentId)
-    }
-
-    /** Applies the lifecycle clearing rule to one appended record. */
-    fun saw(record: BodyEventRecord) {
-        if (record.event in CLEARING_EVENTS) clear(AgentId(record.agentId))
     }
 
     /** How many agents currently hold state, for bound tests. */
@@ -407,6 +420,12 @@ class GoalLedger(
         )
     }
 }
+
+/**
+ * How soon after its walk settles a review may credit the walk with a reveal: the follow-up the
+ * walk owes, and its decision time (r24: eta was credited for a peer's drop 2300 ticks later).
+ */
+const val REVEAL_WINDOW_TICKS: Long = 200
 
 /** Met goals one agent remembers for chaining; the oldest is forgotten past it. */
 private const val MAX_MET_GOALS = 4
@@ -532,6 +551,11 @@ private fun acceptedTag(
         GoalDisposition.COMPLETE -> GoalEvidence.COMPLETED
         GoalDisposition.ABANDON -> GoalEvidence.ABANDONED
     }
+
+/** Applies the lifecycle clearing rule to one appended record. */
+fun GoalLedger.saw(record: BodyEventRecord) {
+    if (record.event in CLEARING_EVENTS) clear(AgentId(record.agentId))
+}
 
 /** [log], with every record it takes also offered to [GoalLedger.saw] once it is written. */
 fun GoalLedger.watching(log: BodyEventLog): BodyEventLog =

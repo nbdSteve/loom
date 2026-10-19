@@ -361,6 +361,7 @@ class EmbodiedCognition(
                         tagOf(applied),
                         (applied as? IntentOutcome.Accepted)?.reached,
                     )
+                goals.settledAt(agentId, decision.requestId, journal.tick())
                 callbacks.onStepSettled.oweReview(agentId, journal.tick(), goal, goalStep, applied)
                 val held = danger.settled(agentId, decision.requestId, fled = decision.intent is Intent.Flee)
                 if (applied == IntentOutcome.NoSuchBody) danger.forget(agentId) else held?.let { tell(agentId, it) }
@@ -422,6 +423,9 @@ private fun StepSettlement.oweReview(
     val effected = applied is IntentOutcome.Accepted || (applied as? IntentOutcome.Rejected)?.effected == true
     if (goal?.outcome == GoalEvidence.DEFERRED) {
         settled(agentId, tick, owed = true)
+    } else if (goalStep != null && effected && goalStep.discoveryChain(goal)) {
+        // A discovery is followed through its reveal and into the resource goal it became.
+        discovered(agentId, tick)
     } else if (goalStep != null && effected) {
         val dropped = goalStep.successItem in (applied as? IntentOutcome.Accepted)?.dropped.orEmpty()
         settled(agentId, tick, owed = dropped || goal?.ownGoalDropLying == true)
@@ -455,3 +459,6 @@ private fun refusalOf(
         ?: EventTag.SURVIVAL_REQUIRED.takeIf {
             goal == null && carried != null && SurvivalOffer.of(carried).withholds(intent)
         }
+
+/** Whether this settled step is a discovery's: its walk, or the first step of the goal it became. */
+private fun GoalSummary.discoveryChain(goal: GoalEvidence?): Boolean = discovery || goal?.discoveredFrom != null

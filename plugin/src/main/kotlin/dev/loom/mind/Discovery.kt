@@ -50,6 +50,27 @@ internal fun discoveryRefusalOf(
     }
 }
 
+/** An abandon of a held discovery goal that can still be stepped, or `null`. */
+internal fun discoveryAbandonOf(
+    presented: GoalSummary?,
+    choice: GoalChoice?,
+    observed: GoalObservation?,
+): String? =
+    GoalEvidence.ABANDONED_ACHIEVABLE.takeIf {
+        presented?.discovery == true && choice?.disposition == GoalDisposition.ABANDON && looksOn(presented, observed)
+    }
+
+/**
+ * Whether a held discovery goal can still be stepped: under its stall bound and with somewhere to
+ * look (r24: six of nine discovery goals were abandoned after one or two walks).
+ */
+private fun looksOn(
+    presented: GoalSummary?,
+    observed: GoalObservation?,
+): Boolean =
+    (presented?.progress?.stepsWithoutProgress ?: 0) < dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS &&
+        presented?.progress?.conditionMet != true && observed?.explore?.isNotEmpty() == true
+
 /** Whether [observed] offers the discovery goal [choice] sets, with no success item. */
 private fun offeredTo(
     choice: GoalChoice?,
@@ -91,10 +112,13 @@ internal fun discoveryProgressOf(
     step: StepRecord,
     priorCount: Long,
 ): GoalProgress {
-    val met = observed.revealed.isNotEmpty()
-    val advanced = met && before.revealed.isEmpty()
+    val met = observed.discoveryMet
+    val advanced = met && !before.discoveryMet
     val accepted = goal.lastStep?.outcome == EventTag.ACCEPTED
-    val revealed = advanced && accepted && step.reached == true && step.explored
+    // The walk's own reveal: sight shows the resource at the review straight after it settled.
+    val revealed =
+        advanced && accepted && step.reached == true && step.explored && step.fresh &&
+            observed.revealed.isNotEmpty()
     return GoalProgress(
         conditionMet = met,
         conditionHeld = 0,
