@@ -109,7 +109,7 @@ const { performance } = require('node:perf_hooks')
 const physics = require('mineflayer/lib/plugins/physics')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const { installVanillaCollision } = require('./collision')
-const { borderExclusion, trackWorldBorder, worldBorderOf } = require('./border')
+const { borderExclusion, columnInside, trackWorldBorder, worldBorderOf } = require('./border')
 const { positionOf } = require('./sensing')
 
 /**
@@ -1328,8 +1328,12 @@ function createMovement (bot, {
         : positionOf(tracked.position)
       if (seen === undefined) return unmoved('threatGone')
       const near = new goals.GoalNear(seen[0], seen[1], seen[2], distance)
+      const start = bot.entity?.position
       return walk({
-        goal: new goals.GoalInvert(near),
+        goal: new SafeFlightGoal(new goals.GoalInvert(near), {
+          border: worldBorderOf(bot),
+          floor: Number.isFinite(start?.y) ? Math.floor(start.y) - MAX_FLIGHT_DESCENT_BLOCKS : -Infinity
+        }),
         sprint,
         timeoutMs,
         threat: named,
@@ -1350,6 +1354,51 @@ function createMovement (bot, {
       running.halt()
       return true
     }
+  }
+}
+
+/** How far inside the world border a flight's end must lie, in blocks. */
+const FLIGHT_BORDER_MARGIN_BLOCKS = 3
+
+/** How far below where it began a flight may end: a ravine is no refuge. */
+const MAX_FLIGHT_DESCENT_BLOCKS = 4
+
+/**
+ * A flight's goal with its end held to safe ground: at least [FLIGHT_BORDER_MARGIN_BLOCKS] inside
+ * the server's world border, and no more than [MAX_FLIGHT_DESCENT_BLOCKS] below where it began.
+ * The route may pass anywhere the search allows; only where it may stop is held. In r23 eight
+ * flights ended against the border, kappa's six pinning it along z -63.4 in a ravine for 1100
+ * ticks, and delta's v30 rehearsal flight ended sixteen blocks down a ravine. With no safe end in
+ * reach the search answers noRoute, which is the ground's honest answer.
+ */
+class SafeFlightGoal extends goals.Goal {
+  constructor (inner, { border, floor }) {
+    super()
+    this.inner = inner
+    this.border = border
+    this.floor = floor
+  }
+
+  heuristic (node) {
+    return this.inner.heuristic(node)
+  }
+
+  isEnd (node) {
+    return this.inner.isEnd(node) && node.y >= this.floor && this.clearOfBorder(node)
+  }
+
+  clearOfBorder (node) {
+    if (this.border === undefined) return true
+    const margin = { ...this.border, diameter: this.border.diameter - 2 * FLIGHT_BORDER_MARGIN_BLOCKS }
+    return margin.diameter > 0 && columnInside(margin, Math.floor(node.x), Math.floor(node.z))
+  }
+
+  hasChanged () {
+    return this.inner.hasChanged()
+  }
+
+  isValid () {
+    return this.inner.isValid()
   }
 }
 
@@ -1402,6 +1451,9 @@ function installMovement (bot, options) {
 }
 
 module.exports = {
+  FLIGHT_BORDER_MARGIN_BLOCKS,
+  MAX_FLIGHT_DESCENT_BLOCKS,
+  SafeFlightGoal,
   ARRIVAL_SETTLE_TICKS,
   FINAL_APPROACH_MAX_BLOCKS,
   FINAL_APPROACH_MAX_TICKS,

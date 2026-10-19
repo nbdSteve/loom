@@ -100,3 +100,19 @@ test('a client that cannot start stops the control channel it opened, and the st
     socket.on('error', reject)
   }), /ECONNREFUSED/)
 })
+
+test('a flight ends only three blocks inside the border and no more than four below where it began', () => {
+  const { FLIGHT_BORDER_MARGIN_BLOCKS, MAX_FLIGHT_DESCENT_BLOCKS, SafeFlightGoal } = require('../src/movement')
+  const anywhere = { heuristic: () => 0, isEnd: () => true, hasChanged: () => false, isValid: () => true }
+  const goal = new SafeFlightGoal(anywhere, { border: { x: 0, z: 0, diameter: 128 }, floor: 66 - MAX_FLIGHT_DESCENT_BLOCKS })
+  // r23 kappa's flights ended along z -63.4; the end must now lie three blocks further in.
+  assert.equal(goal.isEnd({ x: 10, y: 66, z: -64 }), false)
+  assert.equal(goal.isEnd({ x: 10, y: 66, z: -64 + FLIGHT_BORDER_MARGIN_BLOCKS }), true)
+  assert.equal(goal.isEnd({ x: 63 - FLIGHT_BORDER_MARGIN_BLOCKS, y: 66, z: 0 }), true)
+  assert.equal(goal.isEnd({ x: 64 - FLIGHT_BORDER_MARGIN_BLOCKS, y: 66, z: 0 }), false)
+  // A ravine sixteen blocks down is no refuge; four down is.
+  assert.equal(goal.isEnd({ x: 0, y: 50, z: 0 }), false)
+  assert.equal(goal.isEnd({ x: 0, y: 62, z: 0 }), true)
+  // No border stated holds only the descent.
+  assert.equal(new SafeFlightGoal(anywhere, { border: undefined, floor: 0 }).isEnd({ x: 1000, y: 1, z: 0 }), true)
+})

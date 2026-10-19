@@ -148,6 +148,8 @@ test('a flight searched as if the border were open ground stalls against it, as 
 test('a flight that knows the border leaves the crater west and arrives, never stepping past it', async () => {
   const { report, refused, outside } = await flight({ border: true })
   assert.equal(report.outcome, 'arrived', JSON.stringify(report))
+  // And it ends clear of the border, not pinned against it (r23 kappa).
+  assert.ok(report.position[2] >= -64 + 3, JSON.stringify(report))
   assert.ok(report.separation > 24, JSON.stringify(report))
   assert.deepEqual(outside, [])
   assert.deepEqual(refused, [])

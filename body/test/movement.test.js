@@ -1284,7 +1284,7 @@ test('a terminal drain keeps a later request from taking ownership early', async
   await H.promptly(second, 'the later request')
 })
 
-test('the goal the library is handed is the library own, inverted for a flight', async () => {
+test('the goal the library is handed is the library own, inverted and held to a safe end for a flight', async () => {
   const bot = drivable()
   bot.entities = { 44: { position: new Vec3(2, 64, 0) } }
   const movement = createMovement(bot)
@@ -1304,9 +1304,12 @@ test('the goal the library is handed is the library own, inverted for a flight',
   const fleeing = movement.flee({
     offered: offeredEntity(bot, 44), entity: 0, distance: 7, timeoutMs: 50, sprint: true
   })
-  const flight = bot.pathfinder.goals[bot.pathfinder.goals.length - 1]
+  const held = bot.pathfinder.goals[bot.pathfinder.goals.length - 1]
   // A flight is that same goal inverted - the library's own way of running away from a place
-  // rather than a second search of Loom's - built around where the threat was seen.
+  // rather than a second search of Loom's - built around where the threat was seen, with only
+  // where it may end held to safe ground (`SafeFlightGoal`).
+  assert.ok(held instanceof libraryGoals.Goal)
+  const flight = held.inner
   assert.ok(flight instanceof libraryGoals.GoalInvert)
   assert.ok(flight.goal instanceof libraryGoals.GoalNear)
   assert.deepEqual([flight.goal.x, flight.goal.y, flight.goal.z], [2, 64, 0])
