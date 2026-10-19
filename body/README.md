@@ -805,6 +805,7 @@ The v29 plains rehearsal's theta stalled three times against the 128-block borde
 
 **A flight may end only on safe ground.**
 `SafeFlightGoal` holds the library's inverted goal to an end at least `FLIGHT_BORDER_MARGIN_BLOCKS` (3) inside the world border and no more than `MAX_FLIGHT_DESCENT_BLOCKS` (4) below where the flight began; the route may pass anywhere, and with no safe end in reach the search answers `noRoute`.
+A flee may also name `avoid`, other entities of the same sense answer: the end must then be no nearer to any than the flight began, at least `FLIGHT_OTHER_CLEARANCE_BLOCKS` (8) from any it began further from, and its least separation from all of them must grow. The controller names them, so the body still chooses nothing, and an entity gone since the answer is passed over (r24: gamma's flight from a spider ended 0.6 blocks from a creeper).
 In r23 eight flights ended against the border and one agent spent 1100 ticks pinned in a ravine along it.
 
 **Sprinting is the one ability a request decides, which is why the policy is built per
