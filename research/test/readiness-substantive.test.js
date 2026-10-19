@@ -6,7 +6,7 @@ const path = require('node:path')
 const { test } = require('node:test')
 
 const { PROFILES } = require('../lib/profiles.js')
-const { readinessMetrics } = require('../lib/readiness.js')
+const { readinessMetrics, refusalClass } = require('../lib/readiness.js')
 
 const R19 = path.join(__dirname, '..', 'experiments', '2026-10-16-openai-10-agent-10m-r19')
 const BARS = PROFILES['explored-goal-10m-10'].coherenceBars
@@ -616,4 +616,59 @@ test('under generation 15 a dig\'s one pickup is described by its terminal and i
   assert.deepEqual(fifteen.goalCoherence.pursuit.description.ownDropPickups, { collectItemGone: 1 })
   assert.equal(fifteen.actions.total, result.actions.total, 'the pickup is no decision of its own')
   assert.equal(fifteen.actions.byClass.untypedTerminal, 0)
+})
+
+const R27 = path.join(__dirname, '..', 'experiments', '2026-10-16-openai-10-agent-10m-r27')
+
+test('r27, judged under gate generation 16, reads its own flight as a race and its drowning as a blocker', () => {
+  const records = fs.readFileSync(path.join(R27, 'evidence.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)
+  const metrics = JSON.parse(fs.readFileSync(path.join(R27, 'metrics.json'), 'utf8'))
+  const judged = (generation) => readinessMetrics({
+    bodyRecords: records.filter((entry) => entry.source === 'body'),
+    harnessRecords: records.filter((entry) => entry.source === 'harness'),
+    metrics,
+    generation,
+    bars: PROFILES['survival-envelope-10m-10'].coherenceBars
+  })
+  const fifteen = judged(15)
+  const sixteen = judged(16)
+  assert.equal(fifteen.version, 'loom-readiness-gate/15', 'generation 15 is frozen')
+  assert.equal(sixteen.version, 'loom-readiness-gate/16')
+  const ending = (result, key) => result.actions.nonSuccess.find((entry) => entry.requestKey === key)
+  // iota's dig was offered 1.8 blocks off and refused after its own flight `mc` carried it 7.7 off.
+  const iota = 'tribe-iota:loom8b6535c92c-sense-mv'
+  assert.equal(ending(fifteen, iota).class, 'inapplicable')
+  assert.equal(ending(sixteen, iota).class, 'ownMovementRace')
+  assert.equal(ending(sixteen, iota).race, true)
+  assert.equal(sixteen.blockers.inapplicable, 0)
+  // epsilon's four walks out of its flooded pit were terrain, and are now the water that drowned it.
+  assert.equal(fifteen.blockers.waterTrapped, undefined)
+  assert.equal(sixteen.blockers.waterTrapped, 4)
+  assert.deepEqual(
+    sixteen.actions.nonSuccess.filter((entry) => entry.class === 'waterTrapped').map((entry) => entry.evidence.recordId),
+    ['body:00001278', 'body:00001342', 'body:00001402', 'body:00001479']
+  )
+  // delta's flight from a peer stays a blocker.
+  assert.equal(sixteen.blockers.peerFlight, 1)
+  // Flight intervals no longer count as progressing time.
+  const held = (result) => result.goalCoherence.pursuit.measured.progressingHeldTimeShare
+  assert.ok(held(sixteen) < held(fifteen), `${held(sixteen)} < ${held(fifteen)}`)
+  assert.equal(sixteen.verdict, 'notReady')
+})
+
+test('under generation 16 a dig refused for flooding the body is inapplicable, and no reach refusal is a race without movement', () => {
+  assert.equal(refusalClass('digFloodsBody', 15), 'unexplainedRefusal')
+  assert.equal(refusalClass('digFloodsBody', 16), 'inapplicable')
+  const records = [
+    ...review('kappa', 'k1', {
+      intent: 'dig',
+      goal: { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'kappa', revision: 0 },
+      choice: { disposition: 'adopt', successItem: LOG, successCount: 2 },
+      applied: 'digOutOfReach',
+      perception: sight(LOG, 0)
+    })
+  ]
+  const sixteen = readinessMetrics({ bodyRecords: records, harnessRecords: [], metrics: {}, generation: 16, bars: BARS14 })
+  assert.equal(sixteen.actions.byClass.ownMovementRace, 0)
+  assert.equal(sixteen.actions.byClass.inapplicable, 1)
 })

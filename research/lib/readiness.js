@@ -101,6 +101,24 @@ const DISCOVERY_READINESS_VERSION = 'loom-readiness-gate/12'
 // after a perception that showed health above it is a concurrent-world race, and the descriptive
 // measures are reported apart from the measured verdict evidence.
 const SURVIVAL_READINESS_VERSION = 'loom-readiness-gate/15'
+// Gate generation 16: the r27 audit found generation 15 counted the agent's own flights as
+// progressing goal time, classed a refusal its own flight caused (the body ran out of reach of the
+// block its perception offered) as the decision's fault, and classed a no-route from a body under
+// water as the ground's answer, which hid the drowning. From 16 a flight's interval is never
+// progressing time, a reach refusal after the agent's own movement ended between its perception and
+// its refusal is the ownMovementRace race, a no-route whose perception shows water in the body's own
+// cells is the waterTrapped blocker, and a dig refused for flooding the body is inapplicable.
+const WATER_READINESS_VERSION = 'loom-readiness-gate/16'
+// From generation 16, a no-route from a body its own perception showed in water.
+const WATER_BLOCKER_CLASSES = Object.freeze(['waterTrapped'])
+// From generation 16, a refusal the agent's own movement caused after its perception was taken.
+const OWN_MOVEMENT_RACE_CLASS = 'ownMovementRace'
+// The refusals that say the target is no longer within the body's reach or sight.
+const REACH_REFUSAL = /(OutOfReach|OutOfRange|NotVisible)$/
+// The blocks that fill a cell with water, as `BukkitBlockGround.holdsWater` reads them.
+const WATER_BLOCKS = new Set(['block.minecraft.water', 'block.minecraft.bubble_column'])
+// The body's two cells above its feet, measured as a block observation's vertical offset.
+const BODY_HEIGHT_BLOCKS = 2
 // The body's attack health floor, `COMBAT_MIN_HEALTH` in `PlayerSurvivalPreparer.kt`.
 const ATTACK_MIN_HEALTH = 4.5
 const DISCOVERY_GOAL_INCOHERENT_TAGS = new Set([...HORIZON_GOAL_INCOHERENT_TAGS, 'goalDiscoveryNotOffered'])
@@ -155,6 +173,7 @@ const TERRAIN_CLASS = 'terrain'
 
 /** The legitimate non-success classes under gate [generation]. */
 function raceClassesOf (generation) {
+  if (generation >= 16) return [...RACE_CLASSES, TERRAIN_CLASS, OWN_MOVEMENT_RACE_CLASS]
   return generation >= 7 ? [...RACE_CLASSES, TERRAIN_CLASS] : RACE_CLASSES
 }
 // From generation 9, a flight the evidence cannot show was worth taking, and one from a peer.
@@ -205,6 +224,7 @@ function refusalClass (tag, generation = 12) {
   if (generation >= 7 && TERRAIN_TAGS.has(tag)) return TERRAIN_CLASS
   if (generation >= 5 && tag === 'digWouldTrap') return 'inapplicable'
   if (generation >= 11 && tag === 'digDropUnreachable') return 'inapplicable'
+  if (generation >= 16 && tag === 'digFloodsBody') return 'inapplicable'
   if (tag === 'controlNotReady') return 'concurrent'
   // A strike landed and the target then left range (r22 delta): a race with the target.
   if (tag === 'attackTargetEscaped') return 'targetRace'
@@ -312,6 +332,33 @@ function dugOwnSupport (bodyRecords, flight, generation = 12) {
     const horizontal = Math.sqrt(Math.max(0, seen.distance ** 2 - seen.verticalOffset ** 2))
     return seen.direction === 'here' || horizontal <= DUG_BENEATH_REACH_BLOCKS
   })
+}
+
+/**
+ * Whether the perception a decision answered showed water in the body's own cells: a water block
+ * in its own column at its feet or head (r27 epsilon, body:00001278: four walks out of a flooded
+ * pit refused for no route while it drowned).
+ */
+function inWater (own) {
+  const perception = own.find((record) => record.event === 'perceived')?.perception
+  return (perception?.surroundings ?? []).some((seen) =>
+    seen.kind === 'block' && WATER_BLOCKS.has(seen.what) && seen.direction === 'here' &&
+    seen.verticalOffset >= 0 && seen.verticalOffset < BODY_HEIGHT_BLOCKS)
+}
+
+/**
+ * Whether a movement of the agent's own ended after the perception a refused decision answered and
+ * before the refusal: the body was carried away from what the perception offered (r27 iota
+ * body:00001888: a block 1.8 blocks from the eyes, refused out of reach after its own flight `mc`
+ * arrived 7.7 blocks off).
+ */
+function movedAfterPerception (bodyRecords, decision, own, refusal) {
+  const perceived = own.find((record) => record.event === 'perceived')
+  if (!Number.isInteger(perceived?.tick) || !Number.isInteger(refusal?.tick)) return false
+  return bodyRecords.some((record) =>
+    ['moved', 'retreating'].includes(record.event) && record.agentId === decision.agentId &&
+    record.requestKey !== decision.requestKey &&
+    record.tick >= perceived.tick && record.tick <= refusal.tick)
 }
 
 /** The terminal of one accepted action, and the record that states it. */
@@ -1086,7 +1133,9 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
     record.event === 'perceived' && answered.has(record.requestKey) &&
     ['threatSighted', 'damaged'].includes(record.perception?.trigger?.event ?? record.trigger)).length
   const deaths = new Set(bodyRecords.filter((record) => record.event === 'died').map((record) => record.agentId)).size
-  const held = progressingTimeOf(bodyRecords, { endAtDeath: true, fromAdvance: discoveryRule, actingOnly: survivalRule })
+  const held = progressingTimeOf(bodyRecords, {
+    endAtDeath: true, fromAdvance: discoveryRule, actingOnly: survivalRule, withoutFlights: generation >= 16
+  })
   const shares = [...byAgent.values()].map((entry) => entry.active / entry.reviews)
   const measured = {
     goalActiveReviewShare: ratio(reviews.filter(active).length, reviews.length),
@@ -1157,7 +1206,7 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
  * time after each decided record whose resolution left a goal held, up to its next decided record,
  * counted only until the window since the goal was set or last advanced closes.
  */
-function progressingTimeOf (bodyRecords, { endAtDeath = false, fromAdvance = false, actingOnly = false } = {}) {
+function progressingTimeOf (bodyRecords, { endAtDeath = false, fromAdvance = false, actingOnly = false, withoutFlights = false } = {}) {
   // From generation 15 a stretch counts only after an action the body accepted: an idle, a rest
   // or a refused step holds the goal without pursuing it (r24: theta's refused walk and beta's idle).
   const acceptedKeys = new Set(bodyRecords
@@ -1167,17 +1216,20 @@ function progressingTimeOf (bodyRecords, { endAtDeath = false, fromAdvance = fal
   const diedAt = new Map(bodyRecords
     .filter((record) => endAtDeath && record.event === 'died' && record.agentId !== undefined)
     .map((record) => [record.agentId, record.tick]))
+  // From generation 16 a flight's interval, from its decision to its terminal, is no pursuit (r27:
+  // about 1500 ticks of flight counted as progressing goal time).
+  const flights = withoutFlights ? flightIntervalsOf(bodyRecords, runEnd) : new Map()
   const agents = new Map()
   const count = (entry, until) => {
     if (entry.since === null) return
     const open = Math.min(until, entry.progressed + PROGRESS_WINDOW_TICKS)
-    if (open > entry.since) entry.held += open - entry.since
+    if (open > entry.since) entry.held += uncovered(entry.since, open, flights.get(entry.agentId) ?? [])
   }
   for (const record of bodyRecords) {
     if (record.agentId === undefined || !Number.isInteger(record.tick)) continue
     if (!agents.has(record.agentId)) {
       if (record.event !== 'perceived') continue
-      agents.set(record.agentId, { start: record.tick, held: 0, since: null, goal: null, progressed: 0 })
+      agents.set(record.agentId, { agentId: record.agentId, start: record.tick, held: 0, since: null, goal: null, progressed: 0 })
     }
     const entry = agents.get(record.agentId)
     if (record.event !== 'decided' || record.goal === undefined) continue
@@ -1232,6 +1284,49 @@ function descriptionOf (measured, bodyRecords = []) {
   }
 }
 
+/**
+ * Each agent's flights as merged [from, to] tick intervals: from the flight's decision to the first
+ * record that ends it - its retreat, its refusal, or a discard - or the run's end.
+ */
+function flightIntervalsOf (bodyRecords, runEnd) {
+  const decidedAt = new Map()
+  const endedAt = new Map()
+  for (const record of bodyRecords) {
+    if (record.requestKey === undefined || !Number.isInteger(record.tick)) continue
+    if (record.event === 'decided' && record.intent === 'flee') decidedAt.set(record.requestKey, record)
+    const ends = record.event === 'retreating' || record.event === 'decisionDiscarded' ||
+      (record.event === 'intentApplied' && record.outcome !== 'accepted')
+    if (ends && !endedAt.has(record.requestKey)) endedAt.set(record.requestKey, record.tick)
+  }
+  const byAgent = new Map()
+  for (const [key, decided] of decidedAt) {
+    const intervals = byAgent.get(decided.agentId) ?? []
+    intervals.push([decided.tick, endedAt.get(key) ?? runEnd])
+    byAgent.set(decided.agentId, intervals)
+  }
+  for (const [agentId, intervals] of byAgent) {
+    intervals.sort((a, b) => a[0] - b[0])
+    const merged = []
+    for (const [from, to] of intervals) {
+      const last = merged[merged.length - 1]
+      if (last !== undefined && from <= last[1]) last[1] = Math.max(last[1], to)
+      else merged.push([from, to])
+    }
+    byAgent.set(agentId, merged)
+  }
+  return byAgent
+}
+
+/** How many ticks of [from, to) no interval of the merged [intervals] covers. */
+function uncovered (from, to, intervals) {
+  let length = to - from
+  for (const [start, end] of intervals) {
+    const overlap = Math.min(to, end) - Math.max(from, start)
+    if (overlap > 0) length -= overlap
+  }
+  return length
+}
+
 /** The health the perception a decision answered showed, or -Infinity when none was recorded. */
 function perceivedHealthOf (own) {
   const health = own.find((record) => record.event === 'perceived')?.perception?.selfState?.health
@@ -1247,7 +1342,8 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
         'goalIncoherent',
         ...(generation >= 9 ? FLIGHT_BLOCKER_CLASSES : []),
         ...(generation >= 11 ? OWN_DROP_BLOCKER_CLASSES : []),
-        ...(generation >= 12 ? SELF_TRAPPED_BLOCKER_CLASSES : [])
+        ...(generation >= 12 ? SELF_TRAPPED_BLOCKER_CLASSES : []),
+        ...(generation >= 16 ? WATER_BLOCKER_CLASSES : [])
       ]
     : BLOCKER_CLASSES
   const raceClasses = raceClassesOf(generation)
@@ -1310,6 +1406,11 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
           dugOwnSupport(bodyRecords, decision, generation)) {
         ending.class = 'selfTrapped'
       }
+      if (generation >= 16 && ending.class === TERRAIN_CLASS && inWater(own)) ending.class = 'waterTrapped'
+      if (generation >= 16 && ending.class === 'inapplicable' && REACH_REFUSAL.test(terminals[0].outcome) &&
+          movedAfterPerception(bodyRecords, decision, own, terminals[0])) {
+        ending.class = OWN_MOVEMENT_RACE_CLASS
+      }
     }
     if (!Object.hasOwn(byClass, ending.class)) ending.class = 'unexplainedRefusal'
     byClass[ending.class] += 1
@@ -1367,8 +1468,9 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       GROUNDED_GOAL_READINESS_VERSION,
       HORIZON_READINESS_VERSION,
       DISCOVERY_READINESS_VERSION,
-      SURVIVAL_READINESS_VERSION
-    ][Math.min(Math.max(generation - 3, 0), 12)],
+      SURVIVAL_READINESS_VERSION,
+      WATER_READINESS_VERSION
+    ][Math.min(Math.max(generation - 3, 0), 13)],
     actions: {
       total,
       byClass: Object.fromEntries(Object.entries(byClass).sort()),
@@ -1396,6 +1498,7 @@ module.exports = {
   BLOCKER_CLASSES,
   SURVIVAL_GOAL_INCOHERENT_TAGS,
   SURVIVAL_READINESS_VERSION,
+  WATER_READINESS_VERSION,
   DISCOVERY_GOAL_INCOHERENT_TAGS,
   DISCOVERY_READINESS_VERSION,
   HORIZON_GOAL_INCOHERENT_TAGS,

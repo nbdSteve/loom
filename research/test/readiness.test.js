@@ -6,6 +6,7 @@ const path = require('node:path')
 const { test } = require('node:test')
 
 const { BLOCKER_CLASSES, RACE_CLASSES, readinessMetrics, refusalClass } = require('../lib/readiness.js')
+const { GATE_GENERATION } = require('../lib/behavior-gate.js')
 
 const AGENT = 'tribe-alpha'
 let sequence = 0
@@ -41,7 +42,7 @@ test('every refusal tag the body can file is classified, none as unexplained', (
   const tags = [...block.slice(0, block.indexOf('\n    )')).matchAll(/EventTag\.(\w+)/g)].map((match) => constants[match[1]])
   assert.ok(tags.length > 100, `${tags.length} refusal tags`)
   for (const tag of tags) {
-    assert.notEqual(refusalClass(tag), 'unexplainedRefusal', tag)
+    assert.notEqual(refusalClass(tag, GATE_GENERATION), 'unexplainedRefusal', tag)
   }
   assert.equal(refusalClass('somethingNobodyFiles'), 'unexplainedRefusal')
   // r22 delta body:00002116: its first strike landed and the skeleton then left range.

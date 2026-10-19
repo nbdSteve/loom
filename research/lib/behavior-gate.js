@@ -41,7 +41,10 @@ const { readinessMetrics } = require('./readiness.js')
 // confirmed craft whether or not a review followed, dropped items as local capacity, an attack
 // refused at the health floor reached while deciding as a race, and names its readiness version
 // after its own generation.
-const GATE_GENERATION = 15
+// Generation 16 counts no flight as progressing time, a reach refusal the agent's own movement
+// caused after its perception as a movement race, a no-route from a body in water as the
+// waterTrapped blocker, and a dig refused for flooding the body as inapplicable.
+const GATE_GENERATION = 16
 // The goal outcomes of a decision whose action was a step of a goal it held or took up.
 const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised', 'goalReplaced', 'goalCompletedAdopted'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`

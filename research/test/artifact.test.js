@@ -263,7 +263,7 @@ test('the scripted v32 publication carries adoption then continuity without clai
   assert.match(readme, /It is not a model-behavior result/)
   // The current gate generation states readiness and lists every action that did not succeed.
   const readiness = published.metrics.behaviorGate.readiness
-  assert.equal(readiness.version, 'loom-readiness-gate/15')
+  assert.equal(readiness.version, 'loom-readiness-gate/16')
   assert.match(readme, new RegExp(`Readiness: \\*\\*${readiness.verdict}\\*\\*`))
   // Coherence is part of that verdict and stated beside the mechanical one.
   assert.match(readme, new RegExp(`Goal coherence: \\*\\*${readiness.goalCoherence.verdict}\\*\\*, part of the verdict`))
