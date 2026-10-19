@@ -847,11 +847,15 @@ fn nearest_block_ref(perception: &Perception, block: &str) -> Option<String> {
 /// the stand-in fled the nearest thing with a ref, a peer, twice).
 fn nearest_ref(perception: &Perception, source: &str) -> Option<String> {
     let kind = source.rsplit(['.', ':']).next().unwrap_or(source);
+    // Only a creature the perception offers a flight may be named: a hunter past the offered
+    // ones would be refused (v32 plains rehearsal 15: a skeleton shooting from beyond them).
+    let offered = crate::offered::OfferedRefs::of(perception).creatures;
     let hunters = || {
-        perception
-            .surroundings
-            .iter()
-            .filter(|seen| seen.kind == ObservationKind::Entity && seen.hunts == Some(true))
+        perception.surroundings.iter().filter(|seen| {
+            seen.kind == ObservationKind::Entity
+                && seen.hunts == Some(true)
+                && offered.contains(&seen.target_ref)
+        })
     };
     hunters()
         .find(|seen| seen.what.rsplit(['.', ':']).next() == Some(kind))
@@ -1051,6 +1055,53 @@ mod tests {
             draft.reasoning.contains("nothing in sight can be named"),
             "the reasoning must say why it did not run, got {reasoning:?}",
             reasoning = draft.reasoning
+        );
+    }
+
+    #[test]
+    fn damage_from_a_hunter_past_the_offered_creatures_flees_one_that_was_offered() {
+        // v32 plains rehearsal 15: epsilon was shot, the nearest skeleton stood past the creatures
+        // the perception offers a flight, and the stand-in named it, which the mind refused and
+        // the run stopped on.
+        let creature = |index: usize, what: &str, hunts: bool| Observation {
+            kind: ObservationKind::Entity,
+            what: format!("entity.minecraft.{what}"),
+            distance: 2.0 + f64::from(u32::try_from(index).unwrap()),
+            direction: Bearing::East,
+            vertical_offset: 0.0,
+            visible: true,
+            target_ref: format!("e{index}"),
+            count: None,
+            standable: None,
+            yields: None,
+            dig_safe: None,
+            route_refused: None,
+            hunts: Some(hunts),
+        };
+        let mut seen = perception(
+            Trigger::Damaged {
+                amount: 3,
+                source: "skeleton".to_owned(),
+            },
+            DecisionImportance::Pivotal,
+        );
+        seen.surroundings = (0..20)
+            .map(|index| creature(index, "sheep", false))
+            .collect();
+        seen.surroundings.insert(3, creature(90, "zombie", true));
+        seen.surroundings.push(creature(91, "skeleton", true));
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        let offered = crate::offered::OfferedRefs::of(&seen);
+        assert!(
+            offered.admits(&draft.intent),
+            "{:?} not offered",
+            draft.intent
+        );
+        assert_eq!(
+            draft.intent,
+            Intent::Flee {
+                from: "e90".to_owned()
+            }
         );
     }
 
