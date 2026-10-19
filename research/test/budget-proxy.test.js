@@ -46,7 +46,7 @@ function startRefusingUpstream (error, failure) {
   })
 }
 
-function request (port, agentId, requestId, trigger = 'goalReview') {
+function request (port, agentId, requestId, trigger = 'goalReview', importance = 'ROUTINE') {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: '127.0.0.1', port })
     let response = ''
@@ -55,7 +55,7 @@ function request (port, agentId, requestId, trigger = 'goalReview') {
         requestId,
         agentId,
         trigger: { event: trigger },
-        importance: 'ROUTINE'
+        importance
       })}\n`)
     })
     socket.on('data', (chunk) => {
@@ -427,4 +427,37 @@ test('a malformed spend bound is refused at construction', () => {
     spend: { ceilingNanoUsd: 1.5, worstCaseCallNanoUsd: 1 },
     journal: { append () {} }
   }), /spend bound/)
+})
+
+test('the proxy reserves each call at its tier and holds pivotal calls to their own ceiling', async () => {
+  // r24 priced every call as pivotal and spent its 150-call ceiling after 149 calls.
+  const upstream = await startUpstream()
+  const events = []
+  const proxy = new CognitionBudgetProxy({
+    listen: { host: '127.0.0.1', port: 0 },
+    upstream: { host: '127.0.0.1', port: upstream.address().port },
+    agents: ['alpha'],
+    budget: { perAgentCallCeiling: 10, globalCallCeiling: 10, globalOutstandingCeiling: 1, pivotalCallCeiling: 2 },
+    // Four ordinary calls at 10 and two pivotal at 100 fit a ceiling of 240: every one priced as
+    // pivotal, only two would.
+    spend: { ceilingNanoUsd: 240, worstCaseCallNanoUsd: 100, tier: { ordinary: 10, pivotal: 100 } },
+    journal: { append: (event, fields) => events.push({ event, ...fields }) }
+  })
+  await proxy.start()
+  try {
+    for (const id of ['r1', 'r2', 'r3']) {
+      assert.equal((await request(proxy.listen.port, 'alpha', id)).intent.action, 'idle', id)
+    }
+    for (const id of ['p1', 'p2']) {
+      assert.equal((await request(proxy.listen.port, 'alpha', id, 'damaged', 'PIVOTAL')).intent.action, 'idle', id)
+    }
+    assert.match((await request(proxy.listen.port, 'alpha', 'p3', 'damaged', 'PIVOTAL')).error, /experiment budget/)
+    const refused = events.filter((event) => event.event === 'cognitionRefused')
+    assert.deepEqual(refused.map((event) => event.bound), ['pivotalCall'])
+    // An ordinary call still fits what the pivotal ceiling left.
+    assert.equal((await request(proxy.listen.port, 'alpha', 'r4')).intent.action, 'idle')
+  } finally {
+    await proxy.close()
+    await new Promise((resolve) => upstream.close(resolve))
+  }
 })

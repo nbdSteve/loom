@@ -56,6 +56,8 @@ class CognitionBudgetProxy {
     this.requestTimeoutMilliseconds = requestTimeoutMilliseconds
     this.spend = this.checkedSpend(spend)
     this.total = 0
+    this.pivotal = 0
+    this.reservedNanoUsd = 0
     this.admissionClosed = null
     this.refusedByBound = {}
     this.outstanding = 0
@@ -89,14 +91,19 @@ class CognitionBudgetProxy {
   // any provider usage is known.
   checkedSpend (configured) {
     if (configured === undefined) return null
-    const { ceilingNanoUsd, worstCaseCallNanoUsd } = configured
+    const { ceilingNanoUsd, worstCaseCallNanoUsd, tier } = configured
     if (
       !Number.isSafeInteger(ceilingNanoUsd) || ceilingNanoUsd < 0 ||
       !Number.isSafeInteger(worstCaseCallNanoUsd) || worstCaseCallNanoUsd < 0
     ) {
       throw new Error('spend bound must be non-negative integer nano-USD')
     }
-    return { ceilingNanoUsd, worstCaseCallNanoUsd }
+    // With a tier, each call is reserved at its own tier's worst price, so cheap routine calls
+    // no longer spend the ceiling as if every one were pivotal (r24).
+    if (tier !== undefined && !(Number.isSafeInteger(tier.ordinary) && Number.isSafeInteger(tier.pivotal))) {
+      throw new Error('tier spend bounds must be integer nano-USD')
+    }
+    return { ceilingNanoUsd, worstCaseCallNanoUsd, tier }
   }
 
   // Returns the post-crash threshold this call would cross, or null.
@@ -120,7 +127,13 @@ class CognitionBudgetProxy {
   }
 
   // The first bound this call would cross, in a fixed order, with its exact numbers.
-  crossedBound (agentId, agentCalls) {
+  // What one call of `importance` reserves of the spend ceiling.
+  callNanoUsd (importance) {
+    if (this.spend?.tier === undefined) return this.spend?.worstCaseCallNanoUsd ?? 0
+    return importance === 'PIVOTAL' ? this.spend.tier.pivotal : this.spend.tier.ordinary
+  }
+
+  crossedBound (agentId, agentCalls, importance) {
     const calls = (bound, reason, ceiling, observed) =>
       ({ bound, reason, unit: 'calls', ceiling, observed })
     if (this.admissionClosed !== null) {
@@ -144,9 +157,14 @@ class CognitionBudgetProxy {
     if (reserve !== null) {
       return calls('postCrashReserve', 'postCrashCallReserve', reserve.ceiling, reserve.observed)
     }
+    if (Number.isInteger(this.budget.pivotalCallCeiling) && importance === 'PIVOTAL' &&
+      this.pivotal >= this.budget.pivotalCallCeiling) {
+      return calls('pivotalCall', 'pivotalCallCeiling', this.budget.pivotalCallCeiling, this.pivotal)
+    }
     if (this.spend !== null) {
-      const reserved = this.total * this.spend.worstCaseCallNanoUsd
-      if (reserved + this.spend.worstCaseCallNanoUsd > this.spend.ceilingNanoUsd) {
+      const reserved = this.spend.tier === undefined ? this.total * this.spend.worstCaseCallNanoUsd : this.reservedNanoUsd
+      const next = this.callNanoUsd(importance)
+      if (reserved + next > this.spend.ceilingNanoUsd) {
         return {
           bound: 'spend',
           reason: 'spendCeiling',
@@ -276,7 +294,7 @@ class CognitionBudgetProxy {
     const agentCalls = this.perAgent.get(agentId) ?? 0
     const origin = this.requestOrigin(perception.trigger?.event)
     const originField = origin === undefined ? {} : { origin }
-    const crossed = this.crossedBound(agentId, agentCalls)
+    const crossed = this.crossedBound(agentId, agentCalls, perception.importance)
     if (crossed !== null) {
       this.refusedByBound[crossed.bound] = (this.refusedByBound[crossed.bound] ?? 0) + 1
       const refused = {
@@ -295,6 +313,8 @@ class CognitionBudgetProxy {
     }
 
     this.total += 1
+    if (perception.importance === 'PIVOTAL') this.pivotal += 1
+    this.reservedNanoUsd += this.callNanoUsd(perception.importance)
     this.outstanding += 1
     const outstandingAtAdmission = this.outstanding
     const admittedAt = performance.now()

@@ -69,8 +69,9 @@
     "providerEndpoint": "https://api.openai.com/v1",
     "providerTimeoutMillis": 12000,
     "maxRequestBytes": 65536,
-    "perAgentCallCeiling": 24,
-    "globalCallCeiling": 150,
+    "perAgentCallCeiling": 40,
+    "globalCallCeiling": 378,
+    "pivotalCallCeiling": 130,
     "globalOutstandingCeiling": 6,
     "maxOutputTokens": 2048,
     "maxExternalSpendUsd": 29.19,
@@ -104,7 +105,7 @@
     "evidenceRecords": 8000
   },
   "primaryBehavior": {
-    "profile": "discovery-goal-10m-10",
+    "profile": "survival-envelope-10m-10",
     "initialPositions": {
       "tribe-alpha": [
         12.5,

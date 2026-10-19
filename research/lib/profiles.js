@@ -291,6 +291,17 @@ PROFILES['discovery-goal-10m-10'] = Object.freeze({
     craftChainSteps: 1
   })
 })
+// The v32 profile keeps the discovery-goal profile's plains scene, plan and bars, and widens the
+// call envelope by tier within the unchanged $29.19 ceiling (the r24 audit): r24's late damage
+// calls were refused by its 150-call ceiling after 149 calls, while its routine and notable calls,
+// which the ordinary model answers at a twelfth of the pivotal model's worst price, were priced as
+// pivotal ones. At most 130 calls may be pivotal and the other 248 ordinary: 130 x $0.19456 plus
+// 248 x $0.0156672 is $29.1782656, under the ceiling, at the measured 65,536-byte request and
+// 2,048-token response bounds and the six-outstanding cap.
+PROFILES['survival-envelope-10m-10'] = Object.freeze({
+  ...PROFILES['discovery-goal-10m-10'],
+  callCeilings: Object.freeze({ perAgent: 40, global: 378, outstanding: 6, pivotal: 130 })
+})
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

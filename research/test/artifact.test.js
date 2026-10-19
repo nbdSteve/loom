@@ -765,6 +765,10 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
       delete config.primaryBehavior.scene
       delete config.primaryBehavior.initialPositions
     }
+    // From v32 the call envelope is tier-aware inside the same $29.19 ceiling (r24).
+    assert.deepEqual([v29.cognition.perAgentCallCeiling, v29.cognition.globalCallCeiling, v29.cognition.pivotalCallCeiling], [40, 378, 130])
+    Object.assign(v29.cognition, { perAgentCallCeiling: 24, globalCallCeiling: 150 })
+    delete v29.cognition.pivotalCallCeiling
     // From v24 the plan names the five scheduled reviews a run can finish.
     assert.equal(v29.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent, 5)
     v29.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 6
@@ -777,7 +781,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   assert.equal(live.mode, 'routine-v32-survival-discovery')
   for (const config of [live, scripted]) {
     assert.deepEqual(validateRunConfig(config), [], config.experimentId)
-    assert.equal(config.primaryBehavior.profile, 'discovery-goal-10m-10')
+    assert.equal(config.primaryBehavior.profile, 'survival-envelope-10m-10')
     // One follow-up a scheduled review: a hundred planned calls leave a third of the ceiling.
     assert.equal(config.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview, 1)
     assert.deepEqual(config.agents, [...AGENT_ORDER])
@@ -805,6 +809,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
     delete copy.title
     Object.assign(copy.bounds, { runDurationSeconds: 0, simulationTickCeiling: 0, logBytes: 0, artifactBytes: 0, evidenceRecords: 0 })
     Object.assign(copy.cognition, { perAgentCallCeiling: 0, globalCallCeiling: 0, globalOutstandingCeiling: 0, maxExternalSpendUsd: 0 })
+    delete copy.cognition.pivotalCallCeiling
     copy.primaryBehavior.profile = null
     copy.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 0
     copy.world.seed = null
@@ -819,8 +824,18 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   assert.equal(live.cognition.backend, 'openai')
   assert.equal(scripted.cognition.backend, 'scripted')
   const manifest = validateProspectiveManifest(live, SOURCE)
-  assert.equal(manifest.protocol.profile, 'discovery-goal-10m-10')
-  assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 29.184)
+  assert.equal(manifest.protocol.profile, 'survival-envelope-10m-10')
+  // 130 pivotal calls at $0.19456 and 248 ordinary at $0.0156672, under the unchanged ceiling.
+  assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 29.1782656)
+  assert.equal(manifest.cognition.maxExternalSpendUsd, 29.19)
+  assert.equal(manifest.cognition.pivotalCallCeiling, 130)
+  // One more pivotal call, or every call priced as pivotal, would exceed it: refused at preflight.
+  const dearer = structuredClone(live)
+  dearer.cognition.pivotalCallCeiling = 131
+  assert.ok(validateRunConfig(dearer).some((error) => error.includes('worst-case')), 'a 131-pivotal mix is refused')
+  const untiered = structuredClone(live)
+  delete untiered.cognition.pivotalCallCeiling
+  assert.ok(validateRunConfig(untiered).some((error) => error.includes('worst-case')), '378 calls all priced pivotal are refused')
 
   const drifts = [
     (config) => { config.agents.pop() },

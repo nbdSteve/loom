@@ -120,8 +120,30 @@ function pricingErrors (config) {
   return errors
 }
 
-function maximumConfiguredSpendNanoUsd (config) {
-  return worstCaseCallNanoUsd(config) * config.cognition.globalCallCeiling
+/**
+ * The configured worst case: every call at the dearest model's request and response bounds, or,
+ * with a pivotal call ceiling, at most that many calls at the pivotal model's bounds and the rest
+ * of the global ceiling at the ordinary model's (r24: 149 of 150 calls were spent while the run's
+ * cheap routine and notable calls were priced as pivotal ones).
+ */
+function maximumConfiguredSpendNanoUsd (cognition) {
+  const settings = cognition.cognition ?? cognition
+  const pivotal = settings.pivotalCallCeiling
+  if (!Number.isInteger(pivotal)) return worstCaseCallNanoUsd(cognition) * settings.globalCallCeiling
+  const tier = worstCaseTierNanoUsd(cognition)
+  return pivotal * tier.pivotal + (settings.globalCallCeiling - pivotal) * tier.ordinary
+}
+
+/** The worst one call can cost at each tier's model, under the request and response bounds. */
+function worstCaseTierNanoUsd (cognition) {
+  const settings = cognition.cognition ?? cognition
+  const models = settings.models ?? cognition.provenance?.models
+  const priced = (model) => {
+    const rates = settings.pricing.models[model]
+    const inputRate = Math.max(rates.inputNanoUsdPerToken, rates.cachedInputNanoUsdPerToken)
+    return (settings.maxRequestBytes * inputRate) + (settings.maxOutputTokens * rates.outputNanoUsdPerToken)
+  }
+  return { ordinary: priced(models.ordinary), pivotal: priced(models.pivotal) }
 }
 
 function worstCaseCallNanoUsd (config) {
@@ -285,7 +307,8 @@ function primaryBehaviorErrors (config) {
   if (
     config.cognition?.perAgentCallCeiling !== ceilings.perAgent ||
     config.cognition?.globalCallCeiling !== ceilings.global ||
-    config.cognition?.globalOutstandingCeiling !== ceilings.outstanding
+    config.cognition?.globalOutstandingCeiling !== ceilings.outstanding ||
+    config.cognition?.pivotalCallCeiling !== ceilings.pivotal
   ) {
     errors.push(
       `profile ${behavior.profile} must use the ${ceilings.perAgent}/${ceilings.global}/${ceilings.outstanding} cognition ceilings`
@@ -455,6 +478,11 @@ function validateRunConfig (config) {
     config.cognition.globalCallCeiling > config.cognition.perAgentCallCeiling * config.agents.length
   ) {
     errors.push('global call ceiling exceeds the sum of per-agent ceilings')
+  }
+  const pivotalCeiling = config.cognition?.pivotalCallCeiling
+  if (pivotalCeiling !== undefined && (!Number.isInteger(pivotalCeiling) || pivotalCeiling < 0 ||
+    pivotalCeiling > config.cognition?.globalCallCeiling)) {
+    errors.push('cognition.pivotalCallCeiling must be an integer within the global call ceiling')
   }
   if (
     typeof config.cognition?.maxExternalSpendUsd !== 'number' ||
@@ -1014,6 +1042,9 @@ function buildManifest ({
       socialRolesInjected: false,
       perAgentCallCeiling: config.cognition.perAgentCallCeiling,
       globalCallCeiling: config.cognition.globalCallCeiling,
+      ...(Number.isInteger(config.cognition.pivotalCallCeiling)
+        ? { pivotalCallCeiling: config.cognition.pivotalCallCeiling }
+        : {}),
       globalOutstandingCeiling: config.cognition.globalOutstandingCeiling,
       maxOutputTokens: config.cognition.maxOutputTokens,
       maxRequestBytes: config.cognition.maxRequestBytes,
@@ -1711,6 +1742,9 @@ function semanticErrors (artifactDirectory, manifest) {
     )
   }
   maximumSpendNanoUsd *= manifest.cognition.globalCallCeiling
+  if (Number.isInteger(manifest.cognition.pivotalCallCeiling)) {
+    maximumSpendNanoUsd = maximumConfiguredSpendNanoUsd({ ...manifest.cognition, models: manifest.provenance.models })
+  }
   if (
     manifest.cognition.worstCaseConfiguredSpendUsd !==
     Number((maximumSpendNanoUsd / NANO_USD_PER_USD).toFixed(9))
@@ -2165,5 +2199,6 @@ module.exports = {
   validateArtifact,
   validateProspectiveManifest,
   validateRunConfig,
-  worstCaseCallNanoUsd
+  worstCaseCallNanoUsd,
+  worstCaseTierNanoUsd
 }

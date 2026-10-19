@@ -12,7 +12,8 @@ const {
   configuredAgents,
   publishArtifact,
   validateProspectiveManifest,
-  worstCaseCallNanoUsd
+  worstCaseCallNanoUsd,
+  worstCaseTierNanoUsd
 } = require('./artifact.js')
 const { CognitionBudgetProxy } = require('./budget-proxy.js')
 const {
@@ -949,7 +950,8 @@ async function runExperiment ({
       requestOrigin: (trigger) => requestOriginFor(config, trigger),
       spend: {
         ceilingNanoUsd: Math.round(config.cognition.maxExternalSpendUsd * 1_000_000_000),
-        worstCaseCallNanoUsd: worstCaseCallNanoUsd(config)
+        worstCaseCallNanoUsd: worstCaseCallNanoUsd(config),
+        ...(Number.isInteger(config.cognition.pivotalCallCeiling) ? { tier: worstCaseTierNanoUsd(config) } : {})
       },
       journal,
       onCognitionFailure: (message, classified, request) => {
