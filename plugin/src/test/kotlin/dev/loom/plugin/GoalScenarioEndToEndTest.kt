@@ -144,6 +144,43 @@ class GoalScenarioEndToEndTest {
     }
 
     @Test
+    fun `damage taken while a flight runs is told as one perception once it settles`() {
+        // r24: 43 of 68 damage perceptions were coalesced behind open answers and never told.
+        val zombie =
+            buildJsonObject {
+                put("id", ZOMBIE_ID)
+                put("what", "zombie")
+                put("x", 8.5)
+                put("y", 64.0)
+                put("z", 12.5)
+            }
+        val scene = Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), entities = listOf(zombie), timeOfDay = NIGHT)
+        val world = world(scene)
+        world.mind.answer = { perception, _ ->
+            // Once clear of the zombie the told damage names nothing to flee from, and is idled.
+            val zombie = perception.surroundings.firstOrNull { it.what == "entity.minecraft.zombie" }
+            (zombie?.let { Intent.Flee(it.ref) } ?: Intent.Idle) to null
+        }
+        world.onMain {
+            world.cognition.consider(ALPHA, Trigger.Damaged(2, "entity.minecraft.zombie"))
+        }
+        world.awaitDecided(1)
+        world.onMain {
+            world.cognition.consider(ALPHA, Trigger.Damaged(3, "entity.minecraft.zombie"))
+            world.cognition.consider(ALPHA, Trigger.Damaged(1, "entity.minecraft.zombie"))
+        }
+        world.awaitRecord { it.event == BodyEvent.RETREATING }
+        world.awaitDecided(2)
+        val told = world.mind.seen.map { it.trigger }
+        assertEquals(Trigger.Damaged(4, "entity.minecraft.zombie"), told[1], "the held damage, summed: $told")
+        val coalesced =
+            world.records.count {
+                it.event == BodyEvent.COGNITION_UNAVAILABLE && it.outcome == EventTag.DANGER_COALESCED
+            }
+        assertEquals(2, coalesced)
+    }
+
+    @Test
     fun `two agents digging one block end in the server's one break and one lost race`() {
         // The v23 rehearsal's tick-3268 race, which r15 never met.
         val dirt = Cell(8, 64, 9, "dirt")
