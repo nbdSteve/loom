@@ -51,7 +51,9 @@ internal class PlayerPerception(
             raw?.let { sceneFor(agentId, it, attacker) }?.let { scene ->
                 commit(
                     scene,
-                    scene.attackerRef?.let { (trigger as? Trigger.Damaged)?.copy(attackerRef = it) } ?: trigger,
+                    // A damage trigger names only the attacker this very sense resolved, never one an
+                    // older sense minted (r27: eta's re-told damage named a ref its message lacked).
+                    (trigger as? Trigger.Damaged)?.copy(attackerRef = scene.attackerRef) ?: trigger,
                 )
             }
         }

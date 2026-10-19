@@ -172,8 +172,9 @@ class GoalScenarioEndToEndTest {
             val attacker = (perception.trigger as? Trigger.Damaged)?.attackerRef
             (attacker?.let { Intent.Flee(it) } ?: Intent.Idle) to null
         }
-        // Damage the witness cannot attribute is perceived as before: the crowd fills the list.
-        world.onMain { world.cognition.consider(ALPHA, Trigger.Damaged(2, "skeleton")) }
+        // Damage the witness cannot attribute is perceived as before: the crowd fills the list, and
+        // a ref an older sense minted is not carried into it (r27 eta og, beta pe).
+        world.onMain { world.cognition.consider(ALPHA, Trigger.Damaged(2, "skeleton", attackerRef = "e999")) }
         world.awaitDecided(1)
         val unnamed = world.mind.seen[0]
         assertTrue(unnamed.surroundings.none { it.what == "entity.minecraft.skeleton" }, "cut by the crowd")

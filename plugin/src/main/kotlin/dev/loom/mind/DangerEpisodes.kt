@@ -94,7 +94,8 @@ class DangerEpisodes(
             // Damage taken while an answer runs is told once that answer settles (r24: 43 of 68
             // damage perceptions were coalesced, gamma's at health 2.7 and 0.7, and none was told).
             (perception.trigger as? Trigger.Damaged)?.let { damage ->
-                pending.merge(agentId, damage) { earlier, later ->
+                // Held without its ref, which named a creature in the sense that minted it alone.
+                pending.merge(agentId, damage.copy(attackerRef = null)) { earlier, later ->
                     Trigger.Damaged(earlier.amount + later.amount, later.source)
                 }
                 // The latest attacker is the one told of, so the flight can name it.
