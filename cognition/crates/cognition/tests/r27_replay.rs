@@ -69,3 +69,26 @@ fn delta_was_never_offered_a_flight_from_a_peer() {
         "the peer flight is no longer an answer"
     );
 }
+
+#[test]
+fn theta_at_two_hearts_beside_hunters_is_offered_only_a_survival_response() {
+    // r27 theta sense-11q and sense-12o (body:00004235, 00004314): at 2.2 health, a spider 10.2 and
+    // two zombies 10 to 11 blocks off, both reviews crafted.
+    for key in [
+        "tribe-theta:loom9bc6579ca4-sense-11q",
+        "tribe-theta:loom9bc6579ca4-sense-12o",
+    ] {
+        let (seen, decided) = shown(key);
+        assert!(
+            seen.self_state.health <= loom_cognition::offered::LOW_HEALTH,
+            "{key}"
+        );
+        let offered = OfferedRefs::of(&seen);
+        assert!(offered.in_immediate_danger(), "{key}: {:?}", offered.danger);
+        let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
+        assert!(
+            !valid(&schema, decided),
+            "{key}: the craft is no longer an answer"
+        );
+    }
+}

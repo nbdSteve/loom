@@ -91,6 +91,8 @@ class EmbodiedCognition(
     // Perceptions sent to the mind whose decision has not yet been recorded or lost, so a
     // plugin shutdown can end each chain rather than leave it open.
     private val inFlight = linkedMapOf<String, Pair<AgentId, Perception>>()
+
+    private val preemption = DangerPreemption()
     private var shutDown = false
 
     /** Whether [shutDown] has run, after which no review is taken. */
@@ -164,6 +166,10 @@ class EmbodiedCognition(
                 // The agent is already answering this threat.
                 !danger.admit(agentId, perception, subject) ->
                     EventTag.DANGER_COALESCED to "coalesced into the active danger episode for this threat"
+                // Damage from a different attacker, or at low health, preempts the older danger
+                // answer still with the mind (r27: alpha's and zeta's hits from new zombies were
+                // coalesced behind a creeper answer, and they died).
+                preemption.preempts(agentId, perception, subject, inFlight) -> null
                 // One review and one event at a time: the answer already coming covers this one.
                 inFlightFor(agentId, review = perception.trigger.reviewsGoal) > 0 -> {
                     danger.withdraw(agentId, perception.requestId)
@@ -181,13 +187,22 @@ class EmbodiedCognition(
         }
         val carried = goals.carried(agentId, shown)
         inFlight[carried.requestId] = agentId to carried
+        preemption.sent(carried, subject)
         mind.submit(carried).whenComplete { decision, failure ->
             // On a bridge thread: everything past here touches the body, so it runs on the main thread.
             mainThread.execute {
                 // A shutdown already ended this chain; nothing may be recorded twice.
                 if (inFlight.remove(carried.requestId) == null) return@execute
+                val supersededNow = preemption.settled(carried.requestId)
                 when {
                     decision == null -> lost(agentId, carried, failure ?: missingBoth(carried))
+                    // A preempting damage's answer governs the body now; this older one is discarded.
+                    supersededNow -> {
+                        danger.settled(agentId, decision.requestId, fled = false)
+                        bodies.held.release(agentId, decision.requestId)
+                        journal.discarded(agentId, decision)
+                        callbacks.onApplied(AppliedDecision(decision, IntentOutcome.NoSuchBody))
+                    }
                     // An answer for an agent that died while the mind was deciding is no decision
                     // of a living agent: it is discarded, never recorded as decided (r21 gamma).
                     callbacks.isDead(agentId) -> {
@@ -415,7 +430,12 @@ class EmbodiedCognition(
     ) {
         val item = lyingStepItem(goal, goalStep, applied, goals.recipes)
         if (item == null) {
-            callbacks.onStepSettled.oweReview(agentId, journal.tick(), goal, goalStep, applied, goals.recipes)
+            callbacks.onStepSettled.oweReview(
+                agentId,
+                journal.tick(),
+                goal,
+                SettledStep(goalStep, applied, goals.recipes),
+            )
             return
         }
         // The dig's one pickup of its own goal item, then the mind is asked at once.
@@ -459,20 +479,28 @@ private fun underlying(failure: Throwable): Throwable =
 /** What this perception showed cognition of its goal, when it reviews one. */
 private fun Perception.shownGoal(): ShownGoal? = ShownGoal(goal, lastRefusal, horizon).takeIf { trigger.reviewsGoal }
 
+/** One settled step of a goal: the goal as it stood after it, what the body did, and the recipes. */
+private class SettledStep(
+    val goalStep: GoalSummary?,
+    val applied: IntentOutcome,
+    val recipes: RecipeInputs,
+)
+
 /**
- * Owes [agentId] a follow-up review at [tick] when its decision settled [applied]: a goal a
- * survival response deferred is owed one whatever the response did, and a held goal's [goalStep]
- * one when the body carried it out - owed past the ordinary allowance when it left the agent's own
- * drop of the goal's item lying.
+ * Owes [agentId] a follow-up review at [tick] when its decision settled [step]'s outcome: a goal a
+ * survival response deferred is owed one whatever the response did, and a held goal's step one
+ * when the body carried it out - owed past the ordinary allowance when it left the agent's own
+ * drop of the goal's item, or of a direct input of its recipe, lying.
  */
 private fun StepSettlement.oweReview(
     agentId: AgentId,
     tick: Long,
     goal: GoalEvidence?,
-    goalStep: GoalSummary?,
-    applied: IntentOutcome,
-    recipes: RecipeInputs,
+    step: SettledStep,
 ) {
+    val goalStep = step.goalStep
+    val applied = step.applied
+    val recipes = step.recipes
     val effected = applied is IntentOutcome.Accepted || (applied as? IntentOutcome.Rejected)?.effected == true
     if (goal?.outcome == GoalEvidence.DEFERRED) {
         settled(agentId, tick, owed = true)
@@ -527,9 +555,8 @@ internal fun lyingStepItem(
     applied: IntentOutcome,
     recipes: RecipeInputs,
 ): String? {
-    val target = goalStep?.successItem ?: return null
+    val target = goalStep?.successItem?.takeIf { goal?.outcome != GoalEvidence.DEFERRED } ?: return null
     val dropped = (applied as? IntentOutcome.Accepted)?.dropped.orEmpty()
-    if (goal?.outcome == GoalEvidence.DEFERRED) return null
     return target.takeIf { it in dropped } ?: recipes.inputsOf(target).sorted().firstOrNull { it in dropped }
 }
 

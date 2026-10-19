@@ -114,4 +114,48 @@ class R27GoalAuditReplayTest {
         val other = dev.loom.body.IntentOutcome.Accepted("dug", dropped = setOf("item.minecraft.dirt"))
         assertEquals(null, lyingStepItem(null, goal, other, recipes))
     }
+
+    /** A stand-in danger subject for [perception]: the evidence keeps no attacker uuid, so its kind. */
+    private fun kindOf(perception: dev.loom.contract.Perception): String =
+        when (val trigger = perception.trigger) {
+            is dev.loom.contract.Trigger.Damaged -> trigger.source.substringAfterLast('.')
+            is dev.loom.contract.Trigger.ThreatSighted -> trigger.threat.substringAfterLast('.')
+            else -> "none"
+        }
+
+    @TestFactory
+    fun `damage from a new attacker or at low health preempts the older answer it waited behind`(): List<DynamicTest> =
+        listOf(
+            // alpha: zombie hits at 8.1 and 5.1 health behind a creeper answer and a zombie sighting.
+            "body:00002601" to "body:00002604",
+            "body:00002619" to "body:00002637",
+            // zeta: a spider hit at 16.7 health behind a zombie sighting, a different attacker.
+            "body:00003823" to "body:00003826",
+        ).map { (olderId, damageId) ->
+            DynamicTest.dynamicTest(damageId) {
+                val older = r27.perception(olderId)
+                val damage = r27.perception(damageId)
+                val agent = AgentId(damage.agentId)
+                val preemption = DangerPreemption()
+                preemption.sent(older, kindOf(older))
+                val inFlight = mapOf(older.requestId to (agent to older))
+                val preempts = preemption.preempts(agent, damage, kindOf(damage), inFlight)
+                assertTrue(preempts, "$damageId preempts $olderId")
+                assertTrue(preemption.settled(older.requestId), "the older answer is discarded when it arrives")
+            }
+        }
+
+    @TestFactory
+    fun `iota's damage at 4_5 and 2_5 health is asked about, not coalesced`(): List<DynamicTest> =
+        listOf("body:00002047" to "body:00002076", "body:00002076" to "body:00002106").map { (olderId, damageId) ->
+            DynamicTest.dynamicTest(damageId) {
+                val older = r27.perception(olderId)
+                val damage = r27.perception(damageId)
+                assertTrue(damage.selfState.health <= LOW_HEALTH)
+                val episodes = DangerEpisodes { 0L }
+                val agent = AgentId(damage.agentId)
+                assertTrue(episodes.admit(agent, older, "spider"))
+                assertTrue(episodes.admit(agent, damage, "spider"), "$damageId at ${damage.selfState.health}")
+            }
+        }
 }

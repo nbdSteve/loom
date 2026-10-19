@@ -87,9 +87,10 @@ class DangerEpisodes(
         // The episode follows its threat: a repeat about it moves it to where it now stands.
         byThreat[key]?.let { episode -> if (distance != null) episode.distance = distance }
         val answered = byThreat[key]?.open?.isEmpty() == true && closedAgain(perception.trigger)
-        val admitted = (key !in byThreat || answered) && !nearerOpen(byThreat, key, distance)
+        val waits = (key in byThreat && !answered) || nearerOpen(byThreat, key, distance)
+        val admitted = urgentDamage(perception) || !waits
         if (admitted) {
-            byThreat[key] = Episode(distance).also { it.open += perception.requestId }
+            opened(byThreat, key, perception, distance)
         } else {
             // Damage taken while an answer runs is told once that answer settles (r24: 43 of 68
             // damage perceptions were coalesced, gamma's at health 2.7 and 0.7, and none was told).
@@ -103,6 +104,21 @@ class DangerEpisodes(
             }
         }
         return admitted
+    }
+
+    /** Opens [key]'s episode for [perception], or adds an urgent damage to the one still open. */
+    private fun opened(
+        byThreat: MutableMap<String, Episode>,
+        key: String,
+        perception: Perception,
+        distance: Double?,
+    ) {
+        val open = byThreat[key]?.takeIf { urgentDamage(perception) && it.open.isNotEmpty() }
+        if (open != null) {
+            open.open += perception.requestId
+        } else {
+            byThreat[key] = Episode(distance).also { it.open += perception.requestId }
+        }
     }
 
     /**
@@ -209,3 +225,10 @@ data class HeldDamage(
     val trigger: Trigger.Damaged,
     val attacker: String?,
 )
+
+/**
+ * Whether [perception] is damage at or below [LOW_HEALTH], always asked about whatever it would
+ * coalesce into (r27: iota's spider hits at 4.5 and 2.5 health were coalesced, and it died).
+ */
+private fun urgentDamage(perception: Perception): Boolean =
+    perception.trigger is Trigger.Damaged && perception.selfState.health <= LOW_HEALTH

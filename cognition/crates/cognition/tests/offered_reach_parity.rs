@@ -105,7 +105,7 @@ fn interaction_reach_is_measured_from_the_eyes_the_body_measures_from() {
 fn every_survival_bound_is_the_one_the_jvm_ledger_defers_a_goal_by() {
     use loom_cognition::offered::{
         ATTACK_MIN_HEALTH, DANGER_SIGHT_BLOCKS, DANGER_UNSEEN_BLOCKS, HUNGRY_FOOD_LEVEL,
-        IMMEDIATE_DANGER_BLOCKS, RANGED_THREAT_BLOCKS,
+        IMMEDIATE_DANGER_BLOCKS, LOW_HEALTH, RANGED_THREAT_BLOCKS,
     };
     let survival = "plugin/src/main/kotlin/dev/loom/mind/Survival.kt";
     #[allow(clippy::cast_precision_loss)]
@@ -125,6 +125,11 @@ fn every_survival_bound_is_the_one_the_jvm_ledger_defers_a_goal_by() {
             "plugin/src/main/kotlin/dev/loom/body/ThreatWatch.kt",
             "PIVOTAL_THREAT_DISTANCE_BLOCKS",
             IMMEDIATE_DANGER_BLOCKS,
+        ),
+        (
+            "plugin/src/main/kotlin/dev/loom/mind/Importance.kt",
+            "LOW_HEALTH",
+            LOW_HEALTH,
         ),
     ];
     for (file, name, mind) in pairs {

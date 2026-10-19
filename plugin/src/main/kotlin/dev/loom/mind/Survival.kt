@@ -52,8 +52,15 @@ data class SurvivalOffer(
                 immediate =
                     perception.surroundings
                         .filter { it.kind == ObservationKind.ENTITY && it.hunts == true }
-                        .filter { it.distance <= immediateReachOf(it, perception) }
-                        .map { it.ref }
+                        .filter {
+                            // At low health every hunter near enough to answer is immediate (r27 theta).
+                            it.distance <=
+                                if (perception.selfState.health <= LOW_HEALTH) {
+                                    if (it.visible) DANGER_SIGHT_BLOCKS else DANGER_UNSEEN_BLOCKS
+                                } else {
+                                    immediateReachOf(it, perception)
+                                }
+                        }.map { it.ref }
                         .toSet() + attacker,
                 hunters =
                     perception.surroundings

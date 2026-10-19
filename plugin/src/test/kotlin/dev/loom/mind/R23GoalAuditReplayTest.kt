@@ -119,8 +119,10 @@ class R23GoalAuditReplayTest {
             }
         }
         assertEquals(true, admitted["body:00001869"], "a skeleton 6.4 blocks off")
-        // Damage from the zombie already being fled is the same episode, as it was.
-        assertEquals(false, admitted["body:00001831"])
+        // Damage from the zombie already being fled is the same episode, but at 8.2 health it is at
+        // or below LOW_HEALTH, so it is asked about rather than held (r27: low-health damage held
+        // behind an older answer killed iota).
+        assertEquals(true, admitted["body:00001831"])
     }
 
     private fun JsonObject.idOf(): String = requireNotNull(this["recordId"]).jsonPrimitive.content

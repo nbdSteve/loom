@@ -93,6 +93,10 @@ pub const MAX_CREATURE_REFS: usize = 16;
 /// counts against its 500 (48 hunters in view took a goal review's schema to 594).
 pub const MAX_DANGER_REFS: usize = 4;
 
+/// The health at or below which every near hunter is immediate danger and only a survival
+/// response is offered; `LOW_HEALTH` in the plugin's `Importance.kt`.
+pub const LOW_HEALTH: f64 = 10.0;
+
 /// How near a hunter out of sight must be to be offered for a flight at a goal review: the
 /// JVM's `THREAT_NEAR_BLOCKS`, inside which an unseen hunter is news.
 pub const DANGER_UNSEEN_BLOCKS: f64 = 8.0;
@@ -309,8 +313,9 @@ impl OfferedRefs {
     fn survival(&mut self, perception: &Perception) {
         let state = &perception.self_state;
         let offered = self;
-        // Just hurt beside a hunter, every near hunter is immediate.
-        if matches!(perception.trigger, Trigger::Damaged { .. }) {
+        // Just hurt beside a hunter, or at low health, every near hunter is immediate (r27: theta
+        // crafted planks and a crafting table at 2.2 health beside a spider and two zombies).
+        if matches!(perception.trigger, Trigger::Damaged { .. }) || state.health <= LOW_HEALTH {
             offered.immediate.clone_from(&offered.danger);
         }
         // An attack the body would refuse by the time it arrives is not offered.
