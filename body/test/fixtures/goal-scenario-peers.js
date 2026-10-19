@@ -126,7 +126,7 @@ async function main () {
       }
       return write(name, parameters)
     }
-    spawned(peer.client)
+    spawned(peer.client, scene.vitals)
     clockReported(peer.client, { timeOfDay: scene.timeOfDay ?? 6000, day: 1 })
     peer.client.emit('position', positionPacket({ ...feet, yaw: 0, pitch: 0, teleportId: 1 }))
     floor(peer.bot, scene.columns ?? COLUMNS)

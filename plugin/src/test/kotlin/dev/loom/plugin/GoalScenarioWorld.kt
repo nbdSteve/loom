@@ -113,6 +113,8 @@ internal data class Scene(
     val serveCrafts: Boolean = false,
     val trackDrops: Boolean = false,
     val servePickups: Boolean = false,
+    /** The bodies' health and food at spawn, vanilla's full bars when absent. */
+    val health: Double? = null,
 ) {
     /** The scene as the peers script reads it. */
     fun json(identities: Map<AgentId, PlayerIdentity>): String =
@@ -135,6 +137,7 @@ internal data class Scene(
             "columns" to columns,
             "serveCrafts" to serveCrafts,
             "servePickups" to servePickups,
+            "vitals" to health?.let { jsonOf("health" to it, "food" to 20, "foodSaturation" to 5) },
             "items" to
                 JsonArray(
                     items.map {

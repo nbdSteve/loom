@@ -181,6 +181,27 @@ class GoalScenarioEndToEndTest {
     }
 
     @Test
+    fun `a weak agent's review beside a hunter twelve blocks off is pivotal`() {
+        // r24 eta: a review at health 4.5 with a skeleton 9.8 blocks off was routine and crafted.
+        val zombie =
+            buildJsonObject {
+                put("id", ZOMBIE_ID)
+                put("what", "zombie")
+                put("x", 8.5)
+                put("y", 64.0)
+                put("z", 20.5)
+            }
+        val scene =
+            Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), entities = listOf(zombie), timeOfDay = NIGHT, health = 6.0)
+        val world = world(scene)
+        world.mind.answer = { _, _ -> Intent.Idle to null }
+        world.review(ALPHA)
+        world.awaitDecided(1)
+        assertEquals(DecisionImportance.PIVOTAL, world.mind.seen[0].importance)
+        assertEquals(6.0, world.mind.seen[0].selfState.health)
+    }
+
+    @Test
     fun `two agents digging one block end in the server's one break and one lost race`() {
         // The v23 rehearsal's tick-3268 race, which r15 never met.
         val dirt = Cell(8, 64, 9, "dirt")
