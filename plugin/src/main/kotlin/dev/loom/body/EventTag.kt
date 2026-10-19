@@ -174,6 +174,12 @@ object EventTag {
      */
     const val DANGER_COALESCED: String = "dangerCoalesced"
 
+    /**
+     * A danger decision discarded unapplied, because newer damage from another attacker or at low
+     * health was sent while it was with the mind and that newer answer governs the body now.
+     */
+    const val DANGER_PREEMPTED: String = "dangerPreempted"
+
     /** A dig's one pickup attempt found its own goal-item drop nowhere in a fresh sense. */
     const val OWN_DROP_NOT_SENSED: String = "ownDropNotSensed"
 

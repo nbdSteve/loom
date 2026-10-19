@@ -12,6 +12,7 @@ import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
+import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
 import dev.loom.body.ShownGoal
 import dev.loom.body.describe
@@ -64,6 +65,26 @@ class DecisionJournal(
             decision,
             BodyEvent.DECISION_DISCARDED,
             "${describe(decision.intent)} was not applied: no body for this agent, which has died or travelled",
+        )
+    }
+
+    /**
+     * Records a danger decision discarded because newer damage preempted it while it was with
+     * the mind: decided and billed, but the newer answer governs the body, so this one is never
+     * applied. Its outcome is [EventTag.DANGER_PREEMPTED], which tells it apart from a discard
+     * for a body that has gone.
+     */
+    fun preempted(
+        agentId: AgentId,
+        decision: Decision,
+    ) {
+        eventLog.append(
+            recordOf(
+                agentId,
+                decision,
+                BodyEvent.DECISION_DISCARDED,
+                "${describe(decision.intent)} was not applied: newer damage preempted it",
+            ).copy(outcome = EventTag.DANGER_PREEMPTED),
         )
     }
 

@@ -123,6 +123,16 @@ test('primary behavior stops on fatal evidence and a lost initial condition', ()
   )
 })
 
+test('a danger answer newer damage preempted is superseded, and any other discard by a living agent still stops the run', () => {
+  const config = primaryBehaviorConfig()
+  const preempted = { event: 'decisionDiscarded', agentId: 'tribe-alpha', requestId: 'r1', outcome: 'dangerPreempted', tick: 6100 }
+  assert.equal(primaryBehaviorRunFailure(config, [preempted]), null)
+  assert.match(
+    primaryBehaviorRunFailure(config, [{ ...preempted, outcome: undefined }]).message,
+    /a cognition decision was discarded/
+  )
+})
+
 test('a witnessed death ends only that agent while its peers continue', () => {
   const config = primaryBehaviorConfig()
   const died = { event: 'died', agentId: 'tribe-alpha', tick: 900 }

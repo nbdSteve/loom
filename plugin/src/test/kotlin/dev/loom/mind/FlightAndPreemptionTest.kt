@@ -134,9 +134,9 @@ class FlightAndPreemptionTest {
         decisions.getValue("zombie").complete(decisionFor(zombie, Intent.Flee("e2")))
         main.drain()
         assertEquals(listOf<String?>("zombie"), applied)
-        assertEquals(
-            listOf("creeper"),
-            records.filter { it.event == dev.loom.body.BodyEvent.DECISION_DISCARDED }.map { it.requestId },
-        )
+        val discarded = records.filter { it.event == dev.loom.body.BodyEvent.DECISION_DISCARDED }
+        assertEquals(listOf("creeper"), discarded.map { it.requestId })
+        // Typed, so the run guard reads it as a preemption and never as a body that has gone.
+        assertEquals(listOf<String?>(dev.loom.body.EventTag.DANGER_PREEMPTED), discarded.map { it.outcome })
     }
 }

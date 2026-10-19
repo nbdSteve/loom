@@ -10,6 +10,14 @@ const COGNITION_COALESCED = 'cognitionCoalesced'
 // scheduled reviews (`CallReserve`). Also deliberately not asked.
 const CALL_RESERVED = 'callReserved'
 
+// A danger decision the JVM discarded unapplied because newer damage preempted it while it was
+// with the mind: answered and billed, and superseded by the newer answer.
+const DANGER_PREEMPTED = 'dangerPreempted'
+
+function isPreempted (record) {
+  return record.event === 'decisionDiscarded' && record.outcome === DANGER_PREEMPTED
+}
+
 function isCoalesced (record) {
   return record.event === 'cognitionUnavailable' &&
     [DANGER_COALESCED, COGNITION_COALESCED, CALL_RESERVED].includes(record.outcome)
@@ -46,10 +54,13 @@ function dangerEpisodeMetrics (bodyRecords) {
     byAgent[record.agentId] = (byAgent[record.agentId] ?? 0) + 1
     byTrigger[record.trigger ?? 'unattested'] = (byTrigger[record.trigger ?? 'unattested'] ?? 0) + 1
   }
+  // Stated only when newer damage preempted an answer, so earlier evidence re-derives unchanged.
+  const preempted = bodyRecords.filter(isPreempted).length
   return {
     coalesced: coalesced.length,
     byAgent: Object.fromEntries(Object.entries(byAgent).sort()),
-    byTrigger: Object.fromEntries(Object.entries(byTrigger).sort())
+    byTrigger: Object.fromEntries(Object.entries(byTrigger).sort()),
+    ...(preempted === 0 ? {} : { preempted })
   }
 }
 
@@ -76,6 +87,8 @@ module.exports = {
   COGNITION_SHUTDOWN,
   cognitionCoalescingMetrics,
   DANGER_COALESCED,
+  DANGER_PREEMPTED,
+  isPreempted,
   dangerEpisodeMetrics,
   CALL_RESERVED,
   isCoalesced,

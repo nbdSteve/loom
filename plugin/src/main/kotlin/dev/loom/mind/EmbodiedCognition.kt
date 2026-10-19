@@ -200,7 +200,7 @@ class EmbodiedCognition(
                     supersededNow -> {
                         danger.settled(agentId, decision.requestId, fled = false)
                         bodies.held.release(agentId, decision.requestId)
-                        journal.discarded(agentId, decision)
+                        journal.preempted(agentId, decision)
                         callbacks.onApplied(AppliedDecision(decision, IntentOutcome.NoSuchBody))
                     }
                     // An answer for an agent that died while the mind was deciding is no decision
