@@ -311,6 +311,11 @@ class GoalPursuitEndToEndTest {
             world.awaitApplied(review)
         }
         val horizon = world.mind.seen[0].horizon.associateBy { it.what }
+        // The perceived record is the perception as the mind was shown it, horizon and all (r23:
+        // every perceived record carried no horizon).
+        val recorded = world.records.first { it.event == BodyEvent.PERCEIVED }.perception
+        assertEquals(world.mind.seen[0].horizon, recorded?.horizon)
+        assertEquals(world.mind.seen[0].importance, recorded?.importance)
         assertEquals(setOf(LOG), horizon.keys, "the dirt beside the feet grounds nothing: $horizon")
         assertEquals(1L + dev.loom.mind.HORIZON_SPAN, horizon.getValue(LOG).most)
         assertTrue(horizon.getValue(LOG).frontier)

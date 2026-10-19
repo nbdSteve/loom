@@ -241,3 +241,67 @@ class BodyEventJournal(
         )
     }
 }
+
+/**
+ * Perception records held until the mind is shown their perception, so each is written as shown:
+ * classified, and with its horizon (r23: every perceived record read ROUTINE and carried no
+ * horizon, because it was written before either). A perception the mind is never shown is written
+ * as captured when its request ends, and the oldest beyond [MAX_PENDING_PERCEPTIONS] the same way,
+ * so no perception goes unrecorded. Main thread only.
+ */
+class PendingPerceptions(
+    private val journal: BodyEventJournal,
+) {
+    /** What a perception record says beside the perception itself. */
+    data class Captured(
+        val detail: String,
+        val audit: PerceptionAudit,
+        val vitals: AgentVitals?,
+    )
+
+    private class Pending(
+        val agentId: AgentId,
+        val perception: Perception,
+        val captured: Captured,
+        val after: () -> Unit,
+    )
+
+    private val pending = linkedMapOf<String, Pending>()
+
+    /** Holds [perception]'s record until [shown] or [release] writes it, then runs [after]. */
+    fun hold(
+        agentId: AgentId,
+        perception: Perception,
+        captured: Captured,
+        after: () -> Unit = {},
+    ) {
+        pending[perception.requestId] = Pending(agentId, perception, captured, after)
+        while (pending.size > MAX_PENDING_PERCEPTIONS) write(pending.keys.first(), null)
+    }
+
+    /** Writes the record of the perception [shown] is, as the mind is shown it. */
+    fun shown(shown: Perception) = write(shown.requestId, shown)
+
+    /** Writes the record of [requestId]'s perception as captured, if the mind was never shown it. */
+    fun release(requestId: String) = write(requestId, null)
+
+    private fun write(
+        requestId: String,
+        shown: Perception?,
+    ) {
+        val held = pending.remove(requestId) ?: return
+        val captured = held.captured
+        journal.recordPerception(
+            held.agentId,
+            captured.detail,
+            shown ?: held.perception,
+            captured.audit,
+            captured.vitals,
+        )
+        held.after()
+    }
+
+    private companion object {
+        const val MAX_PENDING_PERCEPTIONS = 64
+    }
+}

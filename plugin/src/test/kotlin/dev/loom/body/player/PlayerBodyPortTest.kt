@@ -578,6 +578,7 @@ class PlayerBodyPortTest {
 
         val movementPerception =
             requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        harness.port.held.shown(agent, movementPerception)
         assertEquals(18.0, movementPerception.selfState.health)
         assertEquals(6, movementPerception.selfState.food)
         assertEquals(1.5, movementPerception.selfState.saturation)
@@ -613,6 +614,7 @@ class PlayerBodyPortTest {
 
         val eatingPerception =
             requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        harness.port.held.shown(agent, eatingPerception)
         val stack = eatingPerception.selfState.inventorySummary.single()
         val eatOutcome =
             harness.port
@@ -1128,6 +1130,8 @@ class PlayerSceneSelectionIntegrationTest {
         val first = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
         val entity = first.surroundings.first { it.kind == ObservationKind.ENTITY }
         val item = first.surroundings.first { it.kind == ObservationKind.DROPPED_ITEM }
+        // The record is written as the mind is shown the perception, as cognition shows it.
+        harness.port.held.shown(agent, first)
         assertCrowdedAudit(harness, first.requestId)
         assertEquals(PERCEPTION_MAX_OBSERVATIONS, first.surroundings.size)
         for (kind in ObservationKind.entries) {

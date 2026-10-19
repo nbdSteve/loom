@@ -11,6 +11,7 @@ import dev.loom.body.BodySpawnResult
 import dev.loom.body.EventTag
 import dev.loom.body.HeldPerceptions
 import dev.loom.body.IntentOutcome
+import dev.loom.body.PendingPerceptions
 import dev.loom.body.ThreatWatch
 import dev.loom.body.completedBodyOperation
 import dev.loom.contract.Intent
@@ -97,6 +98,13 @@ class PlayerBodyPort(
                 instances[agentId]?.release(agentId, requestId)
             }
 
+            override fun shown(
+                agentId: AgentId,
+                perception: Perception,
+            ) {
+                instances[agentId]?.perceptions?.shown(perception)
+            }
+
             override fun unsent(
                 agentId: AgentId,
                 perception: Perception,
@@ -170,6 +178,9 @@ private class PlayerBodyInstance(
     /** This agent's threat watch, so a sighting that never reached the mind is refunded. */
     val threatWatch: ThreatWatch get() = context.threatWatch
 
+    /** This agent's held perception records, written as the mind is shown each. */
+    val perceptions: PendingPerceptions get() = context.perceptions
+
     fun spawn(agentId: AgentId): CompletionStage<BodySpawnResult> = lifecycle.spawn(agentId)
 
     fun despawn(agentId: AgentId): CompletionStage<Boolean> = lifecycle.despawn(agentId)
@@ -190,7 +201,10 @@ private class PlayerBodyInstance(
     fun release(
         agentId: AgentId,
         requestId: String,
-    ) = sessions.settle(agentId, requestId, expected = null)
+    ) {
+        context.perceptions.release(requestId)
+        sessions.settle(agentId, requestId, expected = null)
+    }
 
     fun tick(tick: Long) {
         lifecycle.tick(tick)

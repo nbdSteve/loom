@@ -10,6 +10,7 @@ import dev.loom.body.BodyInspection
 import dev.loom.body.BodyLifecycle
 import dev.loom.body.BodySpawnResult
 import dev.loom.body.EventTag
+import dev.loom.body.PendingPerceptions
 import dev.loom.body.RequestRefs
 import dev.loom.body.ThreatClock
 import dev.loom.body.ThreatWatch
@@ -60,6 +61,7 @@ internal class PlayerBodyContext(
 ) {
     var closing = false
     val journal = BodyEventJournal(authority.eventLog, authority.currentTick)
+    val perceptions = PendingPerceptions(journal)
     val refs = RequestRefs()
     val routeRefusals = RouteRefusals(authority.currentTick)
     val recall = SourceRecall(authority.currentTick)

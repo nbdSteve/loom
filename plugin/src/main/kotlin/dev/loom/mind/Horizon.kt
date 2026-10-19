@@ -21,6 +21,7 @@ import dev.loom.contract.MAX_HORIZON_GOALS
 import dev.loom.contract.MAX_SUCCESS_COUNT
 import dev.loom.contract.ObservationKind
 import dev.loom.contract.Perception
+import dev.loom.contract.reviewsGoal
 import kotlin.math.sqrt
 
 /** How far past what its grounding gives a horizon goal's total may reach. */
@@ -54,6 +55,10 @@ fun horizonOf(
     perception: Perception,
     recipes: RecipeInputs,
 ): List<HorizonGoal> = HorizonBuilder(perception, recipes).build()
+
+/** [this] as a goal review is shown it, with its horizon; any other perception as it is. */
+fun Perception.withHorizon(recipes: RecipeInputs): Perception =
+    if (trigger.reviewsGoal) copy(horizon = horizonOf(this, recipes)) else this
 
 /** One perception's horizon, assembled in its order of preference. */
 private class HorizonBuilder(

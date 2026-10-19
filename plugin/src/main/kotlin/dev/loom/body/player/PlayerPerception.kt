@@ -9,6 +9,7 @@ import dev.loom.body.BODY_SENSE_MAX_OFFERS_PER_KIND
 import dev.loom.body.BodyEvent
 import dev.loom.body.EventTag
 import dev.loom.body.PERCEPTION_RADIUS_BLOCKS
+import dev.loom.body.PendingPerceptions
 import dev.loom.body.blocksApart
 import dev.loom.body.completedBodyOperation
 import dev.loom.body.tagOf
@@ -202,20 +203,16 @@ internal class PlayerPerception(
                 PLAYER_HEALTH_CAPACITY,
             )
         context.vitalsWatch.noted(agentId, food)
-        context.journal.recordPerception(
-            agentId = agentId,
-            detail =
-                "${perception.surroundings.size} observation(s)" +
-                    if (perception.surroundingsOmitted > 0) {
-                        ", ${perception.surroundingsOmitted} more nearby not reported"
-                    } else {
-                        ""
-                    },
-            perception = perception,
-            perceptionAudit = scene.perceptionAudit,
-            vitals = food,
+        val omitted = perception.surroundingsOmitted
+        val detail =
+            "${perception.surroundings.size} observation(s)" +
+                if (omitted > 0) ", $omitted more nearby not reported" else ""
+        context.perceptions.hold(
+            agentId,
+            perception,
+            PendingPerceptions.Captured(detail, scene.perceptionAudit, food),
+            after = { context.vitalsWatch.recordChanges(agentId, food, health) },
         )
-        context.vitalsWatch.recordChanges(agentId, food, health)
         return perception
     }
 

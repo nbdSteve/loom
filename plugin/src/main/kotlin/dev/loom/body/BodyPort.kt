@@ -196,6 +196,12 @@ fun interface HeldPerceptions {
         perception: Perception,
     ) = Unit
 
+    /** Told the perception the mind is now shown, classified and with its horizon, to record it so. */
+    fun shown(
+        agentId: AgentId,
+        perception: Perception,
+    ) = Unit
+
     companion object {
         /** A body that holds nothing between a perception and its decision. */
         val NONE: HeldPerceptions = HeldPerceptions { _, _ -> }

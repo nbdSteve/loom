@@ -139,6 +139,9 @@ class EmbodiedCognition(
         perception: Perception,
     ) {
         if (shutDown) return
+        // Recorded as shown: classified, a review with its horizon, which the ledger judges against.
+        val shown = perception.withHorizon(goals.recipes)
+        bodies.held.shown(agentId, shown)
         val coalesced =
             when {
                 // The agent is already answering this threat.
@@ -161,20 +164,18 @@ class EmbodiedCognition(
         }
         val carried =
             if (perception.trigger.reviewsGoal) {
-                // The horizon goes on first, so the ledger judges the answer against what was shown.
-                val horizoned = perception.copy(horizon = horizonOf(perception, goals.recipes))
-                horizoned.copy(
+                shown.copy(
                     goal =
                         goals.present(
                             agentId,
                             perception.requestId,
                             perception.capturedTick,
-                            GoalObservation.of(horizoned),
+                            GoalObservation.of(shown),
                         ),
                     lastRefusal = goals.takeRefusal(agentId),
                 )
             } else {
-                perception
+                shown
             }
         inFlight[carried.requestId] = agentId to carried
         mind.submit(carried).whenComplete { decision, failure ->
