@@ -356,6 +356,10 @@ class GoalPursuitEndToEndTest {
         world.awaitDecided(1)
         world.awaitApplied(1)
         world.awaitRecord { it.event == BodyEvent.MOVED }
+        // The walk is a discovery step, followed up at once rather than a cadence later (r24).
+        val until = System.nanoTime() + SETTLE_WAIT_NANOS
+        while (world.settlements.none { it.first == ALPHA } && System.nanoTime() < until) Thread.sleep(POLL_MILLIS)
+        assertTrue(world.settlements.any { (agent, _, owed) -> agent == ALPHA && owed }, "${world.settlements}")
         world.review(ALPHA)
         world.awaitDecided(2)
         world.awaitApplied(2)
