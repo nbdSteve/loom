@@ -158,6 +158,37 @@ data class BodyEventRecord(
     val shown: ShownGoal? = null,
     /** What a flight measured, on [BodyEvent.RETREATING]: how far from its threat it ended and gained. */
     val retreat: RetreatEvidence? = null,
+    /** What an inventory dispute compared, on [BodyEvent.WITNESS_DISPUTED]; see [DisputeEvidence]. */
+    val dispute: DisputeEvidence? = null,
+)
+
+/**
+ * Everything one inventory dispute compared, so a failed run's diagnostic can say why without the
+ * raw evidence: the body's exact claim, the server's inventory when the sense was requested, how
+ * it differed when the answer was audited and at each earlier tick of the lag window, and when
+ * each was read. Every stack is `"slot item count"` and an emptied slot `"slot -"`, item names and
+ * slots only - no position, text or identity.
+ */
+@Serializable
+data class DisputeEvidence(
+    /** The server tick the sense was requested at, and the one its answer was audited at. */
+    val requestTick: Long,
+    val answerTick: Long,
+    /** Wall milliseconds from the request's server reading to the answer's. */
+    val roundTripMillis: Long,
+    val claimed: List<String>,
+    val atRequest: List<String>,
+    /** The slots that differed from [atRequest] when the answer was audited. */
+    val atAnswer: List<String>,
+    /** The window's earlier server readings, oldest first, each as its slots that differ from [atRequest]. */
+    val earlier: List<EarlierInventory>,
+)
+
+/** One earlier server reading of a lag window: its tick and the slots that differ from the request's. */
+@Serializable
+data class EarlierInventory(
+    val tick: Long,
+    val changed: List<String>,
 )
 
 /**

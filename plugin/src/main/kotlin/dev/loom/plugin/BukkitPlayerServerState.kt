@@ -18,7 +18,8 @@ import dev.loom.witness.Around
 import dev.loom.witness.BodyClaim
 import dev.loom.witness.ClaimAudit
 import dev.loom.witness.DurablePermadeath
-import dev.loom.witness.ObservedStack
+import dev.loom.witness.InventoryAt
+import dev.loom.witness.ReadingTimes
 import dev.loom.witness.ServerReading
 import dev.loom.witness.WITNESS_LAG_TICKS
 import dev.loom.witness.bukkit.playerStandingOf
@@ -37,7 +38,10 @@ private data class BukkitSenseAuditSnapshot(
     val username: String,
     val reading: ServerReading,
     /** The player's inventory at each of the last [WITNESS_LAG_TICKS] ticks before the request, oldest first. */
-    val recent: List<List<ObservedStack>> = emptyList(),
+    val recent: List<InventoryAt> = emptyList(),
+    /** The server tick and wall nanoseconds the request's reading was taken at. */
+    val tick: Long = 0,
+    val nanos: Long = 0,
 ) : SenseAuditSnapshot
 
 /** One server entity reduced to the facts needed to correlate a client reading. */
@@ -62,12 +66,12 @@ class BukkitPlayerServerState(
     private val interactionAuditor = BukkitInteractionAuditor(server, interactionEvents)
 
     /** Each audited player's inventory at its last few ticks, newest last; main thread only. */
-    private val history = mutableMapOf<UUID, ArrayDeque<List<ObservedStack>>>()
+    private val history = mutableMapOf<UUID, ArrayDeque<InventoryAt>>()
 
     override val onTick: () -> Unit = {
         history.entries.removeIf { (uuid, readings) ->
             val player = server.getPlayer(uuid) ?: return@removeIf true
-            readings.addLast(serverReadingOf(player).inventory)
+            readings.addLast(InventoryAt(server.currentTick.toLong(), serverReadingOf(player).inventory))
             while (readings.size > WITNESS_LAG_TICKS) readings.removeFirst()
             false
         }
@@ -135,6 +139,8 @@ class BukkitPlayerServerState(
             username = player.name,
             reading = serverReadingOf(player),
             recent = recent.toList(),
+            tick = server.currentTick.toLong(),
+            nanos = System.nanoTime(),
         )
     }
 
@@ -152,7 +158,16 @@ class BukkitPlayerServerState(
             reading = captured.reading,
             // Inventory agrees with the reading from before the request or this one, taken when
             // the answer is audited; vitals are compared with the span between the two.
-            around = Around(server.getPlayer(identity.uuid)?.let(::serverReadingOf), captured.recent),
+            around =
+                Around(
+                    server.getPlayer(identity.uuid)?.let(::serverReadingOf),
+                    captured.recent,
+                    ReadingTimes(
+                        captured.tick,
+                        server.currentTick.toLong(),
+                        (System.nanoTime() - captured.nanos) / NANOS_PER_MILLI,
+                    ),
+                ),
         )
     }
 
@@ -273,3 +288,5 @@ private fun squaredDistance(
         val delta = a - b
         delta * delta
     }
+
+private const val NANOS_PER_MILLI = 1_000_000L

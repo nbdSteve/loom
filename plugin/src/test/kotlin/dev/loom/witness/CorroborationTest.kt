@@ -152,7 +152,7 @@ class CorroborationTest {
         val logs = listOf(ObservedStack(slot = 36, what = "oak_log", count = 2))
         val atAnswer = ServerReading(observed, logs)
         assertIs<Corroboration.Disputed>(corroborate(vitals, emptyList(), observed, logs, Around(atAnswer)))
-        val earlier = listOf(emptyList<ObservedStack>(), logs)
+        val earlier = listOf(InventoryAt(3_127, emptyList()), InventoryAt(3_128, logs))
         assertEquals(Corroboration.Agreed, corroborate(vitals, emptyList(), observed, logs, Around(atAnswer, earlier)))
         // A stack the server held at no moment of the window is still invented.
         val invented = listOf(SensedStack(slot = 36, what = "oak_log", count = 3))
@@ -375,6 +375,43 @@ class CorroborationTest {
         assertTrue(written.length <= MAX_WITNESS_DETAIL_CHARS, written)
         assertContains(written, "${invented.size} disagreed")
         assertContains(written, "$FIRST_CORROBORABLE_SLOT claimed stacks outside the comparison")
+    }
+
+    @Test
+    fun aDisputeRecordsTheClaimTheReadingsAndTheWindowItWasComparedWith() {
+        // r26's dispute left only its tag, and its cause could only be inferred.
+        val logs = listOf(ObservedStack(slot = 36, what = "oak_log", count = 2))
+        val stick = listOf(ObservedStack(slot = 37, what = "stick", count = 1))
+        val found =
+            under.claims.sawClaim(
+                scout.uuid,
+                scout.username,
+                BodyClaim(WELL_FED, listOf(SensedStack(36, "oak_log", 5))),
+                ServerReading(WELL_FED_TRUTH, logs),
+                Around(
+                    after = ServerReading(WELL_FED_TRUTH, logs + stick),
+                    earlier = listOf(InventoryAt(3_127, emptyList()), InventoryAt(3_128, logs)),
+                    timing = ReadingTimes(requestTick = 3_129, answerTick = 3_131, roundTripMillis = 74),
+                ),
+            )
+        assertIs<Corroboration.Disputed>(found)
+        val evidence = requireNotNull(disputes().single().dispute)
+        assertEquals(
+            dev.loom.body.DisputeEvidence(
+                requestTick = 3_129,
+                answerTick = 3_131,
+                roundTripMillis = 74,
+                claimed = listOf("36 oak_log 5"),
+                atRequest = listOf("36 oak_log 2"),
+                atAnswer = listOf("37 stick 1"),
+                earlier =
+                    listOf(
+                        dev.loom.body.EarlierInventory(3_127, listOf("36 -")),
+                        dev.loom.body.EarlierInventory(3_128, emptyList()),
+                    ),
+            ),
+            evidence,
+        )
     }
 
     @Test

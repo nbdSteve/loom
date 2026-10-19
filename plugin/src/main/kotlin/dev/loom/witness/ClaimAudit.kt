@@ -66,7 +66,12 @@ class ClaimAudit(
                 around = around,
             )
         if (found is Corroboration.Disputed) {
-            journal.disputed(subjectOf(identity.agentId, uuid, username), found, currentTick())
+            journal.disputed(
+                subjectOf(identity.agentId, uuid, username),
+                found,
+                currentTick(),
+                disputeEvidenceOf(claim, reading, around),
+            )
         }
         return found
     }

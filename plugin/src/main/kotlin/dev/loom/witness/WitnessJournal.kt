@@ -186,7 +186,10 @@ class WitnessJournal(
         subject: WitnessSubject,
         dispute: Corroboration.Disputed,
         tick: Long,
-    ) = write(subject, BodyEvent.WITNESS_DISPUTED, detailOf(dispute), tick, tagOf(dispute))
+        evidence: dev.loom.body.DisputeEvidence? = null,
+    ) = eventLog.append(
+        recordOf(subject, BodyEvent.WITNESS_DISPUTED, detailOf(dispute), tick, tagOf(dispute)).copy(dispute = evidence),
+    )
 
     /**
      * Records that a body's account of a movement request did not match the server's.
@@ -209,15 +212,21 @@ class WitnessJournal(
         detail: String,
         tick: Long,
         outcome: String? = null,
-    ) = eventLog.append(
-        BodyEventRecord(
-            tick = tick,
-            agentId = subject.agentId.value,
-            event = event,
-            detail = boundedDetail(detail),
-            outcome = outcome,
-            witness = subject.player,
-        ),
+    ) = eventLog.append(recordOf(subject, event, detail, tick, outcome))
+
+    private fun recordOf(
+        subject: WitnessSubject,
+        event: BodyEvent,
+        detail: String,
+        tick: Long,
+        outcome: String?,
+    ) = BodyEventRecord(
+        tick = tick,
+        agentId = subject.agentId.value,
+        event = event,
+        detail = boundedDetail(detail),
+        outcome = outcome,
+        witness = subject.player,
     )
 }
 

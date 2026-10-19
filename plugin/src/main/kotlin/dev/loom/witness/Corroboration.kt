@@ -141,7 +141,22 @@ data class ServerReading(val vitals: ObservedVitals, val inventory: List<Observe
  */
 data class Around(
     val after: ServerReading? = null,
-    val earlier: List<List<ObservedStack>> = emptyList(),
+    val earlier: List<InventoryAt> = emptyList(),
+    /** When the readings were taken: the request's and the answer's server ticks and wall times. */
+    val timing: ReadingTimes? = null,
+)
+
+/** The server's inventory at one tick of a lag window. */
+data class InventoryAt(
+    val tick: Long,
+    val inventory: List<ObservedStack>,
+)
+
+/** The server ticks and wall milliseconds of a claim's request and answer readings. */
+data class ReadingTimes(
+    val requestTick: Long,
+    val answerTick: Long,
+    val roundTripMillis: Long,
 )
 
 /**
@@ -276,7 +291,9 @@ fun corroborate(
     // the claim also agrees with the server as it stood up to [WITNESS_LAG_TICKS] ticks earlier
     // (r26 stopped on gamma's claim that matched the server a moment before a pickup).
     val lagged =
-        recent.any { earlier -> inventoryFaults(checkable, earlier.filter { isCorroborableSlot(it.slot) }).isEmpty() }
+        recent.any { earlier ->
+            inventoryFaults(checkable, earlier.inventory.filter { isCorroborableSlot(it.slot) }).isEmpty()
+        }
     val inventory =
         when {
             before.isEmpty() -> before

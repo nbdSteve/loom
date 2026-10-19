@@ -324,9 +324,48 @@ function nativeReviewWindows (bodyRecords, harnessRecords, config) {
   }
 }
 
+// The inventory disputes a failed run retains in full, the most stacks one list of one may name
+// (the protocol's 46-slot window), and the earlier readings of its lag window (WITNESS_LAG_TICKS).
+const MAX_WITNESS_DISPUTES = 2
+const MAX_DISPUTE_STACKS = 46
+const MAX_DISPUTE_EARLIER = 4
+// One stack of a dispute: "slot item count", or "slot -" for an emptied slot; nothing else is kept.
+const DISPUTE_STACK = /^\d{1,2} (?:[a-z0-9_.:-]{1,64} \d{1,4}|-)$/
+
+function disputeStacks (list) {
+  return Array.isArray(list)
+    ? list.filter((entry) => typeof entry === 'string' && DISPUTE_STACK.test(entry)).slice(0, MAX_DISPUTE_STACKS)
+    : []
+}
+
+// What one inventory dispute compared, as its record states it (`DisputeEvidence` in the plugin):
+// the claim, the server's readings at the request and the answer, the earlier ticks of the lag
+// window, and when each was read - slots, item names and counts only, each checked against
+// [DISPUTE_STACK], so no path, credential or world position can travel in one (r26).
+function witnessDispute (record) {
+  const evidence = record.dispute !== null && typeof record.dispute === 'object' ? record.dispute : {}
+  return {
+    agentId: record.agentId,
+    tick: record.tick,
+    outcome: closedTag(record.outcome, OUTCOME_TAG),
+    requestTick: boundedCount(evidence.requestTick),
+    answerTick: boundedCount(evidence.answerTick),
+    roundTripMillis: boundedCount(evidence.roundTripMillis),
+    claimed: disputeStacks(evidence.claimed),
+    atRequest: disputeStacks(evidence.atRequest),
+    atAnswer: disputeStacks(evidence.atAnswer),
+    earlier: (Array.isArray(evidence.earlier) ? evidence.earlier : []).slice(0, MAX_DISPUTE_EARLIER).map((reading) => ({
+      tick: boundedCount(reading?.tick),
+      changed: disputeStacks(reading?.changed)
+    }))
+  }
+}
+
 function bodySummary (records, configuredAgentIds, crashAfterTick) {
   const outcomes = {}
   const interactionDisputes = []
+  const witnessDisputes = []
+  let witnessDisputesOmitted = 0
   const agents = new Map(
     configuredAgentIds.map((agentId) => [agentId, emptyAgentSummary(agentId)])
   )
@@ -361,6 +400,10 @@ function bodySummary (records, configuredAgentIds, crashAfterTick) {
         record.event === 'worldInteraction' && tag.startsWith('disputed') &&
         agents.has(record.agentId) && interactionDisputes.length < MAX_INTERACTION_DISPUTES
       ) interactionDisputes.push(interactionDispute(record))
+      if (record.event === 'witnessDisputed' && agents.has(record.agentId) && record.dispute !== undefined) {
+        if (witnessDisputes.length < MAX_WITNESS_DISPUTES) witnessDisputes.push(witnessDispute(record))
+        else witnessDisputesOmitted += 1
+      }
     }
     if (record.agentId === 'loom:world') {
       worldRecords += 1
@@ -385,6 +428,8 @@ function bodySummary (records, configuredAgentIds, crashAfterTick) {
     events,
     outcomesByEvent: outcomes,
     interactionDisputes,
+    witnessDisputes,
+    witnessDisputesOmitted,
     agents: [...agents.values()],
     worldRecords,
     unknownAgentRecords,

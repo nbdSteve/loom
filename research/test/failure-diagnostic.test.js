@@ -680,6 +680,79 @@ test('a diagnostic over its bound halves its timeline, newest kept, rather than 
   assert.equal(windows['tribe-alpha'].attempted, 200)
 })
 
+test('a failed run keeps what an inventory dispute compared, bounded and private, under 64 KiB', () => {
+  // r26 stopped on a dispute whose record kept only its tag. The worst case: full timelines, and
+  // three disputes naming every slot of the window in every list, under the longest item name.
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-dispute-diagnostic-'))
+  try {
+    fs.mkdirSync(path.join(directory, 'own'))
+    const files = rawFiles(path.join(directory, 'own'))
+    const item = 'minecraft:wayfinder_armor_trim_smithing_template'
+    const full = Array.from({ length: 46 }, (_, slot) => `${slot} ${item} 64`)
+    const body = []
+    const harness = []
+    for (let index = 0; index < 200; index += 1) {
+      body.push({ tick: index, agentId: 'tribe-alpha', event: 'perceived', trigger: 'goalReview' })
+      harness.push({
+        observedAt: '2026-10-16T00:00:00.000Z',
+        event: 'cognitionForwarded',
+        agentId: 'tribe-alpha',
+        requestId: `r-${index}`,
+        trigger: 'goalReview',
+        origin: 'nativeGoalReviewSchedule',
+        outcome: 'decision',
+        outstandingAtAdmission: 1,
+        latencyMs: index
+      })
+    }
+    const dispute = (tick) => ({
+      tick,
+      agentId: 'tribe-alpha',
+      event: 'witnessDisputed',
+      outcome: 'disputedInventory',
+      detail: `1 disagreed ${SECRET} ${LOCAL_PATH}`,
+      witness: { uuid: '00000000-0000-4000-8000-000000000001', username: 'loom_secret_user' },
+      dispute: {
+        requestTick: tick - 2,
+        answerTick: tick,
+        roundTripMillis: 74,
+        claimed: [...full, `${LOCAL_PATH} 1`, `0 ${SECRET} 1`],
+        atRequest: full,
+        atAnswer: full,
+        earlier: Array.from({ length: 6 }, (_, step) => ({ tick: tick - 6 + step, changed: full })),
+        position: [1.5, 64, -3.25]
+      }
+    })
+    body.push(dispute(3131), dispute(3200), dispute(3300))
+    writeJsonLines(files.bodyFile, body)
+    writeJsonLines(files.harnessFile, harness)
+    writeJsonLines(files.providerUsageFile, [])
+    const retained = retain(directory, { ...files })
+    assert.equal(retained.fallback, false)
+    assert.ok(retained.bytes <= 64 * 1024, `${retained.bytes} bytes`)
+    const kept = retained.diagnostic.body.witnessDisputes
+    assert.equal(kept.length, 2)
+    assert.equal(retained.diagnostic.body.witnessDisputesOmitted, 1)
+    assert.deepEqual(kept[0], {
+      agentId: 'tribe-alpha',
+      tick: 3131,
+      outcome: 'disputedInventory',
+      requestTick: 3129,
+      answerTick: 3131,
+      roundTripMillis: 74,
+      claimed: full,
+      atRequest: full,
+      atAnswer: full,
+      earlier: Array.from({ length: 4 }, (_, step) => ({ tick: 3125 + step, changed: full }))
+    })
+    const text = fs.readFileSync(retained.file, 'utf8')
+    assert.doesNotMatch(text, /loom_secret_user|1\.5|-3\.25/)
+    assertPrivate(retained.file)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('a failed run keeps the closed outcome tags of its failure records', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-outcome-diagnostic-'))
   try {
