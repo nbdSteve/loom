@@ -181,6 +181,15 @@ class SuspensionWatch {
     }
     return null
   }
+
+  /**
+   * The suspension a long gap since the last check shows, else `cause`: a failure that ends a poll
+   * interval spanning a suspension is the suspension's (rehearsal 20: a clamshell sleep's wake
+   * aborted the run as a player leaving, through the loop's own wait, before its check ran).
+   */
+  explain (cause) {
+    return this.check() ?? cause
+  }
 }
 
 module.exports = {

@@ -1108,10 +1108,12 @@ async function runExperiment ({
       return guard.observeBody(body)
     }
     const suspension = new SuspensionWatch()
+    // Primary-behavior polls never wait inside the loop but for its own short delay, so a long gap
+    // is the host itself, and whatever ended the interval it spans is the suspension's.
+    const explained = (cause) => isPrimaryBehaviorMode(config) ? suspension.explain(cause) : cause
     while (Date.now() < deadline) {
-      if (controller.signal.aborted) throw controller.signal.reason
-      // Primary-behavior polls never wait inside the loop, so a long gap is the host itself.
-      const suspended = isPrimaryBehaviorMode(config) ? suspension.check() : null
+      if (controller.signal.aborted) throw explained(controller.signal.reason)
+      const suspended = explained(null)
       if (suspended !== null) throw suspended
       if (bodyTail.offset > config.bounds.logBytes) {
         throw new RunFailure('logLimit', 'body evidence exceeded the configured log byte bound')
@@ -1169,7 +1171,11 @@ async function runExperiment ({
         })
         proxy.markControlledBodyCrash(crashAgent.agentId)
       }
-      await delay(Math.min(250, Math.max(1, deadline - Date.now())), controller.signal)
+      try {
+        await delay(Math.min(250, Math.max(1, deadline - Date.now())), controller.signal)
+      } catch (cause) {
+        throw explained(cause)
+      }
     }
     if (controlledStop === undefined && isPrimaryBehaviorMode(config)) {
       pollEvidence()

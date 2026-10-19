@@ -419,6 +419,13 @@ test('a host suspension mid-run is named from the measured clock gap, not blamed
   assert.equal(failure.code, 'hostSuspended')
   assert.equal(failure.stopReason, 'startupFailed')
   assert.match(failure.message, /suspended for 422 s/)
+  // A failure that ends an interval spanning a suspension is the suspension's; one that does not
+  // is its own (rehearsal 20: the wake aborted the run as a player leaving).
+  const left = new Error('a managed player left the server during the run')
+  now += 250
+  assert.equal(watch.explain(left), left)
+  now += 941_000
+  assert.equal(watch.explain(left).code, 'hostSuspended')
 })
 
 test('a primary behavior run holds native cognition until its initial conditions are applied', () => {
