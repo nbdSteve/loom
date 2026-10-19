@@ -107,7 +107,7 @@ class GoalScenarioEndToEndTest {
                 put("what", "zombie")
                 put("x", 8.5)
                 put("y", 64.0)
-                put("z", 14.5)
+                put("z", 17.5)
             }
         val scene =
             Scene(

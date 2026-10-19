@@ -1461,3 +1461,62 @@ fn a_mandatory_discovery_never_suppresses_a_survival_response() {
         );
     }
 }
+
+#[test]
+fn immediate_danger_withholds_every_non_survival_action_and_a_weak_body_is_offered_no_attack() {
+    // r24: seven reviews beside a near hunter dug, crafted or walked; delta's attack at 8.5 met the
+    // 4.5 floor by the time it arrived.
+    let flee = json!({ "action": "flee", "from": "e7" });
+    let attack = json!({ "action": "attack", "target": "e7", "weapon": "i8", "attacks": 2, "approach": false });
+    let dig = json!({ "action": "dig", "block": "b9" });
+    let hunted = beside_a_hunter(with_bush(with_edge(fixture("perception-goal-review"))));
+    for seen in [hunted.clone(), {
+        let mut event = hunted.clone();
+        event.trigger = loom_contract::Trigger::Damaged {
+            amount: 2,
+            source: "zombie".to_owned(),
+        };
+        event
+    }] {
+        let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        assert!(validator.is_valid(&answer_in(&schema, &flee, &json!(null))));
+        assert!(validator.is_valid(&answer_in(&schema, &attack, &json!(null))));
+        assert!(
+            !validator.is_valid(&answer_in(&schema, &dig, &json!(null))),
+            "{:?}",
+            seen.trigger
+        );
+        assert!(!validator.is_valid(&answer_in(
+            &schema,
+            &json!({ "action": "idle" }),
+            &json!(null)
+        )));
+    }
+    let mut weak = hunted;
+    weak.self_state.health =
+        loom_cognition::offered::ATTACK_MIN_HEALTH + loom_cognition::offered::ATTACK_HEALTH_MARGIN;
+    let schema = decision_schema_for(&OfferedRefs::of(&weak), GoalPhase::of(&weak));
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    assert!(
+        !validator.is_valid(&answer_in(&schema, &attack, &json!(null))),
+        "the floor would refuse it"
+    );
+    assert!(validator.is_valid(&answer_in(&schema, &flee, &json!(null))));
+}
+
+#[test]
+fn a_ranged_hunter_in_bow_range_is_immediate_where_a_melee_one_is_not() {
+    let mut seen = holding_bread(with_edge(fixture("perception-goal-review")));
+    let mut skeleton = beside_a_hunter(fixture("perception-goal-review"))
+        .surroundings
+        .pop()
+        .unwrap();
+    skeleton.what = "entity.minecraft.skeleton".to_owned();
+    skeleton.distance = 12.0;
+    seen.surroundings.push(skeleton.clone());
+    assert!(OfferedRefs::of(&seen).in_immediate_danger());
+    skeleton.what = "entity.minecraft.zombie".to_owned();
+    *seen.surroundings.last_mut().unwrap() = skeleton;
+    assert!(!OfferedRefs::of(&seen).in_immediate_danger());
+}

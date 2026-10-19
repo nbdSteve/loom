@@ -1253,7 +1253,10 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
     });
     let offer = goal_offer(phase, offered);
     let mut defs = offered.map_or_else(|| json!({}), namespace_defs);
-    let mut schema = if let Some(refs) = offered.filter(|_| phase.coupled()) {
+    let immediate = offered.filter(|refs| refs.in_immediate_danger() && phase != GoalPhase::Any);
+    let mut schema = if let Some(refs) = immediate {
+        survival_schema(refs, &reasoning, &mut defs)
+    } else if let Some(refs) = offered.filter(|_| phase.coupled()) {
         coupled_schema(variants, &offer, refs, &reasoning, &mut defs)
     } else {
         let choices = offer.all();
@@ -1277,6 +1280,36 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
 }
 
 const INTENT_DESCRIPTION: &str = "The single action the body should take now.";
+
+/// The answer while a hunter is immediate danger: a survival response alone, with no goal choice,
+/// in a goal review and an event alike (r24: seven reviews beside a near hunter dug, crafted or
+/// walked, delta's beside a spider 6.8 blocks off). The goal, if any, is deferred, not answered.
+fn survival_schema(offered: &OfferedRefs, reasoning: &Value, defs: &mut Value) -> Value {
+    let intents = defs
+        .as_object_mut()
+        .and_then(|table| survival_intents(offered, table))
+        .unwrap_or_else(|| json!([]));
+    json!({
+        "type": "object",
+        "properties": {
+            "decision": {
+                "description": "The survival response the body should take now; a hunter is upon you.",
+                "anyOf": [{
+                    "type": "object",
+                    "properties": {
+                        "intent": { "description": INTENT_DESCRIPTION, "anyOf": intents },
+                        "goal": goal_field(&[json!({ "type": "null" })]),
+                    },
+                    "required": ["intent", "goal"],
+                    "additionalProperties": false,
+                }],
+            },
+            "reasoning": reasoning,
+        },
+        "required": ["decision", "reasoning"],
+        "additionalProperties": false,
+    })
+}
 
 /// A goal review's answer: one `decision` that pairs an intent with a goal choice it may travel
 /// with. A choice that takes the intent as the goal's step is offered only beside one of its own

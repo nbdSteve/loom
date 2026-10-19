@@ -602,6 +602,21 @@ impl ScriptedBackend {
     /// lies in reach, as the body requires; else dig the nearest offered block that can drop
     /// something, the held goal's item first; else do nothing.
     fn review_step(route: &ModelRoute, perception: &Perception) -> Draft {
+        // A hunter upon the agent is answered first, by a flight from the nearest one.
+        if let Some(from) = crate::offered::OfferedRefs::of(perception)
+            .immediate
+            .first()
+            .cloned()
+        {
+            return Draft {
+                goal: None,
+                intent: Intent::Flee { from },
+                reasoning: format!(
+                    "reviewed goals at the {tier:?} tier; something that hunts my kind is upon me, so flee first",
+                    tier = route.tier()
+                ),
+            };
+        }
         if let Some((item, approach)) = own_goal_drop(perception) {
             return Draft {
                 goal: None,

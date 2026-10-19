@@ -163,11 +163,14 @@ class DiscoveryTest {
             GoalEvidence.DEFERRED,
             ledger.answer(hunted.copy(requestId = "r1b"), Intent.Attack("e1", "i1", 2, false), null)?.outcome,
         )
-        // A fed meal is no survival response, and a hungry one is.
+        // A fed meal is no survival response: beside the zombie it is withheld, and away from one it
+        // leaves the discovery unaddressed. A hungry meal is one.
         assertEquals(
-            GoalEvidence.UNADDRESSED,
+            GoalEvidence.SURVIVAL_REQUIRED,
             ledger.answer(hunted.copy(requestId = "r1c"), Intent.Eat("i1"), null)?.outcome,
         )
+        val fedAlone = scene("r1e", 100, 0.0, underfoot).fed(20)
+        assertEquals(GoalEvidence.UNADDRESSED, ledger.answer(fedAlone, Intent.Eat("i1"), null)?.outcome)
         val hungry = scene("r1d", 100, 0.0, underfoot).fed(HUNGRY_FOOD_LEVEL.toInt())
         assertEquals(GoalEvidence.DEFERRED, ledger.answer(hungry, Intent.Eat("i1"), null)?.outcome)
         // Held, it is deferred the same way, and nothing else steps aside from it.
@@ -183,7 +186,7 @@ class DiscoveryTest {
                 GoalObservation.of(walked),
             )?.progress?.stepsWithoutProgress
         ledger.forget(agent, "probe")
-        assertEquals(GoalEvidence.CHOICE_MISSING, ledger.answer(walked, Intent.Dig("g1"), null)?.outcome)
+        assertEquals(GoalEvidence.SURVIVAL_REQUIRED, ledger.answer(walked, Intent.Dig("g1"), null)?.outcome)
         assertEquals(
             GoalEvidence.DEFERRED,
             ledger.answer(walked.copy(requestId = "r3b"), Intent.Flee("e1"), null)?.outcome,

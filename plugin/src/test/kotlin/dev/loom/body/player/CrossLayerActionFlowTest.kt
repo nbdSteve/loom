@@ -128,7 +128,8 @@ private fun sceneReport(
         ground = SensedGround(standingIn = "minecraft:air", standingOn = "minecraft:stone"),
         entities =
             listOf(
-                SensedEntity(what = "minecraft:zombie", position = listOf(4.5, 64.0, 2.5), visible = true),
+                // A creature that hunts nothing, so no action here is withheld as danger.
+                SensedEntity(what = "minecraft:pig", position = listOf(4.5, 64.0, 2.5), visible = true),
             ),
         entitiesOmitted = 0,
         blocks =

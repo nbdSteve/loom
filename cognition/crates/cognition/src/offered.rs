@@ -97,6 +97,35 @@ pub const MAX_DANGER_REFS: usize = 4;
 /// JVM's `THREAT_NEAR_BLOCKS`, inside which an unseen hunter is news.
 pub const DANGER_UNSEEN_BLOCKS: f64 = 8.0;
 
+/// How near a hunter in sight is immediate danger, when only a survival response is offered:
+/// `PIVOTAL_THREAT_DISTANCE_BLOCKS` in the JVM.
+pub const IMMEDIATE_DANGER_BLOCKS: f64 = 8.0;
+
+/// How near an unseen hunter is immediate danger.
+pub const IMMEDIATE_UNSEEN_BLOCKS: f64 = 4.0;
+
+/// How far off a ranged hunter in sight can already hit: `RANGED_THREAT_BLOCKS` in the JVM.
+pub const RANGED_THREAT_BLOCKS: f64 = 16.0;
+
+/// The creatures that hunt the agent's kind from range: `RANGED_HUNTERS` in the JVM.
+pub const RANGED_HUNTERS: [&str; 6] = [
+    "entity.minecraft.skeleton",
+    "entity.minecraft.stray",
+    "entity.minecraft.bogged",
+    "entity.minecraft.pillager",
+    "entity.minecraft.witch",
+    "entity.minecraft.blaze",
+];
+
+/// The health at or below which the body refuses to start an attack: `COMBAT_MIN_HEALTH` in the
+/// JVM's `PlayerSurvivalPreparer.kt`.
+pub const ATTACK_MIN_HEALTH: f64 = 4.5;
+
+/// The health a hunter can take off while the mind decides - two bites of two - which an attack
+/// must leave above [`ATTACK_MIN_HEALTH`] to be offered at all (r24: delta was perceived at 8.5,
+/// bitten to 4.5 during its decision, and its attack was refused).
+pub const ATTACK_HEALTH_MARGIN: f64 = 4.0;
+
 /// The vanilla food level at or below which a goal review may eat before any goal step: the one
 /// survival threshold Loom configures, `HUNGRY_FOOD_LEVEL` in the JVM's `Survival.kt`.
 pub const HUNGRY_FOOD_LEVEL: i64 = 7;
@@ -230,6 +259,10 @@ pub struct OfferedRefs {
     pub held_total: Option<i64>,
     /// Where a goal review stands with a discovery goal.
     pub discovery: Discovery,
+    /// The hunters that are immediate danger - in sight within [`IMMEDIATE_DANGER_BLOCKS`], a ranged
+    /// one within [`RANGED_THREAT_BLOCKS`], unseen within [`IMMEDIATE_UNSEEN_BLOCKS`], or any near
+    /// hunter when the agent was just hurt: only a survival response is offered while one stands.
+    pub immediate: Vec<String>,
     /// The stacks a goal review may eat from before any goal step: every offered stack while its
     /// food is at or below [`HUNGRY_FOOD_LEVEL`], and none otherwise.
     pub meals: Vec<String>,
@@ -260,6 +293,32 @@ impl OfferedRefs {
     #[must_use]
     pub fn discovering(&self) -> bool {
         self.discovery == Discovery::Pursued
+    }
+
+    /// What a perception's danger and hunger make of its survival offer: just hurt, every near
+    /// hunter is immediate; an attack the body would refuse by the time it arrives is not offered;
+    /// and while hungry every stack is a meal.
+    fn survival(&mut self, perception: &Perception) {
+        let state = &perception.self_state;
+        let offered = self;
+        // Just hurt beside a hunter, every near hunter is immediate.
+        if matches!(perception.trigger, Trigger::Damaged { .. }) {
+            offered.immediate.clone_from(&offered.danger);
+        }
+        // An attack the body would refuse by the time it arrives is not offered.
+        if state.health <= ATTACK_MIN_HEALTH + ATTACK_HEALTH_MARGIN {
+            offered.strike_targets.clear();
+            offered.pursuit_targets.clear();
+        }
+        if perception.trigger.reviews_goal() && state.food <= HUNGRY_FOOD_LEVEL {
+            offered.meals.clone_from(&offered.stacks);
+        }
+    }
+
+    /// Whether only a survival response may be offered: an immediate hunter stands near.
+    #[must_use]
+    pub fn in_immediate_danger(&self) -> bool {
+        !self.immediate.is_empty()
     }
 
     /// Whether `intent` is a survival response this review may take with no goal choice: a flight
@@ -522,9 +581,7 @@ impl OfferedRefs {
         for option in state.crafting_options.iter().take(MAX_CRAFTING_LINES) {
             offer(&mut offered.recipes, &option.recipe_ref);
         }
-        if perception.trigger.reviews_goal() && state.food <= HUNGRY_FOOD_LEVEL {
-            offered.meals.clone_from(&offered.stacks);
-        }
+        offered.survival(perception);
         let totals = totals_of(perception, sources);
         // What sight can be counted on for is the expected yield, whole items only: a block's best
         // case is luck (r16: four goals sized to every bush's most, three of them failed).
@@ -847,6 +904,15 @@ impl OfferedRefs {
             && self.danger.len() < MAX_DANGER_REFS;
         if danger {
             offer(&mut self.danger, &seen.target_ref);
+            let ranged = seen.visible && RANGED_HUNTERS.contains(&seen.what.as_str());
+            let reach = match (seen.visible, ranged) {
+                (true, true) => RANGED_THREAT_BLOCKS,
+                (true, false) => IMMEDIATE_DANGER_BLOCKS,
+                (false, _) => IMMEDIATE_UNSEEN_BLOCKS,
+            };
+            if seen.distance <= reach {
+                offer(&mut self.immediate, &seen.target_ref);
+            }
         }
         if danger || self.creatures.len() < MAX_CREATURE_REFS {
             self.creature(&seen.target_ref, seen.distance);

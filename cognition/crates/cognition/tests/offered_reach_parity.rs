@@ -103,10 +103,37 @@ fn interaction_reach_is_measured_from_the_eyes_the_body_measures_from() {
 
 #[test]
 fn every_survival_bound_is_the_one_the_jvm_ledger_defers_a_goal_by() {
-    use loom_cognition::offered::{DANGER_SIGHT_BLOCKS, DANGER_UNSEEN_BLOCKS, HUNGRY_FOOD_LEVEL};
+    use loom_cognition::offered::{
+        ATTACK_MIN_HEALTH, DANGER_SIGHT_BLOCKS, DANGER_UNSEEN_BLOCKS, HUNGRY_FOOD_LEVEL,
+        IMMEDIATE_DANGER_BLOCKS, RANGED_THREAT_BLOCKS,
+    };
     let survival = "plugin/src/main/kotlin/dev/loom/mind/Survival.kt";
     #[allow(clippy::cast_precision_loss)]
     let hungry = HUNGRY_FOOD_LEVEL as f64;
+    let pairs = [
+        (
+            "plugin/src/main/kotlin/dev/loom/body/player/PlayerSurvivalPreparer.kt",
+            "COMBAT_MIN_HEALTH",
+            ATTACK_MIN_HEALTH,
+        ),
+        (
+            "plugin/src/main/kotlin/dev/loom/mind/Importance.kt",
+            "RANGED_THREAT_BLOCKS",
+            RANGED_THREAT_BLOCKS,
+        ),
+        (
+            "plugin/src/main/kotlin/dev/loom/body/ThreatWatch.kt",
+            "PIVOTAL_THREAT_DISTANCE_BLOCKS",
+            IMMEDIATE_DANGER_BLOCKS,
+        ),
+    ];
+    for (file, name, mind) in pairs {
+        let jvm = constant(file, name);
+        assert!(
+            (jvm - mind).abs() < f64::EPSILON,
+            "{name}: JVM {jvm}, mind {mind}"
+        );
+    }
     for (name, mind) in [
         ("HUNGRY_FOOD_LEVEL", hungry),
         ("DANGER_SIGHT_BLOCKS", DANGER_SIGHT_BLOCKS),

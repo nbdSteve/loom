@@ -188,7 +188,7 @@ class EmbodiedCognition(
                             agentId,
                             decision,
                             carried.shownGoal(),
-                            answersDanger = dangerKeyOf(carried.trigger) != null,
+                            carried,
                         )
                 }
             }
@@ -310,16 +310,18 @@ class EmbodiedCognition(
         agentId: AgentId,
         decision: Decision,
         shown: ShownGoal?,
-        answersDanger: Boolean = false,
+        carried: Perception? = null,
     ) {
         val goal = goals.resolve(agentId, decision)
         journal.decided(agentId, decision, goal, shown)
+        val answersDanger = carried != null && dangerKeyOf(carried.trigger) != null
+        val refusing = refusalOf(goal, carried, decision.intent)
         // A decision incoherent with its own goal is refused here, before the body is asked:
         // its typed step is not its intent, or it ignored a met success condition.
-        if (goal != null && goal.outcome in GoalEvidence.REFUSING) {
-            val refused = IntentOutcome.Rejected("the decision contradicts its own goal: ${goal.outcome}", goal.outcome)
-            journal.refused(agentId, decision, goal.outcome)
-            goals.stepped(agentId, decision.requestId, tagOf(decision.intent), goal.outcome)
+        if (refusing != null) {
+            val refused = IntentOutcome.Rejected("the decision contradicts its own goal or danger: $refusing", refusing)
+            journal.refused(agentId, decision, refusing)
+            goals.stepped(agentId, decision.requestId, tagOf(decision.intent), refusing)
             danger.settled(
                 agentId,
                 decision.requestId,
@@ -439,3 +441,17 @@ private fun GoalLedger.carried(
     } else {
         shown
     }
+
+/**
+ * Why a decision is refused before the body acts, or `null`: its own goal refused it, or - in an
+ * event, which carries no goal choice - it took no survival response beside an immediate hunter.
+ */
+private fun refusalOf(
+    goal: GoalEvidence?,
+    carried: Perception?,
+    intent: Intent,
+): String? =
+    goal?.outcome?.takeIf { it in GoalEvidence.REFUSING }
+        ?: EventTag.SURVIVAL_REQUIRED.takeIf {
+            goal == null && carried != null && SurvivalOffer.of(carried).withholds(intent)
+        }

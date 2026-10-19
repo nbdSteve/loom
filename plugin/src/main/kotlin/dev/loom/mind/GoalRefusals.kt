@@ -41,7 +41,8 @@ internal fun incoherenceOf(
     recipes: RecipeInputs = RecipeInputs.NONE,
 ): String? {
     val stepping = choice?.disposition in STEPPING
-    return discoveryRefusalOf(presented, choice, intent, observed)
+    return GoalEvidence.SURVIVAL_REQUIRED.takeIf { observed?.survival?.withholds(intent) == true }
+        ?: discoveryRefusalOf(presented, choice, intent, observed)
         ?: reviseItemOf(presented, choice)
         ?: conditionRefusalOf(presented, choice, intent, observed)
         ?: successRefusalOf(presented, choice, observed)

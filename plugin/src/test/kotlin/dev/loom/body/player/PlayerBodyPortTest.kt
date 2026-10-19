@@ -790,7 +790,10 @@ class PlayerBodyPortTest {
                     CognitionBridge { perception ->
                         val intent =
                             when (perception.agentId) {
-                                "proof-alpha" -> walkOnto(perception)
+                                // A zombie three blocks off is immediate danger: only a survival
+                                // response is taken beside it, and the flight is the proof's action.
+                                "proof-alpha" ->
+                                    Intent.Flee(perception.surroundings.first { it.kind == ObservationKind.ENTITY }.ref)
                                 "proof-beta" ->
                                     Intent.Eat(
                                         perception.selfState.inventorySummary.single().ref,
@@ -828,7 +831,7 @@ class PlayerBodyPortTest {
         assertAgentChain(
             harness.records,
             agents[0],
-            setOf(BodyEvent.PERCEIVED, BodyEvent.DECIDED, BodyEvent.INTENT_APPLIED, BodyEvent.MOVED),
+            setOf(BodyEvent.PERCEIVED, BodyEvent.DECIDED, BodyEvent.INTENT_APPLIED, BodyEvent.RETREATING),
         )
         assertAgentChain(
             harness.records,

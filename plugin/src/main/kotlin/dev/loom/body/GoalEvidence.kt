@@ -210,6 +210,12 @@ data class GoalEvidence(
          */
         const val DISCOVERY_NOT_OFFERED: String = "goalDiscoveryNotOffered"
 
+        /**
+         * A goal review that took no survival response while a hunter was immediate danger: only a
+         * flight, an attack on a hunter or a meal is taken then (r24).
+         */
+        const val SURVIVAL_REQUIRED: String = "goalSurvivalRequired"
+
         /** The outcomes that refuse the decision's intent along with its goal choice. */
         val REFUSING: Set<String> =
             setOf(
@@ -228,6 +234,7 @@ data class GoalEvidence(
                 COMPLETED_WITHOUT_NEXT,
                 CROWDS_EXPLORATION,
                 DISCOVERY_NOT_OFFERED,
+                SURVIVAL_REQUIRED,
             )
 
         /** The outcomes that settle a decision with nothing its next review needs to be told. */

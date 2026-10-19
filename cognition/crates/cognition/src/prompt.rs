@@ -1051,9 +1051,13 @@ fn danger_line(perception: &Perception) -> Option<String> {
         .map(|handle| field(handle))
         .collect::<Vec<_>>()
         .join(", ");
+    let floor = crate::offered::ATTACK_MIN_HEALTH;
+    let offered_above = floor + crate::offered::ATTACK_HEALTH_MARGIN;
     Some(format!(
         "Something that hunts your kind is near ({named}): you may flee from it or fight it now \
-with no goal choice, and any goal you hold stays held and is reviewed again once you are done."
+with no goal choice, and any goal you hold stays held and is reviewed again once you are done. \
+Your body refuses to start an attack at health {floor} or below, so no attack is offered at \
+{offered_above} or below: a hunter can take that much while you decide."
     ))
 }
 

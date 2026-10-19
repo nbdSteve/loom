@@ -24,7 +24,15 @@ const val DANGER_UNSEEN_BLOCKS: Double = 8.0
 data class SurvivalOffer(
     val hunters: Set<String> = emptySet(),
     val meals: Set<String> = emptySet(),
+    /** The hunters that are immediate danger, beside which only a survival response is taken. */
+    val immediate: Set<String> = emptySet(),
 ) {
+    /**
+     * Whether [intent] is withheld: a hunter is immediate danger and [intent] is no survival
+     * response (r24: seven reviews beside a near hunter dug, crafted or walked).
+     */
+    fun withholds(intent: Intent): Boolean = immediate.isNotEmpty() && intent !is Intent.Flee && !survives(intent)
+
     /** Whether [intent] is one of the survival responses this offer allows. */
     fun survives(intent: Intent): Boolean =
         when (intent) {
@@ -37,6 +45,12 @@ data class SurvivalOffer(
     companion object {
         fun of(perception: Perception): SurvivalOffer =
             SurvivalOffer(
+                immediate =
+                    perception.surroundings
+                        .filter { it.kind == ObservationKind.ENTITY && it.hunts == true }
+                        .filter { it.distance <= immediateReachOf(it, perception) }
+                        .map { it.ref }
+                        .toSet(),
                 hunters =
                     perception.surroundings
                         .filter { it.kind == ObservationKind.ENTITY && it.hunts == true }
@@ -59,3 +73,23 @@ data class SurvivalOffer(
  */
 internal fun GoalObservation?.defers(intent: Intent): Boolean =
     intent is Intent.Flee || this?.survival?.survives(intent) == true
+
+/** How near an unseen hunter is immediate danger; `IMMEDIATE_UNSEEN_BLOCKS` in the mind. */
+const val IMMEDIATE_UNSEEN_BLOCKS: Double = 4.0
+
+/**
+ * How near [seen] must be to be immediate danger: anywhere near when the agent was just hurt, a
+ * ranged hunter in sight within bow range, another in sight within pivotal range, and one unseen
+ * within [IMMEDIATE_UNSEEN_BLOCKS]. Mirrors `OfferedRefs::sighted` in the mind.
+ */
+private fun immediateReachOf(
+    seen: dev.loom.contract.Observation,
+    perception: Perception,
+): Double =
+    when {
+        perception.trigger is dev.loom.contract.Trigger.Damaged ->
+            if (seen.visible) DANGER_SIGHT_BLOCKS else DANGER_UNSEEN_BLOCKS
+        !seen.visible -> IMMEDIATE_UNSEEN_BLOCKS
+        seen.what in RANGED_HUNTERS -> RANGED_THREAT_BLOCKS
+        else -> dev.loom.body.PIVOTAL_THREAT_DISTANCE_BLOCKS
+    }

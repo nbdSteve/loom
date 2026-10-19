@@ -174,6 +174,9 @@ object EventTag {
      */
     const val DANGER_COALESCED: String = "dangerCoalesced"
 
+    /** An event decision that took no survival response while a hunter was immediate danger (r24). */
+    const val SURVIVAL_REQUIRED: String = "survivalRequired"
+
     /**
      * A perception the mind was not asked about because the agent already has cognition in
      * flight for the same kind of trigger: one scheduled goal review, and one event, at a time.
