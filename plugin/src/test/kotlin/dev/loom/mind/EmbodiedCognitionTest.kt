@@ -60,6 +60,9 @@ private class RecordingBody(
 ) : BodyPort {
     val applied = mutableListOf<Intent>()
 
+    /** What the next accepted action's own server drops left lying, by item. */
+    var dropped: Set<String> = emptySet()
+
     /** The perceptions ended without an action, in the order their senses were given back. */
     val released = mutableListOf<String>()
 
@@ -83,7 +86,7 @@ private class RecordingBody(
         // the loss belongs to the decision that was lost.
         if (!present) return CompletableFuture.completedFuture(IntentOutcome.NoSuchBody)
         applied.add(intent)
-        val outcome = IntentOutcome.Accepted("applied $intent")
+        val outcome = IntentOutcome.Accepted("applied $intent", dropped = dropped)
         record(agentId, BodyEvent.INTENT_APPLIED, "${describe(intent)} -> ${describe(outcome)}", requestId)
         return CompletableFuture.completedFuture(outcome)
     }
@@ -699,5 +702,48 @@ class EmbodiedCognitionTest {
         assertTrue(!ran, "a MainThread must schedule, never run inline")
         main.drain()
         assertTrue(ran)
+    }
+
+    @Test
+    @DisplayName("a dig that leaves its goal's own item lying is reviewed once at once, then control returns")
+    fun aGoalItemLeftLyingIsReviewedAtOnce() {
+        // r24: all three of epsilon's logs were taken by idle peers before its follow-up came.
+        val records = mutableListOf<BodyEventRecord>()
+        val body =
+            RecordingBody(
+                { trigger -> perceptionNearBush(agentId = agent.value).copy(trigger = trigger) },
+                main::drainingThread,
+                events = BodyEventLog { records.add(it) },
+                currentTick = { tick },
+            )
+        val triggers = mutableListOf<Trigger>()
+        val settled = mutableListOf<Boolean>()
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p ->
+                    triggers.add(p.trigger)
+                    val goal =
+                        if (triggers.size == 1) {
+                            dev.loom.contract.GoalChoice(
+                                dev.loom.contract.GoalDisposition.ADOPT,
+                                successItem = "item.minecraft.stick",
+                                successCount = 1,
+                            )
+                        } else {
+                            null
+                        }
+                    CompletableFuture.completedFuture(decisionFor(p, Intent.Dig("bush")).copy(goal = goal))
+                },
+                mainThread = main,
+                journal = journalInto(records),
+                callbacks = CognitionCallbacks(onStepSettled = { _, _, owed -> settled.add(owed) }),
+            )
+        body.dropped = setOf("item.minecraft.stick")
+        cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+        // The dig settled with a stick lying: one review is asked for at once, not owed for later.
+        assertEquals(listOf<Trigger>(Trigger.GoalReview, Trigger.StepSettled), triggers.take(2))
+        assertEquals(emptyList<Boolean>(), settled, "nothing owed: the review was taken now")
     }
 }

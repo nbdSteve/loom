@@ -362,7 +362,8 @@ class EmbodiedCognition(
                         (applied as? IntentOutcome.Accepted)?.reached,
                     )
                 goals.settledAt(agentId, decision.requestId, journal.tick())
-                callbacks.onStepSettled.oweReview(agentId, journal.tick(), goal, goalStep, applied)
+                // One immediate review owed to the goal item a step left lying, then control returns.
+                followUp(agentId, goal, goalStep, applied)
                 val held = danger.settled(agentId, decision.requestId, fled = decision.intent is Intent.Flee)
                 if (applied == IntentOutcome.NoSuchBody) danger.forget(agentId) else held?.let { tell(agentId, it) }
                 if (applied == IntentOutcome.NoSuchBody) {
@@ -373,26 +374,31 @@ class EmbodiedCognition(
         }
     }
 
-    /**
-     * The failure to report when a future completed with neither a decision nor a
-     * cause.
-     *
-     * `CompletableFuture` allows a `null` success value, so this is reachable in
-     * principle - a transport that returned nothing. Reporting it as its own
-     * failure keeps that from silently looking like a successful no-op decision.
-     */
-    private fun missingBoth(perception: Perception): Throwable =
-        CognitionUnavailableException(
-            CognitionFailure.Failed("the mind completed without a decision"),
-            "cognition for agent ${perception.agentId} completed with neither a decision nor a failure",
-        )
+    /** The review a settled decision owes [agentId]: one now for its goal item left lying, else as owed. */
+    private fun followUp(
+        agentId: AgentId,
+        goal: GoalEvidence?,
+        goalStep: GoalSummary?,
+        applied: IntentOutcome,
+    ) {
+        if (leftGoalItemLying(goal, goalStep, applied) && canReview(agentId)) {
+            tell(agentId, Trigger.StepSettled)
+        } else {
+            callbacks.onStepSettled.oweReview(agentId, journal.tick(), goal, goalStep, applied)
+        }
+    }
 
-    /** Tells [agentId]'s mind of the [damage] it took while its last danger answer ran. */
+    /**
+     * Asks [agentId]'s mind about [trigger] now: the damage it took while its last danger answer
+     * ran, or the step that left its own drop of its goal's item lying, so the one collection that
+     * drop is owed comes before a peer's pickup rather than a cadence later (r24: all three of
+     * epsilon's logs were taken by idle peers before its follow-up).
+     */
     private fun tell(
         agentId: AgentId,
-        damage: Trigger.Damaged,
+        trigger: Trigger,
     ) {
-        if (!callbacks.isDead(agentId) && !shutDown) consider(agentId, damage)
+        if (!callbacks.isDead(agentId) && !shutDown) consider(agentId, trigger)
     }
 }
 
@@ -462,3 +468,26 @@ private fun refusalOf(
 
 /** Whether this settled step is a discovery's: its walk, or the first step of the goal it became. */
 private fun GoalSummary.discoveryChain(goal: GoalEvidence?): Boolean = discovery || goal?.discoveredFrom != null
+
+/** Whether a settled goal step left its own drop of the goal's item lying, owed one collection now. */
+private fun leftGoalItemLying(
+    goal: GoalEvidence?,
+    goalStep: GoalSummary?,
+    applied: IntentOutcome,
+): Boolean =
+    goal?.outcome != GoalEvidence.DEFERRED &&
+        goalStep?.successItem in (applied as? IntentOutcome.Accepted)?.dropped.orEmpty()
+
+/**
+ * The failure to report when a future completed with neither a decision nor a
+ * cause.
+ *
+ * `CompletableFuture` allows a `null` success value, so this is reachable in
+ * principle - a transport that returned nothing. Reporting it as its own
+ * failure keeps that from silently looking like a successful no-op decision.
+ */
+private fun missingBoth(perception: Perception): Throwable =
+    CognitionUnavailableException(
+        CognitionFailure.Failed("the mind completed without a decision"),
+        "cognition for agent ${perception.agentId} completed with neither a decision nor a failure",
+    )
