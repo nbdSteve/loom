@@ -467,6 +467,9 @@ private fun fleeOnce(
         outcome = movementOutcome(report.outcome, "flight"),
         fleeRequest = request,
         fleeReport = report,
+        fleeHunters =
+            (listOf(request.entity) + request.avoid.orEmpty())
+                .mapNotNull { sense.raw.report.entities.getOrNull(it)?.position },
     )
 }
 

@@ -1208,6 +1208,11 @@ class PlayerSceneSelectionIntegrationTest {
         // Every other hunter of the answer is named for the flight to end clear of, at most 16
         // (r24: gamma's flight from a spider ended 0.6 blocks from a creeper).
         assertEquals((1..dev.loom.bodycontrol.MAX_FLIGHT_AVOID).toList(), flee.avoid)
+        // The retreat record states the hunters it was told to avoid and how near it ended to any.
+        awaitPortCondition { harness.records.any { it.event == BodyEvent.RETREATING } }
+        val retreat = requireNotNull(harness.records.last { it.event == BodyEvent.RETREATING }.retreat)
+        assertEquals(dev.loom.bodycontrol.MAX_FLIGHT_AVOID, retreat.avoided)
+        assertTrue(retreat.leastSeparation != null)
     }
 
     @Test

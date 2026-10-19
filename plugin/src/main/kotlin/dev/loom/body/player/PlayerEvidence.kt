@@ -30,6 +30,8 @@ internal data class ActionExecution(
     val moveReport: BodyResponse.MoveReport? = null,
     val fleeRequest: BodyRequest.Flee? = null,
     val fleeReport: BodyResponse.FleeReport? = null,
+    /** Where the threat and every avoided hunter stood when sensed, for the flight's least separation. */
+    val fleeHunters: List<List<Double>> = emptyList(),
     val eatReport: BodyResponse.EatReport? = null,
     val interaction: ServerInteractionClaim? = null,
 )
@@ -115,7 +117,12 @@ internal class PlayerEvidenceRecorder(
                 "separation ${report.separation ?: "unread"}",
             retreatTag(report.outcome, report.separation, request.distance),
             requestId,
-            RetreatEvidence(report.separation, report.separationGained, request.avoid?.size),
+            RetreatEvidence(
+                report.separation,
+                report.separationGained,
+                request.avoid?.size,
+                execution.fleeHunters.minOfOrNull { dev.loom.body.blocksApart(report.position, it) },
+            ),
         )
     }
 

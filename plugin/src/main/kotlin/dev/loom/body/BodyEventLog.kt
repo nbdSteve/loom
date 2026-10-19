@@ -172,6 +172,8 @@ data class RetreatEvidence(
     val separationGained: Double? = null,
     /** How many other hunters the flight was told to end clear of, beside the one it ran from (r24). */
     val avoided: Int? = null,
+    /** How far the flight ended from the nearest of its threat and those hunters, where each was sensed. */
+    val leastSeparation: Double? = null,
 )
 
 /** What one goal review showed cognition beyond the body's own perception. */
