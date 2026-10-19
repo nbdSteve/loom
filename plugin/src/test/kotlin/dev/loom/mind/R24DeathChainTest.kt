@@ -70,7 +70,7 @@ class R24DeathChainTest {
     ) = perception(requestId = id, agentId = "agent", trigger = Trigger.Damaged(3, source))
 
     @TestFactory
-    fun `each r24 death against today's rules`(): List<DynamicTest> =
+    fun `each r24 death against today's danger and tiering rules`(): List<DynamicTest> =
         listOf(
             DynamicTest.dynamicTest("kappa: two zombie hits held behind its walk are told once it settles") {
                 // body:00001805 and body:00001843, ticks 6660 and 6680: identity unavailable in r24.
@@ -109,6 +109,11 @@ class R24DeathChainTest {
                     seen.copy(importance = DecisionImportance.ROUTINE).classified().importance,
                 )
             },
+        )
+
+    @TestFactory
+    fun `each r24 death against today's call envelope`(): List<DynamicTest> =
+        listOf(
             DynamicTest.dynamicTest("epsilon: its pivotal sighting at health 3.8 is admitted") {
                 assertEquals(true, admittedUnderEnvelope["body:00003305"])
             },
