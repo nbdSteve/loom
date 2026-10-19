@@ -1185,6 +1185,10 @@ class PlayerSceneSelectionIntegrationTest {
         assertEquals(null, trigger.reachable)
         // The hunter is marked as one, so a goal review may flee from it (r20 kappa).
         assertEquals(true, entity.hunts)
+        // Danger is tracked by the server's creature, not its kind (r24: one zombie's damage was
+        // coalesced into another's episode 0.4 blocks off).
+        val subject = harness.port.held.dangerSubjectOf(agent, perception.requestId)
+        assertTrue(subject != null && java.util.UUID.fromString(subject) != null, "a server uuid: $subject")
         assertEquals(
             BODY_SENSE_MAX_OFFERS_PER_KIND,
             perception.surroundings.count { it.kind == ObservationKind.BLOCK },
