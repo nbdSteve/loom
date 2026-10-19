@@ -1,6 +1,6 @@
 'use strict'
 
-const { reviewWindowBounds } = require('./controlled-stop.js')
+const { heldReviewOf, reviewWindowBounds } = require('./controlled-stop.js')
 
 // A server-witnessed death is an experiment outcome: that agent's chain ends and its
 // peers continue. Only its own disconnect and discarded in-flight decision may follow.
@@ -157,7 +157,8 @@ function deathMetrics (bodyRecords, harnessRecords, firstTick) {
       settledAfterDeath: settlement.settledAfterDeath(agentId),
       attempted: reviews.length,
       completed: reviews.filter((record) => record.event === 'cognitionForwarded' && record.outcome === 'decision').length,
-      ...bounds
+      ...bounds,
+      ...heldReviewOf(bodyRecords, agentId, tick)
     }
   }
   return {

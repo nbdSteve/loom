@@ -669,6 +669,26 @@ test('a death does not excuse a survivor\'s missing review or a revived chain', 
   rejects(stranger, /bodyDisconnected without a witnessed death/)
 })
 
+test('a review held when its agent died was owed, not lost, and counts toward the window', () => {
+  // v32 plains rehearsal 14: three agents died while their due review waited behind a flight.
+  const held = (raw, tick) => {
+    const index = raw.body.findIndex((record) => record.tick > tick)
+    raw.body.splice(index === -1 ? raw.body.length : index, 0,
+      bodyRecord(tick, 'tribe-alpha', 'goalReviewDeferred', 'waits', { trigger: 'goalReview', outcome: 'fleeing' }))
+    return raw
+  }
+  const owed = publish({ raw: held(deathRaw({ tick: 2900 }), 2500), stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(owed.artifactDirectory).errors, [])
+  assert.deepEqual(owed.metrics.witnessedDeaths.byAgent['tribe-alpha'], {
+    tick: 2900, lifeTicks: 2885, settledAfterDeath: [], attempted: 1, completed: 1, minimum: 2, maximum: 2, heldAtEnd: 1
+  })
+  // A hold before the review that was then handed out excuses nothing, and the refusal is typed
+  // as one, never as a disk failure.
+  assert.throws(() => publish({ raw: held(deathRaw({ tick: 2900 }), 10), stopReason: 'durationElapsed' }), (failure) =>
+    failure.stopReason === 'publicationRefused' && failure.code === 'artifactIntegrityFailed' &&
+    /tribe-alpha did not record the expected native scheduled reviews/.test(failure.message))
+})
+
 function actingRaw (agents = ['tribe-alpha', 'tribe-beta']) {
   const raw = primaryBehaviorRawRecords(goalContinuityConfig())
   for (const agentId of agents) {

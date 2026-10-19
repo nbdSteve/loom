@@ -177,6 +177,18 @@ object EventTag {
     /** A dig's one pickup attempt found its own goal-item drop nowhere in a fresh sense. */
     const val OWN_DROP_NOT_SENSED: String = "ownDropNotSensed"
 
+    /** A due scheduled review waits behind a review or follow-up of the agent's still with the mind. */
+    const val REVIEW_IN_FLIGHT: String = "reviewInFlight"
+
+    /** A due scheduled review waits while the body carries out the agent's flight. */
+    const val FLEEING: String = "fleeing"
+
+    /** A due scheduled review waits while the mind decides a danger of the agent's. */
+    const val DANGER_DECIDING: String = "dangerDeciding"
+
+    /** A due scheduled review waits behind a follow-up the same sweep claimed for the agent. */
+    const val FOLLOW_UP_CLAIMED: String = "followUpClaimed"
+
     /** An event decision that took no survival response while a hunter was immediate danger (r24). */
     const val SURVIVAL_REQUIRED: String = "survivalRequired"
 

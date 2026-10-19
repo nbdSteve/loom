@@ -36,6 +36,48 @@ class GoalReviewScheduleTest {
         }
 
     @Test
+    @DisplayName("a held review delays only itself, and is reported once")
+    fun aHeldReviewDelaysOnlyItself() {
+        // v32 plains rehearsal 14: held reviews pushed every later one back, and three agents
+        // ended owing reviews their schedule never asked for.
+        val living = agents(1)
+        val held = mutableListOf<AgentId>()
+        schedule.claim(living, now)
+        now = CADENCE
+        repeat(3) {
+            assertEquals(emptyList<AgentId>(), schedule.claim(living, now, { false }, held::add))
+            now += schedule.sliceTicks
+        }
+        assertEquals(living.toList(), held, "reported the first time it was held, and only then")
+        assertEquals(living.toList(), schedule.claim(living, now))
+        // The next is due a cadence after this one was due, not after it was handed out.
+        now = 2 * CADENCE - schedule.sliceTicks
+        assertEquals(emptyList<AgentId>(), schedule.claim(living, now))
+        now = 2 * CADENCE
+        assertEquals(living.toList(), schedule.claim(living, now))
+        // A review held again is reported again.
+        now = 3 * CADENCE
+        schedule.claim(living, now, { false }, held::add)
+        assertEquals(2, held.size)
+    }
+
+    @Test
+    @DisplayName("a review held a whole cadence restarts the schedule, so none ever fall due at once")
+    fun aLongHeldReviewRestartsTheSchedule() {
+        val living = agents(1)
+        schedule.claim(living, now)
+        now = 2 * CADENCE + schedule.sliceTicks
+        schedule.claim(living, now, { false })
+        now += schedule.sliceTicks
+        assertEquals(living.toList(), schedule.claim(living, now))
+        // Not again at once: the schedule counts from now, a cadence on.
+        now += schedule.sliceTicks
+        assertEquals(emptyList<AgentId>(), schedule.claim(living, now))
+        now += CADENCE - schedule.sliceTicks
+        assertEquals(living.toList(), schedule.claim(living, now))
+    }
+
+    @Test
     @DisplayName("an agent that has never reviewed is due at once")
     fun aNewAgentThinksImmediately() {
         // What keeps a demo watchable: a body that has just been spawned acts on the

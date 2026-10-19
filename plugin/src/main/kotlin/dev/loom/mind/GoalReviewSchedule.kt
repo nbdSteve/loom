@@ -10,10 +10,18 @@
  *
  * Two properties are load-bearing rather than incidental:
  *
- * - **The cadence is a floor, not a heartbeat.** An agent is due once the cadence
- *   has elapsed since its last review, and it may be handed out later than that if
- *   others were waiting longer. Cost per agent is therefore bounded above by the
- *   cadence; nothing here can make an agent think faster than it.
+ * - **The cadence is a schedule, and its rate is a ceiling.** An agent's review is due
+ *   one cadence after its last was due, and it may be handed out later than that if
+ *   others were waiting longer or the agent could not take one. A late review delays
+ *   only itself: the next is due a cadence after this one was due, not after it was
+ *   handed out, so waits never add up across a run (v32 plains rehearsal 14: three
+ *   agents' held reviews pushed every later one back, and the run owed reviews its
+ *   schedule never asked). A review held a whole cadence restarts the schedule from
+ *   when it is handed out, so no two ever fall due at once, and an agent still reviews
+ *   at most once per cadence over a run.
+ * - **A held review is recorded, once.** A due review the agent cannot take waits, and
+ *   the caller hears of it the first time it is held, so the record shows the review is
+ *   owed rather than lost.
  * - **Reviews are spread across the cadence, never batched.** Each claim hands out
  *   only the population's share of one slice, so a hundred agents cost a hundred
  *   calls spread over a cadence rather than a hundred calls in one tick. Cognition
@@ -144,6 +152,9 @@ class GoalReviewSchedule(
 
     private val lastReview = mutableMapOf<AgentId, Long>()
 
+    /** The agents whose due review has been held and reported once, until it is handed out. */
+    private val heldReviews = mutableSetOf<AgentId>()
+
     // When each owed follow-up review is due, how many each agent's latest scheduled review has
     // been followed by, and how many follow-ups its scheduled reviews have earned and it has not
     // yet spent.
@@ -205,18 +216,23 @@ class GoalReviewSchedule(
         living: Set<AgentId>,
         now: Long,
         ready: (AgentId) -> Boolean = { true },
+        held: (AgentId) -> Unit = {},
     ): List<AgentId> {
         lastReview.keys.retainAll(living)
+        heldReviews.retainAll(living)
         followUpDue.keys.retainAll(living)
         followUps.keys.retainAll(living)
         allowance.keys.retainAll(living)
+        val due = living.filter { isDue(it, now) }
+        val (willing, waiting) = due.partition(ready)
+        waiting.filter(heldReviews::add).forEach(held)
         val claimed =
-            living
-                .filter { isDue(it, now) && ready(it) }
+            willing
                 .sortedWith(longestWaitingFirst)
                 .take(perSlice(living.size))
         claimed.forEach {
-            lastReview[it] = now
+            lastReview[it] = anchorOf(it, now)
+            heldReviews.remove(it)
             // A scheduled review answers whatever a follow-up was owed for, and owes one anew.
             followUpDue.remove(it)
             followUps.remove(it)
@@ -290,6 +306,18 @@ class GoalReviewSchedule(
             allowance[it] = (allowance[it] ?: 0) - 1
         }
         return claimed
+    }
+
+    /**
+     * The tick [agent]'s review claimed at [now] counts from: when it was due, unless it was held a
+     * whole cadence or more, or is its first.
+     */
+    private fun anchorOf(
+        agent: AgentId,
+        now: Long,
+    ): Long {
+        val dueAt = (lastReview[agent] ?: return now) + cadenceTicks
+        return if (now - dueAt < cadenceTicks) dueAt else now
     }
 
     /** Whether [agent] has waited a whole cadence, or has never reviewed at all. */

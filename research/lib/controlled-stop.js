@@ -110,6 +110,22 @@ function isNativeReview (record) {
   return record.trigger === 'goalReview' && record.origin === 'nativeGoalReviewSchedule'
 }
 
+// Whether `agentId`'s scheduled review was held when its window closed at `endTick`: a
+// `goalReviewDeferred` record after its last perceived goal review, so the review was due and
+// owed, never lost. Derived only when the evidence records held reviews at all, so evidence from
+// before them derives exactly the metrics it always did.
+function heldReviewOf (bodyRecords, agentId, endTick) {
+  if (!bodyRecords.some((record) => record.event === 'goalReviewDeferred')) return {}
+  const within = (record) => record.agentId === agentId && Number.isInteger(record.tick) &&
+    (endTick === null || record.tick <= endTick)
+  const lastOf = (event) => bodyRecords
+    .filter((record) => within(record) && record.event === event &&
+      (event !== 'perceived' || record.trigger === 'goalReview'))
+    .reduce((latest, record) => Math.max(latest, record.tick), -Infinity)
+  const deferred = lastOf('goalReviewDeferred')
+  return { heldAtEnd: deferred > -Infinity && deferred > lastOf('perceived') ? 1 : 0 }
+}
+
 // Derived only when the evidence holds an admission closure, so evidence without one
 // derives exactly the metrics it always did.
 function controlledStopMetrics (bodyRecords, harnessRecords, firstTick) {
@@ -147,7 +163,7 @@ function controlledStopMetrics (bodyRecords, harnessRecords, firstTick) {
     const bounds = schedule === undefined || windowTicks === null
       ? { minimum: null, maximum: null }
       : reviewWindowBounds(schedule, agents.length, windowTicks)
-    reviewsByAgent[agentId] = { attempted, completed, ...bounds }
+    reviewsByAgent[agentId] = { attempted, completed, ...bounds, ...heldReviewOf(bodyRecords, agentId, stopTick) }
   }
   const chains = new Map()
   for (const record of bodyRecords) {
@@ -246,7 +262,7 @@ function admissionEndMetrics (bodyRecords, harnessRecords, firstTick) {
     const bounds = schedule === undefined || windowTicks === null
       ? { minimum: null, maximum: null }
       : reviewWindowBounds(schedule, agents.length, windowTicks)
-    byAgent[agentId] = { attempted, completed, ...bounds }
+    byAgent[agentId] = { attempted, completed, ...bounds, ...heldReviewOf(bodyRecords, agentId, endTick) }
   }
   return {
     closures: ends.length,
@@ -274,6 +290,7 @@ module.exports = {
   admissionEndMetrics,
   budgetStopFor,
   controlledStopMetrics,
+  heldReviewOf,
   providerStopFor,
   reviewWindowBounds
 }

@@ -5,6 +5,8 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const { REFUSAL_BOUNDS } = require('./budget-proxy.js')
+const { admissionEndMetrics, controlledStopMetrics } = require('./controlled-stop.js')
+const { deathMetrics } = require('./witnessed-death.js')
 const { validatedCognitionFailure } = require('./cognition-failure.js')
 const { scanText } = require('./evidence.js')
 const { canonicalJson, sortedValue } = require('./util.js')
@@ -66,7 +68,8 @@ const BODY_EVENTS = new Set([
   'witnessQuit',
   'witnessRevived',
   'worldInteraction',
-  'ownDropPickup'
+  'ownDropPickup',
+  'goalReviewDeferred'
 ])
 const HARNESS_EVENTS = new Set([
   'cleanupVerified',
@@ -105,6 +108,7 @@ const REFUSAL_REASONS = new Set([
 ])
 const REFUSAL_BOUND_SET = new Set(REFUSAL_BOUNDS)
 const FAILURE_CODES = new Set([
+  'artifactIntegrityFailed',
   'boundedJournalFailure',
   'cognitionBudgetRefused',
   'cognitionDecisionFailed',
@@ -126,6 +130,7 @@ const STOP_REASONS = new Set([
   'diskFailure',
   'logLimit',
   'paperFailed',
+  'publicationRefused',
   'simulationTickCeiling',
   'startupFailed'
 ])
@@ -214,7 +219,8 @@ const OUTCOME_EVENTS = new Set([
   'witnessDenied',
   'witnessDisputed',
   'worldInteraction',
-  'ownDropPickup'
+  'ownDropPickup',
+  'goalReviewDeferred'
 ])
 const OUTCOME_TAG = /^[a-z][A-Za-z]{0,63}$/
 
@@ -279,6 +285,42 @@ function cognitionTimeline (bodyRecords, harnessRecords, configuredAgentIds) {
     forwardedOmitted: Math.max(0, forwarded.length - MAX_TIMELINE_ENTRIES),
     body: body.slice(-MAX_TIMELINE_ENTRIES),
     bodyOmitted: Math.max(0, body.length - MAX_TIMELINE_ENTRIES)
+  }
+}
+
+const REVIEW_WINDOW_COUNTS = ['attempted', 'minimum', 'maximum']
+
+// Each configured agent's scheduled reviews against the window the publication check holds it
+// to - its death, a controlled stop, the end of admission, or the whole plan - as bare counts,
+// so a failed `expectedNativeReviewsObserved` states which agent fell short and by how much.
+// A fault in reading them answers null rather than costing the rest of the diagnostic.
+function nativeReviewWindows (bodyRecords, harnessRecords, config) {
+  try {
+    const started = harnessRecords.find((record) => record.event === 'experimentStarted')?.startTick
+    const ticks = bodyRecords.map((record) => record.tick).filter(Number.isInteger)
+    const firstTick = Number.isInteger(started) ? started : Math.min(...ticks)
+    const deaths = deathMetrics(bodyRecords, harnessRecords, firstTick)?.byAgent ?? {}
+    const stop = controlledStopMetrics(bodyRecords, harnessRecords, firstTick)
+    const admission = admissionEndMetrics(bodyRecords, harnessRecords, firstTick)
+    const expected = config.primaryBehavior?.nativeGoalReviewSchedule?.expectedReviewsPerAgent ?? null
+    const counted = (window, entry) => ({
+      window,
+      ...Object.fromEntries(REVIEW_WINDOW_COUNTS.map((count) => [count, boundedCount(entry?.[count])]))
+    })
+    return Object.fromEntries([...config.agents].sort().map((agentId) => {
+      const death = deaths[agentId]
+      if (death !== undefined && (stop === undefined || stop.stopTick === null || death.tick <= stop.stopTick)) {
+        return [agentId, counted('death', death)]
+      }
+      if (stop !== undefined) return [agentId, counted('controlledStop', stop.nativeReviews?.byAgent?.[agentId])]
+      if (admission !== undefined) return [agentId, counted('admissionEnd', admission.nativeReviews?.byAgent?.[agentId])]
+      const attempted = harnessRecords.filter((record) =>
+        ['cognitionForwarded', 'cognitionRefused'].includes(record.event) && record.agentId === agentId &&
+        record.trigger === 'goalReview' && record.origin === 'nativeGoalReviewSchedule').length
+      return [agentId, counted('plan', { attempted, minimum: expected, maximum: expected })]
+    }))
+  } catch {
+    return null
   }
 }
 
@@ -625,6 +667,7 @@ function failureCode (failure) {
     diskFailure: 'boundedJournalFailure',
     logLimit: 'logByteLimitReached',
     paperFailed: 'paperProcessFailure',
+    publicationRefused: 'artifactIntegrityFailed',
     simulationTickCeiling: 'simulationTickCeilingReached',
     startupFailed: 'startupOrAcceptanceFailure'
   }
@@ -701,7 +744,8 @@ function failureDiagnostic ({
       harness: harness.summary,
       proxy: safeProxySnapshot(proxySnapshot, config),
       providerUsage: providerUsageSummary(providerUsageInput.records, config),
-      timeline: cognitionTimeline(bodyInput.records, harnessInput.records, config.agents)
+      timeline: cognitionTimeline(bodyInput.records, harnessInput.records, config.agents),
+      nativeReviewWindows: nativeReviewWindows(bodyInput.records, harnessInput.records, config)
     },
     crashContainment: config.proof === undefined
       ? null
@@ -896,6 +940,25 @@ function writeFallbackDiagnostic (options, failedStage, maxBytes) {
   }
 }
 
+// The diagnostic's text with its cognition timeline halved, newest entries kept, until it fits
+// [maxBytes]: the timeline is the one part that grows with a run, and the rest of the diagnostic is
+// worth more than its oldest entries (v32 plains rehearsal 14: a ten-agent night's two full
+// timelines took a failed run's diagnostic to 68 KB, and only the minimal fallback was kept).
+function boundedSerialization (diagnostic, serialize, maxBytes) {
+  let text = serialize(diagnostic)
+  const timeline = diagnostic?.cognition?.timeline
+  if (typeof text !== 'string' || timeline === undefined || timeline === null) return text
+  for (let keep = MAX_TIMELINE_ENTRIES / 2; keep >= 1 && Buffer.byteLength(text) > maxBytes; keep /= 2) {
+    for (const [entries, omitted] of [['forwarded', 'forwardedOmitted'], ['body', 'bodyOmitted']]) {
+      const cut = Math.max(0, timeline[entries].length - keep)
+      timeline[entries] = timeline[entries].slice(cut)
+      timeline[omitted] += cut
+    }
+    text = serialize(diagnostic)
+  }
+  return text
+}
+
 function writeNormalDiagnostic (options, stages, maxBytes, progress) {
   const { config } = options
   const limits = {
@@ -921,7 +984,7 @@ function writeNormalDiagnostic (options, stages, maxBytes, progress) {
     proxySnapshot: options.proxySnapshot
   })
   progress.stage = 'serialize'
-  const text = stages.serialize(diagnostic)
+  const text = boundedSerialization(diagnostic, stages.serialize, maxBytes)
   if (typeof text !== 'string') throw new Error('failed-run diagnostic did not serialize')
   progress.stage = 'sanitize'
   if (stages.scan(text).length > 0) {

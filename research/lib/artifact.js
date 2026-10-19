@@ -31,6 +31,7 @@ const {
 } = require('./evidence.js')
 const { isCoalesced, isShutdownEnding, unansweredAccountedFor } = require('./danger.js')
 const { CADENCE, PROFILES, SCENES, placementOf, profileOf, ticksPerSecondOf } = require('./profiles.js')
+const { RunFailure } = require('./lifecycle.js')
 const {
   CRASH_CONTAINMENT_MODE,
   PRIMARY_BEHAVIOR_MODES,
@@ -773,11 +774,12 @@ function expectedNativeReviewsObserved (config, metrics) {
   return config.agents.every((agentId) => agentReviewsObserved(agentId, metrics, expected))
 }
 
+// A review held when the window closed was due and owed, so it counts toward the minimum.
 function windowEntryHolds (entry) {
   return entry !== undefined &&
     Number.isInteger(entry.minimum) &&
     Number.isInteger(entry.maximum) &&
-    entry.attempted >= entry.minimum &&
+    entry.attempted + (entry.heldAtEnd === 1 ? 1 : 0) >= entry.minimum &&
     entry.attempted <= entry.maximum &&
     entry.completed <= entry.attempted
 }
@@ -2003,7 +2005,13 @@ function publishArtifact ({
 
     const validation = validateArtifact(artifactDirectory)
     if (!validation.ok) {
-      throw new Error(`published artifact is invalid:\n- ${validation.errors.join('\n- ')}`)
+      // A refused integrity check is its own stop, never a disk failure (v32 plains rehearsal 14
+      // read as one, which pointed at the disk rather than at the evidence).
+      throw new RunFailure(
+        'publicationRefused',
+        `published artifact is invalid:\n- ${validation.errors.join('\n- ')}`,
+        'artifactIntegrityFailed'
+      )
     }
     if (fs.existsSync(finalDirectory)) {
       throw new Error(`artifact directory already exists: ${finalDirectory}`)

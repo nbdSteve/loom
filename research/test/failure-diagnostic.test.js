@@ -557,7 +557,8 @@ test('every configuration mode and terminal fault enters the diagnostic path wit
     [new Failure('cognitionFailed', 'drain', 'cognitionDrainTimedOut'), 'cognitionDrainTimedOut'],
     [new Failure('cognitionFailed', 'auth', 'providerAuthenticationRejected'), 'providerAuthenticationRejected'],
     [new Failure('cognitionFailed', 'upstream', 'cognitionUpstreamUnavailable'), 'cognitionUpstreamUnavailable'],
-    [new Failure('diskFailure', 'published artifact is invalid'), 'boundedJournalFailure'],
+    [new Failure('diskFailure', 'harness journal write failed'), 'boundedJournalFailure'],
+    [new Failure('publicationRefused', 'published artifact is invalid', 'artifactIntegrityFailed'), 'artifactIntegrityFailed'],
     [new Failure('cancelled', 'run cancelled'), 'runCancelled'],
     [new Failure('startupFailed', 'the host was suspended for 422 s', 'hostSuspended'), 'hostSuspended'],
     [new Failure('startupFailed', 'listeners remained after cleanup'), 'startupOrAcceptanceFailure']
@@ -628,6 +629,55 @@ test('a failed run keeps a bounded cognition timeline of closed facts', () => {
   } finally {
     fs.rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test('a diagnostic over its bound halves its timeline, newest kept, rather than fall back', () => {
+  // v32 plains rehearsal 14: a ten-agent night's full timelines took the diagnostic to 68 KB, and
+  // only the minimal fallback was kept.
+  const run = (maxBytes) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-bounded-diagnostic-'))
+    try {
+      fs.mkdirSync(path.join(directory, 'own'))
+      const files = rawFiles(path.join(directory, 'own'))
+      const body = []
+      const harness = []
+      for (let index = 0; index < 200; index += 1) {
+        body.push({ tick: index, agentId: 'tribe-alpha', event: 'perceived', trigger: 'goalReview' })
+        harness.push({
+          observedAt: '2026-10-16T00:00:00.000Z',
+          event: 'cognitionForwarded',
+          agentId: 'tribe-alpha',
+          requestId: `r-${index}`,
+          trigger: 'goalReview',
+          origin: 'nativeGoalReviewSchedule',
+          outcome: 'decision',
+          outstandingAtAdmission: 1,
+          latencyMs: index
+        })
+      }
+      writeJsonLines(files.bodyFile, body)
+      writeJsonLines(files.harnessFile, harness)
+      writeJsonLines(files.providerUsageFile, [])
+      return retain(directory, { ...files, ...(maxBytes === undefined ? {} : { maxBytes }) })
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true })
+    }
+  }
+  const full = run()
+  assert.equal(full.fallback, false)
+  assert.equal(full.diagnostic.cognition.timeline.forwarded.length, 128)
+  const bound = full.bytes - 1024
+  const halved = run(bound)
+  assert.equal(halved.fallback, false)
+  assert.ok(halved.bytes <= bound, `${halved.bytes} > ${bound}`)
+  const timeline = halved.diagnostic.cognition.timeline
+  assert.ok(timeline.forwarded.length < 128 && timeline.forwarded.length > 0)
+  assert.equal(timeline.forwarded.length + timeline.forwardedOmitted, 200)
+  assert.equal(timeline.forwarded.at(-1).latencyMs, 199)
+  // And every agent's scheduled reviews stand beside it, against the window it is held to.
+  const windows = halved.diagnostic.cognition.nativeReviewWindows
+  assert.equal(windows['tribe-alpha'].window, 'plan')
+  assert.equal(windows['tribe-alpha'].attempted, 200)
 })
 
 test('a failed run keeps the closed outcome tags of its failure records', () => {

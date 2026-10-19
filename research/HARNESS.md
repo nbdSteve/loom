@@ -358,6 +358,9 @@ Crash-containment evidence can never claim a controlled stop.
 A normal duration or tick-ceiling ending in primary behavior mode closes admission the same way, with one `cognitionAdmissionEnded` record, and drains inside the same bound before shutdown, so a decision in flight at the deadline completes instead of becoming an incomplete chain.
 Requests refused after that record are typed `admissionClosed` refusals and are not owed an answer.
 Validation then owes each agent the scheduled reviews the window up to the ending made due, so a slow host that ends before a second review is due still publishes; the behavioral gate still requires the full configured plan.
+A due review the agent could not take, behind its own review or follow-up, its flight, or a danger the mind was deciding, is journalled once as `goalReviewDeferred` with that reason, and one still held when the window closed counts toward what the window owes (`heldAtEnd`), because it was owed rather than lost.
+A held review delays only itself: the JVM counts the next from when this one was due, so holds never add up across a run (v32 plains rehearsal 14 ended with three agents owing reviews held behind flights).
+A refused integrity check stops a run as `publicationRefused` (`artifactIntegrityFailed`), and its failed-run diagnostic states each agent's window counts (`cognition.nativeReviewWindows`); a diagnostic over its byte bound halves its timeline before it falls back.
 
 ## Danger episodes
 

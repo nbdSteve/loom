@@ -82,7 +82,7 @@ class EmbodiedCognition(
     private val bodies: BodyPort,
     private val mind: CognitionBridge,
     private val mainThread: MainThread,
-    private val journal: DecisionJournal,
+    internal val journal: DecisionJournal,
     private val callbacks: CognitionCallbacks = CognitionCallbacks(),
     private val goals: GoalLedger = GoalLedger(),
 ) {
@@ -92,6 +92,9 @@ class EmbodiedCognition(
     // plugin shutdown can end each chain rather than leave it open.
     private val inFlight = linkedMapOf<String, Pair<AgentId, Perception>>()
     private var shutDown = false
+
+    /** Whether [shutDown] has run, after which no review is taken. */
+    internal val isShutDown: Boolean get() = shutDown
 
     /**
      * Captures [agentId]'s perception of [trigger] and sets cognition going.
@@ -196,16 +199,19 @@ class EmbodiedCognition(
     }
 
     /**
-     * Whether [agentId] can take a scheduled goal review now: no review of its is still
-     * waiting for the mind. A schedule asks this before claiming, so an owed review that does
-     * not fit is deferred to a later slice rather than refused and lost. Main thread only.
+     * Why [agentId] cannot take a scheduled review now, as a countable tag, or `null`: a review of
+     * its still with the mind, its flight still being carried out, or a danger of its the mind is
+     * still deciding - whose answer's flight the review's step would be refused as not ready
+     * behind (r23: five such refusals, eta's only chain craft among them). Main thread only.
      */
-    fun canReview(agentId: AgentId): Boolean =
-        !shutDown && inFlightFor(agentId, review = true) == 0 && agentId !in fleeing &&
-            // Nor while the mind decides a danger of its: the review's step would be refused as not
-            // ready behind the flight that answer starts (r23: five such refusals, eta's only chain
-            // craft among them).
-            inFlight.values.none { (agent, perception) -> agent == agentId && dangerKeyOf(perception.trigger) != null }
+    fun reviewHoldOf(agentId: AgentId): String? =
+        when {
+            inFlightFor(agentId, review = true) > 0 -> EventTag.REVIEW_IN_FLIGHT
+            agentId in fleeing -> EventTag.FLEEING
+            inFlight.values.any { (agent, seen) -> agent == agentId && dangerKeyOf(seen.trigger) != null } ->
+                EventTag.DANGER_DECIDING
+            else -> null
+        }
 
     /**
      * The agents whose flight the body is still carrying out: a review then could only be refused
@@ -505,3 +511,11 @@ private fun missingBoth(perception: Perception): Throwable =
         CognitionFailure.Failed("the mind completed without a decision"),
         "cognition for agent ${perception.agentId} completed with neither a decision nor a failure",
     )
+
+/**
+ * Whether [agentId] can take a scheduled goal review now: nothing in
+ * [EmbodiedCognition.reviewHoldOf] holds it. A schedule asks this before claiming, so an owed
+ * review that does not fit is deferred to a later slice rather than refused and lost. Main thread
+ * only.
+ */
+fun EmbodiedCognition.canReview(agentId: AgentId): Boolean = !isShutDown && reviewHoldOf(agentId) == null

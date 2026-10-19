@@ -295,6 +295,15 @@ enum class BodyEvent {
     OWN_DROP_PICKUP,
 
     /**
+     * A scheduled goal review fell due while the agent could not take one, and waits: `outcome`
+     * says why (`reviewInFlight`, `fleeing`, `dangerDeciding` or `followUpClaimed`). Once per due
+     * review, never per sweep, so the record proves the schedule ran and the review is owed rather
+     * than lost. No perception was taken and no mind was asked.
+     */
+    @SerialName("goalReviewDeferred")
+    GOAL_REVIEW_DEFERRED,
+
+    /**
      * The mind answered a perception, and the body was about to be asked to act.
      *
      * The record the run is reconstructed from: it carries the perception it answers

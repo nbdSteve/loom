@@ -239,6 +239,7 @@ private fun bodilessAfter(
         BodyEvent.HEALTH_CHANGED,
         BodyEvent.RETREATING,
         BodyEvent.OWN_DROP_PICKUP,
+        BodyEvent.GOAL_REVIEW_DEFERRED,
         // A body that looked around is a body: the record says nothing either way about
         // whether the agent still has one, so what was already known stands.
         BodyEvent.THREAT_SUPPRESSED,
@@ -312,6 +313,7 @@ private fun activityAfter(
         // rather than about a new thing the body was told to do. The note says which.
         BodyEvent.RETREATING,
         BodyEvent.OWN_DROP_PICKUP,
+        BodyEvent.GOAL_REVIEW_DEFERRED,
         -> state.activity
         // Nothing was asked of the body and no mind was woken, so the agent is doing
         // exactly what it was already doing. Saying otherwise would show a suppression as

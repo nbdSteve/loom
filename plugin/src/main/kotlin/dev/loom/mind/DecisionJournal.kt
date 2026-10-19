@@ -100,6 +100,23 @@ class DecisionJournal(
         )
     }
 
+    /** Records that [agentId]'s due scheduled review waits, for the countable [reason]. */
+    fun reviewDeferred(
+        agentId: AgentId,
+        reason: String,
+    ) {
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.GOAL_REVIEW_DEFERRED,
+                detail = "a scheduled goal review is due and waits: $reason",
+                trigger = tagOf(dev.loom.contract.Trigger.GoalReview),
+                outcome = reason,
+            ),
+        )
+    }
+
     /**
      * Records a decision refused before the body was asked, because it contradicts its own goal.
      *

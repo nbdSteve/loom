@@ -130,6 +130,36 @@ class AutonomousDriverTest {
     }
 
     @Test
+    @DisplayName("a review due while the last is still with the mind waits, recorded once with why")
+    fun aHeldReviewIsRecordedOnce() {
+        val agent = AgentId("agent-1")
+        val bodies = FakeBodies(setOf(agent))
+        val records = mutableListOf<dev.loom.body.BodyEventRecord>()
+        val cognition =
+            EmbodiedCognition(
+                bodies,
+                CognitionBridge { CompletableFuture<Decision>() },
+                main,
+                DecisionJournal(dev.loom.body.BodyEventLog { records.add(it) }, currentTick = { now }),
+                CognitionCallbacks(onUnavailable = { _, failure -> fail("unexpected: $failure") }),
+            )
+        val driver = AutonomousDriver(bodies, cognition, schedule) { now }
+        driver.sweep()
+        main.drain()
+        now = CADENCE
+        repeat(3) {
+            driver.sweep()
+            main.drain()
+            now += schedule.sliceTicks
+        }
+        val deferred = records.filter { it.event == dev.loom.body.BodyEvent.GOAL_REVIEW_DEFERRED }
+        assertEquals(listOf(dev.loom.body.EventTag.REVIEW_IN_FLIGHT), deferred.map { it.outcome })
+        assertEquals(CADENCE, deferred.single().tick)
+        assertEquals("goalReview", deferred.single().trigger)
+        assertEquals(listOf(agent), bodies.perceived, "the held review took no perception")
+    }
+
+    @Test
     @DisplayName("an agent with no body is never sent to the mind")
     fun aBodylessAgentIsNotDriven() {
         val agent = AgentId("agent-1")
