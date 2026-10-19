@@ -105,6 +105,11 @@ class PlayerBodyPort(
                 instances[agentId]?.perceptions?.shown(perception)
             }
 
+            override fun dangerSubjectOf(
+                agentId: AgentId,
+                requestId: String,
+            ): String? = instances[agentId]?.threatSubjects?.get(requestId)
+
             override fun unsent(
                 agentId: AgentId,
                 perception: Perception,
@@ -197,6 +202,8 @@ private class PlayerBodyInstance(
     ): CompletionStage<Perception?> = perception.perceive(agentId, trigger)
 
     fun senseThreat(agentId: AgentId): CompletionStage<Perception?> = perception.senseThreat(agentId)
+
+    val threatSubjects: ThreatSubjects get() = perception.subjects
 
     fun release(
         agentId: AgentId,

@@ -82,8 +82,39 @@ private fun threatImportance(sighting: Trigger.ThreatSighted): DecisionImportanc
  * This is applied on the way to the mind so the tier stamped on the resulting
  * decision's provenance is the one the event actually earned.
  */
-fun Perception.classified(): Perception =
-    copy(importance = if (trigger.reviewsGoal && huntedNearby()) DecisionImportance.PIVOTAL else importanceOf(trigger))
+fun Perception.classified(): Perception {
+    val dangerous = trigger.reviewsGoal || trigger is Trigger.ThreatSighted
+    val pivotal = dangerous && (huntedNearby() || rangedInRange() || weakBesideAHunter())
+    return copy(importance = if (pivotal) DecisionImportance.PIVOTAL else importanceOf(trigger))
+}
+
+/** The creatures that hunt the agent's kind from range, so a sighting past melee reach can already hit. */
+val RANGED_HUNTERS: Set<String> =
+    setOf("skeleton", "stray", "bogged", "pillager", "witch", "blaze").map { "entity.minecraft.$it" }.toSet()
+
+/** How far off a ranged hunter in sight can hit: a skeleton's bow reaches this far. */
+const val RANGED_THREAT_BLOCKS: Double = 16.0
+
+/** The health at or below which any hunter near the agent makes its next decision pivotal. */
+const val LOW_HEALTH: Double = 10.0
+
+/**
+ * Whether a ranged hunter in sight is close enough to shoot (r24: eta reviewed at health 4.5 with a
+ * skeleton 9.8 blocks off, was tiered routine and crafted, and was shot dead).
+ */
+private fun Perception.rangedInRange(): Boolean =
+    surroundings.any { it.visible && it.what in RANGED_HUNTERS && it.distance <= RANGED_THREAT_BLOCKS } ||
+        (trigger as? Trigger.ThreatSighted)?.let {
+            it.visible && it.threat in RANGED_HUNTERS && it.distance <= RANGED_THREAT_BLOCKS
+        } == true
+
+/** Whether the agent is weak while any hunter is near enough to matter. */
+private fun Perception.weakBesideAHunter(): Boolean =
+    selfState.health <= LOW_HEALTH &&
+        (
+            trigger is Trigger.ThreatSighted ||
+                surroundings.any { it.hunts == true && it.distance <= dangerReachOf(it.visible) }
+        )
 
 /**
  * Whether a creature that hunts this agent's kind is in sight inside
@@ -93,3 +124,6 @@ fun Perception.classified(): Perception =
  */
 private fun Perception.huntedNearby(): Boolean =
     surroundings.any { it.hunts == true && it.visible && it.distance <= PIVOTAL_THREAT_DISTANCE_BLOCKS }
+
+/** How near a hunter is danger enough to answer first, in sight or out of it. */
+private fun dangerReachOf(visible: Boolean): Double = if (visible) DANGER_SIGHT_BLOCKS else DANGER_UNSEEN_BLOCKS

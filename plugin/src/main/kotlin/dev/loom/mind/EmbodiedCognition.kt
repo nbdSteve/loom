@@ -138,15 +138,17 @@ class EmbodiedCognition(
     fun submit(
         agentId: AgentId,
         perception: Perception,
+        dangerSubject: String? = null,
     ) {
         if (shutDown) return
+        val subject = dangerSubject ?: bodies.held.dangerSubjectOf(agentId, perception.requestId)
         // Recorded as shown: classified, a review with its horizon, which the ledger judges against.
         val shown = perception.withHorizon(goals.recipes)
         bodies.held.shown(agentId, shown)
         val coalesced =
             when {
                 // The agent is already answering this threat.
-                !danger.admit(agentId, perception) ->
+                !danger.admit(agentId, perception, subject) ->
                     EventTag.DANGER_COALESCED to "coalesced into the active danger episode for this threat"
                 // One review and one event at a time: the answer already coming covers this one.
                 inFlightFor(agentId, review = perception.trigger.reviewsGoal) > 0 -> {
@@ -163,25 +165,10 @@ class EmbodiedCognition(
             bodies.held.unsent(agentId, perception)
             return
         }
-        val carried =
-            if (perception.trigger.reviewsGoal) {
-                shown.copy(
-                    goal =
-                        goals.present(
-                            agentId,
-                            perception.requestId,
-                            perception.capturedTick,
-                            GoalObservation.of(shown),
-                        ),
-                    lastRefusal = goals.takeRefusal(agentId),
-                )
-            } else {
-                shown
-            }
+        val carried = goals.carried(agentId, shown)
         inFlight[carried.requestId] = agentId to carried
         mind.submit(carried).whenComplete { decision, failure ->
-            // This runs on a bridge thread. Everything past here touches the body,
-            // so it goes through the main thread or not at all.
+            // On a bridge thread: everything past here touches the body, so it runs on the main thread.
             mainThread.execute {
                 // A shutdown already ended this chain; nothing may be recorded twice.
                 if (inFlight.remove(carried.requestId) == null) return@execute
@@ -196,7 +183,13 @@ class EmbodiedCognition(
                         journal.discarded(agentId, decision)
                         callbacks.onApplied(AppliedDecision(decision, IntentOutcome.NoSuchBody))
                     }
-                    else -> actOn(agentId, decision, carried.shownGoal())
+                    else ->
+                        actOn(
+                            agentId,
+                            decision,
+                            carried.shownGoal(),
+                            answersDanger = dangerKeyOf(carried.trigger) != null,
+                        )
                 }
             }
         }
@@ -296,7 +289,7 @@ class EmbodiedCognition(
         // Nothing was done about the threat, so its next report is asked about again rather than
         // cooled down as if answered: v29 rehearsal zeta's danger call was refused for its review
         // reserve and the three bites that followed, the last one fatal, were all coalesced.
-        danger.settled(agentId, perception.requestId, fled = false)
+        danger.settled(agentId, perception.requestId, fled = false)?.let { tell(agentId, it) }
         bodies.held.release(agentId, perception.requestId)
         val classified = failureOf(failure)
         if (classified == CognitionFailure.CallReserved) bodies.held.unsent(agentId, perception)
@@ -317,6 +310,7 @@ class EmbodiedCognition(
         agentId: AgentId,
         decision: Decision,
         shown: ShownGoal?,
+        answersDanger: Boolean = false,
     ) {
         val goal = goals.resolve(agentId, decision)
         journal.decided(agentId, decision, goal, shown)
@@ -326,7 +320,11 @@ class EmbodiedCognition(
             val refused = IntentOutcome.Rejected("the decision contradicts its own goal: ${goal.outcome}", goal.outcome)
             journal.refused(agentId, decision, goal.outcome)
             goals.stepped(agentId, decision.requestId, tagOf(decision.intent), goal.outcome)
-            danger.settled(agentId, decision.requestId, fled = decision.intent is Intent.Flee)
+            danger.settled(
+                agentId,
+                decision.requestId,
+                fled = decision.intent is Intent.Flee,
+            )?.let { tell(agentId, it) }
             bodies.held.release(agentId, decision.requestId)
             callbacks.onApplied(AppliedDecision(decision, refused))
             return
@@ -337,7 +335,8 @@ class EmbodiedCognition(
         if (goal?.outcome == GoalEvidence.COMPLETED) {
             callbacks.onStepSettled.settled(agentId, journal.tick(), owed = true)
         }
-        val flight = decision.intent is Intent.Flee
+        // A flight, and any answer to danger, holds the agent's reviews until the body has carried it out.
+        val flight = decision.intent is Intent.Flee || answersDanger
         if (flight) fleeing += agentId
         bodies.apply(agentId, decision.intent, decision.requestId).whenComplete { outcome, failure ->
             mainThread.execute {
@@ -361,8 +360,8 @@ class EmbodiedCognition(
                         (applied as? IntentOutcome.Accepted)?.reached,
                     )
                 callbacks.onStepSettled.oweReview(agentId, journal.tick(), goal, goalStep, applied)
-                danger.settled(agentId, decision.requestId, fled = decision.intent is Intent.Flee)
-                if (applied == IntentOutcome.NoSuchBody) danger.forget(agentId)
+                val held = danger.settled(agentId, decision.requestId, fled = decision.intent is Intent.Flee)
+                if (applied == IntentOutcome.NoSuchBody) danger.forget(agentId) else held?.let { tell(agentId, it) }
                 if (applied == IntentOutcome.NoSuchBody) {
                     journal.discarded(agentId, decision)
                 }
@@ -385,14 +384,22 @@ class EmbodiedCognition(
             "cognition for agent ${perception.agentId} completed with neither a decision nor a failure",
         )
 
-    /** Unwraps the wrapper completion stages use without exposing transport internals. */
-    private fun underlying(failure: Throwable): Throwable =
-        if (failure is CompletionException && failure.cause != null) {
-            requireNotNull(failure.cause)
-        } else {
-            failure
-        }
+    /** Tells [agentId]'s mind of the [damage] it took while its last danger answer ran. */
+    private fun tell(
+        agentId: AgentId,
+        damage: Trigger.Damaged,
+    ) {
+        if (!callbacks.isDead(agentId) && !shutDown) consider(agentId, damage)
+    }
 }
+
+/** Unwraps the wrapper completion stages use without exposing transport internals. */
+private fun underlying(failure: Throwable): Throwable =
+    if (failure is CompletionException && failure.cause != null) {
+        requireNotNull(failure.cause)
+    } else {
+        failure
+    }
 
 /** What this perception showed cognition of its goal, when it reviews one. */
 private fun Perception.shownGoal(): ShownGoal? = ShownGoal(goal, lastRefusal, horizon).takeIf { trigger.reviewsGoal }
@@ -418,3 +425,17 @@ private fun StepSettlement.oweReview(
         settled(agentId, tick, owed = dropped || goal?.ownGoalDropLying == true)
     }
 }
+
+/** [shown] as the mind receives it: a goal review carries its agent's goal and last refusal. */
+private fun GoalLedger.carried(
+    agentId: AgentId,
+    shown: Perception,
+): Perception =
+    if (shown.trigger.reviewsGoal) {
+        shown.copy(
+            goal = present(agentId, shown.requestId, shown.capturedTick, GoalObservation.of(shown)),
+            lastRefusal = takeRefusal(agentId),
+        )
+    } else {
+        shown
+    }

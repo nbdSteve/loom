@@ -50,13 +50,21 @@ internal class PlayerPerception(
                 // The player body makes no route search toward a threat, so it states none.
                 val outcome = context.threatWatch.consider(agentId, scene.candidates) { null }
                 outcome.suppressed.forEach { context.journal.recordSuppressedThreat(agentId, it) }
-                outcome.sighted?.let { trigger -> commit(scene, trigger) }
+                outcome.sighted?.let { trigger ->
+                    commit(scene, trigger).also { sent ->
+                        val creature = scene.candidates.firstOrNull { it.ref == trigger.ref }
+                        creature?.let { subjects.remember(sent.requestId, it.subject) }
+                    }
+                }
                     ?: run {
                         scene.raw.connection.close()
                         null
                     }
             }
         }
+
+    /** The server identity of each recent sighting's creature, by request. */
+    val subjects = ThreatSubjects()
 
     private fun sceneFor(
         agentId: AgentId,
@@ -280,3 +288,23 @@ internal fun matchesSenseRequest(
         report.items.none { blocksApart(report.position, it.position) > radius }
     return listsFit && listOf(entitiesFit, blocksFit, itemsFit).all { it }
 }
+
+/** The server identity of each recent threat sighting's creature, by request; the oldest is dropped. */
+internal class ThreatSubjects {
+    private val byRequest = LinkedHashMap<String, String>()
+
+    @Synchronized
+    operator fun get(requestId: String): String? = byRequest[requestId]
+
+    @Synchronized
+    fun remember(
+        requestId: String,
+        subject: java.util.UUID,
+    ) {
+        byRequest[requestId] = subject.toString()
+        while (byRequest.size > MAX_THREAT_SUBJECTS) byRequest.remove(byRequest.keys.first())
+    }
+}
+
+/** Recent sightings whose creature identity is kept for danger tracking. */
+private const val MAX_THREAT_SUBJECTS = 64

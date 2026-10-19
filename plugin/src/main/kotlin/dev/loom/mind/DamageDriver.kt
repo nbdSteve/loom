@@ -56,6 +56,8 @@ data class DamageReport(
     val tick: Long,
     val witness: WitnessedPlayer,
     val playerDead: Boolean = false,
+    /** The server's identity for the creature that dealt it, the shooter of a projectile; `null` for a cause. */
+    val attacker: String? = null,
 )
 
 /** Whole damage points for the trigger, or `null` when there is no positive damage. */
@@ -134,7 +136,7 @@ class DamageDriver(
                     record(report, trigger, refusal ?: EventTag.DAMAGE_NOT_PERCEIVED, captured?.requestId)
                 } else {
                     record(report, trigger, EventTag.DAMAGE_SUBMITTED, captured.requestId)
-                    mind.submit(report.agentId, captured.classified())
+                    mind.submit(report.agentId, captured.classified(), report.attacker)
                 }
             }
         }

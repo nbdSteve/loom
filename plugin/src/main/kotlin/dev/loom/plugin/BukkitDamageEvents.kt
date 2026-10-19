@@ -43,31 +43,32 @@ class BukkitDamageEvents(
         val player = event.entity as? Player ?: return
         val attacker = (event as? EntityDamageByEntityEvent)?.damager
         witnessed(
-            uuid = player.uniqueId,
-            username = player.name,
+            player = WitnessedPlayer(player.uniqueId.toString(), player.name),
             finalDamage = event.finalDamage,
             source = damageSourceOf(event.cause, attacker?.let(::attackerType)),
             playerDead = player.isDead,
+            attacker = attacker?.let(::attackerOf)?.uniqueId?.toString(),
         )
     }
 
     internal fun witnessed(
-        uuid: UUID,
-        username: String,
+        player: WitnessedPlayer,
         finalDamage: Double,
         source: String,
         playerDead: Boolean,
+        attacker: String? = null,
     ) {
         if (closed || !(finalDamage > 0.0)) return
-        val agent = agentOf(uuid) ?: return
+        val agent = agentOf(UUID.fromString(player.uuid)) ?: return
         sink(
             DamageReport(
                 agentId = agent,
                 finalDamage = finalDamage,
                 source = source,
                 tick = currentTick(),
-                witness = WitnessedPlayer(uuid.toString(), username),
+                witness = player,
                 playerDead = playerDead,
+                attacker = attacker,
             ),
         )
     }
@@ -80,8 +81,9 @@ class BukkitDamageEvents(
 }
 
 /** A projectile's shooter when it is an entity, otherwise the damager itself. */
-private fun attackerType(damager: Entity): EntityType =
-    ((damager as? Projectile)?.shooter as? Entity)?.type ?: damager.type
+private fun attackerOf(damager: Entity): Entity = (damager as? Projectile)?.shooter as? Entity ?: damager
+
+private fun attackerType(damager: Entity): EntityType = attackerOf(damager).type
 
 /**
  * The stable source token: the attacker's vanilla entity key, else the damage cause.

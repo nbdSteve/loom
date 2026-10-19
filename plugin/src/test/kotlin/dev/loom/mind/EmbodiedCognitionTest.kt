@@ -236,6 +236,7 @@ class EmbodiedCognitionTest {
     fun aDangerRepeatIsCoalescedIntoTheActiveEpisode() {
         val records = mutableListOf<BodyEventRecord>()
         val asked = mutableListOf<String>()
+        val triggers = mutableListOf<Trigger>()
         val decisions = mutableMapOf<String, CompletableFuture<Decision>>()
         val body = perceivingBody()
         val cognition =
@@ -243,6 +244,7 @@ class EmbodiedCognitionTest {
                 body,
                 mind = { p ->
                     asked.add(p.requestId)
+                    triggers.add(p.trigger)
                     CompletableFuture<Decision>().also { decisions[p.requestId] = it }
                 },
                 mainThread = main,
@@ -266,17 +268,28 @@ class EmbodiedCognitionTest {
         // Once the decision is applied, the cooldown holds, then a new engagement is asked.
         decisions.getValue("danger-1").complete(decisionFor(first, Intent.Flee("e1")))
         main.drain()
+        // The damage held behind the flight is told the moment it settles (r24: 43 of 68 never were).
+        assertEquals(2, asked.size)
+        val told = asked[1]
+        assertEquals(Trigger.Damaged(3, "zombie"), triggers[1])
+        decisions.getValue(
+            told,
+        ).complete(decisionFor(perception(requestId = told, agentId = agent.value), Intent.Flee("e1")))
+        main.drain()
         tick += DANGER_EPISODE_COOLDOWN_TICKS
         cognition.submit(agent, perception(requestId = "danger-3", agentId = agent.value, trigger = zombie))
         tick += 1
         cognition.submit(agent, perception(requestId = "danger-4", agentId = agent.value, trigger = zombie))
         main.drain()
-        assertEquals(listOf("danger-1", "danger-4"), asked)
-        assertEquals(listOf("danger-2", "danger-3"), body.released)
+        assertEquals(listOf("danger-1", told, "danger-4"), asked)
+        assertEquals(listOf("danger-2", "danger-3"), body.released.filter { it != told && it != "danger-1" })
         // A lost decision gives its sense back too.
         decisions.getValue("danger-4").completeExceptionally(IllegalStateException("the mind went away"))
         main.drain()
-        assertEquals(listOf("danger-2", "danger-3", "danger-4"), body.released)
+        assertEquals(
+            listOf("danger-2", "danger-3", "danger-4"),
+            body.released.filter { it != told && it != "danger-1" },
+        )
     }
 
     @Test

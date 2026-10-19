@@ -202,6 +202,15 @@ fun interface HeldPerceptions {
         perception: Perception,
     ) = Unit
 
+    /**
+     * The server's own identity for the creature a threat sighting [requestId] is about, so danger
+     * is tracked by the creature rather than its kind; `null` when the body cannot say.
+     */
+    fun dangerSubjectOf(
+        agentId: AgentId,
+        requestId: String,
+    ): String? = null
+
     companion object {
         /** A body that holds nothing between a perception and its decision. */
         val NONE: HeldPerceptions = HeldPerceptions { _, _ -> }

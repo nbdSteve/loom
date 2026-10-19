@@ -23,6 +23,9 @@ const val URGENT_CALL_RESERVE: Int = 2
  * ceiling still holds its own reviews still due and the global ceiling still holds every
  * living agent's.
  *
+ * Urgent danger - damage, or a pivotal sighting - is held only to the two ceilings themselves, and
+ * so comes before every review still due (r24).
+ *
  * The research harness refuses calls at its ceilings, and the run ends there: in r20 the night's
  * 49 danger calls and the follow-ups spent all 150 by tick 8465, so the last scheduled reviews
  * never ran. Inside what is left, urgent danger comes before every other event: a distant sighting
@@ -63,13 +66,16 @@ class CallReserve(
         val calls = sent[agentId] ?: 0
         val total = sent.values.sum()
         val urgent = perception.trigger is Trigger.Damaged || perception.importance == DecisionImportance.PIVOTAL
-        val kept = if (urgent) 0 else URGENT_CALL_RESERVE
+        // Urgent danger preempts the reviews still due: a scheduled review that never runs costs a
+        // goal step, and a refused damage call has cost an agent its life (r24: six damage calls and
+        // eight pivotal sightings were refused to keep calls for reviews their agents never lived to
+        // hold, theta's at health 1).
         val admitted =
-            if (review) {
+            if (review || urgent) {
                 calls < perAgentCeiling && total < globalCeiling
             } else {
-                val keptForAll = owedByTheLiving(agentId) + kept.toLong() * livingCount(agentId)
-                val ownFits = calls + 1 + owedBy(agentId) + kept <= perAgentCeiling
+                val keptForAll = owedByTheLiving(agentId) + URGENT_CALL_RESERVE.toLong() * livingCount(agentId)
+                val ownFits = calls + 1 + owedBy(agentId) + URGENT_CALL_RESERVE <= perAgentCeiling
                 ownFits && total.toLong() + 1 + keptForAll <= globalCeiling
             }
         if (admitted) {
