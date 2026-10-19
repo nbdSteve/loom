@@ -94,6 +94,7 @@ class ObserverView(
             BodyEvent.DESPAWNED -> Note("its body was put away", ObserverLevel.CALM)
             BodyEvent.DIED -> Note("DIED. Permadeath: this agent will not return.", ObserverLevel.ALARM)
             BodyEvent.RETREATING -> retreatNote(record.outcome)
+            BodyEvent.OWN_DROP_PICKUP -> Note("tried once to pick up what its dig dropped", ObserverLevel.CALM)
             BodyEvent.WITNESS_JOINED -> Note("connected to the server and has a body now", ObserverLevel.CALM)
             BodyEvent.WITNESS_QUIT ->
                 Note("disconnected. It is not dead; the agent continues.", ObserverLevel.CALM)
@@ -148,6 +149,7 @@ class ObserverView(
             BodyEvent.DESPAWNED,
             BodyEvent.DIED,
             BodyEvent.RETREATING,
+            BodyEvent.OWN_DROP_PICKUP,
             // Names the creature and the request-scoped handle it was seen under. Neither
             // is a secret, and neither is a line: the bound that refused it is the whole
             // meaning, and that is a countable tag rather than prose.

@@ -286,6 +286,15 @@ enum class BodyEvent {
     RETREATING,
 
     /**
+     * The one bounded pickup attempt a dig makes for its goal's own dropped item, after the dig
+     * settled: its body terminal is `outcome` (a collect tag, or `ownDropNotSensed`), the approach
+     * and server-confirmed inventory change are in `detail`, and it joins the dig by `requestId`.
+     * It is no decision and no second terminal of the dig: control returns to the mind after it.
+     */
+    @SerialName("ownDropPickup")
+    OWN_DROP_PICKUP,
+
+    /**
      * The mind answered a perception, and the body was about to be asked to act.
      *
      * The record the run is reconstructed from: it carries the perception it answers

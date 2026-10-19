@@ -89,6 +89,11 @@ class PlayerBodyPort(
     override fun senseThreat(agentId: AgentId): CompletionStage<Perception?> =
         instances[agentId]?.senseThreat(agentId) ?: completedBodyOperation(null)
 
+    override val pickups: dev.loom.body.OwnDropCollector =
+        dev.loom.body.OwnDropCollector { agentId, requestId, item ->
+            instances[agentId]?.pickup?.attempt(agentId, requestId, item) ?: completedBodyOperation(null)
+        }
+
     override val held: HeldPerceptions =
         object : HeldPerceptions {
             override fun release(
@@ -204,6 +209,8 @@ private class PlayerBodyInstance(
     fun senseThreat(agentId: AgentId): CompletionStage<Perception?> = perception.senseThreat(agentId)
 
     val threatSubjects: ThreatSubjects get() = perception.subjects
+
+    val pickup by lazy { OwnDropPickup(context, registry, sessions, perception) }
 
     fun release(
         agentId: AgentId,

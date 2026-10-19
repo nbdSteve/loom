@@ -65,7 +65,8 @@ const BODY_EVENTS = new Set([
   'witnessDisputed',
   'witnessQuit',
   'witnessRevived',
-  'worldInteraction'
+  'worldInteraction',
+  'ownDropPickup'
 ])
 const HARNESS_EVENTS = new Set([
   'cleanupVerified',
@@ -212,7 +213,8 @@ const OUTCOME_EVENTS = new Set([
   'spawnRejected',
   'witnessDenied',
   'witnessDisputed',
-  'worldInteraction'
+  'worldInteraction',
+  'ownDropPickup'
 ])
 const OUTCOME_TAG = /^[a-z][A-Za-z]{0,63}$/
 

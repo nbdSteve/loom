@@ -363,7 +363,7 @@ class EmbodiedCognition(
                     )
                 goals.settledAt(agentId, decision.requestId, journal.tick())
                 // One immediate review owed to the goal item a step left lying, then control returns.
-                followUp(agentId, goal, goalStep, applied)
+                followUp(agentId, decision.requestId, goal, goalStep, applied)
                 val held = danger.settled(agentId, decision.requestId, fled = decision.intent is Intent.Flee)
                 if (applied == IntentOutcome.NoSuchBody) danger.forget(agentId) else held?.let { tell(agentId, it) }
                 if (applied == IntentOutcome.NoSuchBody) {
@@ -377,14 +377,25 @@ class EmbodiedCognition(
     /** The review a settled decision owes [agentId]: one now for its goal item left lying, else as owed. */
     private fun followUp(
         agentId: AgentId,
+        requestId: String,
         goal: GoalEvidence?,
         goalStep: GoalSummary?,
         applied: IntentOutcome,
     ) {
-        if (leftGoalItemLying(goal, goalStep, applied) && canReview(agentId)) {
-            tell(agentId, Trigger.StepSettled)
-        } else {
+        val item = goalStep?.successItem?.takeIf { leftGoalItemLying(goal, goalStep, applied) }
+        if (item == null) {
             callbacks.onStepSettled.oweReview(agentId, journal.tick(), goal, goalStep, applied)
+            return
+        }
+        // The dig's one pickup of its own goal item, then the mind is asked at once.
+        bodies.pickups.attempt(agentId, requestId, item).whenComplete { _, _ ->
+            mainThread.execute {
+                if (canReview(agentId)) {
+                    tell(agentId, Trigger.StepSettled)
+                } else {
+                    callbacks.onStepSettled.settled(agentId, journal.tick(), owed = true)
+                }
+            }
         }
     }
 

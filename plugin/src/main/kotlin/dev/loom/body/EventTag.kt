@@ -174,6 +174,9 @@ object EventTag {
      */
     const val DANGER_COALESCED: String = "dangerCoalesced"
 
+    /** A dig's one pickup attempt found its own goal-item drop nowhere in a fresh sense. */
+    const val OWN_DROP_NOT_SENSED: String = "ownDropNotSensed"
+
     /** An event decision that took no survival response while a hunter was immediate danger (r24). */
     const val SURVIVAL_REQUIRED: String = "survivalRequired"
 

@@ -66,6 +66,12 @@ internal class PlayerPerception(
     /** The server identity of each recent sighting's creature, by request. */
     val subjects = ThreatSubjects()
 
+    /** A fresh sense held for one pickup attempt, its own drops retained even out of sight; no perception. */
+    fun senseForPickup(agentId: AgentId): CompletionStage<HeldSense?> =
+        capture(agentId, "own drop pickup").thenApplyOn(context.authority.main) { raw ->
+            raw?.let { sceneFor(agentId, it) }?.let(sessions::remember)
+        }
+
     private fun sceneFor(
         agentId: AgentId,
         raw: RawSense,

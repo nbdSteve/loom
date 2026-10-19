@@ -125,6 +125,9 @@ interface BodyPort : AutoCloseable {
      */
     fun senseThreat(agentId: AgentId): CompletionStage<Perception?>
 
+    /** Where a dig's one pickup of its goal's own dropped item is made; see [OwnDropCollector]. */
+    val pickups: OwnDropCollector get() = OwnDropCollector.NONE
+
     /** The perceptions this body holds open until their decisions settle; see [HeldPerceptions]. */
     val held: HeldPerceptions get() = HeldPerceptions.NONE
 
@@ -214,5 +217,21 @@ fun interface HeldPerceptions {
     companion object {
         /** A body that holds nothing between a perception and its decision. */
         val NONE: HeldPerceptions = HeldPerceptions { _, _ -> }
+    }
+}
+
+/** Makes the one bounded pickup attempt a model-selected dig owes its goal's own dropped item. */
+fun interface OwnDropCollector {
+    /** Tries once for the [item] dig [requestId] left lying; answers its terminal tag, or `null` for none. */
+    fun attempt(
+        agentId: AgentId,
+        requestId: String,
+        item: String,
+    ): CompletionStage<String?>
+
+    companion object {
+        /** A body that never tries. */
+        val NONE: OwnDropCollector =
+            OwnDropCollector { _, _, _ -> java.util.concurrent.CompletableFuture.completedFuture(null) }
     }
 }

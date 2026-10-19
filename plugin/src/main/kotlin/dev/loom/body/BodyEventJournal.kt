@@ -187,6 +187,7 @@ class BodyEventJournal(
      * opposite facts about the run - an agent that got away, one whose threat vanished,
      * and one left standing in range - and only the tag tells them apart.
      */
+
     fun recordRetreat(
         agentId: AgentId,
         detail: String,
