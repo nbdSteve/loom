@@ -366,6 +366,12 @@ class GoalPursuitEndToEndTest {
         world.awaitRecord { it.event == BodyEvent.WORLD_INTERACTION }
         assertTrue(world.mind.seen[0].horizon.isEmpty(), "nothing grounds an item goal where alpha starts")
         assertTrue(world.mind.seen[1].horizon.any { it.what == LOG }, "the walk brought the log into sight")
+        // The ground it walked from is not offered again while other bearings are (r24 alpha, iota).
+        val back =
+            world.mind.seen[1].explore.filter {
+                it.direction == Bearing.WEST && kotlin.math.abs(it.distance - 12.0) < 0.2
+            }
+        assertTrue(back.isEmpty(), "the cell back where it stood is withheld: $back")
         val decided = world.records.filter { it.event == BodyEvent.DECIDED }
         assertEquals(GoalEvidence.ADOPTED, decided[0].goal?.outcome)
         assertEquals(true, decided[0].goal?.discovery)
