@@ -1245,19 +1245,52 @@ fn a_horizon_goal_asks_past_what_sight_gives_and_is_stepped_now_by_a_dig_or_a_lo
             .unwrap()
             .clone()
     };
-    // The rolling step is executable now: the log in reach, or the cell to look further from.
+    // The rolling step is executable now: the log in reach, and no walk to look further while it
+    // is (r23: epsilon walked away from two logs in dig reach).
     assert_eq!(steps(LOG).dig, vec!["b1".to_owned()]);
-    assert_eq!(steps(LOG).toward, vec!["x1".to_owned()]);
+    assert!(steps(LOG).toward.is_empty());
     // Planks are stepped toward through the log they are made from.
     assert_eq!(steps(PLANKS).dig, vec!["b1".to_owned()]);
     let validator = jsonschema::validator_for(&schema).unwrap();
     let dig = json!({ "action": "dig", "block": "b1" });
     let adopt = |item: &str, count: i64| json!({ "disposition": "adopt", "successItem": item, "successCount": count });
     assert!(validator.is_valid(&answer_in(&schema, &dig, &adopt(PLANKS, 8))));
-    assert!(validator.is_valid(&answer_in(
+    assert!(!validator.is_valid(&answer_in(
         &schema,
         &json!({ "action": "moveTo", "onto": "x1" }),
         &adopt(LOG, 9)
     )));
     assert!(!validator.is_valid(&answer_in(&schema, &dig, &adopt(LOG, 10))));
+}
+
+#[test]
+fn a_held_goal_may_switch_before_its_stall_bound_into_a_recipe_made_from_what_is_held() {
+    // r23 eta body:00001542: it abandoned its goal and crafted eight planks from its logs with no
+    // goal held, because only a stalled goal could be replaced.
+    const PLANKS: &str = "item.minecraft.oak_planks";
+    let mut seen = stick_goal(4, 0);
+    let crafting = fixture("perception-crafting");
+    seen.self_state.crafting_options = crafting.self_state.crafting_options.clone();
+    seen.self_state.inventory_summary = crafting.self_state.inventory_summary.clone();
+    let made = seen.self_state.crafting_options[0].what.clone();
+    let input = seen.self_state.inventory_summary[0].what.clone();
+    seen.horizon = vec![horizon_goal(
+        &made,
+        loom_contract::HorizonGrounding::Recipe,
+        Some(&input),
+        8,
+    )];
+    let offered = OfferedRefs::of(&seen);
+    assert_eq!(offered.switch_bounds.len(), 1, "{made} from held {input}");
+    let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
+    assert!(dispositions(&schema).contains(&"replace".to_owned()));
+    assert_eq!(count_bounds(&schema, "replace", &made).len(), 1);
+    // A recipe made from nothing held is no switch.
+    seen.horizon = vec![horizon_goal(
+        PLANKS,
+        loom_contract::HorizonGrounding::Recipe,
+        Some("item.minecraft.birch_log"),
+        8,
+    )];
+    assert!(OfferedRefs::of(&seen).switch_bounds.is_empty());
 }

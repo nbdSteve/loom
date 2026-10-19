@@ -183,7 +183,11 @@ class GoalLedger(
             }
             val wanted = next?.successItem?.takeIf { starting } ?: return null
             val needs = recipes.inputsOf(wanted)
-            return met.lastOrNull { (_, made) -> made in needs }?.first
+            // A switch into a recipe made from what the held goal already gathered builds on it,
+            // met or not (r23: eta crafted eight planks from its logs with no goal held).
+            val built = (presented?.progress?.conditionHeld ?: 0) > 0 && tag == GoalEvidence.REPLACED
+            return presented?.goalId.takeIf { built && item != null && item in needs }
+                ?: met.lastOrNull { (_, made) -> made in needs }?.first
         }
     }
 

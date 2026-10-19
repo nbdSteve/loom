@@ -53,51 +53,69 @@ fun footingOf(perception: Perception): Set<String> =
 fun horizonOf(
     perception: Perception,
     recipes: RecipeInputs,
-): List<HorizonGoal> {
-    val observed = GoalObservation.of(perception)
-    val footing = footingOf(perception)
-    val held = { item: String -> observed.inventory[item] ?: 0 }
-    val frontier = perception.explore.isNotEmpty()
-    val sources = observed.capacity.keys.filter { it !in footing }.sorted()
-    val chosen = linkedMapOf<String, HorizonGoal>()
+): List<HorizonGoal> = HorizonBuilder(perception, recipes).build()
 
-    fun add(goal: HorizonGoal) {
-        if (goal.what !in chosen && held(goal.what) < goal.most) chosen[goal.what] = goal
+/** One perception's horizon, assembled in its order of preference. */
+private class HorizonBuilder(
+    private val perception: Perception,
+    private val recipes: RecipeInputs,
+) {
+    private val observed = GoalObservation.of(perception)
+    private val footing = footingOf(perception)
+
+    // What the world gives, not what a craft makes: a craft-only item is grounded by its recipe
+    // and labelled so (r23: sticks a craft would make were labelled seen, with more beyond the edge).
+    private val sources =
+        GoalObservation
+            .of(perception.copy(selfState = perception.selfState.copy(craftingOptions = emptyList())))
+            .capacity
+            .keys
+            .filter { it !in footing }
+            .sorted()
+    private val chosen = linkedMapOf<String, HorizonGoal>()
+
+    private fun held(item: String): Long = observed.inventory[item] ?: 0
+
+    private fun add(goal: HorizonGoal) {
+        if (goal.what !in chosen && goal.what !in footing && held(goal.what) < goal.most) chosen[goal.what] = goal
     }
 
-    fun recipe(
+    private fun recipe(
         item: String,
         via: String,
-    ) = HorizonGoal(
-        item,
-        HorizonGrounding.RECIPE,
-        via,
-        (held(item) + HORIZON_SPAN).coerceAtMost(MAX_SUCCESS_COUNT),
-        false,
-    )
-    // A typed path from anything grounded, the footing included: dirt is a goal only when it feeds one.
-    val firstSteps =
-        (sources + footing.sorted()).flatMap { input ->
-            recipes
-                .madeFrom(input)
-                .take(RECIPES_PER_INPUT)
-                .filter { it !in footing }
-                .map { recipe(it, input) }
+        most: Long = held(item) + HORIZON_SPAN,
+    ) = HorizonGoal(item, HorizonGrounding.RECIPE, via, most.coerceAtMost(MAX_SUCCESS_COUNT), false)
+
+    fun build(): List<HorizonGoal> {
+        craftableNow().forEach(::add)
+        // A typed path from anything grounded - held, given, or the footing: dirt is a goal only
+        // when it feeds one.
+        val inputs = (sources + footing.sorted() + observed.inventory.keys.sorted()).distinct()
+        val firstSteps =
+            inputs.flatMap { input -> recipes.madeFrom(input).take(RECIPES_PER_INPUT).map { recipe(it, input) } }
+        firstSteps.forEach(::add)
+        if (perception.explore.isNotEmpty()) sources.forEach { add(frontierOf(it)) }
+        for (step in firstSteps) {
+            recipes.madeFrom(step.what).take(SECOND_STEP_RECIPES).forEach { add(recipe(it, step.what)) }
         }
-    firstSteps.forEach(::add)
-    if (frontier) {
-        for (item in sources) {
-            val grounding = if (observed.inSight(item) > 0) HorizonGrounding.SIGHT else HorizonGrounding.RECALLED
-            val most = (held(item) + (observed.capacity[item] ?: 0) + HORIZON_SPAN).coerceAtMost(MAX_SUCCESS_COUNT)
-            add(HorizonGoal(item, grounding, null, most, true))
+        return chosen.values.take(MAX_HORIZON_GOALS)
+    }
+
+    /** The crafts the agent can make now, each made from an input it holds. */
+    private fun craftableNow(): List<HorizonGoal> =
+        perception.selfState.craftingOptions.mapNotNull { option ->
+            recipes.inputsOf(option.what).sorted().firstOrNull { held(it) > 0 }?.let { via ->
+                val crafted = held(option.what) + option.resultCount * option.maxCrafts
+                recipe(option.what, via, maxOf(held(option.what) + HORIZON_SPAN, crafted))
+            }
         }
+
+    /** A source's goal, reaching past what it gives onto the frontier. */
+    private fun frontierOf(item: String): HorizonGoal {
+        val grounding = if (observed.inSight(item) > 0) HorizonGrounding.SIGHT else HorizonGrounding.RECALLED
+        val most = (held(item) + (observed.capacity[item] ?: 0) + HORIZON_SPAN).coerceAtMost(MAX_SUCCESS_COUNT)
+        return HorizonGoal(item, grounding, null, most, true)
     }
-    for (step in firstSteps) {
-        recipes.madeFrom(
-            step.what,
-        ).take(SECOND_STEP_RECIPES).filter { it !in footing }.forEach { add(recipe(it, step.what)) }
-    }
-    return chosen.values.take(MAX_HORIZON_GOALS)
 }
 
 /** The items [item]'s horizon recipe path is made from, nearest first: its `via`, then that one's. */

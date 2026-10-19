@@ -213,7 +213,8 @@ private fun canGive(
     // gives nothing, so it is no step of a goal (r19: two equips stood in as a goal's step).
     val given = target?.let { observed?.gives?.get(it) }
     val toward = item?.let { recipes.inputsOf(it) + it + observed?.horizon.orEmpty().pathOf(it) }.orEmpty()
-    return item == null || (intent !is Intent.Equip && (given == null || given.any { it in toward }))
+    val past = observed?.looksPastASource(intent, toward) == true
+    return item == null || (intent !is Intent.Equip && (given == null || given.any { it in toward }) && !past)
 }
 
 /**

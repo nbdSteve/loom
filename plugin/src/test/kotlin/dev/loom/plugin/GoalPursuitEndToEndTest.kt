@@ -233,7 +233,9 @@ class GoalPursuitEndToEndTest {
                     Intent.Dig(seen.surroundings.single { it.what == "block.minecraft.dead_bush" }.ref) to
                         target(GoalDisposition.ADOPT, STICK, 1)
                 1 -> Intent.MoveTo(seen.explore.single { it.direction == Bearing.EAST }.ref) to continuing()
-                else -> Intent.MoveTo(seen.explore.first().ref) to continuing()
+                // The revealed bush is in reach: it is dug, never walked away from (r23 epsilon).
+                else ->
+                    Intent.Dig(seen.surroundings.first { it.what == "block.minecraft.dead_bush" }.ref) to continuing()
             }
         }
         for (review in 1..3) {

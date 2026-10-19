@@ -134,9 +134,50 @@ class HorizonTest {
         assertEquals(StepEvidence.GAINED_INPUT, carried?.progress?.stepEvidence)
         assertEquals(0L, carried?.progress?.stepsWithoutProgress)
         // And a walk to look further is a step of it too.
+        // A walk to look further while the log is still in reach is no step of it (r23: epsilon
+        // walked away from two logs in dig reach).
         val looking = GoalChoice(GoalDisposition.CONTINUE, stepResult = GoalStepResult.PROGRESSING)
         val look = decisionFor(after, Intent.MoveTo("x1")).copy(goal = looking)
-        assertEquals(GoalEvidence.CONTINUED, ledger.resolve(agent, look)?.outcome)
+        assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, ledger.resolve(agent, look)?.outcome)
+    }
+
+    @Test
+    fun `a craft-only item is labelled by its recipe, and a switch into it from the held goal's item is a chain`() {
+        // r23: sticks a craft would make were labelled seen, with more beyond the edge of sight.
+        val planks = InventoryStack("i1", PLANKS, 2)
+        val sticks = dev.loom.contract.CraftingOption("r1", STICK, 4, 1, false)
+        val craft =
+            scene(underfoot, held = listOf(planks)).let {
+                it.copy(selfState = it.selfState.copy(craftingOptions = listOf(sticks)))
+            }
+        val horizon = horizonOf(craft, recipes).associateBy { it.what }
+        assertEquals(HorizonGoal(STICK, HorizonGrounding.RECIPE, PLANKS, HORIZON_SPAN, false), horizon[STICK])
+        // r23 eta: a log goal holding logs switches into planks before its stall bound, and the
+        // planks goal is chained to it.
+        val ledger = GoalLedger(recipes = recipes)
+        val agent = AgentId("agent-eta")
+        val first = scene(underfoot, tree).let { it.copy(horizon = horizonOf(it, recipes)) }
+        ledger.present(agent, first.requestId, first.capturedTick, GoalObservation.of(first))
+        val adopt = GoalChoice(GoalDisposition.ADOPT, successItem = LOG, successCount = 4)
+        assertEquals(
+            GoalEvidence.ADOPTED,
+            ledger.resolve(agent, decisionFor(first, Intent.Dig("b1")).copy(goal = adopt))?.outcome,
+        )
+        ledger.stepped(agent, first.requestId, "dig", EventTag.ACCEPTED, null)
+        val holding =
+            scene(underfoot, tree, held = listOf(InventoryStack("i2", LOG, 2)))
+                .let { it.copy(requestId = "r2", capturedTick = 200, horizon = horizonOf(it, recipes)) }
+        ledger.present(agent, holding.requestId, holding.capturedTick, GoalObservation.of(holding))
+        val switch =
+            GoalChoice(
+                GoalDisposition.REPLACE,
+                successItem = PLANKS,
+                successCount = 8,
+                stepResult = GoalStepResult.PROGRESSING,
+            )
+        val replaced = ledger.resolve(agent, decisionFor(holding, Intent.Dig("b1")).copy(goal = switch))
+        assertEquals(GoalEvidence.REPLACED, replaced?.outcome)
+        assertEquals(first.requestId, replaced?.chainedFrom)
     }
 
     private companion object {

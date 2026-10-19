@@ -1006,7 +1006,14 @@ fn coupled_offer(
         // sight can meet all of it; one sight can meet is not abandoned (r17 theta), and one it
         // cannot may instead look further, or be abandoned (r18: five goals abandoned to look).
         GoalPhase::Held => {
-            let by_item = continue_first(revise_held(), held.as_ref(), continued());
+            let mut by_item = continue_first(revise_held(), held.as_ref(), continued());
+            // A switch into a recipe made from what is already held, before the stall bound.
+            for (item, ..) in &refs.switch_bounds {
+                by_item.push((
+                    item.clone(),
+                    shaped(GoalDisposition::Replace, "replace", REPLACE, item),
+                ));
+            }
             let short = !refs.goal_obtainable;
             GoalOffer {
                 by_item,

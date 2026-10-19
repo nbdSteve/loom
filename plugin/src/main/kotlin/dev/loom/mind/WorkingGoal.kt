@@ -109,6 +109,8 @@ data class GoalObservation(
     val recalledOnly: Set<String> = emptySet(),
     /** The horizon goals the perception offered, by item: what may be asked beyond [capacity]. */
     val horizon: Map<String, HorizonGoal> = emptyMap(),
+    /** The items a craft offered now makes: a recipe step, never sight handing an item over whole. */
+    val craftable: Set<String> = emptySet(),
 ) {
     /** The most of [item] a goal may ask: what is held and sight gives, or its horizon's most. */
     fun reachOf(item: String): Long = maxOf((inventory[item] ?: 0) + (capacity[item] ?: 0), horizon[item]?.most ?: 0)
@@ -118,7 +120,18 @@ data class GoalObservation(
      * offered, and no horizon goal is grounded in [item] or made from it.
      */
     fun crowdsExploration(item: String): Boolean =
-        explore.isNotEmpty() && item !in horizon && horizon.values.none { it.via == item }
+        explore.isNotEmpty() && item !in horizon && horizon.values.none { it.via == item } && item !in craftable
+
+    /**
+     * Whether [intent] walks to the edge of sight while a block in reach already gives one of
+     * [toward] (r23: epsilon walked away from two logs in dig reach).
+     */
+    fun looksPastASource(
+        intent: Intent,
+        toward: Set<String>,
+    ): Boolean =
+        intent is Intent.MoveTo && intent.onto in explore &&
+            inReach.any { ref -> gives[ref].orEmpty().any { it in toward } }
 
     /** The block cell the agent stood in. */
     val cell: List<Int> get() = position.map { floor(it).toInt() }
@@ -183,6 +196,7 @@ data class GoalObservation(
                     recalled.map { it.first }.toSet() -
                         (drops.map { it.what } + crafted.map { it.first } + dug.map { it.first }).toSet(),
                 horizon = perception.horizon.associateBy { it.what },
+                craftable = perception.selfState.craftingOptions.map { it.what }.toSet(),
             )
         }
 

@@ -202,6 +202,10 @@ pub struct OfferedRefs {
     /// ask: one more than is held, and what is held plus [`Self::capacity`], never above
     /// [`MAX_SUCCESS_COUNT`]. A count is the total to hold, counting what is held already.
     pub count_bounds: Vec<(String, i64, i64)>,
+    /// While a goal is held, the horizon recipe goals made from what the agent already holds that
+    /// a replace may switch to before the stall bound, with their count bounds (r23: eta crafted
+    /// eight planks from its logs with no goal held, because only a stalled goal could be replaced).
+    pub switch_bounds: Vec<(String, i64, i64)>,
     /// The held goal's success item, while a goal review carries a goal that is not met and that
     /// what is in sight could still meet: dig and collect are then offered only for what can give
     /// that item, and a revise may change only its count (r15: digs of blocks that could never
@@ -341,13 +345,20 @@ fn path_of(perception: &Perception, item: &str) -> Vec<String> {
 
 /// Whether a goal of `item` would crowd out looking further: cells at the edge of sight are
 /// offered, and no horizon goal is grounded in `item` or made from it (r22: every goal was dirt
-/// from underfoot, and no agent looked for wood). The JVM's `crowdsExploration`.
+/// from underfoot, and no agent looked for wood). An item a craft offered now makes never crowds.
+/// The JVM's `crowdsExploration`.
 fn crowds_exploration(perception: &Perception, item: &str) -> bool {
     !perception.explore.is_empty()
         && !perception
             .horizon
             .iter()
             .any(|goal| goal.what == item || goal.via.as_deref() == Some(item))
+        // A craft offered now is a recipe step, never sight handing an item over whole.
+        && !perception
+            .self_state
+            .crafting_options
+            .iter()
+            .any(|option| option.what == item)
 }
 
 /// Appends `handle` unless the list already holds it.
@@ -461,6 +472,7 @@ impl OfferedRefs {
             .take(MAX_OBTAINABLE_ITEMS)
             .collect();
         offered.count_bounds = offered.count_bounds_for(perception);
+        offered.switch_bounds = offered.switch_bounds_for(perception);
         offered.obtainable = offered
             .count_bounds
             .iter()
@@ -483,7 +495,7 @@ impl OfferedRefs {
                 .any(|(given, what)| given == handle && *what == item)
         };
         let mut items: Vec<&String> = self.pursued.iter().collect();
-        for (item, ..) in &self.count_bounds {
+        for (item, ..) in self.count_bounds.iter().chain(&self.switch_bounds) {
             if !items.contains(&item) {
                 items.push(item);
             }
@@ -552,7 +564,17 @@ impl OfferedRefs {
                                     || (horizon && remembered.is_empty()))
                         })
                 };
-                let toward = take(&self.explore_targets, &recalled_toward);
+                // No walk to look further while a source can already be stepped to (r23: epsilon
+                // walked away from two logs in dig reach).
+                let reachable = !(dig.is_empty()
+                    && pickup.is_empty()
+                    && route.is_empty()
+                    && recipes.is_empty());
+                let toward = if reachable {
+                    Vec::new()
+                } else {
+                    take(&self.explore_targets, &recalled_toward)
+                };
                 ItemSteps {
                     item: item.clone(),
                     dig,
@@ -607,6 +629,31 @@ impl OfferedRefs {
                 (fewest <= most).then(|| (item.clone(), fewest, most))
             })
             .take(MAX_OBTAINABLE_ITEMS)
+            .collect()
+    }
+
+    /// The recipe goals of the horizon made from an item held now, while an unmet goal of another
+    /// item is held: the switch a replace may make before the stall bound.
+    fn switch_bounds_for(&self, perception: &Perception) -> Vec<(String, i64, i64)> {
+        let Some(pursued) = &self.pursued else {
+            return Vec::new();
+        };
+        perception
+            .horizon
+            .iter()
+            .take(loom_contract::MAX_HORIZON_GOALS)
+            .filter(|goal| {
+                goal.grounding == loom_contract::HorizonGrounding::Recipe && &goal.what != pursued
+            })
+            .filter(|goal| {
+                path_of(perception, &goal.what)
+                    .iter()
+                    .any(|input| held_of(perception, input) > 0)
+            })
+            .filter_map(|goal| {
+                let fewest = held_of(perception, &goal.what).saturating_add(1);
+                (fewest <= goal.most).then(|| (goal.what.clone(), fewest, goal.most))
+            })
             .collect()
     }
 
@@ -697,6 +744,7 @@ impl OfferedRefs {
     pub fn count_bounds_of(&self, item: &str) -> Option<(i64, i64)> {
         self.count_bounds
             .iter()
+            .chain(&self.switch_bounds)
             .find(|(name, ..)| name == item)
             .map(|(_, fewest, most)| (*fewest, *most))
     }
