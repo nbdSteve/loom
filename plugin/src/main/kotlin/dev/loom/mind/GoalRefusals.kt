@@ -41,7 +41,8 @@ internal fun incoherenceOf(
     recipes: RecipeInputs = RecipeInputs.NONE,
 ): String? {
     val stepping = choice?.disposition in STEPPING
-    return reviseItemOf(presented, choice)
+    return discoveryRefusalOf(presented, choice, intent, observed)
+        ?: reviseItemOf(presented, choice)
         ?: conditionRefusalOf(presented, choice, intent, observed)
         ?: successRefusalOf(presented, choice, observed)
         ?: GoalEvidence.STEP_IDLE.takeIf { stepping && intent.action in PASSIVE }

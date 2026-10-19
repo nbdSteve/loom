@@ -63,6 +63,12 @@ data class GoalEvidence(
      * sapling, and no review was owed for 2300 ticks).
      */
     val ownGoalDropLying: Boolean? = null,
+    /** Whether the presented goal was a discovery goal. */
+    val presentedDiscovery: Boolean? = null,
+    /** Whether the goal held after this decision is a discovery goal. */
+    val discovery: Boolean? = null,
+    /** The met discovery goal this item goal replaced: the resource goal a discovery became. */
+    val discoveredFrom: String? = null,
 ) {
     /** The tags [outcome] takes. */
     companion object {
@@ -191,6 +197,12 @@ data class GoalEvidence(
          */
         const val CROWDS_EXPLORATION: String = "goalCrowdsExploration"
 
+        /**
+         * A discovery goal set while something grounds an item goal or nowhere is offered to look,
+         * set over a held discovery goal, or set with a success item (r23).
+         */
+        const val DISCOVERY_NOT_OFFERED: String = "goalDiscoveryNotOffered"
+
         /** The outcomes that refuse the decision's intent along with its goal choice. */
         val REFUSING: Set<String> =
             setOf(
@@ -208,6 +220,7 @@ data class GoalEvidence(
                 REVISE_UNCHANGED,
                 COMPLETED_WITHOUT_NEXT,
                 CROWDS_EXPLORATION,
+                DISCOVERY_NOT_OFFERED,
             )
 
         /** The outcomes that settle a decision with nothing its next review needs to be told. */

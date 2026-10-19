@@ -224,6 +224,36 @@ pub struct OfferedRefs {
     /// The held goal's success total, which a revise must change (r19: 28 of 31 revises set the
     /// total they were shown, and read as goal activity).
     pub held_total: Option<i64>,
+    /// Where a goal review stands with a discovery goal.
+    pub discovery: Discovery,
+}
+
+/// Where a goal review stands with a discovery goal (r23: 17 of 70 reviews could set no goal at
+/// all, and looked further with nothing to measure it by).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Discovery {
+    /// No discovery goal may be set: something grounds an item goal, or nowhere is offered to look.
+    #[default]
+    Unoffered,
+    /// One may be set: cells at the edge of sight are offered and no horizon goal is grounded in
+    /// what is seen, remembered or held.
+    Offered,
+    /// The held goal is one.
+    Pursued,
+}
+
+impl OfferedRefs {
+    /// Whether a goal review may set a discovery goal in place of the goal it holds, or none.
+    #[must_use]
+    pub fn discovery_offered(&self) -> bool {
+        self.discovery == Discovery::Offered
+    }
+
+    /// Whether the held goal is a discovery goal.
+    #[must_use]
+    pub fn discovering(&self) -> bool {
+        self.discovery == Discovery::Pursued
+    }
 }
 
 /// Every item's whole capacity, uncut, so a held goal is judged by the rule the body uses: in
@@ -443,6 +473,12 @@ impl OfferedRefs {
         {
             offer(&mut offered.walk_targets, &target.target_ref);
             offer(&mut offered.explore_targets, &target.target_ref);
+        }
+        if perception.trigger.reviews_goal()
+            && perception.horizon.is_empty()
+            && !offered.explore_targets.is_empty()
+        {
+            offered.discovery = Discovery::Offered;
         }
         sources.extend(recalled_sources(perception));
         let state = &perception.self_state;
@@ -671,6 +707,20 @@ impl OfferedRefs {
         let Some(goal) = &perception.goal else {
             return;
         };
+        let at_bound = goal.progress.as_ref().is_some_and(|seen| {
+            seen.steps_without_progress >= loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS
+        });
+        // A discovery goal names no item: it is stepped by a walk to the edge of sight until one
+        // reveals a source, and stalls like any other goal.
+        if goal.discovery {
+            self.discovery = Discovery::Pursued;
+            self.stalled = at_bound
+                && !goal
+                    .progress
+                    .as_ref()
+                    .is_some_and(|seen| seen.condition_met);
+            return;
+        }
         let (Some(item), Some(count)) = (&goal.success_item, goal.success_count) else {
             return;
         };
@@ -682,9 +732,6 @@ impl OfferedRefs {
             .find(|(name, _)| name == item)
             .map_or(0, |(_, total)| *total);
         self.goal_obtainable = count <= held.saturating_add(capacity);
-        let at_bound = goal.progress.as_ref().is_some_and(|seen| {
-            seen.steps_without_progress >= loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS
-        });
         if held >= count {
             return;
         }
@@ -716,7 +763,7 @@ impl OfferedRefs {
     /// sight, to look for a source rather than abandon it (r18: five goals abandoned to look).
     #[must_use]
     pub fn explore_continue(&self) -> bool {
-        self.held_item.is_some()
+        (self.held_item.is_some() || self.discovering())
             && !self.goal_obtainable
             && !self.stalled
             && !self.collect_required

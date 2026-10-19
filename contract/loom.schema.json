@@ -784,7 +784,11 @@
         "successItem": { "$ref": "#/$defs/ItemName" },
         "successCount": { "type": "integer", "minimum": 1, "maximum": 64 },
         "step": { "$ref": "#/$defs/GoalStatement" },
-        "stepResult": { "$ref": "#/$defs/GoalStepResult" }
+        "stepResult": { "$ref": "#/$defs/GoalStepResult" },
+        "discover": {
+          "description": "For an adopt or replace with no success item: a discovery goal, whose success condition is that a walk to the edge of sight reveals a useful resource no footing gives, set only while no item goal is grounded, stepped only by such a walk, and replaced by an item goal once it reveals one (r23: 17 of 70 reviews could set no goal at all).",
+          "const": true
+        }
       }
     },
 
@@ -889,6 +893,10 @@
         "stepRef": {
           "description": "The ref that intent acted on, absent for an action that names none.",
           "$ref": "#/$defs/EntityRef"
+        },
+        "discovery": {
+          "description": "Whether the goal is a discovery goal: no success item, met when a walk to the edge of sight reveals a useful resource no footing gives.",
+          "type": "boolean"
         },
         "progress": { "$ref": "#/$defs/GoalProgress" }
       }

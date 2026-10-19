@@ -1,0 +1,1 @@
+{"requestId":"req-goal-1","agentId":"agent-delta","intent":{"action":"moveTo","onto":"x1"},"reasoning":"look east","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"},"goal":{"disposition":"adopt","discover":false}}

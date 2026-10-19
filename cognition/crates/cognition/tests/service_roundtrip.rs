@@ -138,8 +138,13 @@ async fn every_shared_perception_fixture_gets_a_routed_decision_over_a_socket() 
             if let Some(goal) = &decision.goal {
                 assert_eq!(goal.disposition, GoalDisposition::Adopt);
                 assert_eq!(goal.step.as_deref(), Some(SCRIPTED_STEP));
-                let item = goal.success_item.as_deref().unwrap();
-                assert!(OfferedRefs::of(&sent).capacity_of(item) >= 1);
+                // Or, with nothing grounding an item goal, a discovery goal names no item.
+                match goal.success_item.as_deref() {
+                    Some(item) => assert!(OfferedRefs::of(&sent).capacity_of(item) >= 1),
+                    None => assert!(
+                        goal.discover == Some(true) && OfferedRefs::of(&sent).discovery_offered()
+                    ),
+                }
             }
         }
     }

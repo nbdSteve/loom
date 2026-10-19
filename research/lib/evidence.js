@@ -51,7 +51,8 @@ const GOAL_OUTCOMES = [
   'goalReviseItemChanged',
   'goalCompletedWithoutNext',
   'goalCrowdsExploration',
-  'goalReviseUnchanged'
+  'goalReviseUnchanged',
+  'goalDiscoveryNotOffered'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // What a measured step showed, from routine-v22: the exact target reached, an item gained, a
@@ -277,7 +278,7 @@ function validateGoalEvidence (goal, event, label) {
   if (goal.disposition !== undefined && !GOAL_DISPOSITIONS.includes(goal.disposition)) {
     throw new Error(`${label} has an unknown goal disposition`)
   }
-  for (const field of ['presentedGoalId', 'goalId', 'expiredGoalId', 'chainedFrom']) {
+  for (const field of ['presentedGoalId', 'goalId', 'expiredGoalId', 'chainedFrom', 'discoveredFrom']) {
     if (!validGoalId(goal[field])) throw new Error(`${label} goal ${field} is not a bounded id`)
   }
   for (const field of ['presentedRevision', 'revision']) {
@@ -296,7 +297,7 @@ function validateGoalEvidence (goal, event, label) {
   if (goal.stepEvidence !== undefined && !GOAL_STEP_EVIDENCE.includes(goal.stepEvidence)) {
     throw new Error(`${label} has an unknown goal step evidence`)
   }
-  for (const field of ['conditionMet', 'conditionAdvanced', 'stepAdvanced']) {
+  for (const field of ['conditionMet', 'conditionAdvanced', 'stepAdvanced', 'discovery', 'presentedDiscovery']) {
     if (goal[field] !== undefined && typeof goal[field] !== 'boolean') {
       throw new Error(`${label} goal ${field} must be a boolean`)
     }

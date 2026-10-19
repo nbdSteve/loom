@@ -899,6 +899,11 @@ data class GoalSummary(
     val stepAction: IntentAction? = null,
     /** The target ref that step's intent named, absent for an action that names none. */
     val stepRef: String? = null,
+    /**
+     * Whether the goal is a discovery goal: no success item, met when a walk to the edge of sight
+     * reveals a useful resource no footing gives.
+     */
+    val discovery: Boolean = false,
     /** Body-measured evidence about the goal, once a later review can compare. */
     val progress: GoalProgress? = null,
 ) {
@@ -1154,10 +1159,16 @@ data class GoalChoice(
     val step: String? = null,
     /** The verdict on the carried goal's previous step, for every disposition but adopt. */
     val stepResult: GoalStepResult? = null,
+    /**
+     * For an adopt or replace with no success item: a discovery goal, met when a walk to the edge
+     * of sight reveals a useful resource no footing gives. Present only as `true`.
+     */
+    val discover: Boolean? = null,
 ) {
     init {
         requireTypedSuccess(successItem, successCount)
         step?.let { requireBoundedText("goal step", it, MAX_GOAL_STATEMENT_CHARS) }
+        require(discover != false) { "discover is present only as true" }
     }
 }
 

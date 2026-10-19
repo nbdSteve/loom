@@ -309,6 +309,9 @@ fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> 
         return Ok(None);
     };
     let fields = goal_fields(choice.disposition);
+    if choice.discover.is_some() {
+        return checked_discovery(choice, fields);
+    }
     let present = [
         (
             "success item",
@@ -333,6 +336,23 @@ fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> 
                 "the model's goal choice gave a {name} its disposition forbids"
             ));
         }
+    }
+    Ok(Some(choice))
+}
+
+/// Refuses a discovery choice that is not an adopt or replace, names a success item, or judges
+/// the previous step where its disposition forbids it.
+fn checked_discovery(choice: GoalChoice, fields: GoalFields) -> Result<Option<GoalChoice>, String> {
+    if !fields.targeted || choice.disposition == GoalDisposition::Revise {
+        return Err(
+            "the model's goal choice set a discovery goal its disposition cannot".to_owned(),
+        );
+    }
+    if choice.success_item.is_some() || choice.success_count.is_some() {
+        return Err("the model's goal choice gave a discovery goal a success item".to_owned());
+    }
+    if fields.judged != choice.step_result.is_some() {
+        return Err("the model's goal choice judged a step its disposition does not".to_owned());
     }
     Ok(Some(choice))
 }
@@ -790,6 +810,42 @@ fn goal_variant(
     })
 }
 
+/// The discovery goal shape of an adopt or a replace: no success item, met when a walk to the edge
+/// of sight reveals a useful resource no footing gives (r23: 17 of 70 reviews could set no goal).
+fn discovery_variant(disposition: GoalDisposition, name: &str) -> Value {
+    let fields = goal_fields(disposition);
+    let mut properties = serde_json::Map::new();
+    properties.insert(
+        "disposition".to_owned(),
+        json!({ "type": "string", "enum": [name], "description": DISCOVER }),
+    );
+    properties.insert(
+        "discover".to_owned(),
+        json!({
+            "type": "boolean",
+            "enum": [true],
+            "description": "A discovery goal: find a useful resource beyond the edge of sight. Your body measures it as met when a walk reveals one; then replace it with a goal for that resource.",
+        }),
+    );
+    if fields.judged {
+        properties.insert(
+            "stepResult".to_owned(),
+            json!({
+                "type": "string",
+                "enum": ["done", "progressing", "noProgress"],
+                "description": "Your verdict on the previous step, from the progress evidence the carried goal states: done finished it, progressing moved it forward, noProgress did not.",
+            }),
+        );
+    }
+    let required: Vec<Value> = properties.keys().map(|key| json!(key)).collect();
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": false,
+    })
+}
+
 /// Where one perception stands with its goal, which decides the goal choices it can make.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GoalPhase {
@@ -869,6 +925,7 @@ impl GoalOffer {
 const ADOPT: &str = "Take up a new goal when you hold none.";
 const CONTINUE: &str = "Keep the held goal and take its next step.";
 const REVISE: &str = "Keep pursuing the held goal's item with a new total and step; when its condition is met, a revise must name a total you do not yet hold.";
+const DISCOVER: &str = "Set a discovery goal when nothing you see, remember or hold grounds an item goal: walk to the edge of sight until a useful resource comes into view.";
 const REPLACE: &str = "End the held goal - one that advanced nothing for three steps, or one whose condition is met - and take up a new one in this same answer, whose step is this answer's action.";
 
 /// The goal choices one phase offers: `null`, or one closed disposition shape the body would
@@ -918,10 +975,14 @@ fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
             ]
             .concat(),
         )];
+        let discovery = vec![
+            discovery_variant(GoalDisposition::Adopt, "adopt"),
+            discovery_variant(GoalDisposition::Replace, "replace"),
+        ];
         return GoalOffer {
             by_item,
             exploring: Vec::new(),
-            any: [none(), complete(), abandon()].concat(),
+            any: [none(), complete(), abandon(), discovery].concat(),
         };
     };
     coupled_offer(phase, refs, continued, complete, abandon, none)
@@ -996,6 +1057,13 @@ fn coupled_offer(
             exploring: Vec::new(),
             any: Vec::new(),
         },
+        // With no item goal grounded, a review sets a discovery goal and walks to look further,
+        // rather than act with no goal at all (r23: 17 of 70 reviews held none).
+        GoalPhase::Unheld if refs.discovery_offered() => GoalOffer {
+            by_item: each_item(GoalDisposition::Adopt, "adopt", ADOPT),
+            exploring: vec![discovery_variant(GoalDisposition::Adopt, "adopt")],
+            any: Vec::new(),
+        },
         GoalPhase::Unheld => GoalOffer {
             by_item: each_item(GoalDisposition::Adopt, "adopt", ADOPT),
             exploring: Vec::new(),
@@ -1022,7 +1090,7 @@ fn coupled_offer(
                 } else {
                     Vec::new()
                 },
-                any: if short { abandon() } else { Vec::new() },
+                any: short.then(&abandon).unwrap_or_default(),
             }
         }
         // A met goal is completed, or completed and the next adopted in one answer by a replace,
@@ -1035,33 +1103,45 @@ fn coupled_offer(
                     None => by_item.push((item, choices)),
                 }
             }
-            // A plain complete only when nothing in sight gives a next goal: otherwise the next is
-            // adopted in the same answer (r19: eight plain completes, two beside a filler equip).
-            let any = if by_item.is_empty() {
-                complete()
-            } else {
-                Vec::new()
+            // A met discovery goal becomes a goal for what it revealed, and a met item goal with no
+            // next item in sight becomes a discovery goal; a plain complete only when neither can
+            // be set (r19: eight plain completes, two beside a filler equip).
+            let exploring = discovery_replace(refs);
+            let any = match (
+                by_item.is_empty() && exploring.is_empty(),
+                refs.discovering(),
+            ) {
+                (false, _) => Vec::new(),
+                (true, false) => complete(),
+                (true, true) => abandon(),
             };
             GoalOffer {
                 by_item,
-                exploring: Vec::new(),
+                exploring,
                 any,
             }
         }
         // With nothing in sight to give a goal for another item, the stalled one can only go.
+        // Nor can a stalled item goal with no item grounded look further but by a discovery goal.
         GoalPhase::Stalled => {
             let by_item = each_item(GoalDisposition::Replace, "replace", REPLACE);
-            let any = if by_item.is_empty() {
-                abandon()
-            } else {
-                Vec::new()
-            };
+            let exploring = discovery_replace(refs);
+            let any = by_item.is_empty().then(&abandon).unwrap_or_default();
             GoalOffer {
                 by_item,
-                exploring: Vec::new(),
+                exploring,
                 any,
             }
         }
+    }
+}
+
+/// The replace into a discovery goal, offered when nothing grounds an item goal.
+fn discovery_replace(refs: &OfferedRefs) -> Vec<Value> {
+    if refs.discovery_offered() {
+        vec![discovery_variant(GoalDisposition::Replace, "replace")]
+    } else {
+        Vec::new()
     }
 }
 
@@ -1483,6 +1563,7 @@ mod tests {
         seen.trigger = Trigger::GoalReview;
         seen.importance = DecisionImportance::Routine;
         seen.goal = Some(GoalSummary {
+            discovery: false,
             goal_id: "g".repeat(MAX_GOAL_ID_CHARS),
             statement: "s".repeat(MAX_GOAL_STATEMENT_CHARS),
             revision: i64::MAX,
@@ -1656,6 +1737,7 @@ mod tests {
     #[test]
     fn every_disposition_parses_into_the_contract_choice_unchanged() {
         let choice = |disposition, targeted: bool, step: Option<&str>, result| GoalChoice {
+            discover: None,
             disposition,
             success_item: targeted.then(|| "item.minecraft.oak_log".to_owned()),
             success_count: targeted.then_some(4),
@@ -1802,6 +1884,31 @@ mod tests {
             let reason = goal_of(&stated).expect_err(&stated);
             assert!(reason.contains("wrong shape"), "{stated}: {reason}");
         }
+    }
+
+    #[test]
+    fn a_discovery_choice_is_an_adopt_or_replace_with_no_success_item() {
+        let adopt = goal_of(r#"{"disposition":"adopt","discover":true}"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(adopt.discover, Some(true));
+        assert_eq!(adopt.success_item, None);
+        let replace =
+            goal_of(r#"{"disposition":"replace","discover":true,"stepResult":"progressing"}"#)
+                .unwrap()
+                .unwrap();
+        assert_eq!(replace.step_result, Some(GoalStepResult::Progressing));
+        for bad in [
+            r#"{"disposition":"continue","discover":true,"stepResult":"done"}"#,
+            r#"{"disposition":"revise","discover":true,"stepResult":"done"}"#,
+            r#"{"disposition":"adopt","discover":true,"successItem":"item.minecraft.dirt","successCount":2}"#,
+            r#"{"disposition":"adopt","discover":true,"stepResult":"done"}"#,
+            r#"{"disposition":"replace","discover":true}"#,
+        ] {
+            assert!(goal_of(bad).is_err(), "{bad}");
+        }
+        // The contract refuses a discover that is anything but true.
+        assert!(goal_of(r#"{"disposition":"adopt","discover":false}"#).is_err());
     }
 
     #[test]

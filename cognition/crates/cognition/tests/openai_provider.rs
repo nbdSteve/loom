@@ -476,6 +476,7 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
     assert_eq!(
         decision.goal,
         Some(GoalChoice {
+            discover: None,
             disposition: GoalDisposition::Revise,
             success_item: Some("item.minecraft.birch_log".to_owned()),
             success_count: Some(8),
@@ -485,7 +486,7 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
     );
     assert_eq!(decision.intent, Intent::Idle);
     assert_eq!(decision.provenance.model, FAST_MODEL);
-    assert_eq!(decision.provenance.prompt_version, "routine-v30");
+    assert_eq!(decision.provenance.prompt_version, "routine-v31");
 }
 
 #[tokio::test]

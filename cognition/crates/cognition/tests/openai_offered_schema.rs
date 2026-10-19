@@ -460,12 +460,19 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
         direction: loom_contract::Bearing::East,
         vertical_offset: 0.0,
     });
+    // and with nothing grounding a next item goal, it is replaced by a discovery goal stepped
+    // by that walk rather than completed (r23).
     let beside = jsonschema::validator_for(&of(&looking)).unwrap();
     assert!(!beside.is_valid(&completing));
-    assert!(beside.is_valid(&answer_in(
+    assert!(!beside.is_valid(&answer_in(
         &of(&looking),
         &json!({ "action": "moveTo", "onto": "x1" }),
         &json!({ "disposition": "complete", "stepResult": "done" }),
+    )));
+    assert!(beside.is_valid(&answer_in(
+        &of(&looking),
+        &json!({ "action": "moveTo", "onto": "x1" }),
+        &json!({ "disposition": "replace", "discover": true, "stepResult": "done" }),
     )));
     // A settled step reviews the goal just as a scheduled review does.
     let mut settled = fixture("perception-goal-carried");
@@ -837,7 +844,9 @@ fn an_unheld_review_beside_cells_to_look_from_is_offered_no_idle() {
     // r18 alpha body:00000467, delta 190, eta 051 and zeta 174 and 253 idled with cells offered.
     let seen = with_edge(fixture("perception-goal-review"));
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
-    assert_eq!(dispositions(&schema), ["none"]);
+    // r23: with nothing grounding an item goal, the review sets a discovery goal, not none.
+    assert_eq!(dispositions(&schema), ["adopt"]);
+    let discover = json!({ "disposition": "adopt", "discover": true });
     let validator = jsonschema::validator_for(&schema).unwrap();
     for passive in ["idle", "rest"] {
         assert!(
@@ -850,6 +859,12 @@ fn an_unheld_review_beside_cells_to_look_from_is_offered_no_idle() {
         );
     }
     assert!(validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "moveTo", "onto": "x1" }),
+        &discover
+    )));
+    // It is stepped only by a walk to the edge of sight, and no review goes goalless.
+    assert!(!validator.is_valid(&answer_in(
         &schema,
         &json!({ "action": "moveTo", "onto": "x1" }),
         &json!(null)
@@ -1196,7 +1211,8 @@ fn guaranteed_dirt_does_not_crowd_out_looking_further_unless_a_horizon_goal_is_m
     // Beside a cell at the edge of sight, it is not: the review may only look further.
     let looking = with_edge(ground.clone());
     let schema = decision_schema_for(&OfferedRefs::of(&looking), GoalPhase::of(&looking));
-    assert_eq!(dispositions(&schema), ["none"]);
+    assert_eq!(dispositions(&schema), ["adopt"]);
+    assert!(count_bounds(&schema, "adopt", DIRT).is_empty());
     // Unless a horizon goal is made from it: then it feeds a later typed goal.
     let mut feeding = looking.clone();
     feeding.horizon = vec![horizon_goal(
@@ -1293,4 +1309,77 @@ fn a_held_goal_may_switch_before_its_stall_bound_into_a_recipe_made_from_what_is
         8,
     )];
     assert!(OfferedRefs::of(&seen).switch_bounds.is_empty());
+}
+
+#[test]
+fn a_discovery_goal_is_walked_to_the_edge_of_sight_and_replaced_by_what_it_reveals() {
+    const LOG: &str = "item.minecraft.oak_log";
+    // r23: 17 of 70 reviews could set no goal at all, and walked with nothing to measure it by.
+    let held = fixture("perception-goal-discovery-held");
+    let schema = decision_schema_for(&OfferedRefs::of(&held), GoalPhase::of(&held));
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let walk = json!({ "action": "moveTo", "onto": "x1" });
+    let continuing = json!({ "disposition": "continue", "stepResult": "noProgress" });
+    assert!(validator.is_valid(&answer_in(&schema, &walk, &continuing)));
+    assert!(validator.is_valid(&answer_in(
+        &schema,
+        &walk,
+        &json!({ "disposition": "abandon", "stepResult": "noProgress" })
+    )));
+    // Never completed, never revised, and never set again over itself.
+    for refused in [
+        json!({ "disposition": "complete", "stepResult": "done" }),
+        json!({ "disposition": "replace", "discover": true, "stepResult": "noProgress" }),
+        json!(null),
+    ] {
+        assert!(
+            !validator.is_valid(&answer_in(&schema, &walk, &refused)),
+            "{refused}"
+        );
+    }
+    // Once a walk reveals a log, the goal is met and is replaced by a goal for it alone.
+    let mut met = with_block(held, "b1", "oak_log", Some((LOG, 1, 1)));
+    met.horizon = vec![loom_contract::HorizonGoal {
+        what: LOG.to_owned(),
+        grounding: loom_contract::HorizonGrounding::Sight,
+        via: None,
+        most: 9,
+        frontier: true,
+    }];
+    if let Some(goal) = met.goal.as_mut() {
+        if let Some(progress) = goal.progress.as_mut() {
+            progress.condition_met = true;
+        }
+    }
+    let schema = decision_schema_for(&OfferedRefs::of(&met), GoalPhase::of(&met));
+    assert_eq!(dispositions(&schema), ["replace"]);
+    assert_eq!(count_bounds(&schema, "replace", LOG), vec![(1, 9)]);
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    assert!(!validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "dig", "block": "b1" }),
+        &json!({ "disposition": "complete", "stepResult": "done" })
+    )));
+    assert!(validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "dig", "block": "b1" }),
+        &json!({ "disposition": "replace", "successItem": LOG, "successCount": 4, "stepResult": "done" })
+    )));
+}
+
+#[test]
+fn a_stalled_item_goal_with_nothing_grounded_may_become_a_discovery_goal() {
+    let mut stalled = with_edge(fixture("perception-goal-carried"));
+    if let Some(goal) = stalled.goal.as_mut() {
+        if let Some(progress) = goal.progress.as_mut() {
+            progress.steps_without_progress = loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS;
+        }
+    }
+    let schema = decision_schema_for(&OfferedRefs::of(&stalled), GoalPhase::of(&stalled));
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    assert!(validator.is_valid(&answer_in(
+        &schema,
+        &json!({ "action": "moveTo", "onto": "x1" }),
+        &json!({ "disposition": "replace", "discover": true, "stepResult": "noProgress" })
+    )));
 }

@@ -371,6 +371,7 @@ impl ScriptedBackend {
             return None;
         }
         let step = |disposition, step_result| GoalChoice {
+            discover: None,
             disposition,
             success_item: None,
             success_count: None,
@@ -383,7 +384,16 @@ impl ScriptedBackend {
         );
         let acting = digging || matches!(intent, Intent::MoveTo { .. });
         let offered = crate::offered::OfferedRefs::of(perception);
+        let exploring =
+            matches!(intent, Intent::MoveTo { onto } if offered.explore_targets.contains(onto));
         let Some(held) = &perception.goal else {
+            // With nothing grounding an item goal, a walk to look further sets a discovery goal.
+            if exploring && offered.discovery_offered() {
+                return Some(GoalChoice {
+                    discover: Some(true),
+                    ..step(GoalDisposition::Adopt, None)
+                });
+            }
             // One more of what the dig drops, or one craft's worth of what the recipe makes.
             let (item, more) = match intent {
                 Intent::Dig { block } => (yield_of(perception, block, None)?, 1),
@@ -422,8 +432,6 @@ impl ScriptedBackend {
         let unobtainable = held.success_item.is_some() && !offered.goal_obtainable;
         // A goal sight cannot meet is continued by a walk to the edge of sight, as the body
         // accepts, and abandoned only once nowhere is offered to look or it stalls.
-        let exploring =
-            matches!(intent, Intent::MoveTo { onto } if offered.explore_targets.contains(onto));
         Some(if progress.is_some_and(|seen| seen.condition_met) {
             // A met goal with a next one in sight is completed by adopting it in the same answer:
             // what this step gives when sight offers a count of it, else the first item it does.
@@ -439,6 +447,9 @@ impl ScriptedBackend {
                         ..step(GoalDisposition::Replace, Some(step_result))
                     }
                 }
+                // A met discovery goal is never completed bare: it is replaced or, with nothing to
+                // replace it by, abandoned.
+                None if held.discovery => ended(GoalDisposition::Abandon),
                 None => ended(GoalDisposition::Complete),
             }
         } else if !acting
@@ -604,8 +615,13 @@ impl ScriptedBackend {
             .as_ref()
             .and_then(|goal| goal.success_item.as_deref());
         let offered = crate::offered::OfferedRefs::of(perception);
-        // A held goal sight cannot meet looks further for a source, rather than dig for another.
-        if wanted.is_some() && !offered.goal_obtainable && offered.held_item.is_some() {
+        // A held goal sight cannot meet looks further for a source, rather than dig for another;
+        // so does a discovery goal, and a review that can set one.
+        let discovering = offered.discovering() && !offered.stalled;
+        if (wanted.is_some() && !offered.goal_obtainable && offered.held_item.is_some())
+            || discovering
+            || (perception.goal.is_none() && offered.discovery_offered())
+        {
             return Self::look_further(route, perception);
         }
         if let Some((recipe, item)) = offered_craft(perception, wanted) {
@@ -1086,6 +1102,7 @@ mod tests {
 
         let mut later = perception(Trigger::GoalReview, DecisionImportance::Routine);
         later.goal = Some(GoalSummary {
+            discovery: false,
             goal_id: "req-1".to_owned(),
             statement: "hold 1 item.minecraft.stick".to_owned(),
             revision: 0,
@@ -1115,6 +1132,7 @@ mod tests {
         let route = router().route(DecisionImportance::Routine);
         let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
         seen.goal = Some(GoalSummary {
+            discovery: false,
             goal_id: "req-1".to_owned(),
             statement: "hold 1 item.minecraft.stick".to_owned(),
             revision: 0,

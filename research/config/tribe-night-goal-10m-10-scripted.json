@@ -1,7 +1,7 @@
 {
   "experimentId": "2026-10-16-scripted-10-agent-10m-night-goal-rehearsal",
   "title": "Credential-free 10-agent ten-minute night-goal rehearsal",
-  "mode": "routine-v30-horizon-goal",
+  "mode": "routine-v31-discovery-goal",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -60,9 +60,9 @@
       "pivotal": "scripted-stand-in"
     },
     "prompts": {
-      "routine": "routine-v30",
-      "notable": "notable-v30",
-      "pivotal": "pivotal-v30"
+      "routine": "routine-v31",
+      "notable": "notable-v31",
+      "pivotal": "pivotal-v31"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,
@@ -99,7 +99,7 @@
     "evidenceRecords": 8000
   },
   "primaryBehavior": {
-    "profile": "night-goal-10m-10",
+    "profile": "discovery-goal-10m-10",
     "initialPositions": {
       "tribe-alpha": [
         12.5,

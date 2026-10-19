@@ -1400,6 +1400,10 @@ pub struct GoalSummary {
         deserialize_with = "bounded_optional_ref"
     )]
     pub step_ref: Option<String>,
+    /// Whether the goal is a discovery goal: no success item, met when a walk to the edge of
+    /// sight reveals a useful resource no footing gives.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub discovery: bool,
     /// Body-measured evidence about that step, once a later review can compare.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<GoalProgress>,
@@ -1554,6 +1558,24 @@ pub struct GoalChoice {
     /// The verdict on the carried goal's previous step, for every disposition but adopt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step_result: Option<GoalStepResult>,
+    /// For an adopt or replace with no success item: a discovery goal, met when a walk to the edge
+    /// of sight reveals a useful resource no footing gives. Present only as `true`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "only_true"
+    )]
+    pub discover: Option<bool>,
+}
+
+fn only_true<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match Option::<bool>::deserialize(deserializer)? {
+        Some(false) => Err(de::Error::custom("discover is present only as true")),
+        other => Ok(other),
+    }
 }
 
 /// A named intent the mind returns. The body validates and applies it; the mind

@@ -150,6 +150,7 @@ class GoalLedger(
                 stepEvidence = measured?.stepEvidence,
                 targetHeld = item?.let { observed?.inventory?.get(it) ?: 0 },
                 targetCapacity = item?.let { observed?.capacity?.get(it) ?: 0 },
+                presentedDiscovery = presented?.discovery?.takeIf { it },
             )
         }
     }
@@ -386,6 +387,12 @@ class GoalLedger(
             goalId = next?.goalId,
             revision = next?.revision,
             chainedFrom = chainedFrom,
+            discovery = next?.discovery?.takeIf { it },
+            // A met discovery goal replaced by an item goal for what it revealed.
+            discoveredFrom =
+                presented?.goalId?.takeIf {
+                    presented.discovery && tag == GoalEvidence.COMPLETED_ADOPTED && next?.successItem != null
+                },
             ownGoalDropLying = (item != null && basis.observed?.ownDrops?.containsValue(item) == true).takeIf { it },
         )
     }
@@ -423,17 +430,21 @@ private fun nextGoalOf(
     when (choice.disposition) {
         // A replace ends the held goal and starts a new one under its own decision's id.
         GoalDisposition.ADOPT, GoalDisposition.REPLACE ->
-            GoalSummary(
-                goalId = by.requestId,
-                statement = statementOf(requireNotNull(choice.successItem), requireNotNull(choice.successCount)),
-                revision = 0,
-                adoptedTick = by.capturedTick,
-                successItem = choice.successItem,
-                successCount = choice.successCount,
-                step = stepOf(by.intent),
-                stepAction = by.intent.action,
-                stepRef = by.intent.targetRef,
-            )
+            if (discovers(choice)) {
+                discoveryGoalOf(by.requestId, by.capturedTick, by.intent)
+            } else {
+                GoalSummary(
+                    goalId = by.requestId,
+                    statement = statementOf(requireNotNull(choice.successItem), requireNotNull(choice.successCount)),
+                    revision = 0,
+                    adoptedTick = by.capturedTick,
+                    successItem = choice.successItem,
+                    successCount = choice.successCount,
+                    step = stepOf(by.intent),
+                    stepAction = by.intent.action,
+                    stepRef = by.intent.targetRef,
+                )
+            }
         GoalDisposition.CONTINUE ->
             requireNotNull(presented).copy(
                 lastStep = null,

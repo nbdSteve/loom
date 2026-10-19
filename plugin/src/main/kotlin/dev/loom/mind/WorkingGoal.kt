@@ -26,7 +26,6 @@ package dev.loom.mind
 
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
-import dev.loom.body.describe
 import dev.loom.contract.AIR_ITEM
 import dev.loom.contract.DropFate
 import dev.loom.contract.GoalChoice
@@ -37,7 +36,6 @@ import dev.loom.contract.HorizonGoal
 import dev.loom.contract.Intent
 import dev.loom.contract.IntentAction
 import dev.loom.contract.InventoryChange
-import dev.loom.contract.MAX_GOAL_STATEMENT_CHARS
 import dev.loom.contract.MAX_INVENTORY_CHANGES
 import dev.loom.contract.Observation
 import dev.loom.contract.ObservationKind
@@ -111,7 +109,23 @@ data class GoalObservation(
     val horizon: Map<String, HorizonGoal> = emptyMap(),
     /** The items a craft offered now makes: a recipe step, never sight handing an item over whole. */
     val craftable: Set<String> = emptySet(),
+    /** The items the blocks under and beside the agent's feet give: its footing, guaranteed. */
+    val footing: Set<String> = emptySet(),
 ) {
+    /** Whether a discovery goal may be set: cells at the edge of sight, and no horizon goal at all. */
+    val discoveryOffered: Boolean get() = explore.isNotEmpty() && horizon.isEmpty()
+
+    /**
+     * The useful resources sight shows: items no footing gives that sight can give now and that a
+     * horizon goal is grounded in or made from. What a discovery goal is met by.
+     */
+    val revealed: Set<String>
+        get() =
+            horizon.values
+                .flatMap { listOfNotNull(it.what, it.via) }
+                .filter { it !in footing && inSight(it) > 0 }
+                .toSet()
+
     /** The most of [item] a goal may ask: what is held and sight gives, or its horizon's most. */
     fun reachOf(item: String): Long = maxOf((inventory[item] ?: 0) + (capacity[item] ?: 0), horizon[item]?.most ?: 0)
 
@@ -197,6 +211,7 @@ data class GoalObservation(
                         (drops.map { it.what } + crafted.map { it.first } + dug.map { it.first }).toSet(),
                 horizon = perception.horizon.associateBy { it.what },
                 craftable = perception.selfState.craftingOptions.map { it.what }.toSet(),
+                footing = footingOf(perception),
             )
         }
 
@@ -247,6 +262,21 @@ internal fun progressOf(
     priorCount: Long,
 ): GoalProgress? {
     if (before == null || observed == null) return null
+    return if (goal.discovery) {
+        discoveryProgressOf(goal, before, observed, step, priorCount)
+    } else {
+        itemProgressOf(goal, before, observed, step, priorCount)
+    }
+}
+
+/** [progressOf] for a goal whose success condition is holding an item. */
+private fun itemProgressOf(
+    goal: GoalSummary,
+    before: GoalObservation,
+    observed: GoalObservation,
+    step: StepRecord,
+    priorCount: Long,
+): GoalProgress {
     val item = goal.successItem
     val held = item?.let { observed.inventory[it] } ?: 0
     val heldBefore = item?.let { before.inventory[it] } ?: 0
@@ -356,7 +386,7 @@ private fun movementEvidenceOf(
 }
 
 /** Every item whose held count changed, in name order, bounded to one per inventory slot. */
-private fun deltaOf(
+internal fun deltaOf(
     before: Map<String, Long>,
     after: Map<String, Long>,
 ): List<InventoryChange> =
@@ -383,26 +413,14 @@ internal fun remeasured(
     return measured.copy(conditionMet = held >= (goal.successCount ?: Long.MAX_VALUE), conditionHeld = held)
 }
 
-/**
- * A step's wording, from the decision's own intent: the body's, never the mind's, so the text a
- * later review is shown cannot name what the intent did not do (r17 epsilon's step said it dug
- * terracotta for sticks while its intent dug a dead bush).
- */
-internal fun stepOf(intent: Intent): String = describe(intent).take(MAX_GOAL_STATEMENT_CHARS)
-
-/** The goal's wording, from its typed success condition: the total of the item to hold. */
-internal fun statementOf(
-    item: String,
-    count: Long,
-): String = "hold $count $item"
-
 /** The dispositions that set a held goal's target anew, beside an adopt's first one. */
 private val RETARGETING = setOf(GoalDisposition.REVISE, GoalDisposition.REPLACE)
 
 /** The first field [choice]'s disposition requires that it did not give, or `null`. */
 internal fun missingFieldOf(choice: GoalChoice): String? {
     val adopting = choice.disposition == GoalDisposition.ADOPT
-    val worded = adopting || choice.disposition in RETARGETING
+    // A discovery goal names no item; it is held to its own rules (`Discovery.kt`).
+    val worded = (adopting || choice.disposition in RETARGETING) && !discovers(choice)
     // The step is the decision's own intent and the body words it, so no choice must state one.
     return when {
         worded && (choice.successItem == null || choice.successCount == null) -> GoalEvidence.SUCCESS_TARGET_MISSING

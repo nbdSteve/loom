@@ -6,9 +6,9 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v30 horizon-goal pilot,
-`research/config/first-tribe-routine-v30-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v30-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v31 discovery-goal pilot,
+`research/config/first-tribe-routine-v31-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v31-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
 native event drivers. It uses the v29 prompts, which show each agent its own
@@ -150,7 +150,9 @@ ran `-r6` and the v17 `research/config/tribe-working-goal-10m-10*.json` that ran
 that ran `-r20`; `night-goal-10m-10` is the same profile under the v29 mode, in the
 `e1-explore-ring` scene, with its plan cut to the five scheduled reviews a run can finish (the
 sixth is due at tick 12,000 itself), one follow-up each, and its generation-12 coherence bars
-pre-registered beside it, configured by `research/config/tribe-night-goal-10m-10*.json`.
+pre-registered beside it; `discovery-goal-10m-10` is the same profile under the v31 mode, with
+the generation-14 bars, which keep the strict substance bars and drop the three no run that
+pursued anything could fail, configured by `research/config/tribe-night-goal-10m-10*.json`.
 The plains scene is seed `20011`, the first seed from 20001 whose ring around the origin is flat
 dry land with most slots' nearest log beyond what a body senses: one tree stands 3.6 and 6.1
 blocks from two slots and the woods lie 10.8 to 25.7 blocks from the other eight, so wood must be

@@ -432,3 +432,138 @@ test('under generation 13 a no-route flight is the agent own hole only where it 
   assert.equal(classOf(13, [-41.6, 48, -58.4]), 'terrain')
   assert.equal(classOf(13, [0.5, 65, 0.5]), 'selfTrapped')
 })
+
+// Gate generation 14 (the r23 audit).
+const BARS14 = PROFILES['discovery-goal-10m-10'].coherenceBars
+const gate14 = (bodyRecords, bars = BARS14) =>
+  readinessMetrics({ bodyRecords, harnessRecords: [], metrics: {}, generation: 14, bars })
+const STICK = 'item.minecraft.stick'
+
+test('under generation 14 sight guarantees its calibrated mean, not its least, and a recipe from what is held', () => {
+  // A dead bush drops nought to two sticks, one on average: a goal of two that holds one later
+  // found nothing sight did not already promise.
+  const bush = (count) => ({
+    selfState: { inventorySummary: count === 0 ? [] : [{ ref: 'i1', what: STICK, count }], ownDrops: [] },
+    surroundings: [{
+      kind: 'block',
+      ref: 'b1',
+      what: 'block.minecraft.dead_bush',
+      distance: 1.5,
+      verticalOffset: 0,
+      visible: true,
+      digSafe: true,
+      yields: [{ what: STICK, least: 0, most: 2, perHundred: 100 }]
+    }],
+    horizon: [{ what: STICK, grounding: 'sight', most: 9, frontier: true }]
+  })
+  const goal = [
+    ...review('alpha', 'a1', {
+      goal: { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'alpha', revision: 0 },
+      choice: { disposition: 'adopt', successItem: STICK, successCount: 3 },
+      perception: bush(0)
+    }),
+    ...review('alpha', 'a2', { goal: stepped('alpha', true), perception: bush(1) })
+  ]
+  const bars13 = { ...BARS, dangerEpisodes: 0 }
+  assert.equal(readinessMetrics({ bodyRecords: goal, harnessRecords: [], metrics: {}, generation: 13, bars: bars13 })
+    .goalCoherence.pursuit.measured.discoveredGoals, 1)
+  assert.equal(gate14(goal).goalCoherence.pursuit.measured.discoveredGoals, 0)
+  // Holding one log, four planks are a recipe away: local, not discovered.
+  const planks = review('beta', 'b1', {
+    intent: 'craft',
+    goal: { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'beta', revision: 0 },
+    choice: { disposition: 'adopt', successItem: PLANKS, successCount: 4 },
+    perception: {
+      selfState: { inventorySummary: [{ ref: 'i1', what: LOG, count: 1 }], ownDrops: [] },
+      surroundings: [],
+      horizon: [{ what: PLANKS, grounding: 'recipe', via: LOG, most: 8, frontier: false }]
+    }
+  })
+  assert.equal(gate14(planks).goalCoherence.pursuit.measured.horizonGoals, 0)
+})
+
+test('under generation 14 a chained goal one craft met in full is a chain, and held time starts at the first advance', () => {
+  const parentAndChild = [
+    ...review('gamma', 'g1', {
+      goal: { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'gamma', revision: 0 },
+      choice: { disposition: 'adopt', successItem: LOG, successCount: 3 },
+      perception: sight(LOG, 0)
+    }),
+    ...review('gamma', 'g2', {
+      intent: 'craft',
+      goal: { ...stepped('gamma', true, 'goalReplaced'), goalId: 'gamma-planks', chainedFrom: 'gamma' },
+      choice: { disposition: 'replace', successItem: PLANKS, successCount: 4, stepResult: 'progressing' },
+      perception: sight(LOG, 1)
+    }),
+    ...review('gamma', 'g3', {
+      intent: 'moveTo',
+      onto: 'x1',
+      goal: stepped('gamma-planks', true, 'goalCompletedAdopted', { conditionMet: true, goalId: 'gamma-next' }),
+      shown: { goalId: 'gamma-planks', stepAction: 'craft' },
+      perception: sight(PLANKS, 4)
+    })
+  ]
+  const bars13 = { ...BARS, dangerEpisodes: 0 }
+  const thirteen = readinessMetrics({ bodyRecords: parentAndChild, harnessRecords: [], metrics: {}, generation: 13, bars: bars13 })
+  assert.equal(thirteen.goalCoherence.pursuit.measured.chainedGoals, 0)
+  const fourteen = gate14(parentAndChild).goalCoherence.pursuit.measured
+  assert.equal(fourteen.chainedGoals, 1)
+  assert.equal(fourteen.craftChainSteps, 1)
+  // A goal adopted and never advanced holds no progressing time from generation 14.
+  const idleGoal = [
+    ...review('delta', 'd1', {
+      goal: { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'delta', revision: 0 },
+      choice: { disposition: 'adopt', successItem: LOG, successCount: 3 },
+      perception: sight(LOG, 0)
+    }),
+    ...review('delta', 'd2', { goal: stepped('delta', false), perception: sight(LOG, 0) }),
+    ...review('delta', 'd3', { goal: stepped('delta', false), perception: sight(LOG, 0) })
+  ]
+  assert.ok(readinessMetrics({ bodyRecords: idleGoal, harnessRecords: [], metrics: {}, generation: 13, bars: bars13 })
+    .goalCoherence.pursuit.measured.progressingHeldTimeShare > 0)
+  assert.equal(gate14(idleGoal).goalCoherence.pursuit.measured.progressingHeldTimeShare, 0)
+})
+
+test('under generation 14 a discovery goal is counted apart, and the bars no run could fail are description only', () => {
+  const discovery = [
+    ...review('kappa', 'k1', {
+      intent: 'moveTo',
+      onto: 'x1',
+      goal: { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'kappa', revision: 0, discovery: true },
+      choice: { disposition: 'adopt', discover: true },
+      perception: { ...sight(LOG, 0), explore: [{ ref: 'x1' }] }
+    }),
+    ...review('kappa', 'k2', {
+      goal: {
+        ...stepped('kappa', true, 'goalCompletedAdopted', { conditionMet: true, stepEvidence: 'revealed' }),
+        goalId: 'kappa-log',
+        presentedDiscovery: true,
+        discoveredFrom: 'kappa'
+      },
+      choice: { disposition: 'replace', successItem: LOG, successCount: 4, stepResult: 'done' },
+      perception: sight(LOG, 0)
+    })
+  ]
+  const result = gate14(discovery)
+  const measured = result.goalCoherence.pursuit.measured
+  assert.equal(measured.discoveryGoals, 1)
+  assert.equal(measured.discoveryReveals, 1)
+  assert.equal(measured.discoveryTransitions, 1)
+  // The discovery goal itself is no item goal, so it is no one-step goal either.
+  assert.equal(measured.oneStepGoals, 0)
+  assert.deepEqual(result.goalCoherence.pursuit.descriptive, ['distinctGoalItems', 'exploringAgents', 'dangerEpisodes'])
+  assert.equal(result.version, 'loom-readiness-gate/12')
+  // A bar no run could fail moves no verdict.
+  const unreachable = { ...BARS14, dangerEpisodes: 1000, exploringAgents: 1000, distinctGoalItems: 1000 }
+  assert.equal(gate14(discovery, unreachable).goalCoherence.pursuit.verdict, result.goalCoherence.pursuit.verdict)
+  // A discovery goal set where it was not offered is a refused, incoherent decision.
+  const refused = review('kappa', 'k9', {
+    intent: 'moveTo',
+    onto: 'x1',
+    goal: { outcome: 'goalDiscoveryNotOffered' },
+    choice: { disposition: 'adopt', discover: true },
+    applied: 'goalDiscoveryNotOffered',
+    perception: sight(LOG, 0)
+  })
+  assert.equal(gate14(refused).actions.byClass.goalIncoherent, 1)
+})

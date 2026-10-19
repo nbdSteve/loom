@@ -82,6 +82,19 @@ const GROUNDED_GOAL_READINESS_VERSION = 'loom-readiness-gate/10'
 // only when it dug beneath itself where the flight began.
 const HORIZON_READINESS_VERSION = 'loom-readiness-gate/11'
 const HORIZON_GOAL_INCOHERENT_TAGS = new Set([...SUBSTANTIVE_GOAL_INCOHERENT_TAGS, 'goalCrowdsExploration'])
+// Gate generation 14: the r23 audit found generation 13 measured goals against the wrong
+// evidence. Held time progresses only from a goal's first actual advance, not from its adoption;
+// what sight guaranteed is the calibrated mean a block's sampled rolls give, not the least of
+// them, and includes what a recipe makes from an input held or in reach; a chained goal a single
+// craft application met in full is a real chain; a discovery goal - set when nothing grounds an
+// item goal - is counted apart, by its reveals and the resource goals it became; and danger, the
+// agents that explored and the kinds of goal item are reported as description, never as bars a
+// run clears.
+const DISCOVERY_READINESS_VERSION = 'loom-readiness-gate/12'
+const DISCOVERY_GOAL_INCOHERENT_TAGS = new Set([...HORIZON_GOAL_INCOHERENT_TAGS, 'goalDiscoveryNotOffered'])
+// The generation-13 bars that cannot fail a run that pursued anything at all: from generation 14
+// they are measured and reported, and no verdict rests on them.
+const DESCRIPTIVE_MEASURES = Object.freeze(['distinctGoalItems', 'exploringAgents', 'dangerEpisodes'])
 // From generation 12, a no-route flight from inside a hole the agent dug under itself.
 const SELF_TRAPPED_BLOCKER_CLASSES = Object.freeze(['selfTrapped'])
 // How many more of its item than was held a goal must need to count as more than one step.
@@ -104,6 +117,7 @@ const COMPLETING_OUTCOMES = new Set(['goalCompleted', 'goalCompletedAdopted'])
 
 /** The goal ledger refusals gate [generation] counts as incoherent decisions. */
 function goalIncoherentTagsOf (generation) {
+  if (generation >= 14) return DISCOVERY_GOAL_INCOHERENT_TAGS
   if (generation >= 13) return HORIZON_GOAL_INCOHERENT_TAGS
   if (generation >= 11) return SUBSTANTIVE_GOAL_INCOHERENT_TAGS
   if (generation >= 10) return WOODED_GOAL_INCOHERENT_TAGS
@@ -840,6 +854,30 @@ function guaranteedCountOf (perception, item) {
 }
 
 /**
+ * How many of [item] sight could be counted on for when a goal of it was set, from generation 14:
+ * each visible dig-safe block in reach at the calibrated mean of the server's sampled rolls, in
+ * whole items, and what an offered craft makes. An item a recipe makes from an input held or in
+ * reach is guaranteed outright: its goal needed no looking further (r23).
+ */
+function expectedLocalCountOf (perception, item) {
+  const meanOf = (what) => Math.floor((perception?.surroundings ?? [])
+    .filter((seen) => seen.kind === 'block' && seen.visible === true && seen.digSafe === true &&
+      fromEyes(seen) <= INTERACTION_REACH_BLOCKS)
+    .reduce((sum, seen) => sum + (seen.yields ?? [])
+      .filter((given) => given.what === what)
+      .reduce((total, given) => total + (given.perHundred ?? given.least * 100), 0), 0) / 100)
+  const self = perception?.selfState
+  const heldOf = (what) => (self?.inventorySummary ?? []).filter((stack) => stack.what === what)
+    .reduce((sum, stack) => sum + stack.count, 0)
+  const made = (perception?.horizon ?? []).some((entry) => entry.what === item &&
+    entry.grounding === 'recipe' && entry.via !== undefined && (heldOf(entry.via) > 0 || meanOf(entry.via) >= 1))
+  if (made) return Infinity
+  const crafted = (self?.craftingOptions ?? []).filter((option) => option.what === item)
+    .reduce((sum, option) => sum + option.resultCount * option.maxCrafts, 0)
+  return meanOf(item) + crafted
+}
+
+/**
  * The generation-12 pursuit bars and what the run measured against each (the r20 audit). As
  * generation 11, except:
  * - a goal is substantive only when it needed MIN_SUBSTANTIVE_GAIN or more beyond what was held
@@ -855,6 +893,8 @@ function guaranteedCountOf (perception, item) {
  */
 function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
   const horizonRule = generation >= 13
+  const discoveryRule = generation >= 14
+  const localCountOf = discoveryRule ? expectedLocalCountOf : guaranteedCountOf
   const perceptionOf = new Map(bodyRecords
     .filter((record) => record.event === 'perceived' && record.requestKey !== undefined)
     .map((record) => [record.requestKey, record.perception]))
@@ -885,6 +925,8 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
   for (const record of reviews) {
     const goal = record.goal
     const choice = record.decision?.goal
+    // A discovery goal names no item, and is counted apart from item goals (generation 14).
+    if (discoveryRule && goal.discovery === true) continue
     if (['goalAdopted', 'goalReplaced', 'goalCompletedAdopted'].includes(goal.outcome) && goal.goalId !== undefined) {
       const item = choice?.successItem
       items.add(item)
@@ -907,8 +949,8 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
         adoptedBy: record.requestKey,
         small: !Number.isInteger(count) || count - held < MIN_SUBSTANTIVE_GAIN,
         readopted: recut !== undefined && Number.isInteger(count) && count <= recut,
-        local: Number.isInteger(count) && guaranteedCountOf(perception, item) >= count - held,
-        guaranteed: held + guaranteedCountOf(perception, item),
+        local: Number.isInteger(count) && localCountOf(perception, item) >= count - held,
+        guaranteed: held + localCountOf(perception, item),
         chained: goal.chainedFrom !== undefined,
         chainedFromGoal: goal.chainedFrom,
         horizon: (record.shown?.horizon ?? perception?.horizon ?? []).some((entry) => entry.what === item)
@@ -952,9 +994,21 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
     .filter(([childId, child]) => child.chainedFromGoal !== undefined && advances(childId) >= 1 &&
       original.get(child.chainedFromGoal)?.item !== child.item)
     .map(([, child]) => child.chainedFromGoal))
+  // From generation 14 a chained goal one craft application met in full is a real chain: the goal
+  // it was chained from gathered the input, and the craft made the whole output (r23).
+  const craftMet = new Set(reviews.filter((record) =>
+    record.goal.conditionMet === true && record.goal.stepEvidence === 'gained' &&
+    record.shown?.goal?.stepAction === 'craft' && record.shown?.goal?.goalId === record.goal.presentedGoalId)
+    .map((record) => record.goal.presentedGoalId))
+  const crossChained = (entry) => {
+    const parent = original.get(entry.chainedFromGoal)
+    return parent !== undefined && parent.item !== entry.item && advances(entry.chainedFromGoal) >= 1
+  }
+  const chainCounts = (goalId, entry) => advances(goalId) >= 2 ||
+    (discoveryRule && craftMet.has(goalId) && crossChained(entry))
   let chainedGoals = 0
   for (const [goalId, entry] of original) {
-    if (entry.chained && sized(entry) && advances(goalId) >= 2) chainedGoals += 1
+    if (entry.chained && sized(entry) && chainCounts(goalId, entry)) chainedGoals += 1
   }
   const substantive = (goalId) => {
     const entry = original.get(goalId)
@@ -977,7 +1031,8 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
   const craftChainSteps = reviews.filter((record) =>
     record.intent === 'craft' && active(record) && appliedOf.get(record.requestKey) === 'accepted' &&
     chainedGoalIds.has(record.goal.goalId) &&
-    original.get(record.goal.goalId)?.adoptedBy !== record.requestKey).length
+    (original.get(record.goal.goalId)?.adoptedBy !== record.requestKey ||
+      (discoveryRule && craftMet.has(record.goal.goalId)))).length
   const exploringAgents = new Set(bodyRecords.filter((record) => {
     if (record.event !== 'decided' || record.intent !== 'moveTo') return false
     const onto = record.decision?.intent?.onto
@@ -991,7 +1046,7 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
     record.event === 'perceived' && answered.has(record.requestKey) &&
     ['threatSighted', 'damaged'].includes(record.perception?.trigger?.event ?? record.trigger)).length
   const deaths = new Set(bodyRecords.filter((record) => record.event === 'died').map((record) => record.agentId)).size
-  const held = progressingTimeOf(bodyRecords, { endAtDeath: true })
+  const held = progressingTimeOf(bodyRecords, { endAtDeath: true, fromAdvance: discoveryRule })
   const shares = [...byAgent.values()].map((entry) => entry.active / entry.reviews)
   const measured = {
     goalActiveReviewShare: ratio(reviews.filter(active).length, reviews.length),
@@ -1016,6 +1071,15 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
           discoveredGoals: [...original.keys()].filter((goalId) => !original.get(goalId).local && discovered(goalId)).length,
           crowdedGoals: reviews.filter((record) => record.goal.outcome === 'goalCrowdsExploration').length
         }
+      : {}),
+    ...(discoveryRule
+      ? {
+          discoveryGoals: reviews.filter((record) => record.goal.discovery === true &&
+            ['goalAdopted', 'goalReplaced', 'goalCompletedAdopted'].includes(record.goal.outcome)).length,
+          discoveryReveals: reviews.filter((record) => record.goal.presentedDiscovery === true &&
+            record.goal.stepEvidence === 'revealed').length,
+          discoveryTransitions: reviews.filter((record) => record.goal.discoveredFrom !== undefined).length
+        }
       : {})
   }
   const at = (value, bar) => (value ?? 0) >= bar
@@ -1028,13 +1092,15 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
     at(measured.substantiveMultiStepAgents, bars.substantiveMultiStepAgents) &&
     at(substantiveCompletions, bars.substantiveCompletions) &&
     at(chainedGoals, bars.chainedGoals) &&
-    at(measured.distinctGoalItems, bars.distinctGoalItems) &&
     at(craftChainSteps, bars.craftChainSteps) &&
-    at(exploringAgents, bars.exploringAgents) &&
-    at(dangerEpisodes, bars.dangerEpisodes)
+    (discoveryRule || (
+      at(measured.distinctGoalItems, bars.distinctGoalItems) &&
+      at(exploringAgents, bars.exploringAgents) &&
+      at(dangerEpisodes, bars.dangerEpisodes)))
   return {
     bars: bars ?? null,
     measured,
+    ...(discoveryRule ? { descriptive: DESCRIPTIVE_MEASURES } : {}),
     // The two review shares are close to fixed by the request schema, which offers no idle or
     // rest while a goal is held: they are reported beside the behaviour, not as it (r20).
     schemaShaped: ['goalActiveReviewShare', 'minAgentGoalActiveReviewShare'],
@@ -1048,7 +1114,7 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
  * time after each decided record whose resolution left a goal held, up to its next decided record,
  * counted only until the window since the goal was set or last advanced closes.
  */
-function progressingTimeOf (bodyRecords, { endAtDeath = false } = {}) {
+function progressingTimeOf (bodyRecords, { endAtDeath = false, fromAdvance = false } = {}) {
   const runEnd = maximumTick(bodyRecords)
   const diedAt = new Map(bodyRecords
     .filter((record) => endAtDeath && record.event === 'died' && record.agentId !== undefined)
@@ -1072,7 +1138,9 @@ function progressingTimeOf (bodyRecords, { endAtDeath = false } = {}) {
     const advanced = goal.conditionAdvanced === true ||
       ['gainedInput', 'revealed'].includes(goal.stepEvidence)
     if (goal.goalId !== undefined) {
-      if (goal.goalId !== entry.goal) entry.progressed = record.tick
+      // From generation 14 a goal's held time progresses only from its first actual advance: an
+      // adoption is a claim, not evidence (r23).
+      if (goal.goalId !== entry.goal) entry.progressed = fromAdvance ? -Infinity : record.tick
       else if (advanced) entry.progressed = record.tick
       entry.goal = goal.goalId
       entry.since = record.tick
@@ -1223,8 +1291,9 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       WOODED_READINESS_VERSION,
       SUBSTANTIVE_READINESS_VERSION,
       GROUNDED_GOAL_READINESS_VERSION,
-      HORIZON_READINESS_VERSION
-    ][Math.min(Math.max(generation - 3, 0), 10)],
+      HORIZON_READINESS_VERSION,
+      DISCOVERY_READINESS_VERSION
+    ][Math.min(Math.max(generation - 3, 0), 11)],
     actions: {
       total,
       byClass: Object.fromEntries(Object.entries(byClass).sort()),
@@ -1250,6 +1319,8 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
 
 module.exports = {
   BLOCKER_CLASSES,
+  DISCOVERY_GOAL_INCOHERENT_TAGS,
+  DISCOVERY_READINESS_VERSION,
   HORIZON_GOAL_INCOHERENT_TAGS,
   HORIZON_READINESS_VERSION,
   COHERENT_READINESS_VERSION,

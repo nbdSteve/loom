@@ -272,6 +272,25 @@ PROFILES['night-goal-10m-10'] = Object.freeze({
     dangerEpisodes: 1
   })
 })
+// The v31 profile keeps the plains scene, envelope and plan, and pre-registers the generation-14
+// bars (the r23 audit): the same strict substance bars, with held time progressing only from a
+// goal's first advance, and none of the bars a run that pursued anything could not fail.
+PROFILES['discovery-goal-10m-10'] = Object.freeze({
+  ...PROFILES['shakedown-10m-10'],
+  scene: 'e1-explore-ring',
+  expectedReviewsPerAgent: 5,
+  coherenceBars: Object.freeze({
+    goalActiveReviewShare: 0.6,
+    minAgentGoalActiveReviewShare: 0.4,
+    progressingHeldTimeShare: 0.5,
+    minAgentProgressingHeldTimeShare: 0.25,
+    maxIdleBesideExploration: 0,
+    substantiveMultiStepAgents: 3,
+    substantiveCompletions: 3,
+    chainedGoals: 2,
+    craftChainSteps: 1
+  })
+})
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

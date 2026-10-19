@@ -88,6 +88,7 @@ fn answer(intent: Intent, goal: Option<GoalChoice>, why: &str) -> Draft {
 /// A choice setting `count` of `item` under `disposition`, judging the previous step.
 fn target(disposition: GoalDisposition, item: &str, count: i64) -> GoalChoice {
     GoalChoice {
+        discover: None,
         disposition,
         success_item: Some(item.to_owned()),
         success_count: Some(count),
@@ -99,6 +100,7 @@ fn target(disposition: GoalDisposition, item: &str, count: i64) -> GoalChoice {
 /// A choice under `disposition` that sets no target.
 const fn judged(disposition: GoalDisposition) -> GoalChoice {
     GoalChoice {
+        discover: None,
         disposition,
         success_item: None,
         success_count: None,
@@ -661,6 +663,7 @@ mod tests {
                 });
         }
         seen.goal = Some(GoalSummary {
+            discovery: false,
             goal_id: "g".to_owned(),
             statement: format!("hold {target} {item}"),
             revision: 0,

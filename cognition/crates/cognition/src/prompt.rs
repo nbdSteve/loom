@@ -39,13 +39,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v30";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v31";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v30";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v31";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v30";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v31";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -379,6 +379,28 @@ fn trigger_line(trigger: &Trigger) -> String {
     }
 }
 
+/// A discovery goal's success condition and, once met, what must follow it.
+fn discovery_condition(goal: &GoalSummary) -> Vec<String> {
+    let mut parts = Vec::new();
+    if goal.discovery {
+        let met = goal
+            .progress
+            .as_ref()
+            .is_some_and(|progress| progress.condition_met);
+        parts.push(format!(
+            "Success condition: a walk to the edge of sight brings into view a useful resource your footing does not give; it is {status}.",
+            status = if met { "MET" } else { "not met yet" }
+        ));
+        if met {
+            parts.push(
+                "Because it is met, replace it in this same answer with a goal for a resource it revealed."
+                    .to_owned(),
+            );
+        }
+    }
+    parts
+}
+
 /// The held goal, its revision, and the body's answer to the last step under it.
 ///
 /// Rendered at a goal review only, because that is the only perception the body
@@ -405,6 +427,7 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
         revision = goal.revision,
         tick = goal.adopted_tick
     )];
+    parts.extend(discovery_condition(goal));
     if let (Some(item), Some(count)) = (&goal.success_item, goal.success_count) {
         let held = goal
             .progress
@@ -507,6 +530,9 @@ fn refusal_line(refusal: &GoalRefusal) -> String {
         }
         "goalCompletedWithoutNext" => {
             "it completed a met goal while sight gave a next one: replace it with the next instead"
+        }
+        "goalDiscoveryNotOffered" => {
+            "it set a discovery goal while something in sight, memory or hand grounded an item goal, or nowhere was offered to look"
         }
         "goalStalled" => "the goal had advanced nothing for three steps in a row, so it ended",
         "goalSuccessTargetMissing" => "it set a goal without its item and total",
@@ -829,7 +855,7 @@ fn capacity_line(perception: &Perception) -> String {
             "Nothing in sight can be counted on to give you more of any item, so no goal can be set now."
                 .to_owned()
         } else {
-            "Nothing in sight can be counted on to give you more of any item, so no goal can be set now: walk to the edge of sight to look further."
+            "Nothing in sight can be counted on to give you more of any item, so no item goal can be set now: walk to the edge of sight to look further."
                 .to_owned()
         });
     } else {
@@ -856,6 +882,12 @@ fn capacity_line(perception: &Perception) -> String {
             )
         ));
     }
+    if offered.discovery_offered() {
+        lines.push(
+            "Nothing you see, remember or hold grounds an item goal: set a discovery goal (discover: true) and walk to a cell at the edge of sight; it is met when a useful resource comes into view."
+                .to_owned(),
+        );
+    }
     if offered.collect_required {
         let refs: Vec<&str> = offered
             .own_drops
@@ -873,7 +905,12 @@ fn capacity_line(perception: &Perception) -> String {
                 .to_owned(),
         );
     }
-    if offered.explore_continue() {
+    if offered.explore_continue() && offered.discovering() {
+        lines.push(
+            "Continue your discovery goal by walking to a cell at the edge of sight you have not looked from, or abandon it."
+                .to_owned(),
+        );
+    } else if offered.explore_continue() {
         lines.push(
             "Nothing in sight can give the rest of your goal's item: continue the goal by walking to the edge of sight to look for a source, or abandon it."
                 .to_owned(),
@@ -1395,6 +1432,7 @@ mod tests {
 
     fn held(statement: &str, revision: i64, step: Option<(&str, &str)>) -> GoalSummary {
         GoalSummary {
+            discovery: false,
             goal_id: "req-adopted".to_owned(),
             statement: statement.to_owned(),
             revision,
