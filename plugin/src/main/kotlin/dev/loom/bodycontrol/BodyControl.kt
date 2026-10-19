@@ -1036,6 +1036,8 @@ sealed interface BodyRequest {
         val distance: Int,
         val timeoutMs: Int,
         val sprint: Boolean,
+        /** Other creatures of the same answer the flight must end clear of, by its own ordering. */
+        val avoid: List<Int>? = null,
     ) : BodyRequest {
         init {
             requireEnvelope(protocol, requestId, agentId)
@@ -1043,6 +1045,11 @@ sealed interface BodyRequest {
             requireWithin("entity", entity, 0..MAX_ENTITY_INDEX)
             requireWithin("distance", distance, 1..MAX_RETREAT_DISTANCE)
             requireWithin("timeoutMs", timeoutMs, 1..MAX_MOVE_DEADLINE_MS)
+            avoid?.let { others ->
+                require(others.size <= MAX_FLIGHT_AVOID) { "avoid names at most $MAX_FLIGHT_AVOID creatures" }
+                require(others.toSet().size == others.size) { "avoid names each creature once" }
+                require(others.all { it in 0..MAX_ENTITY_INDEX && it != entity }) { "avoid names other entity indexes" }
+            }
         }
     }
 
@@ -1933,6 +1940,9 @@ data class BodyError(
 
 /** Most dropped items one sense may ask to have reported out of sight. */
 const val MAX_RETAINED_ITEMS = 8
+
+/** Most other creatures a flight may be asked to end clear of; `MAX_FLIGHT_AVOID` in the body. */
+const val MAX_FLIGHT_AVOID = 16
 
 /** An entity uuid as the server spawns it: lower-case and hyphenated. */
 private val ENTITY_UUID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")

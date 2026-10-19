@@ -115,7 +115,7 @@ internal class PlayerEvidenceRecorder(
                 "separation ${report.separation ?: "unread"}",
             retreatTag(report.outcome, report.separation, request.distance),
             requestId,
-            RetreatEvidence(report.separation, report.separationGained),
+            RetreatEvidence(report.separation, report.separationGained, request.avoid?.size),
         )
     }
 

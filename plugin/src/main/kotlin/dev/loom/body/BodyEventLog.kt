@@ -170,6 +170,8 @@ data class BodyEventRecord(
 data class RetreatEvidence(
     val separation: Double? = null,
     val separationGained: Double? = null,
+    /** How many other hunters the flight was told to end clear of, beside the one it ran from (r24). */
+    val avoided: Int? = null,
 )
 
 /** What one goal review showed cognition beyond the body's own perception. */

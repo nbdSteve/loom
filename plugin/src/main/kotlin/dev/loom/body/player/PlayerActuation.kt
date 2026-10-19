@@ -11,6 +11,7 @@ import dev.loom.body.SlotResolution
 import dev.loom.body.WorldTargetResolution
 import dev.loom.body.completedBodyOperation
 import dev.loom.body.horizontalBearing
+import dev.loom.body.huntsPlayers
 import dev.loom.bodycontrol.BODY_CONTROL_PROTOCOL_VERSION
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
@@ -390,6 +391,7 @@ internal class PlayerActionPreparer(
                             distance = FLEE_DISTANCE_BLOCKS,
                             timeoutMs = MOVEMENT_DEADLINE_MS,
                             sprint = true,
+                            avoid = otherHuntersOf(sense, entity).takeIf { it.isNotEmpty() },
                         )
                     val operation: () -> ActionExecution = { flee(runtime, sense, request) }
                     operation
@@ -467,3 +469,21 @@ private fun fleeOnce(
         fleeReport = report,
     )
 }
+
+/**
+ * The other creatures of [sense] that hunt the agent's kind, by the answer's own ordering, that a
+ * flight from [entity] must end clear of too (r24: gamma's flight from a spider ended 0.6 blocks
+ * from a creeper). The JVM names them, so the body still chooses nothing.
+ */
+internal fun otherHuntersOf(
+    sense: HeldSense,
+    entity: Int,
+): List<Int> =
+    sense.raw.report.entities
+        .withIndex()
+        .filter {
+                (index, seen) ->
+            index != entity && huntsPlayers("entity.minecraft." + seen.what.removePrefix("minecraft:"))
+        }
+        .map { it.index }
+        .take(dev.loom.bodycontrol.MAX_FLIGHT_AVOID)

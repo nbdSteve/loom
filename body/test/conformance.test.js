@@ -245,6 +245,7 @@ test('a refused fixture is refused for the reason its name gives', () => {
     'request-flee-zero-distance.json': 'invalidField',
     'request-flee-distance-too-large.json': 'invalidField',
     'request-flee-entity-too-large.json': 'invalidField',
+    'request-flee-avoid-repeated.json': 'invalidField',
     'request-flee-blank-sense-id.json': 'invalidField',
     'request-halt-with-move-payload.json': 'invalidField',
     'response-moveTo-unknown-outcome.json': 'invalidField',
@@ -321,6 +322,7 @@ test('a frame the schema cannot refuse is still refused by the codec', () => {
     'response-sleep-woke-without-entry.json': 'a sleep claims wake without ever entering',
     'response-sense-recipes-omitted-with-no-recipes.json': 'recipes were omitted from an empty list',
     'request-say-too-many-bytes.json': 'say text is within its code points but over its UTF-8 bytes',
+    'request-flee-avoid-names-the-threat.json': 'a flight is asked to end clear of the very threat it runs from',
     'request-say-lone-surrogate.json': 'say text carries an unpaired surrogate'
   }
   const present = fixtures('beyond-schema').map(({ name }) => name)

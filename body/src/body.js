@@ -1350,6 +1350,7 @@ function createBody (options) {
       : movement.flee({
         offered: offered.recall(session, request.senseId)?.entityOffers,
         entity: request.entity,
+        avoid: request.avoid ?? [],
         distance: request.distance,
         timeoutMs: request.timeoutMs,
         sprint: request.sprint,

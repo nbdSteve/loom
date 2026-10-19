@@ -736,6 +736,13 @@
             "sprint": {
               "description": "Whether the body may sprint away. Spelled and meant exactly as a moveTo's is, and not defaulted to true for a flight: whether outrunning this threat is worth the food is the judgement the coordinator is there to make, and a body that assumed it would be deciding on the controller's behalf in the one situation where the cost matters most.",
               "type": "boolean"
+            },
+            "avoid": {
+              "description": "Other creatures of the same sense answer, by its own ordering, that the flight must end clear of as well: no nearer to any than it began, and at least eight blocks from any it started further from, with its least separation from all of them grown. The controller names them, so the body chooses nothing, and an entity gone since the answer is passed over. Unique, never the named threat, and at most sixteen. A peer lacking the field refuses the frame rather than misreading it, so adding it moved no generation.",
+              "type": "array",
+              "maxItems": 16,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/EntityIndex" }
             }
           }
         },

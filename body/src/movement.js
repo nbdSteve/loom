@@ -1314,7 +1314,7 @@ function createMovement (bot, {
      * against is the live reading instead - see [walk]'s per-tick measurement - so the
      * snapshot bounds the search and never the report.
      */
-    flee ({ offered, entity, distance, timeoutMs, sprint, owner }) {
+    flee ({ offered, entity, avoid = [], distance, timeoutMs, sprint, owner }) {
       if (running !== undefined) return undefined
       if (offered === undefined) return unmoved('senseForgotten')
       const named = offered[entity]
@@ -1329,10 +1329,17 @@ function createMovement (bot, {
       if (seen === undefined) return unmoved('threatGone')
       const near = new goals.GoalNear(seen[0], seen[1], seen[2], distance)
       const start = bot.entity?.position
+      // The other hunters the controller named, where each stands now; one gone is passed over.
+      const others = avoid.map((index) => offered[index]).filter((other) => other !== undefined && other.dead !== true)
+        .map((other) => bot.entities?.[other.id] === other.entity ? positionOf(other.entity.position) : undefined)
+        .filter((at) => at !== undefined)
       return walk({
         goal: new SafeFlightGoal(new goals.GoalInvert(near), {
           border: worldBorderOf(bot),
-          floor: Number.isFinite(start?.y) ? Math.floor(start.y) - MAX_FLIGHT_DESCENT_BLOCKS : -Infinity
+          floor: Number.isFinite(start?.y) ? Math.floor(start.y) - MAX_FLIGHT_DESCENT_BLOCKS : -Infinity,
+          threat: seen,
+          others,
+          start: Number.isFinite(start?.x) ? [start.x, start.y, start.z] : undefined
         }),
         sprint,
         timeoutMs,
@@ -1360,6 +1367,14 @@ function createMovement (bot, {
 /** How far inside the world border a flight's end must lie, in blocks. */
 const FLIGHT_BORDER_MARGIN_BLOCKS = 3
 
+/** How far from every other named hunter a flight must end, of those it began further from. */
+const FLIGHT_OTHER_CLEARANCE_BLOCKS = 8
+
+/** The horizontal distance between two positions. */
+function horizontalApart (one, other) {
+  return Math.hypot(one[0] - other[0], one[2] - other[2])
+}
+
 /** How far below where it began a flight may end: a ravine is no refuge. */
 const MAX_FLIGHT_DESCENT_BLOCKS = 4
 
@@ -1372,11 +1387,16 @@ const MAX_FLIGHT_DESCENT_BLOCKS = 4
  * reach the search answers noRoute, which is the ground's honest answer.
  */
 class SafeFlightGoal extends goals.Goal {
-  constructor (inner, { border, floor }) {
+  constructor (inner, { border, floor, threat, others = [], start }) {
     super()
     this.inner = inner
     this.border = border
     this.floor = floor
+    this.others = others
+    // Where the flight began against each other hunter, and its least separation from them all.
+    this.startedFrom = start === undefined ? [] : others.map((other) => horizontalApart(start, other))
+    this.leastAtStart = start === undefined ? 0 : Math.min(...[threat, ...others].filter((at) => at !== undefined).map((at) => horizontalApart(start, at)))
+    this.threat = threat
   }
 
   heuristic (node) {
@@ -1384,7 +1404,25 @@ class SafeFlightGoal extends goals.Goal {
   }
 
   isEnd (node) {
-    return this.inner.isEnd(node) && node.y >= this.floor && this.clearOfBorder(node)
+    return this.inner.isEnd(node) && node.y >= this.floor && this.clearOfBorder(node) && this.clearOfOthers(node)
+  }
+
+  /**
+   * Whether an end at `node` keeps clear of every other hunter the controller named: no nearer to
+   * any than the flight began, at least [FLIGHT_OTHER_CLEARANCE_BLOCKS] from any it began further
+   * from, and its least separation from all of them grown (r24: gamma's flight from a spider ended
+   * 0.6 blocks from a creeper, and alpha's beside one).
+   */
+  clearOfOthers (node) {
+    if (this.others.length === 0) return true
+    const at = [node.x + 0.5, node.y, node.z + 0.5]
+    const clear = this.others.every((other, index) => {
+      const apart = horizontalApart(at, other)
+      const began = this.startedFrom[index] ?? 0
+      return apart >= Math.min(began, FLIGHT_OTHER_CLEARANCE_BLOCKS) && (began < FLIGHT_OTHER_CLEARANCE_BLOCKS || apart >= FLIGHT_OTHER_CLEARANCE_BLOCKS)
+    })
+    const least = Math.min(...[this.threat, ...this.others].filter((pos) => pos !== undefined).map((pos) => horizontalApart(at, pos)))
+    return clear && least > this.leastAtStart
   }
 
   clearOfBorder (node) {
@@ -1452,6 +1490,7 @@ function installMovement (bot, options) {
 
 module.exports = {
   FLIGHT_BORDER_MARGIN_BLOCKS,
+  FLIGHT_OTHER_CLEARANCE_BLOCKS,
   MAX_FLIGHT_DESCENT_BLOCKS,
   SafeFlightGoal,
   ARRIVAL_SETTLE_TICKS,

@@ -49,6 +49,17 @@ const PROTOCOL_VERSION = 7
 /** Most dropped items one sense may ask to have reported out of sight. */
 const MAX_RETAINED_ITEMS = 8
 
+/** Most other creatures a flight may be asked to end clear of. */
+const MAX_FLIGHT_AVOID = 16
+
+/** Whether `avoid` is absent, or a unique set of entity indexes that never names `entity`. */
+function isAvoidSet (avoid, entity) {
+  if (avoid === undefined) return true
+  return Array.isArray(avoid) && avoid.length <= MAX_FLIGHT_AVOID &&
+    avoid.every((index) => Number.isInteger(index) && index >= 0 && index <= MAX_ENTITY_INDEX && index !== entity) &&
+    new Set(avoid).size === avoid.length
+}
+
 /** An entity uuid as the server spawns it and Mineflayer stores it: lower-case, hyphenated. */
 const ENTITY_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
@@ -1554,15 +1565,18 @@ function requestPayload (raw, literals) {
       isBoundedInteger(raw.distance, 1, MAX_RETREAT_DISTANCE) &&
       spellsWholeNumber(literals, 'distance') &&
       isMoveDeadline(raw, literals) &&
-      typeof raw.sprint === 'boolean'
+      typeof raw.sprint === 'boolean' &&
+      isAvoidSet(raw.avoid, raw.entity)
     if (!bounded) return undefined
-    return {
+    const flight = {
       senseId: raw.senseId,
       entity: raw.entity,
       distance: raw.distance,
       timeoutMs: raw.timeoutMs,
       sprint: raw.sprint
     }
+    if (raw.avoid !== undefined) flight.avoid = [...raw.avoid]
+    return flight
   }
   if (raw.op === 'dig') {
     const bounded = isControlId(raw.senseId) &&

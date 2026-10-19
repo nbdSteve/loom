@@ -1205,6 +1205,9 @@ class PlayerSceneSelectionIntegrationTest {
         val flee = harness.connector.requests.filterIsInstance<BodyRequest.Flee>().single()
         assertEquals(perception.requestId, flee.senseId)
         assertEquals(0, flee.entity)
+        // Every other hunter of the answer is named for the flight to end clear of, at most 16
+        // (r24: gamma's flight from a spider ended 0.6 blocks from a creeper).
+        assertEquals((1..dev.loom.bodycontrol.MAX_FLIGHT_AVOID).toList(), flee.avoid)
     }
 
     @Test
