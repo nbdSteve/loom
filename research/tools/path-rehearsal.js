@@ -249,6 +249,15 @@ async function main () {
   })
   let paper
   let windowEnd = Infinity
+  // An interrupt cancels the run rather than ending the process, so the cleanup below always runs:
+  // ended outright, it left Paper, the cognition service and every body running.
+  const cancel = new AbortController()
+  const interrupted = () => cancel.abort()
+  process.once('SIGINT', interrupted)
+  process.once('SIGTERM', interrupted)
+  const cancelled = () => {
+    if (cancel.signal.aborted) throw new RunFailure('cancelled', 'the rehearsal was interrupted')
+  }
   try {
     supervisor.start({
       name: 'cognition',
@@ -261,7 +270,7 @@ async function main () {
       },
       logFile: path.join(runDirectory, 'cognition.log')
     })
-    const signal = new AbortController().signal
+    const signal = cancel.signal
     await waitForPort({ host: config.network.host, port: config.network.cognitionPort, timeoutMilliseconds: 30_000, signal })
     paper = supervisor.start({
       name: 'paper',
@@ -279,6 +288,7 @@ async function main () {
       signal,
       poll: async () => {
         if (failure !== null) throw failure
+        cancelled()
         const spawned = new Set(bodyEvents(bodyFile).filter((record) => record.event === 'spawned').map((record) => record.agentId))
         return config.agents.every((agent) => spawned.has(agent))
       }
@@ -300,6 +310,7 @@ async function main () {
     const deadline = Date.now() + config.bounds.runSeconds * 1000
     while (latestTick(bodyFile) - begin < config.bounds.runTicks) {
       if (failure !== null) throw failure
+      cancelled()
       if (Date.now() > deadline) throw new RunFailure('runFailed', 'the rehearsal did not reach its tick window in time')
       await delay(POLL_MS)
     }
@@ -310,6 +321,8 @@ async function main () {
     for (const handle of supervisor.processes) {
       if (handle.child.exitCode === null) handle.child.kill('SIGKILL')
     }
+    process.off('SIGINT', interrupted)
+    process.off('SIGTERM', interrupted)
   }
   const harnessFile = path.join(runDirectory, 'harness.jsonl')
   fs.writeFileSync(harnessFile, '')
