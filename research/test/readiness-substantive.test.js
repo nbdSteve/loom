@@ -567,3 +567,36 @@ test('under generation 14 a discovery goal is counted apart, and the bars no run
   })
   assert.equal(gate14(refused).actions.byClass.goalIncoherent, 1)
 })
+
+const R24 = path.join(__dirname, '..', 'experiments', '2026-10-16-openai-10-agent-10m-r24')
+
+test('r24, judged under gate generation 15, keeps its schema blocker and reads the health floor as a race', () => {
+  const records = fs.readFileSync(path.join(R24, 'evidence.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)
+  const metrics = JSON.parse(fs.readFileSync(path.join(R24, 'metrics.json'), 'utf8'))
+  const judged = (generation) => readinessMetrics({
+    bodyRecords: records.filter((entry) => entry.source === 'body'),
+    harnessRecords: records.filter((entry) => entry.source === 'harness'),
+    metrics,
+    generation,
+    bars: PROFILES['discovery-goal-10m-10'].coherenceBars
+  })
+  const fourteen = judged(14)
+  const fifteen = judged(15)
+  assert.equal(fourteen.version, 'loom-readiness-gate/12')
+  assert.equal(fifteen.version, 'loom-readiness-gate/15', 'the version now names its gate generation')
+  // delta's attack, perceived at 8.5 and bitten to the 4.5 floor while it decided, is a race.
+  const delta = (result) => result.actions.nonSuccess.find((entry) => entry.requestKey === 'tribe-delta:loom3b4ef3e082-sense-sc')
+  assert.equal(delta(fourteen).class, 'inapplicable')
+  assert.equal(delta(fifteen).class, 'concurrent')
+  assert.equal(fifteen.blockers.inapplicable, 0)
+  assert.equal(fifteen.blockers.goalIncoherent, 1, 'theta was refused, and stays a blocker of its run')
+  // Idle and refused stretches no longer count as progressing time (r24 theta and beta).
+  const held = (result) => result.goalCoherence.pursuit.measured.progressingHeldTimeShare
+  assert.ok(held(fifteen) < held(fourteen), `${held(fifteen)} < ${held(fourteen)}`)
+  // delta's planks, crafted and seen held before it died, are a chain.
+  assert.equal(fourteen.goalCoherence.pursuit.measured.chainedGoals, 0)
+  assert.ok(fifteen.goalCoherence.pursuit.measured.chainedGoals >= 1)
+  // What describes the run sits apart from the verdict evidence.
+  assert.equal(fifteen.goalCoherence.pursuit.description.deaths, 10)
+  assert.equal(fifteen.goalCoherence.pursuit.verdict, 'notCleared')
+})
