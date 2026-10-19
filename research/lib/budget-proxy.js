@@ -59,6 +59,7 @@ class CognitionBudgetProxy {
     this.pivotal = 0
     this.reservedNanoUsd = 0
     this.admissionClosed = null
+    this.stopping = false
     this.refusedByBound = {}
     this.outstanding = 0
     this.perAgent = new Map()
@@ -211,6 +212,15 @@ class CognitionBudgetProxy {
     return true
   }
 
+  // The harness is about to stop its processes. A call still with the mind is cut off by that
+  // stop rather than by a fault upstream, so from here it ends as `runStopping` and never reaches
+  // [onUnavailable]; and nothing new is admitted (r28: the SIGTERM that stopped cognition ended
+  // alpha's in-flight damage call as `upstreamUnavailable`, which read as a provider failure).
+  beginStopping () {
+    this.stopping = true
+    this.admissionClosed ??= { reason: 'runStopping' }
+  }
+
   snapshot () {
     const reserve = this.postCrashReserve
     return {
@@ -360,18 +370,19 @@ class CognitionBudgetProxy {
       downstream.write(response)
       downstream.write('\n')
     } catch {
+      const stopping = this.stopping
       this.journal.append('cognitionForwarded', {
         agentId,
         requestId,
         trigger: perception.trigger?.event ?? null,
         importance: perception.importance ?? null,
-        outcome: 'upstreamUnavailable',
+        outcome: stopping ? 'runStopping' : 'upstreamUnavailable',
         outstandingAtAdmission,
         latencyMs: latencyMs(),
         ...originField
       })
-      this.onUnavailable({ agentId, requestId })
-      downstream.write(refusal('cognition upstream was unavailable'))
+      if (!stopping) this.onUnavailable({ agentId, requestId })
+      downstream.write(refusal(stopping ? 'cognition was stopped with the run' : 'cognition upstream was unavailable'))
     } finally {
       this.outstanding -= 1
     }

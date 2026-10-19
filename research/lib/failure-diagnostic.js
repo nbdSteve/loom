@@ -93,7 +93,8 @@ const FORWARD_OUTCOMES = new Set([
   'decision',
   'cognitionFailure',
   'upstreamRefusal',
-  'upstreamUnavailable'
+  'upstreamUnavailable',
+  'runStopping'
 ])
 const COGNITION_FAILURE_OUTCOMES = new Set([
   'cognitionFailure',
@@ -104,6 +105,7 @@ const REFUSAL_REASONS = new Set([
   'globalOutstandingCeiling',
   'perAgentCallCeiling',
   'postCrashCallReserve',
+  'runStopping',
   'spendCeiling'
 ])
 const REFUSAL_BOUND_SET = new Set(REFUSAL_BOUNDS)
@@ -285,6 +287,115 @@ function cognitionTimeline (bodyRecords, harnessRecords, configuredAgentIds) {
     forwardedOmitted: Math.max(0, forwarded.length - MAX_TIMELINE_ENTRIES),
     body: body.slice(-MAX_TIMELINE_ENTRIES),
     bodyOmitted: Math.max(0, body.length - MAX_TIMELINE_ENTRIES)
+  }
+}
+
+// How many fatal discards and shutdown completions the stop window keeps, and how much of the
+// discarding agent's own chain before each discard.
+const MAX_STOP_DISCARDS = 4
+const MAX_STOP_CONTEXT = 16
+const MAX_STOP_COMPLETIONS = 8
+// The harness records that mark where the stop began and how it went.
+const STOP_EVENTS = new Set(['runFailed', 'processGroupSignalled', 'processExited'])
+const COMPONENTS = new Set(['paper', 'cognition'])
+const SIGNALS = new Set(['SIGTERM', 'SIGKILL', 'SIGINT'])
+
+function millisecondsBetween (from, to) {
+  const start = Date.parse(from)
+  const end = Date.parse(to)
+  return Number.isFinite(start) && Number.isFinite(end) ? end - start : null
+}
+
+/**
+ * The compact evidence around the run's stop: each discard by an agent still alive that was not a
+ * typed preemption - the record a primary-behavior run stops on - with that agent's own chain just
+ * before it, and each call still with the mind when the stop began, with the body's ending for it.
+ * A request is named by a label local to this diagnostic (`q1`, `q2`, ...), never by its id, and
+ * every harness time is milliseconds from the first stop record (r28: alpha's in-flight call ended
+ * `upstreamUnavailable` when the stop signalled cognition, and nothing retained showed the order).
+ */
+function stopWindow (bodyRecords, harnessRecords, configuredAgentIds) {
+  const configured = new Set(configuredAgentIds)
+  const labels = new Map()
+  const label = (record) => {
+    const key = `${record.agentId}:${record.requestId}`
+    if (typeof record.requestId !== 'string') return null
+    if (!labels.has(key)) labels.set(key, `q${labels.size + 1}`)
+    return labels.get(key)
+  }
+  const entry = (record) => ({
+    tick: Number.isInteger(record.tick) ? record.tick : null,
+    event: closedTag(record.event, OUTCOME_TAG),
+    request: label(record),
+    ...(typeof record.outcome === 'string' ? { outcome: closedTag(record.outcome, OUTCOME_TAG) } : {}),
+    ...(typeof record.trigger === 'string' ? { trigger: closedTag(record.trigger, TRIGGER) } : {})
+  })
+  // A context step as one line, `tick event request outcome trigger` with `-` for an absent
+  // field, because a pretty-printed object per step cost the diagnostic its 64 KiB beside disputes.
+  const step = (record) => {
+    const { tick, event, request, outcome, trigger } = entry(record)
+    return [tick ?? '-', event, request ?? '-', outcome ?? '-', trigger ?? '-'].join(' ')
+  }
+  const dead = new Set()
+  const fatal = []
+  let fatalOmitted = 0
+  bodyRecords.forEach((record, index) => {
+    if (!configured.has(record.agentId)) return
+    if (record.event === 'died') dead.add(record.agentId)
+    if (record.event !== 'decisionDiscarded' || dead.has(record.agentId) || record.outcome === 'dangerPreempted') return
+    if (fatal.length >= MAX_STOP_DISCARDS) {
+      fatalOmitted += 1
+      return
+    }
+    const own = bodyRecords.slice(0, index).filter((earlier) => earlier.agentId === record.agentId)
+    fatal.push({
+      agentId: record.agentId,
+      ...entry(record),
+      context: own.slice(-MAX_STOP_CONTEXT).map(step),
+      contextOmitted: Math.max(0, own.length - MAX_STOP_CONTEXT)
+    })
+  })
+  const stopIndex = harnessRecords.findIndex((record) => STOP_EVENTS.has(record.event))
+  const stopAt = stopIndex === -1 ? null : harnessRecords[stopIndex].observedAt
+  const stop = stopIndex === -1
+    ? []
+    : harnessRecords.slice(stopIndex).filter((record) => STOP_EVENTS.has(record.event)).slice(0, 8).map((record) => ({
+      event: record.event,
+      millisecondsFromStop: millisecondsBetween(stopAt, record.observedAt),
+      ...(COMPONENTS.has(record.component) ? { component: record.component } : {}),
+      ...(SIGNALS.has(record.signal) ? { signal: record.signal } : {}),
+      ...(Number.isSafeInteger(record.exitCode) ? { exitCode: record.exitCode } : {}),
+      ...(typeof record.expected === 'boolean' ? { expected: record.expected } : {})
+    }))
+  const endingOf = new Map()
+  for (const record of bodyRecords) {
+    if (['intentApplied', 'decisionDiscarded', 'cognitionUnavailable'].includes(record.event)) {
+      endingOf.set(`${record.agentId}:${record.requestId}`, record)
+    }
+  }
+  const completions = harnessRecords
+    .map((record, index) => ({ record, index }))
+    .filter(({ record, index }) => record.event === 'cognitionForwarded' && configured.has(record.agentId) &&
+      (record.outcome === 'runStopping' || (stopIndex !== -1 && index > stopIndex)))
+  const shutdownCompletions = completions.slice(0, MAX_STOP_COMPLETIONS).map(({ record, index }) => {
+    const ending = endingOf.get(`${record.agentId}:${record.requestId}`)
+    return {
+      agentId: record.agentId,
+      request: label(record),
+      trigger: closedTag(record.trigger, TRIGGER),
+      outcome: closedTag(record.outcome, OUTCOME_TAG),
+      latencyMs: boundedCount(record.latencyMs),
+      afterStopBegan: stopIndex !== -1 && index > stopIndex,
+      millisecondsFromStop: stopAt === null ? null : millisecondsBetween(stopAt, record.observedAt),
+      bodyEnding: ending === undefined ? null : entry(ending)
+    }
+  })
+  return {
+    fatalDiscards: fatal,
+    fatalDiscardsOmitted: fatalOmitted,
+    stop,
+    shutdownCompletions,
+    shutdownCompletionsOmitted: Math.max(0, completions.length - MAX_STOP_COMPLETIONS)
   }
 }
 
@@ -790,6 +901,7 @@ function failureDiagnostic ({
       proxy: safeProxySnapshot(proxySnapshot, config),
       providerUsage: providerUsageSummary(providerUsageInput.records, config),
       timeline: cognitionTimeline(bodyInput.records, harnessInput.records, config.agents),
+      stopWindow: stopWindow(bodyInput.records, harnessInput.records, config.agents),
       nativeReviewWindows: nativeReviewWindows(bodyInput.records, harnessInput.records, config)
     },
     crashContainment: config.proof === undefined

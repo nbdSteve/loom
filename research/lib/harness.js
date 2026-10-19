@@ -1251,6 +1251,8 @@ async function runExperiment ({
           : new RunFailure('startupFailed', 'cleanup could not be verified')
       }
     }
+    // Before any process is signalled, so a call the stop cuts off is typed as the stop's.
+    proxy?.beginStopping()
     await cleanupStep(async () => {
       if (supervisor !== undefined) await supervisor.stopAll(config.bounds.shutdownSeconds * 1000)
     })

@@ -461,3 +461,77 @@ test('the proxy reserves each call at its tier and holds pivotal calls to their 
     await new Promise((resolve) => upstream.close(resolve))
   }
 })
+
+// An upstream process that accepts a call and never answers it, run under the harness's own
+// supervisor so the stop reaches it exactly as the run's stop reaches cognition.
+const SILENT_UPSTREAM = `
+const net = require('node:net')
+const server = net.createServer((socket) => socket.on('data', () => {}))
+server.listen(0, '127.0.0.1', () => process.stdout.write(String(server.address().port) + '\\n'))
+`
+
+async function silentUpstreamProcess (directory) {
+  const { ProcessSupervisor } = require('../lib/lifecycle.js')
+  const harnessEvents = []
+  const supervisor = new ProcessSupervisor({
+    logBytes: 1 << 16,
+    journal: { append: (event, fields) => harnessEvents.push({ event, ...fields }) },
+    onFailure: () => {}
+  })
+  const handle = supervisor.start({
+    name: 'cognition',
+    command: process.execPath,
+    args: ['-e', SILENT_UPSTREAM],
+    env: process.env,
+    logFile: require('node:path').join(directory, 'upstream.log')
+  })
+  const port = await new Promise((resolve) => handle.child.stdout.once('data', (chunk) => resolve(Number(String(chunk).trim()))))
+  return { supervisor, port, harnessEvents }
+}
+
+for (const stopping of [true, false]) {
+  test(stopping
+    ? 'a call still with the mind when the run stops its processes ends as runStopping, not an upstream fault'
+    : 'a call cut off by an upstream that goes away mid-run is still an upstream fault', async () => {
+    // r28: the stop signalled cognition while alpha's damage call was still with it, and the call
+    // was journalled upstreamUnavailable, which reads as a provider failure.
+    const fs = require('node:fs')
+    const os = require('node:os')
+    const directory = fs.mkdtempSync(require('node:path').join(os.tmpdir(), 'loom-stop-proxy-'))
+    const { supervisor, port } = await silentUpstreamProcess(directory)
+    const events = []
+    const unavailable = []
+    const proxy = new CognitionBudgetProxy({
+      listen: { host: '127.0.0.1', port: 0 },
+      upstream: { host: '127.0.0.1', port },
+      agents: ['alpha'],
+      budget: { perAgentCallCeiling: 4, globalCallCeiling: 4, globalOutstandingCeiling: 2 },
+      journal: { append: (event, fields) => events.push({ event, ...fields }) },
+      onUnavailable: (call) => unavailable.push(call)
+    })
+    await proxy.start()
+    try {
+      const answer = request(proxy.listen.port, 'alpha', 'zombie', 'damaged', 'PIVOTAL')
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      assert.equal(proxy.snapshot().outstandingCalls, 1, 'the call is with the mind')
+      if (stopping) proxy.beginStopping()
+      await supervisor.stopAll(2000)
+      const refused = await answer
+      const forwarded = events.filter((record) => record.event === 'cognitionForwarded')
+      assert.deepEqual(forwarded.map((record) => record.outcome), [stopping ? 'runStopping' : 'upstreamUnavailable'])
+      assert.equal(unavailable.length, stopping ? 0 : 1, 'only a mid-run loss reaches the run as a failure')
+      assert.equal(typeof refused.error, 'string')
+      if (stopping) {
+        // Nothing new is admitted once the stop has begun.
+        const late = await request(proxy.listen.port, 'alpha', 'late', 'damaged', 'PIVOTAL')
+        assert.equal(late.code, 'budgetRefused')
+        assert.equal(events.at(-1).event, 'cognitionRefused')
+        assert.equal(events.at(-1).bound, 'admissionClosed')
+        assert.equal(events.at(-1).reason, 'runStopping')
+      }
+    } finally {
+      await proxy.close()
+      fs.rmSync(directory, { recursive: true, force: true })
+    }
+  })
+}

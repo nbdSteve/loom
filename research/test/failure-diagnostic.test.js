@@ -811,3 +811,133 @@ test('a disputed world interaction keeps its operation, body outcome and vanilla
     fs.rmSync(directory, { recursive: true, force: true })
   }
 })
+
+// r28's ending: alpha's older danger answer was discarded untyped, the guard stopped the run on
+// it, and the stop then signalled cognition while alpha's newer damage call was still with it.
+function stoppedOnDiscard ({ contextRecords = 6, discards = 1, inFlight = 1, disputes = 0 } = {}) {
+  const body = []
+  const harness = []
+  for (let index = 0; index < 200; index += 1) {
+    body.push({ tick: index, agentId: 'tribe-beta', event: 'perceived', trigger: 'goalReview' })
+    harness.push({
+      observedAt: '2026-10-19T23:24:00.000Z',
+      event: 'cognitionForwarded',
+      agentId: 'tribe-beta',
+      requestId: `r-${index}`,
+      trigger: 'goalReview',
+      origin: 'nativeGoalReviewSchedule',
+      outcome: 'decision',
+      outstandingAtAdmission: 1,
+      latencyMs: index
+    })
+  }
+  for (let index = 0; index < contextRecords; index += 1) {
+    body.push({ tick: 6098 + index, agentId: 'tribe-alpha', event: 'perceived', requestId: `loom-private-${index}`, trigger: 'threatSighted', detail: LOCAL_PATH })
+    body.push({ tick: 6098 + index, agentId: 'tribe-alpha', event: 'cognitionUnavailable', requestId: `loom-private-${index}`, trigger: 'threatSighted', outcome: 'dangerCoalesced' })
+  }
+  body.push({ tick: 6140, agentId: 'tribe-alpha', event: 'decisionDiscarded', requestId: 'loom-private-typed', outcome: 'dangerPreempted' })
+  for (let index = 0; index < discards; index += 1) {
+    body.push({ tick: 6146 + index, agentId: 'tribe-alpha', event: 'decisionDiscarded', requestId: `loom-private-creeper-${index}`, intent: 'flee', detail: SECRET })
+  }
+  harness.push({ observedAt: '2026-10-19T23:25:00.000Z', event: 'runFailed', stopReason: 'startupFailed' })
+  harness.push({ observedAt: '2026-10-19T23:25:00.004Z', event: 'processGroupSignalled', component: 'cognition', signal: 'SIGTERM' })
+  for (let index = 0; index < inFlight; index += 1) {
+    const requestId = `loom-private-zombie-${index}`
+    harness.push({
+      observedAt: '2026-10-19T23:25:00.021Z',
+      event: 'cognitionForwarded',
+      agentId: 'tribe-alpha',
+      requestId,
+      trigger: 'damaged',
+      importance: 'PIVOTAL',
+      origin: 'nativeEventDriver',
+      outcome: 'runStopping',
+      outstandingAtAdmission: 1,
+      latencyMs: 1535
+    })
+    body.push({ tick: 6177, agentId: 'tribe-alpha', event: 'cognitionUnavailable', requestId, trigger: 'damaged', outcome: 'failed', detail: 'cognition was stopped with the run' })
+  }
+  harness.push({ observedAt: '2026-10-19T23:25:00.090Z', event: 'processExited', component: 'cognition', exitCode: null, signal: 'SIGTERM', expected: true })
+  harness.push({ observedAt: '2026-10-19T23:25:03.500Z', event: 'processExited', component: 'paper', exitCode: 0, signal: null, expected: true })
+  const item = 'minecraft:wayfinder_armor_trim_smithing_template'
+  const full = Array.from({ length: 46 }, (_, slot) => `${slot} ${item} 64`)
+  for (let index = 0; index < disputes; index += 1) {
+    body.push({
+      tick: 3000 + index,
+      agentId: 'tribe-gamma',
+      event: 'witnessDisputed',
+      outcome: 'disputedInventory',
+      dispute: { requestTick: 2998, answerTick: 3000, roundTripMillis: 74, claimed: full, atRequest: full, atAnswer: full, earlier: Array.from({ length: 4 }, (_, step) => ({ tick: 2994 + step, changed: full })) }
+    })
+  }
+  return { body, harness }
+}
+
+function retainStopped (shape, overrides = {}) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-stop-diagnostic-'))
+  fs.mkdirSync(path.join(directory, 'own'))
+  const files = rawFiles(path.join(directory, 'own'))
+  const { body, harness } = stoppedOnDiscard(shape)
+  writeJsonLines(files.bodyFile, body)
+  writeJsonLines(files.harnessFile, harness)
+  writeJsonLines(files.providerUsageFile, [])
+  return { directory, retained: retain(directory, { ...files, ...overrides }) }
+}
+
+test('a run stopped on a live agent\'s discard keeps that agent\'s chain and every call the stop cut off', () => {
+  const { directory, retained } = retainStopped()
+  try {
+    const window = retained.diagnostic.cognition.stopWindow
+    assert.equal(window.fatalDiscards.length, 1, 'the typed preemption is no fatal discard')
+    const [fatal] = window.fatalDiscards
+    assert.equal(fatal.agentId, 'tribe-alpha')
+    assert.equal(fatal.tick, 6146)
+    assert.equal(fatal.event, 'decisionDiscarded')
+    assert.equal(fatal.outcome, undefined, 'an untyped discard says so by having no outcome')
+    assert.equal(fatal.context.length, 13)
+    assert.equal(fatal.context.at(-1), '6140 decisionDiscarded q8 dangerPreempted -')
+    assert.equal(fatal.context[0], '6098 perceived q2 - threatSighted')
+    assert.deepEqual(window.stop.map((entry) => [entry.event, entry.millisecondsFromStop, entry.component ?? null]), [
+      ['runFailed', 0, null],
+      ['processGroupSignalled', 4, 'cognition'],
+      ['processExited', 90, 'cognition'],
+      ['processExited', 3500, 'paper']
+    ])
+    // alpha's damage call ended after the stop signalled cognition, typed as the stop's, and the
+    // body's failed ending for it is the same request.
+    assert.deepEqual(window.shutdownCompletions, [{
+      agentId: 'tribe-alpha',
+      request: 'q9',
+      trigger: 'damaged',
+      outcome: 'runStopping',
+      latencyMs: 1535,
+      afterStopBegan: true,
+      millisecondsFromStop: 21,
+      bodyEnding: { tick: 6177, event: 'cognitionUnavailable', request: 'q9', outcome: 'failed', trigger: 'damaged' }
+    }])
+    assert.equal(retained.diagnostic.cognition.harness.agents.find((agent) => agent.agentId === 'tribe-alpha')
+      .beforeCrash.forwardedByOutcome.runStopping, 1)
+    assertPrivate(retained.file)
+    assert.doesNotMatch(fs.readFileSync(retained.file, 'utf8'), /loom-private/)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('the stop window is bounded, and with full timelines and disputes the diagnostic stays under 64 KiB', () => {
+  const { directory, retained } = retainStopped({ contextRecords: 40, discards: 9, inFlight: 30, disputes: 3 })
+  try {
+    assert.equal(retained.fallback, false, JSON.stringify(retained.diagnostic?.failedStage ?? retained.diagnostic?.fallback ?? retained.diagnostic).slice(0, 600))
+    assert.ok(retained.bytes <= 64 * 1024, `${retained.bytes} bytes`)
+    const window = retained.diagnostic.cognition.stopWindow
+    assert.equal(window.fatalDiscards.length, 4)
+    assert.equal(window.fatalDiscardsOmitted, 5)
+    assert.ok(window.fatalDiscards.every((fatal) => fatal.context.length === 16 && fatal.contextOmitted > 0))
+    assert.equal(window.shutdownCompletions.length, 8)
+    assert.equal(window.shutdownCompletionsOmitted, 22)
+    assert.equal(retained.diagnostic.body.witnessDisputes.length, 2, 'the disputes survive beside it')
+    assertPrivate(retained.file)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})

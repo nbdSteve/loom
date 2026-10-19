@@ -492,11 +492,16 @@ it fits rather than claimed into a full per-agent budget. The `-r7` shakedown fa
 `agentBudgetExhausted` because neither held. The retained failure diagnostic keeps the
 most recent cognition traffic (`cognition.timeline`: per forwarded call its trigger,
 origin, outcome, outstanding count and latency; per body record its tick and outcome).
+It also keeps the stop window (`cognition.stopWindow`): each discard by a living agent that is not a typed `dangerPreempted`, with that agent's last sixteen records as one-line steps, and each call still with the mind when the stop began, with the body's ending for it.
+Requests in it are named by labels local to the diagnostic, and harness times are milliseconds from the first stop record.
 A shared startup deadline covers the service, server, and all bodies. Any
 partial startup enters the same cleanup path as cancellation, timeout, disk
 failure, cognition failure, or Paper failure.
 
-Paper and cognition are separate process groups. Cleanup sends Paper's ordinary
+Paper and cognition are separate process groups. Before cleanup signals either, the proxy
+admits nothing more and ends a call the stop cuts off as `runStopping` rather than
+`upstreamUnavailable` (r28: alpha's damage call was cut off this way and read as a provider
+failure). Cleanup sends Paper's ordinary
 `stop` and terminates cognition immediately, waits for cooperative exit, then
 terminates and finally kills only a process group that still survives inside
 the one shared shutdown ceiling. Every group signal is recorded without a
