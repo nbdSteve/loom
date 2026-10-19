@@ -259,6 +259,10 @@ pub struct OfferedRefs {
     pub held_total: Option<i64>,
     /// Where a goal review stands with a discovery goal.
     pub discovery: Discovery,
+    /// The dig handles in reach that give the pursued goal's item, or an input on its path, at
+    /// least once a dig on the server's sampled mean: a source worth staying for, so no walk to
+    /// look further is offered beside one (r24 theta: 13% grass counted as a source on one side).
+    pub productive: Vec<String>,
     /// The hunters that are immediate danger - in sight within [`IMMEDIATE_DANGER_BLOCKS`], a ranged
     /// one within [`RANGED_THREAT_BLOCKS`], unseen within [`IMMEDIATE_UNSEEN_BLOCKS`], or any near
     /// hunter when the agent was just hurt: only a survival response is offered while one stands.
@@ -844,6 +848,14 @@ impl OfferedRefs {
             })
         };
         self.dig_blocks.retain(gives_goal);
+        for seen in perception.surroundings.iter().take(MAX_OBSERVATIONS) {
+            let yields_well = seen.yields.iter().flatten().any(|given| {
+                given.per_hundred >= 100 && (given.what == *item || path.contains(&given.what))
+            });
+            if yields_well && self.dig_blocks.contains(&seen.target_ref) {
+                offer(&mut self.productive, &seen.target_ref);
+            }
+        }
         self.pickup_items.retain(gives_goal);
         self.route_items.retain(gives_goal);
         self.pursued = Some(item.clone());
@@ -861,6 +873,7 @@ impl OfferedRefs {
             && !self.goal_obtainable
             && !self.stalled
             && !self.collect_required
+            && self.productive.is_empty()
             && !self.explore_targets.is_empty()
     }
 

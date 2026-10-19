@@ -91,7 +91,20 @@ const HORIZON_GOAL_INCOHERENT_TAGS = new Set([...SUBSTANTIVE_GOAL_INCOHERENT_TAG
 // agents that explored and the kinds of goal item are reported as description, never as bars a
 // run clears.
 const DISCOVERY_READINESS_VERSION = 'loom-readiness-gate/12'
+// Gate generation 15: the r24 audit found generation 14 counted idle and refused stretches as
+// progressing time, missed a one-craft chain its agent died before reviewing, left own dropped
+// items out of local capacity, classed a health floor reached while the mind decided as an invalid
+// decision, and published generation 14 as readiness gate 12. From 15 the readiness version names
+// its gate generation, progressing time counts only after an accepted action, a chained goal a
+// confirmed craft met in full counts whenever a later perception of its agent shows it held, local
+// capacity counts own and other dropped items in sight, an attack refused at the health floor
+// after a perception that showed health above it is a concurrent-world race, and the descriptive
+// measures are reported apart from the measured verdict evidence.
+const SURVIVAL_READINESS_VERSION = 'loom-readiness-gate/15'
+// The body's attack health floor, `COMBAT_MIN_HEALTH` in `PlayerSurvivalPreparer.kt`.
+const ATTACK_MIN_HEALTH = 4.5
 const DISCOVERY_GOAL_INCOHERENT_TAGS = new Set([...HORIZON_GOAL_INCOHERENT_TAGS, 'goalDiscoveryNotOffered'])
+const SURVIVAL_GOAL_INCOHERENT_TAGS = new Set([...DISCOVERY_GOAL_INCOHERENT_TAGS, 'goalSurvivalRequired', 'survivalRequired'])
 // The generation-13 bars that cannot fail a run that pursued anything at all: from generation 14
 // they are measured and reported, and no verdict rests on them.
 const DESCRIPTIVE_MEASURES = Object.freeze(['distinctGoalItems', 'exploringAgents', 'dangerEpisodes'])
@@ -117,6 +130,7 @@ const COMPLETING_OUTCOMES = new Set(['goalCompleted', 'goalCompletedAdopted'])
 
 /** The goal ledger refusals gate [generation] counts as incoherent decisions. */
 function goalIncoherentTagsOf (generation) {
+  if (generation >= 15) return SURVIVAL_GOAL_INCOHERENT_TAGS
   if (generation >= 14) return DISCOVERY_GOAL_INCOHERENT_TAGS
   if (generation >= 13) return HORIZON_GOAL_INCOHERENT_TAGS
   if (generation >= 11) return SUBSTANTIVE_GOAL_INCOHERENT_TAGS
@@ -859,7 +873,7 @@ function guaranteedCountOf (perception, item) {
  * whole items, and what an offered craft makes. An item a recipe makes from an input held or in
  * reach is guaranteed outright: its goal needed no looking further (r23).
  */
-function expectedLocalCountOf (perception, item) {
+function expectedLocalCountOf (perception, item, withDrops = false) {
   const meanOf = (what) => Math.floor((perception?.surroundings ?? [])
     .filter((seen) => seen.kind === 'block' && seen.visible === true && seen.digSafe === true &&
       fromEyes(seen) <= INTERACTION_REACH_BLOCKS)
@@ -874,7 +888,11 @@ function expectedLocalCountOf (perception, item) {
   if (made) return Infinity
   const crafted = (self?.craftingOptions ?? []).filter((option) => option.what === item)
     .reduce((sum, option) => sum + option.resultCount * option.maxCrafts, 0)
-  return meanOf(item) + crafted
+  if (!withDrops) return meanOf(item) + crafted
+  // From generation 15 dropped items in sight - the agent's own lying drops and any other - count.
+  const lying = (perception?.surroundings ?? []).filter((seen) => seen.kind === 'droppedItem' && seen.what === item &&
+    seen.routeRefused !== true).reduce((sum, seen) => sum + (seen.count ?? 1), 0)
+  return meanOf(item) + crafted + lying
 }
 
 /**
@@ -894,7 +912,10 @@ function expectedLocalCountOf (perception, item) {
 function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
   const horizonRule = generation >= 13
   const discoveryRule = generation >= 14
-  const localCountOf = discoveryRule ? expectedLocalCountOf : guaranteedCountOf
+  const survivalRule = generation >= 15
+  const localCountOf = discoveryRule
+    ? (perception, item) => expectedLocalCountOf(perception, item, survivalRule)
+    : guaranteedCountOf
   const perceptionOf = new Map(bodyRecords
     .filter((record) => record.event === 'perceived' && record.requestKey !== undefined)
     .map((record) => [record.requestKey, record.perception]))
@@ -1004,6 +1025,21 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
     record.goal.conditionMet === true && record.goal.stepEvidence === 'gained' &&
     record.shown?.goal?.stepAction === 'craft' && record.shown?.goal?.goalId === record.goal.presentedGoalId)
     .map((record) => record.goal.presentedGoalId))
+  // From generation 15 a confirmed craft's chained goal is met in full when any later perception of
+  // its agent shows the count held, whether or not a review followed before it died (r24 delta).
+  if (survivalRule) {
+    for (const [goalId, entry] of original) {
+      if (!entry.chained || craftMet.has(goalId)) continue
+      const after = bodyRecords.findIndex((record) => record.requestKey === entry.adoptedBy && record.event === 'intentApplied')
+      if (after < 0) continue
+      const crafted = bodyRecords.some((record, index) => index > after - 2 && record.requestKey === entry.adoptedBy &&
+        record.event === 'worldInteraction' && record.outcome === 'serverEffectConfirmed')
+      const shown = bodyRecords.slice(after).some((record) => record.event === 'perceived' && record.agentId === entry.agentId &&
+        (record.perception?.selfState?.inventorySummary ?? []).filter((stack) => stack.what === entry.item)
+          .reduce((sum, stack) => sum + stack.count, 0) >= entry.count)
+      if (crafted && shown) craftMet.add(goalId)
+    }
+  }
   const crossChained = (entry) => {
     const parent = original.get(entry.chainedFromGoal)
     return parent !== undefined && parent.item !== entry.item && advances(entry.chainedFromGoal) >= 1
@@ -1050,7 +1086,7 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
     record.event === 'perceived' && answered.has(record.requestKey) &&
     ['threatSighted', 'damaged'].includes(record.perception?.trigger?.event ?? record.trigger)).length
   const deaths = new Set(bodyRecords.filter((record) => record.event === 'died').map((record) => record.agentId)).size
-  const held = progressingTimeOf(bodyRecords, { endAtDeath: true, fromAdvance: discoveryRule })
+  const held = progressingTimeOf(bodyRecords, { endAtDeath: true, fromAdvance: discoveryRule, actingOnly: survivalRule })
   const shares = [...byAgent.values()].map((entry) => entry.active / entry.reviews)
   const measured = {
     goalActiveReviewShare: ratio(reviews.filter(active).length, reviews.length),
@@ -1106,6 +1142,8 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
     bars: bars ?? null,
     measured,
     ...(discoveryRule ? { descriptive: DESCRIPTIVE_MEASURES } : {}),
+    // From generation 15 what describes the run sits apart from the evidence the verdict reads.
+    ...(survivalRule ? { description: descriptionOf(measured) } : {}),
     // The two review shares are close to fixed by the request schema, which offers no idle or
     // rest while a goal is held: they are reported beside the behaviour, not as it (r20).
     schemaShaped: ['goalActiveReviewShare', 'minAgentGoalActiveReviewShare'],
@@ -1119,7 +1157,12 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
  * time after each decided record whose resolution left a goal held, up to its next decided record,
  * counted only until the window since the goal was set or last advanced closes.
  */
-function progressingTimeOf (bodyRecords, { endAtDeath = false, fromAdvance = false } = {}) {
+function progressingTimeOf (bodyRecords, { endAtDeath = false, fromAdvance = false, actingOnly = false } = {}) {
+  // From generation 15 a stretch counts only after an action the body accepted: an idle, a rest
+  // or a refused step holds the goal without pursuing it (r24: theta's refused walk and beta's idle).
+  const acceptedKeys = new Set(bodyRecords
+    .filter((record) => record.event === 'intentApplied' && record.outcome === 'accepted')
+    .map((record) => record.requestKey))
   const runEnd = maximumTick(bodyRecords)
   const diedAt = new Map(bodyRecords
     .filter((record) => endAtDeath && record.event === 'died' && record.agentId !== undefined)
@@ -1142,7 +1185,8 @@ function progressingTimeOf (bodyRecords, { endAtDeath = false, fromAdvance = fal
     const goal = record.goal
     const advanced = goal.conditionAdvanced === true ||
       ['gainedInput', 'revealed'].includes(goal.stepEvidence)
-    if (goal.goalId !== undefined) {
+    const acting = !actingOnly || (acceptedKeys.has(record.requestKey) && !PASSIVE_INTENTS.includes(record.intent))
+    if (goal.goalId !== undefined && acting) {
       // From generation 14 a goal's held time progresses only from its first actual advance: an
       // adoption is a claim, not evidence (r23).
       if (goal.goalId !== entry.goal) entry.progressed = fromAdvance ? -Infinity : record.tick
@@ -1170,6 +1214,19 @@ function progressingTimeOf (bodyRecords, { endAtDeath = false, fromAdvance = fal
     fleet: ratio(held, span),
     minAgent: shares.length === 0 ? null : Number(Math.min(...shares).toFixed(6))
   }
+}
+
+/** The measures that describe a run and decide nothing, apart from the verdict evidence. */
+function descriptionOf (measured) {
+  const described = ['distinctGoalItems', 'exploringAgents', 'dangerEpisodes', 'deaths', 'horizonGoals', 'crowdedGoals',
+    'discoveryGoals', 'discoveryReveals', 'discoveryTransitions', 'deferredReviews']
+  return Object.fromEntries(described.filter((name) => name in measured).map((name) => [name, measured[name]]))
+}
+
+/** The health the perception a decision answered showed, or -Infinity when none was recorded. */
+function perceivedHealthOf (own) {
+  const health = own.find((record) => record.event === 'perceived')?.perception?.selfState?.health
+  return Number.isFinite(health) ? health : -Infinity
 }
 
 function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 3, bars }) {
@@ -1234,6 +1291,9 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       ending.evidence ??= terminals[0]
     } else {
       ending = { class: refusalClass(terminals[0].outcome, generation), evidence: terminals[0] }
+      if (generation >= 15 && terminals[0].outcome === 'attackHealthBound' && perceivedHealthOf(own) > ATTACK_MIN_HEALTH) {
+        ending.class = 'concurrent'
+      }
       if (generation >= 11 && ending.class === TERRAIN_CLASS && ownDropUnreached(decision, own)) {
         ending.class = 'ownDropUnreached'
       }
@@ -1297,8 +1357,9 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       SUBSTANTIVE_READINESS_VERSION,
       GROUNDED_GOAL_READINESS_VERSION,
       HORIZON_READINESS_VERSION,
-      DISCOVERY_READINESS_VERSION
-    ][Math.min(Math.max(generation - 3, 0), 11)],
+      DISCOVERY_READINESS_VERSION,
+      SURVIVAL_READINESS_VERSION
+    ][Math.min(Math.max(generation - 3, 0), 12)],
     actions: {
       total,
       byClass: Object.fromEntries(Object.entries(byClass).sort()),
@@ -1324,6 +1385,8 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
 
 module.exports = {
   BLOCKER_CLASSES,
+  SURVIVAL_GOAL_INCOHERENT_TAGS,
+  SURVIVAL_READINESS_VERSION,
   DISCOVERY_GOAL_INCOHERENT_TAGS,
   DISCOVERY_READINESS_VERSION,
   HORIZON_GOAL_INCOHERENT_TAGS,

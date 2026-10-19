@@ -43,7 +43,8 @@ const MODES = new Set([
   'routine-v28-explored-goal',
   'routine-v29-night-goal',
   'routine-v30-horizon-goal',
-  'routine-v31-discovery-goal'
+  'routine-v31-discovery-goal',
+  'routine-v32-survival-discovery'
 ])
 const MAX_INPUT_LINE_BYTES = 256 * 1024
 const BODY_EVENTS = new Set([

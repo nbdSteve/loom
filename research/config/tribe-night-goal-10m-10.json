@@ -1,7 +1,7 @@
 {
-  "experimentId": "2026-10-16-openai-10-agent-10m-r24",
-  "title": "10-agent ten-minute routine-v31 discovery-goal live shakedown",
-  "mode": "routine-v31-discovery-goal",
+  "experimentId": "2026-10-16-openai-10-agent-10m-r25",
+  "title": "10-agent ten-minute routine-v32 survival-discovery live shakedown",
+  "mode": "routine-v32-survival-discovery",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -60,9 +60,9 @@
       "pivotal": "gpt-5.4"
     },
     "prompts": {
-      "routine": "routine-v31",
-      "notable": "notable-v31",
-      "pivotal": "pivotal-v31"
+      "routine": "routine-v32",
+      "notable": "notable-v32",
+      "pivotal": "pivotal-v32"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,

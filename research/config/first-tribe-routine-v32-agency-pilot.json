@@ -1,7 +1,7 @@
 {
-  "experimentId": "2026-10-16-scripted-routine-v31-agency-pilot-rehearsal",
-  "title": "Credential-free routine-v31 goal-continuity dry run",
-  "mode": "routine-v31-discovery-goal",
+  "experimentId": "2026-10-16-openai-routine-v32-agency-pilot-proposal",
+  "title": "Routine-v32 three-agent goal-continuity pilot",
+  "mode": "routine-v32-survival-discovery",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -46,36 +46,41 @@
     }
   },
   "cognition": {
-    "backend": "scripted",
-    "provider": "none-scripted-local",
+    "backend": "openai",
+    "provider": "OpenAI Chat Completions",
     "models": {
-      "ordinary": "scripted-stand-in",
-      "pivotal": "scripted-stand-in"
+      "ordinary": "gpt-5.4-nano",
+      "pivotal": "gpt-5.4"
     },
     "prompts": {
-      "routine": "routine-v31",
-      "notable": "notable-v31",
-      "pivotal": "pivotal-v31"
+      "routine": "routine-v32",
+      "notable": "notable-v32",
+      "pivotal": "pivotal-v32"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,
-    "providerEndpoint": null,
+    "providerEndpoint": "https://api.openai.com/v1",
     "providerTimeoutMillis": 12000,
     "maxRequestBytes": 65536,
     "perAgentCallCeiling": 6,
     "globalCallCeiling": 18,
     "globalOutstandingCeiling": 3,
     "maxOutputTokens": 2048,
-    "maxExternalSpendUsd": 0,
+    "maxExternalSpendUsd": 3.51,
     "pricing": {
       "currency": "USD",
-      "effectiveDate": "2026-10-14",
-      "source": "No external provider; the shipped scripted backend has zero price.",
+      "effectiveDate": "2026-10-12",
+      "source": "OpenAI API Pricing and official GPT-5.4 model pages, accessed 2026-10-12; standard-processing rates.",
       "models": {
-        "scripted-stand-in": {
-          "inputNanoUsdPerToken": 0,
-          "cachedInputNanoUsdPerToken": 0,
-          "outputNanoUsdPerToken": 0
+        "gpt-5.4-nano": {
+          "inputNanoUsdPerToken": 200,
+          "cachedInputNanoUsdPerToken": 20,
+          "outputNanoUsdPerToken": 1250
+        },
+        "gpt-5.4": {
+          "inputNanoUsdPerToken": 2500,
+          "cachedInputNanoUsdPerToken": 250,
+          "outputNanoUsdPerToken": 15000
         }
       }
     }

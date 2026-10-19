@@ -114,6 +114,12 @@ data class GoalObservation(
     val footing: Set<String> = emptySet(),
     /** The survival responses this perception allows before any goal step. */
     val survival: SurvivalOffer = SurvivalOffer(),
+    /**
+     * The blocks in reach a dig can be counted on for, by ref, with the items each gives at least
+     * once a dig on the server's sampled mean: a source worth staying for, where 13% grass is not
+     * (r24 theta was refused a walk past grass for seeds the schema itself offered).
+     */
+    val productive: Map<String, Set<String>> = emptyMap(),
 ) {
     /** Whether a discovery goal may be set: cells at the edge of sight, and no horizon goal at all. */
     val discoveryOffered: Boolean get() = explore.isNotEmpty() && horizon.isEmpty()
@@ -157,7 +163,7 @@ data class GoalObservation(
         toward: Set<String>,
     ): Boolean =
         intent is Intent.MoveTo && intent.onto in explore &&
-            inReach.any { ref -> gives[ref].orEmpty().any { it in toward } }
+            productive.values.any { items -> items.any { it in toward } }
 
     /** The block cell the agent stood in. */
     val cell: List<Int> get() = position.map { floor(it).toInt() }
@@ -225,6 +231,13 @@ data class GoalObservation(
                 craftable = perception.selfState.craftingOptions.map { it.what }.toSet(),
                 footing = footingOf(perception),
                 survival = SurvivalOffer.of(perception),
+                productive =
+                    digs
+                        .filter { fromEyes(it) <= INTERACTION_REACH_BLOCKS }
+                        .associate { block ->
+                            val sure = block.yields.orEmpty().filter { it.perHundred >= HUNDRED }
+                            block.ref to sure.map { it.what }.toSet()
+                        }.filterValues { it.isNotEmpty() },
             )
         }
 

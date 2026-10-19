@@ -34,11 +34,11 @@ function configNamed (name) {
 }
 
 function goalContinuityConfig () {
-  return configNamed('first-tribe-routine-v31-agency-pilot-scripted.json')
+  return configNamed('first-tribe-routine-v32-agency-pilot-scripted.json')
 }
 
 function openAiGoalContinuityConfig () {
-  return configNamed('first-tribe-routine-v31-agency-pilot.json')
+  return configNamed('first-tribe-routine-v32-agency-pilot.json')
 }
 
 function openAiProofConfig () {
@@ -359,7 +359,7 @@ function scriptedGoalStep (review, agentId, tick) {
 }
 
 function primaryBehaviorRawRecords (config = primaryBehaviorConfig()) {
-  const carriesGoals = config.mode === 'routine-v31-discovery-goal'
+  const carriesGoals = config.mode === 'routine-v32-survival-discovery'
   const body = []
   const harness = [
     {

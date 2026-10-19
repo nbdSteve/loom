@@ -37,7 +37,11 @@ const { readinessMetrics } = require('./readiness.js')
 // Generation 14 measures progressing time from a goal's first advance, sight's guarantee at the
 // calibrated mean and through recipes, counts a chained goal one craft met in full, counts
 // discovery goals apart, and reports danger, exploration and item kinds as description only.
-const GATE_GENERATION = 14
+// Generation 15 counts progressing time only after accepted actions, a chained goal met by one
+// confirmed craft whether or not a review followed, dropped items as local capacity, an attack
+// refused at the health floor reached while deciding as a race, and names its readiness version
+// after its own generation.
+const GATE_GENERATION = 15
 // The goal outcomes of a decision whose action was a step of a goal it held or took up.
 const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised', 'goalReplaced', 'goalCompletedAdopted'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`

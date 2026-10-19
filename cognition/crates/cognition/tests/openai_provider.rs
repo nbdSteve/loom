@@ -486,7 +486,7 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
     );
     assert_eq!(decision.intent, Intent::Idle);
     assert_eq!(decision.provenance.model, FAST_MODEL);
-    assert_eq!(decision.provenance.prompt_version, "routine-v31");
+    assert_eq!(decision.provenance.prompt_version, "routine-v32");
 }
 
 #[tokio::test]
