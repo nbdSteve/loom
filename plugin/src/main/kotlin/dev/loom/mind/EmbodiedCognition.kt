@@ -218,7 +218,7 @@ class EmbodiedCognition(
     fun reviewHoldOf(agentId: AgentId): String? =
         when {
             inFlightFor(agentId, review = true) > 0 -> EventTag.REVIEW_IN_FLIGHT
-            agentId in fleeing -> EventTag.FLEEING
+            fleeing.holds(agentId) -> EventTag.FLEEING
             inFlight.values.any { (agent, seen) -> agent == agentId && dangerKeyOf(seen.trigger) != null } ->
                 EventTag.DANGER_DECIDING
             else -> null
@@ -228,8 +228,12 @@ class EmbodiedCognition(
      * The agents whose flight the body is still carrying out: a review then could only be refused
      * as not ready (r20: theta's follow-up fired during a pivotal flight, and both its collects
      * were refused `controlNotReady`).
+     *
+     * Keyed by each flight's own request, so an older flight's completion releases only its own
+     * hold and never a newer flight's still running (r27: iota's review ran during its own flight,
+     * and its dig was refused out of reach where the flight had carried it).
      */
-    private val fleeing = mutableSetOf<AgentId>()
+    private val fleeing = FlightHolds()
 
     /** How many of [agentId]'s perceptions of one kind - reviews or events - await the mind. */
     private fun inFlightFor(
@@ -360,10 +364,10 @@ class EmbodiedCognition(
         }
         // A flight, and any answer to danger, holds the agent's reviews until the body has carried it out.
         val flight = decision.intent is Intent.Flee || answersDanger
-        if (flight) fleeing += agentId
+        if (flight) fleeing.hold(agentId, decision.requestId)
         bodies.apply(agentId, decision.intent, decision.requestId).whenComplete { outcome, failure ->
             mainThread.execute {
-                if (flight) fleeing -= agentId
+                if (flight) fleeing.release(agentId, decision.requestId)
                 val applied =
                     if (failure != null) {
                         callbacks.onBodyUnavailable(agentId, underlying(failure))

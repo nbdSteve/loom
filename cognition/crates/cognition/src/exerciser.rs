@@ -4,7 +4,7 @@
 //! It is selected by `LOOM_COGNITION_BACKEND=scripted-paths` and by nothing else, and it stamps
 //! [`EXERCISER_MODEL_ID`], so no record it answers can be mistaken for a model's or for the
 //! ordinary stand-in's. Several of its answers are wrong on purpose - an own drop ignored, a revise
-//! to another item, a flight from a peer - because what the rehearsal proves is that the body, the
+//! to another item - because what the rehearsal proves is that the body, the
 //! ledger and the gate each refuse or class them as they should against a real server.
 //!
 //! Each agent's role is fixed by its id's last segment, and every rule reads only the perception
@@ -13,7 +13,6 @@
 //!   sticks, each completing the met goal and adopting the next in one answer;
 //! - `beta` digs a log atop a three-high pillar, whose one body pickup finds no route, and then
 //!   leaves the drop lying, so a perception past retention still tells it;
-//! - `gamma` flees the nearest other player in sight;
 //! - `delta` collects, without moving, an item lying at its feet that vanilla delays picking up,
 //!   and `theta` does the same where nothing else in sight gives anything, so its met goal is
 //!   completed plainly and owes a review;
@@ -33,7 +32,7 @@
 //!   must report unsafe to dig, revises the goal to the total it already has once (refused), and
 //!   once the goal is met completes it plainly beside the log still in sight once (refused)
 //!   before replacing it;
-//! - `gamma`, once clear of its peer, is refused a dirt goal while the frontier is offered (r22:
+//! - `gamma` is refused a dirt goal while the frontier is offered (r22:
 //!   the dirt underfoot crowded out looking for wood);
 //! - `kappa`, once clear of its creeper with nothing in sight to ground an item goal, sets a
 //!   discovery goal and walks toward a tree line the rehearsal lays out past what it senses, and
@@ -60,11 +59,7 @@ const LOG: &str = "item.minecraft.oak_log";
 const DIRT: &str = "item.minecraft.dirt";
 const PLANKS: &str = "item.minecraft.oak_planks";
 const STICK: &str = "item.minecraft.stick";
-const PLAYER: &str = "entity.minecraft.player";
 const IDLE_ROLE: &str = "nothing on this path to do";
-
-/// How near another player must be for gamma's flight from it.
-const PEER_FLIGHT_BLOCKS: f64 = 8.0;
 
 /// The deterministic path exerciser.
 #[derive(Clone, Copy, Debug, Default)]
@@ -131,7 +126,7 @@ impl PathExerciser {
         match role {
             "alpha" => crafter(perception),
             "beta" => dropper(perception),
-            "gamma" => fleer(perception),
+            "gamma" => crowder(perception),
             "delta" | "theta" => collector(perception),
             "epsilon" => explorer(perception),
             "eta" => restater(perception),
@@ -382,23 +377,10 @@ fn dropper(perception: &Perception) -> Draft {
     answer(Intent::Idle, None, "leave my own drop lying")
 }
 
-/// gamma: a flight from the nearest other player in sight.
-fn fleer(perception: &Perception) -> Draft {
-    let peer = perception.surroundings.iter().find(|seen| {
-        seen.kind == ObservationKind::Entity
-            && seen.what == PLAYER
-            && seen.distance <= PEER_FLIGHT_BLOCKS
-    });
-    if let Some(peer) = peer {
-        return answer(
-            Intent::Flee {
-                from: peer.target_ref.clone(),
-            },
-            None,
-            "flee a peer, which is no threat",
-        );
-    }
-    // Once clear of its peer, gamma asks for the dirt underfoot as a goal while there is ground
+/// gamma: a dirt goal beside the frontier, refused once. A flight from a peer is no longer one it
+/// may take, because a peer is never offered to `flee` from (r27: delta's peer flight).
+fn crowder(perception: &Perception) -> Draft {
+    // gamma asks for the dirt underfoot as a goal while there is ground
     // to look at, which the body must refuse, once (r22: the dirt crowded out looking for wood).
     let crowding = perception.trigger.reviews_goal()
         && perception.goal.is_none()
@@ -433,7 +415,7 @@ fn collector(perception: &Perception) -> Draft {
             )),
             "collect the item at my feet without moving",
         ),
-        // A met goal is completed where the agent stands: delta stays gamma's peer to flee from.
+        // A met goal is completed where the agent stands.
         (_, Some(_)) if met(perception) => answer(
             Intent::Idle,
             Some(judged(GoalDisposition::Complete)),
@@ -873,18 +855,14 @@ mod tests {
     }
 
     #[test]
-    fn gamma_flees_the_nearest_peer_and_delta_collects_at_its_feet() {
+    fn gamma_never_flees_a_peer_and_delta_collects_at_its_feet() {
+        // r27: a peer is never offered to flee from, so gamma beside one takes no flight.
         let mut gamma = review("gamma");
         let mut peer = dropped("e1", "entity.minecraft.player", 4.0, 0.0);
         peer.kind = ObservationKind::Entity;
         peer.count = None;
         gamma.surroundings = vec![peer];
-        assert_eq!(
-            draft(&gamma).intent,
-            Intent::Flee {
-                from: "e1".to_owned()
-            }
-        );
+        assert!(!matches!(draft(&gamma).intent, Intent::Flee { .. }));
         let mut delta = review("delta");
         delta.surroundings = vec![dropped("d1", STICK, 0.3, 0.0)];
         let collect = draft(&delta);
@@ -896,7 +874,7 @@ mod tests {
             }
         );
         assert_eq!(collect.goal.unwrap().success_item.as_deref(), Some(STICK));
-        // Clear of its peer, gamma asks for the dirt underfoot beside the frontier, once.
+        // gamma asks for the dirt underfoot beside the frontier, once.
         let mut clear = review("gamma");
         clear.surroundings = vec![Observation {
             what: "block.minecraft.grass_block".to_owned(),

@@ -194,8 +194,12 @@ pub struct OfferedRefs {
     pub walk_targets: Vec<String>,
     /// The cells at the edge of sight, of [`Self::walk_targets`].
     pub explore_targets: Vec<String>,
-    /// Shown living things, and a sighted threat: what `flee` may name.
+    /// Shown living things, cut to [`MAX_CREATURE_REFS`], and a sighted threat.
     pub creatures: Vec<String>,
+    /// What `flee` may name: of [`Self::creatures`], those that hunt the agent's kind, a sighted
+    /// threat, and the creature that just hurt the agent - never a peer or a passive animal (r27:
+    /// delta fled a player with no hunter in sight, a flight the readiness gate rightly blocks).
+    pub flee_targets: Vec<String>,
     /// Creatures that hunt the agent's kind and are near enough to flee from at a goal review:
     /// in sight within [`DANGER_SIGHT_BLOCKS`], or out of sight within [`DANGER_UNSEEN_BLOCKS`]
     /// (r20: kappa reviewed at health 7.7 beside a zombie and a skeleton, was offered only dirt
@@ -927,7 +931,7 @@ impl OfferedRefs {
             }
         }
         if danger || self.creatures.len() < MAX_CREATURE_REFS {
-            self.creature(&seen.target_ref, seen.distance);
+            self.creature(&seen.target_ref, seen.distance, seen.hunts == Some(true));
         }
     }
 
@@ -951,21 +955,25 @@ impl OfferedRefs {
                         })
                 {
                     offer(&mut self.danger, attacker);
-                    self.creature(attacker, seen.distance);
+                    self.creature(attacker, seen.distance, true);
                 }
             }
             Trigger::ThreatSighted {
                 entity_ref,
                 distance,
                 ..
-            } => self.creature(entity_ref, *distance),
+            } => self.creature(entity_ref, *distance, true),
             _ => {}
         }
     }
 
-    /// Offers one creature to flight, and to each attack mode whose bound it is within.
-    fn creature(&mut self, handle: &str, distance: f64) {
+    /// Offers one creature to each attack mode whose bound it is within, and to flight when it is
+    /// one to `flee` from.
+    fn creature(&mut self, handle: &str, distance: f64, flee: bool) {
         offer(&mut self.creatures, handle);
+        if flee {
+            offer(&mut self.flee_targets, handle);
+        }
         if distance <= ATTACK_REACH_BLOCKS {
             offer(&mut self.strike_targets, handle);
         }
@@ -980,7 +988,7 @@ impl OfferedRefs {
         let held = |list: &[String], handle: &str| list.iter().any(|offered| offered == handle);
         match intent {
             Intent::MoveTo { onto } => held(&self.walk_targets, onto),
-            Intent::Flee { from } => held(&self.creatures, from),
+            Intent::Flee { from } => held(&self.flee_targets, from),
             Intent::Eat { slot_ref } => held(&self.stacks, slot_ref),
             Intent::Dig { block } => held(&self.dig_blocks, block),
             Intent::Collect { item, approach } => held(
@@ -1187,9 +1195,15 @@ mod tests {
         assert!(!offered.admits(&attack("chase", false)));
         assert!(offered.admits(&attack("chase", true)));
         assert!(!offered.admits(&attack("afar", true)));
-        assert!(offered.admits(&Intent::Flee {
+        // A creature that hunts nothing is no flight target, however near (r27: delta's peer).
+        assert!(!offered.admits(&Intent::Flee {
             from: "afar".to_owned()
         }));
+        assert_eq!(
+            offered.flee_targets,
+            handles(&["e1"]),
+            "the sighted threat alone"
+        );
     }
 
     #[test]

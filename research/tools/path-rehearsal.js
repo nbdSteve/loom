@@ -10,7 +10,7 @@
 // normalized and judged by readiness gate generation 11, must show every path as the exerciser
 // drove it: a craft of two applications and a goal completed and the next adopted in one answer,
 // each chained to the goal whose item its recipe is made from, an own drop ignored and refused,
-// an own drop still told lying past 4800 ticks, a flight from a peer classed as one, a collect
+// an own drop still told lying past 4800 ticks, a collect
 // without moving that vanilla's own pickup ends, a walk to the edge of sight credited as
 // revealing a source, a revise to another item refused, a revise to the held total refused, a
 // plain completion beside a source refused, a plain completion with none accepted and followed by
@@ -113,7 +113,6 @@ function pathsOf (records, readiness) {
   const passive = of('tribe-delta', 'decided').find((record) =>
     record.intent === 'collect' && record.decision?.intent?.approach === false && confirmed(record))
   const revealed = of('tribe-epsilon', 'decided').find((record) => record.goal?.stepEvidence === 'revealed')
-  const peerFlight = readiness.actions.nonSuccess.find((entry) => entry.agentId === 'tribe-gamma' && entry.class === 'peerFlight')
   // beta's first dig is the drop that lands where no route reaches; a perception of beta at
   // least RETENTION_TICKS later must still tell it lying.
   const firstDig = of('tribe-beta', 'decided').find((record) => record.intent === 'dig' && confirmed(record))
@@ -194,7 +193,6 @@ function pathsOf (records, readiness) {
     ownGoalDropPickupNoRoute: evidence(records.find((record) => record.source === 'body' &&
       record.agentId === 'tribe-beta' && record.event === 'ownDropPickup' && record.outcome === 'collectNoRoute')),
     ownDropToldLyingPastRetention: evidence(retained),
-    peerFlightClassed: peerFlight?.evidence?.recordId ?? null,
     collectWithoutApproachConfirmed: evidence(passive),
     exploreRevealedASource: evidence(revealed),
     reviseToAnotherItemRefused: evidence(applied('tribe-epsilon', 'goalReviseItemChanged'))
@@ -211,7 +209,7 @@ function faultsOf (records, readiness, windowEnd) {
   const counted = readiness.actions.nonSuccess.filter((entry) => !late.has(entry.requestKey))
   const byClass = {}
   for (const entry of counted) byClass[entry.class] = (byClass[entry.class] ?? 0) + 1
-  const expected = new Set(['confirmed', 'peerFlight', 'goalIncoherent', 'terrain', 'targetRace', 'superseded', 'concurrent'])
+  const expected = new Set(['confirmed', 'goalIncoherent', 'terrain', 'targetRace', 'superseded', 'concurrent'])
   return {
     cognitionFailures: body.filter((record) => record.event === 'cognitionUnavailable' && !isCoalesced(record)).length,
     disputes: body.filter((record) => record.event === 'witnessDisputed').length,

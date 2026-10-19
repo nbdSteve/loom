@@ -576,7 +576,7 @@ impl Namespace {
             Self::Block => &offered.kept_blocks,
             Self::DigBlock => &offered.dig_blocks,
             Self::WalkTarget => &offered.walk_targets,
-            Self::Creature => &offered.creatures,
+            Self::Creature => &offered.flee_targets,
             Self::StrikeTarget => &offered.strike_targets,
             Self::PursuitTarget => &offered.pursuit_targets,
             Self::PickupItem => &offered.pickup_items,

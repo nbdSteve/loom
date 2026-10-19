@@ -211,7 +211,7 @@ fn every_offered_ref_is_one_enum_once_whichever_actions_spend_it() {
         offered.dig_blocks.len()
             + offered.kept_blocks.len()
             + offered.walk_targets.len()
-            + offered.creatures.len()
+            + offered.flee_targets.len()
             + offered.strike_targets.len()
             + offered.pursuit_targets.len()
             + offered.pickup_items.len()

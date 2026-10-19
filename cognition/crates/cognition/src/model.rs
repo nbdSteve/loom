@@ -867,7 +867,7 @@ fn nearest_ref(perception: &Perception, source: &str) -> Option<String> {
     let kind = source.rsplit(['.', ':']).next().unwrap_or(source);
     // Only a creature the perception offers a flight may be named: a hunter past the offered
     // ones would be refused (v32 plains rehearsal 15: a skeleton shooting from beyond them).
-    let offered = crate::offered::OfferedRefs::of(perception).creatures;
+    let offered = crate::offered::OfferedRefs::of(perception).flee_targets;
     let hunters = || {
         perception.surroundings.iter().filter(|seen| {
             seen.kind == ObservationKind::Entity
