@@ -65,6 +65,7 @@ internal class PlayerBodyContext(
     val refs = RequestRefs()
     val routeRefusals = RouteRefusals(authority.currentTick)
     val recall = SourceRecall(authority.currentTick)
+    val visited = VisitedGround(authority.currentTick)
     val vitalsWatch = VitalsWatch(journal)
     val threatWatch =
         ThreatWatch(

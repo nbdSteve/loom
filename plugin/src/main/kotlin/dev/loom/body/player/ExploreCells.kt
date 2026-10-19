@@ -31,8 +31,45 @@ internal fun PlayerBodyContext.exploreFor(
     selected: List<SceneOffer>,
 ): List<Pair<ExploreTarget, List<Int>>> {
     val remembered = recall.recalled(raw.report.position, selected).mapNotNull(recall::positionOf)
-    return exploreOf(authority.ground, raw.report.position, remembered)
+    val cells = exploreOf(authority.ground, raw.report.position, remembered)
+    // Ground already stood on is offered again only when every other bearing has been (r24: alpha
+    // and iota walked back to cells they had already looked from).
+    val fresh = cells.filterNot { (_, cell) -> visited.near(cell) }.ifEmpty { cells }
+    visited.stoodAt(raw.report.position)
+    return fresh
 }
+
+/** Where one agent's body has recently stood, so a walk to look further goes somewhere new. */
+internal class VisitedGround(
+    private val currentTick: () -> Long,
+) {
+    private val stood = ArrayDeque<Pair<List<Double>, Long>>()
+
+    @Synchronized
+    fun stoodAt(position: List<Double>) {
+        stood.addLast(position to currentTick())
+        while (stood.size > MAX_VISITED_PLACES) stood.removeFirst()
+    }
+
+    /** Whether [cell] lies within [VISITED_REACH_BLOCKS] of a place stood at in the last [VISITED_TICKS]. */
+    @Synchronized
+    fun near(cell: List<Int>): Boolean {
+        val now = currentTick()
+        return stood.any { (at, tick) ->
+            now - tick <= VISITED_TICKS &&
+                kotlin.math.hypot(cell[0] + CELL_CENTRE - at[0], cell[2] + CELL_CENTRE - at[2]) <= VISITED_REACH_BLOCKS
+        }
+    }
+}
+
+/** Places stood at that one agent remembers. */
+private const val MAX_VISITED_PLACES = 64
+
+/** How near a place stood at an exploration cell counts as already seen: within sensing reach. */
+private const val VISITED_REACH_BLOCKS = 5.0
+
+/** How long a place stood at is remembered: a review cadence. */
+private const val VISITED_TICKS = 2400L
 
 /**
  * The cells at the edge of sight an agent at [position] can walk to, one per compass bearing:
