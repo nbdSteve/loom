@@ -1388,7 +1388,9 @@ test('the three movement operations answer over a real control connection', asyn
   peer.send(H.request('moveTo', 'm2', {
     destination: [2, 64, 2], tolerance: 0, timeoutMs: AMPLE_MS, sprint: false
   }))
-  await H.settled(200)
+  // Halted once the walk is under way rather than after a fixed wait: on a slow host a fixed
+  // wait raced the walk's own start, and the halt's answer was read against the walk's.
+  await H.eventually(() => assert.ok(bot.pathfinder.isMoving(), 'the walk is under way'), AMPLE_MS)
   const halted = await peer.answer(H.request('halt', 'hA'))
   assert.equal(halted.op, 'halt')
   assert.equal(halted.stopped, true)
