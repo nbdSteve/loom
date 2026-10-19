@@ -18,6 +18,9 @@ internal const val RECALL_RADIUS_BLOCKS: Double = 48.0
 /** The most items one body remembers sources of. */
 private const val MAX_REMEMBERED_ITEMS = 32
 
+/** How near a remembered source's place must be for its absence from sight to mean it is gone. */
+private const val GONE_REACH_BLOCKS = 4.0
+
 /**
  * One body's memory of where it last saw a source of each item, so a goal for an item out of
  * sight can be set and walked toward (r20: no agent without a log in sight could set a log goal;
@@ -39,6 +42,9 @@ internal class SourceRecall(
 
     private val seen = LinkedHashMap<String, Seen>()
 
+    /** Where the nearest remembered source of [source]'s item stood, for a waypoint beside it. */
+    fun positionOf(source: RecalledSource): List<Double>? = seen[source.what]?.position
+
     /** Remembers the sources [offers] show, and answers what to tell beyond them from [position]. */
     fun recalled(
         position: List<Double>,
@@ -56,7 +62,12 @@ internal class SourceRecall(
             seen[item] = Seen(nearest.position, sources.sumOf { it.second }.coerceAtMost(MAX_PER_HUNDRED), now)
         }
         val inSight = sighted.keys
-        seen.entries.removeIf { (_, source) -> now - source.tick > RECALL_TICKS }
+        // A source whose place is in reach and shows none any more is gone - dug, often by this
+        // agent - and is not told as one to walk back to.
+        seen.entries.removeIf { (item, source) ->
+            now - source.tick > RECALL_TICKS ||
+                (item !in inSight && blocksApart(position, source.position) <= GONE_REACH_BLOCKS)
+        }
         while (seen.size > MAX_REMEMBERED_ITEMS) seen.remove(seen.keys.first())
         return seen
             .filterKeys { it !in inSight }

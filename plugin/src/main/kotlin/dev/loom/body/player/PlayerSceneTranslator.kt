@@ -14,7 +14,6 @@ import dev.loom.body.blocksApart
 import dev.loom.body.horizontalBearing
 import dev.loom.body.huntsPlayers
 import dev.loom.contract.CraftingOption
-import dev.loom.contract.ExploreTarget
 import dev.loom.contract.InventoryStack
 import dev.loom.contract.MAX_BLOCK_YIELDS
 import dev.loom.contract.MAX_OWN_DROPS
@@ -86,7 +85,7 @@ internal class PlayerSceneTranslator(
             perceptionAudit = perceptionAuditOf(raw, entityOffers.size, blockOffers.size, itemOffers.size),
             candidates = candidatesOf(selected, surroundings),
             selfState = selfStateOf(raw, slotBindings, recipeBindings, itemRefsOf(itemOffers, droppedItemBindings)),
-            explore = exploreOf(context.authority.ground, raw.report.position),
+            explore = context.exploreFor(raw, selected),
             recalled = context.recall.recalled(raw.report.position, selected),
         )
     }
@@ -349,48 +348,4 @@ private fun itemDescriptionId(resource: String): String {
 private fun splitResource(resource: String): Pair<String, String> {
     val split = resource.split(':', limit = 2)
     return if (split.size == 2) split[0] to split[1] else "minecraft" to split[0]
-}
-
-/** How far along each compass axis an exploration cell lies: past the ~5 blocks a body sees. */
-internal const val EXPLORE_REACH_BLOCKS = 12
-
-/** The same along each axis of a diagonal bearing: about twelve blocks off in all. */
-private const val EXPLORE_DIAGONAL_BLOCKS = 8
-
-/** How far above and below the feet an exploration cell's ground is looked for. */
-private const val EXPLORE_RISE_BLOCKS = 3
-private const val EXPLORE_FALL_BLOCKS = 4
-
-/** The eight compass steps, in the order their refs are minted: north first, clockwise. */
-private val COMPASS =
-    listOf(0 to -1, 1 to -1, 1 to 0, 1 to 1, 0 to 1, -1 to 1, -1 to 0, -1 to -1)
-
-/**
- * The cells at the edge of sight an agent at [position] can walk to, one per compass bearing:
- * the highest cell the server's [ground] says a body can stand in, [EXPLORE_REACH_BLOCKS] off
- * along that bearing, and within a few blocks of the feet. They state only where a body can
- * stand, never what lies there, so an agent that sees nothing worth doing can look further
- * (r17: eta idled three reviews with a dead bush 5.4 blocks off, just past what its body saw).
- */
-internal fun exploreOf(
-    ground: BlockGround,
-    position: List<Double>,
-): List<Pair<ExploreTarget, List<Int>>> {
-    val feet = position.map { kotlin.math.floor(it).toInt() }
-    return COMPASS.mapNotNull { (dx, dz) ->
-        // A diagonal step is shortened so every cell lies about as far off.
-        val along = if (dx != 0 && dz != 0) EXPLORE_DIAGONAL_BLOCKS else EXPLORE_REACH_BLOCKS
-        val x = feet[0] + dx * along
-        val z = feet[2] + dz * along
-        (feet[1] + EXPLORE_RISE_BLOCKS downTo feet[1] - EXPLORE_FALL_BLOCKS)
-            .firstNotNullOfOrNull { y -> ground.standCell(listOf(x, y - 1, z))?.takeIf { it[1] == y } }
-    }.mapIndexed { index, cell ->
-        val centre = listOf(cell[0] + BLOCK_CENTER_OFFSET, cell[1].toDouble(), cell[2] + BLOCK_CENTER_OFFSET)
-        ExploreTarget(
-            ref = "x${index + 1}",
-            distance = blocksApart(position, centre),
-            direction = horizontalBearing(centre[0] - position[0], centre[2] - position[2]),
-            verticalOffset = centre[1] - position[1],
-        ) to cell
-    }
 }
