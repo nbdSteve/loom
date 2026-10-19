@@ -84,4 +84,34 @@ class R27GoalAuditReplayTest {
                 assertEquals("attacker", held.attacker)
             }
         }
+
+    @org.junit.jupiter.api.Test
+    fun `delta's dropped oak log, an input of its oak-wood goal, is owed the one pickup`() {
+        // r27 delta sense-bo (body:00000235): its dig dropped an oak log for its oak-wood goal; no
+        // pickup and no review followed, and a peer took the log 1400 ticks later (body:00000461).
+        val interaction = r27.record("body:00000235")
+        assertTrue(field(interaction, "summary").orEmpty().contains("dropped 1 item.minecraft.oak_log"))
+        val goal =
+            dev.loom.contract.GoalSummary(
+                goalId = "loom3b4ef3e082-sense-bo",
+                statement = "hold 1 oak wood",
+                revision = 0,
+                adoptedTick = 3472,
+                successItem = "item.minecraft.oak_wood",
+                successCount = 1,
+            )
+        val recipes =
+            RecipeInputs { if (it == "item.minecraft.oak_wood") setOf("item.minecraft.oak_log") else emptySet() }
+        val dug = dev.loom.body.IntentOutcome.Accepted("dug", dropped = setOf("item.minecraft.oak_log"))
+        assertEquals("item.minecraft.oak_log", lyingStepItem(null, goal, dug, recipes))
+        // Its own item first, and nothing for a drop that is neither.
+        val both =
+            dev.loom.body.IntentOutcome.Accepted(
+                "dug",
+                dropped = setOf("item.minecraft.oak_log", "item.minecraft.oak_wood"),
+            )
+        assertEquals("item.minecraft.oak_wood", lyingStepItem(null, goal, both, recipes))
+        val other = dev.loom.body.IntentOutcome.Accepted("dug", dropped = setOf("item.minecraft.dirt"))
+        assertEquals(null, lyingStepItem(null, goal, other, recipes))
+    }
 }

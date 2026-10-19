@@ -413,9 +413,9 @@ class EmbodiedCognition(
         goalStep: GoalSummary?,
         applied: IntentOutcome,
     ) {
-        val item = goalStep?.successItem?.takeIf { leftGoalItemLying(goal, goalStep, applied) }
+        val item = lyingStepItem(goal, goalStep, applied, goals.recipes)
         if (item == null) {
-            callbacks.onStepSettled.oweReview(agentId, journal.tick(), goal, goalStep, applied)
+            callbacks.onStepSettled.oweReview(agentId, journal.tick(), goal, goalStep, applied, goals.recipes)
             return
         }
         // The dig's one pickup of its own goal item, then the mind is asked at once.
@@ -471,6 +471,7 @@ private fun StepSettlement.oweReview(
     goal: GoalEvidence?,
     goalStep: GoalSummary?,
     applied: IntentOutcome,
+    recipes: RecipeInputs,
 ) {
     val effected = applied is IntentOutcome.Accepted || (applied as? IntentOutcome.Rejected)?.effected == true
     if (goal?.outcome == GoalEvidence.DEFERRED) {
@@ -479,7 +480,7 @@ private fun StepSettlement.oweReview(
         // A discovery is followed through its reveal and into the resource goal it became.
         discovered(agentId, tick)
     } else if (goalStep != null && effected) {
-        val dropped = goalStep.successItem in (applied as? IntentOutcome.Accepted)?.dropped.orEmpty()
+        val dropped = lyingStepItem(goal, goalStep, applied, recipes) != null
         settled(agentId, tick, owed = dropped || goal?.ownGoalDropLying == true)
     }
 }
@@ -515,14 +516,22 @@ private fun refusalOf(
 /** Whether this settled step is a discovery's: its walk, or the first step of the goal it became. */
 private fun GoalSummary.discoveryChain(goal: GoalEvidence?): Boolean = discovery || goal?.discoveredFrom != null
 
-/** Whether a settled goal step left its own drop of the goal's item lying, owed one collection now. */
-private fun leftGoalItemLying(
+/**
+ * The item a settled goal step left lying as its own drop, owed one collection now: the goal's
+ * own item, else a direct input of a recipe for it (r27: delta's dig dropped the oak log its
+ * oak-wood goal is crafted from, got no pickup and no review, and a peer took it 1400 ticks later).
+ */
+internal fun lyingStepItem(
     goal: GoalEvidence?,
     goalStep: GoalSummary?,
     applied: IntentOutcome,
-): Boolean =
-    goal?.outcome != GoalEvidence.DEFERRED &&
-        goalStep?.successItem in (applied as? IntentOutcome.Accepted)?.dropped.orEmpty()
+    recipes: RecipeInputs,
+): String? {
+    val target = goalStep?.successItem ?: return null
+    val dropped = (applied as? IntentOutcome.Accepted)?.dropped.orEmpty()
+    if (goal?.outcome == GoalEvidence.DEFERRED) return null
+    return target.takeIf { it in dropped } ?: recipes.inputsOf(target).sorted().firstOrNull { it in dropped }
+}
 
 /**
  * The failure to report when a future completed with neither a decision nor a
