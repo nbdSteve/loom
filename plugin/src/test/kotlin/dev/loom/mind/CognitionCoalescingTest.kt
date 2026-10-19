@@ -127,9 +127,15 @@ class CognitionCoalescingTest {
         assertEquals(2, mind.held.size)
         assertEquals(1, mind.held.values.count { it.first.trigger == Trigger.GoalReview })
 
-        // The slow answer lands; at the very next slice the owed review is served.
+        // The slow answers land - the review's, and the danger event's, while which no review is
+        // claimed (r23: five reviews claimed beside a danger answer were refused as not ready);
+        // at the very next slice the owed review is served.
         mind.answer(firstReview)
         main.drain()
+        assertTrue(!cognition.canReview(agent), "a danger event is still with the mind")
+        mind.held.keys.toList().forEach(mind::answer)
+        main.drain()
+        assertTrue(cognition.canReview(agent))
         now += GoalReviewSchedule(CADENCE, SLICES).sliceTicks
         driver.sweep()
         main.drain()

@@ -15,8 +15,9 @@
  * settles, another threat or damage perception about the same threat for the same agent is
  * coalesced into it rather than sent; a decision lost or answered by anything but a flight ends
  * the episode at once. A different threat is new
- * information and is sent, unless it is further off than a threat whose decision is still open:
- * in r20, eta's flight from a zombie 6.8 blocks off was preempted by one from a skeleton 23.1 off.
+ * information and is sent, unless it is further off, and outside pivotal range, than a threat
+ * whose decision is still open, judged where each now stands: in r20, eta's flight from a zombie
+ * 6.8 blocks off was preempted by one from a skeleton 23.1 off.
  * Damage is nearest of all. Damage, or a sighting back within pivotal range, after the episode's
  * answer has settled is always sent: the answer did not keep the threat off, which is news. In
  * the v29 rehearsal eta fled a spider safely, was bitten 58 ticks later inside the cooldown, and
@@ -55,8 +56,11 @@ class DangerEpisodes(
     private val currentTick: () -> Long,
 ) {
     private class Episode(
-        /** How far off the threat was when the episode opened; zero for damage. */
-        val distance: Double,
+        /**
+         * How far off the threat is, by its latest sighting, coalesced or not; `null` for damage,
+         * which says nothing about where the attacker stands.
+         */
+        var distance: Double?,
     ) {
         val open = mutableSetOf<String>()
         var settledTick: Long? = null
@@ -78,8 +82,17 @@ class DangerEpisodes(
         val byThreat = episodes.getOrPut(agentId) { mutableMapOf() }
         byThreat.entries.removeIf { (_, episode) -> episode.expiredAt(now) }
         // Whatever survived the sweep is open or still cooling down.
-        val distance = (perception.trigger as? Trigger.ThreatSighted)?.distance ?: 0.0
-        val nearerOpen = byThreat.values.any { it.open.isNotEmpty() && it.distance < distance }
+        val distance = (perception.trigger as? Trigger.ThreatSighted)?.distance
+        // The episode follows its threat: a repeat about it moves it to where it now stands.
+        byThreat[key]?.let { episode -> if (distance != null) episode.distance = distance }
+        // A further threat waits behind a nearer one being answered, judged where each stands
+        // now; a threat inside pivotal range never waits, and damage holds back no sighting (r23:
+        // 40 threats waited behind episodes opened up to 244 ticks earlier, a creeper at 0.8).
+        val nearerOpen =
+            distance != null && distance > PIVOTAL_THREAT_DISTANCE_BLOCKS &&
+                byThreat.any { (other, episode) ->
+                    other != key && episode.open.isNotEmpty() && (episode.distance ?: Double.MAX_VALUE) < distance
+                }
         val answered = byThreat[key]?.open?.isEmpty() == true && closedAgain(perception.trigger)
         val admitted = (key !in byThreat || answered) && !nearerOpen
         if (admitted) byThreat[key] = Episode(distance).also { it.open += perception.requestId }

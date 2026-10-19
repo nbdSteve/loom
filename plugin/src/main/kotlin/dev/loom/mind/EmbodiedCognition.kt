@@ -206,7 +206,11 @@ class EmbodiedCognition(
      * not fit is deferred to a later slice rather than refused and lost. Main thread only.
      */
     fun canReview(agentId: AgentId): Boolean =
-        !shutDown && inFlightFor(agentId, review = true) == 0 && agentId !in fleeing
+        !shutDown && inFlightFor(agentId, review = true) == 0 && agentId !in fleeing &&
+            // Nor while the mind decides a danger of its: the review's step would be refused as not
+            // ready behind the flight that answer starts (r23: five such refusals, eta's only chain
+            // craft among them).
+            inFlight.values.none { (agent, perception) -> agent == agentId && dangerKeyOf(perception.trigger) != null }
 
     /**
      * The agents whose flight the body is still carrying out: a review then could only be refused

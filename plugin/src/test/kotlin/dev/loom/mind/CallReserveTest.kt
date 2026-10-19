@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import dev.loom.contract.DecisionImportance as Importance
 
 /** Each agent's share of a run's calls, kept for its scheduled reviews (r20 stopped at tick 8465). */
 class CallReserveTest {
@@ -46,7 +47,7 @@ class CallReserveTest {
         assertTrue(reserve.admit(alpha, damage("d1")))
         assertTrue(reserve.admit(alpha, damage("d2")))
         assertFalse(reserve.admit(alpha, damage("d3")), "the reviews still due keep their calls")
-        assertEquals(2, DAMAGE_CALL_RESERVE)
+        assertEquals(2, URGENT_CALL_RESERVE)
     }
 
     @Test
@@ -128,5 +129,27 @@ class CallReserveTest {
             )
         repeat(19) { assertTrue(read.admit(alpha, damage("r$it"))) }
         assertFalse(read.admit(alpha, damage("r19")))
+    }
+
+    @Test
+    fun `a pivotal sighting is urgent like damage, and distant ones leave every living agent its urgent calls`() {
+        // r23: creepers at 3.8 and 6.7 blocks were refused after notable flights from hunters
+        // more than twelve blocks off had spent a fifth of the ceiling.
+        val reserve = CallReserve(perAgentCeiling = 24, scheduledPerAgent = 0, globalCeiling = 10, agents = 3)
+        val far = Trigger.ThreatSighted("entity.minecraft.zombie", "e1", 14.0, dev.loom.contract.Bearing.NORTH, true)
+        val near = far.copy(distance = 3.8)
+        val sighted = { id: String, trigger: Trigger, importance: Importance ->
+            perception(requestId = id, agentId = "alpha", trigger = trigger, importance = importance)
+        }
+        // Three living agents keep two urgent calls each: six of the ten.
+        repeat(4) {
+            assertTrue(
+                reserve.admit(alpha, sighted("f$it", far, Importance.NOTABLE)),
+                "far $it",
+            )
+        }
+        assertFalse(reserve.admit(alpha, sighted("f4", far, Importance.NOTABLE)))
+        assertTrue(reserve.admit(alpha, sighted("n1", near, Importance.PIVOTAL)))
+        assertTrue(reserve.admit(alpha, damage("d1")))
     }
 }

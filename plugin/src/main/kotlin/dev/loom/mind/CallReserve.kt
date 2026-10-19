@@ -5,12 +5,16 @@ package dev.loom.mind
 
 import dev.loom.body.AgentId
 import dev.loom.contract.Decision
+import dev.loom.contract.DecisionImportance
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 import java.util.concurrent.CompletableFuture
 
-/** The calls each agent's share keeps for damage beyond its scheduled reviews still due. */
-const val DAMAGE_CALL_RESERVE: Int = 2
+/**
+ * The calls each living agent keeps for urgent danger - damage, or a pivotal sighting - beyond its
+ * scheduled reviews still due, in its own ceiling and in the pooled global one.
+ */
+const val URGENT_CALL_RESERVE: Int = 2
 
 /**
  * Keeps a run's calls inside its two ceilings - [perAgentCeiling] for one agent and
@@ -21,8 +25,11 @@ const val DAMAGE_CALL_RESERVE: Int = 2
  *
  * The research harness refuses calls at its ceilings, and the run ends there: in r20 the night's
  * 49 danger calls and the follow-ups spent all 150 by tick 8465, so the last scheduled reviews
- * never ran. Inside what is left, damage comes before every other event: a sighting or a
- * follow-up is sent only while it also leaves [DAMAGE_CALL_RESERVE] calls for damage.
+ * never ran. Inside what is left, urgent danger comes before every other event: a distant sighting
+ * or a follow-up is sent only while it also leaves [URGENT_CALL_RESERVE] calls for damage and
+ * pivotal sightings, for itself and for every other living agent (r23: notable flights from
+ * hunters more than twelve blocks off spent a fifth of the ceiling, and creepers at 3.8 and 6.7
+ * blocks were refused in the last 1100 ticks).
  *
  * The reserve is pooled, and a dead agent owes nothing: r22 split the global ceiling into fixed
  * shares of 15, refused 21 danger calls (four of them damage, the last of theta's at health 1.5)
@@ -55,13 +62,15 @@ class CallReserve(
         val review = perception.trigger == Trigger.GoalReview
         val calls = sent[agentId] ?: 0
         val total = sent.values.sum()
-        val kept = if (perception.trigger is Trigger.Damaged) 0 else DAMAGE_CALL_RESERVE
+        val urgent = perception.trigger is Trigger.Damaged || perception.importance == DecisionImportance.PIVOTAL
+        val kept = if (urgent) 0 else URGENT_CALL_RESERVE
         val admitted =
             if (review) {
                 calls < perAgentCeiling && total < globalCeiling
             } else {
-                calls + 1 + owedBy(agentId) + kept <= perAgentCeiling &&
-                    total.toLong() + 1 + owedByTheLiving(agentId) + kept <= globalCeiling
+                val keptForAll = owedByTheLiving(agentId) + kept.toLong() * livingCount(agentId)
+                val ownFits = calls + 1 + owedBy(agentId) + kept <= perAgentCeiling
+                ownFits && total.toLong() + 1 + keptForAll <= globalCeiling
             }
         if (admitted) {
             sent[agentId] = calls + 1
@@ -72,6 +81,12 @@ class CallReserve(
 
     private fun owedBy(agentId: AgentId): Int =
         if (isDead(agentId)) 0 else (scheduledPerAgent - (scheduled[agentId] ?: 0)).coerceAtLeast(0)
+
+    /** How many agents are alive, counting configured agents not yet heard from. */
+    private fun livingCount(asking: AgentId): Long {
+        val known = sent.keys + asking
+        return known.count { !isDead(it) }.toLong() + (agents - known.size).coerceAtLeast(0)
+    }
 
     /** The reviews every living agent still owes, counting configured agents not yet heard from. */
     private fun owedByTheLiving(asking: AgentId): Long {

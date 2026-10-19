@@ -58,6 +58,27 @@ class DangerEpisodesTest {
     }
 
     @Test
+    fun `a threat waits behind another only by where each stands now, and never inside pivotal range`() {
+        // r23 gamma body:00001869 and body:00001880: skeletons 6.4 and 7.4 off waited behind a
+        // zombie episode opened at 5.9, whose flight had already gained 13.7 blocks.
+        val zombie = { id: String, distance: Double ->
+            perceptionWith(id, Trigger.ThreatSighted("entity.minecraft.zombie", "e1", distance, Bearing.NORTH, true))
+        }
+        val skeleton = { id: String, distance: Double ->
+            perceptionWith(id, Trigger.ThreatSighted("entity.minecraft.skeleton", "e2", distance, Bearing.EAST, true))
+        }
+        assertTrue(episodes.admit(alpha, zombie("r1", 5.9)))
+        assertTrue(episodes.admit(alpha, skeleton("r2", 6.4)), "inside pivotal range nothing waits")
+        episodes.settled(alpha, "r2", fled = false)
+        // The zombie, still being fled, is seen again 19.6 off: its episode moves with it.
+        assertFalse(episodes.admit(alpha, zombie("r3", 19.6)))
+        assertTrue(episodes.admit(alpha, skeleton("r4", 12.0)), "nearer than the zombie now stands")
+        // Damage opens an episode but holds back no sighting of another threat.
+        assertTrue(episodes.admit(beta, damage("r5", "spider")))
+        assertTrue(episodes.admit(beta, sighting("r6", "entity.minecraft.creeper")))
+    }
+
+    @Test
     fun `the cooldown after the decision settles is exactly the measured bound`() {
         assertTrue(episodes.admit(alpha, damage("r1")))
         tick = 500
