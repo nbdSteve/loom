@@ -33,7 +33,14 @@ class R24DeathChainTest {
     private val admittedUnderEnvelope: Map<String, Boolean> by lazy {
         val dead = mutableSetOf<AgentId>()
         val reserve =
-            CallReserve(perAgentCeiling = 40, scheduledPerAgent = 5, globalCeiling = 378, agents = 10) { it in dead }
+            CallReserve(
+                perAgentCeiling = 40,
+                scheduledPerAgent = 5,
+                globalCeiling = 378,
+                agents = 10,
+                isDead = { it in dead },
+                pivotalCeiling = 130,
+            )
         val endings =
             r24.all
                 .filter { it["event"]?.jsonPrimitive?.content in setOf("decided", "cognitionUnavailable") }

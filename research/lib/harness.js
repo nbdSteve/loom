@@ -338,7 +338,10 @@ function followUpsEnvironmentOf (config) {
           LOOM_COGNITION_CALLS_PER_AGENT: String(perAgent),
           LOOM_COGNITION_CALLS_GLOBAL: String(global),
           LOOM_COGNITION_AGENTS: String(agents),
-          LOOM_EXPECTED_REVIEWS_PER_AGENT: String(schedule.expectedReviewsPerAgent)
+          LOOM_EXPECTED_REVIEWS_PER_AGENT: String(schedule.expectedReviewsPerAgent),
+          ...(Number.isInteger(config.cognition?.pivotalCallCeiling)
+            ? { LOOM_COGNITION_CALLS_PIVOTAL: String(config.cognition.pivotalCallCeiling) }
+            : {})
         }
       : {})
   }

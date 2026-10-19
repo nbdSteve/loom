@@ -162,4 +162,49 @@ class CallReserveTest {
         assertTrue(reserve.admit(alpha, sighted("n1", near, Importance.PIVOTAL)))
         assertTrue(reserve.admit(alpha, damage("d1")))
     }
+
+    @Test
+    fun `pivotal calls are held to their own ceiling inside the JVM, damage last`() {
+        // The survival envelope's 130 pivotal calls: the proxy refuses past them and that ends the
+        // run, so the JVM holds the bound first, as a typed callReserved.
+        val reserve =
+            CallReserve(
+                perAgentCeiling = 40,
+                scheduledPerAgent = 0,
+                globalCeiling = 378,
+                agents = 1,
+                pivotalCeiling = 4,
+            )
+        val pivotal = {
+                id: String ->
+            perception(
+                requestId = id,
+                agentId = "alpha",
+                trigger = Trigger.StepSettled,
+                importance = Importance.PIVOTAL,
+            )
+        }
+        // One living agent keeps two pivotal calls for damage: two sightings or reviews, then damage.
+        repeat(2) { assertTrue(reserve.admit(alpha, pivotal("p$it")), "pivotal $it") }
+        assertFalse(reserve.admit(alpha, pivotal("p2")), "the rest of the pivotal pool is damage's")
+        val bite = {
+                id: String ->
+            perception(
+                requestId = id,
+                agentId = "alpha",
+                trigger = Trigger.Damaged(3, "zombie"),
+                importance = Importance.PIVOTAL,
+            )
+        }
+        repeat(2) { assertTrue(reserve.admit(alpha, bite("d$it")), "damage $it") }
+        assertFalse(reserve.admit(alpha, bite("d2")), "the pivotal ceiling itself")
+        assertTrue(reserve.admit(alpha, review("r1")), "an ordinary review is still sent")
+        assertEquals(
+            4,
+            CallReserve.fromEnvironment(mapOf(CallReserve.CALLS_ENV to "40", CallReserve.PIVOTAL_ENV to "4")).let {
+                    read ->
+                (0 until 6).count { read.admit(alpha, bite("e$it")) }
+            },
+        )
+    }
 }

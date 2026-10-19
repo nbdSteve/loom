@@ -46,6 +46,8 @@ class CallReserve(
     private val globalCeiling: Int = Int.MAX_VALUE,
     private val agents: Int = 0,
     private val isDead: (AgentId) -> Boolean = { false },
+    /** The most pivotal calls the run may make, the costly tier's own ceiling; unbounded when absent. */
+    private val pivotalCeiling: Int = Int.MAX_VALUE,
 ) {
     init {
         require(perAgentCeiling >= 0 && scheduledPerAgent >= 0 && globalCeiling >= 0 && agents >= 0) {
@@ -54,6 +56,7 @@ class CallReserve(
     }
 
     private val sent = mutableMapOf<AgentId, Int>()
+    private var pivotalSent = 0L
     private val scheduled = mutableMapOf<AgentId, Int>()
 
     /** Whether [perception] may be sent now; records it when it may. */
@@ -70,15 +73,24 @@ class CallReserve(
         // goal step, and a refused damage call has cost an agent its life (r24: six damage calls and
         // eight pivotal sightings were refused to keep calls for reviews their agents never lived to
         // hold, theta's at health 1).
+        val pivotal = perception.importance == DecisionImportance.PIVOTAL
+        // The pivotal pool is the run's dearest: damage may spend all of it, and a pivotal sighting or
+        // review leaves every living agent its urgent calls (r24 envelope: the proxy refuses past it,
+        // and a refusal there ends the run, so the JVM holds the bound first).
+        val keptPivotal =
+            if (perception.trigger is Trigger.Damaged) 0L else URGENT_CALL_RESERVE.toLong() * livingCount(agentId)
+        val pivotalFits = !pivotal || pivotalSent + 1 + keptPivotal <= pivotalCeiling
         val admitted =
-            if (review || urgent) {
-                calls < perAgentCeiling && total < globalCeiling
-            } else {
-                val keptForAll = owedByTheLiving(agentId) + URGENT_CALL_RESERVE.toLong() * livingCount(agentId)
-                val ownFits = calls + 1 + owedBy(agentId) + URGENT_CALL_RESERVE <= perAgentCeiling
-                ownFits && total.toLong() + 1 + keptForAll <= globalCeiling
-            }
+            pivotalFits &&
+                if (review || urgent) {
+                    calls < perAgentCeiling && total < globalCeiling
+                } else {
+                    val keptForAll = owedByTheLiving(agentId) + URGENT_CALL_RESERVE.toLong() * livingCount(agentId)
+                    val ownFits = calls + 1 + owedBy(agentId) + URGENT_CALL_RESERVE <= perAgentCeiling
+                    ownFits && total.toLong() + 1 + keptForAll <= globalCeiling
+                }
         if (admitted) {
+            if (pivotal) pivotalSent += 1
             sent[agentId] = calls + 1
             if (review) scheduled[agentId] = (scheduled[agentId] ?: 0) + 1
         }
@@ -114,6 +126,9 @@ class CallReserve(
         /** The environment setting for how many agents share the global ceiling. */
         const val AGENTS_ENV: String = "LOOM_COGNITION_AGENTS"
 
+        /** The environment setting for the run's ceiling on pivotal calls. */
+        const val PIVOTAL_ENV: String = "LOOM_COGNITION_CALLS_PIVOTAL"
+
         /** The environment setting for the scheduled reviews the plan expects of each agent. */
         const val SCHEDULED_ENV: String = "LOOM_EXPECTED_REVIEWS_PER_AGENT"
 
@@ -132,6 +147,7 @@ class CallReserve(
                 globalCeiling = count(GLOBAL_ENV) ?: Int.MAX_VALUE,
                 agents = count(AGENTS_ENV) ?: 0,
                 isDead = isDead,
+                pivotalCeiling = count(PIVOTAL_ENV) ?: Int.MAX_VALUE,
             )
         }
     }

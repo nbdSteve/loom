@@ -87,7 +87,13 @@ class R24GoalAuditReplayTest {
         // run coalesced never reached the reserve and is passed over.
         val dead = mutableSetOf<dev.loom.body.AgentId>()
         val reserve =
-            CallReserve(perAgentCeiling = 24, scheduledPerAgent = 5, globalCeiling = 150, agents = 10) { it in dead }
+            CallReserve(
+                perAgentCeiling = 24,
+                scheduledPerAgent = 5,
+                globalCeiling = 150,
+                agents = 10,
+                isDead = { it in dead },
+            )
         val endings =
             r24.all
                 .filter { it["event"]?.jsonPrimitive?.content in setOf("decided", "cognitionUnavailable") }

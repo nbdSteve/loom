@@ -452,7 +452,8 @@ test('the JVM is told the ceilings and plan its call reserve keeps the living\'s
     LOOM_COGNITION_CALLS_PER_AGENT: '40',
     LOOM_COGNITION_CALLS_GLOBAL: '378',
     LOOM_COGNITION_AGENTS: '10',
-    LOOM_EXPECTED_REVIEWS_PER_AGENT: '5'
+    LOOM_EXPECTED_REVIEWS_PER_AGENT: '5',
+    LOOM_COGNITION_CALLS_PIVOTAL: '130'
   })
 })
 
