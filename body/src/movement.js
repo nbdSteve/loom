@@ -108,6 +108,7 @@
 const { performance } = require('node:perf_hooks')
 const physics = require('mineflayer/lib/plugins/physics')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
+const { Vec3 } = require('vec3')
 const { installVanillaCollision } = require('./collision')
 const { borderExclusion, columnInside, trackWorldBorder, worldBorderOf } = require('./border')
 const { positionOf } = require('./sensing')
@@ -1336,7 +1337,7 @@ function createMovement (bot, {
       return walk({
         goal: new SafeFlightGoal(new goals.GoalInvert(near), {
           border: worldBorderOf(bot),
-          floor: Number.isFinite(start?.y) ? Math.floor(start.y) - MAX_FLIGHT_DESCENT_BLOCKS : -Infinity,
+          floor: flightFloorOf(bot, start),
           threat: seen,
           others,
           start: Number.isFinite(start?.x) ? [start.x, start.y, start.z] : undefined
@@ -1375,12 +1376,57 @@ function horizontalApart (one, other) {
   return Math.hypot(one[0] - other[0], one[2] - other[2])
 }
 
-/** How far below where it began a flight may end: a ravine is no refuge. */
+/** How far below the ground it began over a flight may end: a ravine is no refuge. */
 const MAX_FLIGHT_DESCENT_BLOCKS = 4
+
+/** How far around a flight's start the ground is read, in blocks, and at how many bearings. */
+const FLIGHT_GROUND_RADIUS_BLOCKS = 6
+const FLIGHT_GROUND_BEARINGS = 16
+
+/** How far above and below a flight's start a column is read for its ground, in blocks. */
+const FLIGHT_GROUND_RISE_BLOCKS = 8
+const FLIGHT_GROUND_DEPTH_BLOCKS = 24
+
+/** Whether `block` is ground a body stands on: a solid block that is no part of a tree. */
+function groundBlock (block) {
+  return block !== null && block.boundingBox === 'block' && !/_(leaves|log|wood|stem|hyphae)$/.test(block.name)
+}
+
+/** The height a body stands at on the highest ground of column `x`, `z` near `top`, or undefined. */
+function standingHeightOf (bot, x, z, top) {
+  for (let y = top + FLIGHT_GROUND_RISE_BLOCKS; y >= top - FLIGHT_GROUND_DEPTH_BLOCKS; y -= 1) {
+    if (groundBlock(bot.blockAt(new Vec3(x, y, z)) ?? null)) return y + 1
+  }
+  return undefined
+}
+
+/**
+ * The lowest a flight from `start` may end: [MAX_FLIGHT_DESCENT_BLOCKS] below the lower of where
+ * it began and the ground around it, the median standing height of the columns
+ * [FLIGHT_GROUND_RADIUS_BLOCKS] off, with trees read through. A ravine below the ground is still
+ * no refuge; the ground below a tree a body stands on is (v32 plains rehearsal: beta, on an oak's
+ * canopy six blocks above the grass, was held to the canopy and its flight searched 9108 nodes to
+ * the budget, because every way down and away lay lower than four below the leaves).
+ */
+function flightFloorOf (bot, start) {
+  if (!Number.isFinite(start?.y)) return -Infinity
+  const top = Math.floor(start.y)
+  const heights = []
+  for (let bearing = 0; bearing < FLIGHT_GROUND_BEARINGS; bearing += 1) {
+    const angle = bearing * 2 * Math.PI / FLIGHT_GROUND_BEARINGS
+    const x = Math.floor(start.x + FLIGHT_GROUND_RADIUS_BLOCKS * Math.cos(angle))
+    const z = Math.floor(start.z + FLIGHT_GROUND_RADIUS_BLOCKS * Math.sin(angle))
+    const height = standingHeightOf(bot, x, z, top)
+    if (height !== undefined) heights.push(height)
+  }
+  heights.sort((one, other) => one - other)
+  const ground = heights.length === 0 ? top : heights[Math.floor((heights.length - 1) / 2)]
+  return Math.min(top, ground) - MAX_FLIGHT_DESCENT_BLOCKS
+}
 
 /**
  * A flight's goal with its end held to safe ground: at least [FLIGHT_BORDER_MARGIN_BLOCKS] inside
- * the server's world border, and no more than [MAX_FLIGHT_DESCENT_BLOCKS] below where it began.
+ * the server's world border, and no lower than [flightFloorOf] allows.
  * The route may pass anywhere the search allows; only where it may stop is held. In r23 eight
  * flights ended against the border, kappa's six pinning it along z -63.4 in a ravine for 1100
  * ticks, and delta's v30 rehearsal flight ended sixteen blocks down a ravine. With no safe end in
@@ -1492,6 +1538,7 @@ module.exports = {
   FLIGHT_BORDER_MARGIN_BLOCKS,
   FLIGHT_OTHER_CLEARANCE_BLOCKS,
   MAX_FLIGHT_DESCENT_BLOCKS,
+  flightFloorOf,
   SafeFlightGoal,
   ARRIVAL_SETTLE_TICKS,
   FINAL_APPROACH_MAX_BLOCKS,

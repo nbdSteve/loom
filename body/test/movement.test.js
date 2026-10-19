@@ -342,6 +342,8 @@ function drivable ({ x = 0, y = 64, z = 0 } = {}) {
   bot.registry = H.registry
   bot.entity = { position: new Vec3(x, y, z) }
   bot.entities = {}
+  // A world with nothing loaded in it, as a client knows before any chunk arrives.
+  bot.blockAt = () => null
   bot.pathfinder = {
     goals: [],
     movements: undefined,

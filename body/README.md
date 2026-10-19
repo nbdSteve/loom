@@ -804,9 +804,11 @@ Mineflayer keeps no border state and Prismarine's physics collides with blocks a
 The v29 plains rehearsal's theta stalled three times against the 128-block border and iota died against it; `test/native-flee-border.test.js` replays theta's crater flight on its converged ground, and the JVM's `BukkitBlockGround` closes the same cells so no walk past the border is offered.
 
 **A flight may end only on safe ground.**
-`SafeFlightGoal` holds the library's inverted goal to an end at least `FLIGHT_BORDER_MARGIN_BLOCKS` (3) inside the world border and no more than `MAX_FLIGHT_DESCENT_BLOCKS` (4) below where the flight began; the route may pass anywhere, and with no safe end in reach the search answers `noRoute`.
-A flee may also name `avoid`, other entities of the same sense answer: the end must then be no nearer to any than the flight began, at least `FLIGHT_OTHER_CLEARANCE_BLOCKS` (8) from any it began further from, and its least separation from all of them must grow. The controller names them, so the body still chooses nothing, and an entity gone since the answer is passed over (r24: gamma's flight from a spider ended 0.6 blocks from a creeper).
+`SafeFlightGoal` holds the library's inverted goal to an end at least `FLIGHT_BORDER_MARGIN_BLOCKS` (3) inside the world border and no more than `MAX_FLIGHT_DESCENT_BLOCKS` (4) below the lower of where the flight began and the ground around it (`flightFloorOf`: the median standing height of sixteen columns six blocks off, with trees read through); the route may pass anywhere.
 In r23 eight flights ended against the border and one agent spent 1100 ticks pinned in a ravine along it.
+**Every end the goal refuses is search work the inverted goal no longer ends on its first pop for**, so a restriction measured from the wrong place turns an ordinary flight into one the budget stops.
+Measured from the start alone, the floor held a body on an oak's canopy six blocks above the grass to the canopy, and its flight searched 9108 nodes to the budget on real Paper (v32 plains rehearsal, beta); measured from the ground the same flight finds its way down in 67 (`test/native-flee-canopy.test.js`).
+A flee may also name `avoid`, other entities of the same sense answer: the end must then be no nearer to any than the flight began, at least `FLIGHT_OTHER_CLEARANCE_BLOCKS` (8) from any it began further from, and its least separation from all of them must grow. The controller names them, so the body still chooses nothing, and an entity gone since the answer is passed over (r24: gamma's flight from a spider ended 0.6 blocks from a creeper).
 
 **Sprinting is the one ability a request decides, which is why the policy is built per
 request.**

@@ -101,7 +101,7 @@ test('a client that cannot start stops the control channel it opened, and the st
   }), /ECONNREFUSED/)
 })
 
-test('a flight ends only three blocks inside the border and no more than four below where it began', () => {
+test('a flight ends only three blocks inside the border and no more than four below its floor', () => {
   const { FLIGHT_BORDER_MARGIN_BLOCKS, MAX_FLIGHT_DESCENT_BLOCKS, SafeFlightGoal } = require('../src/movement')
   const anywhere = { heuristic: () => 0, isEnd: () => true, hasChanged: () => false, isValid: () => true }
   const goal = new SafeFlightGoal(anywhere, { border: { x: 0, z: 0, diameter: 128 }, floor: 66 - MAX_FLIGHT_DESCENT_BLOCKS })
@@ -115,4 +115,26 @@ test('a flight ends only three blocks inside the border and no more than four be
   assert.equal(goal.isEnd({ x: 0, y: 62, z: 0 }), true)
   // No border stated holds only the descent.
   assert.equal(new SafeFlightGoal(anywhere, { border: undefined, floor: 0 }).isEnd({ x: 1000, y: 1, z: 0 }), true)
+})
+
+test('a flight floor is four below the lower of its start and the ground around it, trees read through', () => {
+  const { MAX_FLIGHT_DESCENT_BLOCKS, flightFloorOf } = require('../src/movement')
+  // Grass at y 64 everywhere, so a body stands at 65; an oak's leaves fill y 66..70 at the origin.
+  const world = (shaft) => ({
+    blockAt: (at) => {
+      if (at.y === 64 && !(shaft && at.x === 0 && at.z === 0)) return { name: 'grass_block', boundingBox: 'block' }
+      if (at.x === 0 && at.z === 0 && at.y >= 66 && at.y <= 70) return { name: 'oak_leaves', boundingBox: 'block' }
+      if (at.y === 54) return { name: 'stone', boundingBox: 'block' }
+      return { name: 'air', boundingBox: 'empty' }
+    }
+  })
+  const start = (y) => ({ x: 0.5, y, z: 0.5 })
+  assert.equal(flightFloorOf(world(false), start(65)), 65 - MAX_FLIGHT_DESCENT_BLOCKS)
+  // On the canopy the floor is the grass's, not the leaves' (v32 plains rehearsal, beta).
+  assert.equal(flightFloorOf(world(false), start(71)), 65 - MAX_FLIGHT_DESCENT_BLOCKS)
+  // At the foot of its own shaft a body's floor is its own, the lower of the two.
+  assert.equal(flightFloorOf(world(true), start(55)), 55 - MAX_FLIGHT_DESCENT_BLOCKS)
+  // A client that knows no ground keeps the start's floor; one with no position has none.
+  assert.equal(flightFloorOf({ blockAt: () => null }, start(71)), 71 - MAX_FLIGHT_DESCENT_BLOCKS)
+  assert.equal(flightFloorOf({ blockAt: () => null }, undefined), -Infinity)
 })
