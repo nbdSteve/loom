@@ -80,4 +80,39 @@ class R24GoalAuditReplayTest {
         // And a second spider is news of its own, not the first one's episode.
         assertTrue(episodes.admit(gamma, bite.copy(requestId = "other"), "spider-2"))
     }
+
+    @Test
+    fun `every damage call and pivotal sighting r24 refused to keep calls for reviews is admitted today`() {
+        // The run's own perceptions, in order, through today's reserve under its bounds; what the
+        // run coalesced never reached the reserve and is passed over.
+        val dead = mutableSetOf<dev.loom.body.AgentId>()
+        val reserve =
+            CallReserve(perAgentCeiling = 24, scheduledPerAgent = 5, globalCeiling = 150, agents = 10) { it in dead }
+        val endings =
+            r24.all
+                .filter { it["event"]?.jsonPrimitive?.content in setOf("decided", "cognitionUnavailable") }
+                .associate { keyOf(it) to it["outcome"]?.jsonPrimitive?.content }
+        val admitted = mutableMapOf<String, Boolean>()
+        for (record in r24.all) {
+            when (record["event"]?.jsonPrimitive?.content) {
+                "died" -> dead += dev.loom.body.AgentId(requireNotNull(record["agentId"]).jsonPrimitive.content)
+                "perceived" -> {
+                    val key = keyOf(record) ?: continue
+                    if (endings[key] in setOf("dangerCoalesced", "cognitionCoalesced") || key !in endings) continue
+                    val seen = r24.perception(idOf(record))
+                    admitted[idOf(record)] = reserve.admit(dev.loom.body.AgentId(seen.agentId), seen)
+                }
+            }
+        }
+        // iota's damage at health 6, theta's at health 1 and epsilon's pivotal sighting at 3.8 were
+        // refused to keep calls for reviews; today each is admitted.
+        for (id in listOf("body:00003287", "body:00003291", "body:00003305")) assertEquals(true, admitted[id], id)
+        // delta's three and zeta's last come after the run's own 150-call ceiling is spent, which
+        // no reserve can lift: they are refused by the ceiling itself, not kept for reviews.
+        for (id in listOf("body:00003462", "body:00003470", "body:00003501", "body:00003564")) {
+            val before = admitted.entries.takeWhile { it.key != id }.count { it.value }
+            assertEquals(false, admitted[id], id)
+            assertEquals(150, before, id)
+        }
+    }
 }
