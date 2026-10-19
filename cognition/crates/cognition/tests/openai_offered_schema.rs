@@ -1383,3 +1383,81 @@ fn a_stalled_item_goal_with_nothing_grounded_may_become_a_discovery_goal() {
         &json!({ "disposition": "replace", "discover": true, "stepResult": "noProgress" })
     )));
 }
+
+/// [`seen`] with a zombie two blocks off that hunts the agent's kind, and a held stack.
+fn beside_a_hunter(mut seen: Perception) -> Perception {
+    seen.surroundings.push(Observation {
+        kind: ObservationKind::Entity,
+        what: "entity.minecraft.zombie".to_owned(),
+        distance: 2.0,
+        direction: loom_contract::Bearing::East,
+        vertical_offset: 0.0,
+        visible: true,
+        target_ref: "e7".to_owned(),
+        count: None,
+        standable: None,
+        yields: None,
+        dig_safe: None,
+        route_refused: None,
+        hunts: Some(true),
+    });
+    holding_bread(seen)
+}
+
+fn holding_bread(mut seen: Perception) -> Perception {
+    seen.self_state.inventory_summary.push(InventoryStack {
+        slot_ref: "i8".to_owned(),
+        what: "item.minecraft.bread".to_owned(),
+        count: 2,
+    });
+    seen
+}
+
+#[test]
+fn a_mandatory_discovery_never_suppresses_a_survival_response() {
+    // Every goal-review phase that couples its goal to its step still lets a hunter be fled or
+    // fought, and a hungry agent eat, with no goal choice: the goal is deferred, not answered.
+    let unheld = with_edge(fixture("perception-goal-review"));
+    let held = fixture("perception-goal-discovery-held");
+    let carried = with_edge(fixture("perception-goal-carried"));
+    let flee = json!({ "action": "flee", "from": "e7" });
+    let attack = json!({ "action": "attack", "target": "e7", "weapon": "i8", "attacks": 2, "approach": false });
+    let eat = json!({ "action": "eat", "ref": "i8" });
+    for (name, base) in [
+        ("unheld", unheld),
+        ("discovery", held),
+        ("item goal", carried),
+    ] {
+        let hunted = beside_a_hunter(base.clone());
+        let schema = decision_schema_for(&OfferedRefs::of(&hunted), GoalPhase::of(&hunted));
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        for intent in [&flee, &attack] {
+            assert!(
+                validator.is_valid(&answer_in(&schema, intent, &json!(null))),
+                "{name}: {intent}"
+            );
+        }
+        // Fed, a meal is no survival response and cannot stand in for the goal.
+        assert!(
+            !validator.is_valid(&answer_in(&schema, &eat, &json!(null))),
+            "{name}: a fed meal"
+        );
+        let mut starving = holding_bread(base);
+        starving.self_state.food = loom_cognition::offered::HUNGRY_FOOD_LEVEL;
+        let schema = decision_schema_for(&OfferedRefs::of(&starving), GoalPhase::of(&starving));
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        assert!(
+            validator.is_valid(&answer_in(&schema, &eat, &json!(null))),
+            "{name}: a hungry meal"
+        );
+        // And no other action escapes the goal that way.
+        assert!(
+            !validator.is_valid(&answer_in(
+                &schema,
+                &json!({ "action": "moveTo", "onto": "x1" }),
+                &json!(null)
+            )),
+            "{name}"
+        );
+    }
+}

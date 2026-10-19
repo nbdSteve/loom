@@ -336,6 +336,109 @@ class GoalPursuitEndToEndTest {
         assertEquals(1, classes.getValue("goalIncoherent").jsonPrimitive.int)
     }
 
+    @Test
+    fun `with nothing grounded a discovery goal walks to the edge of sight, reveals a log and becomes a log goal`() {
+        // r23: 17 of 70 reviews could set no goal at all. The log stands beside the cell east at
+        // the edge of sight, past what the body senses from where alpha starts.
+        val log = Cell(22, 64, 8, "oak_log")
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(log), serveBreaks = true))
+        world.mind.answer = { seen, index ->
+            when (index) {
+                0 ->
+                    Intent.MoveTo(seen.explore.single { it.direction == Bearing.EAST }.ref) to
+                        GoalChoice(GoalDisposition.ADOPT, discover = true)
+                else ->
+                    Intent.Dig(seen.surroundings.first { it.what == "block.minecraft.oak_log" }.ref) to
+                        target(GoalDisposition.REPLACE, LOG, 1)
+            }
+        }
+        world.review(ALPHA)
+        world.awaitDecided(1)
+        world.awaitApplied(1)
+        world.awaitRecord { it.event == BodyEvent.MOVED }
+        world.review(ALPHA)
+        world.awaitDecided(2)
+        world.awaitApplied(2)
+        world.awaitRecord { it.event == BodyEvent.WORLD_INTERACTION }
+        assertTrue(world.mind.seen[0].horizon.isEmpty(), "nothing grounds an item goal where alpha starts")
+        assertTrue(world.mind.seen[1].horizon.any { it.what == LOG }, "the walk brought the log into sight")
+        val decided = world.records.filter { it.event == BodyEvent.DECIDED }
+        assertEquals(GoalEvidence.ADOPTED, decided[0].goal?.outcome)
+        assertEquals(true, decided[0].goal?.discovery)
+        val became = requireNotNull(decided[1].goal)
+        assertEquals(GoalEvidence.COMPLETED_ADOPTED, became.outcome)
+        assertEquals(StepEvidence.REVEALED, became.stepEvidence)
+        assertEquals(true, became.presentedDiscovery)
+        assertEquals(decided[0].requestId, became.discoveredFrom)
+        // The dig the log goal took is the server's to confirm.
+        val dug = world.records.single { it.event == BodyEvent.WORLD_INTERACTION }
+        assertEquals(decided[1].requestId, dug.requestId)
+        assertEquals("serverEffectConfirmed", dug.outcome)
+        val measured =
+            world
+                .readiness(DISCOVERY_GENERATION)
+                .getValue("goalCoherence")
+                .jsonObject
+                .getValue("pursuit")
+                .jsonObject
+                .getValue("measured")
+                .jsonObject
+        assertEquals(1, measured.getValue("discoveryGoals").jsonPrimitive.int)
+        assertEquals(1, measured.getValue("discoveryReveals").jsonPrimitive.int)
+        assertEquals(1, measured.getValue("discoveryTransitions").jsonPrimitive.int)
+    }
+
+    @Test
+    fun `a hunter beside a review owed a discovery goal is fled first, the goal deferred and its review owed`() {
+        // Discovery is mandatory with nothing grounded, but never ahead of a survival response.
+        val zombie =
+            kotlinx.serialization.json.buildJsonObject {
+                put("id", kotlinx.serialization.json.JsonPrimitive(ZOMBIE_ID))
+                put("what", kotlinx.serialization.json.JsonPrimitive("zombie"))
+                put("x", kotlinx.serialization.json.JsonPrimitive(4.5))
+                put("y", kotlinx.serialization.json.JsonPrimitive(64.0))
+                put("z", kotlinx.serialization.json.JsonPrimitive(8.5))
+            }
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), entities = listOf(zombie)))
+        world.mind.answer = { seen, index ->
+            when (index) {
+                0 -> Intent.Flee(seen.surroundings.first { it.what == "entity.minecraft.zombie" }.ref) to null
+                else ->
+                    Intent.MoveTo(seen.explore.first().ref) to GoalChoice(GoalDisposition.ADOPT, discover = true)
+            }
+        }
+        world.review(ALPHA)
+        world.awaitDecided(1)
+        world.awaitApplied(1)
+        assertTrue(world.mind.seen[0].horizon.isEmpty(), "the review owed a discovery goal")
+        val deferred = world.records.first { it.event == BodyEvent.DECIDED }
+        assertEquals(GoalEvidence.DEFERRED, deferred.goal?.outcome)
+        assertEquals(null, deferred.goal?.goalId, "no goal was set or credited by the flight")
+        val applied = world.records.first { it.event == BodyEvent.INTENT_APPLIED }
+        assertEquals(EventTag.ACCEPTED, applied.outcome)
+        // The flight settled, and the review it deferred is owed again.
+        val until = System.nanoTime() + SETTLE_WAIT_NANOS
+        while (world.settlements.none { it.first == ALPHA } && System.nanoTime() < until) Thread.sleep(POLL_MILLIS)
+        assertTrue(world.settlements.any { (agent, _, owed) -> agent == ALPHA && owed }, "${world.settlements}")
+        world.review(ALPHA)
+        world.awaitDecided(2)
+        val adopted = world.records.filter { it.event == BodyEvent.DECIDED }[1].goal
+        assertEquals(GoalEvidence.ADOPTED, adopted?.outcome)
+        assertEquals(true, adopted?.discovery)
+        // The gate counts the flight as a deferral, never as the discovery's progress.
+        val measured =
+            world
+                .readiness(DISCOVERY_GENERATION)
+                .getValue("goalCoherence")
+                .jsonObject
+                .getValue("pursuit")
+                .jsonObject
+                .getValue("measured")
+                .jsonObject
+        assertEquals(1, measured.getValue("deferredReviews").jsonPrimitive.int)
+        assertEquals(0, measured.getValue("discoveryReveals").jsonPrimitive.int)
+    }
+
     private fun world(scene: Scene): ScenarioWorld {
         val node = nodeOrNull()
         assumeTrue(node != null && Files.isDirectory(REPO.resolve("body/node_modules")), "node and body deps")
@@ -346,9 +449,13 @@ class GoalPursuitEndToEndTest {
         const val GATE_GENERATION = 9
         const val WOODED_GENERATION = 10
         const val HORIZON_GENERATION = 13
+        const val DISCOVERY_GENERATION = 14
         const val DIRT = "item.minecraft.dirt"
         const val LOG = "item.minecraft.oak_log"
         const val STICK_ID = 70
+        const val ZOMBIE_ID = 71
+        const val SETTLE_WAIT_NANOS = 5_000_000_000L
+        const val POLL_MILLIS = 20L
         const val STICK = "item.minecraft.stick"
         const val PLANKS = "item.minecraft.oak_planks"
         val ALPHA = AgentId("agent-alpha")

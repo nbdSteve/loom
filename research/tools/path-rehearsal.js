@@ -34,7 +34,7 @@ const { readinessMetrics } = require('../lib/readiness.js')
 
 const REPO = path.resolve(__dirname, '..', '..')
 const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'path-rehearsal.json'), 'utf8'))
-const GENERATION = 13
+const GENERATION = 14
 const RETENTION_TICKS = 4800
 const POLL_MS = 500
 
@@ -160,7 +160,18 @@ function pathsOf (records, readiness) {
   const discovered = (readiness.goalCoherence?.pursuit?.measured?.discoveredGoals ?? 0) > 0
     ? of('tribe-epsilon', 'decided').find((record) => record.goal?.conditionMet === true)
     : undefined
+  // kappa, clear of its creeper with nothing grounding an item goal, set a discovery goal, walked
+  // toward the tree line, and the walk that brought a log into sight became a log goal (r23).
+  const discoveryRevealed = of('tribe-kappa', 'decided').find((record) =>
+    record.goal?.presentedDiscovery === true && record.goal?.stepEvidence === 'revealed')
+  const discoveryBecameResourceGoal = of('tribe-kappa', 'decided').find((record) =>
+    record.goal?.discoveredFrom !== undefined && byKey(record.requestKey).some((entry) =>
+      entry.event === 'worldInteraction' && entry.outcome === 'serverEffectConfirmed'))
   return {
+    discoverySetWithNothingGrounded: evidence(of('tribe-kappa', 'decided').find((record) =>
+      record.goal?.discovery === true && record.goal?.outcome === 'goalAdopted')),
+    discoveryRevealed: evidence(discoveryRevealed),
+    discoveryBecameResourceGoal: evidence(discoveryBecameResourceGoal),
     localGoalCrowdingRefused: evidence(applied('tribe-gamma', 'goalCrowdsExploration')),
     horizonGoalAdvancedPastSight: evidence(discovered),
     reviewFleesAHunterWithNoGoalChoice: evidence(hunted),

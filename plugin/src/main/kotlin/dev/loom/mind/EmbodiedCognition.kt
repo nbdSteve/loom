@@ -25,6 +25,7 @@ import dev.loom.body.IntentOutcome
 import dev.loom.body.ShownGoal
 import dev.loom.body.tagOf
 import dev.loom.contract.Decision
+import dev.loom.contract.GoalSummary
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
@@ -359,17 +360,7 @@ class EmbodiedCognition(
                         tagOf(applied),
                         (applied as? IntentOutcome.Accepted)?.reached,
                     )
-                val effected =
-                    applied is IntentOutcome.Accepted || (applied as? IntentOutcome.Rejected)?.effected == true
-                if (goalStep != null && effected) {
-                    // A step that left its own drop of the goal's item lying owes a review to collect it.
-                    val dropped = goalStep.successItem in (applied as? IntentOutcome.Accepted)?.dropped.orEmpty()
-                    callbacks.onStepSettled.settled(
-                        agentId,
-                        journal.tick(),
-                        owed = dropped || goal?.ownGoalDropLying == true,
-                    )
-                }
+                callbacks.onStepSettled.oweReview(agentId, journal.tick(), goal, goalStep, applied)
                 danger.settled(agentId, decision.requestId, fled = decision.intent is Intent.Flee)
                 if (applied == IntentOutcome.NoSuchBody) danger.forget(agentId)
                 if (applied == IntentOutcome.NoSuchBody) {
@@ -405,3 +396,25 @@ class EmbodiedCognition(
 
 /** What this perception showed cognition of its goal, when it reviews one. */
 private fun Perception.shownGoal(): ShownGoal? = ShownGoal(goal, lastRefusal, horizon).takeIf { trigger.reviewsGoal }
+
+/**
+ * Owes [agentId] a follow-up review at [tick] when its decision settled [applied]: a goal a
+ * survival response deferred is owed one whatever the response did, and a held goal's [goalStep]
+ * one when the body carried it out - owed past the ordinary allowance when it left the agent's own
+ * drop of the goal's item lying.
+ */
+private fun StepSettlement.oweReview(
+    agentId: AgentId,
+    tick: Long,
+    goal: GoalEvidence?,
+    goalStep: GoalSummary?,
+    applied: IntentOutcome,
+) {
+    val effected = applied is IntentOutcome.Accepted || (applied as? IntentOutcome.Rejected)?.effected == true
+    if (goal?.outcome == GoalEvidence.DEFERRED) {
+        settled(agentId, tick, owed = true)
+    } else if (goalStep != null && effected) {
+        val dropped = goalStep.successItem in (applied as? IntentOutcome.Accepted)?.dropped.orEmpty()
+        settled(agentId, tick, owed = dropped || goal?.ownGoalDropLying == true)
+    }
+}

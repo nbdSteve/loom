@@ -111,6 +111,8 @@ data class GoalObservation(
     val craftable: Set<String> = emptySet(),
     /** The items the blocks under and beside the agent's feet give: its footing, guaranteed. */
     val footing: Set<String> = emptySet(),
+    /** The survival responses this perception allows before any goal step. */
+    val survival: SurvivalOffer = SurvivalOffer(),
 ) {
     /** Whether a discovery goal may be set: cells at the edge of sight, and no horizon goal at all. */
     val discoveryOffered: Boolean get() = explore.isNotEmpty() && horizon.isEmpty()
@@ -212,6 +214,7 @@ data class GoalObservation(
                 horizon = perception.horizon.associateBy { it.what },
                 craftable = perception.selfState.craftingOptions.map { it.what }.toSet(),
                 footing = footingOf(perception),
+                survival = SurvivalOffer.of(perception),
             )
         }
 
@@ -408,9 +411,17 @@ internal fun remeasured(
     measured: GoalProgress,
     observed: GoalObservation?,
 ): GoalProgress {
-    val item = goal.successItem ?: return measured
-    val held = observed?.inventory?.get(item) ?: measured.conditionHeld
-    return measured.copy(conditionMet = held >= (goal.successCount ?: Long.MAX_VALUE), conditionHeld = held)
+    val item = goal.successItem
+    return when {
+        // A discovery goal is met by whatever sight shows now, however it came into view; only the
+        // walk that revealed it was ever credited, so nothing here is.
+        goal.discovery -> measured.copy(conditionMet = observed?.revealed?.isNotEmpty() ?: measured.conditionMet)
+        item == null -> measured
+        else -> {
+            val held = observed?.inventory?.get(item) ?: measured.conditionHeld
+            measured.copy(conditionMet = held >= (goal.successCount ?: Long.MAX_VALUE), conditionHeld = held)
+        }
+    }
 }
 
 /** The dispositions that set a held goal's target anew, beside an adopt's first one. */

@@ -303,6 +303,7 @@ fn situation_of(perception: &Perception) -> String {
             !perception.explore.is_empty(),
         ));
         lines.extend(danger_line(perception));
+        lines.extend(hunger_line(perception));
     }
     lines.extend(no_dropped_item_line(&perception.surroundings));
     let last_step = perception
@@ -1051,9 +1052,23 @@ fn danger_line(perception: &Perception) -> Option<String> {
         .collect::<Vec<_>>()
         .join(", ");
     Some(format!(
-        "Something that hunts your kind is near ({named}): you may flee from it now with no goal \
-choice, and any goal you hold stays held."
+        "Something that hunts your kind is near ({named}): you may flee from it or fight it now \
+with no goal choice, and any goal you hold stays held and is reviewed again once you are done."
     ))
+}
+
+/// The meal a goal review may take before any goal step, or nothing when food is above the
+/// hunger threshold.
+fn hunger_line(perception: &Perception) -> Option<String> {
+    let offered = crate::offered::OfferedRefs::of(perception);
+    (!offered.meals.is_empty()).then(|| {
+        format!(
+            "Your food is {food} of 20, at or below {threshold}: you may eat now with no goal choice, \
+and any goal you hold stays held and is reviewed again once you have eaten.",
+            food = perception.self_state.food,
+            threshold = crate::offered::HUNGRY_FOOD_LEVEL
+        )
+    })
 }
 
 /// The cells at the edge of sight a walk can reach to look further, or nothing when none is offered

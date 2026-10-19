@@ -1348,8 +1348,8 @@ fn coupled_schema(
             &offer.exploring,
         ));
     }
-    if let Some(flee) = danger_flee(offered, table) {
-        pairings.push(pairing(flee, &[json!({ "type": "null" })]));
+    if let Some(survival) = survival_intents(offered, table) {
+        pairings.push(pairing(survival, &[json!({ "type": "null" })]));
     }
     table.insert("activeIntent".to_owned(), json!({ "anyOf": active }));
     if offered.passive_allowed() {
@@ -1376,33 +1376,66 @@ fn coupled_schema(
     })
 }
 
-/// The flight a goal review may take from a hunter near enough to matter, with no goal choice:
-/// it steps aside from the goal, which stays held (r20: kappa reviewed at health 7.7 beside a
-/// zombie and a skeleton, was offered only dirt digs, and died 28 ticks later). Its refs are
-/// defined once under `$defs` as `dangerRef`; none when no hunter is near.
-fn danger_flee(offered: &OfferedRefs, table: &mut serde_json::Map<String, Value>) -> Option<Value> {
-    if offered.danger.is_empty() {
-        return None;
+/// The survival responses a goal review may take before any goal step, with no goal choice: a
+/// flight from or an attack on a hunter near enough to matter, and a meal at or below the hunger
+/// threshold. Each steps aside from the goal, which stays held and is owed a review once the
+/// response settles (r20: kappa reviewed at health 7.7 beside a zombie and a skeleton, was offered
+/// only dirt digs, and died 28 ticks later). Their refs are defined once under `$defs`; none when
+/// nothing is due.
+fn survival_intents(
+    offered: &OfferedRefs,
+    table: &mut serde_json::Map<String, Value>,
+) -> Option<Value> {
+    const HUNTER: &str =
+        "A creature in this message that hunts your kind and is near enough to flee from.";
+    let mut intents = Vec::new();
+    let mut enumerate = |name: &str, handles: Vec<String>, description: &str| {
+        if handles.is_empty() {
+            return None;
+        }
+        table.insert(
+            name.to_owned(),
+            json!({ "type": "string", "enum": handles, "description": description }),
+        );
+        Some(
+            json!({ "description": description, "anyOf": [{ "$ref": format!("#/$defs/{name}") }] }),
+        )
+    };
+    let flee_from = enumerate("dangerRef", offered.danger.clone(), HUNTER);
+    let strike = enumerate(
+        "dangerStrikeRef",
+        offered.danger_targets(false),
+        "A hunter near enough to strike where you stand.",
+    );
+    let pursue = enumerate(
+        "dangerPursuitRef",
+        offered.danger_targets(true),
+        "A hunter near enough to strike after a bounded approach.",
+    );
+    let stack = || {
+        (!offered.stacks.is_empty()).then(|| {
+            json!({ "description": "The ref of an inventory stack offered in this message.", "anyOf": [{ "$ref": "#/$defs/stackRef" }] })
+        })
+    };
+    intents.extend(intent_variant("flee", vec![("from", flee_from)]));
+    for (target, approach) in [(strike, false), (pursue, true)] {
+        intents.extend(intent_variant(
+            "attack",
+            vec![
+                ("target", target),
+                ("weapon", stack()),
+                (
+                    "attacks",
+                    plain(json!({ "type": "integer", "minimum": 1, "maximum": 4, "description": "The maximum number of bounded attack swings." })),
+                ),
+                ("approach", approach_field(ATTACK_APPROACH, Some(approach))),
+            ],
+        ));
     }
-    table.insert(
-        "dangerRef".to_owned(),
-        json!({
-            "type": "string",
-            "enum": offered.danger,
-            "description": "A creature in this message that hunts your kind and is near enough to flee from.",
-        }),
-    );
-    let flee = intent_variant(
-        "flee",
-        vec![(
-            "from",
-            Some(json!({
-                "description": "The ref of the hunter to flee from.",
-                "anyOf": [{ "$ref": "#/$defs/dangerRef" }],
-            })),
-        )],
-    );
-    Some(json!(flee.into_iter().collect::<Vec<_>>()))
+    if !offered.meals.is_empty() {
+        intents.extend(intent_variant("eat", vec![("ref", stack())]));
+    }
+    (!intents.is_empty()).then(|| json!(intents))
 }
 
 /// One goal item's own step intents, each ref list defined once under `$defs` as item `index`'s.

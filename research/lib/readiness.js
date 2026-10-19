@@ -907,7 +907,11 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
     record.decision?.goal?.successItem === record.shown?.goal?.successItem &&
     record.decision?.goal?.successCount === record.shown?.goal?.successCount
   const fled = (record) => record.intent === 'flee' && record.goal.outcome === 'goalUnaddressed'
-  const active = (record) => (GOAL_ACTIVE_OUTCOMES.has(record.goal.outcome) && !noOp(record)) || fled(record)
+  // From routine-v31 a survival response defers the goal its review owed: a flight from or attack
+  // on a hunter, or a meal at the hunger threshold, which is goal activity and never its progress.
+  const deferred = (record) => record.goal.outcome === 'goalDeferred'
+  const active = (record) =>
+    (GOAL_ACTIVE_OUTCOMES.has(record.goal.outcome) && !noOp(record)) || fled(record) || deferred(record)
   const byAgent = new Map()
   for (const record of reviews) {
     const entry = byAgent.get(record.agentId) ?? { reviews: 0, active: 0 }
@@ -1078,7 +1082,8 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
             ['goalAdopted', 'goalReplaced', 'goalCompletedAdopted'].includes(record.goal.outcome)).length,
           discoveryReveals: reviews.filter((record) => record.goal.presentedDiscovery === true &&
             record.goal.stepEvidence === 'revealed').length,
-          discoveryTransitions: reviews.filter((record) => record.goal.discoveredFrom !== undefined).length
+          discoveryTransitions: reviews.filter((record) => record.goal.discoveredFrom !== undefined).length,
+          deferredReviews: reviews.filter(deferred).length
         }
       : {})
   }

@@ -52,7 +52,8 @@ const GOAL_OUTCOMES = [
   'goalCompletedWithoutNext',
   'goalCrowdsExploration',
   'goalReviseUnchanged',
-  'goalDiscoveryNotOffered'
+  'goalDiscoveryNotOffered',
+  'goalDeferred'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // What a measured step showed, from routine-v22: the exact target reached, an item gained, a

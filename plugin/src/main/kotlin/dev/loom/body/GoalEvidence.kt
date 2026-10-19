@@ -84,6 +84,13 @@ data class GoalEvidence(
         /** The held goal's met condition was completed and a new goal adopted in the same answer. */
         const val COMPLETED_ADOPTED: String = "goalCompletedAdopted"
 
+        /**
+         * A survival response - a flight from or attack on a hunter near enough, or a meal at the
+         * hunger threshold - deferred a held goal, or the discovery goal the review was owed: no
+         * goal credit, no stall, and a review owed once it settles.
+         */
+        const val DEFERRED: String = "goalDeferred"
+
         /** The mind made no goal choice; any held goal stays and keeps ageing. */
         const val UNADDRESSED: String = "goalUnaddressed"
 
@@ -234,6 +241,7 @@ data class GoalEvidence(
                 COMPLETED_ADOPTED,
                 ABANDONED,
                 UNADDRESSED,
+                DEFERRED,
                 STALE,
                 NOT_REVIEWED,
             )

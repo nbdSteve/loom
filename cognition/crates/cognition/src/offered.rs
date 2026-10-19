@@ -97,6 +97,10 @@ pub const MAX_DANGER_REFS: usize = 4;
 /// JVM's `THREAT_NEAR_BLOCKS`, inside which an unseen hunter is news.
 pub const DANGER_UNSEEN_BLOCKS: f64 = 8.0;
 
+/// The vanilla food level at or below which a goal review may eat before any goal step: the one
+/// survival threshold Loom configures, `HUNGRY_FOOD_LEVEL` in the JVM's `Survival.kt`.
+pub const HUNGRY_FOOD_LEVEL: i64 = 7;
+
 /// The steps one goal item may be pursued by, by action: what in sight can give that item.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ItemSteps {
@@ -226,6 +230,9 @@ pub struct OfferedRefs {
     pub held_total: Option<i64>,
     /// Where a goal review stands with a discovery goal.
     pub discovery: Discovery,
+    /// The stacks a goal review may eat from before any goal step: every offered stack while its
+    /// food is at or below [`HUNGRY_FOOD_LEVEL`], and none otherwise.
+    pub meals: Vec<String>,
 }
 
 /// Where a goal review stands with a discovery goal (r23: 17 of 70 reviews could set no goal at
@@ -253,6 +260,33 @@ impl OfferedRefs {
     #[must_use]
     pub fn discovering(&self) -> bool {
         self.discovery == Discovery::Pursued
+    }
+
+    /// Whether `intent` is a survival response this review may take with no goal choice: a flight
+    /// from or an attack on a hunter near enough to matter, or a meal while hungry.
+    #[must_use]
+    pub fn survives(&self, intent: &Intent) -> bool {
+        match intent {
+            Intent::Flee { from } => self.danger.contains(from),
+            Intent::Attack { target, .. } => self.danger.contains(target),
+            Intent::Eat { slot_ref } => self.meals.contains(slot_ref),
+            _ => false,
+        }
+    }
+
+    /// The hunters near enough to flee from that an attack in `pursuit` mode or not can reach.
+    #[must_use]
+    pub fn danger_targets(&self, pursuit: bool) -> Vec<String> {
+        let reach = if pursuit {
+            &self.pursuit_targets
+        } else {
+            &self.strike_targets
+        };
+        self.danger
+            .iter()
+            .filter(|handle| reach.contains(handle))
+            .cloned()
+            .collect()
     }
 }
 
@@ -487,6 +521,9 @@ impl OfferedRefs {
         }
         for option in state.crafting_options.iter().take(MAX_CRAFTING_LINES) {
             offer(&mut offered.recipes, &option.recipe_ref);
+        }
+        if perception.trigger.reviews_goal() && state.food <= HUNGRY_FOOD_LEVEL {
+            offered.meals.clone_from(&offered.stacks);
         }
         let totals = totals_of(perception, sources);
         // What sight can be counted on for is the expected yield, whole items only: a block's best

@@ -124,6 +124,16 @@ class GoalLedger(
         val fresh: Boolean,
     ) {
         /**
+         * What a decision with no goal choice made of this review: a survival response defers a
+         * held goal, or the discovery goal the review owed - neither credited nor counted, and
+         * owed its review again once it settles; anything else leaves it unaddressed.
+         */
+        fun unanswered(intent: Intent): String {
+            val owed = presented != null || observed?.discoveryOffered == true
+            return if (owed && observed.defers(intent)) GoalEvidence.DEFERRED else GoalEvidence.UNADDRESSED
+        }
+
+        /**
          * The evidence a decision's goal [choice] starts from: what this basis presented and
          * measured, and the goal held now, [current].
          */
@@ -281,7 +291,7 @@ class GoalLedger(
                     evidence.copy(outcome = incoherent, goalId = null, revision = null)
                 }
                 incoherent != null -> evidence.copy(outcome = incoherent)
-                choice == null -> evidence
+                choice == null -> evidence.copy(outcome = basis.unanswered(decision.intent))
                 !unchanged -> evidence.copy(outcome = GoalEvidence.STALE)
                 else -> apply(goals, basis, choice, decision, evidence)
             }

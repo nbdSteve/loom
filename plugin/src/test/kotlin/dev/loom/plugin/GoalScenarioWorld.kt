@@ -312,7 +312,16 @@ internal class ScenarioWorld(
                 startupConcurrency = 1,
             )
         closers += { port.close() }
-        cognition = EmbodiedCognition(port, mind, main, DecisionJournal(log, tick::get))
+        cognition =
+            EmbodiedCognition(
+                port,
+                mind,
+                main,
+                DecisionJournal(log, tick::get),
+                dev.loom.mind.CognitionCallbacks(
+                    onStepSettled = { agent, at, owed -> settlements += Triple(agent, at, owed) },
+                ),
+            )
         ids.forEach { port.spawn(it).toCompletableFuture().await() }
         closers += { mainExecutor.shutdownNow() }
     }
@@ -320,6 +329,9 @@ internal class ScenarioWorld(
     fun onMain(task: () -> Unit) {
         CompletableFuture.runAsync({ task() }, mainExecutor).await()
     }
+
+    /** Every follow-up review the cognition owed, by agent, server tick and whether it was owed past the allowance. */
+    val settlements = java.util.concurrent.CopyOnWriteArrayList<Triple<AgentId, Long, Boolean>>()
 
     /** A scheduled goal review for [agent], a tick after the last so every review is its own. */
     fun review(agent: AgentId) {

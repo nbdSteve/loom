@@ -191,4 +191,17 @@ class GoalReviewScheduleTest {
         assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(agent), CADENCE + 100))
         assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(agent, other), CADENCE + 100))
     }
+
+    @Test
+    @DisplayName("a goal a survival response deferred is owed its review past the ordinary follow-up")
+    fun aDeferredGoalIsOwedItsReview() {
+        val agent = AgentId("agent-1")
+        val living = setOf(agent)
+        schedule.claim(living, now)
+        schedule.settled(agent, now, owed = false)
+        assertEquals(listOf(agent), schedule.claimFollowUps(living, now + FOLLOW_UP_DELAY_TICKS))
+        // The flight that deferred the goal settles: its review is owed all the same.
+        schedule.settled(agent, now + 100, owed = true)
+        assertEquals(listOf(agent), schedule.claimFollowUps(living, now + 100 + FOLLOW_UP_DELAY_TICKS))
+    }
 }

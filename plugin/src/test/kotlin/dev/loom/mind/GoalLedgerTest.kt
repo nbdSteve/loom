@@ -126,11 +126,11 @@ class GoalLedgerTest {
     @Test
     fun aFlightFromAHunterStepsAsideFromTheHeldGoal() {
         // r20 kappa body:00000839: a review beside a zombie and a skeleton could only dig. A
-        // flight with no goal choice is accepted, and the goal stays held.
+        // flight with no goal choice defers the goal, which stays held.
         review(alpha, "r1", 100, GoalDisposition.ADOPT)
         ledger.present(alpha, "r2", 200)
         val fled = ledger.resolve(alpha, answer(alpha, "r2", null, intent = Intent.Flee("e9")))
-        assertEquals(GoalEvidence.UNADDRESSED, fled?.outcome)
+        assertEquals(GoalEvidence.DEFERRED, fled?.outcome)
         assertEquals("r1", fled?.goalId)
         assertNull(ledger.takeRefusal(alpha))
     }

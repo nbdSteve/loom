@@ -34,7 +34,11 @@
 //!   once the goal is met completes it plainly beside the log still in sight once (refused)
 //!   before replacing it;
 //! - `gamma`, once clear of its peer, is refused a dirt goal while the frontier is offered (r22:
-//!   the dirt underfoot crowded out looking for wood).
+//!   the dirt underfoot crowded out looking for wood);
+//! - `kappa`, once clear of its creeper with nothing in sight to ground an item goal, sets a
+//!   discovery goal and walks toward a tree line the rehearsal lays out past what it senses, and
+//!   once a walk reveals a log replaces the discovery with a log goal stepped by its dig (r23: 17
+//!   of 70 reviews could set no goal at all).
 //!
 //! Any other agent is answered by [`ScriptedBackend`].
 
@@ -435,7 +439,7 @@ fn collector(perception: &Perception) -> Draft {
 /// kappa: a flight from the first hunter the review offers, with no goal choice.
 fn warden(perception: &Perception) -> Draft {
     OfferedRefs::of(perception).danger.first().map_or_else(
-        || answer(Intent::Idle, None, IDLE_ROLE),
+        || discoverer(perception),
         |hunter| {
             answer(
                 Intent::Flee {
@@ -446,6 +450,86 @@ fn warden(perception: &Perception) -> Draft {
             )
         },
     )
+}
+
+/// Where kappa's tree line runs, along z, from x [`TREE_LINE_WEST`] to [`TREE_LINE_EAST`]; the
+/// rehearsal lays it out past anything kappa senses from the border.
+const TREE_LINE_Z: f64 = -46.0;
+const TREE_LINE_WEST: f64 = -60.0;
+const TREE_LINE_EAST: f64 = -14.0;
+
+/// The bearing from where `perception` stands toward the nearest point of kappa's tree line.
+fn toward_tree_line(perception: &Perception) -> Bearing {
+    let at = &perception.self_state.position;
+    let (x, z) = (
+        at.first().copied().unwrap_or(0.0),
+        at.get(2).copied().unwrap_or(0.0),
+    );
+    let dx = x.clamp(TREE_LINE_WEST, TREE_LINE_EAST) - x;
+    let dz = TREE_LINE_Z - z;
+    match (dx.abs() > dz.abs(), dx > 0.0, dz > 0.0) {
+        (true, true, _) => Bearing::East,
+        (true, false, _) => Bearing::West,
+        (false, _, true) => Bearing::South,
+        (false, _, false) => Bearing::North,
+    }
+}
+
+/// kappa, once clear of the creeper: with nothing grounding an item goal, a discovery goal walked
+/// toward its tree line until a log comes into sight, then a log goal for it (r23: 17 of 70
+/// reviews could set no goal at all).
+fn discoverer(perception: &Perception) -> Draft {
+    let offered = OfferedRefs::of(perception);
+    let walk = || edge_toward(perception, toward_tree_line(perception));
+    let discovering = perception.goal.as_ref().is_some_and(|goal| goal.discovery);
+    if offered.stalled {
+        return answer(
+            Intent::Idle,
+            Some(judged(GoalDisposition::Abandon)),
+            "the discovery advanced nothing for three walks; abandon it",
+        );
+    }
+    if discovering && met(perception) {
+        if let (Some(block), Some((fewest, _))) =
+            (dig_of(perception, LOG), offered.count_bounds_of(LOG))
+        {
+            return answer(
+                Intent::Dig { block },
+                Some(target(GoalDisposition::Replace, LOG, fewest)),
+                "the walk revealed a log: replace the discovery with a log goal and dig it",
+            );
+        }
+    }
+    if discovering {
+        return walk().map_or_else(
+            || answer(Intent::Idle, None, IDLE_ROLE),
+            |onto| {
+                answer(
+                    Intent::MoveTo { onto },
+                    Some(judged(GoalDisposition::Continue)),
+                    "keep looking for wood",
+                )
+            },
+        );
+    }
+    if perception.goal.is_none() && offered.discovery_offered() {
+        if let Some(onto) = walk() {
+            return answer(
+                Intent::MoveTo { onto },
+                Some(GoalChoice {
+                    discover: Some(true),
+                    step_result: None,
+                    ..judged(GoalDisposition::Adopt)
+                }),
+                "nothing in sight grounds a goal: set out to discover one",
+            );
+        }
+    }
+    match &perception.goal {
+        Some(_) if met(perception) => finish(perception),
+        Some(_) => pursue(perception, LOG).unwrap_or_else(|| answer(Intent::Idle, None, IDLE_ROLE)),
+        None => answer(Intent::Idle, None, IDLE_ROLE),
+    }
 }
 
 /// iota: the first drop in route reach collected with approach, for a goal of holding it.
@@ -991,6 +1075,82 @@ mod tests {
             }
         );
         assert!(fled.goal.is_none());
+    }
+
+    #[test]
+    fn kappa_clear_of_the_creeper_discovers_its_tree_line_and_replaces_the_discovery_with_logs() {
+        let mut seen = review("kappa");
+        seen.self_state.position = [-30.5, -60.0, -60.5];
+        seen.explore = vec![
+            edge("x1", Bearing::North, 12.0),
+            edge("x5", Bearing::South, 12.0),
+        ];
+        seen.horizon.clear();
+        let set = draft(&seen);
+        assert_eq!(
+            set.intent,
+            Intent::MoveTo {
+                onto: "x5".to_owned()
+            }
+        );
+        assert_eq!(set.goal.as_ref().and_then(|goal| goal.discover), Some(true));
+        // Held and not yet met, it keeps walking toward the tree line.
+        seen.goal = Some(GoalSummary {
+            discovery: true,
+            goal_id: "g".to_owned(),
+            statement: "find a useful resource beyond the edge of sight".to_owned(),
+            revision: 0,
+            adopted_tick: 0,
+            last_step: None,
+            success_item: None,
+            success_count: None,
+            step: None,
+            step_action: None,
+            step_ref: None,
+            progress: Some(GoalProgress {
+                condition_met: false,
+                condition_held: 0,
+                inventory_delta: vec![],
+                condition_advanced: false,
+                step_advanced: false,
+                step_evidence: StepEvidence::None,
+                steps_without_progress: 1,
+            }),
+        });
+        let walking = draft(&seen);
+        assert_eq!(
+            walking.intent,
+            Intent::MoveTo {
+                onto: "x5".to_owned()
+            }
+        );
+        assert_eq!(
+            walking.goal.map(|goal| goal.disposition),
+            Some(GoalDisposition::Continue)
+        );
+        // The walk revealed a log: the discovery becomes a log goal, stepped by its dig.
+        seen.surroundings = vec![log("b1")];
+        seen.horizon = vec![loom_contract::HorizonGoal {
+            what: LOG.to_owned(),
+            grounding: loom_contract::HorizonGrounding::Sight,
+            via: None,
+            most: 9,
+            frontier: true,
+        }];
+        if let Some(progress) = seen.goal.as_mut().and_then(|goal| goal.progress.as_mut()) {
+            progress.condition_met = true;
+            progress.step_evidence = StepEvidence::Revealed;
+        }
+        let became = draft(&seen);
+        assert_eq!(
+            became.intent,
+            Intent::Dig {
+                block: "b1".to_owned()
+            }
+        );
+        let choice = became.goal.unwrap();
+        assert_eq!(choice.disposition, GoalDisposition::Replace);
+        assert_eq!(choice.success_item.as_deref(), Some(LOG));
     }
 
     #[test]

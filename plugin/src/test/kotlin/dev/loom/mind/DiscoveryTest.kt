@@ -136,6 +136,68 @@ class DiscoveryTest {
         }
     }
 
+    private fun hunter(distance: Double) =
+        Observation(
+            kind = ObservationKind.ENTITY,
+            what = "entity.minecraft.zombie",
+            distance = distance,
+            direction = Bearing.WEST,
+            verticalOffset = 0.0,
+            visible = true,
+            ref = "e1",
+            hunts = true,
+        )
+
+    private val bread = dev.loom.contract.InventoryStack("i1", "item.minecraft.bread", 2)
+
+    private fun Perception.fed(food: Int): Perception =
+        copy(selfState = selfState.copy(food = food, inventorySummary = listOf(bread)))
+
+    @Test
+    fun `a survival response defers a mandatory or held discovery goal and is never credited to it`() {
+        val ledger = GoalLedger(recipes = recipes)
+        // Nothing grounded, a zombie close: the flight defers the discovery the review owed.
+        val hunted = scene("r1", 100, 0.0, underfoot, hunter(4.0)).fed(20)
+        assertEquals(GoalEvidence.DEFERRED, ledger.answer(hunted, Intent.Flee("e1"), null)?.outcome)
+        assertEquals(
+            GoalEvidence.DEFERRED,
+            ledger.answer(hunted.copy(requestId = "r1b"), Intent.Attack("e1", "i1", 2, false), null)?.outcome,
+        )
+        // A fed meal is no survival response, and a hungry one is.
+        assertEquals(
+            GoalEvidence.UNADDRESSED,
+            ledger.answer(hunted.copy(requestId = "r1c"), Intent.Eat("i1"), null)?.outcome,
+        )
+        val hungry = scene("r1d", 100, 0.0, underfoot).fed(HUNGRY_FOOD_LEVEL.toInt())
+        assertEquals(GoalEvidence.DEFERRED, ledger.answer(hungry, Intent.Eat("i1"), null)?.outcome)
+        // Held, it is deferred the same way, and nothing else steps aside from it.
+        val bare = scene("r2", 200, 0.0, underfoot)
+        assertEquals(GoalEvidence.ADOPTED, ledger.answer(bare, Intent.MoveTo("x1"), discover)?.outcome)
+        ledger.stepped(agent, "r2", "moveTo", EventTag.ACCEPTED, reached = true)
+        val walked = scene("r3", 400, 12.0, underfoot, hunter(4.0)).fed(HUNGRY_FOOD_LEVEL.toInt())
+        val stalledBefore =
+            ledger.present(
+                agent,
+                "probe",
+                400,
+                GoalObservation.of(walked),
+            )?.progress?.stepsWithoutProgress
+        ledger.forget(agent, "probe")
+        assertEquals(GoalEvidence.CHOICE_MISSING, ledger.answer(walked, Intent.Dig("g1"), null)?.outcome)
+        assertEquals(
+            GoalEvidence.DEFERRED,
+            ledger.answer(walked.copy(requestId = "r3b"), Intent.Flee("e1"), null)?.outcome,
+        )
+        ledger.stepped(agent, "r3b", "flee", EventTag.ACCEPTED, reached = true)
+        // The flight ended beside a tree: the discovery is met, but the flight is no reveal of it.
+        val fled = scene("r4", 600, 30.0, underfoot, tree)
+        val shown = ledger.present(agent, fled.requestId, fled.capturedTick, GoalObservation.of(fled))
+        assertEquals(true, shown?.progress?.conditionMet)
+        assertEquals(StepEvidence.NONE, shown?.progress?.stepEvidence)
+        assertEquals(stalledBefore, shown?.progress?.stepsWithoutProgress)
+        assertEquals("r2", shown?.goalId)
+    }
+
     private companion object {
         const val DIRT = "item.minecraft.dirt"
         const val LOG = "item.minecraft.oak_log"

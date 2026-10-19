@@ -328,7 +328,7 @@ impl BackendChoice {
 /// plus the stagger, or an agent would notice its reserve for the first time after
 /// it had already run out. It is a rule of thumb and nothing more - a real backend
 /// weighs resting against whatever else the agent is doing.
-const LOW_FOOD_LEVEL: i64 = 7;
+const LOW_FOOD_LEVEL: i64 = crate::offered::HUNGRY_FOOD_LEVEL;
 
 /// The item the scripted stand-in prefers its placeholder goal to be achieved by holding.
 pub const SCRIPTED_SUCCESS_ITEM: &str = "item.minecraft.stick";
@@ -367,7 +367,9 @@ impl ScriptedBackend {
     /// abandoned rather than continued into the body's refusal, and no goal is ever adopted beside
     /// an idle step or for a count nothing in sight could give.
     fn goal_now(perception: &Perception, intent: &Intent) -> Option<GoalChoice> {
-        if !perception.trigger.reviews_goal() {
+        if !perception.trigger.reviews_goal()
+            || crate::offered::OfferedRefs::of(perception).survives(intent)
+        {
             return None;
         }
         let step = |disposition, step_result| GoalChoice {
@@ -1287,6 +1289,32 @@ mod tests {
         assert_eq!(
             draft.reasoning,
             "food is 7 of 20 with saturation 0.0; eating the bread may restore it"
+        );
+    }
+
+    #[test]
+    fn a_hungry_meal_defers_a_held_goal_rather_than_abandoning_it() {
+        let mut seen = hungry(
+            perception(Trigger::GoalReview, DecisionImportance::Routine),
+            LOW_FOOD_LEVEL,
+        );
+        seen.self_state.inventory_summary = vec![InventoryStack {
+            slot_ref: "i1".to_owned(),
+            what: "item.minecraft.bread".to_owned(),
+            count: 3,
+        }];
+        let path = format!(
+            "{}/../../../contract/fixtures/valid/perception-goal-discovery-held.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let held: Perception =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        seen.goal = held.goal;
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        assert!(matches!(draft.intent, Intent::Eat { .. }));
+        assert_eq!(
+            draft.goal, None,
+            "the meal defers the goal, which stays held"
         );
     }
 

@@ -30,7 +30,7 @@ fn constant(relative: &str, name: &str) -> f64 {
         .find(|line| {
             let line = line.trim_start();
             (line.starts_with("const ") || line.starts_with("private const val "))
-                && line.contains(&format!("{name} ="))
+                && (line.contains(&format!("{name} =")) || line.contains(&format!("{name}: ")))
         })
         .unwrap_or_else(|| panic!("{relative} states no {name}"));
     let value = line.split('=').nth(1).unwrap().trim().trim_end_matches(';');
@@ -99,4 +99,23 @@ fn interaction_reach_is_measured_from_the_eyes_the_body_measures_from() {
     // the pinned client's player value against this one.
     assert!(source("body/src/interaction.js").contains("bot.entity?.eyeHeight"));
     assert!(source("body/test/libraries.test.js").contains(&format!("{EYE_HEIGHT_BLOCKS}")));
+}
+
+#[test]
+fn every_survival_bound_is_the_one_the_jvm_ledger_defers_a_goal_by() {
+    use loom_cognition::offered::{DANGER_SIGHT_BLOCKS, DANGER_UNSEEN_BLOCKS, HUNGRY_FOOD_LEVEL};
+    let survival = "plugin/src/main/kotlin/dev/loom/mind/Survival.kt";
+    #[allow(clippy::cast_precision_loss)]
+    let hungry = HUNGRY_FOOD_LEVEL as f64;
+    for (name, mind) in [
+        ("HUNGRY_FOOD_LEVEL", hungry),
+        ("DANGER_SIGHT_BLOCKS", DANGER_SIGHT_BLOCKS),
+        ("DANGER_UNSEEN_BLOCKS", DANGER_UNSEEN_BLOCKS),
+    ] {
+        let jvm = constant(survival, name);
+        assert!(
+            (jvm - mind).abs() < f64::EPSILON,
+            "{name}: JVM {jvm}, mind {mind}"
+        );
+    }
 }
