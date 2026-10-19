@@ -1291,7 +1291,7 @@ fn survival_schema(offered: &OfferedRefs, reasoning: &Value, defs: &mut Value) -
     let intents = defs
         .as_object_mut()
         .and_then(|table| survival_intents(offered, table))
-        .unwrap_or_else(|| json!([]));
+        .unwrap_or(Value::Array(Vec::new()));
     json!({
         "type": "object",
         "properties": {
