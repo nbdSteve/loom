@@ -96,7 +96,7 @@ internal class PlayerPerception(
             raw.connection.close()
             return null
         }
-        return runCatching { translator.sceneOf(raw, attacker) }
+        return runCatching { translator.sceneOf(raw, attacker).also(context.approach::recordScene) }
             .getOrElse { failure ->
                 raw.connection.close()
                 throw failure

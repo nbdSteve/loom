@@ -1217,6 +1217,7 @@ mod tests {
             slot_ref: "i1".to_owned(),
             what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
             count: 1,
+            edible: None,
         }];
         let more = ScriptedBackend::draft_now(&route, &first).goal.unwrap();
         assert_eq!(more.success_count, Some(2));
@@ -1389,11 +1390,13 @@ mod tests {
                 slot_ref: "i1".to_owned(),
                 what: "bread".to_owned(),
                 count: 3,
+                edible: None,
             },
             InventoryStack {
                 slot_ref: "i2".to_owned(),
                 what: "iron pickaxe".to_owned(),
                 count: 1,
+                edible: None,
             },
         ];
 
@@ -1506,6 +1509,7 @@ mod tests {
             slot_ref: "i1".to_owned(),
             what: "item.minecraft.light_gray_dye".to_owned(),
             count: 1,
+            edible: None,
         }];
         let goal = seen.goal.as_mut().unwrap();
         goal.discovery = false;
@@ -1539,6 +1543,7 @@ mod tests {
             slot_ref: "i1".to_owned(),
             what: "item.minecraft.bread".to_owned(),
             count: 3,
+            edible: None,
         }];
         let path = format!(
             "{}/../../../contract/fixtures/valid/perception-goal-discovery-held.json",

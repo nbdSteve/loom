@@ -104,12 +104,14 @@ fn interaction_reach_is_measured_from_the_eyes_the_body_measures_from() {
 #[test]
 fn every_survival_bound_is_the_one_the_jvm_ledger_defers_a_goal_by() {
     use loom_cognition::offered::{
-        ATTACK_MIN_HEALTH, DANGER_SIGHT_BLOCKS, DANGER_UNSEEN_BLOCKS, HUNGRY_FOOD_LEVEL,
-        IMMEDIATE_DANGER_BLOCKS, LOW_HEALTH, RANGED_THREAT_BLOCKS,
+        ATTACK_MIN_HEALTH, DANGER_SIGHT_BLOCKS, DANGER_UNSEEN_BLOCKS, HEALING_FOOD_LEVEL,
+        HUNGRY_FOOD_LEVEL, IMMEDIATE_DANGER_BLOCKS, LOW_HEALTH, RANGED_THREAT_BLOCKS,
     };
     let survival = "plugin/src/main/kotlin/dev/loom/mind/Survival.kt";
     #[allow(clippy::cast_precision_loss)]
     let hungry = HUNGRY_FOOD_LEVEL as f64;
+    #[allow(clippy::cast_precision_loss)]
+    let healing = HEALING_FOOD_LEVEL as f64;
     let pairs = [
         (
             "plugin/src/main/kotlin/dev/loom/body/player/PlayerSurvivalPreparer.kt",
@@ -141,6 +143,7 @@ fn every_survival_bound_is_the_one_the_jvm_ledger_defers_a_goal_by() {
     }
     for (name, mind) in [
         ("HUNGRY_FOOD_LEVEL", hungry),
+        ("HEALING_FOOD_LEVEL", healing),
         ("DANGER_SIGHT_BLOCKS", DANGER_SIGHT_BLOCKS),
         ("DANGER_UNSEEN_BLOCKS", DANGER_UNSEEN_BLOCKS),
     ] {

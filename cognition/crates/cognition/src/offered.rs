@@ -134,6 +134,12 @@ pub const ATTACK_HEALTH_MARGIN: f64 = 4.0;
 /// survival threshold Loom configures, `HUNGRY_FOOD_LEVEL` in the JVM's `Survival.kt`.
 pub const HUNGRY_FOOD_LEVEL: i64 = 7;
 
+/// The vanilla food level below which a player no longer heals: at or below [`LOW_HEALTH`] and
+/// under it, a stack the server names food is a meal on any trigger, so a hurt agent can eat its
+/// way back to healing before it starves (r33: every agent's food fell below 18 and stayed there,
+/// and the agents spent hundreds of ticks at 0.8 to 4.8 health). `HEALING_FOOD_LEVEL` in the JVM.
+pub const HEALING_FOOD_LEVEL: i64 = 18;
+
 /// The steps one goal item may be pursued by, by action: what in sight can give that item.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ItemSteps {
@@ -325,6 +331,19 @@ impl OfferedRefs {
         }
         if perception.trigger.reviews_goal() && state.food <= HUNGRY_FOOD_LEVEL {
             offered.meals.clone_from(&offered.stacks);
+        } else if state.health <= LOW_HEALTH && state.food < HEALING_FOOD_LEVEL {
+            let food: Vec<&str> = state
+                .inventory_summary
+                .iter()
+                .filter(|stack| stack.edible == Some(true))
+                .map(|stack| stack.slot_ref.as_str())
+                .collect();
+            offered.meals = offered
+                .stacks
+                .iter()
+                .filter(|stack| food.contains(&stack.as_str()))
+                .cloned()
+                .collect();
         }
     }
 
@@ -1090,6 +1109,7 @@ mod tests {
                 slot_ref: "i1".to_owned(),
                 what: "item.minecraft.stone_sword".to_owned(),
                 count: 1,
+                edible: None,
             });
         perception.self_state.crafting_options.push(CraftingOption {
             recipe_ref: "r1".to_owned(),

@@ -509,6 +509,7 @@ fn a_success_count_is_the_total_to_hold_bounded_by_what_is_held_and_what_sight_c
         slot_ref: "i9".to_owned(),
         what: stick.to_owned(),
         count: 3,
+        edible: None,
     });
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     // Three held and a bush expected to give one of its nought to two: a total of four (r15:
@@ -1410,6 +1411,7 @@ fn holding_bread(mut seen: Perception) -> Perception {
         slot_ref: "i8".to_owned(),
         what: "item.minecraft.bread".to_owned(),
         count: 2,
+        edible: None,
     });
     seen
 }
@@ -1544,6 +1546,7 @@ fn attacked_from(distance: f64, named: bool) -> Perception {
         slot_ref: "i1".to_owned(),
         what: "item.minecraft.stick".to_owned(),
         count: 1,
+        edible: None,
     }];
     seen
 }

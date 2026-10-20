@@ -15,6 +15,13 @@ import dev.loom.contract.Trigger
 /** The vanilla food level at or below which a goal review may eat before any goal step. */
 const val HUNGRY_FOOD_LEVEL: Long = 7
 
+/**
+ * The vanilla food level below which a player no longer heals: at or below [LOW_HEALTH] and under
+ * it, a stack the server names food is a meal on any trigger (r33: every agent's food fell below
+ * 18 and stayed there). `HEALING_FOOD_LEVEL` in the mind.
+ */
+const val HEALING_FOOD_LEVEL: Long = 18
+
 /** How near a hunter in sight is danger enough to answer first; `DANGER_SIGHT_BLOCKS` in the mind. */
 const val DANGER_SIGHT_BLOCKS: Double = 16.0
 
@@ -68,13 +75,21 @@ data class SurvivalOffer(
                         .filter { it.distance <= if (it.visible) DANGER_SIGHT_BLOCKS else DANGER_UNSEEN_BLOCKS }
                         .map { it.ref }
                         .toSet() + attacker,
-                meals =
-                    perception.selfState.inventorySummary
-                        .takeIf { perception.selfState.food <= HUNGRY_FOOD_LEVEL }
-                        .orEmpty()
-                        .map { it.ref }
-                        .toSet(),
+                meals = mealsOf(perception),
             )
+        }
+
+        /** Every stack while hungry, as before, else only food while hurt and not healing. */
+        private fun mealsOf(perception: Perception): Set<String> {
+            val state = perception.selfState
+            val stacks =
+                when {
+                    state.food <= HUNGRY_FOOD_LEVEL -> state.inventorySummary
+                    state.health <= LOW_HEALTH && state.food < HEALING_FOOD_LEVEL ->
+                        state.inventorySummary.filter { it.edible == true }
+                    else -> emptyList()
+                }
+            return stacks.map { it.ref }.toSet()
         }
 
         /** The attacker a damage trigger names, as a set of at most the one ref the scene shows. */

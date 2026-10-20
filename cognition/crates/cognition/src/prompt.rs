@@ -1364,6 +1364,7 @@ mod tests {
             slot_ref: handle.to_owned(),
             what: what.to_owned(),
             count,
+            edible: None,
         }
     }
 
@@ -2064,6 +2065,7 @@ mod tests {
                 slot_ref: format!("i{index:07}"),
                 what: overlong.clone(),
                 count: 64,
+                edible: None,
             })
             .collect();
         // Every own drop a perception may carry, lying at the widest place with the longest name.

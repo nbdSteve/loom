@@ -429,6 +429,11 @@ pub struct InventoryStack {
     /// tell a mind it is carrying food it does not have.
     #[serde(deserialize_with = "occupied_stack_count")]
     pub count: i64,
+    /// Whether the server says the stack can be eaten. Absent when the body did not say, which
+    /// reads as no: a meal is offered only from a stack the server named food (r33: ten agents
+    /// spent hundreds of ticks at low health with food below the healing threshold).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edible: Option<bool>,
 }
 
 /// One exact currently craftable recipe offered by this perception.

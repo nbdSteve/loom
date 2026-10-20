@@ -74,6 +74,10 @@
           "description": "How many items the stack holds. At least one, because an empty slot is not reported at all.",
           "type": "integer",
           "minimum": 1
+        },
+        "edible": {
+          "description": "Whether the server says the stack can be eaten. Absent when the body did not say, which reads as no: a meal is offered only from a stack the server named food.",
+          "type": "boolean"
         }
       }
     },

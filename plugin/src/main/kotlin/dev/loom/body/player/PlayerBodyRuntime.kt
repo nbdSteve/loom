@@ -12,6 +12,7 @@ import dev.loom.body.BodySpawnResult
 import dev.loom.body.EventTag
 import dev.loom.body.PendingPerceptions
 import dev.loom.body.RequestRefs
+import dev.loom.body.ThreatApproach
 import dev.loom.body.ThreatClock
 import dev.loom.body.ThreatWatch
 import dev.loom.body.VitalsWatch
@@ -41,6 +42,7 @@ data class PlayerBodyAuthority(
     val speechClaims: SpeechClaims = SpeechClaims.NONE,
     val ground: BlockGround = BlockGround.UNKNOWN,
     val yields: BlockYields = BlockYields.NONE,
+    val edibility: ItemEdibility = ItemEdibility.NONE,
     val ownDrops: OwnDrops = OwnDrops.NONE,
 )
 
@@ -67,6 +69,7 @@ internal class PlayerBodyContext(
     val recall = SourceRecall(authority.currentTick)
     val visited = VisitedGround(authority.currentTick)
     val vitalsWatch = VitalsWatch(journal)
+    val approach = ThreatApproach()
     val threatWatch =
         ThreatWatch(
             clock =

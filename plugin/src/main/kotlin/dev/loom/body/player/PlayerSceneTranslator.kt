@@ -278,6 +278,7 @@ internal class PlayerSceneTranslator(
                         ref = bindings[index].handle,
                         what = itemDescriptionId(stack.what),
                         count = stack.count.toLong(),
+                        edible = context.authority.edibility.edible(stack.what),
                     )
                 },
             craftingOptions =

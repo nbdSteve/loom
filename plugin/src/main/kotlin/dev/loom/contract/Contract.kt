@@ -273,6 +273,8 @@ data class InventoryStack(
     val what: String,
     /** How many items the stack holds. At least one, because an empty slot is not reported. */
     val count: Long,
+    /** Whether the server says the stack can be eaten; absent reads as no. */
+    val edible: Boolean? = null,
 ) {
     init {
         requireBoundedRef(ref)

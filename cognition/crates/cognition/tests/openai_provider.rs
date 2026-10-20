@@ -354,6 +354,7 @@ fn perception(importance: DecisionImportance) -> Perception {
                 slot_ref: "i1".to_owned(),
                 what: "bread".to_owned(),
                 count: 1,
+                edible: None,
             }],
             crafting_options: vec![],
             crafting_options_omitted: 0,

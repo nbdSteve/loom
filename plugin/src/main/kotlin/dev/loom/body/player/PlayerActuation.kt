@@ -9,6 +9,7 @@ import dev.loom.body.IntentOutcome
 import dev.loom.body.RefResolution
 import dev.loom.body.SlotResolution
 import dev.loom.body.WorldTargetResolution
+import dev.loom.body.blocksApart
 import dev.loom.body.completedBodyOperation
 import dev.loom.body.horizontalBearing
 import dev.loom.body.huntsPlayers
@@ -390,7 +391,7 @@ internal class PlayerActionPreparer(
                             entity = entity,
                             distance = FLEE_DISTANCE_BLOCKS,
                             timeoutMs = MOVEMENT_DEADLINE_MS,
-                            sprint = true,
+                            sprint = context.sprintsFrom(sense, resolved.subject, entity),
                             avoid = otherHuntersOf(sense, entity).takeIf { it.isNotEmpty() },
                             // Takes over from a running walk or flight only once its own threat checks
                             // out, so a refused flight never stops a valid one (r33 gamma).
@@ -456,6 +457,19 @@ private fun rejectedAction(
     {
         ActionExecution(IntentOutcome.Rejected(reason, tag))
     }
+
+/**
+ * Whether the flight from [entity] of [sense] sprints: only from a threat near enough, or closing
+ * fast enough, to need it (`ThreatApproach`).
+ */
+private fun PlayerBodyContext.sprintsFrom(
+    sense: HeldSense,
+    subject: java.util.UUID,
+    entity: Int,
+): Boolean {
+    val seen = sense.raw.report.entities.getOrNull(entity)?.position ?: return true
+    return approach.sprints(subject, sense.raw.capturedTick, blocksApart(sense.raw.report.position, seen))
+}
 
 /** One flight request on the sense connection that named its threat. */
 private fun fleeOnce(

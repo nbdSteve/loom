@@ -246,6 +246,7 @@ class LoomPlugin : JavaPlugin() {
                 speechClaims = sentSpeechOf(witness.speech, bukkitMain) { server.currentTick.toLong() },
                 ground = BukkitBlockGround(server),
                 yields = BukkitBlockYields(server),
+                edibility = BukkitItemEdibility,
                 ownDrops = ownDrops,
             )
         val infrastructures =

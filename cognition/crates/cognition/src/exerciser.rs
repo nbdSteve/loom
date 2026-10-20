@@ -737,6 +737,7 @@ mod tests {
                     slot_ref: "i1".to_owned(),
                     what: item.to_owned(),
                     count,
+                    edible: None,
                 });
         }
         seen.goal = Some(GoalSummary {
