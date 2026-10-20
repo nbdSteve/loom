@@ -34,6 +34,10 @@ fn a_hurt_agent_below_the_healing_threshold_is_offered_only_its_food() {
     assert!(!offered.survives(&Intent::Eat {
         slot_ref: "i2".to_owned()
     }));
+    // The request schema, survival-only beside an immediate hunter, offers the bread as a meal.
+    let schema = decision_schema_for(&offered, GoalPhase::of(&hurt)).to_string();
+    assert!(schema.contains("\"eat\""), "{schema}");
+    assert!(schema.contains("\"i1\""), "{schema}");
 }
 
 #[test]
