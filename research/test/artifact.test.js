@@ -751,10 +751,10 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
     const v13 = read(file)
     const v29 = read(file.replace('shakedown', 'night-goal'))
     // The plains scene moves the seed, every slot and the start time; nothing else about the
-    // world does.
+    // world does. From r34 the balanced scene starts it at 6000 rather than 9000 (the r33 audit).
     assert.equal(v29.world.seed, SCENES['e1-explore-ring'].seed)
-    assert.equal(v29.primaryBehavior.scene, 'e1-explore-ring')
-    assert.equal(v29.primaryBehavior.initialWorldClock.timeOfDay, 9000)
+    assert.equal(v29.primaryBehavior.scene, 'e2-balanced-ring')
+    assert.equal(v29.primaryBehavior.initialWorldClock.timeOfDay, 6000)
     v29.primaryBehavior.initialWorldClock.timeOfDay = 0
     for (const config of [v13, v29]) {
       for (const key of ['experimentId', 'title', 'mode']) delete config[key]
@@ -781,14 +781,15 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   assert.equal(live.mode, 'routine-v32-survival-discovery')
   for (const config of [live, scripted]) {
     assert.deepEqual(validateRunConfig(config), [], config.experimentId)
-    assert.equal(config.primaryBehavior.profile, 'survival-envelope-10m-10')
+    assert.equal(config.primaryBehavior.profile, 'balanced-envelope-10m-10')
     // One follow-up a scheduled review: a hundred planned calls leave a third of the ceiling.
     assert.equal(config.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview, 1)
     assert.deepEqual(config.agents, [...AGENT_ORDER])
-    assert.equal(config.primaryBehavior.scene, 'e1-explore-ring')
+    // The balanced scene: e1's seed and positions, from time 6000 (the r33 audit).
+    assert.equal(config.primaryBehavior.scene, 'e2-balanced-ring')
     assert.equal(config.world.seed, SCENES['e1-explore-ring'].seed)
     assert.deepEqual(config.primaryBehavior.initialPositions, placementOf(explored).positions)
-    assert.deepEqual(config.primaryBehavior.initialWorldClock, { timeOfDay: 9000, day: 0, isDay: true })
+    assert.deepEqual(config.primaryBehavior.initialWorldClock, { timeOfDay: 6000, day: 0, isDay: true })
     assert.equal(config.primaryBehavior.startingInventories, 'empty')
     assert.equal(config.primaryBehavior.externalCognitionStimuli, 'none')
     assert.equal(config.proof, undefined)
@@ -824,7 +825,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   assert.equal(live.cognition.backend, 'openai')
   assert.equal(scripted.cognition.backend, 'scripted')
   const manifest = validateProspectiveManifest(live, SOURCE)
-  assert.equal(manifest.protocol.profile, 'survival-envelope-10m-10')
+  assert.equal(manifest.protocol.profile, 'balanced-envelope-10m-10')
   // 130 pivotal calls at $0.19456 and 248 ordinary at $0.0156672, under the unchanged ceiling.
   assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 29.1782656)
   assert.equal(manifest.cognition.maxExternalSpendUsd, 29.19)
@@ -846,7 +847,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
     (config) => { config.world.mobSpawning = false },
     (config) => { config.world.worldBorderDiameterBlocks = 256 },
     (config) => { config.world.viewDistanceChunks = 5 },
-    (config) => { config.primaryBehavior.initialWorldClock.timeOfDay = 6000 },
+    (config) => { config.primaryBehavior.initialWorldClock.timeOfDay = 9000 },
     (config) => { config.primaryBehavior.startingInventories = 'kit' },
     (config) => { config.primaryBehavior.injectedDirectives.roles = true },
     (config) => { config.primaryBehavior.externalCognitionStimuli = 'operatorThink' },
@@ -894,6 +895,25 @@ test('the README question names the configured population and profile', () => {
   assert.match(shakedown, /^Can ten independently embodied Loom agents complete the bounded routine-v13 shakedown-10m-10 profile using/)
   assert.doesNotMatch(shakedown, /three|pilot/)
   assert.match(readmeQuestion(read('tribe-two-cycle-3.json')), /^Can three .* two-cycle-3 profile using/)
+})
+
+test('the balanced profile keeps every survival-envelope bound and pre-registers its exposure exactly', () => {
+  const { PROFILES, SCENES, exposureOf } = require('../lib/profiles.js')
+  const balanced = PROFILES['balanced-envelope-10m-10']
+  const envelope = PROFILES['survival-envelope-10m-10']
+  assert.deepEqual({ ...balanced, scene: envelope.scene, exposure: undefined }, { ...envelope, exposure: undefined })
+  const from = SCENES['e2-balanced-ring']
+  const was = SCENES['e1-explore-ring']
+  assert.deepEqual({ ...from, initialTimeOfDay: was.initialTimeOfDay }, { ...was })
+  assert.equal(from.initialTimeOfDay, 6000)
+  // 7000 daylight ticks of pursuit before dusk at 13000, then 5000 night ticks of natural danger.
+  assert.deepEqual(exposureOf(from.initialTimeOfDay, balanced.simulationTickCeiling), { daylightTicks: 7000, nightTicks: 5000 })
+  assert.deepEqual({ ...balanced.exposure }, { daylightTicks: 7000, nightTicks: 5000 })
+  // r33's start would have held 4000 daylight ticks and 8000 night ones: refused for this profile.
+  assert.deepEqual(exposureOf(was.initialTimeOfDay, balanced.simulationTickCeiling), { daylightTicks: 4000, nightTicks: 8000 })
+  const late = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'tribe-night-goal-10m-10.json'), 'utf8'))
+  late.primaryBehavior.initialWorldClock.timeOfDay = 9000
+  assert.ok(validateRunConfig(late).some((error) => error.includes('initialWorldClock')), 'a 9000 start is refused')
 })
 
 test('every committed artifact validates, a pre-harness generation by its schema alone', () => {

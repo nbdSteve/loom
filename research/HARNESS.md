@@ -337,6 +337,13 @@ From routine-v23 each scheduled review may owe one follow-up review, so the ten-
 the worst-case price. That is re-sized for the follow-ups and not re-measured; a run under it
 should be treated as the next measurement.
 
+## The balanced scene
+
+From r34 the ten-minute shakedown runs the `balanced-envelope-10m-10` profile on `e2-balanced-ring`: `e1-explore-ring`'s seed, positions, border, difficulty, population, bounds, bars and plan, starting at time 6000 rather than 9000.
+The r33 audit found the 9000 start left about two daylight reviews per agent, so its pursuit bars mostly measured night survival.
+The profile pre-registers its exposure exactly, 7000 daylight ticks before dusk at 13000 and 5000 night ticks after it, and preflight refuses a configuration whose start and tick ceiling do not hold it (`exposureOf`).
+The `e1-explore-ring` scene and the profiles on it are unchanged, so r19 to r33 validate as published.
+
 ## Tier fallback
 
 Once the JVM's pivotal ceiling no longer fits a damage or threat-sighting perception, but its agent's own and the global ceiling still do, the JVM sends it at the ordinary tier and journals one `cognitionTierFallback` body record with outcome `tierFallback` (`CallReserve.Admission`).

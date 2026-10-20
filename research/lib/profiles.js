@@ -55,8 +55,38 @@ const SCENES = Object.freeze({
     ]),
     initialTimeOfDay: 9000,
     coverRule: null
+  }),
+  // `e1-explore-ring`'s seed, positions, border and difficulty, starting at time 6000 instead: the
+  // r33 audit found 9000 left about two daylight reviews per agent, so its pursuit bars measured
+  // night survival. From 6000 a ten-minute run holds 7000 daylight ticks of pursuit before dusk at
+  // 13000 and 5000 night ticks of natural danger after it (`exposureOf`).
+  'e2-balanced-ring': Object.freeze({
+    seed: '20011',
+    positions: Object.freeze([
+      [12.5, 67, 0.5], [9.5, 67, 7.5], [3.5, 67, 11.5], [-4.5, 66, 12.5], [-9.5, 66, 7.5],
+      [-11.5, 66, 0.5], [-9.5, 66, -7.5], [-3.5, 67, -11.5], [3.5, 68, -11.5], [9.5, 69, -7.5]
+    ]),
+    initialTimeOfDay: 6000,
+    coverRule: null
   })
 })
+
+// The night a run's danger exposure is measured in: vanilla's hostile spawning, as the behavior
+// gate reads it (`NIGHT_START`, `NIGHT_END` in `behavior-gate.js`).
+const NIGHT_START_TICK = 13_000
+const NIGHT_END_TICK = 23_000
+
+/** The daylight and night ticks a run from [start] lasting [ticks] world ticks holds. */
+function exposureOf (start, ticks) {
+  let daylightTicks = 0
+  let nightTicks = 0
+  for (let tick = 0; tick < ticks; tick += 1) {
+    const time = (start + tick) % 24_000
+    if (time >= NIGHT_START_TICK && time < NIGHT_END_TICK) nightTicks += 1
+    else daylightTicks += 1
+  }
+  return { daylightTicks, nightTicks }
+}
 
 const TWO_CYCLE_TICKS = 48_000
 const CADENCE = Object.freeze({ cadenceTicks: 2400, sliceTicks: 100 })
@@ -302,6 +332,13 @@ PROFILES['survival-envelope-10m-10'] = Object.freeze({
   ...PROFILES['discovery-goal-10m-10'],
   callCeilings: Object.freeze({ perAgent: 40, global: 378, outstanding: 6, pivotal: 130 })
 })
+// The survival envelope's bounds, bars, plan and population on the balanced scene (the r33 audit),
+// with the daylight and night exposure it must hold pre-registered here, before any run.
+PROFILES['balanced-envelope-10m-10'] = Object.freeze({
+  ...PROFILES['survival-envelope-10m-10'],
+  scene: 'e2-balanced-ring',
+  exposure: Object.freeze({ daylightTicks: 7000, nightTicks: 5000 })
+})
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */
@@ -325,6 +362,7 @@ function placementOf (profile) {
 
 module.exports = {
   AGENT_ORDER,
+  exposureOf,
   CADENCE,
   PROFILES,
   SCENES,

@@ -31,7 +31,7 @@ const {
   scanText
 } = require('./evidence.js')
 const { isCoalesced, isShutdownEnding, unansweredAccountedFor } = require('./danger.js')
-const { CADENCE, PROFILES, SCENES, placementOf, profileOf, ticksPerSecondOf } = require('./profiles.js')
+const { CADENCE, PROFILES, SCENES, exposureOf, placementOf, profileOf, ticksPerSecondOf } = require('./profiles.js')
 const { RunFailure } = require('./lifecycle.js')
 const {
   CRASH_CONTAINMENT_MODE,
@@ -213,6 +213,11 @@ function primaryBehaviorErrors (config) {
     clock?.isDay !== true
   ) {
     errors.push(`primaryBehavior.initialWorldClock must pin day 0 at time ${startTime}`)
+  }
+  // A profile that pre-registers its exposure holds exactly that daylight and night (the r33 audit).
+  if (profile.exposure !== undefined &&
+      !sameJson(exposureOf(startTime, profile.simulationTickCeiling), { ...profile.exposure })) {
+    errors.push(`profile ${behavior.profile} must hold ${JSON.stringify(profile.exposure)} ticks of daylight and night`)
   }
   const schedule = behavior.nativeGoalReviewSchedule
   if (
