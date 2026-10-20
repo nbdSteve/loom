@@ -3,7 +3,7 @@
 const net = require('node:net')
 
 const { validatedCognitionFailure } = require('./cognition-failure.js')
-const { ADMISSION_CLOSED_EVENT, PROXY_REQUEST_TIMEOUT_MILLIS } = require('./controlled-stop.js')
+const { ADMISSION_CLOSED_EVENT, PROXY_REQUEST_TIMEOUT_MILLIS, providerStopFor } = require('./controlled-stop.js')
 
 const MAX_FRAME_BYTES = 256 * 1024
 const REFUSAL_BOUNDS = Object.freeze([
@@ -356,7 +356,10 @@ class CognitionBudgetProxy {
         outstandingAtAdmission,
         latencyMs: latencyMs(),
         ...originField,
-        ...(failure === null ? {} : { failure })
+        ...(failure === null ? {} : { failure }),
+        // A closed public fact beside the private classification evidence does not keep, so a
+        // publisher can tell a provider outage's drained calls from a failure of their own.
+        ...(failure !== null && providerStopFor({}, failure) !== null ? { providerUnavailable: true } : {})
       })
       if (cognitionFailed) {
         this.onCognitionFailure(parsed.error, failure, {

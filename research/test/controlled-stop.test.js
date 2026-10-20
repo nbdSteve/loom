@@ -209,6 +209,23 @@ test('a classified provider unavailability stops under its own kind and keeps it
   assert.match(readme(published), /Provider classification: .*providerServer/)
 })
 
+test('calls the same provider outage fails while they drain are part of the provider stop', () => {
+  // r31: five calls timed out at the provider within twelve seconds; the four still in flight when
+  // the first closed admission ended the run untyped instead of as this stop.
+  const config = openAiGoalContinuityConfig()
+  // The fixture's outstanding ceiling is three: the trigger and two in flight, both cut off too.
+  const raw = controlledStopRawRecords({ config, kind: 'providerUnavailable', inFlight: 2, inFlightFailed: 2 })
+  assert.equal(primaryBehaviorRunFailure(config, raw.body, raw.harness), null, 'the guard reads them as the stop')
+  const stop = assertNoGo(publish({ config, raw }), 'providerUnavailable')
+  assert.equal(stop.forwardedAfterClose, 2)
+  // A different failure while draining is still a failure of its own.
+  const other = controlledStopRawRecords({ config, kind: 'providerUnavailable', inFlight: 2, inFlightFailed: 1 })
+  const malformed = other.harness.find((record) => record.requestId === 'flight-1')
+  malformed.failure.mapping = 'malformedAnswer'
+  delete malformed.providerUnavailable
+  assert.match(primaryBehaviorRunFailure(config, other.body, other.harness).message, /cognition request became unavailable \(failed/)
+})
+
 test('a stop before any decision publishes with zero owed reviews', () => {
   const published = publish({
     raw: controlledStopRawRecords({ inFlight: 3, reviews: false, stopTick: 40 })

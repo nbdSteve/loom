@@ -343,6 +343,7 @@ In primary behavior mode two outcomes end a run without making it an integrity f
 A typed `perAgentCall`, `globalCall`, `globalOutstanding`, or `spend` refusal is a `cognitionBudgetExhausted` stop.
 A provider failure that cognition classified as `providerTimeout`, `providerConnection`, `providerResponseRead`, `providerTransport`, `providerRateLimit`, or `providerServer` is a `providerUnavailable` stop.
 An HTTP 401 or 403 still stops the run immediately as a failure, and every other cognition failure is still fatal.
+A call already in flight when a provider stop closes admission, which the same outage then fails with a classification of that set, is part of the stop rather than a failure of its own; the proxy marks such a forwarded record `providerUnavailable: true`, a closed public fact beside the classification evidence does not keep (r31: five calls timed out within twelve seconds, and the four in flight ended the run untyped).
 `research/lib/controlled-stop.js` owns these closed sets.
 
 On a stop the proxy journals one `cognitionAdmissionClosed` record before it answers, and refuses every later request under the `admissionClosed` bound.

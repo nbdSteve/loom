@@ -24,6 +24,7 @@ const {
   CONTROLLED_STOP_DRAIN_MILLIS,
   CONTROLLED_STOP_REASON,
   budgetStopFor,
+  isProviderDrainFailure,
   providerStopFor
 } = require('./controlled-stop.js')
 const { readJsonLines } = require('./evidence.js')
@@ -374,6 +375,7 @@ class PrimaryBehaviorGuard {
     this.settlement = new DeathSettlement()
     this.typed = new Set()
     this.closed = false
+    this.providerStopped = false
     this.firstPerceptionChecked = new Set()
     this.failure = null
   }
@@ -384,8 +386,13 @@ class PrimaryBehaviorGuard {
       if (record.event === ADMISSION_ENDED_EVENT) this.closed = true
       if (record.event === ADMISSION_CLOSED_EVENT && !this.closed) {
         this.closed = true
-        if (record.kind === 'providerUnavailable') this.typed.add(`${record.agentId}:${record.requestId}`)
+        if (record.kind === 'providerUnavailable') {
+          this.providerStopped = true
+          this.typed.add(`${record.agentId}:${record.requestId}`)
+        }
       }
+      // A call the same outage failed while it drained is part of the provider stop.
+      if (this.providerStopped && isProviderDrainFailure(record)) this.typed.add(`${record.agentId}:${record.requestId}`)
       if (
         record.event === 'cognitionRefused' &&
         [...BUDGET_STOP_BOUNDS, ADMISSION_CLOSED_BOUND].includes(record.bound) &&

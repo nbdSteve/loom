@@ -221,6 +221,42 @@ test('the proxy preserves one sanitized cognition classification for the diagnos
   }
 })
 
+test('a provider unavailability is journalled with a closed public flag beside its private classification', async () => {
+  // r31: the publisher reads normalized evidence, which never keeps `failure`, and has to tell a
+  // provider outage's drained calls from failures of their own.
+  const failure = {
+    schemaVersion: 'loom-cognition-failure/1',
+    backend: 'openai',
+    model: 'fast-model',
+    httpStatus: null,
+    providerType: null,
+    providerCode: null,
+    responseShape: 'noHttpResponse',
+    mapping: 'providerTimeout'
+  }
+  const upstream = await startRefusingUpstream('cognition failed: the model provider did not answer in time', failure)
+  const events = []
+  const proxy = new CognitionBudgetProxy({
+    listen: { host: '127.0.0.1', port: 0 },
+    upstream: { host: '127.0.0.1', port: upstream.address().port },
+    agents: ['alpha'],
+    models: { ordinary: 'fast-model', pivotal: 'deep-model' },
+    budget: { perAgentCallCeiling: 1, globalCallCeiling: 1, globalOutstandingCeiling: 1 },
+    journal: { append: (event, fields) => events.push({ event, ...fields }) }
+  })
+  await proxy.start()
+  try {
+    await request(proxy.listen.port, 'alpha', 'one')
+    const forwarded = events.find((event) => event.event === 'cognitionForwarded')
+    assert.equal(forwarded.outcome, 'cognitionFailure')
+    assert.equal(forwarded.providerUnavailable, true)
+    assert.deepEqual(forwarded.failure, failure)
+  } finally {
+    await proxy.close()
+    await new Promise((resolve) => upstream.close(resolve))
+  }
+})
+
 test('a controlled body crash leaves one scheduled cognition call for each peer', async () => {
   const upstream = await startUpstream()
   const events = []

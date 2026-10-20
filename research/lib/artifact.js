@@ -18,7 +18,8 @@ const {
   CONTROLLED_STOP_DRAIN_MILLIS,
   CONTROLLED_STOP_REASON,
   PROVIDER_UNAVAILABLE_MAPPINGS,
-  STOP_KINDS
+  STOP_KINDS,
+  isProviderDrainFailure
 } = require('./controlled-stop.js')
 const {
   METRICS_VERSION,
@@ -1542,7 +1543,9 @@ function controlledStopErrors (manifest, metrics, records) {
   }
   const typedKeys = new Set([
     ...harness.filter((record) => record.event === 'cognitionRefused').map((record) => record.requestKey),
-    ...(stop.kind === 'providerUnavailable' ? [triggerKey] : [])
+    ...(stop.kind === 'providerUnavailable'
+      ? [triggerKey, ...after.filter(isProviderDrainFailure).map((record) => record.requestKey)]
+      : [])
   ])
   for (const record of harness) {
     if (record.event === 'cognitionRefused') {

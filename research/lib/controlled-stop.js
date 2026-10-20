@@ -72,6 +72,16 @@ function providerStopFor (request, classified) {
   }
 }
 
+// Whether a forwarded record is a call that a provider outage also failed while it was in flight:
+// a classified provider unavailability like the one that closed admission. Once a provider stop
+// has closed admission, such a call is part of that stop rather than a failure of its own (r31:
+// five calls timed out at the provider within twelve seconds, and the four still in flight when
+// the first closed admission ended the run untyped).
+function isProviderDrainFailure (record) {
+  return record.event === 'cognitionForwarded' && record.outcome === 'cognitionFailure' &&
+    record.providerUnavailable === true
+}
+
 // Scheduled reviews an agent must and may have attempted in a window of `windowTicks`
 // after the start. Review k is due no earlier than k cadences, and no later than one
 // stagger across the population plus one sweep after that.
@@ -278,6 +288,7 @@ function admissionEndMetrics (bodyRecords, harnessRecords, firstTick) {
 }
 
 module.exports = {
+  isProviderDrainFailure,
   ADMISSION_CLOSED_BOUND,
   ADMISSION_CLOSED_EVENT,
   ADMISSION_ENDED_EVENT,

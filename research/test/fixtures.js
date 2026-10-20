@@ -508,6 +508,8 @@ function controlledStopRawRecords ({
   eventChains = 0,
   eventAgents = [stopAgent],
   inFlight = 0,
+  // How many of the in-flight calls the same provider outage fails while they drain.
+  inFlightFailed = 0,
   reviews = true,
   late = true,
   live = config.cognition.backend === 'openai'
@@ -671,7 +673,37 @@ function controlledStopRawRecords ({
   }
   unavailable(stopAgent, 'stop-1', stopTick, 'damaged', triggerSeen)
   for (let index = 0; index < inFlight; index += 1) {
-    complete(FLIGHT_AGENTS[index % 3], `flight-${index + 1}`, stopTick + 2, 'damaged')
+    const agentId = FLIGHT_AGENTS[index % 3]
+    const requestId = `flight-${index + 1}`
+    if (index >= inFlightFailed) {
+      complete(agentId, requestId, stopTick + 2, 'damaged')
+      continue
+    }
+    raw.harness.push({
+      observedAt: at(),
+      event: 'cognitionForwarded',
+      agentId,
+      requestId,
+      trigger: 'damaged',
+      importance: 'ROUTINE',
+      origin: 'nativeEventDriver',
+      outcome: 'cognitionFailure',
+      provenance: null,
+      providerUnavailable: true,
+      failure: {
+        schemaVersion: 'loom-cognition-failure/1',
+        backend: 'openai',
+        model: live ? LIVE_MODEL : 'scripted-stand-in',
+        mapping: 'providerTimeout',
+        httpStatus: null,
+        providerType: null,
+        providerCode: null,
+        responseShape: 'noHttpResponse'
+      }
+    })
+    raw.body.push(bodyRecord(stopTick + 2, agentId, 'cognitionUnavailable', 'refused', {
+      requestId, trigger: 'damaged', outcome: 'failed'
+    }))
   }
   if (late) {
     const seen = perceive('tribe-alpha', 'late-1', stopTick + 20, 'damaged')
