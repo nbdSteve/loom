@@ -160,6 +160,32 @@ class CorroborationTest {
     }
 
     @Test
+    fun aSenseReadAtACraftsSettledBoundaryAgreesWithTheServerAtThatTickOfTheRoundTrip() {
+        // r29 beta (tick 2946), its readings as the failed-run diagnostic kept them: the server held
+        // one dye and two dandelions at the request and three dyes at the answer.
+        val vitals = SensedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val observed = ObservedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val atRequest = listOf(ObservedStack(9, "yellow_dye", 1), ObservedStack(36, "dandelion", 2))
+        val atAnswer = ServerReading(observed, listOf(ObservedStack(9, "yellow_dye", 3)))
+        // The body now reads a mid-craft sense at an application's settled boundary, which the
+        // server held at the end of a tick inside the round trip and at neither end.
+        val boundary = listOf(ObservedStack(9, "yellow_dye", 2), ObservedStack(36, "dandelion", 1))
+        val claimed = listOf(SensedStack(9, "yellow_dye", 2), SensedStack(36, "dandelion", 1))
+        assertIs<Corroboration.Disputed>(corroborate(vitals, claimed, observed, atRequest, Around(atAnswer)))
+        val roundTrip = listOf(InventoryAt(2_946, boundary))
+        assertEquals(
+            Corroboration.Agreed,
+            corroborate(vitals, claimed, observed, atRequest, Around(atAnswer, roundTrip)),
+        )
+        // The claim r29 made, read between two clicks with a dandelion in the crafting grid, matches
+        // no tick the server held, which is why the body may not answer one.
+        val midClick = listOf(SensedStack(4, "dandelion", 1), SensedStack(9, "yellow_dye", 1))
+        assertIs<Corroboration.Disputed>(
+            corroborate(vitals, midClick, observed, atRequest, Around(atAnswer, roundTrip)),
+        )
+    }
+
+    @Test
     fun anInventoryThatChangedDuringTheRoundTripAgreesWithTheServerAtEitherEnd() {
         // The path rehearsal: theta picked up a stick while its sense was in flight, and the claim
         // held the stick the reading from before the request did not.

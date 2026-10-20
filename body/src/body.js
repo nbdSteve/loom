@@ -93,7 +93,8 @@ const { attackOfferedTarget } = require('./combat')
 const {
   craftOfferedRecipe,
   installCrafting,
-  recipeReading
+  recipeReading,
+  whenInventorySettled
 } = require('./crafting')
 const { digOfferedBlock, installDigging } = require('./digging')
 const { eatFromSlot } = require('./eating')
@@ -998,8 +999,18 @@ function createBody (options) {
    * went out leaves no slot handle behind: an eat naming it is then `senseForgotten`,
    * which is true, rather than a meal resolved against an inventory no controller was
    * ever shown.
+   *
+   * A sense that arrives while this body's own craft application owns the inventory is read at
+   * that application's settled boundary instead, bounded by `SENSE_SETTLE_MAX_MS`
+   * (`crafting.js` states why), and answered then; the request is still one round trip.
    */
   function sense (socket, session, request, requestId) {
+    // Answered at once in the ordinary case, so its verdict still decides whether this
+    // connection reads on; a deferred answer leaves the connection open until it is written.
+    return whenInventorySettled(bot, () => senseNow(socket, session, request, requestId)) ?? true
+  }
+
+  function senseNow (socket, session, request, requestId) {
     const answer = senseAnswer(request, requestId)
     if (answer === undefined) {
       return refuse(socket, session, { code: 'notReady', requestId })

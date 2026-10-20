@@ -45,7 +45,7 @@ function notch (item) {
  * the grid holds every ingredient the recipe names, and empty before, which is what
  * vanilla's recipe matcher answers for a partly filled grid.
  */
-function windowResponder (bot, client, { answerGrid = true, onGridClick = () => {} } = {}) {
+function windowResponder (bot, client, { answerGrid = true, onGridClick = () => {}, answerDelayMs = 0 } = {}) {
   const original = client.write
   const seen = []
   let stateId = 10
@@ -68,9 +68,11 @@ function windowResponder (bot, client, { answerGrid = true, onGridClick = () => 
         if (answerGrid) {
           const filled = grid.filter((slot) => window.slots[slot] !== null && window.slots[slot] !== undefined).length
           const item = filled >= expected ? result : null
-          setImmediate(() => client.emit('set_slot', {
+          const restate = () => client.emit('set_slot', {
             windowId: parameters.windowId, stateId: ++stateId, slot: 0, item: notch(item)
-          }))
+          })
+          if (answerDelayMs > 0) setTimeout(restate, answerDelayMs)
+          else setImmediate(restate)
         }
       }
     } else if (name === 'close_window') {
@@ -301,5 +303,36 @@ test('craft: a server that never answers a grid click times out and the undraine
   await H.promptly(ended, 'the undrained Minecraft client ending', 2000)
   await H.settled(200)
   assert.equal(server.clicksAfter(0), clicksAtAnswer, 'no click is written after the terminal answer')
+  peer.stop()
+})
+
+test('craft: a sense taken mid-application is read at the settled boundary, never with the grid occupied', async () => {
+  // r29 beta (tick 2946): a sense answered between the clicks of its own yellow-dye craft claimed
+  // a dandelion in crafting-grid slot 4, which the server only passed through inside one tick.
+  const { peer, bot, client } = await scene({ stacks: [[36, 'dandelion', 2]] })
+  let asked = false
+  const server = windowResponder(bot, client, {
+    answerDelayMs: 150,
+    onGridClick () {
+      if (asked) return
+      asked = true
+      setImmediate(() => peer.send(H.request('sense', 's-mid', { radius: 16, limit: 48 })))
+    }
+  })
+  const answer = await sensed(peer)
+  const dye = offerOf(answer, 'yellow_dye', false)
+  server.expect(recipeBehind(bot, 'yellow_dye', false))
+  peer.send(H.request('craft', 'c-dye', { senseId: 's1', recipe: dye, crafts: 2, timeoutMs: 6000 }))
+  const frames = [await peer.read(), await peer.read()]
+  const mid = frames.find((frame) => frame.requestId === 's-mid')
+  const report = frames.find((frame) => frame.requestId === 'c-dye')
+  assert.equal(report.outcome, 'crafted', JSON.stringify(report))
+  assert.equal(mid.op, 'sense', JSON.stringify(mid))
+  assert.deepEqual(mid.inventory.filter((entry) => entry.slot >= 0 && entry.slot <= 4), [],
+    `no stack in the crafting window: ${JSON.stringify(mid.inventory)}`)
+  // A settled state: one application applied, its dandelion consumed and its dye held.
+  const count = (what) => mid.inventory.filter((entry) => entry.what === what)
+    .reduce((sum, entry) => sum + entry.count, 0)
+  assert.deepEqual([count('dandelion'), count('yellow_dye')], [1, 1], JSON.stringify(mid.inventory))
   peer.stop()
 })

@@ -19,6 +19,7 @@ import dev.loom.witness.BodyClaim
 import dev.loom.witness.ClaimAudit
 import dev.loom.witness.DurablePermadeath
 import dev.loom.witness.InventoryAt
+import dev.loom.witness.InventoryHistory
 import dev.loom.witness.ReadingTimes
 import dev.loom.witness.ServerReading
 import dev.loom.witness.WITNESS_LAG_TICKS
@@ -65,16 +66,11 @@ class BukkitPlayerServerState(
 ) : PlayerServerState {
     private val interactionAuditor = BukkitInteractionAuditor(server, interactionEvents)
 
-    /** Each audited player's inventory at its last few ticks, newest last; main thread only. */
-    private val history = mutableMapOf<UUID, ArrayDeque<InventoryAt>>()
+    private val history = InventoryHistory()
 
     override val onTick: () -> Unit = {
-        history.entries.removeIf { (uuid, readings) ->
-            val player = server.getPlayer(uuid) ?: return@removeIf true
-            readings.addLast(InventoryAt(server.currentTick.toLong(), serverReadingOf(player).inventory))
-            while (readings.size > WITNESS_LAG_TICKS) readings.removeFirst()
-            false
-        }
+        val tick = server.currentTick.toLong()
+        history.sample(tick) { uuid -> server.getPlayer(uuid)?.let { serverReadingOf(it).inventory } }
     }
 
     override fun connected(identity: PlayerIdentity): Boolean =
@@ -133,12 +129,12 @@ class BukkitPlayerServerState(
 
     override fun captureSenseAudit(identity: PlayerIdentity): SenseAuditSnapshot? {
         val player = server.getPlayer(identity.uuid) ?: return null
-        val recent = history.getOrPut(player.uniqueId) { ArrayDeque() }
+        history.watch(player.uniqueId)
         return BukkitSenseAuditSnapshot(
             player = player.uniqueId,
             username = player.name,
             reading = serverReadingOf(player),
-            recent = recent.toList(),
+            recent = history.lagWindow(player.uniqueId),
             tick = server.currentTick.toLong(),
             nanos = System.nanoTime(),
         )
@@ -161,7 +157,7 @@ class BukkitPlayerServerState(
             around =
                 Around(
                     server.getPlayer(identity.uuid)?.let(::serverReadingOf),
-                    captured.recent,
+                    captured.recent + history.duringRoundTrip(identity.uuid, captured.tick),
                     ReadingTimes(
                         captured.tick,
                         server.currentTick.toLong(),

@@ -62,6 +62,70 @@ const installations = new WeakSet()
 /** A stopped gate is retained here until its bot disconnects. */
 const activeCraftGates = new WeakSet()
 
+/**
+ * How long a sense waits for its body's own craft application to settle before it reads anyway.
+ *
+ * A craft moves its ingredients through the crafting grid, which the server's witness cannot
+ * address, and a client mid-application states an inventory the server only passes through
+ * inside one tick: r29 beta's sense, answered between the clicks of its own yellow-dye craft,
+ * claimed a dandelion in the grid and none in the hotbar, and was disputed. One application's
+ * drain and settle together are bounded by [CRAFT_CLEANUP_GRACE_MS] and [CRAFT_SETTLE_MS], and
+ * the controller's three-second request timeout leaves two seconds beside this wait.
+ */
+const SENSE_SETTLE_MAX_MS = CRAFT_CLEANUP_GRACE_MS + CRAFT_SETTLE_MS
+
+/** Per bot: whether a craft application owns the inventory, and the reads waiting for it. */
+const applications = new WeakMap()
+
+function applicationOf (bot) {
+  if (!applications.has(bot)) applications.set(bot, { applying: false, readers: [] })
+  return applications.get(bot)
+}
+
+/**
+ * Runs [read] where the inventory is not mid-application: at once when no craft application
+ * owns it, else synchronously at the application's settled boundary, before the next
+ * application starts, or after [maxMs] at the latest so a stuck craft cannot hold a sense.
+ */
+function whenInventorySettled (bot, read, maxMs = SENSE_SETTLE_MAX_MS) {
+  const state = applicationOf(bot)
+  if (!state.applying) return read()
+  let done = false
+  const once = () => {
+    if (done) return
+    done = true
+    clearTimeout(timer)
+    read()
+  }
+  const timer = setTimeout(() => {
+    state.readers = state.readers.filter((reader) => reader !== once)
+    once()
+  }, maxMs)
+  timer.unref?.()
+  state.readers.push(once)
+  return undefined
+}
+
+/** Marks [bot]'s inventory as owned by one craft application. */
+function applicationStarted (bot) {
+  applicationOf(bot).applying = true
+}
+
+/** Ends the application's ownership and serves every waiting read, in order, at this boundary. */
+function applicationSettled (bot) {
+  const state = applicationOf(bot)
+  state.applying = false
+  const readers = state.readers
+  state.readers = []
+  for (const reader of readers) {
+    try {
+      reader()
+    } catch {
+      // A read answers for itself; a fault in one must not leave the craft or another read.
+    }
+  }
+}
+
 function installCrafting (bot) {
   if (installations.has(bot)) return
   bot.loadPlugin(crafting)
@@ -557,6 +621,7 @@ function craftOfferedRecipe (bot, {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      applicationSettled(bot)
       if (restore) gate.restore()
       resolve({
         outcome,
@@ -601,6 +666,7 @@ function craftOfferedRecipe (bot, {
           break
         }
         attempted = true
+        applicationStarted(bot)
         activeCraft = Promise.resolve().then(
           () => bot.craft(offer.recipe, 1, currentTable.table)
         )
@@ -624,6 +690,8 @@ function craftOfferedRecipe (bot, {
           now,
           stopped: () => settled || terminal !== undefined
         })
+        // The client now states what the server has confirmed, so a waiting sense reads here.
+        applicationSettled(bot)
         if (settled || terminal !== undefined) break
         if (resultingInventory === undefined) {
           terminal = 'libraryFailure'
@@ -657,11 +725,13 @@ module.exports = {
   CRAFT_CLEANUP_GRACE_MS,
   CRAFT_SETTLE_MS,
   MAX_RECIPE_CANDIDATES,
+  SENSE_SETTLE_MAX_MS,
   craftOfferedRecipe,
   installCrafting,
   inventoryFingerprint,
   inventoryState,
   recipeFingerprint,
   recipeReading,
-  settledApplication
+  settledApplication,
+  whenInventorySettled
 }

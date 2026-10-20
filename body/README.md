@@ -68,6 +68,7 @@ restate the window to undo it, because Mineflayer moves the stack locally before
 answers and a vanilla server answers a refused click only with that restatement.
 `craft`, `attack` and `sleep` likewise name one offered recipe, one offered living target
 and weapon, or one offered bed, with bounded quantity, swings, pursuit and wait.
+A `sense` that arrives while this body's own craft application owns the inventory is read at that application's settled boundary, at most `SENSE_SETTLE_MAX_MS` later, because a client between two craft clicks holds its ingredients in the crafting grid, a state the server passes through inside one tick (r29 beta).
 `say` sends one line the controller chose through this player's own chat; `src/speaking.js`
 owns it.
 Its text is refused unless it is 1 to 128 code points and at most 256 UTF-8 bytes, carries no

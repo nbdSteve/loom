@@ -137,7 +137,8 @@ data class ServerReading(val vitals: ObservedVitals, val inventory: List<Observe
 /**
  * The server's readings around one claim besides the one taken as the request was sent: the one
  * taken when its answer is audited, and the inventory at each of the last [WITNESS_LAG_TICKS]
- * ticks before the request, which a client not yet told of a change still describes.
+ * ticks before the request, which a client not yet told of a change still describes, and at each
+ * tick of the round trip itself, since the claim is one moment inside it.
  */
 data class Around(
     val after: ServerReading? = null,
@@ -165,6 +166,14 @@ data class ReadingTimes(
  * can send them a tick or two late.
  */
 const val WITNESS_LAG_TICKS: Int = 4
+
+/**
+ * The most server ticks one sense round trip spans: the body-control request timeout of three
+ * seconds at vanilla's twenty ticks. A body reads a sense that arrives mid-craft at the craft
+ * application's settled boundary, which the server held at the end of a tick inside the round
+ * trip but at neither of its ends when the craft went on (r29 beta, tick 2946).
+ */
+const val SENSE_ROUND_TRIP_TICKS: Int = 60
 
 /** Whether a body's account of itself stands up against the server's own reading. */
 sealed interface Corroboration {
@@ -289,7 +298,8 @@ fun corroborate(
         }
     // Nor can a client be told of a change before the tick that made it has sent its packets, so
     // the claim also agrees with the server as it stood up to [WITNESS_LAG_TICKS] ticks earlier
-    // (r26 stopped on gamma's claim that matched the server a moment before a pickup).
+    // (r26 stopped on gamma's claim that matched the server a moment before a pickup), or at any
+    // tick of the round trip (r29: beta's sense read between two applications of its own craft).
     val lagged =
         recent.any { earlier ->
             inventoryFaults(checkable, earlier.inventory.filter { isCorroborableSlot(it.slot) }).isEmpty()
