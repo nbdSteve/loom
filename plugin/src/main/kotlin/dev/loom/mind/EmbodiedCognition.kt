@@ -93,6 +93,7 @@ class EmbodiedCognition(
     private val inFlight = linkedMapOf<String, Pair<AgentId, Perception>>()
 
     private val preemption = DangerPreemption()
+    private val admission = DangerAdmission(danger, preemption, mind.outstandingPerAgent)
     private var shutDown = false
 
     /** Whether [shutDown] has run, after which no review is taken. */
@@ -151,6 +152,7 @@ class EmbodiedCognition(
      * Separate from [consider] so a caller that already holds a perception - a
      * driver command, a test - uses the same one path to the mind.
      */
+
     fun submit(
         agentId: AgentId,
         perception: Perception,
@@ -161,23 +163,7 @@ class EmbodiedCognition(
         // Recorded as shown: classified, a review with its horizon, which the ledger judges against.
         val shown = perception.withHorizon(goals.recipes)
         bodies.held.shown(agentId, shown)
-        val coalesced =
-            when {
-                // The agent is already answering this threat.
-                !danger.admit(agentId, perception, subject) ->
-                    EventTag.DANGER_COALESCED to "coalesced into the active danger episode for this threat"
-                // Damage from a different attacker, or at low health, preempts the older danger
-                // answer still with the mind (r27: alpha's and zeta's hits from new zombies were
-                // coalesced behind a creeper answer, and they died).
-                preemption.preempts(agentId, perception, subject, inFlight) -> null
-                // One review and one event at a time: the answer already coming covers this one.
-                inFlightFor(agentId, review = perception.trigger.reviewsGoal) > 0 -> {
-                    danger.withdraw(agentId, perception.requestId)
-                    EventTag.COGNITION_COALESCED to
-                        "coalesced: the agent already has cognition in flight for this kind of trigger"
-                }
-                else -> null
-            }
+        val coalesced = admission.coalescedOf(agentId, perception, subject, inFlight)
         if (coalesced != null) {
             // The perception still ends its chain, and gives back what its request holds.
             journal.unavailable(agentId, perception, coalesced.first, coalesced.second)

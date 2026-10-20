@@ -19,6 +19,8 @@ class PerAgentCognitionBridge(
     private val maxOutstandingPerAgent: Int,
     private val onFailure: (Perception, CognitionFailure) -> Unit = { _, _ -> },
 ) : CognitionBridge {
+    override val outstandingPerAgent: Int get() = maxOutstandingPerAgent
+
     private val lock = Any()
     private val outstanding = mutableMapOf<String, Int>()
 

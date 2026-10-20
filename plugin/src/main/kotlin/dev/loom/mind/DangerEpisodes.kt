@@ -94,14 +94,7 @@ class DangerEpisodes(
         } else {
             // Damage taken while an answer runs is told once that answer settles (r24: 43 of 68
             // damage perceptions were coalesced, gamma's at health 2.7 and 0.7, and none was told).
-            (perception.trigger as? Trigger.Damaged)?.let { damage ->
-                // Held without its ref, which named a creature in the sense that minted it alone.
-                pending.merge(agentId, damage.copy(attackerRef = null)) { earlier, later ->
-                    Trigger.Damaged(earlier.amount + later.amount, later.source)
-                }
-                // The latest attacker is the one told of, so the flight can name it.
-                if (subject != null) pendingAttacker[agentId] = subject else pendingAttacker.remove(agentId)
-            }
+            (perception.trigger as? Trigger.Damaged)?.let { withdraw(agentId, perception.requestId, it, subject) }
         }
         return admitted
     }
@@ -184,17 +177,26 @@ class DangerEpisodes(
     }
 
     /**
-     * Withdraws the episode [requestId] alone opened, for a perception admitted here but then
-     * not sent at all: a threat the mind was never asked about must not cool down as if it
-     * had been answered.
+     * Withdraws [requestId] from the episodes it was admitted into, for a perception admitted here
+     * but then not sent at all: a threat the mind was never asked about must not cool down as if it
+     * had been answered. A [damage] is held, to be told once no answer of the agent's is open, like
+     * any damage that waits; the latest attacker, [subject], is the one told of.
      */
     fun withdraw(
         agentId: AgentId,
         requestId: String,
+        damage: Trigger.Damaged? = null,
+        subject: String? = null,
     ) {
         episodes[agentId]?.entries?.removeIf { (_, episode) ->
-            episode.settledTick == null && episode.open == setOf(requestId)
+            episode.open.remove(requestId) && episode.open.isEmpty() && episode.settledTick == null
         }
+        if (damage == null) return
+        // Held without its ref, which named a creature in the sense that minted it alone.
+        pending.merge(agentId, damage.copy(attackerRef = null)) { earlier, later ->
+            Trigger.Damaged(earlier.amount + later.amount, later.source)
+        }
+        if (subject != null) pendingAttacker[agentId] = subject else pendingAttacker.remove(agentId)
     }
 
     /** Drops every episode for an agent whose body has gone, so nothing outlives it. */

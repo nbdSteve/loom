@@ -139,7 +139,8 @@ class R27GoalAuditReplayTest {
                 val preemption = DangerPreemption()
                 preemption.sent(older, kindOf(older))
                 val inFlight = mapOf(older.requestId to (agent to older))
-                val preempts = preemption.preempts(agent, damage, kindOf(damage), inFlight)
+                val verdict = preemption.preempts(agent, damage, kindOf(damage), inFlight)
+                val preempts = verdict == DangerPreemption.Verdict.PREEMPT
                 assertTrue(preempts, "$damageId preempts $olderId")
                 assertTrue(preemption.settled(older.requestId), "the older answer is discarded when it arrives")
             }

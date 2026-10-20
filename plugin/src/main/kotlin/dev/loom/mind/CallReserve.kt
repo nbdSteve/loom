@@ -161,6 +161,8 @@ class ReservingCognitionBridge(
     private val delegate: CognitionBridge,
     private val reserve: CallReserve,
 ) : CognitionBridge {
+    override val outstandingPerAgent: Int get() = delegate.outstandingPerAgent
+
     override fun submit(perception: Perception): CompletableFuture<Decision> =
         if (reserve.admit(AgentId(perception.agentId), perception)) {
             delegate.submit(perception)
