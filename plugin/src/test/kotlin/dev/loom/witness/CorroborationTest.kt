@@ -186,6 +186,37 @@ class CorroborationTest {
     }
 
     @Test
+    fun aSenseBetweenTwoCraftApplicationsAgreesOnlyWhenTheServerSampledThatBoundary() {
+        // r32 eta (tick 5510), its readings as the failed-run diagnostic kept them: one oak-button
+        // application applied when the body read, and both by the answer.
+        val vitals = SensedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val observed = ObservedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val atRequest = listOf(ObservedStack(9, "oak_log", 2), ObservedStack(10, "oak_planks", 4))
+        val both =
+            listOf(
+                ObservedStack(9, "oak_log", 2),
+                ObservedStack(10, "oak_planks", 2),
+                ObservedStack(11, "oak_button", 2),
+            )
+        val atAnswer = ServerReading(observed, both)
+        val claimed =
+            listOf(SensedStack(9, "oak_log", 2), SensedStack(10, "oak_planks", 3), SensedStack(11, "oak_button", 1))
+        // The server applied both between two tick samples, so no sample held the boundary.
+        val unsampled = listOf(InventoryAt(5_509, atRequest), InventoryAt(5_510, both))
+        val missed = corroborate(vitals, claimed, observed, atRequest, Around(atAnswer, unsampled))
+        assertIs<Corroboration.Disputed>(missed)
+        // The body now holds the next application until a tick sample holds the boundary.
+        val boundary =
+            listOf(
+                ObservedStack(9, "oak_log", 2),
+                ObservedStack(10, "oak_planks", 3),
+                ObservedStack(11, "oak_button", 1),
+            )
+        val sampled = unsampled + InventoryAt(5_510, boundary)
+        assertEquals(Corroboration.Agreed, corroborate(vitals, claimed, observed, atRequest, Around(atAnswer, sampled)))
+    }
+
+    @Test
     fun anInventoryThatChangedDuringTheRoundTripAgreesWithTheServerAtEitherEnd() {
         // The path rehearsal: theta picked up a stick while its sense was in flight, and the claim
         // held the stick the reading from before the request did not.

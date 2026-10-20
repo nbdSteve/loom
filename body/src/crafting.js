@@ -74,6 +74,16 @@ const activeCraftGates = new WeakSet()
  */
 const SENSE_SETTLE_MAX_MS = CRAFT_CLEANUP_GRACE_MS + CRAFT_SETTLE_MS
 
+/**
+ * How long a craft holds its next application after a sense read its settled boundary.
+ *
+ * The server applies a click as soon as its packet arrives, between ticks, while its witness samples
+ * the inventory once a tick: r32 eta's sense, read between two oak-button applications, described a
+ * boundary the server held for less than one tick, because the next application's clicks followed the
+ * answer at once. Three vanilla ticks leave at least two tick samples of that boundary.
+ */
+const SENSE_BOUNDARY_HOLD_MS = 150
+
 /** Per bot: whether a craft application owns the inventory, and the reads waiting for it. */
 const applications = new WeakMap()
 
@@ -111,7 +121,10 @@ function applicationStarted (bot) {
   applicationOf(bot).applying = true
 }
 
-/** Ends the application's ownership and serves every waiting read, in order, at this boundary. */
+/**
+ * Ends the application's ownership and serves every waiting read, in order, at this boundary.
+ * Answers how many reads it served.
+ */
 function applicationSettled (bot) {
   const state = applicationOf(bot)
   state.applying = false
@@ -124,6 +137,7 @@ function applicationSettled (bot) {
       // A read answers for itself; a fault in one must not leave the craft or another read.
     }
   }
+  return readers.length
 }
 
 function installCrafting (bot) {
@@ -690,8 +704,10 @@ function craftOfferedRecipe (bot, {
           now,
           stopped: () => settled || terminal !== undefined
         })
-        // The client now states what the server has confirmed, so a waiting sense reads here.
-        applicationSettled(bot)
+        // The client now states what the server has confirmed, so a waiting sense reads here, and
+        // the next application waits until the server has sampled the state that sense described.
+        const served = applicationSettled(bot)
+        if (served > 0 && completed + 1 < crafts) await delay(SENSE_BOUNDARY_HOLD_MS)
         if (settled || terminal !== undefined) break
         if (resultingInventory === undefined) {
           terminal = 'libraryFailure'
@@ -725,6 +741,7 @@ module.exports = {
   CRAFT_CLEANUP_GRACE_MS,
   CRAFT_SETTLE_MS,
   MAX_RECIPE_CANDIDATES,
+  SENSE_BOUNDARY_HOLD_MS,
   SENSE_SETTLE_MAX_MS,
   craftOfferedRecipe,
   installCrafting,

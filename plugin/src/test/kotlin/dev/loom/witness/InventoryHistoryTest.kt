@@ -17,8 +17,8 @@ class InventoryHistoryTest {
         val lagged = (2_943L..2_946L).toList()
         assertEquals(lagged, history.lagWindow(beta).map { it.tick })
         // r29 beta: a sense requested at 2945 and read at a craft's settled boundary inside 2946.
-        assertEquals(listOf(2_946L), history.duringRoundTrip(beta, 2_945).map { it.tick })
-        assertEquals(dyes(7), history.duringRoundTrip(beta, 2_945).single().inventory)
+        assertEquals(listOf(2_945L, 2_946L), history.duringRoundTrip(beta, 2_945).map { it.tick })
+        assertEquals(dyes(7), history.duringRoundTrip(beta, 2_945).last().inventory)
     }
 
     @Test

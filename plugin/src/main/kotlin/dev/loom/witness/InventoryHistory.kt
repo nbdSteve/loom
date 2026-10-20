@@ -33,13 +33,16 @@ class InventoryHistory {
     /** [player]'s inventory at each of the last [WITNESS_LAG_TICKS] ticks sampled, oldest first. */
     fun lagWindow(player: UUID): List<InventoryAt> = byPlayer[player].orEmpty().takeLast(WITNESS_LAG_TICKS)
 
-    /** [player]'s inventory at each sampled tick after [requestTick], oldest first. */
+    /**
+     * [player]'s inventory at each tick sampled from [requestTick] on, oldest first: the request's
+     * own tick included, since its sample can be taken after the request was captured (r32 eta).
+     */
     fun duringRoundTrip(
         player: UUID,
         requestTick: Long,
     ): List<InventoryAt> =
         byPlayer[player]
             .orEmpty()
-            .filter { it.tick > requestTick }
+            .filter { it.tick >= requestTick }
             .takeLast(SENSE_ROUND_TRIP_TICKS)
 }

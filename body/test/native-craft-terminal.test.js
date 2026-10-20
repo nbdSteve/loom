@@ -17,6 +17,7 @@ const { afterEach, test } = require('node:test')
 const { Vec3 } = require('vec3')
 
 const H = require('./harness')
+const { SENSE_BOUNDARY_HOLD_MS } = require('../src/crafting')
 
 afterEach(H.disconnected)
 
@@ -311,9 +312,11 @@ test('craft: a sense taken mid-application is read at the settled boundary, neve
   // a dandelion in crafting-grid slot 4, which the server only passed through inside one tick.
   const { peer, bot, client } = await scene({ stacks: [[36, 'dandelion', 2]] })
   let asked = false
+  const clicks = []
   const server = windowResponder(bot, client, {
     answerDelayMs: 150,
     onGridClick () {
+      clicks.push(Date.now())
       if (asked) return
       asked = true
       setImmediate(() => peer.send(H.request('sense', 's-mid', { radius: 16, limit: 48 })))
@@ -323,8 +326,14 @@ test('craft: a sense taken mid-application is read at the settled boundary, neve
   const dye = offerOf(answer, 'yellow_dye', false)
   server.expect(recipeBehind(bot, 'yellow_dye', false))
   peer.send(H.request('craft', 'c-dye', { senseId: 's1', recipe: dye, crafts: 2, timeoutMs: 6000 }))
-  const frames = [await peer.read(), await peer.read()]
+  const first = await peer.read()
+  const answeredAt = Date.now()
+  const frames = [first, await peer.read()]
   const mid = frames.find((frame) => frame.requestId === 's-mid')
+  assert.equal(first.requestId, 's-mid', 'the sense is answered before the craft ends')
+  // r32 eta: the next application waits until the server has sampled the boundary it described.
+  const next = clicks.find((at) => at > answeredAt)
+  assert.ok(next !== undefined && next - answeredAt >= SENSE_BOUNDARY_HOLD_MS - 20, `${next - answeredAt} ms`)
   const report = frames.find((frame) => frame.requestId === 'c-dye')
   assert.equal(report.outcome, 'crafted', JSON.stringify(report))
   assert.equal(mid.op, 'sense', JSON.stringify(mid))
