@@ -1,6 +1,6 @@
 'use strict'
 
-const { isCoalesced, isShutdownEnding } = require('./danger.js')
+const { isCoalesced, isPreempted, isShutdownEnding } = require('./danger.js')
 
 // The readiness gate a ten-minute run must pass before it is called a success. A rate is not
 // the target: every decision must be valid, every action must end in a typed terminal the
@@ -109,6 +109,16 @@ const SURVIVAL_READINESS_VERSION = 'loom-readiness-gate/15'
 // its refusal is the ownMovementRace race, a no-route whose perception shows water in the body's own
 // cells is the waterTrapped blocker, and a dig refused for flooding the body is inapplicable.
 const WATER_READINESS_VERSION = 'loom-readiness-gate/16'
+// Gate generation 17: the r33 audit found generation 16 counted a survival deferral beside a met
+// goal as ignoring it, was blind to the paid danger answers newer damage preempted, and read a
+// flight refused behind the agent's own running flight as an ordinary race. From 17 a `goalDeferred`
+// decision is never metIgnored, each preempted answer is a typed `superseded` action, a
+// `controlNotReady` flight refused while another of the agent's own flights still ran is the
+// `dangerOverlap` blocker, and the report counts the JVM's callReserved refusals, tier fallbacks
+// and preempted answers.
+const DANGER_READINESS_VERSION = 'loom-readiness-gate/17'
+// From generation 17, a flight refused behind the agent's own running flight.
+const DANGER_OVERLAP_BLOCKER_CLASSES = Object.freeze(['dangerOverlap'])
 // From generation 16, a no-route from a body its own perception showed in water.
 const WATER_BLOCKER_CLASSES = Object.freeze(['waterTrapped'])
 // From generation 16, a refusal the agent's own movement caused after its perception was taken.
@@ -361,6 +371,25 @@ function movedAfterPerception (bodyRecords, decision, own, refusal) {
     record.tick >= perceived.tick && record.tick <= refusal.tick)
 }
 
+/**
+ * Whether another flight of the agent's own was decided before [refusal] and had not ended by it
+ * (r33 gamma body:00003000: its sighting flight was refused behind its own running follow-up flight).
+ */
+function ownFlightRunning (bodyRecords, decision, refusal) {
+  const ended = new Map()
+  for (const record of bodyRecords) {
+    if (record.agentId !== decision.agentId || record.requestKey === undefined) continue
+    if (['retreating', 'decisionDiscarded'].includes(record.event) ||
+        (record.event === 'intentApplied' && record.outcome !== 'accepted')) {
+      if (!ended.has(record.requestKey)) ended.set(record.requestKey, record.tick)
+    }
+  }
+  return bodyRecords.some((record) =>
+    record.event === 'decided' && record.intent === 'flee' && record.agentId === decision.agentId &&
+    record.requestKey !== decision.requestKey && record.tick <= refusal.tick &&
+    (ended.get(record.requestKey) ?? Infinity) > refusal.tick)
+}
+
 /** The terminal of one accepted action, and the record that states it. */
 function acceptedClass (decision, byKey, window, generation = 3) {
   const own = (event) => (byKey.get(decision.requestKey) ?? []).filter((record) => record.event === event)
@@ -483,6 +512,8 @@ function typedGoalCoherenceOf (bodyRecords, generation = 4, bars = undefined) {
       // A replace of a met goal completes it and adopts the next in one answer (routine-v26).
       if (COMPLETING_OUTCOMES.has(goal.outcome)) counts.metCompleted += 1
       else if (goal.outcome === 'goalRevised') counts.metRevised += 1
+      // A survival deferral allows no goal choice at all (r33 kappa body:00000640, 2977).
+      else if (generation >= 17 && goal.outcome === 'goalDeferred') counts.metDeferred = (counts.metDeferred ?? 0) + 1
       else counts.metIgnored += 1
     }
     if (goal.presentedGoalId === undefined || typeof goal.conditionAdvanced !== 'boolean') continue
@@ -1343,7 +1374,8 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
         ...(generation >= 9 ? FLIGHT_BLOCKER_CLASSES : []),
         ...(generation >= 11 ? OWN_DROP_BLOCKER_CLASSES : []),
         ...(generation >= 12 ? SELF_TRAPPED_BLOCKER_CLASSES : []),
-        ...(generation >= 16 ? WATER_BLOCKER_CLASSES : [])
+        ...(generation >= 16 ? WATER_BLOCKER_CLASSES : []),
+        ...(generation >= 17 ? DANGER_OVERLAP_BLOCKER_CLASSES : [])
       ]
     : BLOCKER_CLASSES
   const raceClasses = raceClassesOf(generation)
@@ -1407,6 +1439,10 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
         ending.class = 'selfTrapped'
       }
       if (generation >= 16 && ending.class === TERRAIN_CLASS && inWater(own)) ending.class = 'waterTrapped'
+      if (generation >= 17 && terminals[0].outcome === 'controlNotReady' && decision.intent === 'flee' &&
+          ownFlightRunning(bodyRecords, decision, terminals[0])) {
+        ending.class = 'dangerOverlap'
+      }
       if (generation >= 16 && ending.class === 'inapplicable' && REACH_REFUSAL.test(terminals[0].outcome) &&
           movedAfterPerception(bodyRecords, decision, own, terminals[0])) {
         ending.class = OWN_MOVEMENT_RACE_CLASS
@@ -1422,6 +1458,23 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
         class: ending.class,
         race: raceClasses.includes(ending.class),
         evidence: evidenceOf(ending.evidence)
+      })
+    }
+  }
+  // From generation 17 each paid danger answer newer damage preempted is an action the gate sees:
+  // superseded by the newer answer, a race and never a loss (r33: fourteen were invisible to it).
+  const preemptedAnswers = bodyRecords.filter(isPreempted)
+  if (generation >= 17) {
+    for (const record of preemptedAnswers) {
+      total += 1
+      byClass.superseded += 1
+      nonSuccess.push({
+        requestKey: record.requestKey,
+        agentId: record.agentId,
+        intent: record.intent ?? null,
+        class: 'superseded',
+        race: true,
+        evidence: evidenceOf(record)
       })
     }
   }
@@ -1469,8 +1522,9 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       HORIZON_READINESS_VERSION,
       DISCOVERY_READINESS_VERSION,
       SURVIVAL_READINESS_VERSION,
-      WATER_READINESS_VERSION
-    ][Math.min(Math.max(generation - 3, 0), 13)],
+      WATER_READINESS_VERSION,
+      DANGER_READINESS_VERSION
+    ][Math.min(Math.max(generation - 3, 0), 14)],
     actions: {
       total,
       byClass: Object.fromEntries(Object.entries(byClass).sort()),
@@ -1487,6 +1541,18 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
     rates,
     blockers,
     races: nonSuccess.filter((entry) => entry.race).length,
+    // What the JVM decided about calls before any reached the mind (r33: eight callReserved
+    // refusals of alpha's danger reported nowhere).
+    ...(generation >= 17
+      ? {
+          reporting: {
+            callReserved: bodyRecords.filter((record) =>
+              record.event === 'cognitionUnavailable' && record.outcome === 'callReserved').length,
+            tierFallbacks: bodyRecords.filter((record) => record.event === 'cognitionTierFallback').length,
+            preemptedAnswers: preemptedAnswers.length
+          }
+        }
+      : {}),
     ...(typed
       ? { goalCoherence: coherence, mechanicalVerdict: mechanicallyReady ? 'ready' : 'notReady' }
       : { goalCoherence: goalCoherenceOf(bodyRecords) }),
@@ -1499,6 +1565,7 @@ module.exports = {
   SURVIVAL_GOAL_INCOHERENT_TAGS,
   SURVIVAL_READINESS_VERSION,
   WATER_READINESS_VERSION,
+  DANGER_READINESS_VERSION,
   DISCOVERY_GOAL_INCOHERENT_TAGS,
   DISCOVERY_READINESS_VERSION,
   HORIZON_GOAL_INCOHERENT_TAGS,

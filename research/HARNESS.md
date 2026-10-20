@@ -460,6 +460,13 @@ A refusal for reach or sight (`OutOfReach`, `OutOfRange`, `NotVisible`) is the `
 A no-route whose perception shows water in the body's own cells is the `waterTrapped` blocker rather than terrain, and a dig refused as `digFloodsBody` is `inapplicable`.
 Generation 15 is frozen, so r27 re-derives exactly as published; `test/readiness-substantive.test.js` holds r27's evidence to generation 16, where iota's dig is a movement race, epsilon's four walks out of its flooded pit are `waterTrapped`, and delta's peer flight stays a blocker.
 
+Generation 17 (`loom-readiness-gate/17`) answers the r33 audit.
+A `goalDeferred` decision beside a met goal is counted as `metDeferred` and never as `metIgnored`, because a survival deferral allows no goal choice.
+Each danger answer newer damage preempted (`dangerPreempted`) is a `superseded` action the gate counts, rather than a paid answer it cannot see.
+A `controlNotReady` flight refused while another of the agent's own flights still ran is the `dangerOverlap` blocker rather than a `concurrent` race.
+The report counts the JVM's `callReserved` refusals, `tierFallback` sends and preempted answers, and the README states them.
+Generation 16 is frozen, so r33 re-derives exactly as published; `test/readiness-substantive.test.js` holds r33's evidence to generation 17.
+
 ## The path rehearsal
 
 `research/tools/path-rehearsal.js` is a deterministic live rehearsal of the goal paths no research run has reached by itself, and it is not a research run.

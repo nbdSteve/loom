@@ -672,3 +672,35 @@ test('under generation 16 a dig refused for flooding the body is inapplicable, a
   assert.equal(sixteen.actions.byClass.ownMovementRace, 0)
   assert.equal(sixteen.actions.byClass.inapplicable, 1)
 })
+
+const R33 = path.join(__dirname, '..', 'experiments', '2026-10-16-openai-10-agent-10m-r33')
+
+test('r33, judged under gate generation 17, sees its preempted answers, its deferrals and its own-flight overlap', () => {
+  const records = fs.readFileSync(path.join(R33, 'evidence.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)
+  const metrics = JSON.parse(fs.readFileSync(path.join(R33, 'metrics.json'), 'utf8'))
+  const judged = (generation) => readinessMetrics({
+    bodyRecords: records.filter((entry) => entry.source === 'body'),
+    harnessRecords: records.filter((entry) => entry.source === 'harness'),
+    metrics,
+    generation,
+    bars: PROFILES['survival-envelope-10m-10'].coherenceBars
+  })
+  const sixteen = judged(16)
+  const seventeen = judged(17)
+  assert.equal(sixteen.version, 'loom-readiness-gate/16', 'generation 16 is frozen')
+  assert.equal(sixteen.reporting, undefined)
+  assert.equal(seventeen.version, 'loom-readiness-gate/17')
+  // kappa's two survival deferrals beside a met goal are no ignored goal.
+  assert.equal(sixteen.goalCoherence.metIgnored, 2)
+  assert.equal(seventeen.goalCoherence.metIgnored, 0)
+  assert.equal(seventeen.goalCoherence.metDeferred, 2)
+  // The fourteen paid answers newer damage preempted are seen, as superseded races.
+  assert.equal(seventeen.actions.total, sixteen.actions.total + 14)
+  assert.equal(seventeen.actions.byClass.superseded, sixteen.actions.byClass.superseded + 14)
+  // gamma's sighting flight, refused behind its own follow-up flight, is the hidden overlap defect.
+  const gamma = (result) => result.actions.nonSuccess.find((entry) => entry.requestKey === 'tribe-gamma:loom18c040d2cc-sense-sc')
+  assert.equal(gamma(sixteen).class, 'concurrent')
+  assert.equal(gamma(seventeen).class, 'dangerOverlap')
+  assert.equal(seventeen.blockers.dangerOverlap, 1)
+  assert.deepEqual(seventeen.reporting, { callReserved: 8, tierFallbacks: 0, preemptedAnswers: 14 })
+})

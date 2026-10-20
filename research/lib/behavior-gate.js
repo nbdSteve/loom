@@ -44,7 +44,10 @@ const { readinessMetrics } = require('./readiness.js')
 // Generation 16 counts no flight as progressing time, a reach refusal the agent's own movement
 // caused after its perception as a movement race, a no-route from a body in water as the
 // waterTrapped blocker, and a dig refused for flooding the body as inapplicable.
-const GATE_GENERATION = 16
+// Generation 17 never counts a survival deferral as ignoring a met goal, sees each preempted danger
+// answer as a superseded action, classes a flight refused behind the agent's own flight as the
+// dangerOverlap blocker, and reports the JVM's callReserved refusals, tier fallbacks and preempted answers.
+const GATE_GENERATION = 17
 // The goal outcomes of a decision whose action was a step of a goal it held or took up.
 const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised', 'goalReplaced', 'goalCompletedAdopted'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`

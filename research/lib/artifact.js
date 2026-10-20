@@ -1901,6 +1901,12 @@ function readinessLines (readiness) {
       : `- Goal coherence: **${readiness.goalCoherence.verdict}**, part of the verdict (mechanically ${readiness.mechanicalVerdict}); ` +
         `${JSON.stringify(Object.fromEntries(Object.entries(readiness.goalCoherence).filter(([name]) => name !== 'verdict')))}.`
   ]
+  if (readiness.reporting !== undefined) {
+    const { callReserved, tierFallbacks, preemptedAnswers } = readiness.reporting
+    lines.push(`- Calls the JVM decided before the mind: ${callReserved} refused to keep calls in reserve (\`callReserved\`), ` +
+      `${tierFallbacks} sent at the ordinary tier past the pivotal ceiling (\`tierFallback\`), ` +
+      `${preemptedAnswers} answered but preempted by newer damage (\`dangerPreempted\`).`)
+  }
   for (const entry of readiness.actions.nonSuccess) {
     lines.push(`  - \`${entry.requestKey}\` ${entry.intent}: ${entry.class}${entry.race ? ' (race)' : ''}, ` +
       `${entry.evidence === null ? 'no terminal record' : `${entry.evidence.event} ${entry.evidence.outcome ?? ''} at tick ${entry.evidence.tick}`.replace(/  +/g, ' ')}.`)
