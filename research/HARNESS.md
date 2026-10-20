@@ -489,7 +489,10 @@ further event is ended as `cognitionUnavailable` with outcome `cognitionCoalesce
 (never sent, not a failure, counted under `cognitionCoalescing`), and a review that falls
 due while the agent's previous review is still unanswered is deferred to the first slice
 it fits rather than claimed into a full per-agent budget. The `-r7` shakedown failed as
-`agentBudgetExhausted` because neither held. The retained failure diagnostic keeps the
+`agentBudgetExhausted` because neither held.
+A danger answer that newer damage preempted while it was with the mind is a
+`decisionDiscarded` with outcome `dangerPreempted`: superseded, not lost, so it stops no run,
+needs no death and is counted as `cycles.preempted` rather than as a discarded cycle. The retained failure diagnostic keeps the
 most recent cognition traffic (`cognition.timeline`: per forwarded call its trigger,
 origin, outcome, outstanding count and latency; per body record its tick and outcome).
 It also keeps the stop window (`cognition.stopWindow`): each discard by a living agent that is not a typed `dangerPreempted`, with that agent's last sixteen records as one-line steps, and each call still with the mind when the stop began, with the body's ending for it.

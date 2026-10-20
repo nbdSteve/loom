@@ -5,7 +5,7 @@ const path = require('node:path')
 
 const { behaviorGateMetrics } = require('./behavior-gate.js')
 const { admissionEndMetrics, controlledStopMetrics } = require('./controlled-stop.js')
-const { cognitionCoalescingMetrics, dangerEpisodeMetrics } = require('./danger.js')
+const { cognitionCoalescingMetrics, dangerEpisodeMetrics, isPreempted } = require('./danger.js')
 const { maximumOf, minimumOf } = require('./log-tail.js')
 const { deathMetrics } = require('./witnessed-death.js')
 const { canonicalLine, sortedValue } = require('./util.js')
@@ -517,6 +517,7 @@ function deriveMetrics (records, configuredAgents = []) {
     }
   ]))
   const byEvent = {}
+  const preempted = bodyRecords.filter(isPreempted).length
   const decisionsByIntent = {}
   const appliedByIntent = {}
   const byOutcome = {}
@@ -771,7 +772,10 @@ function deriveMetrics (records, configuredAgents = []) {
       decided: byEvent.decided ?? 0,
       applied: byEvent.intentApplied ?? 0,
       unavailable: byEvent.cognitionUnavailable ?? 0,
-      discarded: byEvent.decisionDiscarded ?? 0,
+      // A danger answer newer damage preempted is superseded, never lost, so it is counted apart
+      // and only when there is one: earlier evidence derives exactly the cycles it always did.
+      discarded: (byEvent.decisionDiscarded ?? 0) - preempted,
+      ...(preempted === 0 ? {} : { preempted }),
       incomplete
     },
     behavior: {
