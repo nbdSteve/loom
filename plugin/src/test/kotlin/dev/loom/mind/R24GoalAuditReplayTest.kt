@@ -107,7 +107,7 @@ class R24GoalAuditReplayTest {
                     val sent = key in endings && endings[key] !in setOf("dangerCoalesced", "cognitionCoalesced")
                     if (sent) {
                         val seen = r24.perception(idOf(record))
-                        admitted[idOf(record)] = reserve.admit(dev.loom.body.AgentId(seen.agentId), seen)
+                        admitted[idOf(record)] = reserve.admits(dev.loom.body.AgentId(seen.agentId), seen)
                     }
                 }
             }

@@ -244,6 +244,7 @@ private fun bodilessAfter(
         // whether the agent still has one, so what was already known stands.
         BodyEvent.THREAT_SUPPRESSED,
         BodyEvent.PERCEPTION_REFUSED,
+        BodyEvent.COGNITION_TIER_FALLBACK,
         BodyEvent.DAMAGE_WITNESSED,
         // A body whose account of itself is wrong is still a body. What is in doubt is the
         // readings, not the embodiment - and the readings are exactly what a display would
@@ -320,6 +321,7 @@ private fun activityAfter(
         // a state change, which is the opposite of what it records.
         BodyEvent.THREAT_SUPPRESSED,
         BodyEvent.PERCEPTION_REFUSED,
+        BodyEvent.COGNITION_TIER_FALLBACK,
         // The damage's cognition arrives as its own `perceived` record.
         BodyEvent.DAMAGE_WITNESSED,
         -> state.activity

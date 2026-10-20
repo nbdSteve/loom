@@ -146,18 +146,19 @@ class DamageDriverTest {
     fun `damage held behind an answer is told naming its latest attacker`() {
         val answer = CompletableFuture<Decision>()
         val rig = DamageRig { answer }
-        rig.damage(source = "skeleton", attacker = SKELETON)
+        // Ordinary hits, below LARGE_DAMAGE, so the second is held behind the first's answer.
+        rig.damage(amount = 3.0, source = "skeleton", attacker = SKELETON)
         rig.bodies.capture(0)
         rig.main.drain()
         // A second hit while the first answer is open is held, then told once it settles.
-        rig.damage(tick = 140, source = "skeleton", attacker = SKELETON)
+        rig.damage(amount = 3.0, tick = 140, source = "skeleton", attacker = SKELETON)
         rig.bodies.capture(1)
         rig.main.drain()
         val first = rig.submitted.single()
         answer.complete(decisionFor(first, Intent.Flee("e1")))
         rig.main.drain()
         assertEquals(listOf(SKELETON, SKELETON, SKELETON), rig.bodies.attackers)
-        assertEquals(Trigger.Damaged(6, "skeleton"), rig.bodies.perceived.last().second)
+        assertEquals(Trigger.Damaged(3, "skeleton"), rig.bodies.perceived.last().second)
     }
 
     @Test
@@ -306,11 +307,12 @@ class DamageDriverTest {
         val cognition = EmbodiedCognition(rig.bodies, fair, rig.main, DecisionJournal(rig.log, currentTick = { 0L }))
         val driver = DamageDriver(rig.bodies, cognition, rig.main, { false }, rig.log, currentTick = { 0L })
         val witness = WitnessedPlayer("uuid", "alpha")
-        driver.witnessed(DamageReport(ALPHA, 6.0, "zombie", 100, witness))
+        // Ordinary hits, below LARGE_DAMAGE.
+        driver.witnessed(DamageReport(ALPHA, 3.0, "zombie", 100, witness))
         // A different attacker, so the danger episode for the zombie does not coalesce it: the
         // agent's one event already with the mind does, before the per-agent budget is spent.
-        driver.witnessed(DamageReport(ALPHA, 6.0, "skeleton", 100 + DAMAGE_EPISODE_TICKS, witness))
-        driver.witnessed(DamageReport(BETA, 6.0, "zombie", 100 + DAMAGE_EPISODE_TICKS, witness))
+        driver.witnessed(DamageReport(ALPHA, 3.0, "skeleton", 100 + DAMAGE_EPISODE_TICKS, witness))
+        driver.witnessed(DamageReport(BETA, 3.0, "zombie", 100 + DAMAGE_EPISODE_TICKS, witness))
         rig.bodies.capture(0)
         val refused = rig.bodies.capture(1)
         rig.bodies.capture(2)

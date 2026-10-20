@@ -69,9 +69,10 @@ internal class DangerPreemption {
         if (perception.trigger !is Trigger.Damaged) return Verdict.NONE
         val own = inFlight.filter { (_, held) -> held.first == agentId }.keys
         val older = own.filter { key -> inFlight.getValue(key).second.trigger.reviewsGoal.not() }
+        // Urgent damage - low health, or a large hit even from the same attacker - preempts too.
         val preempting =
             older.isNotEmpty() &&
-                (perception.selfState.health <= LOW_HEALTH || subject != null && older.any { subjects[it] != subject })
+                (urgentDamage(perception) || subject != null && older.any { subjects[it] != subject })
         return when {
             !preempting -> Verdict.NONE
             own.size >= pendingPerAgent || older.any { it in superseded } -> Verdict.DEFER

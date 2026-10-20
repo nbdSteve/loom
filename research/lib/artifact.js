@@ -133,6 +133,8 @@ function maximumConfiguredSpendNanoUsd (cognition) {
   const pivotal = settings.pivotalCallCeiling
   if (!Number.isInteger(pivotal)) return worstCaseCallNanoUsd(cognition) * settings.globalCallCeiling
   const tier = worstCaseTierNanoUsd(cognition)
+  // A JVM tier fallback sends danger past the pivotal ceiling at the ordinary tier inside the
+  // global ceiling, so it is already one of the ordinary calls counted here: the bound is unchanged.
   return pivotal * tier.pivotal + (settings.globalCallCeiling - pivotal) * tier.ordinary
 }
 

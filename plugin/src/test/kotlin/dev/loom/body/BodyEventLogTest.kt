@@ -27,6 +27,7 @@ private val WIRE_NAMES =
         BodyEvent.PERCEIVED to "perceived",
         BodyEvent.THREAT_SUPPRESSED to "threatSuppressed",
         BodyEvent.PERCEPTION_REFUSED to "perceptionRefused",
+        BodyEvent.COGNITION_TIER_FALLBACK to "cognitionTierFallback",
         BodyEvent.DAMAGE_WITNESSED to "damageWitnessed",
         BodyEvent.RETREATING to "retreating",
         BodyEvent.OWN_DROP_PICKUP to "ownDropPickup",

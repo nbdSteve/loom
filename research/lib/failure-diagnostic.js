@@ -69,7 +69,8 @@ const BODY_EVENTS = new Set([
   'witnessRevived',
   'worldInteraction',
   'ownDropPickup',
-  'goalReviewDeferred'
+  'goalReviewDeferred',
+  'cognitionTierFallback'
 ])
 const HARNESS_EVENTS = new Set([
   'cleanupVerified',
@@ -222,7 +223,8 @@ const OUTCOME_EVENTS = new Set([
   'witnessDisputed',
   'worldInteraction',
   'ownDropPickup',
-  'goalReviewDeferred'
+  'goalReviewDeferred',
+  'cognitionTierFallback'
 ])
 const OUTCOME_TAG = /^[a-z][A-Za-z]{0,63}$/
 

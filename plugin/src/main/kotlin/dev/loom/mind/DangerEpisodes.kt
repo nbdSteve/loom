@@ -229,8 +229,20 @@ data class HeldDamage(
 )
 
 /**
- * Whether [perception] is damage at or below [LOW_HEALTH], always asked about whatever it would
- * coalesce into (r27: iota's spider hits at 4.5 and 2.5 health were coalesced, and it died).
+ * The damage, in vanilla half-hearts, that is news even from the creature already being answered.
+ *
+ * From r33's 82 damage perceptions: every ordinary hit was 2 to 5 (spiders 2, zombies 3, skeletons
+ * 3 to 5), and the four at 6 or more were a spider's 6, a skeleton's 8 and creeper blasts of 19 and
+ * 22 - beta's 19 among them, coalesced behind its own creeper sighting (body:00003640) before it died.
  */
-private fun urgentDamage(perception: Perception): Boolean =
-    perception.trigger is Trigger.Damaged && perception.selfState.health <= LOW_HEALTH
+const val LARGE_DAMAGE: Long = 6
+
+/**
+ * Whether [perception] is urgent damage, always asked about whatever it would coalesce into: at or
+ * below [LOW_HEALTH] (r27: iota's spider hits at 4.5 and 2.5 health were coalesced, and it died), or
+ * [LARGE_DAMAGE] or more.
+ */
+internal fun urgentDamage(perception: Perception): Boolean {
+    val damage = perception.trigger as? Trigger.Damaged ?: return false
+    return perception.selfState.health <= LOW_HEALTH || damage.amount >= LARGE_DAMAGE
+}

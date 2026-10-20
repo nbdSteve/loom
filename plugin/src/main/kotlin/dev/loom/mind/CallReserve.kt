@@ -55,16 +55,33 @@ class CallReserve(
         }
     }
 
+    /** What the reserve makes of one perception. */
+    enum class Admission {
+        /** Sent at its own tier. */
+        SENT,
+
+        /**
+         * Urgent danger the pivotal ceiling no longer fits, sent at the ordinary tier inside the
+         * per-agent and global ceilings, which still do: a cheaper answer, never a refused one (r33:
+         * alpha, the last agent alive, had three damage calls and five sightings refused at the
+         * pivotal ceiling while 138 of the 378 global calls were unspent).
+         */
+        TIER_FALLBACK,
+
+        /** Not sent: a hard ceiling, or the calls kept for reviews still due. */
+        REFUSED,
+    }
+
     private val sent = mutableMapOf<AgentId, Int>()
     private var pivotalSent = 0L
     private val scheduled = mutableMapOf<AgentId, Int>()
 
-    /** Whether [perception] may be sent now; records it when it may. */
+    /** Whether [perception] may be sent now, at its tier or the ordinary one; records it when it may. */
     @Synchronized
     fun admit(
         agentId: AgentId,
         perception: Perception,
-    ): Boolean {
+    ): Admission {
         val review = perception.trigger == Trigger.GoalReview
         val calls = sent[agentId] ?: 0
         val total = sent.values.sum()
@@ -74,28 +91,64 @@ class CallReserve(
         // eight pivotal sightings were refused to keep calls for reviews their agents never lived to
         // hold, theta's at health 1).
         val pivotal = perception.importance == DecisionImportance.PIVOTAL
-        // The pivotal pool is the run's dearest: damage may spend all of it, and a pivotal sighting or
-        // review leaves every living agent its urgent calls (r24 envelope: the proxy refuses past it,
-        // and a refusal there ends the run, so the JVM holds the bound first).
+        val pivotalFits = !pivotal || pivotalFits(agentId, perception)
+        val ceilingsFit = ceilingsFit(agentId, review || urgent, calls, total)
+        // Damage and threat sightings past the pivotal ceiling fall back to the ordinary tier.
+        val admission =
+            when {
+                !ceilingsFit -> Admission.REFUSED
+                pivotalFits -> Admission.SENT
+                fallbackEligible(perception) -> Admission.TIER_FALLBACK
+                else -> Admission.REFUSED
+            }
+        if (admission != Admission.REFUSED) record(agentId, review, pivotal && admission == Admission.SENT)
+        return admission
+    }
+
+    private fun record(
+        agentId: AgentId,
+        review: Boolean,
+        pivotal: Boolean,
+    ) {
+        if (pivotal) pivotalSent += 1
+        sent[agentId] = (sent[agentId] ?: 0) + 1
+        if (review) scheduled[agentId] = (scheduled[agentId] ?: 0) + 1
+    }
+
+    /**
+     * Whether one more pivotal call fits the pivotal pool, the run's dearest: damage may spend all of
+     * it, and a pivotal sighting or review leaves every living agent its urgent calls (r24 envelope:
+     * the proxy refuses past it, and a refusal there ends the run, so the JVM holds the bound first).
+     */
+    private fun pivotalFits(
+        agentId: AgentId,
+        perception: Perception,
+    ): Boolean {
         val keptPivotal =
             if (perception.trigger is Trigger.Damaged) 0L else URGENT_CALL_RESERVE.toLong() * livingCount(agentId)
-        val pivotalFits = !pivotal || pivotalSent + 1 + keptPivotal <= pivotalCeiling
-        val admitted =
-            pivotalFits &&
-                if (review || urgent) {
-                    calls < perAgentCeiling && total < globalCeiling
-                } else {
-                    val keptForAll = owedByTheLiving(agentId) + URGENT_CALL_RESERVE.toLong() * livingCount(agentId)
-                    val ownFits = calls + 1 + owedBy(agentId) + URGENT_CALL_RESERVE <= perAgentCeiling
-                    ownFits && total.toLong() + 1 + keptForAll <= globalCeiling
-                }
-        if (admitted) {
-            if (pivotal) pivotalSent += 1
-            sent[agentId] = calls + 1
-            if (review) scheduled[agentId] = (scheduled[agentId] ?: 0) + 1
-        }
-        return admitted
+        return pivotalSent + 1 + keptPivotal <= pivotalCeiling
     }
+
+    /**
+     * Whether one more call by [agentId] fits its own and the global ceiling: held only to the
+     * ceilings themselves when [unreserved], else leaving every review still due and the living
+     * agents' urgent calls.
+     */
+    private fun ceilingsFit(
+        agentId: AgentId,
+        unreserved: Boolean,
+        calls: Int,
+        total: Int,
+    ): Boolean {
+        if (unreserved) return calls < perAgentCeiling && total < globalCeiling
+        val keptForAll = owedByTheLiving(agentId) + URGENT_CALL_RESERVE.toLong() * livingCount(agentId)
+        val ownFits = calls + 1 + owedBy(agentId) + URGENT_CALL_RESERVE <= perAgentCeiling
+        return ownFits && total.toLong() + 1 + keptForAll <= globalCeiling
+    }
+
+    /** Urgent damage and a close threat sighting, the danger a cheaper answer still serves. */
+    private fun fallbackEligible(perception: Perception): Boolean =
+        perception.trigger is Trigger.Damaged || perception.trigger is Trigger.ThreatSighted
 
     private fun owedBy(agentId: AgentId): Int =
         if (isDead(agentId)) 0 else (scheduledPerAgent - (scheduled[agentId] ?: 0)).coerceAtLeast(0)
@@ -160,19 +213,26 @@ class CallReserve(
 class ReservingCognitionBridge(
     private val delegate: CognitionBridge,
     private val reserve: CallReserve,
+    /** Told of each perception sent at the ordinary tier because the pivotal ceiling no longer fits it. */
+    private val onTierFallback: (Perception) -> Unit = {},
 ) : CognitionBridge {
     override val outstandingPerAgent: Int get() = delegate.outstandingPerAgent
 
     override fun submit(perception: Perception): CompletableFuture<Decision> =
-        if (reserve.admit(AgentId(perception.agentId), perception)) {
-            delegate.submit(perception)
-        } else {
-            CompletableFuture.failedFuture(
-                CognitionUnavailableException(
-                    CognitionFailure.CallReserved,
-                    "cognition for agent ${perception.agentId} (request ${perception.requestId}) " +
-                        "was not sent: its remaining calls are kept for its scheduled reviews",
-                ),
-            )
+        when (reserve.admit(AgentId(perception.agentId), perception)) {
+            CallReserve.Admission.SENT -> delegate.submit(perception)
+            CallReserve.Admission.TIER_FALLBACK -> {
+                onTierFallback(perception)
+                // Routed to the ordinary model, whose provenance the mind then stamps on the answer.
+                delegate.submit(perception.copy(importance = DecisionImportance.NOTABLE))
+            }
+            CallReserve.Admission.REFUSED ->
+                CompletableFuture.failedFuture(
+                    CognitionUnavailableException(
+                        CognitionFailure.CallReserved,
+                        "cognition for agent ${perception.agentId} (request ${perception.requestId}) " +
+                            "was not sent: its remaining calls are kept for its scheduled reviews",
+                    ),
+                )
         }
 }

@@ -126,6 +126,8 @@ class ObserverView(
             BodyEvent.THREAT_SUPPRESSED -> null
             // Evidence of a bound, like a suppression; the review it cost is the line's news.
             BodyEvent.PERCEPTION_REFUSED -> null
+            // Evidence of a bound; the answer it routed arrives as its own `decided` note.
+            BodyEvent.COGNITION_TIER_FALLBACK -> null
             // Evidence only; health and the `perceived` note already say it.
             BodyEvent.DAMAGE_WITNESSED -> null
         }
@@ -161,6 +163,7 @@ class ObserverView(
             // meaning, and that is a countable tag rather than prose.
             BodyEvent.THREAT_SUPPRESSED,
             BodyEvent.PERCEPTION_REFUSED,
+            BodyEvent.COGNITION_TIER_FALLBACK,
             BodyEvent.DAMAGE_WITNESSED,
             // The five witness events carry the one kind of detail in Loom that was written
             // by neither Loom nor a model: a server death message names the weapon that did

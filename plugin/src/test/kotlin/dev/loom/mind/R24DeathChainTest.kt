@@ -53,7 +53,7 @@ class R24DeathChainTest {
                     val key = keyOf(record)
                     if (key in endings && endings[key] !in setOf("dangerCoalesced", "cognitionCoalesced")) {
                         val seen = r24.perception(idOf(record))
-                        admitted[idOf(record)] = reserve.admit(AgentId(seen.agentId), seen)
+                        admitted[idOf(record)] = reserve.admits(AgentId(seen.agentId), seen)
                     }
                 }
             }

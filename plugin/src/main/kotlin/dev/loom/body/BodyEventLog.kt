@@ -296,6 +296,15 @@ enum class BodyEvent {
     PERCEPTION_REFUSED,
 
     /**
+     * Urgent danger sent at the ordinary tier because the pivotal ceiling no longer fits it, while
+     * the per-agent and global ceilings still do. `outcome` is [EventTag.TIER_FALLBACK]; the answer's
+     * own provenance names the ordinary model it was routed to (r33: alpha's damage was refused at
+     * the pivotal ceiling with 138 global calls unspent).
+     */
+    @SerialName("cognitionTierFallback")
+    COGNITION_TIER_FALLBACK,
+
+    /**
      * The server witnessed positive damage to a managed agent's player.
      *
      * One record per witnessed event. `outcome` is one of `EventTag`'s `DAMAGE_` tags;

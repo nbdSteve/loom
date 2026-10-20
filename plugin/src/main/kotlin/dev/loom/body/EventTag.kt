@@ -174,6 +174,9 @@ object EventTag {
      */
     const val DANGER_COALESCED: String = "dangerCoalesced"
 
+    /** Urgent danger sent at the ordinary tier because the pivotal ceiling no longer fits it. */
+    const val TIER_FALLBACK: String = "tierFallback"
+
     /**
      * A danger decision discarded unapplied, because newer damage from another attacker or at low
      * health was sent while it was with the mind and that newer answer governs the body now.

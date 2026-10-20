@@ -40,6 +40,7 @@ private val DELIBERATELY_SILENT =
             "server evidence; the cognition it produced arrives as its own perceived note",
         BodyEvent.PERCEPTION_REFUSED to
             "evidence of a bound, like a suppression; the review it cost is what the line shows",
+        BodyEvent.COGNITION_TIER_FALLBACK to "evidence of a bound; the answer it routed is its own decided note",
         BodyEvent.ENERGY_CHANGED to "several a second while an agent regenerates",
         BodyEvent.HEALTH_CHANGED to "one a half-heart for a body under attack",
     )

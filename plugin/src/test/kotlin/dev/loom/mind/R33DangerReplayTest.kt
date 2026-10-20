@@ -184,4 +184,33 @@ class R33DangerReplayTest {
                 )
             }
         }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("beta's 19-damage creeper blast is urgent, though the creeper's own sighting was being answered")
+    fun aLargeHitFromTheSameAttackerIsUrgent() {
+        // body:00003640: coalesced behind sighting yq of the same creeper; beta died 40 ticks later.
+        val blast =
+            r33.perception(
+                requireNotNull(
+                    r33.all.first {
+                        field(it, "recordId") == "body:00003640"
+                    }.let(::perceivedFor),
+                ),
+            )
+        val damage = blast.trigger as Trigger.Damaged
+        assertTrue(damage.amount >= LARGE_DAMAGE, "${damage.amount} at ${blast.selfState.health} health")
+        assertTrue(urgentDamage(blast))
+        // Ordinary hits stay coalesced behind their own attacker's answer.
+        val ordinary = blast.copy(trigger = damage.copy(amount = 4), selfState = blast.selfState.copy(health = 18.0))
+        assertTrue(!urgentDamage(ordinary))
+    }
+
+    /** The `perceived` record of the request [record] ends. */
+    private fun perceivedFor(record: JsonObject): String =
+        requireNotNull(
+            r33.all.first {
+                field(it, "event") == "perceived" && field(it, "requestKey") == field(record, "requestKey")
+            }
+                .let { field(it, "recordId") },
+        )
 }

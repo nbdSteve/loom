@@ -337,6 +337,12 @@ From routine-v23 each scheduled review may owe one follow-up review, so the ten-
 the worst-case price. That is re-sized for the follow-ups and not re-measured; a run under it
 should be treated as the next measurement.
 
+## Tier fallback
+
+Once the JVM's pivotal ceiling no longer fits a damage or threat-sighting perception, but its agent's own and the global ceiling still do, the JVM sends it at the ordinary tier and journals one `cognitionTierFallback` body record with outcome `tierFallback` (`CallReserve.Admission`).
+The answer's provenance names the ordinary model and prompt it was routed to, the proxy reserves it at the ordinary tier's price, and preflight's worst case already counts it, because it is one of the global ceiling's ordinary calls.
+No ceiling is raised, and a perception no ceiling fits is still a typed `callReserved` refusal (r33: alpha's damage was refused at the pivotal ceiling with 138 global calls unspent).
+
 ## Controlled stops
 
 In primary behavior mode two outcomes end a run without making it an integrity failure.

@@ -203,3 +203,9 @@ fun goalChoice(
         stepResult = if (disposition == GoalDisposition.ADOPT) null else stepResult,
     )
 }
+
+/** Whether [reserve] sends [perception] at its own tier: what `admit` answered before tier fallback. */
+fun CallReserve.admits(
+    agentId: dev.loom.body.AgentId,
+    perception: Perception,
+): Boolean = admit(agentId, perception) == CallReserve.Admission.SENT

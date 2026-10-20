@@ -266,6 +266,16 @@ class LoomPlugin : JavaPlugin() {
         return port
     }
 
+    /** [bridge] behind the run's call reserve, each tier fallback it makes journalled. */
+    private fun reserving(
+        bridge: dev.loom.mind.CognitionBridge,
+        journal: DecisionJournal,
+        isDead: (dev.loom.body.AgentId) -> Boolean,
+    ): dev.loom.mind.CognitionBridge =
+        ReservingCognitionBridge(bridge, CallReserve.fromEnvironment(isDead = isDead)) {
+            journal.tierFallback(dev.loom.body.AgentId(it.agentId), it)
+        }
+
     /**
      * Builds the one perception -> cognition -> action path.
      *
@@ -273,6 +283,7 @@ class LoomPlugin : JavaPlugin() {
      * from existing, and its first request fails through the ordinary recorded
      * `cognitionUnavailable` path.
      */
+
     private fun connectMind(
         bodies: BodyPort,
         eventLog: BodyEventLog,
@@ -316,29 +327,35 @@ class LoomPlugin : JavaPlugin() {
                 "${settings.workers} worker(s), queue ${settings.queueDepth}, " +
                 "${settings.perAgentPending} outstanding request(s) per agent",
         )
+        val journal = DecisionJournal(eventLog, currentTick = { server.currentTick.toLong() })
         return EmbodiedCognition(
             bodies = bodies,
-            mind = ReservingCognitionBridge(fair, CallReserve.fromEnvironment(isDead = isDead)),
+            mind = reserving(fair, journal, isDead),
             mainThread = BukkitMainThread(this),
-            journal = DecisionJournal(eventLog, currentTick = { server.currentTick.toLong() }),
+            journal = journal,
             goals = goals,
-            callbacks =
-                CognitionCallbacks(
-                    onStepSettled = settlement,
-                    isDead = isDead,
-                    onApplied = ::reportApplied,
-                    onUnavailable = { perception, failure ->
-                        logger.warning(
-                            "no decision for ${perception.agentId} " +
-                                "(request ${perception.requestId}): ${failure::class.simpleName}",
-                        )
-                    },
-                    onBodyUnavailable = { agent, failure ->
-                        logger.warning("body unavailable for $agent: ${failure::class.simpleName}")
-                    },
-                ),
+            callbacks = cognitionCallbacks(settlement, isDead),
         )
     }
+
+    /** What cognition tells the plugin: settled steps, the death rule, and failures to log. */
+    private fun cognitionCallbacks(
+        settlement: StepSettlement,
+        isDead: (dev.loom.body.AgentId) -> Boolean,
+    ) = CognitionCallbacks(
+        onStepSettled = settlement,
+        isDead = isDead,
+        onApplied = ::reportApplied,
+        onUnavailable = { perception, failure ->
+            logger.warning(
+                "no decision for ${perception.agentId} " +
+                    "(request ${perception.requestId}): ${failure::class.simpleName}",
+            )
+        },
+        onBodyUnavailable = { agent, failure ->
+            logger.warning("body unavailable for $agent: ${failure::class.simpleName}")
+        },
+    )
 
     /**
      * Replays tombstones, installs the server witness, and exposes the same ledger

@@ -88,6 +88,24 @@ class DecisionJournal(
         )
     }
 
+    /** Records that [perception] was sent at the ordinary tier because the pivotal ceiling no longer fits it. */
+    fun tierFallback(
+        agentId: AgentId,
+        perception: Perception,
+    ) {
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.COGNITION_TIER_FALLBACK,
+                detail = "sent at the ordinary tier: the pivotal ceiling no longer fits it",
+                requestId = perception.requestId,
+                trigger = tagOf(perception.trigger),
+                outcome = EventTag.TIER_FALLBACK,
+            ),
+        )
+    }
+
     /**
      * Records a perception the mind never answered, and what stopped it.
      *
