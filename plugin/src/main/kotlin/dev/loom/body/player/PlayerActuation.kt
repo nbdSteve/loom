@@ -392,6 +392,9 @@ internal class PlayerActionPreparer(
                             timeoutMs = MOVEMENT_DEADLINE_MS,
                             sprint = true,
                             avoid = otherHuntersOf(sense, entity).takeIf { it.isNotEmpty() },
+                            // Takes over from a running walk or flight only once its own threat checks
+                            // out, so a refused flight never stops a valid one (r33 gamma).
+                            replace = true,
                         )
                     val operation: () -> ActionExecution = { flee(runtime, sense, request) }
                     operation

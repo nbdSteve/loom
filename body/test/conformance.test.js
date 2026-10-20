@@ -249,6 +249,7 @@ test('a refused fixture is refused for the reason its name gives', () => {
     'request-flee-distance-too-large.json': 'invalidField',
     'request-flee-entity-too-large.json': 'invalidField',
     'request-flee-avoid-repeated.json': 'invalidField',
+    'request-flee-replace-not-boolean.json': 'invalidField',
     'request-flee-blank-sense-id.json': 'invalidField',
     'request-halt-with-move-payload.json': 'invalidField',
     'response-moveTo-unknown-outcome.json': 'invalidField',

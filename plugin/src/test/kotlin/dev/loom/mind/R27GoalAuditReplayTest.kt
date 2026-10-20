@@ -142,7 +142,8 @@ class R27GoalAuditReplayTest {
                 val verdict = preemption.preempts(agent, damage, kindOf(damage), inFlight)
                 val preempts = verdict == DangerPreemption.Verdict.PREEMPT
                 assertTrue(preempts, "$damageId preempts $olderId")
-                assertTrue(preemption.settled(older.requestId), "the older answer is discarded when it arrives")
+                val settled = preemption.settled(older.requestId)
+                assertTrue(settled != DangerPreemption.Supersession.NONE, "the older answer arrives superseded")
             }
         }
 

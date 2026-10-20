@@ -36,8 +36,24 @@ internal class DangerPreemption {
     /** The danger subject each in-flight event perception was sent about, by request. */
     private val subjects = mutableMapOf<String, String?>()
 
-    /** Event requests still with the mind whose answers a preempting damage has superseded. */
-    private val superseded = mutableSetOf<String>()
+    /** What a superseded answer's arrival means, by whether the answer that superseded it has come. */
+    enum class Supersession {
+        /** Never superseded: the ordinary path applies it. */
+        NONE,
+
+        /**
+         * Superseded, but the newer answer is still with the mind: a ready flight is applied rather
+         * than thrown away, and the newer answer replaces it when it is ready (r33: gamma, kappa, iota
+         * and delta each lost a correct ready flight to a newer perception, and gamma livelocked).
+         */
+        NEWER_PENDING,
+
+        /** Superseded, and the newer answer already governs the body: this one is discarded. */
+        NEWER_ANSWERED,
+    }
+
+    /** Event requests still with the mind that a preempting damage superseded, to the one that did. */
+    private val superseded = mutableMapOf<String, String>()
 
     /**
      * Whether damage [perception] preempts an older event of [agentId]'s in [inFlight]; when it
@@ -60,7 +76,7 @@ internal class DangerPreemption {
             !preempting -> Verdict.NONE
             own.size >= pendingPerAgent || older.any { it in superseded } -> Verdict.DEFER
             else -> {
-                superseded += older
+                older.forEach { superseded[it] = perception.requestId }
                 Verdict.PREEMPT
             }
         }
@@ -74,9 +90,10 @@ internal class DangerPreemption {
         if (!sent.trigger.reviewsGoal) subjects[sent.requestId] = subject
     }
 
-    /** The answer to [requestId] arrived: whether it was superseded, and so is to be discarded. */
-    fun settled(requestId: String): Boolean {
+    /** The answer to [requestId] arrived: whether it was superseded, and whether its successor has come. */
+    fun settled(requestId: String): Supersession {
         subjects -= requestId
-        return superseded.remove(requestId)
+        val newer = superseded.remove(requestId) ?: return Supersession.NONE
+        return if (newer in subjects) Supersession.NEWER_PENDING else Supersession.NEWER_ANSWERED
     }
 }

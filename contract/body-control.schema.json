@@ -750,6 +750,10 @@
               "maxItems": 16,
               "uniqueItems": true,
               "items": { "$ref": "#/$defs/EntityIndex" }
+            },
+            "replace": {
+              "description": "Whether this flight may take over from a flight the body is already running. The body first checks the named threat exactly as a flight that starts from rest would; when that check refuses, the answer is that refusal and the running flight is untouched, and only when it passes is the running flight ended as cancelled and this one begun in the same turn, so no other request can take the body between them and a refused flight never stops a valid one (r33: gamma's refused flight halted the flight it meant to replace). Anything else running is still notReady. A peer lacking the field refuses the frame rather than misreading it, so adding it moved no generation.",
+              "type": "boolean"
             }
           }
         },

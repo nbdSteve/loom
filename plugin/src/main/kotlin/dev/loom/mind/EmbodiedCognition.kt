@@ -179,11 +179,16 @@ class EmbodiedCognition(
             mainThread.execute {
                 // A shutdown already ended this chain; nothing may be recorded twice.
                 if (inFlight.remove(carried.requestId) == null) return@execute
-                val supersededNow = preemption.settled(carried.requestId)
+                val supersession = preemption.settled(carried.requestId)
+                // A ready flight is applied while the answer that superseded it is still coming;
+                // anything else a newer answer superseded is discarded.
+                val discardedNow =
+                    supersession == DangerPreemption.Supersession.NEWER_ANSWERED ||
+                        supersession == DangerPreemption.Supersession.NEWER_PENDING && decision?.intent !is Intent.Flee
                 when {
                     decision == null -> lost(agentId, carried, failure ?: missingBoth(carried))
                     // A preempting damage's answer governs the body now; this older one is discarded.
-                    supersededNow -> {
+                    discardedNow -> {
                         danger.settled(agentId, decision.requestId, fled = false)
                         bodies.held.release(agentId, decision.requestId)
                         journal.preempted(agentId, decision)

@@ -131,8 +131,10 @@ class FlightAndPreemptionTest {
         cognition.submit(agent, zombie, dangerSubject = "zombie-1")
         main.drain()
         assertEquals(setOf("creeper", "zombie"), decisions.keys, "the zombie's damage was sent, not coalesced")
-        decisions.getValue("creeper").complete(decisionFor(creeper, Intent.Flee("e1")))
+        // The newer answer is ready first, so the older one arrives behind it and is discarded.
         decisions.getValue("zombie").complete(decisionFor(zombie, Intent.Flee("e2")))
+        main.drain()
+        decisions.getValue("creeper").complete(decisionFor(creeper, Intent.Flee("e1")))
         main.drain()
         assertEquals(listOf<String?>("zombie"), applied)
         val discarded = records.filter { it.event == dev.loom.body.BodyEvent.DECISION_DISCARDED }
@@ -219,8 +221,65 @@ class FlightAndPreemptionTest {
         decisions.getValue("sighting").complete(decisionFor(sighting, Intent.Flee("e1")))
         decisions.getValue("d6548").complete(decisionFor(first, Intent.Flee("e1")))
         main.drain()
-        assertEquals(listOf<String?>("d6548"), applied, "the preempting answer governs the body")
+        // The sighting's flight was ready first, so it ran until the preempting answer replaced it.
+        assertEquals(listOf<String?>("sighting", "d6548"), applied, "each ready flight is applied in turn")
         // The two held hits are told as one damage once no answer of the agent's is still open.
         assertEquals(listOf<Trigger>(Trigger.Damaged(4, "zombie")), told)
+    }
+
+    @Test
+    @DisplayName("a superseded flight that is ready first is applied, and the newer answer replaces it when ready")
+    fun aReadySupersededFlightIsApplied() {
+        // r33 kappa body:00003423: a sighting answer, preempted one tick before it could apply, was
+        // thrown away, and kappa died with no flight running.
+        val applied = mutableListOf<String?>()
+        val body =
+            object : BodyPort {
+                override fun spawn(agentId: AgentId) = fail("cognition must not spawn bodies")
+
+                override fun despawn(agentId: AgentId) = fail("cognition must not despawn bodies")
+
+                override fun apply(
+                    agentId: AgentId,
+                    intent: Intent,
+                    requestId: String?,
+                ): CompletableFuture<IntentOutcome> {
+                    applied += requestId
+                    return CompletableFuture.completedFuture(IntentOutcome.Accepted("ok"))
+                }
+
+                override fun perceive(
+                    agentId: AgentId,
+                    trigger: Trigger,
+                ): CompletableFuture<Perception?> = CompletableFuture.completedFuture(null)
+
+                override fun senseThreat(agentId: AgentId) = fail("not this test's business")
+
+                override fun tick(tick: Long) = fail("cognition must never drive the tick")
+
+                override fun liveBodies(): Set<AgentId> = fail("cognition does not enumerate bodies")
+            }
+        val records = mutableListOf<BodyEventRecord>()
+        val decisions = mutableMapOf<String, CompletableFuture<Decision>>()
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p -> CompletableFuture<Decision>().also { decisions[p.requestId] = it } },
+                mainThread = main,
+                journal = journalInto(records),
+            )
+        val creeper = perception(requestId = "creeper", agentId = agent.value, trigger = Trigger.Damaged(7, "creeper"))
+        cognition.submit(agent, creeper, dangerSubject = "creeper-1")
+        main.drain()
+        val zombie = perception(requestId = "zombie", agentId = agent.value, trigger = Trigger.Damaged(3, "zombie"))
+        cognition.submit(agent, zombie, dangerSubject = "zombie-1")
+        main.drain()
+        decisions.getValue("creeper").complete(decisionFor(creeper, Intent.Flee("e1")))
+        main.drain()
+        assertEquals(listOf<String?>("creeper"), applied, "the ready flight runs while the newer answer is coming")
+        decisions.getValue("zombie").complete(decisionFor(zombie, Intent.Flee("e2")))
+        main.drain()
+        assertEquals(listOf<String?>("creeper", "zombie"), applied, "the newer answer replaces it when ready")
+        assertEquals(0, records.count { it.outcome == EventTag.DANGER_PREEMPTED }, "no ready flight was thrown away")
     }
 }

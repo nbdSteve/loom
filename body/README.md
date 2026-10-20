@@ -66,6 +66,7 @@ dropped-item and inventory offers from one retained `sense` answer.
 An `equip` is `equipped` only after a bounded settle window in which the server did not
 restate the window to undo it, because Mineflayer moves the stack locally before the server
 answers and a vanilla server answers a refused click only with that restatement.
+A `flee` with `replace` may take over from a running walk or flight: its threat is checked first and a refused one leaves the running movement alone, and a valid one ends it as `cancelled` and holds the body until it has drained (`REPLACE_SETTLE_MS`), so nothing else takes the body between them.
 `craft`, `attack` and `sleep` likewise name one offered recipe, one offered living target
 and weapon, or one offered bed, with bounded quantity, swings, pursuit and wait.
 A `sense` that arrives while this body's own craft application owns the inventory is read at that application's settled boundary, at most `SENSE_SETTLE_MAX_MS` later, because a client between two craft clicks holds its ingredients in the crafting grid, a state the server passes through inside one tick (r29 beta); the craft then holds its next application `SENSE_BOUNDARY_HOLD_MS`, because the server applies clicks between its once-a-tick witness samples (r32 eta).

@@ -1041,6 +1041,8 @@ sealed interface BodyRequest {
         val sprint: Boolean,
         /** Other creatures of the same answer the flight must end clear of, by its own ordering. */
         val avoid: List<Int>? = null,
+        /** Whether this flight may take over from a running flight once its threat checks out. */
+        val replace: Boolean? = null,
     ) : BodyRequest {
         init {
             requireEnvelope(protocol, requestId, agentId)

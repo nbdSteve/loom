@@ -1581,7 +1581,8 @@ function requestPayload (raw, literals) {
       spellsWholeNumber(literals, 'distance') &&
       isMoveDeadline(raw, literals) &&
       typeof raw.sprint === 'boolean' &&
-      isAvoidSet(raw.avoid, raw.entity)
+      isAvoidSet(raw.avoid, raw.entity) &&
+      (raw.replace === undefined || typeof raw.replace === 'boolean')
     if (!bounded) return undefined
     const flight = {
       senseId: raw.senseId,
@@ -1591,6 +1592,7 @@ function requestPayload (raw, literals) {
       sprint: raw.sprint
     }
     if (raw.avoid !== undefined) flight.avoid = [...raw.avoid]
+    if (raw.replace !== undefined) flight.replace = raw.replace
     return flight
   }
   if (raw.op === 'dig') {

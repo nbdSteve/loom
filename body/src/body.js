@@ -146,6 +146,13 @@ const MAX_TRACKED_REQUESTS = 64
  * `duplicateRequestId` and the rest - which is what its rationale above is about.
  * `notReady` is not one of them and has [MAX_NOT_READY_PER_CONNECTION] instead.
  */
+/**
+ * How long a replacing flight waits for the flight it cancelled to release the path: a cancelled
+ * flight answers once its physics frame has drained and the body is at rest, which is bounded by
+ * movement's own rest settle, so one second is generous on a loopback server.
+ */
+const REPLACE_SETTLE_MS = 1_000
+
 const MAX_REFUSALS_PER_CONNECTION = 8
 
 /**
@@ -1348,6 +1355,28 @@ function createBody (options) {
    * that answer: its slot offers are a meal's.
    */
   function move (socket, session, request, requestId) {
+    const replacing = request.op === 'flee' && request.replace === true && state === 'ready' &&
+      movement !== undefined && !eating && actionOwner?.kind === 'movement'
+    if (replacing) {
+      // A flight that may take over is checked first, and a refused one leaves the running
+      // flight alone (r33: gamma's refused flight halted the flight it meant to replace).
+      const refused = movement.fleeRefusal({
+        offered: offered.recall(session, request.senseId)?.entityOffers,
+        entity: request.entity
+      })
+      if (refused !== undefined) {
+        settleMovement(socket, session, request, requestId, refused, {}).catch(() => {})
+        return true
+      }
+      // The running flight ends as cancelled, and this one holds the body from that moment until
+      // the cancelled flight has drained, so nothing else can take the body between them.
+      const owned = actionOwner
+      owned.cancel()
+      const reserved = { token: {}, kind: 'movement', session, cancel: () => false, abort: () => false }
+      actionOwner = reserved
+      takeOver(socket, session, request, requestId, reserved).catch(() => {})
+      return true
+    }
     if (state !== 'ready' || movement === undefined || eating || actionOwner !== undefined) {
       return refuse(socket, session, { code: 'notReady', requestId })
     }
@@ -1382,6 +1411,19 @@ function createBody (options) {
     // become an unhandled rejection.
     settleMovement(socket, session, request, requestId, walking, owner).catch(() => {})
     return true
+  }
+
+  /**
+   * Starts a replacing flight once the flight it cancelled has released the path, holding the
+   * body under [reserved] meanwhile, within [REPLACE_SETTLE_MS]; a path still held after that is
+   * `notReady`, the answer a flight behind running work always had.
+   */
+  async function takeOver (socket, session, request, requestId, reserved) {
+    const until = Date.now() + REPLACE_SETTLE_MS
+    while (movement?.busy() === true && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10))
+    if (actionOwner !== reserved) return refuse(socket, session, { code: 'notReady', requestId })
+    actionOwner = undefined
+    return move(socket, session, { ...request, replace: false }, requestId)
   }
 
   /**

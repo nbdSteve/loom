@@ -1380,17 +1380,10 @@ function createMovement (bot, {
      */
     flee ({ offered, entity, avoid = [], distance, timeoutMs, sprint, owner }) {
       if (running !== undefined) return undefined
-      if (offered === undefined) return unmoved('senseForgotten')
+      const refused = this.fleeRefusal({ offered, entity })
+      if (refused !== undefined) return refused
       const named = offered[entity]
-      if (named === undefined) return unmoved('threatUnnamed')
-      const tracked = bot.entities === null || bot.entities === undefined
-        ? undefined
-        : bot.entities[named.id]
-      const seen = tracked === undefined || named.dead === true ||
-        tracked !== named.entity || tracked.isValid === false
-        ? undefined
-        : positionOf(tracked.position)
-      if (seen === undefined) return unmoved('threatGone')
+      const seen = positionOf(bot.entities[named.id].position)
       const near = new goals.GoalNear(seen[0], seen[1], seen[2], distance)
       const start = bot.entity?.position
       // The other hunters the controller named, where each stands now; one gone is passed over.
@@ -1410,6 +1403,29 @@ function createMovement (bot, {
         threat: named,
         owner
       })
+    },
+
+    /**
+     * The unmoved answer a flight from [entity] of [offered] would be refused with, or undefined
+     * when its threat checks out: the same three checks a flight makes before it searches, made
+     * without touching a flight that is running, so a replacing flight can be refused first.
+     */
+    /** Whether a movement still owns the path: one cancelled holds it until its frame has drained. */
+    busy () {
+      return running !== undefined
+    },
+
+    fleeRefusal ({ offered, entity }) {
+      if (offered === undefined) return unmoved('senseForgotten')
+      const named = offered[entity]
+      if (named === undefined) return unmoved('threatUnnamed')
+      const tracked = bot.entities === null || bot.entities === undefined
+        ? undefined
+        : bot.entities[named.id]
+      const gone = tracked === undefined || named.dead === true ||
+        tracked !== named.entity || tracked.isValid === false ||
+        positionOf(tracked.position) === undefined
+      return gone ? unmoved('threatGone') : undefined
     },
 
     /**
