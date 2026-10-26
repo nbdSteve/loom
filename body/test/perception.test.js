@@ -1206,3 +1206,56 @@ test('a starving body eats nothing and asks for no respawn of its own accord', a
   assert.deepEqual(client.writes, [])
   await body.stop()
 })
+
+/** Puts a block of [what] at each cell, over whatever the column held. */
+function placed (bot, what, cells) {
+  const { Vec3 } = require('vec3')
+  for (const { x, y, z } of cells) bot.world.setBlockStateId(new Vec3(x, y, z), registry.blocksByName[what].defaultState)
+}
+
+/** The blocks of a reading beyond dig reach of the eyes at FEET. */
+function beyondReach (reading) {
+  const eyes = [FEET.x, FEET.y + EYE_HEIGHT, FEET.z]
+  return reading.blocks.filter(({ position }) =>
+    Math.hypot(position[0] + 0.5 - eyes[0], position[1] + 0.5 - eyes[1], position[2] + 0.5 - eyes[2]) > 5.1)
+}
+
+test('a sought kind is reported beyond dig reach, and only when sought', async () => {
+  // r34 zeta: logs 6.6 to 8 blocks off were only ever recalled, never in sight.
+  const { bot } = await standing()
+  placed(bot, 'oak_log', [{ x: 15, y: FEET.y, z: 8 }])
+  const plain = senseReading(bot, { radius: 16, limit: 48 }).reading
+  assert.deepEqual(beyondReach(plain), [])
+  const seeking = senseReading(bot, { radius: 16, limit: 48, seek: ['oak_log'] }).reading
+  assert.deepEqual(beyondReach(seeking), [{ what: 'oak_log', position: [15, FEET.y, 8], visible: true }])
+  // The omission count is only about what a dig could reach: the sought log took one place from
+  // the nearer blocks, which is the one more counted omitted, and is never counted itself.
+  assert.equal(seeking.blocksOmitted, plain.blocksOmitted + 1)
+  // A radius inside dig reach looks no further, whatever is sought.
+  const near = senseReading(bot, { radius: 5, limit: 48, seek: ['oak_log'] }).reading
+  assert.deepEqual(beyondReach(near), [])
+})
+
+test('a sought block out of sight is neither reported nor counted', async () => {
+  const { bot } = await standing({ walls: [{ x: 12, y: FEET.y, z: 8 }, { x: 12, y: FEET.y + 1, z: 8 }] })
+  placed(bot, 'oak_log', [{ x: 15, y: FEET.y, z: 8 }])
+  const reading = senseReading(bot, { radius: 16, limit: 48, seek: ['oak_log'] }).reading
+  assert.deepEqual(beyondReach(reading).filter(({ what }) => what === 'oak_log'), [])
+})
+
+test('sought kinds share a quarter of the list fairly, each kind\'s nearest first', async () => {
+  const { bot } = await standing()
+  // Three oak logs east, nearest first, and one birch log west, farther than all of them.
+  placed(bot, 'oak_log', [{ x: 14, y: FEET.y, z: 8 }, { x: 15, y: FEET.y, z: 8 }, { x: 15, y: FEET.y, z: 9 }])
+  placed(bot, 'birch_log', [{ x: 0, y: FEET.y, z: 8 }])
+  // A list of eight leaves two places beyond reach: the oak's nearest and the birch, never two oaks.
+  const reading = senseReading(bot, { radius: 16, limit: 8, seek: ['oak_log', 'birch_log', 'pale_oak_log'] }).reading
+  assert.deepEqual(beyondReach(reading), [
+    { what: 'oak_log', position: [14, FEET.y, 8], visible: true },
+    { what: 'birch_log', position: [0, FEET.y, 8], visible: true }
+  ])
+  assert.ok(reading.blocks.length <= 8)
+  // A list too short for a quarter of it seeks nothing.
+  const short = senseReading(bot, { radius: 16, limit: 3, seek: ['oak_log'] }).reading
+  assert.deepEqual(beyondReach(short), [])
+})

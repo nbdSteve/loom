@@ -253,9 +253,10 @@ test('research evidence never reports a dormant intent as an applied capability'
 })
 
 test('every documented command is a declared and handled command, and every handled command is declared', () => {
+  // A subcommand may be hyphenated, as `end-exposure` is.
   const descriptor = read('plugin', 'src', 'main', 'resources', 'plugin.yml')
   const declared = new Map()
-  for (const match of descriptor.matchAll(/^ {6}\/(loom[a-z]+)(?: ([a-z]+))?/gm)) {
+  for (const match of descriptor.matchAll(/^ {6}\/(loom[a-z]+)(?: ([a-z]+(?:-[a-z]+)*))?/gm)) {
     if (!declared.has(match[1])) declared.set(match[1], new Set())
     if (match[2]) declared.get(match[1]).add(match[2])
   }
@@ -265,14 +266,14 @@ test('every documented command is a declared and handled command, and every hand
   }
   assert.deepEqual(sorted([...declared.keys()]), sorted(Object.keys(handled)), 'declared commands')
   for (const [command, source] of Object.entries(handled)) {
-    const constants = new Map([...source.matchAll(/const val ([A-Z_]+)(?:: String)? = "([a-z]+)"/g)].map((match) => [match[1], match[2]]))
-    const branches = [...source.matchAll(/^\s+(?:args\.first(?:OrNull)?\(\) == )?(?:"([a-z]+)"|([A-Z_]+)) ->/gm)].map((match) => match[1] ?? constants.get(match[2])).filter(Boolean)
+    const constants = new Map([...source.matchAll(/const val ([A-Z_]+)(?:: String)? = "([a-z]+(?:-[a-z]+)*)"/g)].map((match) => [match[1], match[2]]))
+    const branches = [...source.matchAll(/^\s+(?:args\.first(?:OrNull)?\(\) == )?(?:"([a-z]+(?:-[a-z]+)*)"|([A-Z_]+)) ->/gm)].map((match) => match[1] ?? constants.get(match[2])).filter(Boolean)
     for (const sub of declared.get(command)) assert.ok(branches.includes(sub), `${command} ${sub} is declared but unhandled`)
     for (const branch of branches) assert.ok(declared.get(command).has(branch), `${command} ${branch} is handled but undeclared`)
   }
   const docs = ['README.md', 'DEMO.md', 'AGENTS.md', 'body/README.md', 'cognition/README.md', 'research/README.md', 'research/HARNESS.md']
   for (const doc of docs) {
-    for (const match of read(doc).matchAll(/\/(loom[a-z]+)\b((?: [a-z]+)(?:\|[a-z]+)*)?/g)) {
+    for (const match of read(doc).matchAll(/\/(loom[a-z]+)\b((?: [a-z]+(?:-[a-z]+)*)(?:\|[a-z]+(?:-[a-z]+)*)*)?/g)) {
       assert.ok(declared.has(match[1]), `${doc} documents unknown command /${match[1]}`)
       if (!match[2]) continue
       for (const sub of match[2].trim().split('|')) {
