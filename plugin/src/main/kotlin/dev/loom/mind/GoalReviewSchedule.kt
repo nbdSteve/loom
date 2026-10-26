@@ -78,12 +78,6 @@ const val FOLLOW_UP_DELAY_TICKS: Long = 40
 /** Follow-up reviews each scheduled review earns, spent over the run rather than within it. */
 const val MAX_FOLLOW_UPS_PER_REVIEW: Int = 2
 
-/**
- * Follow-ups any settled step may spend per scheduled review; past it, one is spent only while a
- * step leaves an own goal-item drop lying.
- */
-const val ORDINARY_FOLLOW_UPS_PER_REVIEW: Int = 1
-
 /** Follow-ups a discovery's walks and transition may claim per scheduled review, outside the allowance. */
 const val MAX_DISCOVERY_FOLLOW_UPS: Int = 3
 
@@ -245,10 +239,13 @@ class GoalReviewSchedule(
     /**
      * Owes [agent] one follow-up review [FOLLOW_UP_DELAY_TICKS] after [tick], when its held goal's
      * step settled - unless it has spent every follow-up its scheduled reviews earned, or its
-     * latest scheduled review has already been followed up [ORDINARY_FOLLOW_UPS_PER_REVIEW] times
-     * and the step did not leave the agent's own drop of the goal's item lying ([owed]), or it has
-     * never had a scheduled review at all. r17 beta's dig at its one follow-up dropped two sticks
-     * with no review owed until 2255 ticks later, and gamma took them.
+     * latest scheduled review has already been followed up as often as each earns
+     * ([followUpsPerReview]) and the step did not leave the agent's own drop of the goal's item
+     * lying ([owed]), or it has never had a scheduled review at all. r17 beta's dig at its one
+     * follow-up dropped two sticks with no review owed until 2255 ticks later, and gamma took them.
+     * A plan of two follow-ups a review may spend both on ordinary steps, past the reserve: r35's
+     * plan of one left its agents' first cycles none, and 26 of its 60 day steps waited a whole
+     * cadence for their next review.
      */
     override fun settled(
         agent: AgentId,
@@ -259,7 +256,7 @@ class GoalReviewSchedule(
         val earned = allowance[agent] ?: 0
         // An ordinary follow-up leaves the last earned one to a review that is owed (r19: the
         // allowance ran out while own goal-item drops lay unreviewed for 2000 to 2300 ticks).
-        val ordinarySpent = !owed && (spentHere >= ORDINARY_FOLLOW_UPS_PER_REVIEW || earned <= OWED_RESERVE)
+        val ordinarySpent = !owed && (spentHere >= followUpsPerReview || earned <= OWED_RESERVE)
         if (agent !in lastReview || earned <= 0 || ordinarySpent) return
         followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS)
     }

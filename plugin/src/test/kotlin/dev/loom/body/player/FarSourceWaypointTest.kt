@@ -30,11 +30,15 @@ class FarSourceWaypointTest {
         digSafe = true,
     )
 
-    /** Grass at y 65 everywhere, leaves at y 68 and 69 round the cut trunk, the last log at y 70. */
+    /**
+     * Grass at y 65 everywhere, leaves at y 68 and 69 round the trunk eta had cut from 66 to 69 -
+     * its own column open - and the last log at y 70.
+     */
     private val ground =
         BlockGround { cell ->
+            val trunk = cell[0] == -13 && cell[2] == -6
             val canopy = cell[1] in 68..69 && kotlin.math.abs(cell[0] + 13) <= 2 && kotlin.math.abs(cell[2] + 6) <= 2
-            cell[1] >= 66 && !canopy && cell != listOf(-13, 70, -6)
+            cell[1] >= 66 && !(canopy && !trunk) && cell != listOf(-13, 70, -6)
         }
 
     @Test
@@ -48,13 +52,17 @@ class FarSourceWaypointTest {
     }
 
     @Test
-    fun `the cell beside a canopy log stands where the eyes reach it`() {
+    fun `the cell beside a canopy log stands where the eyes reach it and see it`() {
+        // Every stand round the trunk is under the leaves; only the cut trunk's own column sees up
+        // to the log, so that is where the walk ends, not on the leaves' top nor under them.
         val feet = listOf(-19.5, 66.0, -3.5)
         val source = listOf(-12.5, 70.5, -5.5)
-        val east = exploreOf(ground, feet, listOf(source)).map { it.second }[2]
-        val eyes = listOf(east[0] + 0.5, east[1] + 1.62, east[2] + 0.5)
-        assertTrue(blocksApart(eyes, source) <= 4.5, "the eyes at $east reach the log")
-        assertEquals(66, east[1])
+        val walkable = walkableFrom(ground, listOf(-20, 66, -4), 20)
+        val east = exploreOf(ground, feet, listOf(source), walkable = walkable).map { it.second }[2]
+        assertEquals(listOf(-13, 66, -6), east)
+        val anywhere = exploreOf(ground, feet, listOf(source)).map { it.second }[2]
+        assertEquals(70, anywhere[1], "without the walk the nearest stand that sees it is on the leaves")
+        assertTrue(digsFrom(ground, east, listOf(-13, 70, -6)))
     }
 
     @Test

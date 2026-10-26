@@ -1,7 +1,7 @@
 {
   "experimentId": "2026-10-15-scripted-two-cycle-10-agent-accelerated",
   "title": "Credential-free 10-agent two-cycle accelerated structural proof",
-  "mode": "routine-v33-sighted-exposure",
+  "mode": "routine-v34-reached-source",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -60,9 +60,9 @@
       "pivotal": "scripted-stand-in"
     },
     "prompts": {
-      "routine": "routine-v33",
-      "notable": "notable-v33",
-      "pivotal": "pivotal-v33"
+      "routine": "routine-v34",
+      "notable": "notable-v34",
+      "pivotal": "pivotal-v34"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,

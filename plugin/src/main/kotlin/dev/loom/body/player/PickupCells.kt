@@ -138,6 +138,28 @@ internal fun walkReaches(
     return answer
 }
 
+/**
+ * Every cell a body standing in [start] can walk to over [ground] within [radius] blocks along each
+ * horizontal axis, by the moves [walkReaches] makes, at most [WALK_MAX_CELLS] of them, [start] first.
+ */
+internal fun walkableFrom(
+    ground: BlockGround,
+    start: List<Int>,
+    radius: Int,
+): Set<List<Int>> {
+    val open = { cell: List<Int> -> ground.standsIn(cell) }
+    val seen = linkedSetOf(start)
+    val queue = ArrayDeque(listOf(start))
+    while (queue.isNotEmpty() && seen.size <= WALK_MAX_CELLS) {
+        stepsFrom(queue.removeFirst(), open)
+            .filter { abs(it[0] - start[0]) <= radius && abs(it[2] - start[2]) <= radius }
+            .filter { abs(it[1] - start[1]) <= WALK_SEARCH_RISE_BLOCKS }
+            .filter { ground.standCell(listOf(it[0], it[1] - 1, it[2])) == it && seen.add(it) }
+            .forEach(queue::addLast)
+    }
+    return seen
+}
+
 /** The cells one step from [at]: level or dropping into the column beside it, or one block up it. */
 private fun stepsFrom(
     at: List<Int>,

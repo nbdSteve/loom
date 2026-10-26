@@ -228,6 +228,10 @@ pub struct OfferedRefs {
     pub stacks: Vec<String>,
     /// Shown craftable recipes: what `craft` may name.
     pub recipes: Vec<String>,
+    /// The most applications each shown recipe allows, by ref, within the contract's own bound:
+    /// a craft may ask no more (r35 alpha asked two of a stick recipe its planks made once, and the
+    /// body refused it as `craftQuantityExceeded`).
+    pub recipe_crafts: Vec<(String, i64)>,
     /// Every item something in sight could give the agent more of - dropped in sight, craftable,
     /// or yielded by a visible block it may dig - which is what a success condition may name.
     pub obtainable: Vec<String>,
@@ -614,6 +618,12 @@ impl OfferedRefs {
         }
         for option in state.crafting_options.iter().take(MAX_CRAFTING_LINES) {
             offer(&mut offered.recipes, &option.recipe_ref);
+            offered.recipe_crafts.push((
+                option.recipe_ref.clone(),
+                option
+                    .max_crafts
+                    .clamp(1, loom_contract::MAX_CRAFTS_PER_INTENT),
+            ));
         }
         offered.survival(perception);
         let totals = totals_of(perception, sources);
@@ -1047,7 +1057,17 @@ impl OfferedRefs {
         }
     }
 
-    /// Whether every ref `intent` names is offered to that action in that mode.
+    /// The most applications the shown recipe `recipe` allows; none for one not shown.
+    #[must_use]
+    pub fn crafts_of(&self, recipe: &str) -> i64 {
+        self.recipe_crafts
+            .iter()
+            .find(|(offered, _)| offered == recipe)
+            .map_or(0, |(_, most)| *most)
+    }
+
+    /// Whether every ref `intent` names is offered to that action in that mode, and a craft asks
+    /// no more applications than its recipe allows.
     #[must_use]
     pub fn admits(&self, intent: &Intent) -> bool {
         let held = |list: &[String], handle: &str| list.iter().any(|offered| offered == handle);
@@ -1068,7 +1088,9 @@ impl OfferedRefs {
                 held(&self.blocks, block) && held(&self.stacks, item)
             }
             Intent::Equip { item, .. } => held(&self.stacks, item),
-            Intent::Craft { recipe, .. } => held(&self.recipes, recipe),
+            Intent::Craft { recipe, crafts } => {
+                held(&self.recipes, recipe) && *crafts <= self.crafts_of(recipe)
+            }
             Intent::Attack {
                 target,
                 weapon,

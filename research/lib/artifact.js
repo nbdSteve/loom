@@ -234,7 +234,9 @@ function primaryBehaviorErrors (config) {
   // settles (`MAX_FOLLOW_UPS_PER_REVIEW` in `GoalReviewSchedule.kt`), so the planned reviews are
   // the scheduled ones and as many follow-ups, and both ceilings must hold them.
   const followUps = schedule?.followUpsPerReview ?? 0
-  const pinnedFollowUps = primaryBehaviorModeOf(config.mode)?.followUpsPerReview ?? 0
+  // A profile may pin its own plan of follow-ups in place of its mode's (r35: one a review left
+  // 26 of 60 day steps waiting a whole cadence).
+  const pinnedFollowUps = profile.followUpsPerReview ?? primaryBehaviorModeOf(config.mode)?.followUpsPerReview ?? 0
   if (followUps !== 0 && followUps !== pinnedFollowUps) {
     errors.push(`primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview must be ${pinnedFollowUps} when stated`)
   }
@@ -277,10 +279,10 @@ function primaryBehaviorErrors (config) {
   if (behavior.categoryFairSelection !== pinned.categoryFairSelection) {
     errors.push(`primaryBehavior.categoryFairSelection must be ${pinned.categoryFairSelection} for ${configuredMode(config)}`)
   }
-  if ((schedule?.followUpsPerReview ?? 0) !== (pinned.followUpsPerReview ?? 0)) {
+  if ((schedule?.followUpsPerReview ?? 0) !== pinnedFollowUps) {
     errors.push(
-      `primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview must be ${pinned.followUpsPerReview ?? 0} ` +
-        `for ${configuredMode(config)}`
+      `primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview must be ${pinnedFollowUps} ` +
+        `for ${configuredMode(config)} and ${behavior.profile}`
     )
   }
   if (config.proof !== undefined) {

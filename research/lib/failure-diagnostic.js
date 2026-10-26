@@ -47,7 +47,8 @@ const MODES = new Set([
   'routine-v30-horizon-goal',
   'routine-v31-discovery-goal',
   'routine-v32-survival-discovery',
-  'routine-v33-sighted-exposure'
+  'routine-v33-sighted-exposure',
+  'routine-v34-reached-source'
 ])
 const MAX_INPUT_LINE_BYTES = 256 * 1024
 const BODY_EVENTS = new Set([

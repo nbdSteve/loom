@@ -339,6 +339,15 @@ PROFILES['balanced-envelope-10m-10'] = Object.freeze({
   scene: 'e2-balanced-ring',
   exposure: Object.freeze({ daylightTicks: 7000, nightTicks: 5000 })
 })
+// The balanced envelope's scene, bounds, bars and exposure with two follow-ups a scheduled review
+// in place of one (the r35 audit): with one, the review a settled step owes was kept back for an
+// owed one, so 26 of r35's 60 day goal steps waited a whole cadence for their next review. 50
+// scheduled reviews and 100 follow-ups leave 228 of the 378 calls to events, past the third the
+// mode keeps, and 15 a living agent's own, under its 40.
+PROFILES['balanced-follow-up-10m-10'] = Object.freeze({
+  ...PROFILES['balanced-envelope-10m-10'],
+  followUpsPerReview: 2
+})
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

@@ -507,7 +507,7 @@ fn intent_variant(action: &str, fields: Vec<(&str, Option<Value>)>) -> Option<Va
 
 /// One request namespace: the handles one action may name in one mode, defined once under
 /// `$defs` so a block offered to three actions costs one enum and not three.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Namespace {
     Block,
     DigBlock,
@@ -623,12 +623,95 @@ fn any_ref_field(
     (!any.is_empty()).then(|| json!({ "description": description, "anyOf": any }))
 }
 
-/// The `$defs` a request carries: one closed string enum per namespace it offers.
+/// The offered recipes grouped by how many applications each allows, fewest first.
+fn recipe_groups<'a>(
+    offered: &'a OfferedRefs,
+    recipes: &'a [String],
+) -> Vec<(i64, Vec<&'a String>)> {
+    let mut groups: Vec<(i64, Vec<&String>)> = Vec::new();
+    for recipe in recipes {
+        let most = offered.crafts_of(recipe);
+        match groups.iter_mut().find(|(group, _)| *group == most) {
+            Some((_, members)) => members.push(recipe),
+            None => groups.push((most, vec![recipe])),
+        }
+    }
+    groups.sort_by_key(|(most, _)| *most);
+    groups
+}
+
+/// The name of the `$defs` enum of the offered recipes that allow exactly `most` applications.
+fn recipe_def(most: i64) -> String {
+    format!("recipeOf{most}Ref")
+}
+
+/// The applications a craft may ask, from one to `most`.
+fn crafts_field(most: i64) -> Option<Value> {
+    plain(json!({
+        "type": "integer",
+        "minimum": 1,
+        "maximum": most,
+        "description": "How many bounded applications of that offered recipe to request; no more than it allows."
+    }))
+}
+
+/// The `craft` variants a request offers: in the reference shape one with any recipe and up to the
+/// contract's bound, and otherwise one per group of recipes that allow the same applications, so a
+/// craft can never ask more than its recipe makes (r35 alpha's `craftQuantityExceeded`).
+fn craft_variants(offered: Option<&OfferedRefs>) -> Vec<Option<Value>> {
+    let Some(refs) = offered else {
+        return vec![intent_variant(
+            "craft",
+            vec![
+                (
+                    "recipe",
+                    ref_field(
+                        "The ref of the exact offered recipe to apply.",
+                        Namespace::Recipe,
+                        None,
+                    ),
+                ),
+                ("crafts", crafts_field(loom_contract::MAX_CRAFTS_PER_INTENT)),
+            ],
+        )];
+    };
+    recipe_groups(refs, &refs.recipes)
+        .into_iter()
+        .map(|(most, _)| {
+            intent_variant(
+                "craft",
+                vec![
+                    (
+                        "recipe",
+                        Some(json!({
+                            "description": "The ref of the exact offered recipe to apply.",
+                            "anyOf": [{ "$ref": format!("#/$defs/{}", recipe_def(most)) }],
+                        })),
+                    ),
+                    ("crafts", crafts_field(most)),
+                ],
+            )
+        })
+        .collect()
+}
+
+/// The `$defs` a request carries: one closed string enum per namespace it offers, the recipes
+/// split by the applications each allows.
 fn namespace_defs(offered: &OfferedRefs) -> Value {
     let mut defs = serde_json::Map::new();
+    for (most, members) in recipe_groups(offered, &offered.recipes) {
+        defs.insert(
+            recipe_def(most),
+            json!({
+                "type": "string",
+                "enum": members,
+                "description": Namespace::Recipe.description(),
+            }),
+        );
+    }
     for namespace in Namespace::ALL {
         let handles = namespace.of(offered);
-        if !handles.is_empty() {
+        if namespace != Namespace::Recipe && !handles.is_empty() {
             defs.insert(
                 namespace.name().to_owned(),
                 json!({
@@ -1214,6 +1297,58 @@ fn names_action(variant: &Value, actions: &[&str]) -> bool {
 /// The intents that take no step, which a goal cannot be pursued by.
 const PASSIVE_ACTIONS: [&str; 2] = ["rest", "idle"];
 
+/// The `place` and `equip` variants: the two actions that name a held stack beside where it goes.
+fn handling_variants(offered: Option<&OfferedRefs>) -> [Option<Value>; 2] {
+    let blocks = |description: &str| {
+        any_ref_field(
+            description,
+            &[Namespace::DigBlock, Namespace::Block],
+            offered,
+        )
+    };
+    let stacks = |description: &str| ref_field(description, Namespace::Stack, offered);
+    [
+        intent_variant(
+            "place",
+            vec![
+                (
+                    "block",
+                    blocks("The ref of the exact sensed support block."),
+                ),
+                (
+                    "item",
+                    stacks("The ref of the offered inventory stack already held in the main hand."),
+                ),
+                (
+                    "face",
+                    plain(json!({
+                        "type": "string",
+                        "enum": ["down", "up", "north", "south", "west", "east"],
+                        "description": "The support-block face against which to place once."
+                    })),
+                ),
+            ],
+        ),
+        intent_variant(
+            "equip",
+            vec![
+                (
+                    "item",
+                    stacks("The ref of the exact offered inventory stack to equip."),
+                ),
+                (
+                    "destination",
+                    plain(json!({
+                        "type": "string",
+                        "enum": ["hand", "offHand", "head", "torso", "legs", "feet"],
+                        "description": "The bounded player equipment destination."
+                    })),
+                ),
+            ],
+        ),
+    ]
+}
+
 fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Value {
     let blocks = |description: &str| {
         any_ref_field(
@@ -1226,7 +1361,6 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
     let walk_targets = |description: &str| ref_field(description, Namespace::WalkTarget, offered);
     let creatures = |description: &str| ref_field(description, Namespace::Creature, offered);
     let stacks = |description: &str| ref_field(description, Namespace::Stack, offered);
-    let recipes = |description: &str| ref_field(description, Namespace::Recipe, offered);
     let mut variants: Vec<Option<Value>> = vec![
         intent_variant("say", vec![("text", plain(json!({
             "type": "string",
@@ -1238,34 +1372,8 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
         intent_variant("dig", vec![("block", dig_blocks("The ref of the exact nearby block to dig once. A block ref from this message, never coordinates or an item name."))]),
     ];
     variants.extend(collect_variants(offered));
-    variants.extend([
-        intent_variant("place", vec![
-            ("block", blocks("The ref of the exact sensed support block.")),
-            ("item", stacks("The ref of the offered inventory stack already held in the main hand.")),
-            ("face", plain(json!({
-                "type": "string",
-                "enum": ["down", "up", "north", "south", "west", "east"],
-                "description": "The support-block face against which to place once."
-            }))),
-        ]),
-        intent_variant("equip", vec![
-            ("item", stacks("The ref of the exact offered inventory stack to equip.")),
-            ("destination", plain(json!({
-                "type": "string",
-                "enum": ["hand", "offHand", "head", "torso", "legs", "feet"],
-                "description": "The bounded player equipment destination."
-            }))),
-        ]),
-        intent_variant("craft", vec![
-            ("recipe", recipes("The ref of the exact offered recipe to apply.")),
-            ("crafts", plain(json!({
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 8,
-                "description": "How many bounded applications of that offered recipe to request."
-            }))),
-        ]),
-    ]);
+    variants.extend(handling_variants(offered));
+    variants.extend(craft_variants(offered));
     variants.extend(attack_variants(offered));
     variants.extend([
         intent_variant(
@@ -1381,7 +1489,7 @@ fn coupled_schema(
         let Some(steps) = offered.item_steps.iter().find(|steps| &steps.item == item) else {
             continue;
         };
-        let intents = item_step_variants(index, steps, table);
+        let intents = item_step_variants(index, steps, offered, table);
         if intents.is_empty() || choices.is_empty() {
             continue;
         }
@@ -1507,6 +1615,7 @@ fn survival_intents(
 fn item_step_variants(
     index: usize,
     steps: &ItemSteps,
+    offered: &OfferedRefs,
     table: &mut serde_json::Map<String, Value>,
 ) -> Vec<Value> {
     let mut named = |kind: &str, handles: &[String], description: &str| -> Option<Value> {
@@ -1537,11 +1646,20 @@ fn item_step_variants(
         &steps.route,
         "A drop of this goal's item within walking reach.",
     );
-    let recipe = named(
-        "Recipe",
-        &steps.recipes,
-        "A recipe that makes this goal's item.",
-    );
+    let recipes: Vec<(i64, Option<Value>)> = recipe_groups(offered, &steps.recipes)
+        .into_iter()
+        .map(|(most, members)| {
+            let members: Vec<String> = members.into_iter().cloned().collect();
+            (
+                most,
+                named(
+                    &format!("RecipeOf{most}"),
+                    &members,
+                    "A recipe that makes this goal's item.",
+                ),
+            )
+        })
+        .collect();
     let walk = named(
         "Walk",
         &steps.walks,
@@ -1555,22 +1673,20 @@ fn item_step_variants(
     [
         dig.map(|block| intent_variant("dig", vec![("block", Some(block))])),
         pickup.map(|item| {
-            intent_variant("collect", vec![("item", Some(item)), ("approach", approach_field(COLLECT_APPROACH, Some(false)))])
+            intent_variant(
+                "collect",
+                vec![
+                    ("item", Some(item)),
+                    ("approach", approach_field(COLLECT_APPROACH, Some(false))),
+                ],
+            )
         }),
         route.map(|item| {
-            intent_variant("collect", vec![("item", Some(item)), ("approach", approach_field(COLLECT_APPROACH, Some(true)))])
-        }),
-        recipe.map(|recipe| {
             intent_variant(
-                "craft",
+                "collect",
                 vec![
-                    ("recipe", Some(recipe)),
-                    ("crafts", plain(json!({
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 8,
-                        "description": "How many bounded applications of that offered recipe to request."
-                    }))),
+                    ("item", Some(item)),
+                    ("approach", approach_field(COLLECT_APPROACH, Some(true))),
                 ],
             )
         }),
@@ -1578,6 +1694,14 @@ fn item_step_variants(
         toward.map(|onto| intent_variant("moveTo", vec![("onto", Some(onto))])),
     ]
     .into_iter()
+    .chain(recipes.into_iter().map(|(most, recipe)| {
+        recipe.map(|recipe| {
+            intent_variant(
+                "craft",
+                vec![("recipe", Some(recipe)), ("crafts", crafts_field(most))],
+            )
+        })
+    }))
     .flatten()
     .flatten()
     .collect()

@@ -220,6 +220,33 @@ class GoalReviewScheduleTest {
     }
 
     @Test
+    @DisplayName("a plan of two follow-ups a review spends both on ordinary steps, past the reserve")
+    fun aPlanOfTwoFollowUpsSpendsBothOnOrdinarySteps() {
+        // r35's plan of one left every agent's first cycle no ordinary follow-up, and 26 of its 60
+        // day steps waited a whole cadence for their next review.
+        val agent = AgentId("agent-1")
+        val living = setOf(agent)
+        val follow = { planned: GoalReviewSchedule, at: Long ->
+            planned.settled(agent, at, owed = false)
+            planned.claimFollowUps(living, at + FOLLOW_UP_DELAY_TICKS)
+        }
+        val one = GoalReviewSchedule(CADENCE, SLICES, followUpsPerReview = 1)
+        one.claim(living, 0)
+        assertEquals(emptyList<AgentId>(), follow(one, 5), "the one it earned is kept for an owed review")
+        one.claim(living, CADENCE)
+        assertEquals(listOf(agent), follow(one, CADENCE + 5))
+        assertEquals(emptyList<AgentId>(), follow(one, CADENCE + 60), "one ordinary follow-up a review")
+        val two = GoalReviewSchedule(CADENCE, SLICES, followUpsPerReview = 2)
+        two.claim(living, 0)
+        assertEquals(listOf(agent), follow(two, 5))
+        assertEquals(emptyList<AgentId>(), follow(two, 60), "the last earned is kept for an owed review")
+        two.claim(living, CADENCE)
+        assertEquals(listOf(agent), follow(two, CADENCE + 5))
+        assertEquals(listOf(agent), follow(two, CADENCE + 60))
+        assertEquals(emptyList<AgentId>(), follow(two, CADENCE + 100), "two ordinary follow-ups a review")
+    }
+
+    @Test
     @DisplayName("an owed follow-up waits for a mind that is busy, and is dropped with its agent")
     fun anOwedFollowUpWaitsAndIsForgotten() {
         val agent = AgentId("agent-1")

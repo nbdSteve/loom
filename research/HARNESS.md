@@ -6,9 +6,9 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v33 sighted-exposure pilot,
-`research/config/first-tribe-routine-v33-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v33-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v34 reached-source pilot,
+`research/config/first-tribe-routine-v34-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v34-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
 native event drivers. It uses the v29 prompts, which show each agent its own
@@ -180,7 +180,7 @@ typed-goal mode), and the `tribe-grounded-step-10m-10*.json` files (the routine-
 mode), and the `tribe-obtainable-goal-10m-10*.json` files (the routine-v22 obtainable-goal mode), and the
 `tribe-own-evidence-10m-10*.json`, `tribe-answered-goal-10m-10*.json`, `tribe-collected-goal-10m-10*.json`
 and `tribe-pursued-goal-10m-10*.json` files (the routine-v23 to routine-v26 modes), and the
-`tribe-night-goal-10m-10*.json` files (the routine-v32 configuration r34 ran). They pin prompts the current mind no longer serves, so
+`tribe-night-goal-10m-10*.json` and `tribe-balanced-envelope-10m-10*.json` files (the routine-v32 and routine-v33 configurations r34 and r35 ran). They pin prompts the current mind no longer serves, so
 preflight refuses them before anything is built, started or read; the artifacts
 committed under them still validate. `contract/fixtures/capability-support.json`
 is the one classification of which configurations, modes, intents, triggers and
@@ -199,7 +199,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v33-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v34-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -218,8 +218,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v33-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v33-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v34-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v34-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -344,8 +344,9 @@ From r34 the ten-minute shakedown runs the `balanced-envelope-10m-10` profile on
 The r33 audit found the 9000 start left about two daylight reviews per agent, so its pursuit bars mostly measured night survival.
 The profile pre-registers its exposure exactly, 7000 daylight ticks before dusk at 13000 and 5000 night ticks after it, and preflight refuses a configuration whose start and tick ceiling do not hold it (`exposureOf`).
 The `e1-explore-ring` scene and the profiles on it are unchanged, so r19 to r33 validate as published.
-From r35 the balanced shakedown is configured by `research/config/tribe-balanced-envelope-10m-10.json` and its provider-free twin `tribe-balanced-envelope-10m-10-scripted.json`, under the routine-v33 mode.
-r34 ran the same profile from `tribe-night-goal-10m-10.json`, whose name came from the profile before it; that file and its twin are kept unchanged under the names r34's artifact states, and are historical because they pin routine-v32.
+r35 ran the balanced shakedown from `research/config/tribe-balanced-envelope-10m-10.json` under the routine-v33 mode, and r34 the same profile from `tribe-night-goal-10m-10.json`, whose name came from the profile before it; those files and their twins are kept unchanged under the names their artifacts state, and are historical because they pin routine-v33 and routine-v32.
+From r36 the shakedown runs the `balanced-follow-up-10m-10` profile, configured by `research/config/tribe-balanced-follow-up-10m-10.json` and its provider-free twin under the routine-v34 mode: the balanced envelope's scene, bounds, exposure and bars, with two follow-ups a scheduled review in place of one, because with one the review a settled step owes was kept back for an owed one and 26 of r35's 60 day goal steps waited a whole cadence for their next review.
+A profile may pin its own `followUpsPerReview` in place of its mode's, and the JVM spends up to that many on ordinary steps a review, past the one it keeps for an owed review.
 
 ## Tier fallback
 

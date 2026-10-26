@@ -99,11 +99,15 @@ function promptActions () {
 function strictSchemaActions () {
   const source = rust('cognition', 'src', 'openai', 'wire.rs')
   const builder = blockAfter(source, /fn build_decision_schema\([^)]*\) -> Value \{/)
-  const direct = [...builder.matchAll(/intent_variant\("([A-Za-z]+)"/g)].map((match) => match[1])
+  const named = (block) => [...block.matchAll(/intent_variant\(\s*"([A-Za-z]+)"/g)].map((match) => match[1])
+  const direct = named(builder)
   const helpers = [...builder.matchAll(/\b([a-z_]+_variant)\(\)/g)].map((match) => match[1])
   const indirect = helpers.flatMap((helper) =>
     [...blockAfter(source, new RegExp(`fn ${helper}\\(\\) -> Value \\{`)).matchAll(/"action"[^]*?"(?:const|enum)"\s*:\s*\[?\s*"([A-Za-z]+)"/g)].map((match) => match[1]))
-  return [...direct, ...indirect]
+  // The variant helpers the builder extends its list with, each taking what was offered.
+  const extended = [...builder.matchAll(/\b([a-z_]+_variants)\(offered\)/g)].map((match) => match[1])
+    .flatMap((helper) => named(blockAfter(source, new RegExp(`fn ${helper}\\(`))))
+  return [...direct, ...indirect, ...extended]
 }
 
 test('the prompt advertises exactly the supported intents and states their count', () => {
