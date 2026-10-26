@@ -17,8 +17,8 @@
 //!   and `theta` does the same where nothing else in sight gives anything, so its met goal is
 //!   completed plainly and owes a review;
 //! - `epsilon` digs the one log in reach, and once the other log it counted on is gone walks east
-//!   to the edge of sight to look for another, then revises its log goal to planks once (refused)
-//!   before finishing it;
+//!   to the edge of sight to look for another, which comes into sight out of dig reach, walks to
+//!   the cell beside it, then revises its log goal to planks once (refused) before finishing it;
 //! - `zeta` speaks at every goal review, so an agent nearby perceives at a time no review of its
 //!   own reaches;
 //! - `iota` stands in a pit beside a one-high nook its log lies in, just past vanilla's pickup
@@ -36,8 +36,9 @@
 //!   the dirt underfoot crowded out looking for wood);
 //! - `kappa`, once clear of its creeper with nothing in sight to ground an item goal, sets a
 //!   discovery goal and walks toward a tree line the rehearsal lays out past what it senses, and
-//!   once a walk reveals a log replaces the discovery with a log goal stepped by its dig (r23: 17
-//!   of 70 reviews could set no goal at all).
+//!   once a walk reveals a log replaces the discovery with a log goal stepped by its dig, or by
+//!   the walk beside it while it lies out of dig reach (r23: 17 of 70 reviews could set no goal
+//!   at all).
 //!
 //! Any other agent is answered by [`ScriptedBackend`].
 
@@ -233,8 +234,21 @@ fn met(perception: &Perception) -> bool {
         .is_some_and(|progress| progress.condition_met)
 }
 
-/// One pursuit step for a held goal of `item`: collect an own drop, craft it, dig it, or collect
-/// any other drop of it in reach.
+/// The nearest cell at the edge of sight offered as a walk toward a source of `item` that sight
+/// shows out of dig reach or the body remembers: beside it, where the body stands one up.
+fn toward_of(perception: &Perception, item: &str) -> Option<String> {
+    let offered = OfferedRefs::of(perception);
+    let steps = offered.item_steps.iter().find(|steps| steps.item == item)?;
+    perception
+        .explore
+        .iter()
+        .filter(|cell| steps.toward.contains(&cell.target_ref))
+        .min_by(|one, other| one.distance.total_cmp(&other.distance))
+        .map(|cell| cell.target_ref.clone())
+}
+
+/// One pursuit step for a held goal of `item`: collect an own drop, craft it, dig it, collect
+/// any other drop of it in reach, or walk beside a source of it out of dig reach.
 fn pursue(perception: &Perception, item: &str) -> Option<Draft> {
     let continuing = || Some(judged(GoalDisposition::Continue));
     if let Some((drop, approach)) = own_drop_of(perception, item) {
@@ -261,14 +275,21 @@ fn pursue(perception: &Perception, item: &str) -> Option<Draft> {
             "dig a source of the goal's item",
         ));
     }
-    drop_of(perception, item).map(|(drop, approach)| {
-        answer(
+    if let Some((drop, approach)) = drop_of(perception, item) {
+        return Some(answer(
             Intent::Collect {
                 item: drop,
                 approach,
             },
             continuing(),
             "collect a drop of the goal's item in reach",
+        ));
+    }
+    toward_of(perception, item).map(|onto| {
+        answer(
+            Intent::MoveTo { onto },
+            continuing(),
+            "walk beside the source of the goal's item out of dig reach",
         )
     })
 }
@@ -479,14 +500,21 @@ fn discoverer(perception: &Perception) -> Draft {
         );
     }
     if discovering && met(perception) {
-        if let (Some(block), Some((fewest, _))) =
-            (dig_of(perception, LOG), offered.count_bounds_of(LOG))
-        {
-            return answer(
-                Intent::Dig { block },
-                Some(target(GoalDisposition::Replace, LOG, fewest)),
-                "the walk revealed a log: replace the discovery with a log goal and dig it",
-            );
+        if let Some((fewest, _)) = offered.count_bounds_of(LOG) {
+            if let Some(block) = dig_of(perception, LOG) {
+                return answer(
+                    Intent::Dig { block },
+                    Some(target(GoalDisposition::Replace, LOG, fewest)),
+                    "the walk revealed a log: replace the discovery with a log goal and dig it",
+                );
+            }
+            if let Some(onto) = toward_of(perception, LOG) {
+                return answer(
+                    Intent::MoveTo { onto },
+                    Some(target(GoalDisposition::Replace, LOG, fewest)),
+                    "the walk revealed a log out of reach: replace the discovery and walk beside it",
+                );
+            }
         }
     }
     if discovering {
@@ -575,11 +603,14 @@ fn explorer(perception: &Perception) -> Draft {
     if met(perception) {
         return finish(perception);
     }
-    let revealed = goal
-        .progress
-        .as_ref()
-        .is_some_and(|progress| progress.step_evidence == StepEvidence::Revealed);
-    if revealed && perception.last_refusal.is_none() {
+    // The walk that revealed the log, or the one beside it that brought it within reach.
+    let found = goal.progress.as_ref().is_some_and(|progress| {
+        matches!(
+            progress.step_evidence,
+            StepEvidence::Revealed | StepEvidence::Arrived
+        )
+    });
+    if found && perception.last_refusal.is_none() {
         if let Some(block) = dig_of(perception, LOG) {
             return answer(
                 Intent::Dig { block },
@@ -1141,6 +1172,67 @@ mod tests {
         let choice = became.goal.unwrap();
         assert_eq!(choice.disposition, GoalDisposition::Replace);
         assert_eq!(choice.success_item.as_deref(), Some(LOG));
+        // A log revealed out of dig reach is walked to by the cell in its direction instead.
+        seen.surroundings = vec![Observation {
+            distance: 6.2,
+            direction: Bearing::South,
+            ..log("b2")
+        }];
+        let beside = draft(&seen);
+        assert_eq!(
+            beside.intent,
+            Intent::MoveTo {
+                onto: "x5".to_owned()
+            }
+        );
+        assert_eq!(
+            beside.goal.map(|goal| goal.disposition),
+            Some(GoalDisposition::Replace)
+        );
+    }
+
+    #[test]
+    fn epsilon_walks_beside_a_log_revealed_out_of_reach_then_revises_once_it_arrives() {
+        let mut seen = review("epsilon");
+        seen.explore = vec![
+            edge("x0", Bearing::North, 12.0),
+            edge("x1", Bearing::East, 11.3),
+            edge("x2", Bearing::East, 12.0),
+        ];
+        holding(&mut seen, LOG, 1, 2, StepEvidence::Revealed);
+        seen.horizon = vec![loom_contract::HorizonGoal {
+            what: LOG.to_owned(),
+            grounding: loom_contract::HorizonGrounding::Sight,
+            via: None,
+            most: 9,
+            frontier: true,
+        }];
+        // The walk east showed a log 13.5 blocks on: no dig reaches it, so the nearest cell its
+        // way is the step, and no revise is tried yet.
+        seen.surroundings = vec![Observation {
+            distance: 13.5,
+            ..log("b9")
+        }];
+        let walking = draft(&seen);
+        assert_eq!(
+            walking.intent,
+            Intent::MoveTo {
+                onto: "x1".to_owned()
+            }
+        );
+        assert_eq!(walking.goal.unwrap().disposition, GoalDisposition::Continue);
+        // Arrived beside it, the log is in reach: the one revise to planks the body refuses.
+        seen.surroundings = vec![log("b9")];
+        seen.goal
+            .as_mut()
+            .unwrap()
+            .progress
+            .as_mut()
+            .unwrap()
+            .step_evidence = StepEvidence::Arrived;
+        let revise = draft(&seen).goal.unwrap();
+        assert_eq!(revise.disposition, GoalDisposition::Revise);
+        assert_eq!(revise.success_item.as_deref(), Some(PLANKS));
     }
 
     #[test]

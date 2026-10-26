@@ -12,7 +12,8 @@
 // each chained to the goal whose item its recipe is made from, an own drop ignored and refused,
 // an own drop still told lying past 4800 ticks, a collect
 // without moving that vanilla's own pickup ends, a walk to the edge of sight credited as
-// revealing a source, a revise to another item refused, a revise to the held total refused, a
+// revealing a source, a walk beside a source sight showed out of dig reach credited as arriving,
+// a revise to another item refused, a revise to the held total refused, a
 // plain completion beside a source refused, a plain completion with none accepted and followed by
 // the review it owed, and a block beside the support under an overhang reported unsafe to dig.
 //
@@ -163,9 +164,16 @@ function pathsOf (records, readiness) {
   // toward the tree line, and the walk that brought a log into sight became a log goal (r23).
   const discoveryRevealed = of('tribe-kappa', 'decided').find((record) =>
     record.goal?.presentedDiscovery === true && record.goal?.stepEvidence === 'revealed')
-  const discoveryBecameResourceGoal = of('tribe-kappa', 'decided').find((record) =>
-    record.goal?.discoveredFrom !== undefined && byKey(record.requestKey).some((entry) =>
+  // The log goal it became is stepped by its dig, at once or after the walk beside a log revealed
+  // out of dig reach (r34 zeta).
+  const became = of('tribe-kappa', 'decided').find((record) => record.goal?.discoveredFrom !== undefined)
+  const discoveryBecameResourceGoal = became && of('tribe-kappa', 'decided').find((record) =>
+    record.goal?.goalId === became.goal.goalId && byKey(record.requestKey).some((entry) =>
       entry.event === 'worldInteraction' && entry.outcome === 'serverEffectConfirmed'))
+  // A walk to the cell beside a source sight showed out of dig reach, credited when it brought the
+  // source within reach (r34 zeta's logs were in view and out of reach).
+  const besideFarSource = records.find((record) => record.source === 'body' && record.event === 'decided' &&
+    ['tribe-epsilon', 'tribe-kappa'].includes(record.agentId) && record.goal?.stepEvidence === 'arrived')
   // A dig that dropped its goal's own item made its one body pickup, which the server confirmed.
   const pickedUp = records.find((record) => record.source === 'body' && record.event === 'ownDropPickup' &&
     record.outcome === 'accepted')
@@ -195,6 +203,7 @@ function pathsOf (records, readiness) {
     ownDropToldLyingPastRetention: evidence(retained),
     collectWithoutApproachConfirmed: evidence(passive),
     exploreRevealedASource: evidence(revealed),
+    walkBesideAFarSourceArrived: evidence(besideFarSource),
     reviseToAnotherItemRefused: evidence(applied('tribe-epsilon', 'goalReviseItemChanged'))
   }
 }

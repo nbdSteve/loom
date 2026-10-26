@@ -156,8 +156,9 @@ pub struct ItemSteps {
     /// Standable blocks out of dig reach that can drop it: a walk onto one reaches a source a dig
     /// could not already reach (r18: all seven credited walks were onto bushes already in reach).
     pub walks: Vec<String>,
-    /// Cells at the edge of sight in the direction of a recalled source of it: a walk toward
-    /// where the body last saw one (r20: no agent without a log in sight could set a log goal).
+    /// Cells at the edge of sight in the direction of a recalled source of it, or of one in sight
+    /// beyond dig reach: a walk toward where the body last saw one, or sees one it cannot dig
+    /// (r20: no agent without a log in sight could set a log goal; r34 zeta).
     pub toward: Vec<String>,
 }
 
