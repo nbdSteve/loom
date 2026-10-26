@@ -75,8 +75,9 @@ internal class PlayerEvidenceRecorder(
                 ended is IntentOutcome.Rejected && audited?.second?.effected == true -> ended.copy(effected = true)
                 else -> ended
             }
-        (execution.interaction as? ServerInteractionClaim.Collect)?.let(context.routeRefusals::remember)
-        recordAction(agentId, intent, requestId, outcome)
+        val collect = execution.interaction as? ServerInteractionClaim.Collect
+        collect?.let(context.routeRefusals::remember)
+        recordAction(agentId, intent, requestId, outcome, terrainOf(context.authority.ground, collect))
         recordWalk(runtime, requestId, execution)
         recordFlight(runtime, requestId, execution)
         recordMeal(agentId, execution)
@@ -218,13 +219,25 @@ internal class PlayerEvidenceRecorder(
         intent: Intent,
         requestId: String?,
         outcome: IntentOutcome,
+        terrain: dev.loom.body.TerrainEvidence? = null,
     ) {
-        context.journal.recordAction(
-            agentId = agentId,
-            detail = "${describe(intent)} -> ${describe(outcome)}",
-            requestId = requestId,
-            intent = tagOf(intent),
-            outcome = tagOf(outcome),
+        val detail = "${describe(intent)} -> ${describe(outcome)}"
+        if (terrain == null) {
+            context.journal.recordAction(agentId, detail, requestId, tagOf(intent), tagOf(outcome))
+            return
+        }
+        // A collect the body found no route for carries the server's reading of its ground.
+        context.authority.eventLog.append(
+            dev.loom.body.BodyEventRecord(
+                tick = context.authority.currentTick(),
+                agentId = agentId.value,
+                event = dev.loom.body.BodyEvent.INTENT_APPLIED,
+                detail = detail,
+                requestId = requestId,
+                intent = tagOf(intent),
+                outcome = tagOf(outcome),
+                terrain = terrain,
+            ),
         )
     }
 

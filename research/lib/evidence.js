@@ -406,7 +406,8 @@ function normalizeBodyRecord (
     'shown',
     'retreat',
     'dispute',
-    'movement'
+    'movement',
+    'terrain'
   ]) {
     if (record[field] !== undefined && record[field] !== null) {
       normalized[field] = sanitizeValue(record[field], state)

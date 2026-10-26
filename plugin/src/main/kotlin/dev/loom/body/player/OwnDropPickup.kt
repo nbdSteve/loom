@@ -190,6 +190,7 @@ internal class OwnDropPickup(
                         digRequestId,
                         tag,
                         "one pickup of its own drop: $tag$travelled; server ${audit?.detail ?: "unread"}",
+                        terrainOf(context.authority.ground, claim),
                     )
                     answer.complete(tag)
                 }
@@ -201,6 +202,7 @@ internal class OwnDropPickup(
         requestId: String,
         outcome: String,
         detail: String,
+        terrain: dev.loom.body.TerrainEvidence? = null,
     ) = context.authority.eventLog.append(
         dev.loom.body.BodyEventRecord(
             tick = context.authority.currentTick(),
@@ -209,6 +211,7 @@ internal class OwnDropPickup(
             detail = detail,
             requestId = requestId,
             outcome = outcome,
+            terrain = terrain,
         ),
     )
 }

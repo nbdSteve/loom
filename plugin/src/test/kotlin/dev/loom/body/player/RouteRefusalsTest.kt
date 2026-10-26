@@ -10,7 +10,10 @@ class RouteRefusalsTest {
     private val log = UUID.fromString("bbba1205-277c-4297-bff8-a2c179a622a0")
     private var tick = 3_307L
     private val solid = mutableSetOf<List<Int>>()
-    private val ground = BlockGround { cell -> cell !in solid }
+
+    /** The ground under delta at y 65, and the rise its logs lay on at y 66 from x -6 east. */
+    private val ground =
+        BlockGround { cell -> cell !in solid && cell[1] > 65 && !(cell[1] == 66 && cell[0] >= -6) }
     private val refusals = RouteRefusals({ tick }, ground)
 
     // Where r34 delta stood, and where its first dug log lay, when its pickup stalled at tick 3307.

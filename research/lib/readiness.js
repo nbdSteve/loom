@@ -124,9 +124,15 @@ const DANGER_READINESS_VERSION = 'loom-readiness-gate/17'
 // superseded `retreatStale`, counted apart. A collect or attack whose approach stalled or
 // over-travelled is the body's incomplete movement, as a walk's or flight's is, never the
 // decision's inapplicable fault (r34: delta's three collects stalled in the cell its flight did).
+// A collect's no-route is the ground's answer only when the server verified it - no cell a body
+// stands in would pick the item up (`terrain.pickupCells` 0) - and otherwise the body's claim, the
+// `unverifiedTerrain` blocker (r34: three no-routes to one lodged log, and nothing said whether a
+// route could exist).
 const EXPOSURE_READINESS_VERSION = 'loom-readiness-gate/18'
 // From generation 18, the approach endings judged as a walk's or flight's own.
 const APPROACH_MOVEMENT_TAGS = new Set(['collectStalled', 'collectOverTravelled', 'attackStalled', 'attackOverTravelled'])
+// From generation 18, a collect's no-route the server's ground did not verify.
+const TERRAIN_BLOCKER_CLASSES = Object.freeze(['unverifiedTerrain'])
 // From generation 17, a flight refused behind the agent's own running flight.
 const DANGER_OVERLAP_BLOCKER_CLASSES = Object.freeze(['dangerOverlap'])
 // From generation 16, a no-route from a body its own perception showed in water.
@@ -1411,7 +1417,8 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
         ...(generation >= 11 ? OWN_DROP_BLOCKER_CLASSES : []),
         ...(generation >= 12 ? SELF_TRAPPED_BLOCKER_CLASSES : []),
         ...(generation >= 16 ? WATER_BLOCKER_CLASSES : []),
-        ...(generation >= 17 ? DANGER_OVERLAP_BLOCKER_CLASSES : [])
+        ...(generation >= 17 ? DANGER_OVERLAP_BLOCKER_CLASSES : []),
+        ...(generation >= 18 ? TERRAIN_BLOCKER_CLASSES : [])
       ]
     : BLOCKER_CLASSES
   const raceClasses = raceClassesOf(generation)
@@ -1467,7 +1474,12 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       if (generation >= 15 && terminals[0].outcome === 'attackHealthBound' && perceivedHealthOf(own) > ATTACK_MIN_HEALTH) {
         ending.class = 'concurrent'
       }
-      if (generation >= 11 && ending.class === TERRAIN_CLASS && ownDropUnreached(decision, own)) {
+      if (generation >= 18 && ending.class === TERRAIN_CLASS && decision.intent === 'collect') {
+        // Verified ground excuses even the agent's own drop: it lodged where no body stands.
+        if (terminals[0].terrain?.pickupCells !== 0) {
+          ending.class = ownDropUnreached(decision, own) ? 'ownDropUnreached' : 'unverifiedTerrain'
+        }
+      } else if (generation >= 11 && ending.class === TERRAIN_CLASS && ownDropUnreached(decision, own)) {
         ending.class = 'ownDropUnreached'
       }
       if (generation >= 12 && ending.class === TERRAIN_CLASS && decision.intent === 'flee' &&

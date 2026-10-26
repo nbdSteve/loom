@@ -82,8 +82,9 @@ internal class RouteRefusals(
     }
 
     /**
-     * Whether [item], lying at [target], is no item to offer a body standing at [from]: refused as
-     * no route, or stalled on from this same cell, to this same cell, over this same ground.
+     * Whether [item], lying at [target], is no item to offer a body standing at [from]: no cell the
+     * server's ground has a body stand in would pick it up ([pickupCellsOf]), refused as no route,
+     * or stalled on from this same cell, to this same cell, over this same ground.
      */
     fun blocks(
         item: UUID,
@@ -91,11 +92,12 @@ internal class RouteRefusals(
         target: List<Double>,
     ): Boolean {
         expire()
-        val refusal = refused[item] ?: return false
-        val stall = refusal.stall
-        return stall == null ||
-            stall.from == cellOf(from) && stall.target == cellOf(target) &&
-            terrainBetween(stall.from, stall.target) == stall.terrain
+        val refusal = refused[item]
+        val stall = refusal?.stall
+        val stalledHere =
+            stall != null && stall.from == cellOf(from) && stall.target == cellOf(target) &&
+                terrainBetween(stall.from, stall.target) == stall.terrain
+        return pickupCellsOf(ground, target).isEmpty() || (refusal != null && (stall == null || stalledHere))
     }
 
     private fun remember(

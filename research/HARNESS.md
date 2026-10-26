@@ -477,6 +477,13 @@ A `controlNotReady` flight refused while another of the agent's own flights stil
 The report counts the JVM's `callReserved` refusals, `tierFallback` sends and preempted answers, and the README states them.
 Generation 16 is frozen, so r33 re-derives exactly as published; `test/readiness-substantive.test.js` holds r33's evidence to generation 17.
 
+Generation 18 (`loom-readiness-gate/18`) answers the r34 audit.
+Work that drained after the run's exposure ended is typed `exposureEnded` and is never a cognition failure, and the report states the exposure's end tick, its source, and every death and damage after it (`exposure`); a death after the end makes the run mechanically `notReady`.
+A flight an older danger answer started, refused or cancelled because a newer danger answer governs the body, is the superseded `retreatStale`, counted apart.
+A collect or attack whose approach stalled or over-travelled is the body's `incompleteMovement`, as a walk's or flight's is, never the decision's `inapplicable` fault.
+A collect's no-route is the ground's answer only when the server verified it - no cell a body stands in would pick the item up, `terrain.pickupCells` 0 on its record (`pickupCellsOf`) - and is otherwise the `unverifiedTerrain` blocker, or `ownDropUnreached` for the agent's own drop.
+Generation 17 is frozen, so r34 re-derives exactly as published; `test/readiness-r34.test.js` holds r34's evidence to generation 18, where delta's four blockers are one stuck body's incomplete movements, delta's and gamma's deaths fall after the exposure, and the three no-routes to one lodged log are unverified until the ground is read.
+
 ## The path rehearsal
 
 `research/tools/path-rehearsal.js` is a deterministic live rehearsal of the goal paths no research run has reached by itself, and it is not a research run.

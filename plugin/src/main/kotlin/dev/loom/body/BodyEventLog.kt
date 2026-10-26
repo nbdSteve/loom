@@ -162,6 +162,20 @@ data class BodyEventRecord(
     val dispute: DisputeEvidence? = null,
     /** What a walk, flight or approach stated beyond its journey; on movement and interaction records. */
     val movement: MovementEvidence? = null,
+    /** What the server's ground says of a collect the body found no route for; see [TerrainEvidence]. */
+    val terrain: TerrainEvidence? = null,
+)
+
+/**
+ * The server's own reading of the ground a collect's `noRoute` was about: how many cells a body
+ * stands in from which vanilla would pick the item up (`pickupCellsOf`). None verifies the
+ * ground's answer; one or more leaves it the body's claim about a route, which the server cannot
+ * search (r34: one log lodged under a canopy drew three `noRoute`s and nothing said whether a
+ * route could exist).
+ */
+@Serializable
+data class TerrainEvidence(
+    val pickupCells: Int,
 )
 
 /**

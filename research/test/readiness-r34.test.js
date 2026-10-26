@@ -60,3 +60,26 @@ test('r34 delta\'s four blockers, judged under generation 18, are one stuck body
   // A stall is the body's failure, so the decisions that met it are valid.
   assert.ok(eighteen.rates.decisionValidity > seventeen.rates.decisionValidity)
 })
+
+test('r34\'s collects of the lodged log are the ground\'s answer only once the server verifies it', () => {
+  // kappa (tick 8218) and theta (10916) were offered the log ce29f989 delta's pickup had already
+  // found no route to; r34 recorded no reading of the ground, so under 18 neither is excused.
+  const keys = ['tribe-kappa:loomf309750e7b-sense-rl', 'tribe-theta:loom9bc6579ca4-sense-10x']
+  const classOf = (result, key) => result.actions.nonSuccess.find((entry) => entry.requestKey === key)?.class
+  assert.deepEqual(keys.map((key) => classOf(judged(17), key)), ['terrain', 'terrain'])
+  assert.deepEqual(keys.map((key) => classOf(judged(18), key)), ['unverifiedTerrain', 'unverifiedTerrain'])
+  // The server's count of cells a body could pick the log up from - none, as
+  // `R34TerrainReplayTest` reads r34's ground - verifies it.
+  const verified = records.map((entry) => keys.includes(entry.requestKey) && entry.event === 'intentApplied'
+    ? { ...entry, terrain: { pickupCells: 0 } }
+    : entry)
+  const reread = readinessMetrics({
+    bodyRecords: verified.filter((entry) => entry.source === 'body'),
+    harnessRecords: verified.filter((entry) => entry.source === 'harness'),
+    metrics,
+    generation: 18,
+    bars: PROFILES['balanced-envelope-10m-10'].coherenceBars
+  })
+  assert.deepEqual(keys.map((key) => classOf(reread, key)), ['terrain', 'terrain'])
+  assert.equal(reread.blockers.unverifiedTerrain, 0)
+})
