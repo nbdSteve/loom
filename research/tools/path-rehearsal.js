@@ -7,7 +7,7 @@
 // laid out by console commands (`tools/path-rehearsal.json`), with the cognition service answering
 // as the path exerciser (`LOOM_COGNITION_BACKEND=scripted-paths`, `cognition/src/exerciser.rs`).
 // Each agent walks one path; the server witnesses what each body did, and the run's own evidence,
-// normalized and judged by readiness gate generation 11, must show every path as the exerciser
+// normalized and judged by readiness gate generation 14, must show every path as the exerciser
 // drove it: a craft of two applications and a goal completed and the next adopted in one answer,
 // each chained to the goal whose item its recipe is made from, an own drop ignored and refused,
 // an own drop still told lying past 4800 ticks, a collect
@@ -16,6 +16,8 @@
 // a revise to another item refused, a revise to the held total refused, a
 // plain completion beside a source refused, a plain completion with none accepted and followed by
 // the review it owed, and a block beside the support under an overhang reported unsafe to dig.
+// Its window closes as a research run's does: admission closes before Paper stops, and every
+// decision reaches one typed terminal, so `untypedTerminal` must be zero.
 //
 // It is not a research run: its world is built for the paths, its mind is scripted, and nothing
 // is published. It writes under `.scratch/path-rehearsal/` and prints one report.
@@ -27,10 +29,18 @@ const path = require('node:path')
 
 const { configuredAgents } = require('../lib/artifact.js')
 const { normalizeEvidence } = require('../lib/evidence.js')
-const { bodyEvents, buildComponents, ensurePaper, findJava21, verifyNoListeners, writeServerFiles } = require('../lib/harness.js')
+const {
+  RequestSettlement,
+  bodyEvents,
+  buildComponents,
+  ensurePaper,
+  findJava21,
+  verifyNoListeners,
+  writeServerFiles
+} = require('../lib/harness.js')
 const { ProcessSupervisor, RunFailure, delay, waitForCondition, waitForPort } = require('../lib/lifecycle.js')
 const { seedPaperRuntime } = require('../lib/paper-runtime.js')
-const { isCoalesced } = require('../lib/danger.js')
+const { isCoalesced, isExposureEnding } = require('../lib/danger.js')
 const { readinessMetrics } = require('../lib/readiness.js')
 
 const REPO = path.resolve(__dirname, '..', '..')
@@ -38,6 +48,9 @@ const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'path-rehearsal.j
 const GENERATION = 14
 const RETENTION_TICKS = 4800
 const POLL_MS = 500
+// How long admitted work may take to reach its typed terminals once admission closes: the longest
+// body action deadline (a sleep's 20 s) and its control round trip, with room for a late answer.
+const DRAIN_MS = 60_000
 
 function serverConfig () {
   return {
@@ -209,18 +222,21 @@ function pathsOf (records, readiness) {
 }
 
 /**
- * The mechanical faults no path exercises: a failed decision, a dispute, a protocol error. A
- * decision taken after the window, which the server's stop cut off, is no fault.
+ * The mechanical faults no path exercises: a failed decision, a dispute, a protocol error, and a
+ * decision with no typed terminal. Admission closes before Paper stops, so no decision is exempt
+ * for coming late: work admitted before the close drains to its own terminal, and an answer after
+ * it is withheld as `exposureEnded`.
  */
-function faultsOf (records, readiness, windowEnd) {
+function faultsOf (records, readiness) {
   const body = records.filter((record) => record.source === 'body')
-  const late = new Set(body.filter((record) => record.event === 'decided' && record.tick > windowEnd).map((record) => record.requestKey))
-  const counted = readiness.actions.nonSuccess.filter((entry) => !late.has(entry.requestKey))
+  const counted = readiness.actions.nonSuccess
   const byClass = {}
   for (const entry of counted) byClass[entry.class] = (byClass[entry.class] ?? 0) + 1
   const expected = new Set(['confirmed', 'goalIncoherent', 'terrain', 'targetRace', 'superseded', 'concurrent'])
   return {
-    cognitionFailures: body.filter((record) => record.event === 'cognitionUnavailable' && !isCoalesced(record)).length,
+    cognitionFailures: body.filter((record) =>
+      record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isExposureEnding(record)).length,
+    untypedTerminals: readiness.actions.byClass.untypedTerminal ?? 0,
     disputes: body.filter((record) => record.event === 'witnessDisputed').length,
     unexpectedClasses: Object.fromEntries(Object.entries(byClass).filter(([name]) => !expected.has(name))),
     unexpectedRefusals: counted
@@ -231,6 +247,16 @@ function faultsOf (records, readiness, windowEnd) {
         'goalCrowdsExploration'
       ].includes(outcome))
   }
+}
+
+/**
+ * Whether every agent's exposure has ended and every perception sent before it has its one typed
+ * terminal: an applied or discarded decision, or a mind that did not answer.
+ */
+function drained (records, agents, settlement = new RequestSettlement()) {
+  settlement.observe(records)
+  const ended = new Set(records.filter((record) => record.event === 'exposureEnded').map((record) => record.agentId))
+  return agents.every((agentId) => ended.has(agentId)) && settlement.unsettled.size === 0
 }
 
 async function main () {
@@ -255,7 +281,6 @@ async function main () {
     onFailure: (fault) => { failure = fault }
   })
   let paper
-  let windowEnd = Infinity
   // An interrupt cancels the run rather than ending the process, so the cleanup below always runs:
   // ended outright, it left Paper, the cognition service and every body running.
   const cancel = new AbortController()
@@ -313,7 +338,6 @@ async function main () {
     command('loombody begin')
     await delay(1000)
     const begin = latestTick(bodyFile)
-    windowEnd = begin + config.bounds.runTicks
     const deadline = Date.now() + config.bounds.runSeconds * 1000
     while (latestTick(bodyFile) - begin < config.bounds.runTicks) {
       if (failure !== null) throw failure
@@ -321,6 +345,20 @@ async function main () {
       if (Date.now() > deadline) throw new RunFailure('runFailed', 'the rehearsal did not reach its tick window in time')
       await delay(POLL_MS)
     }
+    // Admission closes before Paper stops, as a research run's does: nothing new is sent, applied
+    // or counted, and every decision already taken reaches its one typed terminal first.
+    command('loombody end-exposure')
+    const settlement = new RequestSettlement()
+    await waitForCondition({
+      description: 'admitted work to reach its typed terminals after admission closed',
+      timeoutMilliseconds: DRAIN_MS,
+      signal,
+      poll: async () => {
+        if (failure !== null) throw failure
+        cancelled()
+        return drained(bodyEvents(bodyFile), config.agents, settlement)
+      }
+    })
     command('stop')
     await waitForCondition({ description: 'Paper to stop', timeoutMilliseconds: 60_000, signal, poll: async () => paper.child.exitCode !== null })
   } finally {
@@ -349,9 +387,9 @@ async function main () {
     generation: GENERATION
   })
   const paths = pathsOf(records, readiness)
-  const faults = faultsOf(records, readiness, windowEnd)
+  const faults = faultsOf(records, readiness)
   const covered = Object.values(paths).every((recordId) => recordId !== null)
-  const clean = faults.cognitionFailures === 0 && faults.disputes === 0 &&
+  const clean = faults.cognitionFailures === 0 && faults.disputes === 0 && faults.untypedTerminals === 0 &&
     Object.keys(faults.unexpectedClasses).length === 0 && faults.unexpectedRefusals.length === 0
   const report = { verdict: covered && clean ? 'covered' : 'notCovered', paths, faults, byClass: readiness.actions.byClass }
   fs.writeFileSync(path.join(runDirectory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`)
@@ -371,4 +409,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { faultsOf, pathsOf }
+module.exports = { drained, faultsOf, pathsOf }

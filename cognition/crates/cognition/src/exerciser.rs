@@ -234,17 +234,19 @@ fn met(perception: &Perception) -> bool {
         .is_some_and(|progress| progress.condition_met)
 }
 
-/// The nearest cell at the edge of sight offered as a walk toward a source of `item` that sight
-/// shows out of dig reach or the body remembers: beside it, where the body stands one up.
+/// A walk toward a source of `item` out of dig reach: onto one where a body stands on it, else
+/// the nearest cell at the edge of sight its way - beside it, where the body stands one up.
 fn toward_of(perception: &Perception, item: &str) -> Option<String> {
     let offered = OfferedRefs::of(perception);
     let steps = offered.item_steps.iter().find(|steps| steps.item == item)?;
-    perception
-        .explore
-        .iter()
-        .filter(|cell| steps.toward.contains(&cell.target_ref))
-        .min_by(|one, other| one.distance.total_cmp(&other.distance))
-        .map(|cell| cell.target_ref.clone())
+    steps.walks.first().cloned().or_else(|| {
+        perception
+            .explore
+            .iter()
+            .filter(|cell| steps.toward.contains(&cell.target_ref))
+            .min_by(|one, other| one.distance.total_cmp(&other.distance))
+            .map(|cell| cell.target_ref.clone())
+    })
 }
 
 /// One pursuit step for a held goal of `item`: collect an own drop, craft it, dig it, collect
@@ -463,10 +465,11 @@ fn warden(perception: &Perception) -> Draft {
 }
 
 /// Where kappa's tree line runs, along z, from x [`TREE_LINE_WEST`] to [`TREE_LINE_EAST`]; the
-/// rehearsal lays it out past anything kappa senses from the border.
-const TREE_LINE_Z: f64 = -46.0;
+/// rehearsal lays it out past anything a goal review senses, 16 blocks, from the border or from
+/// epsilon's place.
+const TREE_LINE_Z: f64 = -40.0;
 const TREE_LINE_WEST: f64 = -60.0;
-const TREE_LINE_EAST: f64 = -14.0;
+const TREE_LINE_EAST: f64 = -20.0;
 
 /// The bearing from where `perception` stands toward the nearest point of kappa's tree line.
 fn toward_tree_line(perception: &Perception) -> Bearing {

@@ -56,4 +56,18 @@ class FarSourceWaypointTest {
         assertTrue(blocksApart(eyes, source) <= 4.5, "the eyes at $east reach the log")
         assertEquals(66, east[1])
     }
+
+    @Test
+    fun `a log in sight thirteen blocks off is walked to beside it in one walk, where a remembered one is not`() {
+        // The path rehearsal: epsilon's log 13 blocks east took a walk past it and one back.
+        val level = BlockGround { cell -> cell[1] >= 64 }
+        val feet = listOf(13.5, 64.0, -39.5)
+        val log = listOf(26.5, 64.5, -39.5)
+        val remembered = exploreOf(level, feet, listOf(log)).map { it.second }[2]
+        assertEquals(listOf(25, 64, -40), remembered, "a remembered source past the edge keeps the twelve-block cell")
+        val sighted = exploreOf(level, feet, sighted = listOf(log)).map { it.second }[2]
+        val eyes = listOf(sighted[0] + 0.5, sighted[1] + 1.62, sighted[2] + 0.5)
+        assertTrue(blocksApart(eyes, log) <= 4.5, "the eyes at $sighted reach the log")
+        assertTrue(sighted[0] < 26 && sighted != remembered, "beside it, not past it: $sighted")
+    }
 }

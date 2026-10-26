@@ -44,8 +44,8 @@ internal fun PlayerBodyContext.exploreFor(
     selected: List<SceneOffer>,
 ): List<Pair<ExploreTarget, List<Int>>> {
     val remembered = recall.recalled(raw.report.position, selected).mapNotNull(recall::positionOf)
-    val sources = remembered + farSourcesOf(raw.report.position, selected)
-    val cells = exploreOf(authority.ground, raw.report.position, sources)
+    val sighted = farSourcesOf(raw.report.position, selected)
+    val cells = exploreOf(authority.ground, raw.report.position, remembered, sighted)
     // Ground already stood on is offered again only when every other bearing has been (r24: alpha
     // and iota walked back to cells they had already looked from).
     val fresh = cells.filterNot { (_, cell) -> visited.near(cell) }.ifEmpty { cells }
@@ -112,14 +112,17 @@ private const val VISITED_TICKS = 2400L
 /**
  * The cells at the edge of sight an agent at [position] can walk to, one per compass bearing:
  * the highest cell the server's [ground] says a body can stand in, [EXPLORE_REACH_BLOCKS] off
- * along that bearing, and within a few blocks of the feet. They state only where a body can
- * stand, never what lies there, so an agent that sees nothing worth doing can look further
- * (r17: eta idled three reviews with a dead bush 5.4 blocks off, just past what its body saw).
+ * along that bearing, and within a few blocks of the feet; a bearing toward a [remembered] source
+ * nearer than that, or a [sighted] one within [SIGHTED_WAYPOINT_BLOCKS], gets the cell beside it.
+ * They state only where a body can stand, never what lies there, so an agent that sees nothing
+ * worth doing can look further (r17: eta idled three reviews with a dead bush 5.4 blocks off, just
+ * past what its body saw).
  */
 internal fun exploreOf(
     ground: BlockGround,
     position: List<Double>,
     remembered: List<List<Double>> = emptyList(),
+    sighted: List<List<Double>> = emptyList(),
 ): List<Pair<ExploreTarget, List<Int>>> {
     val feet = position.map { kotlin.math.floor(it).toInt() }
     val cells =
@@ -131,10 +134,14 @@ internal fun exploreOf(
     // A remembered source nearer than the edge of sight is walked to beside it, not past it: its
     // bearing's cell becomes the standable cell nearest the agent within reach of the source (r23:
     // twelve-block cells overshot logs remembered 4.7 to 8 blocks off, and agents walked back and forth).
-    for (source in remembered) {
+    // A source in sight is walked to beside it as far as a goal review sees, so one walk reaches
+    // it (the path rehearsal: epsilon's log 13 blocks off took a walk past it and one back).
+    val sources =
+        remembered.map { it to EXPLORE_REACH_BLOCKS.toDouble() } + sighted.map { it to SIGHTED_WAYPOINT_BLOCKS }
+    for ((source, reach) in sources) {
         val dx = source[0] - position[0]
         val dz = source[2] - position[2]
-        if (kotlin.math.hypot(dx, dz) >= EXPLORE_REACH_BLOCKS) continue
+        if (kotlin.math.hypot(dx, dz) >= reach) continue
         val bearing = COMPASS.indices.minBy { index -> angleBetween(COMPASS[index], dx, dz) }
         cells[bearing] = besideSource(ground, source, position) ?: cells[bearing]
     }
@@ -211,6 +218,9 @@ private fun standableAll(
 ): List<List<Int>> =
     (feetY + EXPLORE_RISE_BLOCKS downTo feetY - EXPLORE_FALL_BLOCKS)
         .mapNotNull { y -> ground.standCell(listOf(x, y - 1, z))?.takeIf { it[1] == y } }
+
+/** How far off a source in sight is walked to beside it: as far as a goal review's sense looks. */
+private const val SIGHTED_WAYPOINT_BLOCKS = 16.0
 
 /** How far from a remembered source its waypoint may stand, along each axis. */
 private const val WAYPOINT_REACH_BLOCKS = 2
