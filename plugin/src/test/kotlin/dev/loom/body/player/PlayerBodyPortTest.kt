@@ -2734,6 +2734,30 @@ class PlayerWalkResolutionTest {
     }
 
     @Test
+    fun `a far block no walk reaches a dig of is still reported, as no safe dig, never hidden`() {
+        // r35's canopy log: dropping it from the perception broke the audit that every block the
+        // body reported is in the scene; it is told as a block no walk can dig instead.
+        val agent = AgentId("agent-unreached")
+        val far = listOf(SENSE_POSITION[0].toInt() + 9, SENSE_POSITION[1].toInt() + 3, SENSE_POSITION[2].toInt())
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let {
+                            fakeSense(it).copy(blocks = listOf(SensedBlock("minecraft:oak_log", far, visible = true)))
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        // The one block the body reported is in the scene: no offer is hidden from the audit.
+        val log = seen.surroundings.single { it.kind == ObservationKind.BLOCK }
+        assertEquals(false, log.digSafe)
+    }
+
+    @Test
     fun `an own lying drop is asked for by its server uuid and offered back by its ref`() {
         // r15 kappa body:00000080: its own dig dropped a stick it never saw, and iota's own stick
         // lay out of sight five blocks off; neither could be named to collect.

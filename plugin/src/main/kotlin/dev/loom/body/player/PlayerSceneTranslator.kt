@@ -203,11 +203,13 @@ internal class PlayerSceneTranslator(
             blocksApart(eyes, block.map { it + BLOCK_CENTER_OFFSET }) > SIGHT_DIG_REACH_BLOCKS
         }
         val blocks =
-            raw.report.blocks.mapIndexedNotNull { index, block ->
+            raw.report.blocks.mapIndexed { index, block ->
                 // A block sight shows beyond dig reach that no stand a walk reaches digs - a canopy log
-                // seen through a gap - is no source to walk to, and is not offered (r35 epsilon, zeta).
-                val unreached = far(block.position) && !diggableFrom(scene.ground, block.position, scene.walkable)
-                if (context.authority.ground !== BlockGround.UNKNOWN && unreached) return@mapIndexedNotNull null
+                // seen through a gap - is reported but is no safe dig, so it grounds no goal and draws
+                // no walk (r35 epsilon, zeta); dropping it would hide an offer the body made.
+                val unreached =
+                    context.authority.ground !== BlockGround.UNKNOWN && far(block.position) &&
+                        !diggableFrom(scene.ground, block.position, scene.walkable)
                 SceneOffer(
                     kind = ObservationKind.BLOCK,
                     sourceIndex = index,
@@ -216,7 +218,7 @@ internal class PlayerSceneTranslator(
                     visible = block.visible,
                     standable = scene.ground.standCell(block.position) != null,
                     yields = context.authority.yields.of(block.position, raw.identity).take(MAX_BLOCK_YIELDS),
-                    digSafe = digSafeAt(scene.ground, raw.report.position, block.position),
+                    digSafe = !unreached && digSafeAt(scene.ground, raw.report.position, block.position),
                 )
             }
         val items =

@@ -768,12 +768,18 @@ fn yields_line(surroundings: &[Observation]) -> String {
     // of one such block drop on average, and the blocks.
     let mut items: Vec<(&str, i64, i64, i64, Vec<&str>)> = Vec::new();
     let mut unsafe_digs: Vec<&str> = Vec::new();
+    let mut unreached: Vec<&str> = Vec::new();
     for seen in surroundings.iter().take(MAX_OBSERVATIONS) {
         if seen.kind != ObservationKind::Block || !seen.visible {
             continue;
         }
         if seen.dig_safe == Some(false) {
-            unsafe_digs.push(&seen.target_ref);
+            // Out of dig reach, a block no dig is safe for is one no place a walk arrives can dig.
+            if crate::offered::beyond_dig_reach(seen) {
+                unreached.push(&seen.target_ref);
+            } else {
+                unsafe_digs.push(&seen.target_ref);
+            }
             continue;
         }
         for item in seen.yields.iter().flatten() {
@@ -823,12 +829,20 @@ fn yields_line(surroundings: &[Observation]) -> String {
             )
         )
     };
-    if unsafe_digs.is_empty() {
+    let drops = if unsafe_digs.is_empty() {
         drops
     } else {
         format!(
             "{drops} Digging {} would leave you in a hole with no way out, or its drop where you could not reach it, so it is not offered.",
             some_refs(&unsafe_digs)
+        )
+    };
+    if unreached.is_empty() {
+        drops
+    } else {
+        format!(
+            "{drops} {} out of dig reach can be dug from no place you can walk to, so it is no source to walk toward.",
+            some_refs(&unreached)
         )
     }
 }
@@ -1676,6 +1690,16 @@ mod tests {
         assert!(situation(&seen).contains(
             "Digging b1 would leave you in a hole with no way out, or its drop where you could not reach it, so it is not offered."
         ));
+        // r35: a canopy log seen past dig reach that no place a walk arrives can dig.
+        let mut canopy = seen.clone();
+        canopy.surroundings[0].distance = 9.0;
+        canopy.surroundings[0].vertical_offset = 4.0;
+        let told = situation(&canopy);
+        assert!(
+            told.contains("b1 out of dig reach can be dug from no place you can walk to, so it is no source to walk toward."),
+            "{told}"
+        );
+        assert!(!told.contains("Digging b1 would leave you in a hole"));
         let bush = seen.surroundings[1].clone();
         seen.surroundings.extend((3..8).map(|index| Observation {
             target_ref: format!("b{index}"),

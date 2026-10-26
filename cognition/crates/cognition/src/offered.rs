@@ -538,6 +538,12 @@ fn offer(list: &mut Vec<String>, handle: &str) {
 }
 
 /// The distance from the agent's eyes to the observed point, from its feet-relative reading.
+/// Whether `seen` lies beyond the body's interaction reach of the eyes.
+#[must_use]
+pub fn beyond_dig_reach(seen: &Observation) -> bool {
+    from_eyes(seen) > INTERACTION_REACH_BLOCKS
+}
+
 fn from_eyes(seen: &Observation) -> f64 {
     let horizontal = (seen.distance.powi(2) - seen.vertical_offset.powi(2)).max(0.0);
     (horizontal + (seen.vertical_offset - EYE_HEIGHT_BLOCKS).powi(2)).sqrt()
