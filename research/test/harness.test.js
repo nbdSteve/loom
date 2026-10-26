@@ -365,18 +365,17 @@ function openAiGoalContinuityConfigFile () {
   return path.join(__dirname, '..', 'config', 'first-tribe-routine-v33-agency-pilot.json')
 }
 
-test('a busy host is refused before startup and a quiet one is admitted', async () => {
-  const { awaitQuietHost, MAX_LOAD_PER_CPU } = require('../lib/paper-runtime.js')
-  assert.equal(MAX_LOAD_PER_CPU, 0.5)
-  const quiet = await awaitQuietHost({ loadavg: () => [5.9, 0, 0], cpus: () => 12, settleMs: 0 })
-  assert.deepEqual(quiet, { load: 5.9, limit: 6 })
-  await assert.rejects(
-    awaitQuietHost({ loadavg: () => [16.4, 0, 0], cpus: () => 12, settleMs: 0, wait: async () => {} }),
-    (cause) => cause.stopReason === 'startupFailed' && /host load 16.40 is above the 6.00 start threshold/.test(cause.message)
-  )
-  const readings = [9, 8, 4]
-  const settled = await awaitQuietHost({ loadavg: () => [readings.shift() ?? 4, 0, 0], cpus: () => 12, settleMs: 60_000, wait: async () => {} })
-  assert.equal(settled.load, 4)
+test('no host-state gate delays or refuses a run', () => {
+  // A busy host never stops a run before it starts or holds it waiting; only a suspension the run
+  // itself measured makes it invalid.
+  const runtime = require('../lib/paper-runtime.js')
+  assert.equal(runtime.awaitQuietHost, undefined)
+  assert.equal(runtime.MAX_LOAD_PER_CPU, undefined)
+  const harness = fs.readFileSync(path.join(__dirname, '..', 'lib', 'harness.js'), 'utf8')
+  // Nothing reads the host's load, swap, memory pressure, power, lid or display state.
+  for (const source of [harness, fs.readFileSync(path.join(__dirname, '..', 'lib', 'paper-runtime.js'), 'utf8')]) {
+    assert.doesNotMatch(source, /loadavg|swapusage|memory_pressure|vm_pressure|pmset|ioreg|AppleClamshellState|freemem/)
+  }
 })
 
 test('the Paper runtime cache verifies file by file against its own manifest', () => {
@@ -417,13 +416,14 @@ test('the Paper clock asks for game time on a bounded cadence and reads the late
   assert.equal(written.length, 2)
 })
 
-test('a host suspension mid-run is named from the measured clock gap, not blamed on bodies', () => {
+test('a host suspension mid-run ends the run integrity-invalid, whatever else happens after it', () => {
   const { SuspensionWatch } = require('../lib/paper-runtime.js')
   let now = 0
   const watch = new SuspensionWatch({ now: () => now })
   now = 250
   assert.equal(watch.check(), null)
-  // The clamshell sleep that cut a rehearsal: 422 seconds with the whole host stopped.
+  // The clamshell sleep that cut a rehearsal: 422 seconds with the whole host stopped. The gap
+  // alone is the run's failure: nothing else need fail for it to be invalid.
   now += 422_000
   const failure = watch.check()
   assert.equal(failure.code, 'hostSuspended')
@@ -436,6 +436,9 @@ test('a host suspension mid-run is named from the measured clock gap, not blamed
   assert.equal(watch.explain(left), left)
   now += 941_000
   assert.equal(watch.explain(left).code, 'hostSuspended')
+  // The poll loop throws the suspension it sees, before it reads any more evidence.
+  const harness = fs.readFileSync(path.join(__dirname, '..', 'lib', 'harness.js'), 'utf8')
+  assert.match(harness, /const suspended = explained\(null\)\n\s+if \(suspended !== null\) throw suspended/)
 })
 
 test('a primary behavior run holds native cognition until its initial conditions are applied', () => {

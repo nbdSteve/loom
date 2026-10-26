@@ -38,7 +38,7 @@ const {
 const { writeFailureDiagnostic } = require('./failure-diagnostic.js')
 const { JsonLinesTail, maximumOf } = require('./log-tail.js')
 const { PaperClock } = require('./paper-clock.js')
-const { SuspensionWatch, awaitQuietHost, seedPaperRuntime } = require('./paper-runtime.js')
+const { SuspensionWatch, seedPaperRuntime } = require('./paper-runtime.js')
 const { profileOf, ticksPerSecondOf } = require('./profiles.js')
 const { DeathSettlement } = require('./witnessed-death.js')
 const {
@@ -835,8 +835,7 @@ async function runExperiment ({
   credentialProvider,
   failureDiagnosticRoot,
   signal,
-  statfs = fs.statfsSync,
-  hostLoad
+  statfs = fs.statfsSync
 }) {
   const absoluteRoot = path.resolve(repositoryRoot)
   const config = readJson(path.resolve(configFile))
@@ -938,9 +937,8 @@ async function runExperiment ({
     )
   }
   try {
-    // Before anything is started or read: a busy host is refused, and Paper starts from the
-    // verified runtime cache rather than downloading and remapping.
-    await awaitQuietHost({ ...(hostLoad ?? {}) })
+    // Paper starts from the verified runtime cache rather than downloading and remapping. No host
+    // state - load, swap, memory pressure, battery, lid, display or power - delays or refuses a run.
     writeServerFiles({
       runDirectory,
       paperFile,
@@ -1150,7 +1148,8 @@ async function runExperiment ({
     }
     const suspension = new SuspensionWatch()
     // Primary-behavior polls never wait inside the loop but for its own short delay, so a long gap
-    // is the host itself, and whatever ended the interval it spans is the suspension's.
+    // is the host itself: the run ends integrity-invalid as `hostSuspended` and is never published,
+    // and whatever ended the interval it spans is the suspension's.
     const explained = (cause) => isPrimaryBehaviorMode(config) ? suspension.explain(cause) : cause
     while (Date.now() < deadline) {
       if (controller.signal.aborted) throw explained(controller.signal.reason)

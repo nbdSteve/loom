@@ -17,8 +17,6 @@ const BOOTSTRAP_TIMEOUT_MS = 300_000
 
 // The host must be quiet before a run starts: Paper's tick rate and the bodies' path search
 // budgets are wall-clock bounded, so a contended host changes behavior, not only speed.
-const MAX_LOAD_PER_CPU = 0.5
-const LOAD_SETTLE_MS = 180_000
 
 function sha256 (file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
@@ -132,35 +130,15 @@ async function seedPaperRuntime ({ repositoryRoot, paperFile, config, java, runD
   return root
 }
 
-/**
- * Waits, at most `settleMs`, for the one-minute load average to fall to the fixed per-CPU
- * threshold, and refuses to start a run on a host that stays busier than that.
- */
-async function awaitQuietHost ({
-  settleMs = LOAD_SETTLE_MS,
-  loadavg = os.loadavg,
-  cpus = () => os.cpus().length,
-  wait = delay
-} = {}) {
-  const limit = MAX_LOAD_PER_CPU * cpus()
-  const deadline = Date.now() + settleMs
-  while (true) {
-    const load = loadavg()[0]
-    if (load <= limit) return { load, limit }
-    if (Date.now() >= deadline) {
-      throw new RunFailure(
-        'startupFailed',
-        `host load ${load.toFixed(2)} is above the ${limit.toFixed(2)} start threshold (${MAX_LOAD_PER_CPU} per CPU)`
-      )
-    }
-    await wait(5_000)
-  }
-}
-
 // The poll loop runs every 250 ms; a much longer gap means the host itself was suspended.
 const MAX_POLL_GAP_MS = 10_000
 
-/** Tracks the wall-clock gap between polls and names a host suspension when one occurs. */
+/**
+ * Tracks the wall-clock gap between polls and names a host suspension when one occurs. A
+ * suspension is never a reason to delay or refuse a run, but a run that was suspended cannot be
+ * trusted: its clients and timers stopped with the host, so it ends integrity-invalid as
+ * `hostSuspended` and is never published, whether or not anything else failed after it.
+ */
 class SuspensionWatch {
   constructor ({ now = Date.now, maxGapMs = MAX_POLL_GAP_MS } = {}) {
     this.now = now
@@ -193,11 +171,9 @@ class SuspensionWatch {
 }
 
 module.exports = {
-  MAX_LOAD_PER_CPU,
   MAX_POLL_GAP_MS,
   SuspensionWatch,
   RUNTIME_ENTRIES,
-  awaitQuietHost,
   seedPaperRuntime,
   verifiedRuntime
 }
