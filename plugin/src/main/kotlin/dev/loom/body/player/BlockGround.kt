@@ -42,6 +42,28 @@ fun interface BlockGround {
 }
 
 /**
+ * [this] with each cell's verdict read from the server once: a scene's walk search and lines of
+ * sight read the same cells many times over, and every read is a main-thread world lookup.
+ * Short-lived by design - one sense's scene - so a block that changes later is read anew.
+ */
+internal fun BlockGround.cached(): BlockGround {
+    val source = this
+    if (source === BlockGround.UNKNOWN) return source
+    val open = HashMap<List<Int>, Boolean>()
+    val water = HashMap<List<Int>, Boolean>()
+    val stands = HashMap<List<Int>, List<Int>?>()
+    return object : BlockGround {
+        override fun standsIn(position: List<Int>): Boolean = open.getOrPut(position) { source.standsIn(position) }
+
+        override fun holdsWater(position: List<Int>): Boolean = water.getOrPut(position) { source.holdsWater(position) }
+
+        // The source's own answer, which a ground may state its own way, read once a cell.
+        override fun standCell(position: List<Int>): List<Int>? =
+            if (position in stands) stands[position] else source.standCell(position).also { stands[position] = it }
+    }
+}
+
+/**
  * Where a body stands on the block at [position] under [ground]'s collision verdicts.
  *
  * In the block's own cell when it has no collision, with solid ground below and an open cell

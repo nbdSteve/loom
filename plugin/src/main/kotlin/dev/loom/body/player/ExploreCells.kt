@@ -39,18 +39,15 @@ private const val SOURCE_EYE_HEIGHT_BLOCKS = 1.62
 internal fun PlayerBodyContext.exploreFor(
     raw: RawSense,
     selected: List<SceneOffer>,
+    scene: SceneGround,
 ): List<Pair<ExploreTarget, List<Int>>> {
     val remembered = recall.recalled(raw.report.position, selected).mapNotNull(recall::positionOf)
     val sighted = farSourcesOf(raw.report.position, selected)
-    // A waypoint beside a source must be somewhere a walk arrives, never the leaves' top.
-    val walkable =
-        if (remembered.isEmpty() && sighted.isEmpty()) {
-            null
-        } else {
-            val feet = raw.report.position.map { kotlin.math.floor(it).toInt() }
-            walkableFrom(authority.ground, feet, WAYPOINT_WALK_RADIUS)
-        }
-    val cells = exploreOf(authority.ground, raw.report.position, remembered, sighted, walkable)
+    // A waypoint beside a source sight shows must be somewhere a walk arrives, never the leaves'
+    // top. The walk is searched only for a sense that saw that far - a goal review's - because a
+    // search on every threat scan stalled the server's tick (the v34 path rehearsal).
+    val reached = if (sighted.isEmpty()) null else scene.walkable
+    val cells = exploreOf(scene.ground, raw.report.position, remembered, sighted, reached)
     // Ground already stood on is offered again only when every other bearing has been (r24: alpha
     // and iota walked back to cells they had already looked from).
     val fresh = cells.filterNot { (_, cell) -> visited.near(cell) }.ifEmpty { cells }
@@ -230,9 +227,6 @@ private fun standableAll(
 
 /** How far off a source in sight is walked to beside it: as far as a goal review's sense looks. */
 private const val SIGHTED_WAYPOINT_BLOCKS = 16.0
-
-/** How far a walk to a waypoint is searched: as far as one may lie, and the cells beside it. */
-private const val WAYPOINT_WALK_RADIUS = 20
 
 /** How far from a remembered source its waypoint may stand, along each axis. */
 private const val WAYPOINT_REACH_BLOCKS = 2

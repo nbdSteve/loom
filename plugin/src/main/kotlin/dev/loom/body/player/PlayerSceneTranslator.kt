@@ -31,9 +31,6 @@ private const val BLOCK_CENTER_OFFSET = 0.5
 private const val SIGHT_DIG_REACH_BLOCKS = 5.1
 private const val SIGHT_EYE_HEIGHT_BLOCKS = 1.62
 
-/** How far a walk to a source sight shows is searched: the sense's reach and a stand beside it. */
-private const val SIGHT_WALK_RADIUS_BLOCKS = 20
-
 internal class PlayerSceneTranslator(
     private val context: PlayerBodyContext,
 ) {
@@ -54,7 +51,8 @@ internal class PlayerSceneTranslator(
             )
         val subjects = subjectsOf(raw, serverSubjects)
         val itemSubjects = context.authority.serverState.itemSubjectsOf(raw.identity, raw.report.items)
-        val selected = selectedOffers(raw, subjects, itemSubjects, attacker)
+        val scene = SceneGround(context.authority.ground, raw.report.position)
+        val selected = selectedOffers(raw, subjects, itemSubjects, attacker, scene)
         val entityOffers = selected.filter { it.kind == ObservationKind.ENTITY }
         val blockOffers = selected.filter { it.kind == ObservationKind.BLOCK }
         val itemOffers = selected.filter { it.kind == ObservationKind.DROPPED_ITEM }
@@ -97,7 +95,7 @@ internal class PlayerSceneTranslator(
             perceptionAudit = perceptionAuditOf(raw, entityOffers.size, blockOffers.size, itemOffers.size),
             candidates = candidatesOf(selected, surroundings),
             selfState = selfStateOf(raw, slotBindings, recipeBindings, itemRefsOf(itemOffers, droppedItemBindings)),
-            explore = context.exploreFor(raw, selected),
+            explore = context.exploreFor(raw, selected, scene),
             recalled = context.recall.recalled(raw.report.position, selected),
         )
     }
@@ -107,8 +105,9 @@ internal class PlayerSceneTranslator(
         subjects: List<UUID>,
         itemSubjects: List<UUID?>,
         attacker: UUID?,
+        scene: SceneGround,
     ): List<SceneOffer> {
-        val offers = offersOf(raw, subjects, itemSubjects)
+        val offers = offersOf(raw, subjects, itemSubjects, scene)
         val reserved = offers.filter { attacker != null && it.subject == attacker }.map(SceneOffer::key).toSet()
         return PlayerSceneSelector.select(raw.report.position, offers, reserved)
     }
@@ -186,6 +185,7 @@ internal class PlayerSceneTranslator(
         raw: RawSense,
         subjects: List<UUID>,
         itemSubjects: List<UUID?>,
+        scene: SceneGround,
     ): List<SceneOffer> {
         val entities =
             raw.report.entities.mapIndexed { index, entity ->
@@ -198,30 +198,25 @@ internal class PlayerSceneTranslator(
                     subject = subjects[index],
                 )
             }
-        val ground = context.authority.ground
         val eyes = raw.report.position.let { listOf(it[0], it[1] + SIGHT_EYE_HEIGHT_BLOCKS, it[2]) }
         val far = { block: List<Int> ->
             blocksApart(eyes, block.map { it + BLOCK_CENTER_OFFSET }) > SIGHT_DIG_REACH_BLOCKS
-        }
-        // Where the body can walk to, read once a sense and only when sight shows a block past reach.
-        val walkable by lazy {
-            walkableFrom(ground, raw.report.position.map { kotlin.math.floor(it).toInt() }, SIGHT_WALK_RADIUS_BLOCKS)
         }
         val blocks =
             raw.report.blocks.mapIndexedNotNull { index, block ->
                 // A block sight shows beyond dig reach that no stand a walk reaches digs - a canopy log
                 // seen through a gap - is no source to walk to, and is not offered (r35 epsilon, zeta).
-                val unreached = far(block.position) && !diggableFrom(ground, block.position, walkable)
-                if (ground !== BlockGround.UNKNOWN && unreached) return@mapIndexedNotNull null
+                val unreached = far(block.position) && !diggableFrom(scene.ground, block.position, scene.walkable)
+                if (context.authority.ground !== BlockGround.UNKNOWN && unreached) return@mapIndexedNotNull null
                 SceneOffer(
                     kind = ObservationKind.BLOCK,
                     sourceIndex = index,
                     what = blockDescriptionId(block.what),
                     position = block.position.map { it + BLOCK_CENTER_OFFSET },
                     visible = block.visible,
-                    standable = context.authority.ground.standCell(block.position) != null,
+                    standable = scene.ground.standCell(block.position) != null,
                     yields = context.authority.yields.of(block.position, raw.identity).take(MAX_BLOCK_YIELDS),
-                    digSafe = digSafeAt(context.authority.ground, raw.report.position, block.position),
+                    digSafe = digSafeAt(scene.ground, raw.report.position, block.position),
                 )
             }
         val items =

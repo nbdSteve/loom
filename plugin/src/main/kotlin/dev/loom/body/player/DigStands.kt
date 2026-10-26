@@ -24,7 +24,7 @@ private const val DIG_STAND_BELOW = 5
 private const val DIG_STAND_ABOVE = 1
 
 /** The most walkable stands one block's check reads, nearest the block first. */
-private const val MAX_DIG_STANDS = 48
+private const val MAX_DIG_STANDS = 24
 
 /** The step a line of sight is sampled at, in blocks. */
 private const val SIGHT_STEP_BLOCKS = 0.2
@@ -91,4 +91,23 @@ internal fun diggableFrom(
         .sortedBy { blocksApart(it.map(Int::toDouble), block.map(Int::toDouble)) }
         .take(MAX_DIG_STANDS)
         .any { cell -> digsFrom(ground, cell, block) }
+}
+
+/** How far a walk to a source sight shows is searched: the sense's reach and a stand beside it. */
+private const val SIGHT_WALK_RADIUS_BLOCKS = 20
+
+/**
+ * One sense's reads of the ground: each cell's verdict taken from the server once, and where a
+ * body standing at [feet] can walk to, searched only when a far source asks - a search on every
+ * threat scan stalled the server's tick (the v34 path rehearsal).
+ */
+internal class SceneGround(
+    source: BlockGround,
+    feet: List<Double>,
+) {
+    val ground: BlockGround = source.cached()
+
+    val walkable: Set<List<Int>> by lazy(LazyThreadSafetyMode.NONE) {
+        walkableFrom(ground, feet.map { floor(it).toInt() }, SIGHT_WALK_RADIUS_BLOCKS)
+    }
 }
