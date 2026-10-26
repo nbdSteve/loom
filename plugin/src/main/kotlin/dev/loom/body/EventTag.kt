@@ -186,6 +186,13 @@ object EventTag {
     /** A dig's one pickup attempt found its own goal-item drop nowhere in a fresh sense. */
     const val OWN_DROP_NOT_SENSED: String = "ownDropNotSensed"
 
+    /**
+     * A dig's one pickup not tried: its body already found no way to that drop - no route, or a
+     * route it stalled on from this same cell over this same ground (r34 delta: three collects of
+     * its own logs stalled from one stuck cell, and a pickup was forced into the same stall).
+     */
+    const val OWN_DROP_UNREACHABLE: String = "ownDropUnreachable"
+
     /** A due scheduled review waits behind a review or follow-up of the agent's still with the mind. */
     const val REVIEW_IN_FLIGHT: String = "reviewInFlight"
 

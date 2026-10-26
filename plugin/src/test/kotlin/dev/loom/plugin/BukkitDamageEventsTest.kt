@@ -45,6 +45,7 @@ private fun player(
             "getUniqueId" -> uuid
             "getName" -> "loom_alpha"
             "isDead" -> dead
+            "getHealth" -> 20.0
             else -> null
         }
     }
@@ -99,6 +100,9 @@ class BukkitDamageEventsTest {
                     77L,
                     WitnessedPlayer(MANAGED.toString(), "loom_alpha"),
                     playerDead = false,
+                    // The server's health before the hit, and that less the hit's final damage.
+                    healthBefore = 20.0,
+                    healthAfter = 14.5,
                 ),
             ),
             rig.reports,

@@ -20,7 +20,6 @@ import dev.loom.body.tagOf
 import dev.loom.bodycontrol.BODY_CONTROL_PROTOCOL_VERSION
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
-import dev.loom.bodycontrol.CollectOutcome
 import dev.loom.contract.DropFate
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
@@ -99,12 +98,36 @@ internal class OwnDropPickup(
         perception.senseForPickup(agentId).whenComplete { sense, failure ->
             context.authority.main.execute {
                 val index = sense?.droppedItemSubjects?.entries?.firstOrNull { it.value == drop.entity }?.key
-                if (failure != null || sense == null || index == null) {
-                    sense?.let { sessions.settle(agentId, it.raw.report.requestId, it) }
-                    record(agentId, requestId, EventTag.OWN_DROP_NOT_SENSED, "its own drop of $item was not in sight")
-                    answer.complete(EventTag.OWN_DROP_NOT_SENSED)
-                } else {
-                    collect(runtime, sense, index, requestId, answer)
+                val unreachable =
+                    sense != null && index != null && drop.entity != null &&
+                        context.routeRefusals.blocks(
+                            drop.entity,
+                            sense.raw.report.position,
+                            sense.raw.report.items[index].position,
+                        )
+                when {
+                    failure != null || sense == null || index == null -> {
+                        sense?.let { sessions.settle(agentId, it.raw.report.requestId, it) }
+                        record(
+                            agentId,
+                            requestId,
+                            EventTag.OWN_DROP_NOT_SENSED,
+                            "its own drop of $item was not in sight",
+                        )
+                        answer.complete(EventTag.OWN_DROP_NOT_SENSED)
+                    }
+                    // Never forced into the stall or the missing route it already met from here.
+                    unreachable -> {
+                        sessions.settle(agentId, sense.raw.report.requestId, sense)
+                        record(
+                            agentId,
+                            requestId,
+                            EventTag.OWN_DROP_UNREACHABLE,
+                            "its own drop of $item was not tried: the body already found no way to it from here",
+                        )
+                        answer.complete(EventTag.OWN_DROP_UNREACHABLE)
+                    }
+                    else -> collect(runtime, sense, index, requestId, answer)
                 }
             }
         }
@@ -160,9 +183,7 @@ internal class OwnDropPickup(
                         }
                     // The server's own account of the pickup: what entered the inventory, or who took it.
                     val audit = claim?.let { context.authority.serverState.auditInteraction(runtime.identity, it) }
-                    if (report?.outcome == CollectOutcome.NO_ROUTE) {
-                        sense.droppedItemSubjects[index]?.let(context.routeRefusals::refused)
-                    }
+                    claim?.let(context.routeRefusals::remember)
                     val travelled = report?.travelled?.let { "; approached $it blocks" }.orEmpty()
                     record(
                         agentId,

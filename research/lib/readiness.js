@@ -121,8 +121,12 @@ const DANGER_READINESS_VERSION = 'loom-readiness-gate/17'
 // cognition admission closed - and an older danger answer's flight replacing a newer one. From 18
 // work that drained after the run's exposure ended is typed (`exposureEnded`) and never a
 // cognition failure, and an older flight a newer danger answer was applied after is the
-// superseded `retreatStale`, counted apart.
+// superseded `retreatStale`, counted apart. A collect or attack whose approach stalled or
+// over-travelled is the body's incomplete movement, as a walk's or flight's is, never the
+// decision's inapplicable fault (r34: delta's three collects stalled in the cell its flight did).
 const EXPOSURE_READINESS_VERSION = 'loom-readiness-gate/18'
+// From generation 18, the approach endings judged as a walk's or flight's own.
+const APPROACH_MOVEMENT_TAGS = new Set(['collectStalled', 'collectOverTravelled', 'attackStalled', 'attackOverTravelled'])
 // From generation 17, a flight refused behind the agent's own running flight.
 const DANGER_OVERLAP_BLOCKER_CLASSES = Object.freeze(['dangerOverlap'])
 // From generation 16, a no-route from a body its own perception showed in water.
@@ -238,6 +242,7 @@ const PROTOCOL_TAGS = new Set(['rejected', 'controlUnavailable', 'unsupported', 
 function refusalClass (tag, generation = 12) {
   if (goalIncoherentTagsOf(generation).has(tag)) return 'goalIncoherent'
   if (generation >= 18 && tag === 'retreatStale') return 'superseded'
+  if (generation >= 18 && APPROACH_MOVEMENT_TAGS.has(tag)) return 'incompleteMovement'
   if (generation >= 7 && TERRAIN_TAGS.has(tag)) return TERRAIN_CLASS
   if (generation >= 5 && tag === 'digWouldTrap') return 'inapplicable'
   if (generation >= 11 && tag === 'digDropUnreachable') return 'inapplicable'

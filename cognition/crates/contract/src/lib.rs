@@ -721,8 +721,10 @@ pub struct Observation {
     /// [`ObservationKind::Block`]; false only for the support block of a body with no exit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dig_safe: Option<bool>,
-    /// Present, and true, only for a dropped item this agent's body has already found no
-    /// route to: it is not offered to collect and gives nothing a goal may count on.
+    /// Present, and true, only for a dropped item this agent's body has already found no way
+    /// to from where it stands - no route at all, or a route its approach stalled on from this
+    /// same cell over the same ground (r34 delta): it is not offered to collect and gives
+    /// nothing a goal may count on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_refused: Option<bool>,
     /// Present, and true, only for a creature that hunts the agent's kind, by the body's own
@@ -836,6 +838,24 @@ pub enum Trigger {
             deserialize_with = "bounded_optional_ref"
         )]
         attacker_ref: Option<String>,
+        /// The server's own health of the body when the hit landed, before it was applied;
+        /// present with [`Trigger::Damaged::health_after`] whenever the server witnessed the hit.
+        #[serde(
+            rename = "healthBefore",
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "nonnegative_optional_health"
+        )]
+        health_before: Option<f64>,
+        /// The server's own health of the body once the hit was applied, which a damaged
+        /// perception's `self_state.health` is (r34: alpha was shown 20 with 6 left).
+        #[serde(
+            rename = "healthAfter",
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "nonnegative_optional_health"
+        )]
+        health_after: Option<f64>,
     },
     /// A living thing that hunts this agent's kind came into the body's view.
     ///
@@ -1299,6 +1319,21 @@ where
         refuse_unbounded_ref(handle)?;
     }
     Ok(handle)
+}
+
+fn nonnegative_optional_health<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let health = Option::<f64>::deserialize(deserializer)?;
+    if let Some(value) = health {
+        if !value.is_finite() || value < 0.0 {
+            return Err(serde::de::Error::custom(
+                "a health reading is a finite number at or above zero",
+            ));
+        }
+    }
+    Ok(health)
 }
 
 fn nonzero_change<'de, D>(deserializer: D) -> Result<i64, D::Error>

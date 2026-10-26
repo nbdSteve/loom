@@ -349,7 +349,7 @@
           "minimum": 1
         },
         "routeRefused": {
-          "description": "Present, and true, only for a dropped item this agent's body has already found no route to: it is not offered to collect and gives nothing a goal may count on.",
+          "description": "Present, and true, only for a dropped item this agent's body has already found no way to from where it stands: no route at all, for as long as the item lives (r15), or a route its approach stalled on from this same cell to the item's, over the same ground (r34 delta). It is not offered to collect and gives nothing a goal may count on.",
           "const": true
         },
         "hunts": {
@@ -401,6 +401,16 @@
             "attackerRef": {
               "description": "The creature that dealt the damage - a projectile's shooter, not the projectile - as the ref this perception's own surroundings name it by, so a flight or a strike can name the one creature that hurt the agent rather than the nearest of its kind. Present only when the server identified the attacker and this perception shows it; such an attacker is always among the surroundings and always offered to flee and to attack within reach, however many nearer creatures there are. Absent for damage no creature dealt, and for an attacker the body could not see or report.",
               "$ref": "#/$defs/EntityRef"
+            },
+            "healthBefore": {
+              "description": "The server's own health of the agent's body when the hit landed, before it was applied. Present together with healthAfter whenever the server witnessed the hit.",
+              "type": "number",
+              "minimum": 0
+            },
+            "healthAfter": {
+              "description": "The server's own health of the agent's body once the hit was applied: its health before the hit less the hit's final damage, never below zero. A damaged perception's selfState.health is this value, because the body's own reading can still be the one before the hit (r34: alpha took 14 from a creeper and was shown health 20 when it had 6 left). Present together with healthBefore.",
+              "type": "number",
+              "minimum": 0
             }
           }
         },

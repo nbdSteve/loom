@@ -75,10 +75,7 @@ internal class PlayerEvidenceRecorder(
                 ended is IntentOutcome.Rejected && audited?.second?.effected == true -> ended.copy(effected = true)
                 else -> ended
             }
-        (execution.interaction as? ServerInteractionClaim.Collect)
-            ?.takeIf { it.report.outcome == CollectOutcome.NO_ROUTE }
-            ?.itemSubject
-            ?.let(context.routeRefusals::refused)
+        (execution.interaction as? ServerInteractionClaim.Collect)?.let(context.routeRefusals::remember)
         recordAction(agentId, intent, requestId, outcome)
         recordWalk(runtime, requestId, execution)
         recordFlight(runtime, requestId, execution)

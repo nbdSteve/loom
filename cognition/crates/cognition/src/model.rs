@@ -509,6 +509,7 @@ impl ScriptedBackend {
                 amount,
                 source,
                 attacker_ref,
+                ..
             } => match attacker_ref
                 .clone()
                 .or_else(|| nearest_ref(perception, source))
@@ -991,6 +992,8 @@ mod tests {
                     amount: 6,
                     source: "zombie".to_owned(),
                     attacker_ref: None,
+                    health_before: None,
+                    health_after: None,
                 },
                 DecisionImportance::Pivotal,
             ),
@@ -1019,6 +1022,8 @@ mod tests {
                         amount: 3,
                         source: "minecraft:zombie".to_owned(),
                         attacker_ref: None,
+                        health_before: None,
+                        health_after: None,
                     },
                     DecisionImportance::Pivotal,
                 ),
@@ -1044,6 +1049,8 @@ mod tests {
                     amount: 3,
                     source: "fall".to_owned(),
                     attacker_ref: None,
+                    health_before: None,
+                    health_after: None,
                 },
                 DecisionImportance::Pivotal,
             ),
@@ -1068,6 +1075,8 @@ mod tests {
                 amount: 6,
                 source: "zombie".to_owned(),
                 attacker_ref: None,
+                health_before: None,
+                health_after: None,
             },
             DecisionImportance::Pivotal,
         );
@@ -1105,6 +1114,8 @@ mod tests {
                 amount: 3,
                 source: "skeleton".to_owned(),
                 attacker_ref: None,
+                health_before: None,
+                health_after: None,
             },
             DecisionImportance::Pivotal,
         );
@@ -1131,6 +1142,8 @@ mod tests {
             amount: 3,
             source: "skeleton".to_owned(),
             attacker_ref: Some("e91".to_owned()),
+            health_before: None,
+            health_after: None,
         };
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
         assert!(crate::offered::OfferedRefs::of(&seen).admits(&draft.intent));
@@ -1153,6 +1166,8 @@ mod tests {
                 amount: 1,
                 source: "cactus".to_owned(),
                 attacker_ref: None,
+                health_before: None,
+                health_after: None,
             },
             Trigger::BlockSighted {
                 block: "diamond_ore".to_owned(),
@@ -1571,6 +1586,8 @@ mod tests {
                 amount: 4,
                 source: "zombie".to_owned(),
                 attacker_ref: None,
+                health_before: None,
+                health_after: None,
             },
             DecisionImportance::Pivotal,
         );
@@ -1628,6 +1645,8 @@ mod tests {
                         amount: 6,
                         source: "zombie".to_owned(),
                         attacker_ref: None,
+                        health_before: None,
+                        health_after: None,
                     },
                     DecisionImportance::Pivotal,
                 ),

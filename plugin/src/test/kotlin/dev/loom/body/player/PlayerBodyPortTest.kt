@@ -2788,6 +2788,38 @@ class PlayerWalkResolutionTest {
     }
 
     @Test
+    fun `an item the body stalled on is not offered from that place again, and is from another`() {
+        // r34 delta: three collects of its own logs stalled from one stuck cell, each offered anew.
+        val agent = AgentId("agent-stalled-collect")
+        var standing = SENSE_POSITION
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        when (request) {
+                            is BodyRequest.Sense -> interactionSense(request).copy(position = standing)
+                            is BodyRequest.Collect ->
+                                fakeCollect(request).copy(outcome = CollectOutcome.STALLED, what = null, count = null)
+                            else -> null
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val first = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val item = first.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }
+        val stalled = harness.port.apply(agent, Intent.Collect(item.ref, approach = true), first.requestId).await()
+        assertEquals(EventTag.COLLECT_STALLED, (stalled as IntentOutcome.Rejected).tag)
+        val again = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        assertEquals(true, again.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }.routeRefused)
+        // From another cell the approach is another walk, and the item is offered again.
+        standing = listOf(SENSE_POSITION[0] + 1.0, SENSE_POSITION[1], SENSE_POSITION[2])
+        val moved = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        assertNull(moved.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }.routeRefused)
+    }
+
+    @Test
     fun `a dig the server credits to another player is that player's break, not this one's`() {
         // The second v23 rehearsal, tick 3262: two finishes on one instant-break bush crossed in
         // the server, and both bodies saw the block go after their own finish.

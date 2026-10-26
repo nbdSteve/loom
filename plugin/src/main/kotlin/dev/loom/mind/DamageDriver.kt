@@ -58,7 +58,22 @@ data class DamageReport(
     val playerDead: Boolean = false,
     /** The server's identity for the creature that dealt it, the shooter of a projectile; `null` for a cause. */
     val attacker: String? = null,
+    /** The server's own health of the player when the hit landed, before it was applied. */
+    val healthBefore: Double? = null,
+    /** The server's own health of the player once the hit was applied: [healthBefore] less [finalDamage]. */
+    val healthAfter: Double? = null,
 )
+
+/**
+ * This damaged perception as the mind is shown it: its body's health is the server's own reading
+ * once the hit was applied, which the body's sense - taken in the same tick - can still predate
+ * (r34: alpha took 14 from a creeper and was shown health 20 with 6 left, so neither its prompt nor
+ * its survival offer knew it was hurt). Any other perception is unchanged.
+ */
+fun Perception.afterTheHit(): Perception {
+    val after = (trigger as? Trigger.Damaged)?.healthAfter ?: return this
+    return copy(selfState = selfState.copy(health = after))
+}
 
 /** Whole damage points for the trigger, or `null` when there is no positive damage. */
 fun boundedDamageAmount(finalDamage: Double): Long? =
@@ -91,7 +106,13 @@ class DamageDriver(
     /** Handles one report on the main thread. Never waits for a body or a mind. */
     fun witnessed(report: DamageReport) {
         val amount = boundedDamageAmount(report.finalDamage) ?: return
-        val trigger = Trigger.Damaged(amount, sanitizedDamageSource(report.source))
+        val trigger =
+            Trigger.Damaged(
+                amount,
+                sanitizedDamageSource(report.source),
+                healthBefore = report.healthBefore,
+                healthAfter = report.healthAfter,
+            )
         val refusal =
             when {
                 closed -> EventTag.DAMAGE_SHUTDOWN
@@ -136,7 +157,7 @@ class DamageDriver(
                     record(report, trigger, refusal ?: EventTag.DAMAGE_NOT_PERCEIVED, captured?.requestId)
                 } else {
                     record(report, trigger, EventTag.DAMAGE_SUBMITTED, captured.requestId)
-                    mind.submit(report.agentId, captured.classified(), report.attacker)
+                    mind.submit(report.agentId, captured.afterTheHit().classified(), report.attacker)
                 }
             }
         }

@@ -214,7 +214,11 @@ internal class PlayerSceneTranslator(
                     visible = item.visible,
                     subject = itemSubjects.getOrNull(index),
                     count = item.count.toLong(),
-                    routeRefused = itemSubjects.getOrNull(index)?.let { it in context.routeRefusals }?.takeIf { it },
+                    // No route, or a stall from this cell to the item's over the same ground (r34 delta).
+                    routeRefused =
+                        itemSubjects.getOrNull(index)
+                            ?.let { context.routeRefusals.blocks(it, raw.report.position, item.position) }
+                            ?.takeIf { it },
                 )
             }
         return entities + blocks + items

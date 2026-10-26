@@ -531,8 +531,10 @@ data class Observation(
      */
     val digSafe: Boolean? = null,
     /**
-     * Present, and true, only for a dropped item this agent's body has already found no route
-     * to: it is not offered to collect and gives nothing a goal may count on.
+     * Present, and true, only for a dropped item this agent's body has already found no way to
+     * from where it stands - no route at all, or a route its approach stalled on from this same
+     * cell over the same ground (r34 delta): it is not offered to collect and gives nothing a goal
+     * may count on.
      */
     val routeRefused: Boolean? = null,
     /**
@@ -586,9 +588,20 @@ sealed interface Trigger {
          * dealt it or the body could not report the attacker.
          */
         val attackerRef: String? = null,
+        /** The server's own health of the body when the hit landed, before it was applied. */
+        val healthBefore: Double? = null,
+        /**
+         * The server's own health of the body once the hit was applied, which a damaged
+         * perception's `selfState.health` is: the body's reading can still be the one before the
+         * hit (r34: alpha took 14 from a creeper and was shown health 20 with 6 left).
+         */
+        val healthAfter: Double? = null,
     ) : Trigger {
         init {
             attackerRef?.let(::requireBoundedRef)
+            listOfNotNull(healthBefore, healthAfter).forEach { health ->
+                require(health.isFinite() && health >= 0.0) { "a health reading is finite and at or above zero" }
+            }
         }
     }
 

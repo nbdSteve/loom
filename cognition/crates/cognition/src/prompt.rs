@@ -209,8 +209,8 @@ Adopt, continue, revise or replace beside idle or rest takes no step and is not 
 total you already hold or one beyond what sight can be counted on to give. At a goal review \
 with cells at the edge of sight offered, idle and rest are not offered at all: when nothing in \
 sight is worth doing, walk to look further. There is something to collect \
-only when a dropped item is listed, and a dropped item your body found no route to is not \
-offered. Your body sees only the nearest blocks; when nothing in sight is worth doing, you are \
+only when a dropped item is listed, and a dropped item your body found no way to from where \
+you stand is not offered. Your body sees only the nearest blocks; when nothing in sight is worth doing, you are \
 offered cells at the edge of sight to walk to, so you can look further. A dig the server saw drop something for you is told to you with where that drop is now, \
 and a drop of yours still lying is offered to collect by its ref, in sight or not. While your own \
 drop of the goal's item lies in reach, the goal's next step is to collect it, with approach true \
@@ -332,17 +332,31 @@ fn trigger_line(trigger: &Trigger) -> String {
             amount,
             source,
             attacker_ref,
-        } => match attacker_ref {
-            Some(attacker) => format!(
-                "you took {amount} damage from {source}; the one that hurt you is {attacker}",
-                source = field(source),
-                attacker = field(attacker)
-            ),
-            None => format!(
-                "you took {amount} damage from {source}",
-                source = field(source)
-            ),
-        },
+            health_before,
+            health_after,
+        } => {
+            // The server's own reading of the hit, so a hurt agent is never shown the health it
+            // had before it (r34: alpha took 14 from a creeper and was shown 20 with 6 left).
+            let health = match (health_before, health_after) {
+                (Some(before), Some(after)) => format!(
+                    " (health {before} before the hit, {after} after it)",
+                    before = number(*before),
+                    after = number(*after)
+                ),
+                _ => String::new(),
+            };
+            match attacker_ref {
+                Some(attacker) => format!(
+                    "you took {amount} damage from {source}{health}; the one that hurt you is {attacker}",
+                    source = field(source),
+                    attacker = field(attacker)
+                ),
+                None => format!(
+                    "you took {amount} damage from {source}{health}",
+                    source = field(source)
+                ),
+            }
+        }
         Trigger::ThreatSighted {
             threat,
             entity_ref,
@@ -1243,9 +1257,10 @@ fn observation_phrase(seen: &Observation) -> String {
         } else {
             ""
         },
-        // r15: five collects were refused as noRoute, and the items stood on offer after.
+        // r15: five collects were refused as noRoute, and the items stood on offer after; r34
+        // delta's walk stalled three times toward its own logs from one stuck cell.
         route = if seen.route_refused == Some(true) {
-            ", which your body found no route to, so it is not offered"
+            ", which your body found no way to from where you stand, so it is not offered"
         } else {
             ""
         }
@@ -1755,8 +1770,27 @@ mod tests {
             amount: 2,
             source: "zombie".to_owned(),
             attacker_ref: None,
+            health_before: None,
+            health_after: None,
         };
         assert!(!situation(&seen).contains("counted on to give you"));
+    }
+
+    #[test]
+    fn a_hit_states_the_servers_health_before_and_after_it() {
+        // r34 alpha body:00001342: 14 from a creeper at 20 health, shown as 20 with 6 left.
+        let seen: Perception = serde_json::from_str(include_str!(
+            "../../../../contract/fixtures/valid/perception-damaged-health-before-after.json"
+        ))
+        .unwrap();
+        let rendered = situation(&seen);
+        assert!(
+            rendered.contains(
+                "you took 14 damage from creeper (health 20.0 before the hit, 6.0 after it)"
+            ),
+            "got {rendered}"
+        );
+        assert!(rendered.contains("Your body: health 6.0"), "got {rendered}");
     }
 
     #[test]
@@ -1858,6 +1892,8 @@ mod tests {
                 amount: 2,
                 source: "zombie".to_owned(),
                 attacker_ref: None,
+                health_before: None,
+                health_after: None,
             },
             DecisionImportance::Pivotal,
         );
@@ -2120,6 +2156,8 @@ mod tests {
                 amount: 7,
                 source: "zombie".to_owned(),
                 attacker_ref: None,
+                health_before: None,
+                health_after: None,
             },
             DecisionImportance::Pivotal,
         );
@@ -2807,6 +2845,8 @@ mod tests {
             amount: 2,
             source: "zombie".to_owned(),
             attacker_ref: None,
+            health_before: None,
+            health_after: None,
         };
         assert!(!situation(&event).contains("Goals you may set"));
     }

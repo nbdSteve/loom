@@ -45,3 +45,18 @@ test('r34, judged under generation 18, does not count the two deaths after its a
   assert.ok(eighteen.exposure.damageAfter >= 2, `${eighteen.exposure.damageAfter}`)
   assert.equal(eighteen.mechanicalVerdict, 'notReady')
 })
+
+test('r34 delta\'s four blockers, judged under generation 18, are one stuck body\'s incomplete movements', () => {
+  // Three collects of its own logs (ticks 3622, 6026, 7835) and a flight (8951), all from the one
+  // cell under the oak's leaves at (-8.43, 66, -27.5), none of them a decision's fault.
+  const keys = ['bq', 'k5', 'q8', 'u1'].map((suffix) => `tribe-delta:loom3b4ef3e082-sense-${suffix}`)
+  const classOf = (result, key) => result.actions.nonSuccess.find((entry) => entry.requestKey === key)?.class
+  const seventeen = judged(17)
+  const eighteen = judged(18)
+  assert.deepEqual(keys.map((key) => classOf(seventeen, key)), ['inapplicable', 'inapplicable', 'inapplicable', 'incompleteMovement'])
+  assert.deepEqual(keys.map((key) => classOf(eighteen, key)), Array(4).fill('incompleteMovement'))
+  assert.equal(eighteen.blockers.inapplicable, 0)
+  assert.equal(eighteen.blockers.incompleteMovement, 4)
+  // A stall is the body's failure, so the decisions that met it are valid.
+  assert.ok(eighteen.rates.decisionValidity > seventeen.rates.decisionValidity)
+})

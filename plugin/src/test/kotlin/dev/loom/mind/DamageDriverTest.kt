@@ -133,6 +133,22 @@ class DamageDriverTest {
     }
 
     @Test
+    fun `a damaged perception shows the server's own health after the hit, not the body's reading before it`() {
+        // r34 alpha body:00002061: 14 from a creeper at 20 health, and the perception said 20.
+        val rig = DamageRig()
+        rig.driver.witnessed(rig.reportOf(ALPHA, 14.0, source = "creeper").copy(healthBefore = 20.0, healthAfter = 6.0))
+        val asked = rig.bodies.perceived.single().second as Trigger.Damaged
+        assertEquals(20.0, asked.healthBefore)
+        assertEquals(6.0, asked.healthAfter)
+        rig.bodies.capture(0)
+        rig.main.drain()
+
+        val sent = rig.submitted.single()
+        assertEquals(6.0, sent.selfState.health, "the body's own sense said 20")
+        assertEquals(6.0, (sent.trigger as Trigger.Damaged).healthAfter)
+    }
+
+    @Test
     fun `the creature the server names as the attacker is handed to the body's damage perception`() {
         // v32 plains rehearsal 15: without it, a skeleton shooting from past the nearer creatures
         // could not be named back to flee from.

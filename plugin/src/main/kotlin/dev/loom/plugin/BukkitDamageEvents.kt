@@ -43,32 +43,36 @@ class BukkitDamageEvents(
         val player = event.entity as? Player ?: return
         val attacker = (event as? EntityDamageByEntityEvent)?.damager
         witnessed(
-            player = WitnessedPlayer(player.uniqueId.toString(), player.name),
-            finalDamage = event.finalDamage,
-            source = damageSourceOf(event.cause, attacker?.let(::attackerType)),
-            playerDead = player.isDead,
-            attacker = attacker?.let(::attackerOf)?.uniqueId?.toString(),
+            WitnessedPlayer(player.uniqueId.toString(), player.name),
+            WitnessedHit(
+                finalDamage = event.finalDamage,
+                source = damageSourceOf(event.cause, attacker?.let(::attackerType)),
+                playerDead = player.isDead,
+                attacker = attacker?.let(::attackerOf)?.uniqueId?.toString(),
+                // At MONITOR the hit is not yet applied; its final damage is already net of armour,
+                // resistance and absorption, so what is left is the health less it.
+                healthBefore = player.health,
+            ),
         )
     }
 
     internal fun witnessed(
         player: WitnessedPlayer,
-        finalDamage: Double,
-        source: String,
-        playerDead: Boolean,
-        attacker: String? = null,
+        hit: WitnessedHit,
     ) {
-        if (closed || !(finalDamage > 0.0)) return
+        if (closed || !(hit.finalDamage > 0.0)) return
         val agent = agentOf(UUID.fromString(player.uuid)) ?: return
         sink(
             DamageReport(
                 agentId = agent,
-                finalDamage = finalDamage,
-                source = source,
+                finalDamage = hit.finalDamage,
+                source = hit.source,
                 tick = currentTick(),
                 witness = player,
-                playerDead = playerDead,
-                attacker = attacker,
+                playerDead = hit.playerDead,
+                attacker = hit.attacker,
+                healthBefore = hit.healthBefore,
+                healthAfter = hit.healthBefore?.let { (it - hit.finalDamage).coerceAtLeast(0.0) },
             ),
         )
     }
@@ -79,6 +83,15 @@ class BukkitDamageEvents(
         HandlerList.unregisterAll(this)
     }
 }
+
+/** What the server witnessed of one hit on a player, before it was applied. */
+internal data class WitnessedHit(
+    val finalDamage: Double,
+    val source: String,
+    val playerDead: Boolean,
+    val attacker: String? = null,
+    val healthBefore: Double? = null,
+)
 
 /** A projectile's shooter when it is an entity, otherwise the damager itself. */
 private fun attackerOf(damager: Entity): Entity = (damager as? Projectile)?.shooter as? Entity ?: damager

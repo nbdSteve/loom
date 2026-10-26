@@ -1479,6 +1479,8 @@ fn immediate_danger_withholds_every_non_survival_action_and_a_weak_body_is_offer
             amount: 2,
             source: "zombie".to_owned(),
             attacker_ref: None,
+            health_before: None,
+            health_after: None,
         };
         event
     }] {

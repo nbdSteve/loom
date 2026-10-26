@@ -65,7 +65,7 @@ internal class PlayerBodyContext(
     val journal = BodyEventJournal(authority.eventLog, authority.currentTick)
     val perceptions = PendingPerceptions(journal)
     val refs = RequestRefs()
-    val routeRefusals = RouteRefusals(authority.currentTick)
+    val routeRefusals = RouteRefusals(authority.currentTick, authority.ground)
     val recall = SourceRecall(authority.currentTick)
     val visited = VisitedGround(authority.currentTick)
     val vitalsWatch = VitalsWatch(journal)
