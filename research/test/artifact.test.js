@@ -148,20 +148,20 @@ test('every feature flag must be true because no runtime route reads one', () =>
   }
 })
 
-test('the routine-v32 pilot preflights under the v12 treatment plus v32 prompts and category fairness', () => {
+test('the routine-v33 pilot preflights under the v12 treatment plus v33 prompts and category fairness', () => {
   const config = openAiGoalContinuityConfig()
   assert.deepEqual(validateRunConfig(config), [])
   assert.deepEqual(validateRunConfig(goalContinuityConfig()), [])
   const manifest = validateProspectiveManifest(config, SOURCE)
-  assert.equal(manifest.protocol.mode, 'routine-v32-survival-discovery')
+  assert.equal(manifest.protocol.mode, 'routine-v33-sighted-exposure')
   assert.equal(manifest.protocol.categoryFairSelection, true)
   assert.equal(manifest.protocol.controlledBodyCrashPlanned, false)
   assert.deepEqual(manifest.provenance.prompts, {
-    routine: 'routine-v32',
-    notable: 'notable-v32',
-    pivotal: 'pivotal-v32'
+    routine: 'routine-v33',
+    notable: 'notable-v33',
+    pivotal: 'pivotal-v33'
   })
-  // The v32 pilot is the v13 pilot with only its mode, prompts, identity, the follow-up reviews a
+  // The v33 pilot is the v13 pilot with only its mode, prompts, identity, the follow-up reviews a
   // settled goal step owes, and the global and spend ceilings that hold them moved.
   for (const suffix of ['', '-scripted']) {
     const read = (version) => {
@@ -173,7 +173,7 @@ test('the routine-v32 pilot preflights under the v12 treatment plus v32 prompts 
       delete pinned.cognition.maxExternalSpendUsd
       return pinned
     }
-    assert.deepEqual(read('v32'), read('v13'))
+    assert.deepEqual(read('v33'), read('v13'))
   }
   assert.deepEqual(manifest.provenance.models, { ordinary: 'gpt-5.4-nano', pivotal: 'gpt-5.4' })
   // 18 calls at the worst-case price, from v26's two owed follow-ups per review.
@@ -208,7 +208,7 @@ test('each native-scheduler pilot refuses the other pilot prompts or fairness at
 
   const v13OldPrompts = goalContinuityConfig()
   v13OldPrompts.cognition.prompts = { routine: 'routine-v13', notable: 'notable-v13', pivotal: 'pivotal-v13' }
-  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v32')))
+  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v33')))
   const v13 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v13-agency-pilot-scripted.json'))
   assert.ok(validateRunConfig(v13).some((error) => error.includes('mode routine-v13-goal-continuity is historical')))
 
@@ -249,7 +249,7 @@ test('the scripted v32 publication carries adoption then continuity without clai
   assert.deepEqual(validation.errors, [])
   assert.equal(published.metrics.spatial.playerSightings, 1)
   assert.ok(published.metrics.findings.observations.includes('1 perception(s) showed another player within eight blocks'))
-  assert.equal(published.manifest.protocol.mode, 'routine-v32-survival-discovery')
+  assert.equal(published.manifest.protocol.mode, 'routine-v33-sighted-exposure')
   assert.equal(published.manifest.protocol.categoryFairSelection, true)
   assert.equal(published.manifest.perceptionAudit.byKind.entities.jvmCutOmittedCount, 0)
   assert.equal(published.metrics.goalContinuity.byOutcome.goalAdopted, 3)
@@ -259,7 +259,7 @@ test('the scripted v32 publication carries adoption then continuity without clai
     ['tribe-alpha', 'tribe-beta', 'tribe-gamma']
   )
   const readme = fs.readFileSync(path.join(published.artifactDirectory, 'README.md'), 'utf8')
-  assert.match(readme, /routine-v32 pilot/)
+  assert.match(readme, /routine-v33 pilot/)
   assert.match(readme, /It is not a model-behavior result/)
   // The current gate generation states readiness and lists every action that did not succeed.
   const readiness = published.metrics.behaviorGate.readiness
@@ -774,11 +774,11 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
     v29.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 6
     assert.deepEqual(v29, v13, file)
   }
-  const live = read('tribe-night-goal-10m-10.json')
-  const scripted = read('tribe-night-goal-10m-10-scripted.json')
+  const live = read('tribe-balanced-envelope-10m-10.json')
+  const scripted = read('tribe-balanced-envelope-10m-10-scripted.json')
   const base = read('tribe-two-cycle-10.json')
   assert.match(live.experimentId, /^2026-10-16-openai-10-agent-10m-r[0-9]+$/)
-  assert.equal(live.mode, 'routine-v32-survival-discovery')
+  assert.equal(live.mode, 'routine-v33-sighted-exposure')
   for (const config of [live, scripted]) {
     assert.deepEqual(validateRunConfig(config), [], config.experimentId)
     assert.equal(config.primaryBehavior.profile, 'balanced-envelope-10m-10')
@@ -873,7 +873,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
     (config) => { config.mode = 'routine-v13-goal-continuity' }
   ]
   for (const drift of drifts) {
-    const config = read('tribe-night-goal-10m-10.json')
+    const config = read('tribe-balanced-envelope-10m-10.json')
     drift(config)
     assert.notDeepEqual(validateRunConfig(config), [], drift.toString())
   }
@@ -911,7 +911,7 @@ test('the balanced profile keeps every survival-envelope bound and pre-registers
   assert.deepEqual({ ...balanced.exposure }, { daylightTicks: 7000, nightTicks: 5000 })
   // r33's start would have held 4000 daylight ticks and 8000 night ones: refused for this profile.
   assert.deepEqual(exposureOf(was.initialTimeOfDay, balanced.simulationTickCeiling), { daylightTicks: 4000, nightTicks: 8000 })
-  const late = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'tribe-night-goal-10m-10.json'), 'utf8'))
+  const late = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'tribe-balanced-envelope-10m-10.json'), 'utf8'))
   late.primaryBehavior.initialWorldClock.timeOfDay = 9000
   assert.ok(validateRunConfig(late).some((error) => error.includes('initialWorldClock')), 'a 9000 start is refused')
 })

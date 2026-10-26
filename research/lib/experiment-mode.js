@@ -127,12 +127,22 @@ const ROUTINE_V31_DISCOVERY_GOAL_MODE = 'routine-v31-discovery-goal'
 // is followed through its reveal, never abandoned before its stall bound, and met by a recalled
 // source; and a reveal is the walk's own (gate generation 15).
 const ROUTINE_V32_SURVIVAL_DISCOVERY_MODE = 'routine-v32-survival-discovery'
+// v33 keeps v32 and answers the r34 audit: the run's exposure ends in the turn its cognition
+// admission closes, so nothing new is sent, applied or hurt in the drain; an older danger answer's
+// flight never replaces a newer one's; a damaged agent is shown the server's health after the hit;
+// a flight states why it sprints; a walk that cannot be left is corrected once and the pathfinder's
+// impossible diagonal jump is refused; an approach that stalled is not offered again from the same
+// cell over the same ground; a goal review looks further for logs and berry bushes and walks
+// beside one out of reach; a stalled goal's count stays with what is made from it; and an item no
+// body could pick up is not offered, with a collect's no-route verified on the server's ground
+// (gate generation 18).
+const ROUTINE_V33_SIGHTED_EXPOSURE_MODE = 'routine-v33-sighted-exposure'
 // The two native-scheduler pilots share every condition except what each mode pins here.
 // Category fairness is a fact about the JVM selector a run used, so v12 stays false for
 // its committed evidence and v13, which runs on the 48-per-kind selector, attests true.
 // The prompt versions the mind serves today (`cognition/crates/cognition/src/prompt.rs`).
 // A configuration pinning any other version can only fail after it has run.
-const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v32', notable: 'notable-v32', pivotal: 'pivotal-v32' })
+const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v33', notable: 'notable-v33', pivotal: 'pivotal-v33' })
 // Modes kept only so artifacts committed under them still validate; no run may select one.
 const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V12_PRIMARY_BEHAVIOR_MODE]: Object.freeze({
@@ -223,11 +233,17 @@ const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
     categoryFairSelection: true,
     followUpsPerReview: 1,
     eventCallReserveShare: 1 / 3
+  }),
+  [ROUTINE_V32_SURVIVAL_DISCOVERY_MODE]: Object.freeze({
+    prompts: Object.freeze({ routine: 'routine-v32', notable: 'notable-v32', pivotal: 'pivotal-v32' }),
+    categoryFairSelection: true,
+    followUpsPerReview: 1,
+    eventCallReserveShare: 1 / 3
   })
 })
 const PRIMARY_BEHAVIOR_MODES = Object.freeze({
-  [ROUTINE_V32_SURVIVAL_DISCOVERY_MODE]: Object.freeze({
-    prompts: Object.freeze({ routine: 'routine-v32', notable: 'notable-v32', pivotal: 'pivotal-v32' }),
+  [ROUTINE_V33_SIGHTED_EXPOSURE_MODE]: Object.freeze({
+    prompts: Object.freeze({ routine: 'routine-v33', notable: 'notable-v33', pivotal: 'pivotal-v33' }),
     categoryFairSelection: true,
     followUpsPerReview: 1,
     // The share of the global call ceiling the planned reviews must leave for events (r20).
@@ -355,6 +371,7 @@ module.exports = {
   ROUTINE_V30_HORIZON_GOAL_MODE,
   ROUTINE_V31_DISCOVERY_GOAL_MODE,
   ROUTINE_V32_SURVIVAL_DISCOVERY_MODE,
+  ROUTINE_V33_SIGHTED_EXPOSURE_MODE,
   SERVED_PROMPTS,
   configuredMode,
   createInterventionSchedule,

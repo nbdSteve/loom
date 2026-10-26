@@ -1,7 +1,7 @@
 {
-  "experimentId": "2026-10-16-openai-routine-v32-agency-pilot-proposal",
-  "title": "Routine-v32 three-agent goal-continuity pilot",
-  "mode": "routine-v32-survival-discovery",
+  "experimentId": "2026-10-16-openai-routine-v33-agency-pilot-proposal",
+  "title": "Routine-v33 three-agent goal-continuity pilot",
+  "mode": "routine-v33-sighted-exposure",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -53,9 +53,9 @@
       "pivotal": "gpt-5.4"
     },
     "prompts": {
-      "routine": "routine-v32",
-      "notable": "notable-v32",
-      "pivotal": "pivotal-v32"
+      "routine": "routine-v33",
+      "notable": "notable-v33",
+      "pivotal": "pivotal-v33"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,

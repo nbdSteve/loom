@@ -358,11 +358,11 @@ test('a full run refuses low disk before any build, listener, Paper start or cre
 })
 
 function goalContinuityConfigFile () {
-  return path.join(__dirname, '..', 'config', 'first-tribe-routine-v32-agency-pilot-scripted.json')
+  return path.join(__dirname, '..', 'config', 'first-tribe-routine-v33-agency-pilot-scripted.json')
 }
 
 function openAiGoalContinuityConfigFile () {
-  return path.join(__dirname, '..', 'config', 'first-tribe-routine-v32-agency-pilot.json')
+  return path.join(__dirname, '..', 'config', 'first-tribe-routine-v33-agency-pilot.json')
 }
 
 test('a busy host is refused before startup and a quiet one is admitted', async () => {
@@ -461,7 +461,7 @@ test('a primary behavior run holds native cognition until its initial conditions
 
 test('the JVM is told the ceilings and plan its call reserve keeps the living\'s reviews within', () => {
   const { followUpsEnvironmentOf } = require('../lib/harness.js')
-  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'tribe-night-goal-10m-10.json'), 'utf8'))
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'tribe-balanced-envelope-10m-10.json'), 'utf8'))
   // r20 spent its whole ceiling of 150 on the night's danger before its last reviews, and r22's
   // fixed shares of 15 stranded the dead's calls: the JVM keeps the pooled ceilings instead.
   assert.deepEqual(followUpsEnvironmentOf(config), {

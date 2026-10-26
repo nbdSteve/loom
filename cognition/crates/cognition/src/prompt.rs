@@ -39,13 +39,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v32";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v33";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v32";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v33";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v32";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v33";
 
 /// How many surroundings entries reach the prompt.
 ///

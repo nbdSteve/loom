@@ -1,11 +1,18 @@
 {
-  "experimentId": "2026-10-16-scripted-routine-v32-agency-pilot-rehearsal",
-  "title": "Credential-free routine-v32 goal-continuity dry run",
-  "mode": "routine-v32-survival-discovery",
+  "experimentId": "2026-10-26-scripted-10-agent-10m-balanced-envelope-rehearsal",
+  "title": "Credential-free 10-agent ten-minute balanced-envelope rehearsal",
+  "mode": "routine-v33-sighted-exposure",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
-    "tribe-gamma"
+    "tribe-gamma",
+    "tribe-delta",
+    "tribe-epsilon",
+    "tribe-zeta",
+    "tribe-eta",
+    "tribe-theta",
+    "tribe-iota",
+    "tribe-kappa"
   ],
   "paper": {
     "minecraftVersion": "1.21.1",
@@ -14,7 +21,7 @@
     "sha256": "39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9"
   },
   "world": {
-    "seed": "76192346017",
+    "seed": "20011",
     "difficulty": "normal",
     "mobSpawning": true,
     "maxWorldSizeBlocks": 256,
@@ -30,7 +37,7 @@
     "cognitionUpstreamPort": 8643
   },
   "runtime": {
-    "paperMemoryMiB": 1024,
+    "paperMemoryMiB": 2048,
     "body": {
       "startupRetryMillis": 250,
       "healthCheckIntervalTicks": 100,
@@ -40,7 +47,7 @@
     "cognitionBridge": {
       "timeoutMillis": 30000,
       "connectTimeoutMillis": 500,
-      "workers": 3,
+      "workers": 6,
       "queueDepth": 16,
       "perAgentPending": 2
     }
@@ -53,18 +60,19 @@
       "pivotal": "scripted-stand-in"
     },
     "prompts": {
-      "routine": "routine-v32",
-      "notable": "notable-v32",
-      "pivotal": "pivotal-v32"
+      "routine": "routine-v33",
+      "notable": "notable-v33",
+      "pivotal": "pivotal-v33"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,
     "providerEndpoint": null,
     "providerTimeoutMillis": 12000,
     "maxRequestBytes": 65536,
-    "perAgentCallCeiling": 6,
-    "globalCallCeiling": 18,
-    "globalOutstandingCeiling": 3,
+    "perAgentCallCeiling": 40,
+    "globalCallCeiling": 378,
+    "pivotalCallCeiling": 130,
+    "globalOutstandingCeiling": 6,
     "maxOutputTokens": 2048,
     "maxExternalSpendUsd": 0,
     "pricing": {
@@ -82,43 +90,78 @@
   },
   "bounds": {
     "startupConcurrency": 2,
-    "startupSeconds": 120,
-    "runDurationSeconds": 180,
-    "simulationTickCeiling": 4000,
+    "startupSeconds": 300,
+    "runDurationSeconds": 600,
+    "simulationTickCeiling": 12000,
     "startupAttempts": 2,
     "shutdownSeconds": 20,
-    "logBytes": 4194304,
-    "artifactBytes": 2097152,
-    "evidenceRecords": 20000
+    "logBytes": 16777216,
+    "artifactBytes": 16777216,
+    "evidenceRecords": 8000
   },
   "primaryBehavior": {
-    "profile": "pilot-180s",
+    "profile": "balanced-envelope-10m-10",
     "initialPositions": {
       "tribe-alpha": [
-        10.5,
-        68.0,
-        3.5
+        12.5,
+        67,
+        0.5
       ],
       "tribe-beta": [
-        1.5,
-        68.0,
-        1.5
+        9.5,
+        67,
+        7.5
       ],
       "tribe-gamma": [
+        3.5,
+        67,
+        11.5
+      ],
+      "tribe-delta": [
+        -4.5,
+        66,
+        12.5
+      ],
+      "tribe-epsilon": [
         -9.5,
-        68.0,
+        66,
+        7.5
+      ],
+      "tribe-zeta": [
+        -11.5,
+        66,
+        0.5
+      ],
+      "tribe-eta": [
+        -9.5,
+        66,
+        -7.5
+      ],
+      "tribe-theta": [
+        -3.5,
+        67,
+        -11.5
+      ],
+      "tribe-iota": [
+        3.5,
+        68,
+        -11.5
+      ],
+      "tribe-kappa": [
+        9.5,
+        69,
         -7.5
       ]
     },
     "initialWorldClock": {
-      "timeOfDay": 0,
+      "timeOfDay": 6000,
       "day": 0,
       "isDay": true
     },
     "nativeGoalReviewSchedule": {
       "cadenceTicks": 2400,
       "sliceTicks": 100,
-      "expectedReviewsPerAgent": 2,
+      "expectedReviewsPerAgent": 5,
       "followUpsPerReview": 1
     },
     "externalCognitionStimuli": "none",
@@ -132,7 +175,7 @@
       "conflict": false,
       "scriptedObjectives": false
     },
-    "scene": "r5-neutral",
+    "scene": "e2-balanced-ring",
     "categoryFairSelection": true
   },
   "featureFlags": {
