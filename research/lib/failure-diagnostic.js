@@ -70,7 +70,8 @@ const BODY_EVENTS = new Set([
   'worldInteraction',
   'ownDropPickup',
   'goalReviewDeferred',
-  'cognitionTierFallback'
+  'cognitionTierFallback',
+  'exposureEnded'
 ])
 const HARNESS_EVENTS = new Set([
   'cleanupVerified',

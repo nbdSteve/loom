@@ -85,7 +85,7 @@ test('the primary behavior harness issues no loombody think command', () => {
     externalCognitionStimuli: 'none',
     harnessThinkCommandsIssued: 0,
     nativeSchedulersOnly: true,
-    behaviorGateGeneration: 17,
+    behaviorGateGeneration: 18,
     profile: 'pilot-180s',
     nativeGoalReviewSchedule: {
       cadenceTicks: 2400,

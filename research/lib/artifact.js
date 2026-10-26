@@ -30,7 +30,7 @@ const {
   readJsonLines,
   scanText
 } = require('./evidence.js')
-const { isCoalesced, isShutdownEnding, unansweredAccountedFor } = require('./danger.js')
+const { isCoalesced, isExposureEnding, isShutdownEnding, unansweredAccountedFor } = require('./danger.js')
 const { CADENCE, PROFILES, SCENES, exposureOf, placementOf, profileOf, ticksPerSecondOf } = require('./profiles.js')
 const { RunFailure } = require('./lifecycle.js')
 const {
@@ -1426,7 +1426,8 @@ function admissionEndErrors (manifest, metrics, records) {
     }
   }
   for (const record of body) {
-    if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) && !refusedKeys.has(record.requestKey)) {
+    if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) &&
+        !isExposureEnding(record) && !refusedKeys.has(record.requestKey)) {
       errors.push(`unavailable decision ${record.requestKey} has no typed refusal`)
     }
   }
@@ -1568,7 +1569,8 @@ function controlledStopErrors (manifest, metrics, records) {
     }
   }
   for (const record of body) {
-    if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) && !typedKeys.has(record.requestKey)) {
+    if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) &&
+        !isExposureEnding(record) && !typedKeys.has(record.requestKey)) {
       errors.push(`unavailable decision ${record.requestKey} has no typed refusal`)
     }
     if (

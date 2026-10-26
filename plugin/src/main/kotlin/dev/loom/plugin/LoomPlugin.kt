@@ -22,6 +22,7 @@ import dev.loom.mind.CognitionCallbacks
 import dev.loom.mind.CognitionSettings
 import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
+import dev.loom.mind.ExposureGate
 import dev.loom.mind.GoalLedger
 import dev.loom.mind.GoalReviewSchedule
 import dev.loom.mind.PerAgentCognitionBridge
@@ -85,6 +86,9 @@ class LoomPlugin : JavaPlugin() {
     internal val schedule = GoalReviewSchedule(followUpsPerReview = followUpsPerReviewOf(System.getenv(FOLLOW_UPS_ENV)))
     private var cognition: EmbodiedCognition? = null
 
+    // Whether the run's exposure has ended; read by cognition and by the Bukkit guard.
+    private val exposure = ExposureGate()
+
     /**
      * Exact player identities Loom is authorised to witness.
      *
@@ -129,9 +133,10 @@ class LoomPlugin : JavaPlugin() {
         hearer = hearerOf(port, mind)
         val native =
             NativeCognitionStart.fromEnvironment { nativeSources = startNativeSources(port, mind, witnessed, witness) }
+        val ending = guardExposure(port, witnessed)
         bind(
             BODY_COMMAND,
-            BodyCommand(port, mind, { message -> logger.info(message) }, native::begin),
+            BodyCommand(port, mind, { message -> logger.info(message) }, native::begin, ending::end),
             "the body port has no driver",
         )
         bind(WATCH_COMMAND, WatchCommand(watched), "a run cannot be watched")
@@ -189,6 +194,27 @@ class LoomPlugin : JavaPlugin() {
         bodyPort = null
         eventLog?.close()
         eventLog = null
+    }
+
+    /** Registers the exposure guard and answers the one step that ends the run's exposure. */
+    private fun guardExposure(
+        port: PlayerBodyPort,
+        eventLog: BodyEventLog,
+    ): ExposureEnd {
+        server.pluginManager.registerEvents(
+            BukkitExposureGuard(exposure) { uuid -> managedPlayers.byUuid(uuid) != null },
+            this,
+        )
+        return ExposureEnd(
+            exposure = exposure,
+            eventLog = eventLog,
+            agents = { port.inspections().map { it.agentId } },
+            currentTick = { server.currentTick.toLong() },
+            stopSources = {
+                nativeSources?.close()
+                nativeSources = null
+            },
+        )
     }
 
     private fun bind(
@@ -346,6 +372,7 @@ class LoomPlugin : JavaPlugin() {
     ) = CognitionCallbacks(
         onStepSettled = settlement,
         isDead = isDead,
+        exposure = exposure,
         onApplied = ::reportApplied,
         onUnavailable = { perception, failure ->
             logger.warning(

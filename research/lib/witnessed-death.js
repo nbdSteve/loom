@@ -1,7 +1,7 @@
 'use strict'
 
 const { heldReviewOf, reviewWindowBounds } = require('./controlled-stop.js')
-const { isPreempted } = require('./danger.js')
+const { isExposureEnding, isPreempted } = require('./danger.js')
 
 // A server-witnessed death is an experiment outcome: that agent's chain ends and its
 // peers continue. Only its own disconnect and discarded in-flight decision may follow.
@@ -24,6 +24,8 @@ const AFTER_DEATH_DAMAGE_OUTCOMES = Object.freeze(['damageDiedBeforeCognition', 
 const SETTLEMENT_REPORTS = Object.freeze(['moved', 'retreating'])
 
 function allowedAfterDeath (record) {
+  // The run's own exposure end is stated on every agent's chain, a dead one's included.
+  if (record.event === 'exposureEnded') return true
   return AFTER_DEATH_EVENTS.includes(record.event) ||
     (record.event === 'damageWitnessed' && AFTER_DEATH_DAMAGE_OUTCOMES.includes(record.outcome))
 }
@@ -110,7 +112,7 @@ function deathViolation (bodyRecords, settlement = new DeathSettlement()) {
       settlement.observe(record, false)
       if (record.event === 'died') {
         dead.set(agentId, record.tick)
-      } else if (AFTER_DEATH_EVENTS.includes(record.event) && !isPreempted(record)) {
+      } else if (AFTER_DEATH_EVENTS.includes(record.event) && !isPreempted(record) && !isExposureEnding(record)) {
         // A danger answer newer damage preempted is a living agent's superseded answer, and
         // needs no death (v32 plains rehearsal 23: kappa's).
         return `${agentId} recorded ${record.event} without a witnessed death`

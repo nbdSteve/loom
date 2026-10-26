@@ -26,6 +26,15 @@ function isCoalesced (record) {
 // A perception still waiting for the mind when the plugin shut down after the run ended.
 const COGNITION_SHUTDOWN = 'cognitionShutdown'
 
+// A perception captured before the run's exposure ended, or an answer already with the mind
+// then, that the JVM ended here rather than sent or applied: work admitted while the run was
+// exposed, drained to a typed terminal after it (`ExposureGate` in the plugin).
+const EXPOSURE_ENDED = 'exposureEnded'
+
+function isExposureEnding (record) {
+  return ['cognitionUnavailable', 'decisionDiscarded'].includes(record.event) && record.outcome === EXPOSURE_ENDED
+}
+
 function isShutdownEnding (record) {
   return record.event === 'cognitionUnavailable' && record.outcome === COGNITION_SHUTDOWN
 }
@@ -39,7 +48,7 @@ function unansweredAccountedFor (bodyRecords, { admissionEnded, refusedKeys }) {
     .filter((record) => record.event === 'cognitionUnavailable')
     .every((record) =>
       isCoalesced(record) ||
-      (admissionEnded && isShutdownEnding(record)) ||
+      (admissionEnded && (isShutdownEnding(record) || isExposureEnding(record))) ||
       refusedKeys.has(record.requestKey))
 }
 
@@ -88,6 +97,8 @@ module.exports = {
   cognitionCoalescingMetrics,
   DANGER_COALESCED,
   DANGER_PREEMPTED,
+  EXPOSURE_ENDED,
+  isExposureEnding,
   isPreempted,
   dangerEpisodeMetrics,
   CALL_RESERVED,

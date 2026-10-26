@@ -288,6 +288,21 @@ function paperCommand (paper, command) {
   paper.child.stdin.write(`${command}\n`)
 }
 
+/**
+ * The one step a primary behavior run's admission close ends its exposure with: the plugin's
+ * `loombody end-exposure`, sent once, in the same turn the proxy closed admission, so nothing new is
+ * damaged, killed, targeted or applied after it while admitted work drains (r34: delta and gamma
+ * were shot dead in the drain after admission closed, and both deaths counted).
+ */
+function exposureEnder (paper, config) {
+  let sent = false
+  return () => {
+    if (sent || !isPrimaryBehaviorMode(config)) return
+    sent = true
+    paperCommand(paper, 'loombody end-exposure')
+  }
+}
+
 function applyPrimaryBehaviorInitialConditions (paper, config, journal) {
   if (!isPrimaryBehaviorMode(config)) return
   paperCommand(paper, 'gamerule doDaylightCycle true')
@@ -377,6 +392,7 @@ class PrimaryBehaviorGuard {
     this.closed = false
     this.providerStopped = false
     this.firstPerceptionChecked = new Set()
+    this.exposureEnded = new Set()
     this.failure = null
   }
 
@@ -413,6 +429,16 @@ class PrimaryBehaviorGuard {
   }
 
   check (record) {
+    if (record.event === 'exposureEnded') {
+      this.exposureEnded.add(record.agentId)
+      return null
+    }
+    // Admitted work that drained after the exposure ended ends typed, never applied.
+    if (
+      ['cognitionUnavailable', 'decisionDiscarded'].includes(record.event) &&
+      record.outcome === 'exposureEnded' &&
+      this.exposureEnded.has(record.agentId)
+    ) return null
     const dead = this.dead.has(record.agentId)
     const refusedAfterDeath = this.settlement.observe(record, dead)
     if (dead) {
@@ -852,9 +878,14 @@ async function runExperiment ({
   let clean = false
   let failure
   let controlledStop
+  // Ends the run's exposure in the same turn cognition admission closes; assigned once Paper runs.
+  let endExposure = () => {}
   const stopAdmission = (stop) => {
     try {
-      if (proxy.closeAdmission(stop)) controlledStop = stop
+      if (proxy.closeAdmission(stop)) {
+        controlledStop = stop
+        endExposure()
+      }
     } catch (cause) {
       abort(cause instanceof RunFailure
         ? cause
@@ -1110,6 +1141,7 @@ async function runExperiment ({
     const harnessTail = new JsonLinesTail(rawHarnessEvidence)
     const guard = new PrimaryBehaviorGuard(config)
     const settlement = new RequestSettlement()
+    endExposure = exposureEnder(paper, config)
     const pollEvidence = () => {
       const body = bodyTail.poll()
       guard.observeHarness(harnessTail.poll())
@@ -1193,6 +1225,7 @@ async function runExperiment ({
         reason: stopReason,
         endTick: Math.max(bodyTail.maxTick, serverTick)
       }, ADMISSION_ENDED_EVENT)
+      endExposure()
     }
     if (controlledStop !== undefined || isPrimaryBehaviorMode(config)) {
       if (controlledStop !== undefined) stopReason = CONTROLLED_STOP_REASON
@@ -1200,6 +1233,7 @@ async function runExperiment ({
         proxy,
         poll: pollEvidence,
         settlement,
+        exposureRecorded: () => !isPrimaryBehaviorMode(config) || config.agents.every((agentId) => guard.exposureEnded.has(agentId)),
         signal: controller.signal
       })
     }
@@ -1325,6 +1359,7 @@ async function drainControlledStop ({
   proxy,
   poll,
   settlement,
+  exposureRecorded = () => true,
   signal,
   timeoutMilliseconds = CONTROLLED_STOP_DRAIN_MILLIS
 }) {
@@ -1337,7 +1372,7 @@ async function drainControlledStop ({
       poll: async () => {
         invalid = poll()
         return invalid !== null ||
-          (proxy.snapshot().outstandingCalls === 0 && settlement.unsettled.size === 0)
+          (proxy.snapshot().outstandingCalls === 0 && settlement.unsettled.size === 0 && exposureRecorded())
       }
     })
   } catch (cause) {
@@ -1371,6 +1406,7 @@ module.exports = {
   PrimaryBehaviorGuard,
   RequestSettlement,
   drainControlledStop,
+  exposureEnder,
   ensurePaper,
   findJava21,
   importProviderUsage,

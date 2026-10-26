@@ -136,10 +136,24 @@ class BodyCommandTest {
         assertEquals(1, starts)
     }
 
+    @Test
+    @DisplayName("end-exposure ends the run's exposure once and says so")
+    fun endExposureEndsItOnce() {
+        var ends = 0
+        val command = commandFor(SpyBody(), endExposure = { ++ends == 1 })
+        assertEquals(
+            "the run's exposure ended: nothing new is perceived, sent or applied",
+            command.reply(arrayOf("end-exposure")),
+        )
+        assertEquals("the run's exposure had already ended", command.reply(arrayOf("end-exposure")))
+        assertEquals(2, ends)
+    }
+
     private fun commandFor(
         body: SpyBody,
         report: (String) -> Unit = {},
         begin: () -> Boolean = { false },
+        endExposure: () -> Boolean = { false },
     ): BodyCommand {
         val cognition =
             EmbodiedCognition(
@@ -163,7 +177,7 @@ class BodyCommandTest {
                 mainThread = main,
                 journal = silentJournal(),
             )
-        return BodyCommand(body, cognition, report, begin)
+        return BodyCommand(body, cognition, report, begin, endExposure)
     }
 
     private class SpyBody : BodyPort {

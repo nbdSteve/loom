@@ -622,6 +622,44 @@ test('the controlled-stop drain waits for settled chains, is bounded, and stops 
   )
 })
 
+test('admitted work that drains after the exposure ended is typed, and the drain waits for every end', async () => {
+  // r34: delta and gamma were shot dead in the drain after admission closed at tick 12063, and
+  // both deaths counted; the plugin now ends the exposure in the turn admission closes.
+  const { exposureEnder } = require('../lib/harness.js')
+  const config = goalContinuityConfig()
+  const written = []
+  const paper = { child: { stdin: { writable: true, write: (line) => written.push(line.trim()) } } }
+  const end = exposureEnder(paper, config)
+  end()
+  end()
+  assert.deepEqual(written, ['loombody end-exposure'])
+
+  const guard = new PrimaryBehaviorGuard(config)
+  guard.observeHarness([{ event: 'cognitionAdmissionEnded', kind: 'runEnded' }])
+  const agent = config.agents[0]
+  const drained = [
+    bodyRecord(12_063, agent, 'exposureEnded', 'the exposure ended', { outcome: 'exposureEnded' }),
+    bodyRecord(12_070, agent, 'decisionDiscarded', 'not applied', { requestId: 'late', outcome: 'exposureEnded' }),
+    bodyRecord(12_071, agent, 'cognitionUnavailable', 'not sent', { requestId: 'later', outcome: 'exposureEnded' })
+  ]
+  assert.equal(guard.observeBody(drained), null)
+  assert.ok(guard.exposureEnded.has(agent))
+  // Without the agent's own end, the same discard is still the fatal untyped one.
+  const unguarded = new PrimaryBehaviorGuard(config)
+  assert.match(unguarded.observeBody([drained[1]]).message, /discarded/)
+
+  const proxy = { snapshot: () => ({ outstandingCalls: 0 }) }
+  const settled = { poll: () => null, settlement: new RequestSettlement() }
+  let recorded = false
+  setTimeout(() => { recorded = true }, 150)
+  await drainControlledStop({ proxy, ...settled, exposureRecorded: () => recorded, timeoutMilliseconds: 2000 })
+  assert.equal(recorded, true)
+  await assert.rejects(
+    drainControlledStop({ proxy, ...settled, exposureRecorded: () => false, timeoutMilliseconds: 250 }),
+    (cause) => cause.code === 'cognitionDrainTimedOut'
+  )
+})
+
 test('the incremental tail reads only appended complete lines across multi-byte splits', () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-tail-'))
   const file = path.join(temporary, 'log.jsonl')
@@ -756,7 +794,7 @@ test('from gate generation 6 only an action that steps a goal is meaningful beha
   assert.ok(decided.goal !== undefined, 'the fixture review adopts a goal')
   delete decided.goal
   const gate = publish({ raw: ungrounded, stopReason: 'durationElapsed' }).metrics.behaviorGate
-  assert.equal(gate.version, 'loom-primary-behavior-gate/17')
+  assert.equal(gate.version, 'loom-primary-behavior-gate/18')
   // The action is still a confirmed review action, but no step of any goal.
   assert.equal(gate.goalReviewActions.confirmed, 2)
   assert.deepEqual(gate.meaningfulBehaviorByAgent, { 'tribe-beta': 1 })

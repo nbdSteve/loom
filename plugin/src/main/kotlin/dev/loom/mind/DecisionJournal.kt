@@ -69,22 +69,25 @@ class DecisionJournal(
     }
 
     /**
-     * Records a danger decision discarded because newer damage preempted it while it was with
-     * the mind: decided and billed, but the newer answer governs the body, so this one is never
-     * applied. Its outcome is [EventTag.DANGER_PREEMPTED], which tells it apart from a discard
-     * for a body that has gone.
+     * Records a decision decided and billed that is deliberately never applied, under the countable
+     * [outcome] that says why, which tells it apart from a discard for a body that has gone:
+     * [EventTag.DANGER_PREEMPTED] when newer damage preempted it while it was with the mind and the
+     * newer answer governs the body, and [EventTag.EXPOSURE_ENDED] when it arrived after the run's
+     * exposure had ended and nothing new may count.
      */
-    fun preempted(
+    fun withheld(
         agentId: AgentId,
         decision: Decision,
+        outcome: String,
+        why: String,
     ) {
         eventLog.append(
             recordOf(
                 agentId,
                 decision,
                 BodyEvent.DECISION_DISCARDED,
-                "${describe(decision.intent)} was not applied: newer damage preempted it",
-            ).copy(outcome = EventTag.DANGER_PREEMPTED),
+                "${describe(decision.intent)} was not applied: $why",
+            ).copy(outcome = outcome),
         )
     }
 

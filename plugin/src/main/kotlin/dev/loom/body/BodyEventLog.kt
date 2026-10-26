@@ -371,6 +371,15 @@ enum class BodyEvent {
     GOAL_REVIEW_DEFERRED,
 
     /**
+     * The run's experiment exposure ended for this agent, at the tick cognition admission closed:
+     * from here no new perception, decision, damage, targeting or death counts toward the run, and
+     * only work already admitted drains to its typed terminals (`ExposureGate`). One per agent, all
+     * on one tick, so each agent's chain states its own end.
+     */
+    @SerialName("exposureEnded")
+    EXPOSURE_ENDED,
+
+    /**
      * The mind answered a perception, and the body was about to be asked to act.
      *
      * The record the run is reconstructed from: it carries the perception it answers

@@ -57,6 +57,8 @@ data class CognitionCallbacks(
     val onStepSettled: StepSettlement = StepSettlement.NONE,
     /** Durable permadeath, consulted when an answer arrives: a dead agent's answer is discarded. */
     val isDead: (AgentId) -> Boolean = { false },
+    /** Whether the run's exposure has ended, after which nothing new is sent, applied or owed. */
+    val exposure: ExposureGate = ExposureGate(),
 )
 
 /**
@@ -86,6 +88,8 @@ class EmbodiedCognition(
     private val callbacks: CognitionCallbacks = CognitionCallbacks(),
     private val goals: GoalLedger = GoalLedger(),
 ) {
+    private val exposure: ExposureGate get() = callbacks.exposure
+
     private val danger = DangerEpisodes(journal::tick)
 
     // Perceptions sent to the mind whose decision has not yet been recorded or lost, so a
@@ -93,7 +97,7 @@ class EmbodiedCognition(
     private val inFlight = linkedMapOf<String, Pair<AgentId, Perception>>()
 
     private val preemption = DangerPreemption()
-    private val admission = DangerAdmission(danger, preemption, mind.outstandingPerAgent)
+    private val admission = DangerAdmission(danger, preemption, mind.outstandingPerAgent) { callbacks.exposure.ended }
     private var shutDown = false
 
     /** Whether [shutDown] has run, after which no review is taken. */
@@ -187,11 +191,19 @@ class EmbodiedCognition(
                         supersession == DangerPreemption.Supersession.NEWER_PENDING && decision?.intent !is Intent.Flee
                 when {
                     decision == null -> lost(agentId, carried, failure ?: missingBoth(carried))
+                    // Admitted while the run was exposed and answered after it ended: typed, never applied.
+                    exposure.ended -> {
+                        goals.forget(agentId, decision.requestId)
+                        danger.forget(agentId)
+                        bodies.held.release(agentId, decision.requestId)
+                        journal.withheld(agentId, decision, EventTag.EXPOSURE_ENDED, "the run's exposure had ended")
+                        callbacks.onApplied(AppliedDecision(decision, IntentOutcome.NoSuchBody))
+                    }
                     // A preempting damage's answer governs the body now; this older one is discarded.
                     discardedNow -> {
                         danger.settled(agentId, decision.requestId, fled = false)
                         bodies.held.release(agentId, decision.requestId)
-                        journal.preempted(agentId, decision)
+                        journal.withheld(agentId, decision, EventTag.DANGER_PREEMPTED, "newer damage preempted it")
                         callbacks.onApplied(AppliedDecision(decision, IntentOutcome.NoSuchBody))
                     }
                     // An answer for an agent that died while the mind was deciding is no decision
@@ -421,6 +433,8 @@ class EmbodiedCognition(
         goalStep: GoalSummary?,
         applied: IntentOutcome,
     ) {
+        // After the exposure ends nothing new is owed: no review and no pickup.
+        if (exposure.ended) return
         val item = lyingStepItem(goal, goalStep, applied, goals.recipes)
         if (item == null) {
             callbacks.onStepSettled.oweReview(
@@ -457,7 +471,7 @@ class EmbodiedCognition(
         trigger: Trigger,
         attacker: String? = null,
     ) {
-        if (!callbacks.isDead(agentId) && !shutDown) consider(agentId, trigger, attacker)
+        if (!callbacks.isDead(agentId) && !shutDown && !exposure.ended) consider(agentId, trigger, attacker)
     }
 }
 

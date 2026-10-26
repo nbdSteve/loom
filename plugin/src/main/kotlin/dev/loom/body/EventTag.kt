@@ -336,6 +336,12 @@ object EventTag {
     const val RETREAT_SUPERSEDED: String = "retreatSuperseded"
 
     /**
+     * The run's experiment exposure had ended: a perception captured before the end and an answer
+     * already with the mind end here rather than reach the mind or the body (`ExposureGate`).
+     */
+    const val EXPOSURE_ENDED: String = "exposureEnded"
+
+    /**
      * An older flight that a newer danger answer of the same agent's was applied after, ended before
      * it could take the body: refused behind the newer one, or displaced from its takeover before it
      * began. Never halts the newer answer (r34 beta: an older sighting's flight, retried after

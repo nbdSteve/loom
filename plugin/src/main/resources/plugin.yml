@@ -29,6 +29,7 @@ commands:
       /loombody think <agentId>
       /loombody stop <agentId>
       /loombody begin
+      /loombody end-exposure
   loomwatch:
     description: Watches one living agent - energy, trigger, model, intent, and outcome.
     permission: loom.observe
