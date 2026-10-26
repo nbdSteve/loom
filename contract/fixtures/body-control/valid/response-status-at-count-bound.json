@@ -1,1 +1,1 @@
-{"op":"status","protocol":7,"requestId":"req-10","agentId":"agent-alpha","state":"ready","uptimeMs":9007199254740991,"stateMs":9007199254740991,"requestsHandled":9007199254740991}
+{"op":"status","protocol":8,"requestId":"req-10","agentId":"agent-alpha","state":"ready","uptimeMs":9007199254740991,"stateMs":9007199254740991,"requestsHandled":9007199254740991}

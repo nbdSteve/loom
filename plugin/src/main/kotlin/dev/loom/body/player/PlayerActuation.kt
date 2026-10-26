@@ -8,6 +8,8 @@ import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.RefResolution
 import dev.loom.body.SlotResolution
+import dev.loom.body.SprintChoice
+import dev.loom.body.SprintReason
 import dev.loom.body.WorldTargetResolution
 import dev.loom.body.blocksApart
 import dev.loom.body.completedBodyOperation
@@ -382,6 +384,7 @@ internal class PlayerActionPreparer(
                         EventTag.RETREAT_THREAT_FORGOTTEN,
                     )
                 } else {
+                    val sprint = context.sprintFrom(sense, resolved.subject, entity)
                     val request =
                         BodyRequest.Flee(
                             protocol = BODY_CONTROL_PROTOCOL_VERSION,
@@ -391,13 +394,13 @@ internal class PlayerActionPreparer(
                             entity = entity,
                             distance = FLEE_DISTANCE_BLOCKS,
                             timeoutMs = MOVEMENT_DEADLINE_MS,
-                            sprint = context.sprintsFrom(sense, resolved.subject, entity),
+                            sprint = sprint.sprint,
                             avoid = otherHuntersOf(sense, entity).takeIf { it.isNotEmpty() },
                             // Takes over from a running walk or flight only once its own threat checks
                             // out, so a refused flight never stops a valid one (r33 gamma).
                             replace = true,
                         )
-                    val operation: () -> ActionExecution = { flee(runtime, sense, request) }
+                    val operation: () -> ActionExecution = { flee(runtime, sense, request, sprint) }
                     operation
                 }
             }
@@ -414,12 +417,14 @@ internal class PlayerActionPreparer(
         runtime: PlayerRuntime,
         sense: HeldSense,
         request: BodyRequest.Flee,
+        sprint: SprintChoice,
     ): ActionExecution {
         var attempt = request
         var halted = false
         repeat(PREEMPT_ATTEMPTS) { tries ->
             try {
-                return fleeOnce(sense, attempt, context.infrastructure.settings.movementTimeout)
+                val timeout = context.infrastructure.settings.movementTimeout
+                return fleeOnce(sense, attempt, timeout).copy(fleeSprint = sprint)
             } catch (busy: BodyControlFailure.Refused) {
                 if (busy.code != ErrorCode.NOT_READY || tries == PREEMPT_ATTEMPTS - 1) throw busy
                 if (!halted) {
@@ -459,16 +464,18 @@ private fun rejectedAction(
     }
 
 /**
- * Whether the flight from [entity] of [sense] sprints: only from a threat near enough, or closing
- * fast enough, to need it (`ThreatApproach`).
+ * Whether the flight from [entity] of [sense] sprints, and why: only from a threat near enough, or
+ * closing fast enough, to need it (`ThreatApproach`), or one the sense states no position for.
  */
-private fun PlayerBodyContext.sprintsFrom(
+private fun PlayerBodyContext.sprintFrom(
     sense: HeldSense,
     subject: java.util.UUID,
     entity: Int,
-): Boolean {
-    val seen = sense.raw.report.entities.getOrNull(entity)?.position ?: return true
-    return approach.sprints(subject, sense.raw.capturedTick, blocksApart(sense.raw.report.position, seen))
+): SprintChoice {
+    val seen =
+        sense.raw.report.entities.getOrNull(entity)?.position
+            ?: return SprintChoice(true, SprintReason.UNLOCATED)
+    return approach.choice(subject, sense.raw.capturedTick, blocksApart(sense.raw.report.position, seen))
 }
 
 /** One flight request on the sense connection that named its threat. */

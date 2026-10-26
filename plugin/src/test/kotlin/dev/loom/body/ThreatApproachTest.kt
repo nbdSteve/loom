@@ -1,5 +1,6 @@
 package dev.loom.body
 
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -29,5 +30,16 @@ class ThreatApproachTest {
         assertFalse(approach.sprints(skeleton, 120, 14.0))
         // A sample past the window says nothing about the pace now.
         assertFalse(approach.sprints(skeleton, 100 + CLOSING_WINDOW_TICKS + 1, 10.0))
+    }
+
+    @Test
+    fun `each sprint choice states the reason that decided it`() {
+        // r34: delta's walking flight from a skeleton 15.6 blocks off stalled, and no record said
+        // it had walked, nor why.
+        val approach = ThreatApproach()
+        assertEquals(SprintChoice(true, SprintReason.NEAR), approach.choice(skeleton, 100, SPRINT_NEAR_BLOCKS))
+        approach.record(skeleton, 100, 16.0)
+        assertEquals(SprintChoice(true, SprintReason.CLOSING), approach.choice(skeleton, 120, 10.0))
+        assertEquals(SprintChoice(false, SprintReason.DISTANT), approach.choice(skeleton, 120, 15.6))
     }
 }

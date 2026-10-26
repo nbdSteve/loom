@@ -317,14 +317,14 @@ function disconnected () {
  * The bot is registered for teardown here; see [disconnected] for why that is not
  * optional.
  */
-async function realBot () {
+async function realBot ({ movement } = {}) {
   const client = fakeClient()
   const bot = mineflayer.createBot({
     ...botOptionsFor({ username: USERNAME, minecraft: { host: '127.0.0.1', port: 25565 } }),
     client,
     version: VERSION
   })
-  installMovement(bot)
+  installMovement(bot, movement)
   installDigging(bot)
   installPlacing(bot)
   openBots.add(bot)
@@ -347,8 +347,8 @@ const loadedBot = realBot
  * body is started around it: `createBody` subscribes to `login` and `spawn` on the bot
  * it is handed, so the subscriptions are in place before `spawned` is called.
  */
-async function embodied (overrides = {}) {
-  const { bot, client, events } = await realBot()
+async function embodied ({ movement, ...overrides } = {}) {
+  const { bot, client, events } = await realBot({ movement })
   const started = await startedBody({ bot, ...overrides })
   return { ...started, client, events }
 }

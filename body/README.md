@@ -31,8 +31,11 @@ child is still alive can mean another exclusive action owns the player. The coor
 records a refused intent and leaves the process ready; it must not turn expected action
 contention into a disconnect or terminate a healthy child.
 
-The wire is **sixteen operations at protocol generation 7**, and the split between them is
+The wire is **sixteen operations at protocol generation 8**, and the split between them is
 the split this whole package is built on.
+Generation 8 moved because every movement answer may state the one correction its walk made
+(`recovery`) and an arrival the `departure` its check found, which a controller meets without
+asking; see "A walk checks it can be left" below.
 Generation 7 moved because a dig report may answer `blockChanged` after the dig was handed to
 Mineflayer: the world turned the offered block into another, as grass spreads onto dirt, before
 this body's own finish, and the dig is stopped rather than finished on a block it was not offered.
@@ -170,21 +173,21 @@ Drive it over the control channel, on one connection, since a handshake is per
 connection and each `requestId` may be used once:
 
 ```sh
-{ printf '{"op":"handshake","protocol":6,"requestId":"h1","agentId":"loom.demo.body"}\n'
+{ printf '{"op":"handshake","protocol":8,"requestId":"h1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"status","protocol":6,"requestId":"s1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"status","protocol":8,"requestId":"s1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"sense","protocol":6,"requestId":"n1","agentId":"loom.demo.body","radius":24,"limit":48}\n'
+  printf '{"op":"sense","protocol":8,"requestId":"n1","agentId":"loom.demo.body","radius":24,"limit":48}\n'
   sleep 1
-  printf '{"op":"eat","protocol":6,"requestId":"e1","agentId":"loom.demo.body","senseId":"n1","slot":36}\n'
+  printf '{"op":"eat","protocol":8,"requestId":"e1","agentId":"loom.demo.body","senseId":"n1","slot":36}\n'
   sleep 1
-  printf '{"op":"flee","protocol":6,"requestId":"f1","agentId":"loom.demo.body","senseId":"n1","entity":0,"distance":16,"timeoutMs":10000,"sprint":true}\n'
+  printf '{"op":"flee","protocol":8,"requestId":"f1","agentId":"loom.demo.body","senseId":"n1","entity":0,"distance":16,"timeoutMs":10000,"sprint":true}\n'
   sleep 12
-  printf '{"op":"moveTo","protocol":6,"requestId":"m1","agentId":"loom.demo.body","destination":[12,64,12],"tolerance":0,"timeoutMs":10000,"sprint":false}\n'
+  printf '{"op":"moveTo","protocol":8,"requestId":"m1","agentId":"loom.demo.body","destination":[12,64,12],"tolerance":0,"timeoutMs":10000,"sprint":false}\n'
   sleep 1
-  printf '{"op":"halt","protocol":6,"requestId":"z1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"halt","protocol":8,"requestId":"z1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"shutdown","protocol":6,"requestId":"x1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"shutdown","protocol":8,"requestId":"x1","agentId":"loom.demo.body"}\n'
   sleep 1
 } | nc 127.0.0.1 25585
 ```
@@ -473,6 +476,13 @@ Prismarine's physics compares a body's face with a block's face exactly, and van
 A body clamped flush against a face at a negative coordinate (x = -2.3) has its box face at -1.9999999999999998, 2e-16 inside the block, so the exact comparison misses the collision and the client steps into it.
 The server refuses that move and puts the player back every tick until the stall bound ends the walk or flight.
 `src/collision.js` gives the library's AABB vanilla's tolerance once, from `installMovement`; `test/libraries.test.js` pins the pinned library's own exact comparison, and `test/native-flee-terrain.test.js` replays the two stalled flights on the real s2-ring ground against a server that refuses colliding moves.
+**The search may offer only moves the library's own executor can make.**
+`getMoveDiagonal` admits a diagonal step up one block when either side corridor of the corner is clear, because it costs the cheaper of the two, but a body's box crossing the corner overlaps both side cells as it rises, so a solid block above either one stops the jump; the executor simulates every step before pressing a control and, finding none reaches the node, presses nothing until its futility check resets the route to the identical one.
+r34 delta stood at (-8.43, 66, -27.5) on seed 20011 under an oak leaf at (-8, 68, -28), and three collects and a walking flight stalled there without moving; `ClearanceMovements` refuses such a diagonal unless both side cells are clear at the jump's two heights, and `test/native-r34-delta-terrain.test.js` replays all four on the run's own ground.
+**A walk checks it can be left, and may correct itself once, with typed evidence.**
+A `moveTo` or `flee` that arrives states its `departure`: whether one move the search offers out of the cell it came to rest in is one the executor can make from that exact position.
+Where none is and from the cell's centre one would be, it makes one straight `recentre` step first; a route the library abandons as stuck while the body has not left its start makes one straight `sidestep` into a level cell beside it that the search offers and the executor can make, then resumes the same goal.
+Either is stated as the report's `recovery`, at most one per request, never a teleport and never a loop: a second stall counts against `MAX_STALL_RETRIES` as before.
 **A dig by a body standing on support also holds the simulation, for its ground state alone.**
 Mineflayer answers every server teleport with `onGround: false`, and with the simulation shut
 nothing corrects it, so both Mineflayer's dig time and the server's destroy progress ran at

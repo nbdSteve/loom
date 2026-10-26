@@ -1,1 +1,1 @@
-{"op":"sleep","protocol":7,"requestId":"bad-sleep-response","agentId":"agent-alpha","state":"ready","outcome":"dreamed","elapsedMs":1,"entered":false}
+{"op":"sleep","protocol":8,"requestId":"bad-sleep-response","agentId":"agent-alpha","state":"ready","outcome":"dreamed","elapsedMs":1,"entered":false}

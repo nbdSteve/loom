@@ -1,0 +1,1 @@
+{"op":"moveTo","protocol":8,"requestId":"req-24","agentId":"agent-alpha","state":"ready","outcome":"arrived","from":[12.5,71.5,-40.5],"position":[-8.5,66.5,-27.5],"travelled":17.25,"elapsedMs":4200,"departure":"clear","recovery":{"kind":"recentre","cause":"departureBlocked","from":[-8.434705761507354,66.5,-27.5],"to":[-8.5,66.5,-27.5]}}

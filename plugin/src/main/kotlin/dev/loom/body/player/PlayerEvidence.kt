@@ -9,6 +9,7 @@ import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.RetreatEvidence
 import dev.loom.body.WitnessedPlayer
+import dev.loom.body.WorldInteractionRecord
 import dev.loom.body.describe
 import dev.loom.body.tagOf
 import dev.loom.bodycontrol.BodyRequest
@@ -32,6 +33,8 @@ internal data class ActionExecution(
     val fleeReport: BodyResponse.FleeReport? = null,
     /** Where the threat and every avoided hunter stood when sensed, for the flight's least separation. */
     val fleeHunters: List<List<Double>> = emptyList(),
+    /** Whether the flight sprinted and why, as the JVM chose it. */
+    val fleeSprint: dev.loom.body.SprintChoice? = null,
     val eatReport: BodyResponse.EatReport? = null,
     val interaction: ServerInteractionClaim? = null,
 )
@@ -93,7 +96,13 @@ internal class PlayerEvidenceRecorder(
         recordMovement(
             runtime.identity.agentId,
             requestId,
-            MovementEnding(report.outcome, report.from, report.position, report.travelled),
+            MovementEnding(
+                report.outcome,
+                report.from,
+                report.position,
+                report.travelled,
+                movementEvidenceOf(report.departure, report.recovery),
+            ),
         )
     }
 
@@ -109,7 +118,13 @@ internal class PlayerEvidenceRecorder(
         recordMovement(
             agentId,
             requestId,
-            MovementEnding(report.outcome, report.from, report.position, report.travelled),
+            MovementEnding(
+                report.outcome,
+                report.from,
+                report.position,
+                report.travelled,
+                movementEvidenceOf(report.departure, report.recovery),
+            ),
         )
         context.journal.recordRetreat(
             agentId,
@@ -122,6 +137,8 @@ internal class PlayerEvidenceRecorder(
                 report.separationGained,
                 request.avoid?.size,
                 execution.fleeHunters.minOfOrNull { dev.loom.body.blocksApart(report.position, it) },
+                sprint = request.sprint,
+                sprintReason = execution.fleeSprint?.reason,
             ),
         )
     }
@@ -157,29 +174,21 @@ internal class PlayerEvidenceRecorder(
                 drops.isEmpty() -> "; dropped nothing"
                 else -> "; dropped " + drops.joinToString(", ") { "${it.count} ${it.what}" }
             }
-        val senseId =
-            when (controlRequest) {
-                is BodyRequest.Dig -> controlRequest.senseId
-                is BodyRequest.Collect -> controlRequest.senseId
-                is BodyRequest.Place -> controlRequest.senseId
-                is BodyRequest.Equip -> controlRequest.senseId
-                is BodyRequest.Craft -> controlRequest.senseId
-                is BodyRequest.Attack -> controlRequest.senseId
-                is BodyRequest.Sleep -> controlRequest.senseId
-                else -> error("only world-interaction requests are recorded here")
-            }
         context.journal.recordWorldInteraction(
-            agentId = runtime.identity.agentId,
-            witness =
-                WitnessedPlayer(
-                    uuid = runtime.identity.uuid.toString(),
-                    username = runtime.identity.username,
-                ),
-            detail =
-                "${describe(intent)}; sense $senseId; control ${controlRequest.requestId}; " +
-                    "body ${claim.bodyOutcome.lowercase()}${journeyOf(claim)}; vanilla ${audit.detail}$dropped",
-            requestId = requestId,
-            confirmed = audit.confirmed,
+            runtime.identity.agentId,
+            WorldInteractionRecord(
+                witness =
+                    WitnessedPlayer(
+                        uuid = runtime.identity.uuid.toString(),
+                        username = runtime.identity.username,
+                    ),
+                detail =
+                    "${describe(intent)}; sense ${senseIdOf(controlRequest)}; control ${controlRequest.requestId}; " +
+                        "body ${claim.bodyOutcome.lowercase()}${journeyOf(claim)}; vanilla ${audit.detail}$dropped",
+                requestId = requestId,
+                confirmed = audit.confirmed,
+                movement = approachEvidenceOf(claim),
+            ),
         )
     }
 
@@ -224,13 +233,15 @@ internal class PlayerEvidenceRecorder(
         requestId: String?,
         ending: MovementEnding,
     ) {
-        if (ending.travelled <= 0.0 && ending.from == ending.position) return
+        if (ending.travelled <= 0.0 && ending.from == ending.position && ending.movement == null) return
         context.journal.recordMovement(
             agentId,
             "from ${ending.from.joinToString(",")} to ${ending.position.joinToString(",")}; " +
-                "travelled ${ending.travelled}; ${ending.outcome.name.lowercase()}",
+                "travelled ${ending.travelled}; ${ending.outcome.name.lowercase()}" +
+                (ending.movement?.recovery?.let { "; ${it.kind} for ${it.cause}" } ?: ""),
             requestId,
             movementTag(ending.outcome),
+            ending.movement,
         )
     }
 }
@@ -376,6 +387,27 @@ private val PLACE_REFUSALS: Map<PlaceOutcome, IntentOutcome.Rejected> =
         PlaceOutcome.LIBRARY_FAILURE to
             IntentOutcome.Rejected("place library failure", EventTag.PLACE_LIBRARY_FAILURE),
     )
+
+/** The sense answer a world-interaction request names its authority from. */
+private fun senseIdOf(controlRequest: BodyRequest): String =
+    when (controlRequest) {
+        is BodyRequest.Dig -> controlRequest.senseId
+        is BodyRequest.Collect -> controlRequest.senseId
+        is BodyRequest.Place -> controlRequest.senseId
+        is BodyRequest.Equip -> controlRequest.senseId
+        is BodyRequest.Craft -> controlRequest.senseId
+        is BodyRequest.Attack -> controlRequest.senseId
+        is BodyRequest.Sleep -> controlRequest.senseId
+        else -> error("only world-interaction requests are recorded here")
+    }
+
+/** What an approaching interaction's route stated beyond its journey: its one correction, if any. */
+private fun approachEvidenceOf(claim: ServerInteractionClaim): dev.loom.body.MovementEvidence? =
+    when (claim) {
+        is ServerInteractionClaim.Collect -> movementEvidenceOf(null, claim.report.recovery)
+        is ServerInteractionClaim.Attack -> movementEvidenceOf(null, claim.report.recovery)
+        else -> null
+    }
 
 /**
  * Where an approaching interaction's body went, against where its offered target was, so an

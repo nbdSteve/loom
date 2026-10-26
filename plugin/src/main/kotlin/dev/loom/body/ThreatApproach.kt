@@ -15,6 +15,27 @@ const val SPRINT_NEAR_BLOCKS: Double = 8.0
  */
 const val SPRINT_CLOSING_BLOCKS_PER_TICK: Double = 0.15
 
+/** Why a flight sprints or walks, as its `retreating` record states it (r34: the choice was in no record). */
+object SprintReason {
+    /** Within [SPRINT_NEAR_BLOCKS]: sprinted whatever its pace. */
+    const val NEAR: String = "threatNear"
+
+    /** Closing at [SPRINT_CLOSING_BLOCKS_PER_TICK] or more: sprinted wherever it stands. */
+    const val CLOSING: String = "threatClosing"
+
+    /** The sense that named it states no position for it: sprinted, as nothing says it is far. */
+    const val UNLOCATED: String = "threatUnlocated"
+
+    /** Neither near nor closing: walked, keeping the food a sprint would spend. */
+    const val DISTANT: String = "threatDistant"
+}
+
+/** Whether one flight sprints, and the [SprintReason] that decided it. */
+data class SprintChoice(
+    val sprint: Boolean,
+    val reason: String,
+)
+
 /** How far back a sample of a threat's distance still says how fast it is closing, in ticks. */
 const val CLOSING_WINDOW_TICKS: Long = 100
 
@@ -50,7 +71,14 @@ class ThreatApproach {
         subject: UUID,
         tick: Long,
         distance: Double,
-    ): Boolean {
+    ): Boolean = choice(subject, tick, distance).sprint
+
+    /** Whether a flight from [subject], [distance] blocks off at [tick], sprints, and why. */
+    fun choice(
+        subject: UUID,
+        tick: Long,
+        distance: Double,
+    ): SprintChoice {
         val earlier =
             samples[subject].orEmpty().lastOrNull {
                     (at, _) ->
@@ -58,6 +86,10 @@ class ThreatApproach {
             }
         val rate = earlier?.let { (at, was) -> (was - distance) / (tick - at) }
         val closing = rate != null && rate >= SPRINT_CLOSING_BLOCKS_PER_TICK
-        return distance <= SPRINT_NEAR_BLOCKS || closing
+        return when {
+            distance <= SPRINT_NEAR_BLOCKS -> SprintChoice(true, SprintReason.NEAR)
+            closing -> SprintChoice(true, SprintReason.CLOSING)
+            else -> SprintChoice(false, SprintReason.DISTANT)
+        }
     }
 }

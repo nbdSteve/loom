@@ -1067,7 +1067,8 @@ function createBody (options) {
         radius: request.radius,
         limit: request.limit,
         retainItems: request.retainItems,
-        retainEntities: request.retainEntities
+        retainEntities: request.retainEntities,
+        seek: request.seek
       })
       if (read === undefined) return undefined
       const { reading, entityOffers, blockOffers, itemOffers, slotOffers } = read

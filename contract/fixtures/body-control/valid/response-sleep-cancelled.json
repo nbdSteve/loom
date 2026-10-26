@@ -1,1 +1,1 @@
-{"op":"sleep","protocol":7,"requestId":"res-sleep-cancelled","agentId":"agent-alpha","state":"ready","outcome":"cancelled","elapsedMs":500,"entered":true}
+{"op":"sleep","protocol":8,"requestId":"res-sleep-cancelled","agentId":"agent-alpha","state":"ready","outcome":"cancelled","elapsedMs":500,"entered":true}

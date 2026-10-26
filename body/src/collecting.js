@@ -207,6 +207,7 @@ function collectOfferedItem (bot, movement, {
         report.what = resolved.stack.what
         report.count = pickupCount
       }
+      if (journey.recovery !== undefined) report.recovery = journey.recovery
       resolve(report)
     }
 
@@ -309,7 +310,12 @@ function collectOfferedItem (bot, movement, {
       if (stepped === undefined) return
       route = Promise.resolve(stepped).then((last) => last === undefined
         ? journey
-        : { ...last, from: journey.from, travelled: journey.travelled + last.travelled })
+        : {
+            ...last,
+            from: journey.from,
+            travelled: journey.travelled + last.travelled,
+            ...(journey.recovery === undefined ? {} : { recovery: journey.recovery })
+          })
       route.then(
         (whole) => {
           if (settled) return

@@ -6,7 +6,12 @@ package dev.loom.body.player
 
 import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
+import dev.loom.body.MovementEvidence
+import dev.loom.body.RecoveryEvidence
+import dev.loom.bodycontrol.Departure
 import dev.loom.bodycontrol.MoveOutcome
+import dev.loom.bodycontrol.MovementRecovery
+import dev.loom.bodycontrol.RecoveryKind
 
 internal fun movementOutcome(
     outcome: MoveOutcome,
@@ -68,7 +73,35 @@ internal data class MovementEnding(
     val from: List<Double>,
     val position: List<Double>,
     val travelled: Double,
+    val movement: MovementEvidence? = null,
 )
+
+/** A report's departure and one correction as evidence, or `null` when it stated neither. */
+internal fun movementEvidenceOf(
+    departure: Departure?,
+    recovery: MovementRecovery?,
+): MovementEvidence? =
+    if (departure == null && recovery == null) {
+        null
+    } else {
+        MovementEvidence(
+            departure =
+                when (departure) {
+                    Departure.CLEAR -> "clear"
+                    Departure.BLOCKED -> "blocked"
+                    null -> null
+                },
+            recovery =
+                recovery?.let {
+                    RecoveryEvidence(
+                        kind = if (it.kind == RecoveryKind.RECENTRE) "recentre" else "sidestep",
+                        cause = if (it.kind == RecoveryKind.RECENTRE) "departureBlocked" else "firstMoveStuck",
+                        from = it.from,
+                        to = it.to,
+                    )
+                },
+        )
+    }
 
 /** The movement name a walk's outcome is described with; anything else is a flight. */
 internal const val WALK = "walk"

@@ -19,6 +19,7 @@ import dev.loom.body.BodySpawnResult
 import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
+import dev.loom.body.SprintReason
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
 import dev.loom.bodycontrol.CollectOutcome
@@ -1217,6 +1218,14 @@ class PlayerSceneSelectionIntegrationTest {
         val retreat = requireNotNull(harness.records.last { it.event == BodyEvent.RETREATING }.retreat)
         assertEquals(dev.loom.bodycontrol.MAX_FLIGHT_AVOID, retreat.avoided)
         assertTrue(retreat.leastSeparation != null)
+        // The sprint the JVM chose, and why, ride the record (r34: delta's walking flight stalled).
+        assertEquals(flee.sprint, retreat.sprint)
+        val sprinting = setOf(SprintReason.NEAR, SprintReason.CLOSING, SprintReason.UNLOCATED)
+        assertEquals(flee.sprint, retreat.sprintReason in sprinting, "${retreat.sprintReason}")
+        // The flight's one correction is typed on its movement record.
+        val moved = harness.records.last { it.event == BodyEvent.MOVED }
+        assertEquals("sidestep", moved.movement?.recovery?.kind)
+        assertEquals("firstMoveStuck", moved.movement?.recovery?.cause)
     }
 
     @Test
@@ -2245,6 +2254,7 @@ private fun fakeMove(request: BodyRequest.MoveTo): BodyResponse.MoveReport =
         position = request.destination,
         travelled = distance(SENSE_POSITION, request.destination),
         elapsedMs = 250,
+        departure = dev.loom.bodycontrol.Departure.CLEAR,
     )
 
 private fun fakeFlee(request: BodyRequest.Flee): BodyResponse.FleeReport =
@@ -2260,6 +2270,14 @@ private fun fakeFlee(request: BodyRequest.Flee): BodyResponse.FleeReport =
         elapsedMs = 500,
         separation = 9.0,
         separationGained = 6.0,
+        departure = dev.loom.bodycontrol.Departure.CLEAR,
+        recovery =
+            dev.loom.bodycontrol.MovementRecovery(
+                dev.loom.bodycontrol.RecoveryKind.SIDESTEP,
+                dev.loom.bodycontrol.RecoveryCause.FIRST_MOVE_STUCK,
+                SENSE_POSITION,
+                listOf(-0.5, 64.0, 2.5),
+            ),
     )
 
 private fun fakeEat(request: BodyRequest.Eat): BodyResponse.EatReport =
@@ -2360,6 +2378,9 @@ private fun assertRoundTripEvidence(
     val moved = harness.records.single { it.event == BodyEvent.MOVED }
     assertEquals(movementRequestId, moved.requestId)
     assertEquals(EventTag.MOVEMENT_ARRIVED, moved.outcome)
+    // The arrival's departure check is typed on the record, so a body left where it cannot start
+    // another route is read from a field rather than inferred from the stalls that follow (r34).
+    assertEquals(dev.loom.body.MovementEvidence(departure = "clear"), moved.movement)
 }
 
 private fun assertRequestUsesSenseConnection(

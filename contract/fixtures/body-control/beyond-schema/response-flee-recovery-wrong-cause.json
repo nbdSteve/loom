@@ -1,0 +1,1 @@
+{"op":"flee","protocol":8,"requestId":"req-26","agentId":"agent-alpha","state":"ready","outcome":"arrived","from":[-8.434705761507354,66.5,-27.5],"position":[1.5,68.5,-26.5],"travelled":12.75,"elapsedMs":3600,"separation":25.5,"separationGained":9.9,"departure":"clear","recovery":{"kind":"sidestep","cause":"departureBlocked","from":[0.5,64.5,0.5],"to":[0.5,64.5,1.5]}}

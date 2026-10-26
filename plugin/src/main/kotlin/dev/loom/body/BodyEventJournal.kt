@@ -106,25 +106,23 @@ class BodyEventJournal(
     /** Records the server-authoritative end of one bounded native interaction. */
     fun recordWorldInteraction(
         agentId: AgentId,
-        witness: WitnessedPlayer,
-        detail: String,
-        requestId: String?,
-        confirmed: Boolean,
+        interaction: WorldInteractionRecord,
     ) {
         eventLog.append(
             BodyEventRecord(
                 tick = currentTick(),
                 agentId = agentId.value,
                 event = BodyEvent.WORLD_INTERACTION,
-                detail = detail,
-                requestId = requestId,
+                detail = interaction.detail,
+                requestId = interaction.requestId,
                 outcome =
-                    if (confirmed) {
+                    if (interaction.confirmed) {
                         EventTag.SERVER_EFFECT_CONFIRMED
                     } else {
                         EventTag.DISPUTED_WORLD_INTERACTION
                     },
-                witness = witness,
+                witness = interaction.witness,
+                movement = interaction.movement,
             ),
         )
     }
@@ -218,8 +216,19 @@ class BodyEventJournal(
         detail: String,
         requestId: String?,
         outcome: String,
+        movement: MovementEvidence? = null,
     ) {
-        classified(agentId, BodyEvent.MOVED, detail, outcome, requestId)
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.MOVED,
+                detail = detail,
+                requestId = requestId,
+                outcome = outcome,
+                movement = movement,
+            ),
+        )
     }
 
     /** Appends an [event] whose meaning is carried by a short stable [outcome] tag. */
@@ -306,3 +315,16 @@ class PendingPerceptions(
         const val MAX_PENDING_PERCEPTIONS = 64
     }
 }
+
+/**
+ * One server-witnessed native interaction as its record states it: the player the server saw, the
+ * rendered detail, the perception it answers, whether vanilla confirmed the body's claim, and what
+ * an approaching interaction's route stated beyond its journey.
+ */
+data class WorldInteractionRecord(
+    val witness: WitnessedPlayer,
+    val detail: String,
+    val requestId: String?,
+    val confirmed: Boolean,
+    val movement: MovementEvidence? = null,
+)

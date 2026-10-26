@@ -931,6 +931,11 @@ sealed interface BodyRequest {
          * chooses nothing.
          */
         val retainEntities: List<String>? = null,
+        /**
+         * Block kinds to look for beyond interaction reach: the caller names them, as Loom names
+         * the wood a goal can be grounded in, so the body chooses nothing (r34).
+         */
+        val seek: List<String>? = null,
     ) : BodyRequest {
         init {
             requireEnvelope(protocol, requestId, agentId)
@@ -938,6 +943,7 @@ sealed interface BodyRequest {
             requireWithin("limit", limit, 1..MAX_SENSE_OFFERS_PER_KIND)
             retainItems?.let { requireRetained("retainItems", it, MAX_RETAINED_ITEMS) }
             retainEntities?.let { requireRetained("retainEntities", it, MAX_RETAINED_ENTITIES) }
+            seek?.let(::requireSought)
         }
     }
 
@@ -1528,12 +1534,17 @@ sealed interface BodyResponse {
         @Serializable(with = CanonicalDistance::class)
         val travelled: Double,
         val elapsedMs: Long,
+        /** What the arrival's check found; present exactly on an arrival the body could simulate. */
+        val departure: Departure? = null,
+        /** The one correction the walk made, when it made one. */
+        val recovery: MovementRecovery? = null,
     ) : BodyResponse {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireReady(state, "a walk")
             require(outcome !in THREAT_REFUSALS) { "a walk names no threat, so it cannot answer $outcome" }
             requireJourney(outcome, from, position, travelled, elapsedMs)
+            requireCorrection(outcome, departure, recovery)
         }
     }
 
@@ -1571,11 +1582,16 @@ sealed interface BodyResponse {
         val elapsedMs: Long,
         val separation: Double? = null,
         val separationGained: Double? = null,
+        /** What the arrival's check found; present exactly on an arrival the body could simulate. */
+        val departure: Departure? = null,
+        /** The one correction the flight made, when it made one. */
+        val recovery: MovementRecovery? = null,
     ) : BodyResponse {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireReady(state, "a flight")
             requireJourney(outcome, from, position, travelled, elapsedMs)
+            requireCorrection(outcome, departure, recovery)
             val measured = outcome !in THREAT_REFUSALS
             require((separation != null) == measured) {
                 "separation is present exactly when a threat was resolved"
@@ -1642,10 +1658,13 @@ sealed interface BodyResponse {
         val elapsedMs: Long,
         val what: String? = null,
         val count: Int? = null,
+        /** The sidestep the approach's route made, when it made one. */
+        val recovery: MovementRecovery? = null,
     ) : BodyResponse {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireReady(state, "a collection")
+            requireApproachCorrection(recovery)
             requireWorldPosition("from", from)
             requireWorldPosition("position", position)
             requireReal("travelled", travelled, MAX_TRAVEL_DISTANCE)
@@ -1792,10 +1811,13 @@ sealed interface BodyResponse {
         val travelled: Double,
         val elapsedMs: Long,
         val attacks: Int,
+        /** The sidestep the approach's route made, when it made one. */
+        val recovery: MovementRecovery? = null,
     ) : BodyResponse {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireReady(state, "an attack")
+            requireApproachCorrection(recovery)
             requireWorldPosition("from", from)
             requireWorldPosition("position", position)
             requireReal("travelled", travelled, MAX_TRAVEL_DISTANCE)

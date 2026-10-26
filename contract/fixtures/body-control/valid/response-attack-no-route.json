@@ -1,1 +1,1 @@
-{"op":"attack","protocol":7,"requestId":"res-attack-no-route","agentId":"agent-alpha","state":"ready","outcome":"noRoute","from":[0.5,64.5,0.5],"position":[1.5,64.5,0.5],"travelled":1,"elapsedMs":250,"attacks":0}
+{"op":"attack","protocol":8,"requestId":"res-attack-no-route","agentId":"agent-alpha","state":"ready","outcome":"noRoute","from":[0.5,64.5,0.5],"position":[1.5,64.5,0.5],"travelled":1,"elapsedMs":250,"attacks":0}

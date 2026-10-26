@@ -45,6 +45,19 @@ const {
 /** Mineflayer's native direct interaction reach, in blocks. */
 const INTERACTION_REACH_BLOCKS = 5.1
 
+/**
+ * How far from the eyes a sense looks for the block kinds a controller names in `seek`, in
+ * blocks: past interaction reach, so a tree the body cannot dig yet is still seen (r34: the woods
+ * lay 10.8 to 25.7 blocks from eight of ten slots, and zeta walked for 9000 ticks without one).
+ */
+const OBSERVATION_REACH_BLOCKS = 16
+
+/** Most blocks of named kinds beyond interaction reach one answer reports, of its block limit. */
+const MAX_SOUGHT_BLOCKS = 12
+
+/** Most blocks of one named kind tried for sight, nearest first, before its rank is passed over. */
+const MAX_SIGHT_TRIES_PER_KIND = 6
+
 /** Registry names the game uses for empty space rather than an interactable block. */
 const AIR_BLOCKS = Object.freeze(new Set(['air', 'cave_air', 'void_air']))
 
@@ -250,9 +263,11 @@ function describable (bot, eyes) {
  * skipped rather than counted as omitted, for the reason dropped items are.
  *
  * The scan is capped at Mineflayer's own direct interaction reach even when the caller asks
- * for a wider scene. It does not form a map: at most [MAX_SENSE_BLOCKS] nearest candidates
- * are reported, and the exact type/state snapshot is retained beside the wire offer so a
- * later action can distinguish a changed block from the one the controller chose.
+ * for a wider scene, except for the kinds the caller names in `seek`, which [soughtBlocks] looks
+ * for out to [OBSERVATION_REACH_BLOCKS] in at most a quarter of the list: a block seen there is a
+ * place to walk toward, never one in reach of a dig. It does not form a map: at most
+ * [MAX_SENSE_BLOCKS] candidates are reported, and the exact type/state snapshot is retained beside
+ * the wire offer so a later action can distinguish a changed block from the one the controller chose.
  */
 /**
  * The nearest `bound` of `within`, already sorted nearest first, taken fairly across block kinds:
@@ -279,7 +294,76 @@ function fairBlocks (within, bound) {
   return within.filter((entry) => chosen.has(entry))
 }
 
-function nearestBlocks (bot, eyes, standing, { radius, limit }) {
+/**
+ * The blocks of the kinds a controller named, beyond interaction reach and within
+ * [OBSERVATION_REACH_BLOCKS] of the eyes, that the body can see: each kind's nearest in sight,
+ * then each kind's second, the kinds in order of their nearest, at most `bound` in all.
+ *
+ * The controller chooses the kinds, so the body still decides nothing; it only looks further for
+ * what it was asked about. The scan reads state ids rather than building a block per cell, and casts
+ * sight only at a kind's nearest few, so a sphere of sixteen costs a sense little. A block of a named
+ * kind that is never cast at is neither reported nor counted as omitted: its sight is unknown, and
+ * an unseen block is skipped for the reason [nearestBlocks] gives.
+ */
+function soughtBlocks (bot, eyes, standing, { radius, seek, bound }) {
+  if (!Array.isArray(seek) || seek.length === 0 || bound <= 0) return []
+  const reach = Math.min(radius, OBSERVATION_REACH_BLOCKS)
+  const states = new Map()
+  for (const name of seek) {
+    const known = bot.registry?.blocksByName?.[name]
+    if (known !== undefined && Number.isInteger(known.minStateId) && Number.isInteger(known.maxStateId)) {
+      states.set(name, [known.minStateId, known.maxStateId])
+    }
+  }
+  if (states.size === 0 || typeof bot.world?.getBlockStateId !== 'function') return []
+  const kindOf = (stateId) => {
+    for (const [name, [least, most]] of states) if (stateId >= least && stateId <= most) return name
+    return undefined
+  }
+  const span = Math.ceil(reach)
+  const feet = standing.floored()
+  const byKind = new Map()
+  for (let dx = -span; dx <= span; dx += 1) {
+    for (let dy = -span; dy <= span; dy += 1) {
+      for (let dz = -span; dz <= span; dz += 1) {
+        const cell = feet.offset(dx, dy, dz)
+        const name = kindOf(bot.world.getBlockStateId(cell))
+        if (name === undefined) continue
+        const away = cell.offset(0.5, 0.5, 0.5).distanceTo(eyes)
+        if (away <= INTERACTION_REACH_BLOCKS || !realWithin(away, 0, reach)) continue
+        if (!byKind.has(name)) byKind.set(name, [])
+        byKind.get(name).push({ cell, away })
+      }
+    }
+  }
+  const queues = [...byKind.values()].map((cells) => ({
+    cells: cells.sort((one, other) => one.away - other.away || one.cell.x - other.cell.x ||
+      one.cell.y - other.cell.y || one.cell.z - other.cell.z),
+    next: 0
+  })).sort((one, other) => one.cells[0].away - other.cells[0].away)
+  const found = []
+  const nextInSight = (queue) => {
+    for (let tries = 0; tries < MAX_SIGHT_TRIES_PER_KIND && queue.next < queue.cells.length; tries += 1) {
+      const block = bot.blockAt(queue.cells[queue.next].cell)
+      const away = queue.cells[queue.next].away
+      queue.next += 1
+      if (block === null || block === undefined || !isResourceName(block.name)) continue
+      if (!Number.isInteger(block.type) || !Number.isInteger(block.stateId)) continue
+      if (blockInSight(bot, eyes, block)) return { block, away }
+    }
+    return undefined
+  }
+  while (found.length < bound && queues.some((queue) => queue.next < queue.cells.length)) {
+    for (const queue of queues) {
+      if (found.length >= bound) break
+      const seen = nextInSight(queue)
+      if (seen !== undefined) found.push(seen)
+    }
+  }
+  return found.sort((one, other) => one.away - other.away)
+}
+
+function nearestBlocks (bot, eyes, standing, { radius, limit, seek }) {
   const reach = Math.min(radius, INTERACTION_REACH_BLOCKS)
   const span = Math.ceil(reach)
   const feet = standing.floored()
@@ -304,14 +388,18 @@ function nearestBlocks (bot, eyes, standing, { radius, limit }) {
     one.block.position.y - other.block.position.y ||
     one.block.position.z - other.block.position.z
   )
-  const reported = fairBlocks(within, Math.min(limit, MAX_SENSE_BLOCKS))
+  const room = Math.min(limit, MAX_SENSE_BLOCKS)
+  // The named kinds beyond reach take at most a quarter of the list, so what can be dug stays.
+  const sought = soughtBlocks(bot, eyes, standing, { radius, seek, bound: Math.min(MAX_SOUGHT_BLOCKS, Math.floor(room / 4)) })
+  const near = fairBlocks(within, room - sought.length)
+  const reported = [...near, ...sought]
   return {
     blocks: reported.map(({ block }) => ({
       what: block.name,
       position: [block.position.x, block.position.y, block.position.z],
       visible: true
     })),
-    blocksOmitted: within.length - reported.length,
+    blocksOmitted: within.length - near.length,
     blockOffers: reported.map(({ block }) => ({
       what: block.name,
       position: [block.position.x, block.position.y, block.position.z],
@@ -517,7 +605,7 @@ function inventoryOf (bot) {
  * answer to an encoder. The contract's frames are built field by field from named properties.
  * One reading, two consumers, and no way to hand the wrong one to the wrong one by accident.
  */
-function senseReading (bot, { radius, limit, retainItems, retainEntities }) {
+function senseReading (bot, { radius, limit, retainItems, retainEntities, seek }) {
   const standing = bot.entity === null || bot.entity === undefined
     ? undefined
     : bot.entity.position
@@ -531,7 +619,7 @@ function senseReading (bot, { radius, limit, retainItems, retainEntities }) {
   const eyes = standing.offset(0, bot.entity.eyeHeight, 0)
   const { entities, entitiesOmitted, entityOffers } = nearest(bot, eyes, { radius, limit, retainEntities })
   const { blocks, blocksOmitted, blockOffers } =
-    nearestBlocks(bot, eyes, standing, { radius, limit })
+    nearestBlocks(bot, eyes, standing, { radius, limit, seek })
   const { items, itemsOmitted, itemOffers } = nearestItems(bot, eyes, { radius, limit, retainItems })
   const reading = {
     position,
@@ -558,6 +646,8 @@ function senseReading (bot, { radius, limit, retainItems, retainEntities }) {
 
 module.exports = {
   INTERACTION_REACH_BLOCKS,
+  MAX_SOUGHT_BLOCKS,
+  OBSERVATION_REACH_BLOCKS,
   blockInSight,
   clockOf,
   droppedStack,

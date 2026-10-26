@@ -6,8 +6,26 @@
 
   "$defs": {
     "ProtocolVersion": {
-      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted. Generation 7 is current. It moved from 6 because a dig report may now answer blockChanged after the dig was handed to Mineflayer, when the world turned the offered block into another before this body finished it; generation 6 moved from 5 because a dig report may now answer blockGone after the dig was handed to Mineflayer, when another player broke the block first; generation 5 moved from 4 because the body-chosen entity, block, and dropped-item response lists widened from 24 to 48 entries. Widening a body-chosen answer can hand an older controller a frame it never agreed to read. The const is a numeric value rather than a spelling, so 7, 7.0 and 7e0 all name this generation.",
-      "const": 7
+      "description": "The protocol generation the frame is written in. Present on every frame in both directions, and checked before any generation-specific field is interpreted. Generation 8 is current. It moved from 7 because every movement answer may now state the one correction its walk made (MovementRecovery) and an arrival the departure its check found (Departure), which a controller meets without having asked for anything new; generation 7 moved from 6 because a dig report may now answer blockChanged after the dig was handed to Mineflayer, when the world turned the offered block into another before this body finished it; generation 6 moved from 5 because a dig report may now answer blockGone after the dig was handed to Mineflayer, when another player broke the block first; generation 5 moved from 4 because the body-chosen entity, block, and dropped-item response lists widened from 24 to 48 entries. Widening a body-chosen answer can hand an older controller a frame it never agreed to read. The const is a numeric value rather than a spelling, so 8, 8.0 and 8e0 all name this generation.",
+      "const": 8
+    },
+
+    "Departure": {
+      "description": "What an arrival's departure check found: whether, from where the body came to rest, one move the route search offers out of that cell is one the client library's own executor can carry out, simulated from that exact position before it is answered. 'blocked' says the next request would stand still there; it is a measurement, never a refusal. Present on a MoveReport or FleeReport exactly when the outcome is 'arrived', and absent when the client could not simulate a step at all; a codec rule rather than a schema conditional, like every relation in this file.",
+      "enum": ["clear", "blocked"]
+    },
+
+    "MovementRecovery": {
+      "description": "The one correction one movement request made, at most one per request and never a teleport: a 'recentre' is a straight step to the centre of the cell an arrival came to rest in, made because no move out of where it stood was one the executor could make and from the centre one was (cause 'departureBlocked', so only on an 'arrived' outcome); a 'sidestep' is a straight step into one level cell beside the start that the route search itself offers and the executor can make, made because the library abandoned its route as stuck while the body had not left its start, after which the same goal was resumed (cause 'firstMoveStuck'). r34 delta stood under an oak's leaves where every route began with a diagonal jump up the executor could not make. Each kind has exactly its one cause. 'from' is where the step began and 'to' where the body came to rest.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "cause", "from", "to"],
+      "properties": {
+        "kind": { "enum": ["recentre", "sidestep"] },
+        "cause": { "enum": ["departureBlocked", "firstMoveStuck"] },
+        "from": { "$ref": "#/$defs/WorldPosition" },
+        "to": { "$ref": "#/$defs/WorldPosition" }
+      }
     },
 
     "ControlId": {
@@ -678,6 +696,14 @@
               "maxItems": 4,
               "uniqueItems": true,
               "items": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
+            },
+            "seek": {
+              "description": "Block kinds, by resource name, to look for beyond interaction reach out to sixteen blocks from the eyes, the radius permitting: the blocks of these kinds the body can see there are reported in 'blocks' with visible true, each kind's nearest first, in at most a quarter of the block limit and at most twelve. The controller names the kinds, so the body chooses nothing: Loom names the wood a goal can be grounded in, so a tree the body cannot dig yet is still seen and can be walked toward (r34: the woods lay 10.8 to 25.7 blocks from eight of the ten slots). A block beyond interaction reach is never one a dig or a placement can act on; the body refuses it as outOfReach. Unique, and at most twelve.",
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 12,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/ResourceName" }
             }
           }
         },
@@ -1148,7 +1174,9 @@
             "elapsedMs": {
               "$ref": "#/$defs/StatusCount",
               "description": "How long the request took, from admission to this answer, by the process's own monotonic clock. It is what the deadline was measured against, so a 'timedOut' outcome states the bound it hit rather than leaving a reader to infer it, and an 'arrived' states what the walk cost."
-            }
+            },
+            "departure": { "$ref": "#/$defs/Departure" },
+            "recovery": { "$ref": "#/$defs/MovementRecovery" }
           }
         },
         {
@@ -1198,7 +1226,9 @@
             "separationGained": {
               "description": "How much further from the threat the body ended up than it began - this answer's own separation less the same measurement taken when the request was admitted. Signed, and the sign is the point: a negative figure is a threat that closed faster than the body ran, which is a flight that failed while covering plenty of ground, and it is the one thing a magnitude alone could not say. Present exactly when the outcome is not a threat refusal, for the same reason 'separation' is.",
               "$ref": "#/$defs/SeparationChange"
-            }
+            },
+            "departure": { "$ref": "#/$defs/Departure" },
+            "recovery": { "$ref": "#/$defs/MovementRecovery" }
           }
         },
         {
@@ -1240,7 +1270,11 @@
             "travelled": { "$ref": "#/$defs/TravelDistance" },
             "elapsedMs": { "$ref": "#/$defs/StatusCount" },
             "what": { "$ref": "#/$defs/ResourceName" },
-            "count": { "$ref": "#/$defs/StackCount" }
+            "count": { "$ref": "#/$defs/StackCount" },
+            "recovery": {
+              "description": "The sidestep the approach's route made, when it made one; an approach makes no re-centre, so a codec refuses one here.",
+              "$ref": "#/$defs/MovementRecovery"
+            }
           }
         },
         {
@@ -1335,6 +1369,10 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4
+            },
+            "recovery": {
+              "description": "The sidestep the approach's route made, when it made one; an approach makes no re-centre, so a codec refuses one here.",
+              "$ref": "#/$defs/MovementRecovery"
             }
           }
         },

@@ -1,1 +1,1 @@
-{"op":"sense","protocol":7,"requestId":"req-5","agentId":"agent-alpha","radius":24,"limit":48,"retainItems":["00000000-0000-4000-8000-000000000077","00000000-0000-4000-8000-000000000077"]}
+{"op":"sense","protocol":8,"requestId":"req-5","agentId":"agent-alpha","radius":24,"limit":48,"retainItems":["00000000-0000-4000-8000-000000000077","00000000-0000-4000-8000-000000000077"]}

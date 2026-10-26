@@ -160,6 +160,30 @@ data class BodyEventRecord(
     val retreat: RetreatEvidence? = null,
     /** What an inventory dispute compared, on [BodyEvent.WITNESS_DISPUTED]; see [DisputeEvidence]. */
     val dispute: DisputeEvidence? = null,
+    /** What a walk, flight or approach stated beyond its journey; on movement and interaction records. */
+    val movement: MovementEvidence? = null,
+)
+
+/**
+ * What one walk, flight or approaching interaction stated beyond its journey, as the body typed
+ * it: the [departure] an arrival's check found - whether the library's own executor could start
+ * another route from where the body came to rest - and the one correction it made, absent when it
+ * made none. r34 delta stood still under an oak's leaves for four requests and no record said why.
+ */
+@Serializable
+data class MovementEvidence(
+    /** `clear` or `blocked`, on an arrival the body could simulate; absent otherwise. */
+    val departure: String? = null,
+    val recovery: RecoveryEvidence? = null,
+)
+
+/** One movement's one correction: a `recentre` for a blocked departure, or a `sidestep` for a first move stuck. */
+@Serializable
+data class RecoveryEvidence(
+    val kind: String,
+    val cause: String,
+    val from: List<Double>,
+    val to: List<Double>,
 )
 
 /**
@@ -205,6 +229,9 @@ data class RetreatEvidence(
     val avoided: Int? = null,
     /** How far the flight ended from the nearest of its threat and those hunters, where each was sensed. */
     val leastSeparation: Double? = null,
+    /** Whether the flight sprinted, which spends food, and the `SprintReason` that chose it (r34). */
+    val sprint: Boolean? = null,
+    val sprintReason: String? = null,
 )
 
 /** What one goal review showed cognition beyond the body's own perception. */

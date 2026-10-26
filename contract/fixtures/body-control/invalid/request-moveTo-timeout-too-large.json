@@ -1,1 +1,1 @@
-{"op":"moveTo","protocol":7,"requestId":"req-20","agentId":"agent-alpha","destination":[24.5,71.5,-30.5],"tolerance":1,"timeoutMs":20001,"sprint":false}
+{"op":"moveTo","protocol":8,"requestId":"req-20","agentId":"agent-alpha","destination":[24.5,71.5,-30.5],"tolerance":1,"timeoutMs":20001,"sprint":false}
