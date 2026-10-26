@@ -124,4 +124,75 @@ class R34ReplayTest {
         assertEquals(6.0, damaged.healthAfter)
         assertEquals(dev.loom.contract.DecisionImportance.PIVOTAL, sent.importance)
     }
+
+    /** Logs to planks, and planks to buttons, plates and wood: the sole-input recipes zeta's horizon crossed. */
+    private val woodRecipes =
+        object : RecipeInputs {
+            override fun inputsOf(item: String): Set<String> =
+                mapOf(
+                    "item.minecraft.oak_planks" to setOf(OAK_LOG),
+                    "item.minecraft.oak_wood" to setOf(OAK_LOG),
+                    OAK_BUTTON to setOf("item.minecraft.oak_planks"),
+                    "item.minecraft.oak_pressure_plate" to setOf("item.minecraft.oak_planks"),
+                )[item].orEmpty()
+        }
+
+    private fun recordOf(
+        event: String,
+        requestKey: String,
+    ): kotlinx.serialization.json.JsonObject =
+        r34.all.first {
+            it["event"]?.jsonPrimitive?.content == event && it["requestKey"]?.jsonPrimitive?.content == requestKey
+        }
+
+    @Test
+    @DisplayName("zeta's stalled oak log goal replaced by oak buttons keeps its three steps that advanced nothing")
+    fun aStalledGoalsProductKeepsItsStallCount() {
+        // body:00000222: oak log three steps without progress, replaced by two oak buttons, which need
+        // the same unreached log; r34 started the button goal at none and it was abandoned two walks on.
+        val zeta = dev.loom.body.AgentId("tribe-zeta")
+        val ledger = GoalLedger(recipes = woodRecipes)
+        val outcomes = mutableListOf<String?>()
+        var presentedAtAbandon: dev.loom.contract.GoalSummary? = null
+        for (sense in listOf("3h", "48", "4z", "bq", "ch", "jw")) {
+            val key = "tribe-zeta:loom3d8263b30e-sense-$sense"
+            val perceived = recordOf("perceived", key)
+            val decided = recordOf("decided", key)
+            val decidedId = requireNotNull(decided["recordId"]).jsonPrimitive.content
+            val seen =
+                r34.perception(requireNotNull(perceived["recordId"]).jsonPrimitive.content)
+                    .copy(horizon = r34.shownHorizon(decidedId))
+            val presented = ledger.present(zeta, seen.requestId, seen.capturedTick, GoalObservation.of(seen))
+            if (sense == "jw") presentedAtAbandon = presented
+            val decision =
+                dev.loom.contract.LoomJson.decodeFromJsonElement(
+                    dev.loom.contract.Decision.serializer(),
+                    requireNotNull(decided["decision"]),
+                )
+            outcomes += ledger.resolve(zeta, decision)?.outcome
+            val applied = recordOf("intentApplied", key)
+            val outcome = requireNotNull(applied["outcome"]).jsonPrimitive.content
+            ledger.stepped(zeta, seen.requestId, "moveTo", outcome, reached = true)
+        }
+        assertEquals(
+            listOf(
+                dev.loom.body.GoalEvidence.ADOPTED,
+                dev.loom.body.GoalEvidence.COMPLETED_ADOPTED,
+                dev.loom.body.GoalEvidence.REVISED,
+                dev.loom.body.GoalEvidence.REVISED,
+                dev.loom.body.GoalEvidence.REPLACED,
+                dev.loom.body.GoalEvidence.ABANDONED,
+            ),
+            outcomes,
+        )
+        val buttons = requireNotNull(presentedAtAbandon)
+        assertEquals(OAK_BUTTON, buttons.successItem)
+        // The three the log goal carried, and the walk the button goal took.
+        assertEquals(4L, buttons.progress?.stepsWithoutProgress)
+    }
+
+    private companion object {
+        const val OAK_LOG = "item.minecraft.oak_log"
+        const val OAK_BUTTON = "item.minecraft.oak_button"
+    }
 }

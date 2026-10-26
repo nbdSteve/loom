@@ -1175,6 +1175,136 @@ fn a_source_recalled_out_of_sight_can_be_a_goal_walked_toward_by_its_edge_of_sig
     );
 }
 
+#[test]
+fn a_source_in_sight_beyond_dig_reach_is_walked_toward_by_its_edge_of_sight_cell_never_dug() {
+    // r34 zeta: logs 6.6 to 8 blocks off and up a tree were in no sight a dig could reach, and the
+    // only walks offered went past them.
+    let mut seen = fixture("perception-goal-review");
+    seen.explore = vec![
+        loom_contract::ExploreTarget {
+            target_ref: "x1".to_owned(),
+            distance: 6.1,
+            direction: loom_contract::Bearing::East,
+            vertical_offset: 0.0,
+        },
+        loom_contract::ExploreTarget {
+            target_ref: "x2".to_owned(),
+            distance: 12.0,
+            direction: loom_contract::Bearing::West,
+            vertical_offset: 0.0,
+        },
+    ];
+    seen.surroundings.push(Observation {
+        kind: ObservationKind::Block,
+        what: "block.minecraft.oak_log".to_owned(),
+        distance: 8.1,
+        direction: loom_contract::Bearing::East,
+        vertical_offset: 3.5,
+        visible: true,
+        target_ref: "b40".to_owned(),
+        count: None,
+        standable: Some(false),
+        yields: Some(vec![loom_contract::BlockYield {
+            what: "item.minecraft.oak_log".to_owned(),
+            least: 1,
+            most: 1,
+            per_hundred: 100,
+        }]),
+        dig_safe: Some(true),
+        route_refused: None,
+        hunts: None,
+    });
+    // The horizon the JVM grounds in the log sight shows.
+    seen.horizon = vec![horizon_goal(
+        "item.minecraft.oak_log",
+        loom_contract::HorizonGrounding::Sight,
+        None,
+        9,
+    )];
+    let offered = OfferedRefs::of(&seen);
+    assert!(
+        !offered.dig_blocks.contains(&"b40".to_owned()),
+        "a log out of reach is never dug"
+    );
+    assert_eq!(offered.capacity_of("item.minecraft.oak_log"), 1);
+    let logs = offered
+        .item_steps
+        .iter()
+        .find(|steps| steps.item == "item.minecraft.oak_log")
+        .unwrap();
+    assert!(logs.dig.is_empty());
+    assert!(
+        logs.walks.is_empty(),
+        "a log up a tree has no room to stand on"
+    );
+    assert_eq!(logs.toward, vec!["x1".to_owned()]);
+    let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let adopt = json!({ "disposition": "adopt", "successItem": "item.minecraft.oak_log", "successCount": 1 });
+    let step = |intent: Value| answer_in(&schema, &intent, &adopt);
+    assert!(validator.is_valid(&step(json!({ "action": "moveTo", "onto": "x1" }))));
+    assert!(!validator.is_valid(&step(json!({ "action": "moveTo", "onto": "x2" }))));
+    assert!(!validator.is_valid(&step(json!({ "action": "dig", "block": "b40" }))));
+}
+
+#[test]
+fn a_stalled_goal_is_not_replaced_by_an_item_made_from_it() {
+    // r34 zeta: an oak log goal three steps without progress was replaced by an oak button goal,
+    // which needed the same unreached log, and two more walks advanced nothing.
+    let mut seen = with_edge(stick_goal(
+        2,
+        loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS,
+    ));
+    seen.goal.as_mut().unwrap().success_item = Some("item.minecraft.oak_log".to_owned());
+    seen.recalled = vec![loom_contract::RecalledSource {
+        what: "item.minecraft.oak_log".to_owned(),
+        distance: 8.1,
+        direction: loom_contract::Bearing::East,
+        vertical_offset: 3.5,
+        per_hundred: 100,
+    }];
+    seen.horizon = vec![
+        horizon_goal(
+            "item.minecraft.oak_planks",
+            loom_contract::HorizonGrounding::Recipe,
+            Some("item.minecraft.oak_log"),
+            8,
+        ),
+        horizon_goal(
+            "item.minecraft.oak_log",
+            loom_contract::HorizonGrounding::Recalled,
+            None,
+            9,
+        ),
+        horizon_goal(
+            "item.minecraft.oak_button",
+            loom_contract::HorizonGrounding::Recipe,
+            Some("item.minecraft.oak_planks"),
+            8,
+        ),
+        horizon_goal(
+            "item.minecraft.stick",
+            loom_contract::HorizonGrounding::Sight,
+            None,
+            9,
+        ),
+    ];
+    let offered = OfferedRefs::of(&seen);
+    let replacing: Vec<&str> = offered
+        .count_bounds
+        .iter()
+        .map(|(item, ..)| item.as_str())
+        .collect();
+    assert!(replacing.contains(&"item.minecraft.stick"), "{replacing:?}");
+    for made in [
+        "item.minecraft.oak_log",
+        "item.minecraft.oak_planks",
+        "item.minecraft.oak_button",
+    ] {
+        assert!(!replacing.contains(&made), "{made} needs the stalled log");
+    }
+}
+
 fn horizon_goal(
     what: &str,
     grounding: loom_contract::HorizonGrounding,

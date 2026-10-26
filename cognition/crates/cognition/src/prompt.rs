@@ -196,7 +196,9 @@ that advanced nothing.
 - replace: drop the held goal and take up a new one in the same answer - name the new item and \
 total, take its step with this answer's action, and judge the previous step. Once the held goal \
 has advanced nothing for three steps in a row, replace with a goal for a different item is the \
-only way to keep acting toward a goal. When the held goal's condition is met, replace completes \
+only way to keep acting toward a goal, and an item made from the stalled one is not offered, \
+because it needs the same source first; a replace made from an unmet goal's item keeps its count \
+of steps that advanced nothing. When the held goal's condition is met, replace completes \
 it and adopts the next in one answer, so finishing one goal need not cost a review.
 - complete: drop the held goal because your body shows its success condition met, when nothing \
 in sight gives a next goal; while something does, replace it with the next goal instead.
@@ -210,7 +212,10 @@ total you already hold or one beyond what sight can be counted on to give. At a 
 with cells at the edge of sight offered, idle and rest are not offered at all: when nothing in \
 sight is worth doing, walk to look further. There is something to collect \
 only when a dropped item is listed, and a dropped item your body found no way to from where \
-you stand is not offered. Your body sees only the nearest blocks; when nothing in sight is worth doing, you are \
+you stand is not offered. Your body sees only the nearest blocks, except that at a goal review it \
+also looks further for logs and berry bushes: one seen further off is out of dig reach, a place to \
+walk toward by the cell at the edge of sight in its direction, never one to dig from where you \
+stand. When nothing in sight is worth doing, you are \
 offered cells at the edge of sight to walk to, so you can look further. A dig the server saw drop something for you is told to you with where that drop is now, \
 and a drop of yours still lying is offered to collect by its ref, in sight or not. While your own \
 drop of the goal's item lies in reach, the goal's next step is to collect it, with approach true \
@@ -218,7 +223,8 @@ when it is not beside you; digging for more is not offered until you hold it, be
 lying is one another agent can take. Only evidence advances a goal: the held count of its item \
 rising, or the step you took carried out with evidence - an action after which you hold more, a \
 walk onto a block out of dig reach that drops the goal's item, reaching it somewhere the goal has \
-not already been, or a walk to the edge of sight that brings a source of the item into a sight \
+not already been, a walk to the cell beside a source in sight out of dig reach that brings it \
+within reach of a dig, or a walk to the edge of sight that brings a source of the item into a sight \
 that showed none. A drop is not progress until you hold it, but while it lies in reach it does \
 not count toward the three steps either, because its collect is the next step; a walk to \
 anything else is no step. What a \

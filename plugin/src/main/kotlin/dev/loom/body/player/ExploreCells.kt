@@ -1,12 +1,13 @@
 /*
  * The cells at the edge of sight a perception offers to walk to, and the waypoint beside a
- * remembered source nearer than that edge.
+ * remembered source, or a source in sight beyond dig reach, nearer than that edge.
  */
 package dev.loom.body.player
 
 import dev.loom.body.blocksApart
 import dev.loom.body.horizontalBearing
 import dev.loom.contract.ExploreTarget
+import dev.loom.contract.ObservationKind
 
 /** A cell's centre, from its corner. */
 private const val CELL_CENTRE = 0.5
@@ -25,18 +26,55 @@ private const val EXPLORE_FALL_BLOCKS = 4
 private val COMPASS =
     listOf(0 to -1, 1 to -1, 1 to 0, 1 to 1, 0 to 1, -1 to 1, -1 to 0, -1 to -1)
 
-/** The cells to look further from, a remembered source's beside it rather than past it. */
+/** `INTERACTION_REACH_BLOCKS` in `body/src/sensing.js`: eyes to a block's centre. */
+private const val SOURCE_DIG_REACH_BLOCKS = 5.1
+
+/** Mineflayer's player eye height, from which dig reach is measured. */
+private const val SOURCE_EYE_HEIGHT_BLOCKS = 1.62
+
+/** How far inside dig reach a waypoint keeps its source, so a body arriving off-centre still reaches it. */
+private const val WAYPOINT_REACH_MARGIN_BLOCKS = 0.6
+
+/**
+ * The cells to look further from, a remembered source's, or one sight shows beyond dig reach,
+ * beside it rather than past it.
+ */
 internal fun PlayerBodyContext.exploreFor(
     raw: RawSense,
     selected: List<SceneOffer>,
 ): List<Pair<ExploreTarget, List<Int>>> {
     val remembered = recall.recalled(raw.report.position, selected).mapNotNull(recall::positionOf)
-    val cells = exploreOf(authority.ground, raw.report.position, remembered)
+    val sources = remembered + farSourcesOf(raw.report.position, selected)
+    val cells = exploreOf(authority.ground, raw.report.position, sources)
     // Ground already stood on is offered again only when every other bearing has been (r24: alpha
     // and iota walked back to cells they had already looked from).
     val fresh = cells.filterNot { (_, cell) -> visited.near(cell) }.ifEmpty { cells }
     visited.stoodAt(raw.report.position)
     return fresh
+}
+
+/**
+ * Where the sources [offers] show in sight beyond dig reach of a body at [position] stand: for
+ * each item no dig-safe block in reach gives, its nearest such source. The body looks that far
+ * only for the kinds a goal review seeks (`SOUGHT_SOURCE_KINDS`), so a walk to the cell beside
+ * one reaches a source sight already grounds (r34: zeta's logs were walked past, never to).
+ */
+internal fun farSourcesOf(
+    position: List<Double>,
+    offers: List<SceneOffer>,
+): List<List<Double>> {
+    val eyes = listOf(position[0], position[1] + SOURCE_EYE_HEIGHT_BLOCKS, position[2])
+    val sources = offers.filter { it.kind == ObservationKind.BLOCK && it.visible && it.digSafe == true }
+    val (near, far) = sources.partition { blocksApart(eyes, it.position) <= SOURCE_DIG_REACH_BLOCKS }
+    val inReach = near.flatMap { offer -> offer.yields.orEmpty().filter { it.perHundred >= 1 }.map { it.what } }.toSet()
+    return far
+        .flatMap { offer ->
+            offer.yields.orEmpty().filter { it.perHundred >= 1 && it.what !in inReach }.map { it.what to offer }
+        }.groupBy({ it.first }, { it.second })
+        .toSortedMap()
+        .values
+        .map { found -> found.minBy { blocksApart(eyes, it.position) }.position }
+        .distinct()
 }
 
 /** Where one agent's body has recently stood, so a walk to look further goes somewhere new. */
@@ -134,25 +172,45 @@ private fun angleBetween(
     return minOf(turn, 2 * kotlin.math.PI - turn)
 }
 
-/** The standable cell beside [source], out of its own column, nearest the agent at [position]. */
+/**
+ * The standable cell beside [source], out of its own column, nearest the agent at [position]:
+ * one whose eyes reach the source if any does, as a log high in a tree needs (r34: zeta's
+ * waypoint stood under a canopy log four blocks up, out of a dig's reach).
+ */
 private fun besideSource(
     ground: BlockGround,
     source: List<Double>,
     position: List<Double>,
 ): List<Int>? {
     val column = source.map { kotlin.math.floor(it).toInt() }
-    return (-WAYPOINT_REACH_BLOCKS..WAYPOINT_REACH_BLOCKS)
-        .flatMap { dx -> (-WAYPOINT_REACH_BLOCKS..WAYPOINT_REACH_BLOCKS).map { dz -> dx to dz } }
-        .filter { (dx, dz) -> dx != 0 || dz != 0 }
-        .mapNotNull { (dx, dz) -> standableNear(ground, column[0] + dx, column[1], column[2] + dz) }
-        .minByOrNull {
-                cell ->
-            blocksApart(
-                position,
-                listOf(cell[0] + CELL_CENTRE, cell[1].toDouble(), cell[2] + CELL_CENTRE),
-            )
-        }
+    val centre = { cell: List<Int> -> listOf(cell[0] + CELL_CENTRE, cell[1].toDouble(), cell[2] + CELL_CENTRE) }
+    val reaches = { cell: List<Int> ->
+        val eyes = centre(cell).let { listOf(it[0], it[1] + SOURCE_EYE_HEIGHT_BLOCKS, it[2]) }
+        blocksApart(eyes, source) <= SOURCE_DIG_REACH_BLOCKS - WAYPOINT_REACH_MARGIN_BLOCKS
+    }
+    val columns =
+        (-WAYPOINT_REACH_BLOCKS..WAYPOINT_REACH_BLOCKS)
+            .flatMap { dx -> (-WAYPOINT_REACH_BLOCKS..WAYPOINT_REACH_BLOCKS).map { dz -> dx to dz } }
+            .filter { (dx, dz) -> dx != 0 || dz != 0 }
+    // Every cell of the band a body stands in, not only each column's highest: the highest beside
+    // a canopy log is the leaves' top, where no walk from the ground arrives.
+    val reaching =
+        columns
+            .flatMap { (dx, dz) -> standableAll(ground, column[0] + dx, column[1], column[2] + dz) }
+            .filter(reaches)
+    val beside = columns.mapNotNull { (dx, dz) -> standableNear(ground, column[0] + dx, column[1], column[2] + dz) }
+    return reaching.ifEmpty { beside }.minByOrNull { blocksApart(position, centre(it)) }
 }
+
+/** Every cell a body stands in at column ([x], [z]), within a few blocks of [feetY], highest first. */
+private fun standableAll(
+    ground: BlockGround,
+    x: Int,
+    feetY: Int,
+    z: Int,
+): List<List<Int>> =
+    (feetY + EXPLORE_RISE_BLOCKS downTo feetY - EXPLORE_FALL_BLOCKS)
+        .mapNotNull { y -> ground.standCell(listOf(x, y - 1, z))?.takeIf { it[1] == y } }
 
 /** How far from a remembered source its waypoint may stand, along each axis. */
 private const val WAYPOINT_REACH_BLOCKS = 2

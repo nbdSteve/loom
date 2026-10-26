@@ -20,6 +20,7 @@ import dev.loom.bodycontrol.MAX_RETAINED_ENTITIES
 import dev.loom.bodycontrol.MAX_RETAINED_ITEMS
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
+import dev.loom.contract.reviewsGoal
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
@@ -29,6 +30,26 @@ private const val PLAYER_FOOD_CAPACITY = 20.0
 private const val PLAYER_HEALTH_CAPACITY = 20.0
 private const val BODY_SENSE_MEMORY = 4
 private const val KEEPALIVE_SECONDS = 10L
+
+/**
+ * The block kinds a goal review's sense also looks for beyond dig reach (`seek`): every overworld
+ * log and the berry bush, the sources a horizon goal is grounded in and the one natural food a
+ * body can dig, collect and eat with the server witnessing each step. A block seen there is a
+ * place to walk toward, never one a dig may name (r34: logs 6.6 to 8 blocks off were only ever
+ * recalled, and walks to the edge of sight went past them).
+ */
+internal val SOUGHT_SOURCE_KINDS: List<String> =
+    listOf(
+        "oak_log",
+        "birch_log",
+        "spruce_log",
+        "jungle_log",
+        "acacia_log",
+        "dark_oak_log",
+        "mangrove_log",
+        "cherry_log",
+        "sweet_berry_bush",
+    )
 
 /** Captures and commits Mineflayer sense reports without blocking Paper's tick. */
 internal class PlayerPerception(
@@ -47,7 +68,12 @@ internal class PlayerPerception(
         trigger: Trigger,
         attacker: UUID? = null,
     ): CompletionStage<Perception?> =
-        capture(agentId, tagOf(trigger), listOfNotNull(attacker)).thenApplyOn(context.authority.main) { raw ->
+        capture(
+            agentId,
+            tagOf(trigger),
+            listOfNotNull(attacker),
+            seek = trigger.reviewsGoal,
+        ).thenApplyOn(context.authority.main) { raw ->
             raw?.let { sceneFor(agentId, it, attacker) }?.let { scene ->
                 commit(
                     scene,
@@ -107,6 +133,7 @@ internal class PlayerPerception(
         agentId: AgentId,
         asked: String,
         retainEntities: List<UUID> = emptyList(),
+        seek: Boolean = false,
     ): CompletionStage<RawSense?> {
         val runtime = registry.ready(agentId)
         val atCapacity =
@@ -122,13 +149,14 @@ internal class PlayerPerception(
         }
         return when {
             runtime == null || atCapacity -> completedBodyOperation(null)
-            else -> startCapture(runtime, retainEntities)
+            else -> startCapture(runtime, retainEntities, seek)
         }
     }
 
     private fun startCapture(
         runtime: PlayerRuntime,
         retainEntities: List<UUID>,
+        seek: Boolean,
     ): CompletionStage<RawSense?> {
         runtime.sensesInFlight += 1
         val request =
@@ -148,6 +176,8 @@ internal class PlayerPerception(
                         .ifEmpty { null },
                 // The creature that just hurt the agent is reported however many stand nearer.
                 retainEntities = retainEntities.map(UUID::toString).take(MAX_RETAINED_ENTITIES).ifEmpty { null },
+                // Only a goal review looks further: what it sees there grounds a goal and a walk.
+                seek = SOUGHT_SOURCE_KINDS.takeIf { seek },
             )
         val capturedTick = context.authority.currentTick()
         val auditSnapshot = context.authority.serverState.captureSenseAudit(runtime.identity)

@@ -2707,6 +2707,33 @@ class PlayerWalkResolutionTest {
     }
 
     @Test
+    fun `only a goal review's sense looks beyond dig reach, and only for logs and berry bushes`() {
+        // r34 zeta: logs 6.6 to 8 blocks off were only ever recalled; a threat scan or a damage
+        // sense has no goal to ground and stays inside the body's reach.
+        val agent = AgentId("agent-seeking")
+        val senses = CopyOnWriteArrayList<BodyRequest.Sense>()
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let {
+                            senses += it
+                            interactionSense(it)
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        harness.port.perceive(agent, Trigger.Damaged(2, "zombie")).await()
+        val (review, damage) = senses
+        assertEquals(SOUGHT_SOURCE_KINDS, review.seek)
+        assertTrue(requireNotNull(review.seek).all { it.endsWith("_log") || it == "sweet_berry_bush" })
+        assertNull(damage.seek)
+    }
+
+    @Test
     fun `an own lying drop is asked for by its server uuid and offered back by its ref`() {
         // r15 kappa body:00000080: its own dig dropped a stick it never saw, and iota's own stick
         // lay out of sight five blocks off; neither could be named to collect.

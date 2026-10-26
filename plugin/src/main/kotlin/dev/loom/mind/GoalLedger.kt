@@ -50,6 +50,7 @@ import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalRefusal
 import dev.loom.contract.GoalStep
 import dev.loom.contract.GoalSummary
+import dev.loom.contract.HorizonGoal
 import dev.loom.contract.Intent
 import dev.loom.contract.MAX_GOAL_ID_CHARS
 import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
@@ -374,7 +375,7 @@ class GoalLedger(
         // A continue or revise carries the run of steps that changed nothing; only an adopted
         // goal starts it again, since only a measured change is evidence of progress.
         val fresh = choice.disposition in STARTING
-        val carriedCount = carriedCountOf(presented, choice)
+        val carriedCount = carriedCountOf(presented, choice, recipes, basis.observed?.horizon.orEmpty())
         // A new goal starts with only the cell it was adopted at; a kept goal remembers every cell
         // it has been reviewed at, so a walk back to one of them is no arrival anywhere new.
         val earlier = if (fresh) emptySet() else goals.held?.visited.orEmpty()
@@ -523,16 +524,22 @@ private fun stalledOf(
 /**
  * The run of steps that advanced nothing [choice] carries on from [presented]: none for a goal it
  * starts afresh, except a replace of an unmet goal that sets the same item again, at any total,
- * which is the old goal relabelled (r17 alpha body:00000163; r18: three replaces at one more).
+ * which is the old goal relabelled (r17 alpha body:00000163; r18: three replaces at one more), or
+ * an item made from it by [recipes] or a [horizon] path, which still needs the source the old goal
+ * never reached (r34: zeta's oak log goal stalled three steps and was replaced by oak buttons, and
+ * two more walks advanced nothing before it was abandoned).
  */
 private fun carriedCountOf(
     presented: GoalSummary?,
     choice: GoalChoice,
+    recipes: RecipeInputs,
+    horizon: Map<String, HorizonGoal>,
 ): Long {
+    val path = choice.successItem?.let { recipes.inputsOf(it) + horizon.pathOf(it) }.orEmpty()
     val relabelled =
         choice.disposition == GoalDisposition.REPLACE &&
             presented?.progress?.conditionMet != true &&
-            choice.successItem == presented?.successItem
+            presented?.successItem?.let { it == choice.successItem || it in path } == true
     val fresh = choice.disposition in STARTING && !relabelled
     return if (fresh) 0 else presented?.progress?.stepsWithoutProgress ?: 0
 }

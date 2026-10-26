@@ -431,6 +431,15 @@ fn own_drops_of(perception: &Perception, route_items: &[String]) -> Vec<(String,
 }
 
 /// The total the held goal a goal review carries asks of `item`, if its item is that one.
+/// Whether the held goal's item is on `item`'s recipe path: a goal for `item` needs it first.
+fn made_from_goal(perception: &Perception, item: &str) -> bool {
+    perception
+        .goal
+        .as_ref()
+        .and_then(|goal| goal.success_item.as_ref())
+        .is_some_and(|held| path_of(perception, item).contains(held))
+}
+
 fn goal_total(perception: &Perception, item: &str) -> Option<i64> {
     let goal = perception.goal.as_ref()?;
     (goal.success_item.as_deref() == Some(item))
@@ -701,15 +710,11 @@ impl OfferedRefs {
                         && source(handle)
                 };
                 let walks = take(&self.walk_targets, &walk);
-                // Toward where a source of it, or of what it is made from, was last seen; a horizon
-                // goal with none remembered may look further every way, as its total reaches past
-                // what sight gives.
-                let remembered: Vec<Bearing> = perception
-                    .recalled
-                    .iter()
-                    .filter(|source| &source.what == item || path.contains(&source.what))
-                    .map(|source| source.direction)
-                    .collect();
+                // Toward where a source of it, or of what it is made from, was last seen, or is seen
+                // beyond dig reach (r34: zeta's logs lay in view and out of reach, and only walks
+                // past them were offered); a horizon goal with none remembered may look further
+                // every way, as its total reaches past what sight gives.
+                let remembered = self.source_bearings(perception, item, &path, &source);
                 // Nor, when no cell is offered the way it was remembered, may it be left with no step:
                 // it looks further every way, as the body accepts (v32 plains rehearsal 17: two met
                 // goals' next logs lay where no cell was offered, and their review could not be answered).
@@ -749,6 +754,35 @@ impl OfferedRefs {
             .collect()
     }
 
+    /// The bearings of the sources of `item`, or of an input on its `path`, recalled out of sight or
+    /// in sight beyond dig reach: the directions a walk to the edge of sight steps toward it.
+    fn source_bearings(
+        &self,
+        perception: &Perception,
+        item: &String,
+        path: &[String],
+        source: &dyn Fn(&String) -> bool,
+    ) -> Vec<Bearing> {
+        perception
+            .recalled
+            .iter()
+            .filter(|recalled| &recalled.what == item || path.contains(&recalled.what))
+            .map(|recalled| recalled.direction)
+            .chain(
+                perception
+                    .surroundings
+                    .iter()
+                    .take(MAX_OBSERVATIONS)
+                    .filter(|seen| {
+                        seen.kind == ObservationKind::Block
+                            && !self.blocks.contains(&seen.target_ref)
+                            && source(&seen.target_ref)
+                    })
+                    .map(|seen| seen.direction),
+            )
+            .collect()
+    }
+
     /// For each item [`Self::capacity`] or the perception's horizon names, the fewest and most a
     /// success count may ask now: one more than is held, up to what is held plus capacity or the
     /// horizon's most, whichever is more. While cells at the edge of sight are offered, an item no
@@ -778,8 +812,12 @@ impl OfferedRefs {
             .filter_map(|(item, capacity)| {
                 let held = held_of(perception, item);
                 // A replace of a stalled goal may not set the same item again, at any total, which
-                // would only relabel it (r17 alpha body:00000163; r18: three replaces at one more).
-                if self.stalled && goal_total(perception, item).is_some() {
+                // would only relabel it (r17 alpha body:00000163; r18: three replaces at one more),
+                // nor an item made from it, which still needs the source the goal never reached
+                // (r34: zeta's stalled oak log goal became oak buttons and advanced nothing more).
+                if self.stalled
+                    && (goal_total(perception, item).is_some() || made_from_goal(perception, item))
+                {
                     return None;
                 }
                 let fewest = held.saturating_add(1);
@@ -804,7 +842,9 @@ impl OfferedRefs {
             .iter()
             .take(loom_contract::MAX_HORIZON_GOALS)
             .filter(|goal| {
-                goal.grounding == loom_contract::HorizonGrounding::Recipe && &goal.what != pursued
+                goal.grounding == loom_contract::HorizonGrounding::Recipe
+                    && &goal.what != pursued
+                    && !(self.stalled && made_from_goal(perception, &goal.what))
             })
             .filter(|goal| {
                 path_of(perception, &goal.what)

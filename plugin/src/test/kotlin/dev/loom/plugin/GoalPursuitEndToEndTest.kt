@@ -336,33 +336,47 @@ class GoalPursuitEndToEndTest {
         assertEquals(1, classes.getValue("goalIncoherent").jsonPrimitive.int)
     }
 
+    /** Reviews alpha for its [step]th walk and waits for the walk and the follow-up it owes (r24). */
+    private fun walkAndSettle(
+        world: ScenarioWorld,
+        step: Int,
+    ) {
+        world.review(ALPHA)
+        world.awaitDecided(step)
+        world.awaitApplied(step)
+        world.awaitRecord { it.event == BodyEvent.MOVED && it.requestId == world.mind.seen[step - 1].requestId }
+        val until = System.nanoTime() + SETTLE_WAIT_NANOS
+        while (world.settlements.count { it.first == ALPHA } < step && System.nanoTime() < until) {
+            Thread.sleep(POLL_MILLIS)
+        }
+        val owed = world.settlements.count { (agent, _, owing) -> agent == ALPHA && owing }
+        assertTrue(owed >= step, "${world.settlements}")
+    }
+
     @Test
     fun `with nothing grounded a discovery goal walks to the edge of sight, reveals a log and becomes a log goal`() {
-        // r23: 17 of 70 reviews could set no goal at all. The log stands beside the cell east at
-        // the edge of sight, past what the body senses from where alpha starts.
-        val log = Cell(22, 64, 8, "oak_log")
-        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(log), serveBreaks = true))
+        // r23: 17 of 70 reviews could set no goal at all. The tree stands past the cell east at the
+        // edge of sight, beyond what even a goal review's sense looks for from where alpha starts.
+        val trunk = listOf(Cell(30, 64, 8, "oak_log"), Cell(30, 65, 8, "oak_log"))
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = trunk, serveBreaks = true))
         world.mind.answer = { seen, index ->
             when (index) {
                 0 ->
                     Intent.MoveTo(seen.explore.single { it.direction == Bearing.EAST }.ref) to
                         GoalChoice(GoalDisposition.ADOPT, discover = true)
+                // r34 zeta: the log in sight beyond dig reach is walked to by the cell beside it.
+                1 ->
+                    Intent.MoveTo(seen.explore.filter { it.direction == Bearing.EAST }.minBy { it.distance }.ref) to
+                        target(GoalDisposition.REPLACE, LOG, 1)
                 else ->
                     Intent.Dig(seen.surroundings.first { it.what == "block.minecraft.oak_log" }.ref) to
-                        target(GoalDisposition.REPLACE, LOG, 1)
+                        GoalChoice(GoalDisposition.CONTINUE, stepResult = GoalStepResult.PROGRESSING)
             }
         }
+        for (step in 1..2) walkAndSettle(world, step)
         world.review(ALPHA)
-        world.awaitDecided(1)
-        world.awaitApplied(1)
-        world.awaitRecord { it.event == BodyEvent.MOVED }
-        // The walk is a discovery step, followed up at once rather than a cadence later (r24).
-        val until = System.nanoTime() + SETTLE_WAIT_NANOS
-        while (world.settlements.none { it.first == ALPHA } && System.nanoTime() < until) Thread.sleep(POLL_MILLIS)
-        assertTrue(world.settlements.any { (agent, _, owed) -> agent == ALPHA && owed }, "${world.settlements}")
-        world.review(ALPHA)
-        world.awaitDecided(2)
-        world.awaitApplied(2)
+        world.awaitDecided(3)
+        world.awaitApplied(3)
         world.awaitRecord { it.event == BodyEvent.WORLD_INTERACTION }
         assertTrue(world.mind.seen[0].horizon.isEmpty(), "nothing grounds an item goal where alpha starts")
         assertTrue(world.mind.seen[1].horizon.any { it.what == LOG }, "the walk brought the log into sight")
@@ -372,6 +386,8 @@ class GoalPursuitEndToEndTest {
                 it.direction == Bearing.WEST && kotlin.math.abs(it.distance - 12.0) < 0.2
             }
         assertTrue(back.isEmpty(), "the cell back where it stood is withheld: $back")
+        // The cell east is beside the log now in sight, not the twelve blocks past it.
+        assertTrue(world.mind.seen[1].explore.any { it.direction == Bearing.EAST && it.distance < 9.0 })
         val decided = world.records.filter { it.event == BodyEvent.DECIDED }
         assertEquals(GoalEvidence.ADOPTED, decided[0].goal?.outcome)
         assertEquals(true, decided[0].goal?.discovery)
@@ -380,9 +396,14 @@ class GoalPursuitEndToEndTest {
         assertEquals(StepEvidence.REVEALED, became.stepEvidence)
         assertEquals(true, became.presentedDiscovery)
         assertEquals(decided[0].requestId, became.discoveredFrom)
+        // The walk beside the log brought it within a dig's reach: arrived, and progress.
+        val beside = requireNotNull(decided[2].goal)
+        assertEquals(GoalEvidence.CONTINUED, beside.outcome)
+        assertEquals(StepEvidence.ARRIVED, beside.stepEvidence)
+        assertEquals(0L, beside.stepsWithoutProgress)
         // The dig the log goal took is the server's to confirm.
         val dug = world.records.single { it.event == BodyEvent.WORLD_INTERACTION }
-        assertEquals(decided[1].requestId, dug.requestId)
+        assertEquals(decided[2].requestId, dug.requestId)
         assertEquals("serverEffectConfirmed", dug.outcome)
         val measured =
             world

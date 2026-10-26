@@ -168,6 +168,9 @@ data class GoalObservation(
     /** The block cell the agent stood in. */
     val cell: List<Int> get() = position.map { floor(it).toInt() }
 
+    /** Whether a block in reach can be counted on to give one of [items] at a dig. */
+    fun digsFor(items: Set<String>): Boolean = productive.values.any { gives -> gives.any(items::contains) }
+
     /** How many of [item] sight itself could give: none for an item only recalled out of sight. */
     fun inSight(item: String): Long = if (item in recalledOnly) 0 else capacity[item] ?: 0
 
@@ -401,17 +404,32 @@ private fun movementEvidenceOf(
     step: StepRecord,
 ): StepEvidence {
     val reached = step.reached == true
-    val arrived = reached && step.visible && step.towardSource && observed.cell !in step.visited
     val item = goal.successItem
+    val arrived = reached && step.visible && step.towardSource && observed.cell !in step.visited
     val revealed =
         reached && step.explored && item != null &&
             before.inSight(item) == 0L && observed.inSight(item) > 0
     return when {
         arrived -> StepEvidence.ARRIVED
         revealed -> StepEvidence.REVEALED
+        broughtWithinReach(before, observed, step, setOfNotNull(item) + step.inputs) -> StepEvidence.ARRIVED
         else -> StepEvidence.NONE
     }
 }
+
+/**
+ * Whether a walk to the cell beside a source sight showed beyond dig reach arrived at it: a dig can
+ * now be counted on for one of [toward] where none could before (r34: zeta's logs were in view and
+ * out of reach, and no walk toward them was ever evidence).
+ */
+private fun broughtWithinReach(
+    before: GoalObservation,
+    observed: GoalObservation,
+    step: StepRecord,
+    toward: Set<String>,
+): Boolean =
+    step.reached == true && step.explored && observed.cell !in step.visited &&
+        !before.digsFor(toward) && observed.digsFor(toward)
 
 /** Every item whose held count changed, in name order, bounded to one per inventory slot. */
 internal fun deltaOf(
