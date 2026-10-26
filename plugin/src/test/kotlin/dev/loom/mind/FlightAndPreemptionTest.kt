@@ -82,6 +82,69 @@ class FlightAndPreemptionTest {
     }
 
     @Test
+    @DisplayName("a newer danger answer that is not a flight stops the agent's older flight before it is applied")
+    fun aNewerDangerAnswerTakesTheBodyFromAnOlderFlight() {
+        // r34 epsilon sense-10j: its attack on the spider biting it was refused not ready behind its
+        // own older flight from a zombie, so the older answer governed the body over the newer one.
+        val calls = mutableListOf<String>()
+        val flights = mutableMapOf<String, CompletableFuture<IntentOutcome>>()
+        val body =
+            object : BodyPort {
+                override fun spawn(agentId: AgentId) = fail("cognition must not spawn bodies")
+
+                override fun despawn(agentId: AgentId) = fail("cognition must not despawn bodies")
+
+                override fun apply(
+                    agentId: AgentId,
+                    intent: Intent,
+                    requestId: String?,
+                ): CompletableFuture<IntentOutcome> {
+                    calls += "apply $requestId"
+                    return CompletableFuture<IntentOutcome>().also { flights[requireNotNull(requestId)] = it }
+                }
+
+                override val halts =
+                    dev.loom.body.BodyHalt {
+                        calls += "halt"
+                        flights.getValue("zi").complete(IntentOutcome.Accepted("flight was cancelled after moving"))
+                        CompletableFuture.completedFuture(true)
+                    }
+
+                override fun perceive(
+                    agentId: AgentId,
+                    trigger: Trigger,
+                ): CompletableFuture<Perception?> = CompletableFuture.completedFuture(null)
+
+                override fun senseThreat(agentId: AgentId) = fail("not this test's business")
+
+                override fun tick(tick: Long) = fail("cognition must never drive the tick")
+
+                override fun liveBodies(): Set<AgentId> = setOf(agent)
+            }
+        val decisions = mutableMapOf<String, CompletableFuture<Decision>>()
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p -> CompletableFuture<Decision>().also { decisions[p.requestId] = it } },
+                mainThread = main,
+                journal = journalInto(mutableListOf()),
+            )
+        val zombie = Trigger.ThreatSighted("entity.minecraft.zombie", "e1", 6.0, Bearing.NORTH, true)
+        val sighted = perception(requestId = "zi", agentId = agent.value, trigger = zombie)
+        cognition.submit(agent, sighted, dangerSubject = "zombie-e1")
+        main.drain()
+        decisions.getValue("zi").complete(decisionFor(sighted, Intent.Flee("e1")))
+        main.drain()
+        val bitten = perception(requestId = "10j", agentId = agent.value, trigger = Trigger.Damaged(2, "spider", "e2"))
+        cognition.submit(agent, bitten, dangerSubject = "spider-e2")
+        main.drain()
+        decisions.getValue("10j").complete(decisionFor(bitten, Intent.Attack("e2", "i4", 4, false)))
+        main.drain()
+
+        assertEquals(listOf("apply zi", "halt", "apply 10j"), calls)
+    }
+
+    @Test
     @DisplayName(
         "damage from a new attacker is sent at once, and the older answer it supersedes never reaches the body",
     )

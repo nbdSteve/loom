@@ -1373,7 +1373,19 @@ function createBody (options) {
       // the cancelled flight has drained, so nothing else can take the body between them.
       const owned = actionOwner
       owned.cancel()
-      const reserved = { token: {}, kind: 'movement', session, cancel: () => false, abort: () => false }
+      // A takeover still waiting is displaced by this newer one rather than racing it: it answers
+      // `cancelled` before it began, and only the newest flight takes the body (r34 beta).
+      const reserved = {
+        token: {},
+        kind: 'movement',
+        session,
+        displaced: false,
+        cancel: () => {
+          reserved.displaced = true
+          return true
+        },
+        abort: () => false
+      }
       actionOwner = reserved
       takeOver(socket, session, request, requestId, reserved).catch(() => {})
       return true
@@ -1417,11 +1429,23 @@ function createBody (options) {
   /**
    * Starts a replacing flight once the flight it cancelled has released the path, holding the
    * body under [reserved] meanwhile, within [REPLACE_SETTLE_MS]; a path still held after that is
-   * `notReady`, the answer a flight behind running work always had.
+   * `notReady`, the answer a flight behind running work always had. A takeover a newer replacing
+   * flight or a halt displaced while it waited answers `cancelled` without having moved, measured
+   * against its threat where it stands, so an older flight can never start after a newer one.
    */
   async function takeOver (socket, session, request, requestId, reserved) {
     const until = Date.now() + REPLACE_SETTLE_MS
-    while (movement?.busy() === true && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10))
+    while (movement?.busy() === true && Date.now() < until && !reserved.displaced) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    if (reserved.displaced) {
+      if (actionOwner === reserved) actionOwner = undefined
+      const unstarted = movement?.unstarted({
+        offered: offered.recall(session, request.senseId)?.entityOffers,
+        entity: request.entity
+      })
+      return settleMovement(socket, session, request, requestId, unstarted, reserved.token)
+    }
     if (actionOwner !== reserved) return refuse(socket, session, { code: 'notReady', requestId })
     actionOwner = undefined
     return move(socket, session, { ...request, replace: false }, requestId)

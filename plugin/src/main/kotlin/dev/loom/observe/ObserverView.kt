@@ -398,6 +398,8 @@ class ObserverView(
                     Note("was told to run from something it was never told about", ObserverLevel.CONCERN)
                 EventTag.RETREAT_SUPERSEDED ->
                     Note("stopped running: a later decision took over", ObserverLevel.CONCERN)
+                EventTag.RETREAT_STALE ->
+                    Note("an older flight gave way to a newer danger answer", ObserverLevel.CONCERN)
                 // RETREAT_FAILED, and anything a later version adds without saying so here:
                 // the agent is still in range of something hunting it and has been left
                 // standing, which is the reading an unrecognised tag must not be softer than.

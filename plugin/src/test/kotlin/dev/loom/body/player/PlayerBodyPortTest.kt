@@ -2870,6 +2870,47 @@ class PlayerWalkResolutionTest {
     }
 
     @Test
+    fun `an older flight refused behind a newer one never halts it and ends stale`() {
+        // r34 beta 10s/111/115: the older sighting's flight 111 was refused notReady while waiting
+        // to take over, its retry halted the newer damage's flight 115, and 111 ran in its place.
+        val agent = AgentId("agent-stale-flight")
+        val olderAsked = java.util.concurrent.CountDownLatch(1)
+        val newerApplied = java.util.concurrent.CountDownLatch(1)
+        var olderSense: String? = null
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        if (request is BodyRequest.Flee && request.senseId == olderSense) {
+                            olderAsked.countDown()
+                            newerApplied.await(5, java.util.concurrent.TimeUnit.SECONDS)
+                            throw BodyControlFailure.Refused(ErrorCode.NOT_READY)
+                        }
+                        null
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val older = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val newer = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        olderSense = older.requestId
+        val threatIn = { seen: Perception -> seen.surroundings.first { it.kind == ObservationKind.ENTITY }.ref }
+
+        val olderFled = harness.port.apply(agent, Intent.Flee(threatIn(older)), older.requestId)
+        assertTrue(olderAsked.await(5, java.util.concurrent.TimeUnit.SECONDS), "the older flight reached the body")
+        val newerFled = harness.port.apply(agent, Intent.Flee(threatIn(newer)), newer.requestId).await()
+        newerApplied.countDown()
+
+        assertTrue(newerFled is IntentOutcome.Accepted, newerFled.toString())
+        assertEquals(EventTag.RETREAT_STALE, (olderFled.await() as IntentOutcome.Rejected).tag)
+        // Nothing was halted for the older flight, so the newer one was never stopped by it.
+        assertTrue(harness.connector.requests.none { it is BodyRequest.Halt }, "${harness.connector.requests}")
+        val applied = harness.records.filter { it.event == BodyEvent.INTENT_APPLIED }
+        assertEquals(EventTag.RETREAT_STALE, applied.single { it.requestId == older.requestId }.outcome)
+    }
+
+    @Test
     fun `a covered block is offered as not standable and a walk onto it is refused before the body`() {
         val agent = AgentId("agent-walk-covered")
         val server = FakePlayerServerState().apply { buried += listOf(4, 63, 2) }

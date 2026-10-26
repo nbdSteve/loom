@@ -72,3 +72,47 @@ test('a replacing flight that is refused leaves the running flight alone, and a 
 
   peer.stop()
 })
+
+test('a replacing flight still waiting to take over is displaced by a newer one and never starts', async () => {
+  // r34 beta: an older sighting's flight was waiting to take over when a newer damage's flight
+  // arrived; the older one was refused notReady, its retry's halt stopped the newer flight, and the
+  // older one then ran in its place for 43 ticks.
+  const given = await H.embodied()
+  const { body, bot, client, port } = given
+  openBody = body
+  H.spawned(client, FED)
+  H.clockReported(client, { timeOfDay: 14_000, day: 0 })
+  client.emit('position', H.positionPacket({ ...FEET, yaw: 0, pitch: 0, teleportId: 1 }))
+  H.ground(bot)
+  H.spotted(client, SPIDER)
+  H.spotted(client, ZOMBIE)
+  await H.settled(300)
+
+  const peer = await H.handshaken(port)
+  const seen = await peer.answer(H.request('sense', 's1', { radius: 16, limit: 48 }))
+  const spider = seen.entities.findIndex((offered) => offered.what === 'spider')
+  const zombie = seen.entities.findIndex((offered) => offered.what === 'zombie')
+  const flight = (id, entity, extra = {}) => H.request('flee', id, {
+    senseId: 's1', entity, distance: 10, timeoutMs: DEADLINE_MS, sprint: false, ...extra
+  })
+  peer.send(flight('f1', spider))
+  await H.settled(150)
+  // The older answer and the newer one reach the body in one chunk, so both arrive before f1 drains.
+  peer.pipeline([flight('f2', zombie, { replace: true }), flight('f3', spider, { replace: true })])
+  const answers = new Map()
+  while (answers.size < 3) {
+    const frame = await H.promptly(peer.read(), 'the three flights', DEADLINE_MS + 3000)
+    answers.set(frame.requestId, frame)
+  }
+  assert.equal(answers.get('f1').outcome, 'cancelled', JSON.stringify(answers.get('f1')))
+  // The displaced takeover never began: cancelled where it stood, measured against its threat.
+  const displaced = answers.get('f2')
+  assert.equal(displaced.outcome, 'cancelled', JSON.stringify(displaced))
+  assert.equal(displaced.travelled, 0)
+  assert.equal(displaced.separationGained, 0)
+  assert.ok(displaced.separation > 0)
+  // The newest flight is the one that ran.
+  assert.notEqual(answers.get('f3').outcome, 'cancelled', JSON.stringify(answers.get('f3')))
+  assert.ok(answers.get('f3').travelled > 0, JSON.stringify(answers.get('f3')))
+  peer.stop()
+})

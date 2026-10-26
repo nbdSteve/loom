@@ -1,28 +1,17 @@
 package dev.loom.mind
 
-import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
-import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
-import dev.loom.body.BodyPort
 import dev.loom.body.EventTag
-import dev.loom.body.IntentOutcome
-import dev.loom.contract.Decision
-import dev.loom.contract.Intent
-import dev.loom.contract.LoomJson
-import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 import dev.loom.replay.CommittedEvidence
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
-import org.junit.jupiter.api.fail
-import java.util.concurrent.CompletableFuture
 
 /**
  * The r33 audit's danger chains, replayed through today's cognition from
@@ -32,115 +21,21 @@ import java.util.concurrent.CompletableFuture
 class R33DangerReplayTest {
     private val r33 = CommittedEvidence("2026-10-16-openai-10-agent-10m-r33")
 
+    private val replays = DangerReplay(r33)
+
     private fun field(
         record: JsonObject,
         name: String,
     ) = record[name]?.jsonPrimitive?.content
 
-    /** A danger subject for [perception]: the evidence keeps no attacker uuid, so its kind. */
-    private fun kindOf(perception: Perception): String? =
-        when (val trigger = perception.trigger) {
-            is Trigger.Damaged -> trigger.source.substringAfterLast('.')
-            is Trigger.ThreatSighted -> trigger.threat.substringAfterLast('.')
-            else -> null
-        }
-
-    /** Every request r33 sent to the mind. */
-    private val sentKeys: Set<String?> by lazy {
-        r33.all.filter { field(it, "event") == "cognitionForwarded" }.map { field(it, "requestKey") }.toSet()
-    }
-
     private fun brief(record: BodyEventRecord) =
         "${record.tick} ${record.event} ${record.requestId?.substringAfterLast('-')} ${record.outcome}"
 
-    private data class Replayed(
-        val applied: List<String?>,
-        val records: List<BodyEventRecord>,
-    )
-
-    /** [agent]'s chain from [from] to [until]: perceptions submitted, answers given back in r33's order. */
     private fun replay(
         agent: String,
         from: Long,
         until: Long,
-    ): Replayed {
-        val main = FakeMainThread()
-        var now = from
-        val records = mutableListOf<BodyEventRecord>()
-        val applied = mutableListOf<String?>()
-        val decisions = mutableMapOf<String, CompletableFuture<Decision>>()
-        val body =
-            object : BodyPort {
-                override fun spawn(agentId: AgentId) = fail("not this replay's business")
-
-                override fun despawn(agentId: AgentId) = fail("not this replay's business")
-
-                override fun apply(
-                    agentId: AgentId,
-                    intent: Intent,
-                    requestId: String?,
-                ): CompletableFuture<IntentOutcome> {
-                    applied += requestId
-                    return CompletableFuture.completedFuture(IntentOutcome.Accepted("ok"))
-                }
-
-                override fun perceive(
-                    agentId: AgentId,
-                    trigger: Trigger,
-                ): CompletableFuture<Perception?> = CompletableFuture.completedFuture(null)
-
-                override fun senseThreat(agentId: AgentId) = fail("not this replay's business")
-
-                override fun tick(tick: Long) = fail("cognition must never drive the tick")
-
-                override fun liveBodies(): Set<AgentId> = setOf(AgentId(agent))
-            }
-        val cognition =
-            EmbodiedCognition(
-                body,
-                mind =
-                    PerAgentCognitionBridge(
-                        { p -> CompletableFuture<Decision>().also { decisions[p.requestId] = it } },
-                        // As r33 ran: LOOM_COGNITION_PENDING_PER_AGENT=2.
-                        2,
-                    ),
-                mainThread = main,
-                journal = DecisionJournal(BodyEventLog { records.add(it) }, currentTick = { now }),
-            )
-        val window =
-            r33.all.filter {
-                field(it, "agentId") == agent && (it["tick"]?.jsonPrimitive?.longOrNull ?: -1) in from..until
-            }
-        for (record in window) {
-            now = requireNotNull(record["tick"]?.jsonPrimitive?.longOrNull)
-            when (field(record, "event")) {
-                "perceived" -> {
-                    val perception = r33.perception(requireNotNull(field(record, "recordId")))
-                    // The evidence keeps no creature uuid: a perception r33 sent is its own threat, and one
-                    // r33 coalesced shares its kind's episode.
-                    val subject =
-                        if (field(record, "requestKey") in sentKeys) {
-                            perception.requestId
-                        } else {
-                            kindOf(
-                                perception,
-                            )
-                        }
-                    cognition.submit(AgentId(agent), perception, dangerSubject = subject)
-                }
-                "decided", "decisionDiscarded" -> {
-                    val decision =
-                        LoomJson.decodeFromJsonElement(
-                            Decision.serializer(),
-                            requireNotNull(record["decision"]),
-                        )
-                    decisions[decision.requestId]?.complete(decision)
-                }
-            }
-            main.drain()
-        }
-        return Replayed(applied, records)
-    }
+    ) = replays.replay(agent, from, until)
 
     @TestFactory
     @DisplayName("a ready flight is applied, never discarded, while the answer that superseded it is still coming")

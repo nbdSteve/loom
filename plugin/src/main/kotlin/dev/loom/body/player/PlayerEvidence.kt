@@ -35,6 +35,8 @@ internal data class ActionExecution(
     val fleeHunters: List<List<Double>> = emptyList(),
     /** Whether the flight sprinted and why, as the JVM chose it. */
     val fleeSprint: dev.loom.body.SprintChoice? = null,
+    /** Whether a newer danger answer was applied before this flight could take the body. */
+    val fleeStale: Boolean = false,
     val eatReport: BodyResponse.EatReport? = null,
     val interaction: ServerInteractionClaim? = null,
 )
@@ -130,7 +132,8 @@ internal class PlayerEvidenceRecorder(
             agentId,
             "flight ended ${report.outcome.name.lowercase()}, " +
                 "separation ${report.separation ?: "unread"}",
-            retreatTag(report.outcome, report.separation, request.distance),
+            retreatTag(report.outcome, report.separation, request.distance).takeUnless { execution.fleeStale }
+                ?: EventTag.RETREAT_STALE,
             requestId,
             RetreatEvidence(
                 report.separation,

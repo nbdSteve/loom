@@ -128,6 +128,9 @@ interface BodyPort : AutoCloseable {
     /** Where a dig's one pickup of its goal's own dropped item is made; see [OwnDropCollector]. */
     val pickups: OwnDropCollector get() = OwnDropCollector.NONE
 
+    /** How a newer danger answer that is not a flight takes the body from an older flight; see [BodyHalt]. */
+    val halts: BodyHalt get() = BodyHalt.NONE
+
     /**
      * How this body perceives damage that names the creature that dealt it; see [DamagePerception].
      * A port that cannot name it perceives the damage as [perceive] does.
@@ -238,6 +241,21 @@ fun interface DamagePerception {
         trigger: Trigger.Damaged,
         attacker: String?,
     ): CompletionStage<Perception?>
+}
+
+/**
+ * Stops whatever cancellable movement or interaction one agent's body is carrying out, and answers
+ * whether anything was stopped: how a newer danger answer that is not itself a flight takes the body
+ * from an older flight of the agent's own, which would otherwise refuse it as not ready (r34
+ * epsilon's attack behind its own older flight).
+ */
+fun interface BodyHalt {
+    fun halt(agentId: AgentId): CompletionStage<Boolean>
+
+    companion object {
+        /** A port with nothing to halt. */
+        val NONE: BodyHalt = BodyHalt { completedBodyOperation(false) }
+    }
 }
 
 /** Makes the one bounded pickup attempt a model-selected dig owes its goal's own dropped item. */

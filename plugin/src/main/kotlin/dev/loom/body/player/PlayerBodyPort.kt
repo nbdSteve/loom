@@ -99,6 +99,11 @@ class PlayerBodyPort(
             instances[agentId]?.pickup?.attempt(agentId, requestId, item) ?: completedBodyOperation(null)
         }
 
+    override val halts: dev.loom.body.BodyHalt =
+        dev.loom.body.BodyHalt { agentId ->
+            instances[agentId]?.halts?.halt(agentId) ?: completedBodyOperation(false)
+        }
+
     override val held: HeldPerceptions =
         object : HeldPerceptions {
             override fun release(
@@ -206,6 +211,9 @@ private class PlayerBodyInstance(
         intent: Intent,
         requestId: String?,
     ): CompletionStage<IntentOutcome> = actuation.apply(agentId, intent, requestId)
+
+    /** This agent's halt, for a newer danger answer that takes the body from an older flight. */
+    val halts: dev.loom.body.BodyHalt get() = dev.loom.body.BodyHalt(actuation::halt)
 
     fun perceive(
         agentId: AgentId,

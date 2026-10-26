@@ -1754,6 +1754,21 @@ function createMovement (bot, {
       return running !== undefined
     },
 
+    /**
+     * The answer to a flight from [entity] of [offered] cancelled before it began: one of the three
+     * threat refusals when its threat no longer checks out, and otherwise `cancelled` where the
+     * body stands, its separation measured against the live threat and nothing gained.
+     */
+    unstarted ({ offered, entity }) {
+      const refused = this.fleeRefusal({ offered, entity })
+      if (refused !== undefined) return refused
+      const from = standing()
+      const seen = positionOf(bot.entities[offered[entity].id].position)
+      if (from === undefined || seen === undefined) return undefined
+      const separation = blocksApart(from, seen)
+      return { outcome: 'cancelled', from, position: from, travelled: 0, elapsedMs: 0, separation, separationGained: 0 }
+    },
+
     fleeRefusal ({ offered, entity }) {
       if (offered === undefined) return unmoved('senseForgotten')
       const named = offered[entity]

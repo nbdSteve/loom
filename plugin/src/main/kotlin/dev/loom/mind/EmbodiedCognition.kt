@@ -370,8 +370,10 @@ class EmbodiedCognition(
         }
         // A flight, and any answer to danger, holds the agent's reviews until the body has carried it out.
         val flight = decision.intent is Intent.Flee || answersDanger
+        // Asked before this decision's own flight hold is taken, so the hold it finds is an older one's.
+        val applying = bodies.governing(agentId, decision, answersDanger && fleeing.holds(agentId))
         if (flight) fleeing.hold(agentId, decision.requestId)
-        bodies.apply(agentId, decision.intent, decision.requestId).whenComplete { outcome, failure ->
+        applying.whenComplete { outcome, failure ->
             mainThread.execute {
                 if (flight) fleeing.release(agentId, decision.requestId)
                 val applied =
@@ -458,6 +460,23 @@ class EmbodiedCognition(
         if (!callbacks.isDead(agentId) && !shutDown) consider(agentId, trigger, attacker)
     }
 }
+
+/**
+ * [decision] applied to [agentId]'s body as the newest danger answer governs it: one that is not
+ * itself a flight, applied [afterOlderFlight] of the agent's own still being carried out, first stops
+ * that flight, which would otherwise refuse it as not ready (r34 epsilon), while a flight takes over by
+ * replacing it.
+ */
+private fun BodyPort.governing(
+    agentId: AgentId,
+    decision: Decision,
+    afterOlderFlight: Boolean,
+): CompletionStage<IntentOutcome> =
+    if (afterOlderFlight && decision.intent !is Intent.Flee) {
+        halts.halt(agentId).handle { _, _ -> Unit }.thenCompose { apply(agentId, decision.intent, decision.requestId) }
+    } else {
+        apply(agentId, decision.intent, decision.requestId)
+    }
 
 /** Unwraps the wrapper completion stages use without exposing transport internals. */
 private fun underlying(failure: Throwable): Throwable =

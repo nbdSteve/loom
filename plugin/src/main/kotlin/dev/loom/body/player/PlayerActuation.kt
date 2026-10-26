@@ -19,6 +19,7 @@ import dev.loom.bodycontrol.BODY_CONTROL_PROTOCOL_VERSION
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
 import dev.loom.bodycontrol.ErrorCode
+import dev.loom.bodycontrol.MoveOutcome
 import dev.loom.contract.Bearing
 import dev.loom.contract.Intent
 import java.util.concurrent.CompletableFuture
@@ -60,6 +61,9 @@ internal class PlayerActuation(
         requestId: String?,
     ): CompletionStage<IntentOutcome> {
         val runtime = registry.ready(agentId) ?: return completedBodyOperation(IntentOutcome.NoSuchBody)
+        // The newest decision applied governs the body: an older flight still being carried out
+        // never halts or replaces it (r34 beta).
+        requestId?.let { preparer.newest.applied(agentId, it) }
         val sense = requestId?.let { sessions.get(agentId, it) }
         sense?.stopKeepalive()
         val answer = CompletableFuture<IntentOutcome>()
@@ -74,6 +78,18 @@ internal class PlayerActuation(
                 }
             }
         return answer
+    }
+
+    /**
+     * Stops whatever cancellable work [agentId]'s body is carrying out, off the main thread, with the
+     * same halt an idle decision sends; nothing is recorded, since no decision of its own asked.
+     */
+    fun halt(agentId: AgentId): CompletionStage<Boolean> {
+        val runtime = registry.ready(agentId) ?: return completedBodyOperation(false)
+        val stopping = preparer.prepare(runtime, Intent.Idle, null, null)
+        return CompletableFuture
+            .supplyAsync(stopping, context.infrastructure.io)
+            .handle { stopped, failure -> failure == null && stopped?.outcome is IntentOutcome.Accepted }
     }
 
     private fun complete(
@@ -142,6 +158,8 @@ internal class PlayerActionPreparer(
     private val interactions: PlayerInteractionPreparer = PlayerInteractionPreparer(context),
     private val survival: PlayerSurvivalPreparer = PlayerSurvivalPreparer(context),
     private val speech: PlayerSpeech = PlayerSpeech(context),
+    /** The newest decision applied to each agent's body; an older flight never halts or replaces it. */
+    val newest: NewestDecisions = NewestDecisions(),
 ) {
     fun prepare(
         runtime: PlayerRuntime,
@@ -400,7 +418,7 @@ internal class PlayerActionPreparer(
                             // out, so a refused flight never stops a valid one (r33 gamma).
                             replace = true,
                         )
-                    val operation: () -> ActionExecution = { flee(runtime, sense, request, sprint) }
+                    val operation: () -> ActionExecution = { flee(runtime, sense, request, sprint, requestId) }
                     operation
                 }
             }
@@ -418,15 +436,23 @@ internal class PlayerActionPreparer(
         sense: HeldSense,
         request: BodyRequest.Flee,
         sprint: SprintChoice,
+        decidedBy: String,
     ): ActionExecution {
+        val agentId = runtime.identity.agentId
         var attempt = request
         var halted = false
         repeat(PREEMPT_ATTEMPTS) { tries ->
             try {
                 val timeout = context.infrastructure.settings.movementTimeout
-                return fleeOnce(sense, attempt, timeout).copy(fleeSprint = sprint)
+                val fled = fleeOnce(sense, attempt, timeout).copy(fleeSprint = sprint)
+                // Displaced from its takeover by the newer flight before it began: stale, not superseded.
+                val unstarted = fled.fleeReport?.outcome == MoveOutcome.CANCELLED && fled.fleeReport.travelled == 0.0
+                val stale = unstarted && newest.outdated(agentId, decidedBy)
+                return if (stale) fled.copy(outcome = STALE_FLIGHT, fleeStale = true) else fled
             } catch (busy: BodyControlFailure.Refused) {
                 if (busy.code != ErrorCode.NOT_READY || tries == PREEMPT_ATTEMPTS - 1) throw busy
+                // Refused behind a newer answer of the agent's own: it governs, and is never halted.
+                if (newest.outdated(agentId, decidedBy)) return ActionExecution(STALE_FLIGHT)
                 if (!halted) {
                     halt(runtime, "halted routine work for a flight")
                     halted = true
@@ -454,6 +480,9 @@ internal class PlayerActionPreparer(
                 ).use(operation)
         }
 }
+
+/** An older flight that a newer decision of the same agent's was applied after. */
+private val STALE_FLIGHT = IntentOutcome.Rejected("a newer danger answer governs the body", EventTag.RETREAT_STALE)
 
 private fun rejectedAction(
     reason: String,
@@ -514,3 +543,27 @@ internal fun otherHuntersOf(
         }
         .map { it.index }
         .take(dev.loom.bodycontrol.MAX_FLIGHT_AVOID)
+
+/**
+ * The newest decision applied to each agent's body, by its perception's request: a flight still being
+ * carried out for an older decision never halts or replaces the body's newer work (r34 beta: an older
+ * sighting's flight, retried after notReady, halted the newer damage's flight and ran in its place).
+ * Written on the main thread as each decision is applied, read from the I/O thread a flight retries on.
+ */
+internal class NewestDecisions {
+    private val newest = java.util.concurrent.ConcurrentHashMap<AgentId, String>()
+
+    /** [requestId]'s decision is the newest applied to [agentId]'s body. */
+    fun applied(
+        agentId: AgentId,
+        requestId: String,
+    ) {
+        newest[agentId] = requestId
+    }
+
+    /** Whether a decision newer than [requestId]'s has been applied to [agentId]'s body since. */
+    fun outdated(
+        agentId: AgentId,
+        requestId: String,
+    ): Boolean = newest[agentId].let { it != null && it != requestId }
+}
