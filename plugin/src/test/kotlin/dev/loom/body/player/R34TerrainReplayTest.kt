@@ -82,7 +82,21 @@ class R34TerrainReplayTest {
                 null,
                 8218,
             )
-        assertEquals(0, terrainOf(ground, claim)?.pickupCells)
+        assertEquals(dev.loom.body.TerrainEvidence(pickupCells = 0), terrainOf(ground, claim))
+    }
+
+    @Test
+    fun `a walk over the server's ground verifies a no-route or leaves it the body's claim`() {
+        // Grass at y 63, a three-high stone pillar at (12, 64..66, 8) with a stick on top, and a
+        // one-block step at (10, 64, 10): GoalRefusalEndToEndTest's scene.
+        val pillar = (64..66).map { listOf(12, it, 8) }.toSet()
+        val flat = BlockGround { cell -> cell[1] >= 64 && cell !in pillar && cell != listOf(10, 64, 10) }
+        val start = listOf(8, 64, 8)
+        val top = pickupCellsOf(flat, listOf(12.5, 67.0, 8.5))
+        assertEquals(listOf(listOf(12, 67, 8)), top, "only the pillar top picks the stick up")
+        assertEquals(false, walkReaches(flat, start, top.toSet()), "no walk climbs three blocks")
+        assertEquals(true, walkReaches(flat, start, setOf(listOf(10, 65, 10))), "one block up is a step")
+        assertEquals(true, walkReaches(flat, start, setOf(listOf(20, 64, 3))), "level ground is walked")
     }
 
     private companion object {

@@ -127,6 +127,8 @@ class GoalRefusalEndToEndTest {
         world.review(ALPHA)
         val refused = world.awaitRecord { it.event == BodyEvent.INTENT_APPLIED }
         assertEquals(EventTag.COLLECT_NO_ROUTE, refused.outcome)
+        // The server verifies it: one cell picks the stick up, and no walk climbs the pillar (r34).
+        assertEquals(dev.loom.body.TerrainEvidence(pickupCells = 1, walkable = false), refused.terrain)
         world.review(ALPHA)
         world.awaitDecided(2)
         val again = world.mind.seen[1].surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }

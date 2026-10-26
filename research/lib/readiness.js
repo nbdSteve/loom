@@ -125,9 +125,9 @@ const DANGER_READINESS_VERSION = 'loom-readiness-gate/17'
 // over-travelled is the body's incomplete movement, as a walk's or flight's is, never the
 // decision's inapplicable fault (r34: delta's three collects stalled in the cell its flight did).
 // A collect's no-route is the ground's answer only when the server verified it - no cell a body
-// stands in would pick the item up (`terrain.pickupCells` 0) - and otherwise the body's claim, the
-// `unverifiedTerrain` blocker (r34: three no-routes to one lodged log, and nothing said whether a
-// route could exist).
+// stands in would pick the item up (`terrain.pickupCells` 0), or no walk over the server's ground
+// reaches one (`terrain.walkable` false) - and otherwise the body's claim, the `unverifiedTerrain`
+// blocker (r34: three no-routes to one lodged log, and nothing said whether a route could exist).
 const EXPOSURE_READINESS_VERSION = 'loom-readiness-gate/18'
 // From generation 18, the approach endings judged as a walk's or flight's own.
 const APPROACH_MOVEMENT_TAGS = new Set(['collectStalled', 'collectOverTravelled', 'attackStalled', 'attackOverTravelled'])
@@ -1476,7 +1476,8 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       }
       if (generation >= 18 && ending.class === TERRAIN_CLASS && decision.intent === 'collect') {
         // Verified ground excuses even the agent's own drop: it lodged where no body stands.
-        if (terminals[0].terrain?.pickupCells !== 0) {
+        const terrain = terminals[0].terrain
+        if (terrain?.pickupCells !== 0 && terrain?.walkable !== false) {
           ending.class = ownDropUnreached(decision, own) ? 'ownDropUnreached' : 'unverifiedTerrain'
         }
       } else if (generation >= 11 && ending.class === TERRAIN_CLASS && ownDropUnreached(decision, own)) {

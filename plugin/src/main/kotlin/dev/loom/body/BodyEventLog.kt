@@ -168,14 +168,16 @@ data class BodyEventRecord(
 
 /**
  * The server's own reading of the ground a collect's `noRoute` was about: how many cells a body
- * stands in from which vanilla would pick the item up (`pickupCellsOf`). None verifies the
- * ground's answer; one or more leaves it the body's claim about a route, which the server cannot
- * search (r34: one log lodged under a canopy drew three `noRoute`s and nothing said whether a
- * route could exist).
+ * stands in from which vanilla would pick the item up (`pickupCellsOf`), and, when there are any,
+ * whether a walk from where the body stood reaches one (`walkReaches`; absent when the search
+ * outgrew its bound). No cell, or no walk to one, verifies the ground's answer; a walk the server
+ * finds leaves the `noRoute` the body's claim (r34: one log lodged under a canopy drew three
+ * `noRoute`s and nothing said whether a route could exist).
  */
 @Serializable
 data class TerrainEvidence(
     val pickupCells: Int,
+    val walkable: Boolean? = null,
 )
 
 /**

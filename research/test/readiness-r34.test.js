@@ -82,4 +82,17 @@ test('r34\'s collects of the lodged log are the ground\'s answer only once the s
   })
   assert.deepEqual(keys.map((key) => classOf(reread, key)), ['terrain', 'terrain'])
   assert.equal(reread.blockers.unverifiedTerrain, 0)
+  // Cells a walk over the server's ground reaches leave the no-route the body's claim; cells no
+  // walk reaches verify it.
+  const regrounded = (terrain) => readinessMetrics({
+    bodyRecords: records.filter((entry) => entry.source === 'body').map((entry) =>
+      keys.includes(entry.requestKey) && entry.event === 'intentApplied' ? { ...entry, terrain } : entry),
+    harnessRecords: records.filter((entry) => entry.source === 'harness'),
+    metrics,
+    generation: 18,
+    bars: PROFILES['balanced-envelope-10m-10'].coherenceBars
+  })
+  assert.equal(regrounded({ pickupCells: 2, walkable: true }).blockers.unverifiedTerrain, 2)
+  assert.equal(regrounded({ pickupCells: 2 }).blockers.unverifiedTerrain, 2)
+  assert.equal(regrounded({ pickupCells: 2, walkable: false }).blockers.unverifiedTerrain, 0)
 })
