@@ -48,7 +48,8 @@ const MODES = new Set([
   'routine-v31-discovery-goal',
   'routine-v32-survival-discovery',
   'routine-v33-sighted-exposure',
-  'routine-v34-reached-source'
+  'routine-v34-reached-source',
+  'routine-v35-shelter-goal'
 ])
 const MAX_INPUT_LINE_BYTES = 256 * 1024
 const BODY_EVENTS = new Set([
@@ -73,7 +74,8 @@ const BODY_EVENTS = new Set([
   'ownDropPickup',
   'goalReviewDeferred',
   'cognitionTierFallback',
-  'exposureEnded'
+  'exposureEnded',
+  'shelterChanged'
 ])
 const HARNESS_EVENTS = new Set([
   'cleanupVerified',

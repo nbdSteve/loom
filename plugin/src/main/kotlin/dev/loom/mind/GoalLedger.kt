@@ -98,6 +98,10 @@ class GoalLedger(
         val explored: Boolean = false,
         val inputs: Set<String> = emptySet(),
         val settledTick: Long? = null,
+        /** For a shelter goal, the most enclosed it has been, which a step must pass to be credited. */
+        val best: CoverRank? = null,
+        /** For a resource subgoal, the shelter goal it feeds, held again once the subgoal ends. */
+        val parent: Held? = null,
     ) {
         /**
          * This goal as [now] shows it, and the goal to hold after: its settled step measured, once.
@@ -114,12 +118,42 @@ class GoalLedger(
             }
             // A reveal is the walk's own: seen at the review right after it, never at a later one.
             val fresh = settledTick != null && at - settledTick <= REVEAL_WINDOW_TICKS
-            val step = StepRecord(visited, stepVisible, reached, towardSource, explored, inputs, fresh)
+            val step = StepRecord(visited, stepVisible, reached, towardSource, explored, inputs, fresh, best)
             val progress = progressOf(summary, observed, now, step, stepsWithoutProgress) ?: earlier
             val shown = summary.copy(progress = progress)
             val settled = summary.lastStep != null && progress != null
-            return shown to if (settled) copy(summary = shown, measured = true) else this
+            // A shelter is credited only past the most enclosed it has been, so a return is no step.
+            val passed = listOfNotNull(best, now?.cover?.rank?.takeIf { summary.shelter }).maxOrNull()
+            return shown to if (settled) copy(summary = shown, measured = true, best = passed) else this
         }
+
+        /**
+         * This shelter goal held again by decision [by], whose perception was taken at [at] and
+         * read [observed], once the resource subgoal under it ended; [intent] is its next step,
+         * none when the ending answer took no step of it.
+         */
+        fun resumed(
+            at: Long,
+            by: String,
+            observed: GoalObservation?,
+            intent: Intent?,
+        ): Held =
+            copy(
+                summary =
+                    summary.copy(
+                        lastStep = null,
+                        progress = null,
+                        step = intent?.let(::stepOf) ?: summary.step,
+                        stepAction = intent?.action ?: summary.stepAction,
+                        stepRef = if (intent != null) intent.targetRef else summary.stepRef,
+                    ),
+                affirmedTick = at,
+                affirmedBy = by,
+                observed = observed,
+                measured = false,
+                reached = null,
+                settledTick = null,
+            )
     }
 
     private data class Basis(
@@ -138,6 +172,21 @@ class GoalLedger(
         fun unanswered(intent: Intent): String {
             val owed = presented != null || observed?.discoveryOffered == true
             return if (owed && observed.defers(intent)) GoalEvidence.DEFERRED else GoalEvidence.UNADDRESSED
+        }
+
+        /**
+         * What [intent]'s target was to this basis, for a goal of [item]: in sight - a walk's step is
+         * evidence only toward a target this perception showed in sight - a source of [item] out of
+         * dig reach, and a cell at the edge of sight.
+         */
+        fun targeting(
+            intent: Intent,
+            item: String?,
+        ): Triple<Boolean, Boolean, Boolean> {
+            val target = intent.targetRef ?: return Triple(false, false, false)
+            val inReach = target in observed?.inReach.orEmpty()
+            val toward = item != null && !inReach && item in observed?.gives?.get(target).orEmpty()
+            return Triple(observed?.visible?.contains(target) == true, toward, target in observed?.explore.orEmpty())
         }
 
         /**
@@ -168,6 +217,9 @@ class GoalLedger(
                 targetHeld = item?.let { observed?.inventory?.get(it) ?: 0 },
                 targetCapacity = item?.let { observed?.capacity?.get(it) ?: 0 },
                 presentedDiscovery = presented?.discovery?.takeIf { it },
+                presentedShelter = presented?.shelter?.takeIf { it },
+                steppedBy = presented?.lastStep?.requestId?.takeIf { fresh },
+                cover = presented?.progress?.cover,
             )
         }
     }
@@ -206,6 +258,125 @@ class GoalLedger(
             val built = (presented?.progress?.conditionHeld ?: 0) > 0 && tag == GoalEvidence.REPLACED
             return presented?.goalId.takeIf { built && item != null && item in needs }
                 ?: met.lastOrNull { (_, made) -> made in needs }?.first
+        }
+
+        /**
+         * What a met or abandoned resource subgoal [basis] presented leaves held: the shelter goal it
+         * fed, whose next step is [decision]'s intent; `null` for any other choice.
+         */
+        fun resumedBy(
+            basis: Basis,
+            choice: GoalChoice,
+            decision: Decision,
+            evidence: GoalEvidence,
+        ): GoalEvidence? {
+            val parent = held?.parent?.takeIf { basis.presented?.feeds != null && choice.disposition in ENDING }
+            return parent?.let {
+                val step = decision.intent.takeIf { it.action !in PASSIVE }
+                val resumed = it.resumed(basis.capturedTick, decision.requestId, basis.observed, step)
+                held = resumed
+                evidence.copy(
+                    outcome = acceptedTag(choice.disposition, basis.presented),
+                    goalId = resumed.summary.goalId,
+                    revision = resumed.summary.revision,
+                    shelter = true,
+                    resumed = resumed.summary.goalId,
+                )
+            }
+        }
+
+        /**
+         * The evidence of [choice], one whose shape fits the goal [basis] presented, once applied: a
+         * resource subgoal that ends hands back its shelter goal, and any other choice is applied.
+         */
+        fun answered(
+            basis: Basis,
+            choice: GoalChoice,
+            decision: Decision,
+            evidence: GoalEvidence,
+            recipes: RecipeInputs,
+        ): GoalEvidence =
+            shapeRefusalOf(basis.presented, choice)?.let { evidence.copy(outcome = it) }
+                ?: resumedBy(basis, choice, decision, evidence)
+                ?: applied(basis, choice, decision, evidence, recipes)
+
+        /**
+         * Ends the held goal at the stall bound, and answers the evidence: a stalled resource subgoal
+         * hands back the shelter goal it fed, with no step yet.
+         */
+        fun stalled(
+            basis: Basis,
+            decision: Decision,
+            evidence: GoalEvidence,
+        ): GoalEvidence {
+            val parent = held?.parent?.resumed(basis.capturedTick, decision.requestId, basis.observed, null)
+            held = parent
+            return evidence.copy(
+                outcome = GoalEvidence.STALLED,
+                goalId = parent?.summary?.goalId,
+                revision = parent?.summary?.revision,
+                resumed = parent?.summary?.goalId,
+            )
+        }
+
+        /** The goal [choice] leaves held once applied to [basis], and the evidence of it. */
+        fun applied(
+            basis: Basis,
+            choice: GoalChoice,
+            decision: Decision,
+            evidence: GoalEvidence,
+            recipes: RecipeInputs,
+        ): GoalEvidence {
+            val requestId = decision.requestId
+            val presented = basis.presented
+            val next = nextGoalOf(presented, choice, Affirmation(requestId, basis.capturedTick, decision.intent))
+            // A continue or revise carries the run of steps that changed nothing; only an adopted
+            // goal starts it again, since only a measured change is evidence of progress.
+            val fresh = choice.disposition in STARTING
+            val carriedCount = carriedCountOf(presented, choice, recipes, basis.observed?.horizon.orEmpty())
+            // A new goal starts with only the cell it was adopted at; a kept goal remembers every cell
+            // it has been reviewed at, so a walk back to one of them is no arrival anywhere new.
+            val earlier = if (fresh) emptySet() else held?.visited.orEmpty()
+            val visited = (earlier + listOfNotNull(basis.observed?.cell)).toList().takeLast(MAX_GOAL_CELLS).toSet()
+            val item = next?.successItem
+            val (stepVisible, towardSource, explored) = basis.targeting(decision.intent, item)
+            val tag = acceptedTag(choice.disposition, presented)
+            val chainedFrom = chainOf(tag, presented, next, fresh, recipes)
+            val before = held
+            held =
+                next?.let {
+                    Held(
+                        it,
+                        basis.capturedTick,
+                        requestId,
+                        basis.observed,
+                        carriedCount,
+                        visited,
+                        stepVisible,
+                        towardSource = towardSource,
+                        explored = explored,
+                        inputs =
+                            item?.let { recipes.inputsOf(it) + basis.observed?.horizon.orEmpty().pathOf(it) }.orEmpty(),
+                        best = if (fresh) basis.observed?.cover?.rank?.takeIf { _ -> it.shelter } else before?.best,
+                        // A subgoal keeps the shelter goal it feeds; any other new goal stands alone.
+                        parent = if (feeds(choice)) before else before?.parent?.takeIf { !fresh },
+                    )
+                }
+            return evidence.copy(
+                outcome = tag,
+                goalId = next?.goalId,
+                revision = next?.revision,
+                chainedFrom = chainedFrom,
+                discovery = next?.discovery?.takeIf { it },
+                shelter = next?.shelter?.takeIf { it },
+                feeds = next?.feeds,
+                // A met discovery goal replaced by an item goal for what it revealed.
+                discoveredFrom =
+                    presented?.goalId?.takeIf {
+                        presented.discovery && tag == GoalEvidence.COMPLETED_ADOPTED && next?.successItem != null
+                    },
+                ownGoalDropLying = basis.observed?.ownDrops?.containsValue(item)?.takeIf { it && item != null },
+            )
         }
     }
 
@@ -293,14 +464,11 @@ class GoalLedger(
             }
         val resolved =
             when {
-                incoherent == GoalEvidence.STALLED -> {
-                    goals.held = null
-                    evidence.copy(outcome = incoherent, goalId = null, revision = null)
-                }
+                incoherent == GoalEvidence.STALLED -> goals.stalled(basis, decision, evidence)
                 incoherent != null -> evidence.copy(outcome = incoherent)
                 choice == null -> evidence.copy(outcome = basis.unanswered(decision.intent))
                 !unchanged -> evidence.copy(outcome = GoalEvidence.STALE)
-                else -> apply(goals, basis, choice, decision, evidence)
+                else -> goals.answered(basis, choice, decision, evidence, recipes)
             }
         if (resolved.outcome !in GoalEvidence.TOLD_NOTHING) {
             goals.refusal = refusalOf(decision.requestId, resolved.outcome, basis.presented, choice, basis.observed)
@@ -359,67 +527,6 @@ class GoalLedger(
     /** How many agents currently hold state, for bound tests. */
     @Synchronized
     fun trackedAgents(): Int = agents.size
-
-    private fun apply(
-        goals: AgentGoals,
-        basis: Basis,
-        choice: GoalChoice,
-        decision: Decision,
-        evidence: GoalEvidence,
-    ): GoalEvidence {
-        val requestId = decision.requestId
-        val refusal = shapeRefusalOf(basis.presented, choice)
-        if (refusal != null) return evidence.copy(outcome = refusal)
-        val presented = basis.presented
-        val next = nextGoalOf(presented, choice, Affirmation(requestId, basis.capturedTick, decision.intent))
-        // A continue or revise carries the run of steps that changed nothing; only an adopted
-        // goal starts it again, since only a measured change is evidence of progress.
-        val fresh = choice.disposition in STARTING
-        val carriedCount = carriedCountOf(presented, choice, recipes, basis.observed?.horizon.orEmpty())
-        // A new goal starts with only the cell it was adopted at; a kept goal remembers every cell
-        // it has been reviewed at, so a walk back to one of them is no arrival anywhere new.
-        val earlier = if (fresh) emptySet() else goals.held?.visited.orEmpty()
-        val visited = (earlier + listOfNotNull(basis.observed?.cell)).toList().takeLast(MAX_GOAL_CELLS).toSet()
-        // A walk's step is evidence only toward a target this perception showed in sight.
-        val target = decision.intent.targetRef
-        val stepVisible = target != null && basis.observed?.visible?.contains(target) == true
-        val item = next?.successItem
-        val inReach = target != null && target in basis.observed?.inReach.orEmpty()
-        val towardSource =
-            item != null && target != null && !inReach && item in basis.observed?.gives?.get(target).orEmpty()
-        val explored = target != null && target in basis.observed?.explore.orEmpty()
-        val tag = acceptedTag(choice.disposition, presented)
-        val chainedFrom = goals.chainOf(tag, presented, next, fresh, recipes)
-        goals.held =
-            next?.let {
-                Held(
-                    it,
-                    basis.capturedTick,
-                    requestId,
-                    basis.observed,
-                    carriedCount,
-                    visited,
-                    stepVisible,
-                    towardSource = towardSource,
-                    explored = explored,
-                    inputs =
-                        item?.let { recipes.inputsOf(it) + basis.observed?.horizon.orEmpty().pathOf(it) }.orEmpty(),
-                )
-            }
-        return evidence.copy(
-            outcome = tag,
-            goalId = next?.goalId,
-            revision = next?.revision,
-            chainedFrom = chainedFrom,
-            discovery = next?.discovery?.takeIf { it },
-            // A met discovery goal replaced by an item goal for what it revealed.
-            discoveredFrom =
-                presented?.goalId?.takeIf {
-                    presented.discovery && tag == GoalEvidence.COMPLETED_ADOPTED && next?.successItem != null
-                },
-            ownGoalDropLying = (item != null && basis.observed?.ownDrops?.containsValue(item) == true).takeIf { it },
-        )
-    }
 }
 
 /**
@@ -439,6 +546,9 @@ private val KEEPING = setOf(GoalDisposition.CONTINUE, GoalDisposition.REVISE)
 
 /** The dispositions that start a goal of their own, and so a run of steps of its own. */
 private val STARTING = setOf(GoalDisposition.ADOPT, GoalDisposition.REPLACE)
+
+/** The dispositions that end the held goal. */
+private val ENDING = setOf(GoalDisposition.COMPLETE, GoalDisposition.ABANDON)
 
 /** The decision affirming a goal: its request, when its perception was taken, and its intent. */
 private data class Affirmation(
@@ -462,6 +572,8 @@ private fun nextGoalOf(
         GoalDisposition.ADOPT, GoalDisposition.REPLACE ->
             if (discovers(choice)) {
                 discoveryGoalOf(by.requestId, by.capturedTick, by.intent)
+            } else if (shelters(choice)) {
+                shelterGoalOf(by.requestId, by.capturedTick, by.intent)
             } else {
                 GoalSummary(
                     goalId = by.requestId,
@@ -473,6 +585,7 @@ private fun nextGoalOf(
                     step = stepOf(by.intent),
                     stepAction = by.intent.action,
                     stepRef = by.intent.targetRef,
+                    feeds = presented?.goalId?.takeIf { feeds(choice) },
                 )
             }
         GoalDisposition.CONTINUE ->
@@ -505,7 +618,8 @@ private fun shapeRefusalOf(
 ): String? {
     val adopting = choice.disposition == GoalDisposition.ADOPT
     return when {
-        adopting && presented != null -> GoalEvidence.ALREADY_HELD
+        // A resource subgoal is adopted under the shelter goal it feeds (`Shelter.kt`).
+        adopting && presented != null && !feeds(choice) -> GoalEvidence.ALREADY_HELD
         !adopting && presented == null -> GoalEvidence.NOT_HELD
         else -> missingFieldOf(choice)
     }

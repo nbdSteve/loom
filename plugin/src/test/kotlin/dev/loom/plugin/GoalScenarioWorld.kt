@@ -40,6 +40,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
@@ -124,6 +125,12 @@ internal data class Scene(
     val health: Double? = null,
     /** The world border the server states before the bodies are placed, none when absent. */
     val border: SceneBorder? = null,
+    /** The floor's block at y 63, and the layers under it, top first. */
+    val floor: String = "stone",
+    val depth: List<String> = emptyList(),
+    /** Whether a served break hands the breaker its drop at once, and a placement is served. */
+    val dropsOnBreak: Boolean = false,
+    val servePlaces: Boolean = false,
 ) {
     /** The scene as the peers script reads it. */
     fun json(identities: Map<AgentId, PlayerIdentity>): String =
@@ -148,6 +155,10 @@ internal data class Scene(
             "servePickups" to servePickups,
             "vitals" to health?.let { jsonOf("health" to it, "food" to 20, "foodSaturation" to 5) },
             "border" to border?.let { jsonOf("x" to it.x, "z" to it.z, "diameter" to it.diameter) },
+            "floor" to floor,
+            "depth" to JsonArray(depth.map { JsonPrimitive(it) }).takeIf { depth.isNotEmpty() },
+            "dropsOnBreak" to dropsOnBreak,
+            "servePlaces" to servePlaces,
             "items" to
                 JsonArray(
                     items.map {
@@ -183,14 +194,22 @@ internal data class Scene(
                 }
         }
 
-    /** The server's ground for this scene: the stone floor and every solid block in it. */
+    /** The scene block at [position]: a placed one, else the floor and its layers within the columns. */
+    fun blockAt(position: List<Int>): String? {
+        val (x, y, z) = position
+        val block = blocks.firstOrNull { it.x == x && it.y == y && it.z == z }
+        val extent = -CHUNK * columns until CHUNK * (columns + 1)
+        val layer =
+            (listOf(floor) + depth).getOrNull(FLOOR_Y - y)?.takeIf { y <= FLOOR_Y && x in extent && z in extent }
+        return block?.name ?: layer
+    }
+
+    /** The server's ground for this scene: the floor, its layers and every solid block in it. */
     val ground: BlockGround =
-        BlockGround { position ->
-            val (x, y, z) = position
-            val block = blocks.firstOrNull { it.x == x && it.y == y && it.z == z }
-            val extent = -CHUNK * columns until CHUNK * (columns + 1)
-            val floor = y == FLOOR_Y && x in extent && z in extent
-            !floor && (block == null || block.name in PASSABLE)
+        object : BlockGround {
+            override fun standsIn(position: List<Int>): Boolean = blockAt(position).let { it == null || it in PASSABLE }
+
+            override fun holdsNothing(position: List<Int>): Boolean = blockAt(position) == null
         }
 
     /** What digging each block with a bare hand drops: a dead bush nought to two sticks, dirt or a log one. */
@@ -198,9 +217,9 @@ internal data class Scene(
         BlockYields { position, _ ->
             val (x, y, z) = position
             val block = blocks.firstOrNull { it.x == x && it.y == y && it.z == z }
-            when (block?.name) {
+            when (block?.name ?: blockAt(position)) {
                 "dead_bush" -> listOf(BlockYield("item.minecraft.stick", 0, 2, 100))
-                "dirt" -> listOf(BlockYield("item.minecraft.dirt", 1, 1, 100))
+                "dirt", "grass_block" -> listOf(BlockYield("item.minecraft.dirt", 1, 1, 100))
                 "oak_log" -> listOf(BlockYield("item.minecraft.oak_log", 1, 1, 100))
                 else -> emptyList()
             }
@@ -277,6 +296,21 @@ internal class ScenarioWorld(
     private val kept = CopyOnWriteArrayList<BodyEventRecord>()
     private val writes = CopyOnWriteArrayList<DigWrite>()
     private val broke = CopyOnWriteArrayList<String>()
+    private val placers = CopyOnWriteArrayList<String>()
+
+    /** The cells the shared server changed, by what now stands in each: [AIR] where a break left nothing. */
+    private val changed = ConcurrentHashMap<List<Int>, String>()
+
+    /** The server's ground as the shared server left it: the scene's, under every break and placement. */
+    private fun groundOf(scene: Scene): BlockGround =
+        object : BlockGround {
+            override fun standsIn(position: List<Int>): Boolean =
+                changed[position]?.let { it == AIR } ?: scene.ground.standsIn(position)
+
+            override fun holdsNothing(position: List<Int>): Boolean =
+                changed[position]?.let { it == AIR } ?: scene.ground.holdsNothing(position)
+        }
+
     private val log = BodyEventLog { record -> kept += record }
     val mind = ScenarioMind()
     val records: List<BodyEventRecord> get() = kept.toList()
@@ -310,19 +344,29 @@ internal class ScenarioWorld(
                             listOf("x", "y", "z").map { wrote.getValue(it).jsonPrimitive.int },
                         )
                 }
-                read["broke"]?.jsonObject?.let { broke += it.getValue("agentId").jsonPrimitive.content }
+                read["broke"]?.jsonObject?.let {
+                    changed[listOf("x", "y", "z").map { axis -> it.getValue(axis).jsonPrimitive.int }] = AIR
+                    broke += it.getValue("agentId").jsonPrimitive.content
+                }
+                read["placed"]?.jsonObject?.let {
+                    changed[listOf("x", "y", "z").map { axis -> it.getValue(axis).jsonPrimitive.int }] =
+                        it.getValue("name").jsonPrimitive.content
+                    placers += it.getValue("agentId").jsonPrimitive.content
+                }
             }
         }.apply { isDaemon = true }.start()
         val authority =
             PlayerBodyAuthority(
                 main = mainExecutor,
                 registerIdentity = {},
-                serverState = SceneServer(broke, scene.items, scene.entities),
+                serverState = SceneServer(broke, scene.items, scene.entities, placers),
                 eventLog = log,
                 currentTick = tick::get,
-                ground = scene.ground,
+                ground = groundOf(scene),
                 yields = scene.yields,
                 ownDrops = if (scene.trackDrops) LedgerDrops(dropLedger) else scene.drops,
+                solidity = { what -> what.removePrefix("minecraft:") in SOLID },
+                players = ScenePlayers,
             )
         val port =
             PlayerBodyPort(
@@ -528,6 +572,7 @@ internal class SceneServer(
     private val broke: List<String>,
     private val items: List<SceneItem>,
     private val entities: List<kotlinx.serialization.json.JsonObject> = emptyList(),
+    private val placers: List<String> = emptyList(),
 ) : PlayerServerState {
     /** Each sensed item correlated to the scene item it lies within a block of, as Paper does. */
     override fun itemSubjectsOf(
@@ -587,6 +632,11 @@ internal class SceneServer(
     ): ServerInteractionAudit {
         val dug = claim is ServerInteractionClaim.Dig && claim.report.outcome == DigOutcome.DUG
         val ours = identity.agentId.value in broke
+        if (claim is ServerInteractionClaim.Place) {
+            val placed = claim.report.outcome == dev.loom.bodycontrol.PlaceOutcome.PLACED
+            val served = identity.agentId.value in placers
+            return ServerInteractionAudit(placed == served, if (served) "found: the server set the block" else "absent")
+        }
         return when {
             dug && ours -> ServerInteractionAudit(true, "found: the server took this player's break")
             dug -> ServerInteractionAudit(true, "absent: another player's break", brokenByOther = true)
@@ -613,6 +663,25 @@ private fun jsonOf(vararg fields: Pair<String, Any?>): JsonObject =
 /** The uuid the peers spawn scene entity [id] with (`body/test/harness.js` `spotted`). */
 internal fun sceneEntityUuid(id: Int): UUID =
     UUID.fromString("00000000-0000-4000-8000-${id.toString().padStart(12, '0')}")
+
+/** What a break leaves in a cell the shared server changed. */
+private const val AIR = "air"
+
+/** The scene items that place as a solid block, as Paper's `Material.isSolid` says. */
+private val SOLID = setOf("dirt", "grass_block", "stone", "cobblestone", "oak_log", "oak_planks")
+
+/**
+ * Where the server has a scene's players, as far as a scene says: no position of its own, and the
+ * hand in the first hotbar slot, where the bodies keep it.
+ */
+private object ScenePlayers : dev.loom.body.player.ServerPlayerView {
+    override fun feetOf(identity: PlayerIdentity): List<Double>? = null
+
+    override fun mainHandSlotOf(identity: PlayerIdentity): Int = FIRST_HOTBAR_SLOT
+}
+
+/** The protocol window slot of the first hotbar slot. */
+private const val FIRST_HOTBAR_SLOT = 36
 
 /** Vanilla's tick, at which the fake server drives the body's per-tick hook. */
 private const val SERVER_TICK_MILLIS = 50L

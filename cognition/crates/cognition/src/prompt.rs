@@ -39,13 +39,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v34";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v35";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v34";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v35";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v34";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v35";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -237,7 +237,26 @@ not progress either. After three steps in a row that advanced nothing, your body
 continue and revise; only replace with a different item, abandon, or complete when met, is \
 offered then. When your success condition is met you must complete the goal, replace it with \
 the next, or revise it to a total you do not yet hold, at that review; anything else is refused \
-with your action.";
+with your action.
+
+Night brings creatures that hunt you, and open ground gives them every side to reach you from. \
+You are told your cover: how many of the nine sides around your body - four beside your feet, \
+four beside your head, and the one over your head - are closed, read from the ground itself, \
+and whether the space you stand in is sealed, closed on every side so nothing can walk, climb or \
+swim in. As night nears, and through the night, you may set a shelter goal instead of an item \
+goal: its success condition is being sealed in, measured from the ground and never from what you \
+say. It is stepped only by what your cover offers: digging the block under your feet when that \
+drops you into more enclosed ground - three digs down on open grass leave one side open, over \
+your head, closable from inside - placing a solid block you hold against a named support so it \
+closes an open side, equipping a solid block into your main hand first when none is there, or \
+walking onto a block whose cell is more enclosed than yours, which is natural cover. A step \
+counts only when the ground then shows you more enclosed than the shelter goal had yet been, so \
+moving away and back counts nothing. When sides are left to close and you hold nothing solid, \
+you may adopt a resource subgoal that feeds the shelter goal: a goal for a solid block sight can \
+give, such as dirt from a dig; the shelter goal waits under it and is held again once you \
+complete or abandon the subgoal, with that answer's action as the shelter's next step. Once \
+sealed in, complete the shelter goal and stay: rest is a fine answer then, and creatures outside \
+are not news. In a pit you cannot walk out of, no flight is offered; closing it is your defence.";
 
 /// The per-tier closing instruction.
 ///
@@ -290,6 +309,7 @@ fn situation_of(perception: &Perception) -> String {
     ));
     lines.push(self_line(&perception.self_state));
     lines.push(world_line(&perception.self_state.world));
+    lines.extend(cover_line(perception));
     lines.push(inventory_line(&perception.self_state.inventory_summary));
     lines.push(crafting_line(
         &perception.self_state.crafting_options,
@@ -433,6 +453,39 @@ fn discovery_condition(goal: &GoalSummary) -> Vec<String> {
     parts
 }
 
+/// A shelter goal's success condition and its measured cover, and the shelter a subgoal feeds.
+fn shelter_condition(goal: &GoalSummary) -> Vec<String> {
+    let mut parts = Vec::new();
+    if goal.shelter {
+        let progress = goal.progress.as_ref();
+        let met = progress.is_some_and(|progress| progress.condition_met);
+        parts.push(format!(
+            "Success condition: the ground seals the space you stand in; it is {status}{cover}.",
+            status = if met { "MET" } else { "not met yet" },
+            cover = progress.and_then(|progress| progress.cover).map_or_else(String::new, |cover| {
+                format!(
+                    ", with {closed} of 9 sides closed and {closable} more closable from where you stand at the last measure",
+                    closed = cover.closed,
+                    closable = cover.closable
+                )
+            })
+        ));
+        if met {
+            parts.push(
+                "Because it is met, complete this goal and stay sealed in, or replace it with an item goal sight gives."
+                    .to_owned(),
+            );
+        }
+    }
+    if let Some(shelter) = &goal.feeds {
+        parts.push(format!(
+            "This is a resource subgoal feeding your shelter goal {shelter}: complete it once met, or abandon it, and the shelter goal is held again with that answer's action as its step.",
+            shelter = field(shelter)
+        ));
+    }
+    parts
+}
+
 /// The held goal, its revision, and the body's answer to the last step under it.
 ///
 /// Rendered at a goal review only, because that is the only perception the body
@@ -460,6 +513,7 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
         tick = goal.adopted_tick
     )];
     parts.extend(discovery_condition(goal));
+    parts.extend(shelter_condition(goal));
     if let (Some(item), Some(count)) = (&goal.success_item, goal.success_count) {
         let held = goal
             .progress
@@ -517,6 +571,9 @@ fn goal_line(goal: Option<&GoalSummary>) -> String {
                 StepEvidence::Revealed => {
                     "walked to the edge of sight and brought a source of the goal's item into sight"
                 }
+                StepEvidence::Covered => {
+                    "left you more enclosed than this shelter goal had yet been"
+                }
                 StepEvidence::None => "showed no evidence and advanced nothing",
             },
             count = progress.steps_without_progress,
@@ -544,7 +601,9 @@ fn refusal_line(refusal: &GoalRefusal) -> String {
         }
         "goalCompletionUnmet" => "it completed a goal your inventory did not show met",
         "goalChoiceMissing" => "it acted while you held a goal and said nothing of the goal",
-        "goalStepUnproductive" => "its action could not give the goal's item",
+        "goalStepUnproductive" => {
+            "its action could not give the goal's item, or was no step your cover offered a shelter goal"
+        }
         "goalOwnDropIgnored" => {
             "it did not collect your own drop of the goal's item that lay in reach"
         }
@@ -567,6 +626,15 @@ fn refusal_line(refusal: &GoalRefusal) -> String {
             "it set a discovery goal while something in sight, memory or hand grounded an item goal, or nowhere was offered to look"
         }
         "goalStalled" => "the goal had advanced nothing for three steps in a row, so it ended",
+        "goalShelterNotOffered" => {
+            "it set a shelter goal where none was offered: night was not near, you were already sealed in, or your cover offered no step"
+        }
+        "goalFeedsNotOffered" => {
+            "it adopted a resource subgoal where none could feed a shelter: no shelter goal held, no side to close, a solid block already held, or an item that places no solid block"
+        }
+        "goalSubgoalReplaced" => {
+            "it replaced a resource subgoal, which would drop the shelter goal it feeds: complete or abandon it instead"
+        }
         "goalSuccessTargetMissing" => "it set a goal without its item and total",
         "goalStepResultMissing" => "it did not judge the previous step",
         _ => "it broke a goal rule",
@@ -654,10 +722,20 @@ fn inventory_line(inventory: &[InventoryStack]) -> String {
         .take(MAX_INVENTORY_LINES)
         .map(|stack| {
             format!(
-                "{count} {what} (ref {handle})",
+                "{count} {what} (ref {handle}{solid}{held})",
                 count = stack.count,
                 what = field(&stack.what),
-                handle = field(&stack.slot_ref)
+                handle = field(&stack.slot_ref),
+                solid = if stack.solid == Some(true) {
+                    ", a solid block"
+                } else {
+                    ""
+                },
+                held = if stack.held == Some(true) {
+                    ", in your main hand"
+                } else {
+                    ""
+                }
             )
         })
         .collect::<Vec<_>>()
@@ -1174,6 +1252,92 @@ fn world_line(world: &WorldState) -> String {
     )
 }
 
+/// The agent's cover, from the ground: how enclosed it stands, what would close it more, and the
+/// natural cover in sight (r36: all ten agents died at night in the open, told nothing of shelter).
+fn cover_line(perception: &Perception) -> Option<String> {
+    let cover = perception.self_state.cover.as_ref()?;
+    let shelter = crate::offered::ShelterOffer::of(perception);
+    let closed = shelter.closed;
+    if cover.sealed {
+        return Some(format!(
+            "Your cover: you are sealed in, {closed} of 9 sides around you closed; nothing can walk, climb or swim in to you{out}.",
+            out = if cover.walk_out { "" } else { ", and no short walk leads out" }
+        ));
+    }
+    let mut parts = vec![format!(
+        "Your cover: {closed} of 9 sides around you are closed, so you are not sealed in{out}.",
+        out = if cover.walk_out {
+            ""
+        } else {
+            "; no short walk leads out of where you stand, so no flight can run"
+        }
+    )];
+    if let Some(descend) = &cover.descend {
+        parts.push(format!(
+            "Digging the block under your feet (ref {}) drops you into more enclosed ground.",
+            field(descend)
+        ));
+    }
+    if !cover.closings.is_empty() {
+        let closings = cover
+            .closings
+            .iter()
+            .map(|closing| {
+                format!(
+                    "{side} side of {block}",
+                    side = serde_json::to_value(closing.side)
+                        .ok()
+                        .and_then(|value| value.as_str().map(str::to_owned))
+                        .unwrap_or_default(),
+                    block = field(&closing.block)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(format!(
+            "A solid block placed against the {closings} would close an open side{held}.",
+            held = if shelter.solid_held.is_empty() {
+                if shelter.solid.is_empty() {
+                    "; you hold nothing solid"
+                } else {
+                    "; equip a solid block into your main hand first"
+                }
+            } else {
+                ""
+            }
+        ));
+    }
+    if !shelter.sites.is_empty() {
+        let sites = perception
+            .surroundings
+            .iter()
+            .filter(|seen| shelter.sites.contains(&seen.target_ref))
+            .map(|seen| {
+                format!(
+                    "{block} ({faces} of 9)",
+                    block = field(&seen.target_ref),
+                    faces = seen.cover.unwrap_or(0)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(format!("More enclosed ground to stand on: {sites}."));
+    }
+    if !cover.block_items.is_empty() && shelter.solid.is_empty() {
+        let items = cover
+            .block_items
+            .iter()
+            .map(|item| field(item))
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(format!("Sight could give you these solid blocks: {items}."));
+    }
+    if shelter.offered() {
+        parts.push("Night is near, so a shelter goal is offered.".to_owned());
+    }
+    Some(parts.join(" "))
+}
+
 /// What the nightfall countdown means, which depends on whether night has already come.
 ///
 /// The number wraps the world's day and never reads zero, so during the night it is a
@@ -1400,6 +1564,8 @@ mod tests {
             what: what.to_owned(),
             count,
             edible: None,
+            solid: None,
+            held: None,
         }
     }
 
@@ -1424,6 +1590,7 @@ mod tests {
                     is_day: true,
                     ticks_until_nightfall: 6_000,
                 },
+                cover: None,
             },
             surroundings: vec![Observation {
                 kind: ObservationKind::Entity,
@@ -1439,6 +1606,7 @@ mod tests {
                 dig_safe: None,
                 route_refused: None,
                 hunts: None,
+                cover: None,
             }],
             surroundings_omitted: 0,
             goal: None,
@@ -1475,6 +1643,7 @@ mod tests {
                 dig_safe: Some(true),
                 route_refused: None,
                 hunts: None,
+                cover: None,
             },
             Observation {
                 kind: ObservationKind::Block,
@@ -1490,6 +1659,7 @@ mod tests {
                 dig_safe: Some(true),
                 route_refused: None,
                 hunts: None,
+                cover: None,
             },
         ];
         seen.surroundings_omitted = 117;
@@ -1514,6 +1684,8 @@ mod tests {
             step_action: None,
             step_ref: None,
             progress: None,
+            shelter: false,
+            feeds: None,
         }
     }
 
@@ -1603,6 +1775,7 @@ mod tests {
             step_advanced: false,
             step_evidence: loom_contract::StepEvidence::None,
             steps_without_progress: 2,
+            cover: None,
         });
         let rendered = situation(&goal_review_holding(Some(goal.clone())));
         assert!(rendered.contains("The step you chose last time: \"cut the oak log in reach\"."));
@@ -1636,6 +1809,7 @@ mod tests {
             step_advanced: true,
             step_evidence: loom_contract::StepEvidence::Gained,
             steps_without_progress: 0,
+            cover: None,
         });
         let met = situation(&goal_review_holding(Some(goal)));
         for expected in [
@@ -1786,6 +1960,7 @@ mod tests {
             dig_safe: Some(true),
             route_refused: None,
             hunts: None,
+            cover: None,
         });
         assert!(situation(&seen)
             .contains("What is in sight can be counted on to give you 1 more item.minecraft.stick (at best 2), beyond what you hold; a goal may count only on the first number."));
@@ -1849,6 +2024,7 @@ mod tests {
             dig_safe: None,
             route_refused: None,
             hunts: None,
+            cover: None,
         });
         assert!(!situation(&with_one).contains("No dropped item"));
     }
@@ -2132,6 +2308,8 @@ mod tests {
                 what: overlong.clone(),
                 count: 64,
                 edible: None,
+                solid: None,
+                held: None,
             })
             .collect();
         // Every own drop a perception may carry, lying at the widest place with the longest name.
@@ -2642,6 +2820,7 @@ mod tests {
                 dig_safe: None,
                 route_refused: None,
                 hunts: None,
+                cover: None,
             })
             .collect();
         seen.surroundings_omitted = 7;
@@ -2679,6 +2858,7 @@ mod tests {
                 dig_safe: None,
                 route_refused: None,
                 hunts: None,
+                cover: None,
             })
             .collect();
         seen.surroundings_omitted = -1_000;
@@ -2766,6 +2946,7 @@ mod tests {
                 dig_safe: None,
                 route_refused: None,
                 hunts: None,
+                cover: None,
             })
             .collect();
         let prompt = render(&router().route(seen.importance), &seen);

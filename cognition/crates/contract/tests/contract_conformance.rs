@@ -524,3 +524,35 @@ fn a_perception_tells_at_most_eight_own_drops_and_both_reviews_carry_the_goal() 
     seen["selfState"]["ownDrops"] = serde_json::Value::Array(vec![drop; 9]);
     assert!(serde_json::from_value::<Perception>(seen).is_err());
 }
+
+#[test]
+fn a_cover_names_each_face_once_and_closes_only_open_ones() {
+    let cover = |fields: &str| serde_json::from_str::<loom_contract::Cover>(fields);
+    assert!(cover(
+        r#"{"sealed":false,"walkOut":false,"open":["roof","feetNorth"],"closings":[{"face":"roof","block":"b2","side":"west"}],"descend":"b1","blockItems":["item.minecraft.dirt"]}"#
+    )
+    .is_ok());
+    for bad in [
+        // A face named twice.
+        r#"{"sealed":false,"walkOut":true,"open":["roof","roof"],"closings":[],"blockItems":[]}"#,
+        // A closing of a face that is not open.
+        r#"{"sealed":false,"walkOut":true,"open":["feetNorth"],"closings":[{"face":"roof","block":"b2","side":"west"}],"blockItems":[]}"#,
+        // Two closings of one face.
+        r#"{"sealed":false,"walkOut":true,"open":["roof"],"closings":[{"face":"roof","block":"b2","side":"west"},{"face":"roof","block":"b3","side":"east"}],"blockItems":[]}"#,
+        // A block item that is no item.
+        r#"{"sealed":false,"walkOut":true,"open":[],"closings":[],"blockItems":["block.minecraft.dirt"]}"#,
+        // A descend ref longer than any ref the body issues.
+        r#"{"sealed":false,"walkOut":true,"open":[],"closings":[],"descend":"b123456789","blockItems":[]}"#,
+    ] {
+        assert!(cover(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn natural_cover_is_told_only_for_a_block_a_body_can_stand_at() {
+    let seen = |fields: &str| serde_json::from_str::<loom_contract::Observation>(fields);
+    let block = r#""kind":"block","what":"block.minecraft.stone","distance":2.0,"direction":"east","verticalOffset":0.0,"visible":true,"ref":"b1","yields":[],"digSafe":true"#;
+    assert!(seen(&format!(r#"{{{block},"standable":true,"cover":9}}"#)).is_ok());
+    assert!(seen(&format!(r#"{{{block},"standable":false,"cover":3}}"#)).is_err());
+    assert!(seen(&format!(r#"{{{block},"standable":true,"cover":10}}"#)).is_err());
+}

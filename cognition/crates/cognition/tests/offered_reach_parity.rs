@@ -154,3 +154,21 @@ fn every_survival_bound_is_the_one_the_jvm_ledger_defers_a_goal_by() {
         );
     }
 }
+
+#[test]
+fn every_shelter_bound_is_the_one_the_jvm_ledger_judges_a_shelter_by() {
+    use loom_cognition::offered::{MAX_SHELTER_SITES, SHELTER_LEAD_TICKS};
+    let shelter = "plugin/src/main/kotlin/dev/loom/mind/Shelter.kt";
+    #[allow(clippy::cast_precision_loss)]
+    let pairs = [
+        ("SHELTER_LEAD_TICKS", SHELTER_LEAD_TICKS as f64),
+        ("MAX_SHELTER_SITES", MAX_SHELTER_SITES as f64),
+    ];
+    for (name, mind) in pairs {
+        let jvm = constant(shelter, name);
+        assert!(
+            (jvm - mind).abs() < f64::EPSILON,
+            "{name}: JVM {jvm}, mind {mind}"
+        );
+    }
+}

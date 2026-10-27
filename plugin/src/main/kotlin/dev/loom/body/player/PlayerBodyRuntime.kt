@@ -44,6 +44,8 @@ data class PlayerBodyAuthority(
     val yields: BlockYields = BlockYields.NONE,
     val edibility: ItemEdibility = ItemEdibility.NONE,
     val ownDrops: OwnDrops = OwnDrops.NONE,
+    val solidity: ItemSolidity = ItemSolidity.NONE,
+    val players: ServerPlayerView = ServerPlayerView.NONE,
 )
 
 internal data class PlayerRuntime(

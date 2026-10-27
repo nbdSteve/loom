@@ -7,6 +7,7 @@ import dev.loom.body.player.BlockGround
 import dev.loom.body.player.columnInsideBorder
 import org.bukkit.Material
 import org.bukkit.Server
+import org.bukkit.block.Block
 import org.bukkit.block.data.Waterlogged
 
 /**
@@ -16,18 +17,29 @@ import org.bukkit.block.data.Waterlogged
 class BukkitBlockGround(
     private val server: Server,
 ) : BlockGround {
-    override fun standsIn(position: List<Int>): Boolean {
-        val (x, y, z) = position
-        val world = server.worlds.firstOrNull() ?: return false
-        val border = world.worldBorder
-        val centre = border.center
-        return columnInsideBorder(centre.x, centre.z, border.size, x, z) && world.getBlockAt(x, y, z).isPassable
-    }
+    override fun standsIn(position: List<Int>): Boolean = insideBorder(position)?.isPassable == true
+
+    override fun holdsNothing(position: List<Int>): Boolean = insideBorder(position)?.type?.isAir == true
+
+    override fun breakable(position: List<Int>): Boolean = (blockAt(position)?.type?.hardness ?: -1f) >= 0f
 
     override fun holdsWater(position: List<Int>): Boolean {
-        val (x, y, z) = position
-        val block = server.worlds.firstOrNull()?.getBlockAt(x, y, z) ?: return false
+        val block = blockAt(position) ?: return false
         return block.type == Material.WATER || block.type == Material.BUBBLE_COLUMN ||
             (block.blockData as? Waterlogged)?.isWaterlogged == true
+    }
+
+    private fun blockAt(position: List<Int>): Block? {
+        val (x, y, z) = position
+        return server.worlds.firstOrNull()?.getBlockAt(x, y, z)
+    }
+
+    /** The block at [position], or `null` past the world border, where the server lets nothing be. */
+    private fun insideBorder(position: List<Int>): Block? {
+        val (x, y, z) = position
+        val world = server.worlds.firstOrNull() ?: return null
+        val border = world.worldBorder
+        val centre = border.center
+        return if (columnInsideBorder(centre.x, centre.z, border.size, x, z)) world.getBlockAt(x, y, z) else null
     }
 }

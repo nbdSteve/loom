@@ -251,15 +251,7 @@ class LoomPlugin : JavaPlugin() {
         val authority =
             PlayerBodyAuthority(
                 main = Executor { command -> bukkitMain.execute { command.run() } },
-                registerIdentity = { identity ->
-                    managedPlayers.register(
-                        ManagedIdentity(
-                            identity.agentId,
-                            identity.username,
-                            identity.uuid,
-                        ),
-                    )
-                },
+                registerIdentity = { managedPlayers.register(ManagedIdentity(it.agentId, it.username, it.uuid)) },
                 serverState =
                     BukkitPlayerServerState(
                         server = server,
@@ -274,6 +266,8 @@ class LoomPlugin : JavaPlugin() {
                 yields = BukkitBlockYields(server),
                 edibility = BukkitItemEdibility,
                 ownDrops = ownDrops,
+                solidity = BukkitItemSolidity,
+                players = BukkitServerPlayerView(server),
             )
         val infrastructures =
             fleet.deployments.map { deployment ->

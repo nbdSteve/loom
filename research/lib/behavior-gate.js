@@ -49,7 +49,10 @@ const { readinessMetrics } = require('./readiness.js')
 // dangerOverlap blocker, and reports the JVM's callReserved refusals, tier fallbacks and preempted answers.
 // Generation 18 types the work that drained after the run's exposure ended and counts an older
 // flight a newer danger answer was applied after as the superseded retreatStale.
-const GATE_GENERATION = 18
+// Generation 19 counts a shelter goal apart from item goals, credits its covered steps, refuses a
+// shelter or subgoal set where none was offered or a subgoal replaced, and measures the run's
+// shelter from the server's sealed record against the profile's pre-registered shelter bar.
+const GATE_GENERATION = 19
 // The goal outcomes of a decision whose action was a step of a goal it held or took up.
 const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised', 'goalReplaced', 'goalCompletedAdopted'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`

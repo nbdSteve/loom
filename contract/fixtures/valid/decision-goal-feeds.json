@@ -1,0 +1,1 @@
+{"requestId":"req-feed-1","agentId":"agent-zeta","intent":{"action":"dig","block":"b4"},"reasoning":"nothing held can close the shelter; dig dirt for it","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"},"goal":{"disposition":"adopt","successItem":"item.minecraft.dirt","successCount":1,"feeds":true}}

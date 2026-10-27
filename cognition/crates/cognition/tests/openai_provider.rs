@@ -355,6 +355,8 @@ fn perception(importance: DecisionImportance) -> Perception {
                 what: "bread".to_owned(),
                 count: 1,
                 edible: None,
+                solid: None,
+                held: None,
             }],
             crafting_options: vec![],
             crafting_options_omitted: 0,
@@ -364,6 +366,7 @@ fn perception(importance: DecisionImportance) -> Perception {
                 is_day: true,
                 ticks_until_nightfall: 6_000,
             },
+            cover: None,
         },
         surroundings: vec![],
         surroundings_omitted: 0,
@@ -483,11 +486,13 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
             success_count: Some(8),
             step: Some("walk to the birch on the hill".to_owned()),
             step_result: Some(GoalStepResult::NoProgress),
+            shelter: None,
+            feeds: None,
         })
     );
     assert_eq!(decision.intent, Intent::Idle);
     assert_eq!(decision.provenance.model, FAST_MODEL);
-    assert_eq!(decision.provenance.prompt_version, "routine-v34");
+    assert_eq!(decision.provenance.prompt_version, "routine-v35");
 }
 
 #[tokio::test]

@@ -227,6 +227,8 @@ private class PlayerBodyInstance(
 
     val pickup by lazy { OwnDropPickup(context, registry, sessions, perception) }
 
+    private val shelter = ShelterWitness(context, registry)
+
     fun release(
         agentId: AgentId,
         requestId: String,
@@ -238,6 +240,7 @@ private class PlayerBodyInstance(
     fun tick(tick: Long) {
         lifecycle.tick(tick)
         pickup.tick(tick)
+        shelter.tick(tick)
     }
 
     fun liveBodies(): Set<AgentId> = registry.liveBodies()

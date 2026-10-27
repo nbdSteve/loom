@@ -41,6 +41,7 @@ internal fun incoherenceOf(
 ): String? {
     val stepping = choice?.disposition in STEPPING
     return GoalEvidence.SURVIVAL_REQUIRED.takeIf { observed?.survival?.withholds(intent) == true }
+        ?: shelterRefusalOf(presented, choice, intent, observed)
         ?: discoveryRefusalOf(presented, choice, intent, observed)
         ?: discoveryAbandonOf(presented, choice, observed)
         ?: reviseItemOf(presented, choice)
@@ -114,8 +115,10 @@ private fun successRefusalOf(
         observed == null -> null
         !continuing && held >= count -> GoalEvidence.ALREADY_MET
         !continuing && count > observed.reachOf(item) -> GoalEvidence.SUCCESS_UNOBTAINABLE
-        // A new target may not hand over whole what looking further would not (r22).
-        disposition in NEW_TARGET && observed.crowdsExploration(item) -> GoalEvidence.CROWDS_EXPLORATION
+        // A new target may not hand over whole what looking further would not (r22); a block that
+        // closes a shelter is the shelter's, not a goal of its own.
+        disposition in NEW_TARGET && !feeds(choice) && observed.crowdsExploration(item) ->
+            GoalEvidence.CROWDS_EXPLORATION
         else -> null
     }
 }

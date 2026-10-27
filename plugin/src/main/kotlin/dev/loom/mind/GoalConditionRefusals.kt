@@ -35,7 +35,7 @@ internal fun conditionRefusalOf(
         met && !steppedAside && !movesOnFrom(choice, observed) -> GoalEvidence.CONDITION_MET_IGNORED
         disposition == GoalDisposition.ABANDON && achievable(presented, observed) ->
             GoalEvidence.ABANDONED_ACHIEVABLE
-        disposition == GoalDisposition.COMPLETE -> completionRefusalOf(met, observed)
+        disposition == GoalDisposition.COMPLETE -> completionRefusalOf(met, observed, presented)
         presented != null && choice == null && intent.action !in PASSIVE && !steppedAside ->
             GoalEvidence.CHOICE_MISSING
         else -> null
@@ -63,12 +63,17 @@ private fun movesOnFrom(
 private fun completionRefusalOf(
     met: Boolean,
     observed: GoalObservation?,
-): String? =
-    when {
+    presented: GoalSummary?,
+): String? {
+    // A sealed shelter is completed to be stayed in, and a met subgoal resumes the shelter it fed:
+    // neither leaves its agent without what comes next.
+    val leadsOn = presented?.shelter == true || presented?.feeds != null
+    return when {
         !met -> GoalEvidence.COMPLETION_UNMET
-        observed != null && nextGoalOffered(observed) -> GoalEvidence.COMPLETED_WITHOUT_NEXT
+        !leadsOn && observed != null && nextGoalOffered(observed) -> GoalEvidence.COMPLETED_WITHOUT_NEXT
         else -> null
     }
+}
 
 /**
  * Whether a replace could adopt a next goal from what sight gives without crowding out looking

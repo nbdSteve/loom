@@ -164,6 +164,18 @@ data class BodyEventRecord(
     val movement: MovementEvidence? = null,
     /** What the server's ground says of a collect the body found no route for; see [TerrainEvidence]. */
     val terrain: TerrainEvidence? = null,
+    /** Whether the server's ground sealed the agent in, and its cover then; see [ShelterEvidence]. */
+    val shelter: ShelterEvidence? = null,
+)
+
+/**
+ * The server's ground around an agent's server position at a change in whether it is sealed in:
+ * [sealed] as `Cover.sealed` reads it, and [closed] of the nine faces around its body.
+ */
+@Serializable
+data class ShelterEvidence(
+    val sealed: Boolean,
+    val closed: Long,
 )
 
 /**
@@ -394,6 +406,14 @@ enum class BodyEvent {
      */
     @SerialName("exposureEnded")
     EXPOSURE_ENDED,
+
+    /**
+     * Whether the server's ground seals an agent in changed, read at the server's own position for
+     * its player once a second (`ShelterWitness`): how long a shelter held, and whether damage
+     * reached an agent inside one, are sums over these.
+     */
+    @SerialName("shelterChanged")
+    SHELTER_CHANGED,
 
     /**
      * The mind answered a perception, and the body was about to be asked to act.

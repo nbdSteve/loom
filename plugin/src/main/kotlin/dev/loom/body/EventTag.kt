@@ -165,6 +165,15 @@ object EventTag {
     /** A hunter in sight but beyond [THREAT_SIGHT_NEWS_BLOCKS], not worth a flight. */
     const val THREAT_DISTANT_SEEN: String = "threatDistantSeen"
 
+    /** The server's ground seals the agent in, read at its server position (`ShelterWitness`). */
+    const val SHELTER_SEALED: String = "sheltered"
+
+    /** The server's ground no longer seals the agent in. */
+    const val SHELTER_OPEN: String = "exposed"
+
+    /** A hunter seen while the agent stands sealed in, which nothing it hunts with can reach. */
+    const val THREAT_SHELTERED: String = "threatSheltered"
+
     /** A witnessed server damage event reached cognition as one `damaged` trigger. */
     const val DAMAGE_SUBMITTED: String = "damageSubmitted"
 

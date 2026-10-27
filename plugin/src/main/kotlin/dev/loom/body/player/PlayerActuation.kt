@@ -225,7 +225,7 @@ internal class PlayerActionPreparer(
         sense: HeldSense?,
     ): () -> ActionExecution {
         // A cell at the edge of sight is where its walk ends: the server stood it up when it was offered.
-        val explored = sense?.exploreCells?.get(intent.onto)?.map(Int::toDouble)
+        val explored = sense?.targets?.exploreCells?.get(intent.onto)?.map(Int::toDouble)
         val resolved =
             requestId?.let {
                 context.refs.blocks.resolve(

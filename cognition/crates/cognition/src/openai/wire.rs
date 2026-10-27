@@ -36,7 +36,7 @@ use serde_json::{json, Value};
 
 use crate::config::bounded_to;
 use crate::model::Draft;
-use crate::offered::{ItemSteps, OfferedRefs};
+use crate::offered::{ItemSteps, OfferedRefs, Sheltering};
 use crate::prompt::Prompt;
 
 /// Name the response schema is registered under in the request.
@@ -309,8 +309,13 @@ fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> 
         return Ok(None);
     };
     let fields = goal_fields(choice.disposition);
-    if choice.discover.is_some() {
+    if choice.discover.is_some() || choice.shelter.is_some() {
         return checked_discovery(choice, fields);
+    }
+    if choice.feeds.is_some() && choice.disposition != GoalDisposition::Adopt {
+        return Err(
+            "the model's goal choice fed a shelter with a disposition other than adopt".to_owned(),
+        );
     }
     let present = [
         (
@@ -340,10 +345,15 @@ fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> 
     Ok(Some(choice))
 }
 
-/// Refuses a discovery choice that is not an adopt or replace, names a success item, or judges
-/// the previous step where its disposition forbids it.
+/// Refuses a discovery or shelter choice that is not an adopt or replace, names a success item, or
+/// judges the previous step where its disposition forbids it.
 fn checked_discovery(choice: GoalChoice, fields: GoalFields) -> Result<Option<GoalChoice>, String> {
-    if !fields.targeted || choice.disposition == GoalDisposition::Revise {
+    if choice.discover.is_some() && choice.shelter.is_some() {
+        return Err(
+            "the model's goal choice set a discovery and a shelter goal at once".to_owned(),
+        );
+    }
+    if !fields.targeted || choice.disposition == GoalDisposition::Revise || choice.feeds.is_some() {
         return Err(
             "the model's goal choice set a discovery goal its disposition cannot".to_owned(),
         );
@@ -944,6 +954,71 @@ fn discovery_variant(disposition: GoalDisposition, name: &str) -> Value {
     })
 }
 
+/// The shelter goal shape of an adopt or a replace: no success item, met when the server's ground
+/// seals the space the agent stands in (r36: all ten agents died at night in the open).
+fn shelter_variant(disposition: GoalDisposition, name: &str) -> Value {
+    let fields = goal_fields(disposition);
+    let mut properties = serde_json::Map::new();
+    properties.insert(
+        "disposition".to_owned(),
+        json!({ "type": "string", "enum": [name], "description": SHELTER }),
+    );
+    properties.insert(
+        "shelter".to_owned(),
+        json!({
+            "type": "boolean",
+            "enum": [true],
+            "description": "A shelter goal: seal the space you stand in against the night. Your body measures it from the ground around you, met once nothing can reach you; then complete it and stay.",
+        }),
+    );
+    if fields.judged {
+        properties.insert("stepResult".to_owned(), step_result_field());
+    }
+    let required: Vec<Value> = properties.keys().map(|key| json!(key)).collect();
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": false,
+    })
+}
+
+/// The resource subgoal shape: an adopt of a goal for `item`, a solid block your held shelter goal
+/// can be closed with, that feeds the shelter goal, which waits and is held again once it ends.
+fn feeds_variant(item: &str, fewest: i64, most: i64) -> Value {
+    let mut variant = goal_variant(
+        goal_fields(GoalDisposition::Adopt),
+        "adopt",
+        FEEDS,
+        json!({ "type": "string", "enum": [item] }),
+        fewest,
+        most,
+    );
+    if let Some(properties) = variant["properties"].as_object_mut() {
+        properties.insert(
+            "feeds".to_owned(),
+            json!({
+                "type": "boolean",
+                "enum": [true],
+                "description": "This goal feeds your held shelter goal: nothing you hold can close it, and this item can.",
+            }),
+        );
+    }
+    if let Some(required) = variant["required"].as_array_mut() {
+        required.push(json!("feeds"));
+    }
+    variant
+}
+
+/// The previous step's verdict field, which every disposition that answers a carried goal states.
+fn step_result_field() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["done", "progressing", "noProgress"],
+        "description": "Your verdict on the previous step, from the progress evidence the carried goal states: done finished it, progressing moved it forward, noProgress did not.",
+    })
+}
+
 /// Where one perception stands with its goal, which decides the goal choices it can make.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GoalPhase {
@@ -1003,6 +1078,8 @@ impl GoalPhase {
 struct GoalOffer {
     by_item: Vec<(String, Vec<Value>)>,
     exploring: Vec<Value>,
+    /// The choices that take one of the cover reading's shelter steps as the goal's step.
+    sheltering: Vec<Value>,
     any: Vec<Value>,
 }
 
@@ -1015,6 +1092,7 @@ impl GoalOffer {
             .flat_map(|(_, choices)| choices)
             .collect();
         choices.extend(self.exploring);
+        choices.extend(self.sheltering);
         choices.extend(self.any);
         choices
     }
@@ -1025,6 +1103,8 @@ const CONTINUE: &str = "Keep the held goal and take its next step.";
 const REVISE: &str = "Keep pursuing the held goal's item with a new total and step; when its condition is met, a revise must name a total you do not yet hold.";
 const DISCOVER: &str = "Set a discovery goal when nothing you see, remember or hold grounds an item goal: walk to the edge of sight until a useful resource comes into view.";
 const REPLACE: &str = "End the held goal - one that advanced nothing for three steps, or one whose condition is met - and take up a new one in this same answer, whose step is this answer's action.";
+const SHELTER: &str = "Set a shelter goal as night nears: seal the space you stand in by the steps your cover offers - dig down, close an open face with a solid block you hold, or walk onto more enclosed ground.";
+const FEEDS: &str = "Take up a resource subgoal for a solid block your shelter can be closed with, when you hold none; your shelter goal waits and is held again once this goal is complete or abandoned.";
 
 /// The goal choices one phase offers: `null`, or one closed disposition shape the body would
 /// accept now.
@@ -1059,6 +1139,7 @@ fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
         return GoalOffer {
             by_item: Vec::new(),
             exploring: Vec::new(),
+            sheltering: Vec::new(),
             any: none(),
         };
     }
@@ -1077,9 +1158,15 @@ fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
             discovery_variant(GoalDisposition::Adopt, "adopt"),
             discovery_variant(GoalDisposition::Replace, "replace"),
         ];
+        let shelter = vec![
+            shelter_variant(GoalDisposition::Adopt, "adopt"),
+            shelter_variant(GoalDisposition::Replace, "replace"),
+            feeds_variant_reference(),
+        ];
         return GoalOffer {
             by_item,
             exploring: Vec::new(),
+            sheltering: shelter,
             any: [none(), complete(), abandon(), discovery].concat(),
         };
     };
@@ -1131,60 +1218,51 @@ fn coupled_offer(
     abandon: impl Fn() -> Vec<Value>,
     none: impl Fn() -> Vec<Value>,
 ) -> GoalOffer {
+    if let Some(offer) = shelter_offer(phase, refs, &continued, &complete, &abandon) {
+        return offer;
+    }
     let held = refs.held_item.clone();
-    // One item's targeted shapes of `disposition`, when a count for that item is offered.
     let shaped = |disposition, name, description, item: &str| {
-        refs.count_bounds_of(item)
-            .map(|(fewest, most)| {
-                goal_variant(
-                    goal_fields(disposition),
-                    name,
-                    description,
-                    json!({ "type": "string", "enum": [item] }),
-                    fewest,
-                    most,
-                )
-            })
-            .into_iter()
-            .collect::<Vec<Value>>()
+        shaped_choices(refs, disposition, name, description, item)
     };
-    let each_item = |disposition, name, description| -> Vec<(String, Vec<Value>)> {
-        refs.count_bounds
-            .iter()
-            .map(|(item, ..)| (item.clone(), shaped(disposition, name, description, item)))
-            .filter(|(_, choices)| !choices.is_empty())
-            .collect()
+    let each_item =
+        |disposition, name, description| each_item_choices(refs, disposition, name, description);
+    let revise_held = || revise_held_choices(refs);
+    // A shelter goal may be set in place of any other while night nears and the cover offers a step.
+    let shelter_replace = || {
+        if refs.shelter.offered() && refs.sheltering == Sheltering::Unheld {
+            vec![shelter_variant(GoalDisposition::Replace, "replace")]
+        } else {
+            Vec::new()
+        }
     };
-    let revise_held = || -> Vec<(String, Vec<Value>)> {
-        held.iter()
-            .map(|item| (item.clone(), revise_choices(refs, item)))
-            .filter(|(_, choices)| !choices.is_empty())
-            .collect()
-    };
-    match phase {
+    match (phase, refs.sheltering) {
         // The reference shape and an event are never coupled, so never reach here.
-        GoalPhase::Any | GoalPhase::Event => GoalOffer {
+        (GoalPhase::Any | GoalPhase::Event, _) => GoalOffer {
             by_item: Vec::new(),
             exploring: Vec::new(),
+            sheltering: Vec::new(),
             any: Vec::new(),
         },
         // With no item goal grounded, a review sets a discovery goal and walks to look further,
         // rather than act with no goal at all (r23: 17 of 70 reviews held none).
-        GoalPhase::Unheld if refs.discovery_offered() => GoalOffer {
+        (GoalPhase::Unheld, _) if refs.discovery_offered() => GoalOffer {
             by_item: each_item(GoalDisposition::Adopt, "adopt", ADOPT),
             exploring: vec![discovery_variant(GoalDisposition::Adopt, "adopt")],
+            sheltering: shelter_adopt(refs),
             any: Vec::new(),
         },
-        GoalPhase::Unheld => GoalOffer {
+        (GoalPhase::Unheld, _) => GoalOffer {
             by_item: each_item(GoalDisposition::Adopt, "adopt", ADOPT),
             exploring: Vec::new(),
+            sheltering: shelter_adopt(refs),
             any: none(),
         },
         // A held goal must be answered: a decision that acts while ignoring its goal is refused,
         // so null is not offered (r15 kappa). It is stepped toward its own item whether or not
         // sight can meet all of it; one sight can meet is not abandoned (r17 theta), and one it
         // cannot may instead look further, or be abandoned (r18: five goals abandoned to look).
-        GoalPhase::Held => {
+        (GoalPhase::Held, _) => {
             let mut by_item = continue_first(revise_held(), held.as_ref(), continued());
             // A switch into a recipe made from what is already held, before the stall bound.
             for (item, ..) in &refs.switch_bounds {
@@ -1201,17 +1279,19 @@ fn coupled_offer(
             } else {
                 Vec::new()
             };
-            let short =
-                (!refs.goal_obtainable && !looking) || !pairable(refs, &by_item, &exploring);
+            let sheltering = shelter_replace();
+            let short = (!refs.goal_obtainable && !looking)
+                || (!pairable(refs, &by_item, &exploring) && sheltering.is_empty());
             GoalOffer {
                 by_item,
                 exploring,
+                sheltering,
                 any: short.then(&abandon).unwrap_or_default(),
             }
         }
         // A met goal is completed, or completed and the next adopted in one answer by a replace,
         // or revised to a total not yet held (r17 and r18: every completion idled).
-        GoalPhase::Met => {
+        (GoalPhase::Met, _) => {
             let mut by_item = each_item(GoalDisposition::Replace, "replace", REPLACE);
             for (item, choices) in revise_held() {
                 match by_item.iter_mut().find(|(name, _)| *name == item) {
@@ -1223,7 +1303,9 @@ fn coupled_offer(
             // next item in sight becomes a discovery goal; a plain complete only when neither can
             // be set (r19: eight plain completes, two beside a filler equip).
             let exploring = discovery_replace(refs);
-            let any = match (!pairable(refs, &by_item, &exploring), refs.discovering()) {
+            let sheltering = shelter_replace();
+            let unpaired = !pairable(refs, &by_item, &exploring) && sheltering.is_empty();
+            let any = match (unpaired, refs.discovering()) {
                 (false, _) => Vec::new(),
                 (true, false) => complete(),
                 (true, true) => abandon(),
@@ -1231,24 +1313,173 @@ fn coupled_offer(
             GoalOffer {
                 by_item,
                 exploring,
+                sheltering,
                 any,
             }
         }
         // With nothing in sight to give a goal for another item, the stalled one can only go.
         // Nor can a stalled item goal with no item grounded look further but by a discovery goal.
-        GoalPhase::Stalled => {
+        (GoalPhase::Stalled, _) => {
             let by_item = each_item(GoalDisposition::Replace, "replace", REPLACE);
             let exploring = discovery_replace(refs);
-            let any = (!pairable(refs, &by_item, &exploring))
+            let sheltering = shelter_replace();
+            let any = (!pairable(refs, &by_item, &exploring) && sheltering.is_empty())
                 .then(&abandon)
                 .unwrap_or_default();
             GoalOffer {
                 by_item,
                 exploring,
+                sheltering,
                 any,
             }
         }
     }
+}
+
+/// One item's targeted shapes of `disposition`, when a count for that item is offered.
+fn shaped_choices(
+    refs: &OfferedRefs,
+    disposition: GoalDisposition,
+    name: &str,
+    description: &str,
+    item: &str,
+) -> Vec<Value> {
+    refs.count_bounds_of(item)
+        .map(|(fewest, most)| {
+            goal_variant(
+                goal_fields(disposition),
+                name,
+                description,
+                json!({ "type": "string", "enum": [item] }),
+                fewest,
+                most,
+            )
+        })
+        .into_iter()
+        .collect()
+}
+
+/// Every offered item's targeted shapes of `disposition`, each beside its item.
+fn each_item_choices(
+    refs: &OfferedRefs,
+    disposition: GoalDisposition,
+    name: &str,
+    description: &str,
+) -> Vec<(String, Vec<Value>)> {
+    refs.count_bounds
+        .iter()
+        .map(|(item, ..)| {
+            (
+                item.clone(),
+                shaped_choices(refs, disposition, name, description, item),
+            )
+        })
+        .filter(|(_, choices)| !choices.is_empty())
+        .collect()
+}
+
+/// The revise shapes of the held goal's item, beside it.
+fn revise_held_choices(refs: &OfferedRefs) -> Vec<(String, Vec<Value>)> {
+    refs.held_item
+        .iter()
+        .map(|item| (item.clone(), revise_choices(refs, item)))
+        .filter(|(_, choices)| !choices.is_empty())
+        .collect()
+}
+
+/// The goal choices of a review holding a shelter goal or its resource subgoal, or `None` for any
+/// other: a shelter goal is stepped by what its cover offers, fed by a subgoal when nothing held
+/// can close it, completed once sealed, or let go; a subgoal is pursued like any goal of its item
+/// but never replaced, since a replace would drop the shelter it feeds.
+fn shelter_offer(
+    phase: GoalPhase,
+    refs: &OfferedRefs,
+    continued: &impl Fn() -> Vec<Value>,
+    complete: &impl Fn() -> Vec<Value>,
+    abandon: &impl Fn() -> Vec<Value>,
+) -> Option<GoalOffer> {
+    let held = refs.held_item.clone();
+    let offer = match (phase, refs.sheltering) {
+        // A held shelter goal is stepped by what its cover reading offers, fed by a resource
+        // subgoal when nothing held can close it, or let go.
+        (GoalPhase::Held, Sheltering::Held) => GoalOffer {
+            by_item: feeding(refs),
+            exploring: Vec::new(),
+            sheltering: if refs.shelter.stepped() {
+                continued()
+            } else {
+                Vec::new()
+            },
+            any: abandon(),
+        },
+        // A sealed shelter is completed to be stayed in, or replaced by a goal sight gives.
+        (GoalPhase::Met, Sheltering::Held) => GoalOffer {
+            by_item: each_item_choices(refs, GoalDisposition::Replace, "replace", REPLACE),
+            exploring: Vec::new(),
+            sheltering: Vec::new(),
+            any: complete(),
+        },
+        // A resource subgoal is pursued like any goal of its item, never replaced, since a replace
+        // would drop the shelter it feeds; let go, it hands the shelter back.
+        (GoalPhase::Held, Sheltering::Feeding) => GoalOffer {
+            by_item: continue_first(revise_held_choices(refs), held.as_ref(), continued()),
+            exploring: Vec::new(),
+            sheltering: Vec::new(),
+            any: abandon(),
+        },
+        // A met subgoal is completed, and the shelter it fed takes this answer's step.
+        (GoalPhase::Met, Sheltering::Feeding) => GoalOffer {
+            by_item: Vec::new(),
+            exploring: Vec::new(),
+            sheltering: if refs.shelter.stepped() {
+                complete()
+            } else {
+                Vec::new()
+            },
+            any: if refs.shelter.stepped() {
+                Vec::new()
+            } else {
+                complete()
+            },
+        },
+        (GoalPhase::Stalled, Sheltering::Feeding) => GoalOffer {
+            by_item: Vec::new(),
+            exploring: Vec::new(),
+            sheltering: Vec::new(),
+            any: abandon(),
+        },
+        _ => return None,
+    };
+    Some(offer)
+}
+
+/// The adopt of a shelter goal, offered while night nears and the cover offers a step.
+fn shelter_adopt(refs: &OfferedRefs) -> Vec<Value> {
+    if refs.shelter.offered() {
+        vec![shelter_variant(GoalDisposition::Adopt, "adopt")]
+    } else {
+        Vec::new()
+    }
+}
+
+/// The resource subgoals a held shelter goal may adopt: one per solid-block item sight can give,
+/// at the counts that item admits, each paired with that item's own steps.
+fn feeding(refs: &OfferedRefs) -> Vec<(String, Vec<Value>)> {
+    if !refs.shelter.feedable() {
+        return Vec::new();
+    }
+    refs.shelter
+        .feed_bounds
+        .iter()
+        .map(|(item, fewest, most)| (item.clone(), vec![feeds_variant(item, *fewest, *most)]))
+        .collect()
+}
+
+/// The reference shape of a resource subgoal: any item, at any count.
+fn feeds_variant_reference() -> Value {
+    let mut variant = feeds_variant("", 1, MAX_SUCCESS_COUNT);
+    variant["properties"]["successItem"] = json!({ "type": "string" });
+    variant
 }
 
 /// The replace into a discovery goal, offered when nothing grounds an item goal.
@@ -1521,6 +1752,16 @@ fn coupled_schema(
             &offer.exploring,
         ));
     }
+    if !offer.sheltering.is_empty() {
+        let steps = shelter_step_variants(offered, table);
+        if !steps.is_empty() {
+            table.insert("shelterStep".to_owned(), json!({ "anyOf": steps }));
+            pairings.push(pairing(
+                json!([reference("shelterStep")]),
+                &offer.sheltering,
+            ));
+        }
+    }
     if let Some(survival) = survival_intents(offered, table) {
         pairings.push(pairing(survival, &[json!({ "type": "null" })]));
     }
@@ -1590,7 +1831,14 @@ fn survival_intents(
             json!({ "description": "The ref of an inventory stack offered in this message.", "anyOf": [{ "$ref": "#/$defs/stackRef" }] })
         })
     };
-    intents.extend(intent_variant("flee", vec![("from", flee_from)]));
+    if !offered.shelter.trapped() {
+        intents.extend(intent_variant("flee", vec![("from", flee_from)]));
+    }
+    // Where no flight can run, closing the cover, or readying the block that does, shuts the
+    // hunter out.
+    if offered.shelter.trapped() && offered.in_immediate_danger() {
+        intents.extend(closing_variants(offered, table, "survivalClosing"));
+    }
     for (target, approach) in [(strike, false), (pursue, true)] {
         intents.extend(intent_variant(
             "attack",
@@ -1609,6 +1857,122 @@ fn survival_intents(
         intents.extend(intent_variant("eat", vec![("ref", stack())]));
     }
     (!intents.is_empty()).then(|| json!(intents))
+}
+
+/// A shelter goal's step intents, each ref list defined once under `$defs`: the descent underfoot,
+/// each closing of an open face with a solid held stack, and a walk onto more enclosed ground.
+fn shelter_step_variants(
+    offered: &OfferedRefs,
+    table: &mut serde_json::Map<String, Value>,
+) -> Vec<Value> {
+    let shelter = &offered.shelter;
+    let mut named = |name: &str, handles: Vec<String>, description: &str| -> Option<Value> {
+        if handles.is_empty() {
+            return None;
+        }
+        table.insert(
+            name.to_owned(),
+            json!({ "type": "string", "enum": handles, "description": description }),
+        );
+        Some(
+            json!({ "description": description, "anyOf": [{ "$ref": format!("#/$defs/{name}") }] }),
+        )
+    };
+    let dig = named(
+        "shelterDigRef",
+        shelter.descend.iter().cloned().collect(),
+        "The block under your feet, whose dig drops you into more enclosed ground.",
+    );
+    let site = named(
+        "shelterSiteRef",
+        shelter.sites.clone(),
+        "A block to stand on whose cell is more enclosed than where you stand: natural cover.",
+    );
+    let mut variants: Vec<Value> = [
+        dig.and_then(|block| intent_variant("dig", vec![("block", Some(block))])),
+        site.and_then(|onto| intent_variant("moveTo", vec![("onto", Some(onto))])),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    variants.extend(closing_variants(offered, table, "shelterClosing"));
+    variants
+}
+
+/// The placements that close an open face of the agent's cover with a solid held stack, one
+/// variant per support side, their refs defined once under `$defs` with `prefix`.
+fn closing_variants(
+    offered: &OfferedRefs,
+    table: &mut serde_json::Map<String, Value>,
+    prefix: &str,
+) -> Vec<Value> {
+    let shelter = &offered.shelter;
+    let ready = shelter.to_equip();
+    if !ready.is_empty() {
+        // Nothing solid in hand yet: the step is the equip that puts a solid stack there.
+        let name = format!("{prefix}EquipRef");
+        table.insert(
+            name.clone(),
+            json!({ "type": "string", "enum": ready, "description": "A stack you carry that places as a solid block, to put in your main hand." }),
+        );
+        return intent_variant(
+            "equip",
+            vec![
+                ("item", Some(json!({ "description": "The solid stack to put in your main hand.", "anyOf": [{ "$ref": format!("#/$defs/{name}") }] }))),
+                ("destination", plain(json!({ "type": "string", "enum": ["hand"], "description": "Your main hand." }))),
+            ],
+        )
+        .into_iter()
+        .collect();
+    }
+    if shelter.solid_held.is_empty() {
+        return Vec::new();
+    }
+    let stack_name = format!("{prefix}StackRef");
+    table.insert(
+        stack_name.clone(),
+        json!({ "type": "string", "enum": shelter.solid_held, "description": "The solid stack in your main hand." }),
+    );
+    let mut sides: Vec<loom_contract::BlockFace> = Vec::new();
+    for (_, side) in &shelter.closings {
+        if !sides.contains(side) {
+            sides.push(*side);
+        }
+    }
+    sides
+        .into_iter()
+        .filter_map(|side| {
+            let face = serde_json::to_value(side).ok()?;
+            let face_name = face.as_str()?.to_owned();
+            let blocks: Vec<&String> = shelter
+                .closings
+                .iter()
+                .filter(|(_, at)| *at == side)
+                .map(|(block, _)| block)
+                .collect();
+            let name = format!("{prefix}{}Ref", capitalised(&face_name));
+            table.insert(
+                name.clone(),
+                json!({ "type": "string", "enum": blocks, "description": "A support block whose side, placed against, closes an open face of your cover." }),
+            );
+            intent_variant(
+                "place",
+                vec![
+                    ("block", Some(json!({ "description": "The support block to place against.", "anyOf": [{ "$ref": format!("#/$defs/{name}") }] }))),
+                    ("item", Some(json!({ "description": "The solid stack, already held in the main hand, to place.", "anyOf": [{ "$ref": format!("#/$defs/{stack_name}") }] }))),
+                    ("face", plain(json!({ "type": "string", "enum": [face_name], "description": "The side of the support block to place against." }))),
+                ],
+            )
+        })
+        .collect()
+}
+
+/// `text` with its first letter in upper case.
+fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 /// One goal item's own step intents, each ref list defined once under `$defs` as item `index`'s.
@@ -1814,7 +2178,10 @@ mod tests {
                 step_advanced: true,
                 step_evidence: loom_contract::StepEvidence::None,
                 steps_without_progress: i64::MAX,
+                cover: None,
             }),
+            shelter: false,
+            feeds: None,
         });
         // Every cell at the edge of sight it may be offered, each a walk target of its own, at
         // the widest place a number can render.
@@ -1965,6 +2332,8 @@ mod tests {
             success_count: targeted.then_some(4),
             step: step.map(str::to_owned),
             step_result: result,
+            shelter: None,
+            feeds: None,
         };
         let cases = [
             (

@@ -7,7 +7,7 @@
 // laid out by console commands (`tools/path-rehearsal.json`), with the cognition service answering
 // as the path exerciser (`LOOM_COGNITION_BACKEND=scripted-paths`, `cognition/src/exerciser.rs`).
 // Each agent walks one path; the server witnesses what each body did, and the run's own evidence,
-// normalized and judged by readiness gate generation 14, must show every path as the exerciser
+// normalized and judged by readiness gate generation 19, must show every path as the exerciser
 // drove it: a craft of two applications and a goal completed and the next adopted in one answer,
 // each chained to the goal whose item its recipe is made from, an own drop ignored and refused,
 // an own drop still told lying past 4800 ticks, a collect
@@ -15,7 +15,9 @@
 // revealing a source, a walk beside a source sight showed out of dig reach credited as arriving,
 // a revise to another item refused, a revise to the held total refused, a
 // plain completion beside a source refused, a plain completion with none accepted and followed by
-// the review it owed, and a block beside the support under an overhang reported unsafe to dig.
+// the review it owed, a block beside the support under an overhang reported unsafe to dig, and,
+// once a console command brings dusk, a shelter goal dug down and roofed over the agent's head,
+// each step one its cover reading named, until the server's ground seals it in.
 // Its window closes as a research run's does: admission closes before Paper stops, and every
 // decision reaches one typed terminal, so `untypedTerminal` must be zero.
 //
@@ -45,7 +47,7 @@ const { readinessMetrics } = require('../lib/readiness.js')
 
 const REPO = path.resolve(__dirname, '..', '..')
 const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'path-rehearsal.json'), 'utf8'))
-const GENERATION = 14
+const GENERATION = 19
 const RETENTION_TICKS = 4800
 const POLL_MS = 500
 // How long admitted work may take to reach its typed terminals once admission closes: the longest
@@ -187,10 +189,31 @@ function pathsOf (records, readiness) {
   // source within reach (r34 zeta's logs were in view and out of reach).
   const besideFarSource = records.find((record) => record.source === 'body' && record.event === 'decided' &&
     ['tribe-epsilon', 'tribe-kappa'].includes(record.agentId) && record.goal?.stepEvidence === 'arrived')
+  // gamma, once dusk is brought, sets a shelter goal, digs down and closes the roof over its head
+  // with the dirt its digs gave, each step one its cover reading named, until the server's ground
+  // seals it in, and completes it there (r36: all ten agents died at night in the open).
+  const shelterAdopted = of('tribe-gamma', 'decided').find((record) =>
+    record.goal?.shelter === true && record.goal?.outcome === 'goalAdopted')
+  const coveredBeforeNight = (readiness.shelter?.progressingAgents ?? []).includes('tribe-gamma')
+    ? of('tribe-gamma', 'decided').find((record) => record.goal?.stepEvidence === 'covered')
+    : undefined
+  const roofed = of('tribe-gamma', 'decided').find((record) =>
+    record.intent === 'place' && confirmed(record) &&
+    byKey(record.requestKey).some((entry) => entry.event === 'intentApplied' && entry.outcome === 'accepted'))
+  const sealedIn = of('tribe-gamma', 'shelterChanged').find((record) =>
+    record.outcome === 'sheltered' && record.shelter?.sealed === true)
+  const shelterCompleted = of('tribe-gamma', 'decided').find((record) =>
+    record.goal?.presentedShelter === true && record.goal?.outcome === 'goalCompleted' &&
+    record.goal?.conditionMet === true)
   // A dig that dropped its goal's own item made its one body pickup, which the server confirmed.
   const pickedUp = records.find((record) => record.source === 'body' && record.event === 'ownDropPickup' &&
     record.outcome === 'accepted')
   return {
+    shelterAdoptedAsNightNeared: evidence(shelterAdopted),
+    shelterStepCoveredBeforeNight: evidence(coveredBeforeNight),
+    roofPlacedFromItsOwnDigs: evidence(roofed),
+    sealedInByTheServersGround: evidence(sealedIn),
+    sealedShelterCompleted: evidence(shelterCompleted),
     ownGoalDropPickedUpOnce: evidence(pickedUp),
     discoverySetWithNothingGrounded: evidence(of('tribe-kappa', 'decided').find((record) =>
       record.goal?.discovery === true && record.goal?.outcome === 'goalAdopted')),
@@ -339,10 +362,14 @@ async function main () {
     await delay(1000)
     const begin = latestTick(bodyFile)
     const deadline = Date.now() + config.bounds.runSeconds * 1000
-    while (latestTick(bodyFile) - begin < config.bounds.runTicks) {
+    // A console command due part way through, such as the dusk a shelter path needs once the
+    // reviews that must come by day have been taken.
+    const timed = [...(config.timed ?? [])].sort((one, other) => one.afterTicks - other.afterTicks)
+    for (let elapsed = 0; elapsed < config.bounds.runTicks; elapsed = latestTick(bodyFile) - begin) {
       if (failure !== null) throw failure
       cancelled()
       if (Date.now() > deadline) throw new RunFailure('runFailed', 'the rehearsal did not reach its tick window in time')
+      while (timed.length > 0 && elapsed >= timed[0].afterTicks) command(timed.shift().command)
       await delay(POLL_MS)
     }
     // Admission closes before Paper stops, as a research run's does: nothing new is sent, applied

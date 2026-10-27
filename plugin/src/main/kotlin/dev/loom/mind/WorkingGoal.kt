@@ -120,6 +120,8 @@ data class GoalObservation(
      * (r24 theta was refused a walk past grass for seeds the schema itself offered).
      */
     val productive: Map<String, Set<String>> = emptyMap(),
+    /** The agent's cover, from the server's ground, when the perception read one (`Shelter.kt`). */
+    val cover: CoverObservation? = null,
 ) {
     /** Whether a discovery goal may be set: cells at the edge of sight, and no horizon goal at all. */
     val discoveryOffered: Boolean get() = explore.isNotEmpty() && horizon.isEmpty()
@@ -234,15 +236,19 @@ data class GoalObservation(
                 craftable = perception.selfState.craftingOptions.map { it.what }.toSet(),
                 footing = footingOf(perception),
                 survival = SurvivalOffer.of(perception),
-                productive =
-                    digs
-                        .filter { fromEyes(it) <= INTERACTION_REACH_BLOCKS }
-                        .associate { block ->
-                            val sure = block.yields.orEmpty().filter { it.perHundred >= HUNDRED }
-                            block.ref to sure.map { it.what }.toSet()
-                        }.filterValues { it.isNotEmpty() },
+                productive = productiveOf(digs),
+                cover = CoverObservation.of(perception),
             )
         }
+
+        /** The visible dig-safe blocks in reach among [digs] that give an item at least once a dig, by ref. */
+        private fun productiveOf(digs: List<Observation>): Map<String, Set<String>> =
+            digs
+                .filter { fromEyes(it) <= INTERACTION_REACH_BLOCKS }
+                .associate { block ->
+                    val sure = block.yields.orEmpty().filter { it.perHundred >= HUNDRED }
+                    block.ref to sure.map { it.what }.toSet()
+                }.filterValues { it.isNotEmpty() }
 
         /** The distance from the eyes to [seen], from its feet-relative reading, as the mind measures it. */
         private fun fromEyes(seen: Observation): Double {
@@ -278,6 +284,8 @@ internal data class StepRecord(
     val inputs: Set<String> = emptySet(),
     /** Whether this review comes straight after the step settled, as a reveal must. */
     val fresh: Boolean = true,
+    /** For a shelter goal, the most enclosed the goal had yet been, which a step must pass. */
+    val best: CoverRank? = null,
 )
 
 /**
@@ -293,10 +301,10 @@ internal fun progressOf(
     priorCount: Long,
 ): GoalProgress? {
     if (before == null || observed == null) return null
-    return if (goal.discovery) {
-        discoveryProgressOf(goal, before, observed, step, priorCount)
-    } else {
-        itemProgressOf(goal, before, observed, step, priorCount)
+    return when {
+        goal.discovery -> discoveryProgressOf(goal, before, observed, step, priorCount)
+        goal.shelter -> shelterProgressOf(goal, before, observed, step.best, priorCount)
+        else -> itemProgressOf(goal, before, observed, step, priorCount)
     }
 }
 
@@ -459,6 +467,14 @@ internal fun remeasured(
         // A discovery goal is met by whatever sight shows now, however it came into view; only the
         // walk that revealed it was ever credited, so nothing here is.
         goal.discovery -> measured.copy(conditionMet = observed?.discoveryMet ?: measured.conditionMet)
+        // A shelter goal is met by whatever the ground shows now; nothing is credited again.
+        goal.shelter -> {
+            val rank = observed?.cover?.rank
+            measured.copy(
+                conditionMet = rank?.sealed ?: measured.conditionMet,
+                cover = rank?.progress ?: measured.cover,
+            )
+        }
         item == null -> measured
         else -> {
             val held = observed?.inventory?.get(item) ?: measured.conditionHeld
@@ -474,7 +490,7 @@ private val RETARGETING = setOf(GoalDisposition.REVISE, GoalDisposition.REPLACE)
 internal fun missingFieldOf(choice: GoalChoice): String? {
     val adopting = choice.disposition == GoalDisposition.ADOPT
     // A discovery goal names no item; it is held to its own rules (`Discovery.kt`).
-    val worded = (adopting || choice.disposition in RETARGETING) && !discovers(choice)
+    val worded = (adopting || choice.disposition in RETARGETING) && !discovers(choice) && !shelters(choice)
     // The step is the decision's own intent and the body words it, so no choice must state one.
     return when {
         worded && (choice.successItem == null || choice.successCount == null) -> GoalEvidence.SUCCESS_TARGET_MISSING

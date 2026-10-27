@@ -522,18 +522,23 @@ private fun StepSettlement.oweReview(
     goal: GoalEvidence?,
     step: SettledStep,
 ) {
-    val goalStep = step.goalStep
+    if (goal?.outcome == GoalEvidence.DEFERRED) return settled(agentId, tick, owed = true)
+    val goalStep = step.goalStep ?: return
     val applied = step.applied
-    val recipes = step.recipes
     val effected = applied is IntentOutcome.Accepted || (applied as? IntentOutcome.Rejected)?.effected == true
-    if (goal?.outcome == GoalEvidence.DEFERRED) {
-        settled(agentId, tick, owed = true)
-    } else if (goalStep != null && effected && goalStep.discoveryChain(goal)) {
+    val sheltering = goalStep.shelter || goalStep.feeds != null
+    when {
+        // A shelter is followed step by step to its seal, a refused step as well: night will not wait.
+        sheltering && applied != IntentOutcome.NoSuchBody -> sheltered(agentId, tick)
         // A discovery is followed through its reveal and into the resource goal it became.
-        discovered(agentId, tick)
-    } else if (goalStep != null && effected) {
-        val dropped = lyingStepItem(goal, goalStep, applied, recipes) != null
-        settled(agentId, tick, owed = dropped || goal?.ownGoalDropLying == true)
+        effected && goalStep.discoveryChain(goal) -> discovered(agentId, tick)
+        effected -> {
+            val dropped = lyingStepItem(goal, goalStep, applied, step.recipes) != null
+            settled(agentId, tick, owed = dropped || goal?.ownGoalDropLying == true)
+        }
+        // A step the body refused is owed an ordinary review, so the goal does not wait a whole
+        // cadence for its next step (r36: zeta stood idle 1584 ticks after its refused dig).
+        applied is IntentOutcome.Rejected -> settled(agentId, tick, owed = false)
     }
 }
 

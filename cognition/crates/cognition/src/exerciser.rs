@@ -33,20 +33,24 @@
 //!   once the goal is met completes it plainly beside the log still in sight once (refused)
 //!   before replacing it;
 //! - `gamma` is refused a dirt goal while the frontier is offered (r22:
-//!   the dirt underfoot crowded out looking for wood);
+//!   the dirt underfoot crowded out looking for wood), and once night nears sets a shelter goal,
+//!   digs down three times, closes the roof over its head with the dirt the digs gave, and
+//!   completes it once the server's ground seals it in (r36: all ten agents died at night in the
+//!   open);
 //! - `kappa`, once clear of its creeper with nothing in sight to ground an item goal, sets a
 //!   discovery goal and walks toward a tree line the rehearsal lays out past what it senses, and
 //!   once a walk reveals a log replaces the discovery with a log goal stepped by its dig, or by
 //!   the walk beside it while it lies out of dig reach (r23: 17 of 70 reviews could set no goal
 //!   at all).
 //!
-//! Any other agent is answered by [`ScriptedBackend`].
+//! Anything but a goal review is answered by a flight from a hunter close enough to be immediate
+//! danger, else an idle. Any other agent is answered by [`ScriptedBackend`].
 
 use std::future::Future;
 
 use loom_contract::{
-    Bearing, GoalChoice, GoalDisposition, GoalStepResult, Intent, ObservationKind, Perception,
-    StepEvidence,
+    Bearing, EquipmentDestination, GoalChoice, GoalDisposition, GoalStepResult, Intent,
+    ObservationKind, Perception, StepEvidence,
 };
 
 use crate::model::{BackendError, Draft, ModelBackend, ScriptedBackend};
@@ -101,6 +105,8 @@ fn target(disposition: GoalDisposition, item: &str, count: i64) -> GoalChoice {
         success_count: Some(count),
         step: None,
         step_result: (disposition != GoalDisposition::Adopt).then_some(GoalStepResult::Progressing),
+        shelter: None,
+        feeds: None,
     }
 }
 
@@ -113,6 +119,8 @@ const fn judged(disposition: GoalDisposition) -> GoalChoice {
         success_count: None,
         step: None,
         step_result: Some(GoalStepResult::Progressing),
+        shelter: None,
+        feeds: None,
     }
 }
 
@@ -121,7 +129,7 @@ impl PathExerciser {
     #[must_use]
     pub fn draft_now(route: &ModelRoute, perception: &Perception) -> Draft {
         if !perception.trigger.reviews_goal() {
-            return answer(Intent::Idle, None, "only a goal review moves a path");
+            return beset(perception);
         }
         let role = perception.agent_id.rsplit('-').next().unwrap_or_default();
         match role {
@@ -143,6 +151,25 @@ impl PathExerciser {
             _ => ScriptedBackend::draft_now(route, perception),
         }
     }
+}
+
+/// The answer to anything but a goal review: a flight from the nearest hunter close enough to be
+/// immediate danger, beside which the body takes nothing else, else an idle, since only a goal
+/// review moves a path (the v34 rehearsal answered kappa's sighting of its creeper 3.2 blocks off
+/// with an idle, which the body refused as `survivalRequired`).
+fn beset(perception: &Perception) -> Draft {
+    OfferedRefs::of(perception).immediate.first().map_or_else(
+        || answer(Intent::Idle, None, "only a goal review moves a path"),
+        |hunter| {
+            answer(
+                Intent::Flee {
+                    from: hunter.clone(),
+                },
+                None,
+                "flee the hunter close enough to be immediate danger",
+            )
+        },
+    )
 }
 
 /// The nearest offered dig of a block that can drop `item`.
@@ -221,7 +248,13 @@ fn edge_toward(perception: &Perception, direction: Bearing) -> Option<String> {
 fn look_further(perception: &Perception, goal: Option<GoalChoice>, why: &str) -> Draft {
     match edge_toward(perception, Bearing::East) {
         Some(onto) => answer(Intent::MoveTo { onto }, goal, why),
-        None => answer(Intent::Idle, None, IDLE_ROLE),
+        // Nowhere to look, as from a pit with no walk out: a completion is kept, beside an idle,
+        // since a met goal answered with no choice is refused (`goalConditionMetIgnored`).
+        None => answer(
+            Intent::Idle,
+            goal.filter(|choice| choice.disposition == GoalDisposition::Complete),
+            IDLE_ROLE,
+        ),
     }
 }
 
@@ -403,6 +436,9 @@ fn dropper(perception: &Perception) -> Draft {
 /// gamma: a dirt goal beside the frontier, refused once. A flight from a peer is no longer one it
 /// may take, because a peer is never offered to `flee` from (r27: delta's peer flight).
 fn crowder(perception: &Perception) -> Draft {
+    if let Some(sheltering) = shelterer(perception) {
+        return sheltering;
+    }
     // gamma asks for the dirt underfoot as a goal while there is ground
     // to look at, which the body must refuse, once (r22: the dirt crowded out looking for wood).
     let crowding = perception.trigger.reviews_goal()
@@ -417,6 +453,62 @@ fn crowder(perception: &Perception) -> Draft {
         ),
         None => answer(Intent::Idle, None, IDLE_ROLE),
     }
+}
+
+/// gamma, once night nears: a shelter goal stepped only by what its cover reading names - each dig
+/// down, the equip that puts a solid block in hand, then the placement that closes the open face -
+/// and completed once the server's ground seals it in (r36: all ten agents died at night in the
+/// open). `None` while no shelter is held or offered.
+fn shelterer(perception: &Perception) -> Option<Draft> {
+    let offered = OfferedRefs::of(perception);
+    let shelter = &offered.shelter;
+    let held = perception.goal.as_ref().is_some_and(|goal| goal.shelter);
+    let settable = perception.goal.is_none() && shelter.offered();
+    if !held && !settable {
+        return None;
+    }
+    if held && met(perception) {
+        return Some(answer(
+            Intent::Rest,
+            Some(judged(GoalDisposition::Complete)),
+            "sealed in: complete the shelter and stay in it",
+        ));
+    }
+    let placed = || {
+        let (block, face) = shelter.closings.first()?;
+        let item = shelter.solid_held.first()?;
+        Some(Intent::Place {
+            block: block.clone(),
+            item: item.clone(),
+            face: *face,
+        })
+    };
+    let readied = || {
+        shelter.to_equip().first().map(|item| Intent::Equip {
+            item: item.clone(),
+            destination: EquipmentDestination::Hand,
+        })
+    };
+    let intent = shelter
+        .descend
+        .clone()
+        .map(|block| Intent::Dig { block })
+        .or_else(placed)
+        .or_else(readied)?;
+    let choice = if held {
+        judged(GoalDisposition::Continue)
+    } else {
+        GoalChoice {
+            shelter: Some(true),
+            step_result: None,
+            ..judged(GoalDisposition::Adopt)
+        }
+    };
+    Some(answer(
+        intent,
+        Some(choice),
+        "night nears: take the step my cover names toward a shelter",
+    ))
 }
 
 /// delta: an item at its feet collected without moving, which vanilla picks up once its delay ends.
@@ -733,6 +825,7 @@ mod tests {
             dig_safe: Some(true),
             route_refused: None,
             hunts: None,
+            cover: None,
         }
     }
 
@@ -751,6 +844,7 @@ mod tests {
             dig_safe: None,
             route_refused: None,
             hunts: None,
+            cover: None,
         }
     }
 
@@ -772,6 +866,8 @@ mod tests {
                     what: item.to_owned(),
                     count,
                     edible: None,
+                    solid: None,
+                    held: None,
                 });
         }
         seen.goal = Some(GoalSummary {
@@ -794,7 +890,10 @@ mod tests {
                 step_advanced: evidence != StepEvidence::None,
                 step_evidence: evidence,
                 steps_without_progress: 0,
+                cover: None,
             }),
+            shelter: false,
+            feeds: None,
         });
     }
 
@@ -1070,6 +1169,15 @@ mod tests {
             StepEvidence::None,
         );
         assert_eq!(draft(&holding_goal).intent, Intent::Idle);
+        // Its goal met in a pit with no walk out, nowhere further is offered: it completes the
+        // goal beside an idle (the v35 rehearsal's iota idled with no choice and was refused).
+        let mut met = review("iota");
+        holding(&mut met, LOG, 1, 1, StepEvidence::Gained);
+        met.surroundings.clear();
+        met.explore.clear();
+        let stay = draft(&met);
+        assert_eq!(stay.intent, Intent::Idle);
+        assert_eq!(stay.goal.unwrap().disposition, GoalDisposition::Complete);
     }
 
     #[test]
@@ -1090,6 +1198,7 @@ mod tests {
             dig_safe: None,
             route_refused: None,
             hunts: Some(true),
+            cover: None,
         }];
         let fled = draft(&seen);
         assert_eq!(
@@ -1139,7 +1248,10 @@ mod tests {
                 step_advanced: false,
                 step_evidence: StepEvidence::None,
                 steps_without_progress: 1,
+                cover: None,
             }),
+            shelter: false,
+            feeds: None,
         });
         let walking = draft(&seen);
         assert_eq!(
@@ -1236,6 +1348,98 @@ mod tests {
         let revise = draft(&seen).goal.unwrap();
         assert_eq!(revise.disposition, GoalDisposition::Revise);
         assert_eq!(revise.success_item.as_deref(), Some(PLANKS));
+    }
+
+    fn shelter_scene(name: &str) -> Perception {
+        let path = format!(
+            "{}/tests/fixtures/shelter-{name}.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut seen: Perception =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        seen.agent_id = "tribe-gamma".to_owned();
+        seen
+    }
+
+    #[test]
+    fn gamma_shelters_at_dusk_by_the_steps_its_cover_names_and_completes_once_sealed() {
+        // At dusk on open grass: a shelter goal, stepped by the dig underfoot its cover names.
+        let dusk = draft(&shelter_scene("dusk-open-grass"));
+        assert_eq!(
+            dusk.intent,
+            Intent::Dig {
+                block: "b1".to_owned()
+            }
+        );
+        let adopt = dusk.goal.unwrap();
+        assert_eq!(
+            (adopt.disposition, adopt.shelter),
+            (GoalDisposition::Adopt, Some(true))
+        );
+        assert!(adopt.success_item.is_none() && adopt.step_result.is_none());
+        // At midday no shelter is offered, so gamma crowds the frontier as before.
+        let midday = draft(&shelter_scene("midday-open-grass"));
+        assert!(midday.goal.is_none_or(|goal| goal.shelter.is_none()));
+        // In the pit with the dirt in hand: the roof's closing, then the equip when it is not.
+        assert_eq!(
+            draft(&shelter_scene("pit-roof-closable")).intent,
+            Intent::Place {
+                block: "b2".to_owned(),
+                item: "s1".to_owned(),
+                face: loom_contract::BlockFace::West
+            }
+        );
+        assert_eq!(
+            draft(&shelter_scene("pit-dirt-not-in-hand")).intent,
+            Intent::Equip {
+                item: "s2".to_owned(),
+                destination: loom_contract::EquipmentDestination::Hand
+            }
+        );
+        // Sealed in: completed, and stayed in.
+        let sealed = draft(&shelter_scene("sealed-met"));
+        assert_eq!(sealed.intent, Intent::Rest);
+        assert_eq!(sealed.goal.unwrap().disposition, GoalDisposition::Complete);
+    }
+
+    #[test]
+    fn a_sighting_of_an_immediate_hunter_is_fled_and_one_farther_off_is_not() {
+        // The v34 rehearsal answered kappa's sighting of its creeper 3.2 blocks off with an idle,
+        // which the body refused as `survivalRequired`.
+        let creeper = |distance| Observation {
+            kind: ObservationKind::Entity,
+            what: "entity.minecraft.creeper".to_owned(),
+            distance,
+            direction: Bearing::South,
+            vertical_offset: 0.0,
+            visible: true,
+            target_ref: "e1".to_owned(),
+            count: None,
+            standable: None,
+            yields: None,
+            dig_safe: None,
+            route_refused: None,
+            hunts: Some(true),
+            cover: None,
+        };
+        let mut seen = review("kappa");
+        seen.trigger = loom_contract::Trigger::ThreatSighted {
+            threat: "entity.minecraft.creeper".to_owned(),
+            entity_ref: "e1".to_owned(),
+            distance: 3.2,
+            direction: Bearing::South,
+            visible: true,
+            reachable: None,
+        };
+        seen.surroundings = vec![creeper(3.2)];
+        assert_eq!(
+            draft(&seen).intent,
+            Intent::Flee {
+                from: "e1".to_owned()
+            }
+        );
+        seen.surroundings = vec![creeper(10.2)];
+        assert_eq!(draft(&seen).intent, Intent::Idle);
     }
 
     #[test]

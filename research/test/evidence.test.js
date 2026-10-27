@@ -430,6 +430,31 @@ test('goal continuity is derived from typed goal evidence rather than prose', ()
   assert.deepEqual(deriveMetrics(elsewhere.records).goalContinuity.agentsWithContinuity, [])
 })
 
+test('a shelter goal\'s typed cover is kept and a malformed one refused at normalization', () => {
+  const step = {
+    outcome: 'goalContinued',
+    disposition: 'continue',
+    presentedGoalId: 'sense-1',
+    presentedRevision: 0,
+    goalId: 'sense-1',
+    revision: 0,
+    presentedShelter: true,
+    stepEvidence: 'covered',
+    cover: { closed: 8, closable: 1, sealed: false }
+  }
+  const normalized = normalizedWithGoals((record) => {
+    if (record.event === 'decided' && record.agentId === 'tribe-beta' && record.requestId === 'sense-2') record.goal = step
+  })
+  const kept = normalized.records.find((record) => record.requestKey === 'tribe-beta:sense-2' && record.event === 'decided')
+  assert.deepEqual(kept.goal.cover, step.cover)
+  for (const cover of [null, [], { closed: 10, closable: 0, sealed: false }, { closed: 8, closable: -1, sealed: false },
+    { closed: 8, closable: 1, sealed: 'no' }]) {
+    assert.throws(() => normalizedWithGoals((record) => {
+      if (record.event === 'decided' && record.agentId === 'tribe-beta') record.goal = { ...step, cover }
+    }), /cover/)
+  }
+})
+
 test('evidence without goal records derives no goal continuity section', () => {
   const metrics = deriveMetrics(normalizedWithGoals(() => {}).records)
   assert.equal(metrics.goalContinuity, undefined)

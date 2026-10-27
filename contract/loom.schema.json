@@ -29,6 +29,78 @@
       "enum": ["down", "up", "north", "south", "west", "east"]
     },
 
+    "CoverFace": {
+      "description": "One of the nine faces around the two cells a standing body fills: the four cells beside its feet, the four beside its head, and the cell over its head. A creature can reach the body only through a face the server gives no collision.",
+      "type": "string",
+      "enum": ["feetNorth", "feetEast", "feetSouth", "feetWest", "headNorth", "headEast", "headSouth", "headWest", "roof"]
+    },
+
+    "Closing": {
+      "description": "One placement that would close an open face of the agent's cover: a held block placed against the named side of the named sensed support block lands in that face's cell.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["face", "block", "side"],
+      "properties": {
+        "face": { "$ref": "#/$defs/CoverFace" },
+        "block": {
+          "description": "The request-scoped ref of the sensed support block, in sight and in reach, to place against.",
+          "$ref": "#/$defs/EntityRef"
+        },
+        "side": { "$ref": "#/$defs/BlockFace" }
+      }
+    },
+
+    "Cover": {
+      "description": "How enclosed the agent stands, read from the server's own ground at the cells around its body: what a shelter is made of. Server-observed geometry, never the mind's claim.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sealed", "walkOut", "open", "closings", "blockItems"],
+      "properties": {
+        "sealed": {
+          "description": "Whether the open space the body stands in is closed on every side: no cell of it, searched from the body's own two cells through every cell the server gives no collision, leads further than a small enclosure, so no creature can walk, climb or swim in. A sealed agent is sheltered.",
+          "type": "boolean"
+        },
+        "walkOut": {
+          "description": "Whether a short walk leads out of where the body stands, by the steps a body makes. False in a pit deeper than a jump or a sealed shelter: no flight can run from there.",
+          "type": "boolean"
+        },
+        "open": {
+          "description": "The faces around the body the server gives no collision, each at most once.",
+          "type": "array",
+          "maxItems": 9,
+          "items": { "$ref": "#/$defs/CoverFace" }
+        },
+        "closings": {
+          "description": "For open faces a held block could close from where the body stands, one placement each, at most one per face.",
+          "type": "array",
+          "maxItems": 9,
+          "items": { "$ref": "#/$defs/Closing" }
+        },
+        "descend": {
+          "description": "The ref of the block under the body's feet when digging it drops the body onto solid ground into a cell more enclosed than this one, with no water let in: the one dig that deepens a shelter. Absent otherwise.",
+          "$ref": "#/$defs/EntityRef"
+        },
+        "blockItems": {
+          "description": "Items something in sight can give the agent now - a dig in reach or a drop in sight - that place as a solid block: what a shelter can be closed with when nothing held can.",
+          "type": "array",
+          "maxItems": 8,
+          "items": { "allOf": [{ "$ref": "#/$defs/ItemName" }, { "not": { "const": "item.minecraft.air" } }] }
+        }
+      }
+    },
+
+    "CoverProgress": {
+      "description": "A shelter goal's body-measured cover: how many of the nine faces around the body are closed, how many more a held block could close from where it stands, and whether the space it stands in is sealed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["closed", "closable", "sealed"],
+      "properties": {
+        "closed": { "type": "integer", "minimum": 0, "maximum": 9 },
+        "closable": { "type": "integer", "minimum": 0, "maximum": 9 },
+        "sealed": { "type": "boolean" }
+      }
+    },
+
     "EquipmentDestination": {
       "description": "The equipment destination the mind chose for one offered inventory stack. These are Mineflayer's bounded player equipment destinations, translated at the body-control boundary rather than guessed from a slot number.",
       "type": "string",
@@ -77,6 +149,14 @@
         },
         "edible": {
           "description": "Whether the server says the stack can be eaten. Absent when the body did not say, which reads as no: a meal is offered only from a stack the server named food.",
+          "type": "boolean"
+        },
+        "solid": {
+          "description": "Whether the server says the stack places as a solid block, one no creature passes. Absent when the body did not say, which reads as no: a shelter is closed only with a stack the server named solid.",
+          "type": "boolean"
+        },
+        "held": {
+          "description": "Whether the server says the stack is in the main hand, which a placement must already be holding. Absent when the body did not say, which reads as no.",
           "type": "boolean"
         }
       }
@@ -202,7 +282,11 @@
           "items": { "$ref": "#/$defs/OwnDrop" },
           "maxItems": 8
         },
-        "world": { "$ref": "#/$defs/WorldState" }
+        "world": { "$ref": "#/$defs/WorldState" },
+        "cover": {
+          "description": "How enclosed the agent stands, from the server's ground. Absent where the body has no server ground to read.",
+          "$ref": "#/$defs/Cover"
+        }
       }
     },
 
@@ -315,9 +399,14 @@
             "allOf": [
               { "not": { "required": ["standable"] } },
               { "not": { "required": ["yields"] } },
-              { "not": { "required": ["digSafe"] } }
+              { "not": { "required": ["digSafe"] } },
+              { "not": { "required": ["cover"] } }
             ]
           }
+        },
+        {
+          "if": { "required": ["cover"] },
+          "then": { "properties": { "standable": { "const": true } } }
         }
       ],
       "properties": {
@@ -369,6 +458,12 @@
         "standable": {
           "description": "Whether a body can stand at this block: on top of a solid block with two open cells above it, or in the own cell of a block the server gives no collision, with solid ground below and an open cell above. Read from the server's ground rather than from sight, because a block whose face is visible can still be covered. Present only when kind is block; absent for entities and dropped items. The bindings enforce that relation.",
           "type": "boolean"
+        },
+        "cover": {
+          "description": "For a block a body can stand at, how many of the nine faces around the cell it would stand in the server gives collision: natural cover in sight, nine for a cell closed on every side. Present only for a standable block.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
         }
       }
     },
@@ -806,6 +901,14 @@
         "discover": {
           "description": "For an adopt or replace with no success item: a discovery goal, whose success condition is that a walk to the edge of sight reveals a useful resource no footing gives, set only while no item goal is grounded, stepped only by such a walk, and replaced by an item goal once it reveals one (r23: 17 of 70 reviews could set no goal at all).",
           "const": true
+        },
+        "shelter": {
+          "description": "For an adopt or replace with no success item: a shelter goal, whose success condition is that the server's ground seals the space the agent stands in, stepped by a dig that deepens the cover, a placement that closes an open face, or a walk onto natural cover, and offered as night nears or while it lasts.",
+          "const": true
+        },
+        "feeds": {
+          "description": "For an adopt while a shelter goal is held and nothing held can close it: the item goal adopted is a resource subgoal that feeds the shelter goal, which waits under it and is held again once the subgoal is completed or abandoned.",
+          "const": true
         }
       }
     },
@@ -826,14 +929,18 @@
         "conditionAdvanced": { "type": "boolean" },
         "stepAdvanced": { "type": "boolean" },
         "stepEvidence": { "$ref": "#/$defs/StepEvidence" },
-        "stepsWithoutProgress": { "type": "integer", "minimum": 0 }
+        "stepsWithoutProgress": { "type": "integer", "minimum": 0 },
+        "cover": {
+          "description": "For a shelter goal, its cover as this review measured it; conditionMet then says the cover is sealed.",
+          "$ref": "#/$defs/CoverProgress"
+        }
       }
     },
 
     "StepEvidence": {
-      "description": "What showed the goal's last step was carried out: arrived for a walk that reached its visible target somewhere new to the goal, gained for an action after which the inventory held more of the goal's item, gainedInput for one after which it held more of a direct input of a recipe for the goal's item, dropped for a dig the server saw drop something for this agent's own request, wherever it went after, revealed for a walk to the edge of sight that arrived where a source of the goal's item was then in sight, none when nothing did. Only a step with evidence advances.",
+      "description": "What showed the goal's last step was carried out: arrived for a walk that reached its visible target somewhere new to the goal, gained for an action after which the inventory held more of the goal's item, gainedInput for one after which it held more of a direct input of a recipe for the goal's item, dropped for a dig the server saw drop something for this agent's own request, wherever it went after, revealed for a walk to the edge of sight that arrived where a source of the goal's item was then in sight, covered for a shelter goal's step after which the server's ground showed the agent more enclosed than the goal had yet been - more faces closed, or more closable from where it stands, or sealed - none when nothing did. Only a step with evidence advances.",
       "type": "string",
-      "enum": ["arrived", "gained", "gainedInput", "dropped", "revealed", "none"]
+      "enum": ["arrived", "gained", "gainedInput", "dropped", "revealed", "covered", "none"]
     },
 
     "InventoryChange": {
@@ -915,6 +1022,16 @@
         "discovery": {
           "description": "Whether the goal is a discovery goal: no success item, met when a walk to the edge of sight reveals a useful resource no footing gives.",
           "type": "boolean"
+        },
+        "shelter": {
+          "description": "Whether the goal is a shelter goal: no success item, met when the server's ground seals the space the agent stands in.",
+          "type": "boolean"
+        },
+        "feeds": {
+          "description": "For a resource subgoal, the goalId of the shelter goal it feeds, which is held again once this goal is completed or abandoned.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
         },
         "progress": { "$ref": "#/$defs/GoalProgress" }
       }

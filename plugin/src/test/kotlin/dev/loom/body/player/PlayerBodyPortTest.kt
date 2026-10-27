@@ -470,6 +470,7 @@ private data class HarnessOptions(
     val healthFailureLimit: Int = 3,
     val yields: BlockYields = BlockYields.NONE,
     val ownDrops: OwnDrops = OwnDrops.NONE,
+    val players: ServerPlayerView = ServerPlayerView.NONE,
 )
 
 private class StartupGate {
@@ -538,6 +539,34 @@ class PlayerBodyPortTest {
         harnesses.forEach { runCatching(it.port::close) }
         fleetHarnesses.forEach { runCatching(it.port::close) }
         extraPorts.forEach { runCatching(it::close) }
+    }
+
+    @Test
+    fun `the shelter witness journals each time the server's ground seals the agent in or opens`() {
+        // r36: no record said whether any agent was ever enclosed; time sheltered is now a sum of these.
+        val agent = AgentId("agent-sheltered")
+        val server = FakePlayerServerState()
+        val feet = listOf(4, 61, 4)
+        val players =
+            object : ServerPlayerView {
+                override fun feetOf(identity: PlayerIdentity): List<Double> = listOf(4.5, 61.0, 4.5)
+
+                override fun mainHandSlotOf(identity: PlayerIdentity): Int? = null
+            }
+        server.passable += listOf(feet, listOf(4, 62, 4))
+        val harness = harness(agent, HarnessOptions(server = server, players = players))
+        harness.port.spawn(agent).await()
+        tick.set(SHELTER_SAMPLE_TICKS * 10)
+        harness.port.tick(tick.get())
+        // A corridor out of the pit, longer than any shelter: the agent is open to the world.
+        server.passable += (63..63 + MAX_ENCLOSURE_CELLS).map { listOf(4, it, 4) }
+        harness.port.tick(tick.get() + 1)
+        tick.set(SHELTER_SAMPLE_TICKS * 11)
+        harness.port.tick(tick.get())
+        val changes = harness.records.filter { it.event == BodyEvent.SHELTER_CHANGED }
+        assertEquals(listOf(EventTag.SHELTER_SEALED, EventTag.SHELTER_OPEN), changes.map { it.outcome })
+        assertEquals(listOf(true, false), changes.map { it.shelter?.sealed })
+        assertEquals(9L, changes.first().shelter?.closed)
     }
 
     @Test
@@ -1930,6 +1959,7 @@ private fun buildPortHarness(
                     ground = FakeGround(options.server),
                     yields = options.yields,
                     ownDrops = options.ownDrops,
+                    players = options.players,
                 ),
             startupConcurrency = 1,
         )

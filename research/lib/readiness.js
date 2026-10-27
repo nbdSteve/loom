@@ -129,6 +129,16 @@ const DANGER_READINESS_VERSION = 'loom-readiness-gate/17'
 // reaches one (`terrain.walkable` false) - and otherwise the body's claim, the `unverifiedTerrain`
 // blocker (r34: three no-routes to one lodged log, and nothing said whether a route could exist).
 const EXPOSURE_READINESS_VERSION = 'loom-readiness-gate/18'
+// Gate generation 19 (the r36 audit): all ten agents died at night in the open, and no goal any
+// agent could hold was one a hiding place could meet. From 19 a shelter goal is the model's own
+// choice, met only when the server's ground seals the agent in and credited `covered` only for a
+// step that left it more enclosed than the goal had yet been; it names no item and is counted apart
+// from item goals, as a discovery goal is, so no item-chain measure moves for it. The run's shelter
+// is measured beside them from the server's own record (`shelterChanged`): the pre-registered
+// `shelterProgressAgentsBeforeNight` - agents whose own adopted shelter goal took a server-witnessed
+// step credited `covered` before nightfall - and, reported, completions, cover quality, time
+// sheltered through the night, damage taken while sealed in, and who survived to the exposure's end.
+const SHELTER_READINESS_VERSION = 'loom-readiness-gate/19'
 // From generation 18, the approach endings judged as a walk's or flight's own.
 const APPROACH_MOVEMENT_TAGS = new Set(['collectStalled', 'collectOverTravelled', 'attackStalled', 'attackOverTravelled'])
 // From generation 18, a collect's no-route the server's ground did not verify.
@@ -149,6 +159,11 @@ const BODY_HEIGHT_BLOCKS = 2
 const ATTACK_MIN_HEALTH = 4.5
 const DISCOVERY_GOAL_INCOHERENT_TAGS = new Set([...HORIZON_GOAL_INCOHERENT_TAGS, 'goalDiscoveryNotOffered'])
 const SURVIVAL_GOAL_INCOHERENT_TAGS = new Set([...DISCOVERY_GOAL_INCOHERENT_TAGS, 'goalSurvivalRequired', 'survivalRequired'])
+// From generation 19, a shelter set where none was offered, a subgoal fed where none could feed a
+// shelter, and a subgoal replaced from under the shelter it fed.
+const SHELTER_GOAL_INCOHERENT_TAGS = new Set([
+  ...SURVIVAL_GOAL_INCOHERENT_TAGS, 'goalShelterNotOffered', 'goalFeedsNotOffered', 'goalSubgoalReplaced'
+])
 // The generation-13 bars that cannot fail a run that pursued anything at all: from generation 14
 // they are measured and reported, and no verdict rests on them.
 const DESCRIPTIVE_MEASURES = Object.freeze(['distinctGoalItems', 'exploringAgents', 'dangerEpisodes'])
@@ -174,6 +189,7 @@ const COMPLETING_OUTCOMES = new Set(['goalCompleted', 'goalCompletedAdopted'])
 
 /** The goal ledger refusals gate [generation] counts as incoherent decisions. */
 function goalIncoherentTagsOf (generation) {
+  if (generation >= 19) return SHELTER_GOAL_INCOHERENT_TAGS
   if (generation >= 15) return SURVIVAL_GOAL_INCOHERENT_TAGS
   if (generation >= 14) return DISCOVERY_GOAL_INCOHERENT_TAGS
   if (generation >= 13) return HORIZON_GOAL_INCOHERENT_TAGS
@@ -187,6 +203,8 @@ function goalIncoherentTagsOf (generation) {
 }
 // The evidence that may credit a step; `none`, or no evidence stated at all, never does.
 const CREDITING_STEP_EVIDENCE = new Set(['arrived', 'gained', 'gainedInput', 'dropped', 'revealed'])
+// From generation 19 a shelter step that left the agent more enclosed is evidence too.
+const SHELTER_CREDITING_STEP_EVIDENCE = new Set([...CREDITING_STEP_EVIDENCE, 'covered'])
 
 const PASSIVE_INTENTS = Object.freeze(['idle', 'rest'])
 const INTERACTION_INTENTS = Object.freeze(['dig', 'collect', 'place', 'equip', 'craft', 'attack', 'sleep'])
@@ -543,7 +561,8 @@ function typedGoalCoherenceOf (bodyRecords, generation = 4, bars = undefined) {
     } else if (goal.stepAdvanced === true) counts.stepOnlySteps += 1
     else counts.unadvancedSteps += 1
     // r13: 22 steps the mind itself called noProgress were credited because a dig was accepted.
-    if (evidenced && goal.stepAdvanced === true && !CREDITING_STEP_EVIDENCE.has(goal.stepEvidence)) {
+    const crediting = generation >= 19 ? SHELTER_CREDITING_STEP_EVIDENCE : CREDITING_STEP_EVIDENCE
+    if (evidenced && goal.stepAdvanced === true && !crediting.has(goal.stepEvidence)) {
       counts.unevidencedCredits += 1
     }
     byGoal.set(goal.presentedGoalId, entry)
@@ -1046,8 +1065,10 @@ function groundedPursuitOf (bodyRecords, byGoal, bars, generation = 12) {
   for (const record of reviews) {
     const goal = record.goal
     const choice = record.decision?.goal
-    // A discovery goal names no item, and is counted apart from item goals (generation 14).
+    // A discovery goal names no item, and is counted apart from item goals (generation 14); so
+    // does a shelter goal (generation 19).
     if (discoveryRule && goal.discovery === true) continue
+    if (generation >= 19 && (goal.shelter === true || goal.presentedShelter === true)) continue
     if (['goalAdopted', 'goalReplaced', 'goalCompletedAdopted'].includes(goal.outcome) && goal.goalId !== undefined) {
       const item = choice?.successItem
       items.add(item)
@@ -1400,6 +1421,125 @@ function exposureOf (bodyRecords, harnessRecords) {
   }
 }
 
+/** The goal outcomes of a decision that took up a goal of its own. */
+const ADOPTING_OUTCOMES = new Set(['goalAdopted', 'goalReplaced', 'goalCompletedAdopted'])
+
+/**
+ * The tick the run's first night fell, from the first perception taken by day: when it was taken
+ * plus the ticks it stated to nightfall. `undefined` when no perception stated one.
+ */
+function nightfallOf (bodyRecords) {
+  const first = bodyRecords.find((record) =>
+    record.event === 'perceived' && Number.isInteger(record.perception?.capturedTick) &&
+    record.perception?.selfState?.world?.dayPhase !== 'night' &&
+    Number.isInteger(record.perception?.selfState?.world?.ticksUntilNightfall))
+  return first === undefined
+    ? undefined
+    : first.perception.capturedTick + first.perception.selfState.world.ticksUntilNightfall
+}
+
+/**
+ * Each agent's sealed intervals, [from, to), from the server's `shelterChanged` records: sealed in
+ * from a `sheltered` record until the next `exposed` one, the agent's death, or [end].
+ */
+function shelteredIntervalsOf (bodyRecords, end) {
+  const byAgent = new Map()
+  const open = new Map()
+  const close = (agentId, tick) => {
+    if (!open.has(agentId)) return
+    const intervals = byAgent.get(agentId) ?? []
+    intervals.push([open.get(agentId), Math.min(tick, end)])
+    byAgent.set(agentId, intervals)
+    open.delete(agentId)
+  }
+  for (const record of bodyRecords) {
+    if (record.agentId === undefined || !Number.isInteger(record.tick) || record.tick > end) continue
+    if (record.event === 'shelterChanged' && record.shelter?.sealed === true && !open.has(record.agentId)) {
+      open.set(record.agentId, record.tick)
+    } else if ((record.event === 'shelterChanged' && record.shelter?.sealed === false) || record.event === 'died') {
+      close(record.agentId, record.tick)
+    }
+  }
+  for (const agentId of [...open.keys()]) close(agentId, end)
+  return byAgent
+}
+
+/**
+ * The run's shelter from generation 19 (the r36 audit): whether agents chose shelter and built it
+ * before night, measured from their own goal evidence and the server's sealed record.
+ *
+ * - `shelterProgressAgentsBeforeNight`, the pre-registered bar: agents whose own adopted shelter
+ *   goal was credited a `covered` step before nightfall, the step itself accepted by the body and,
+ *   for a dig or a placement, confirmed by the server's interaction witness;
+ * - reported: shelter goals adopted, completions of a sealed shelter, cover quality (the most sides
+ *   each agent's shelter closed), time sheltered from nightfall to the exposure's end, damage
+ *   witnessed while sealed in, and the agents alive, and sheltered, at the exposure's end.
+ */
+function shelterOf (bodyRecords, exposure, bars) {
+  const runEnd = maximumTick(bodyRecords)
+  const end = exposure?.endTick ?? runEnd
+  const nightfall = nightfallOf(bodyRecords)
+  const decided = bodyRecords.filter((record) => record.event === 'decided' && record.goal !== undefined)
+  const adopted = new Set(decided
+    .filter((record) => record.goal.shelter === true && ADOPTING_OUTCOMES.has(record.goal.outcome))
+    .map((record) => `${record.agentId}:${record.goal.goalId}`))
+  const appliedOf = new Map(bodyRecords
+    .filter((record) => record.event === 'intentApplied' && record.requestKey !== undefined)
+    .map((record) => [record.requestKey, record]))
+  const confirmed = new Set(bodyRecords
+    .filter((record) => record.event === 'worldInteraction' && record.outcome === 'serverEffectConfirmed')
+    .map((record) => record.requestKey))
+  const witnessedStep = (record) => {
+    const key = `${record.agentId}:${record.goal.steppedBy}`
+    const applied = appliedOf.get(key)
+    if (applied?.outcome !== 'accepted') return false
+    return !['dig', 'place'].includes(applied.intent) || confirmed.has(key)
+  }
+  const progressing = new Set(decided.filter((record) =>
+    record.goal.presentedShelter === true && record.goal.stepEvidence === 'covered' &&
+    adopted.has(`${record.agentId}:${record.goal.presentedGoalId}`) &&
+    nightfall !== undefined && record.tick < nightfall && witnessedStep(record))
+    .map((record) => record.agentId))
+  const completions = decided.filter((record) =>
+    record.goal.presentedShelter === true && record.goal.conditionMet === true &&
+    COMPLETING_OUTCOMES.has(record.goal.outcome)).length
+  const quality = {}
+  for (const record of decided) {
+    const closed = record.goal.presentedShelter === true ? record.goal.cover?.closed : undefined
+    if (Number.isInteger(closed)) quality[record.agentId] = Math.max(quality[record.agentId] ?? 0, closed)
+  }
+  const intervals = shelteredIntervalsOf(bodyRecords, end)
+  const night = nightfall ?? end
+  let sheltered = 0
+  for (const spans of intervals.values()) {
+    for (const [from, to] of spans) sheltered += Math.max(0, to - Math.max(from, night))
+  }
+  const inside = (agentId, tick) => (intervals.get(agentId) ?? []).some(([from, to]) => tick >= from && tick < to)
+  const agents = new Set(bodyRecords.filter((record) => record.event === 'perceived').map((record) => record.agentId))
+  const dead = new Set(bodyRecords.filter((record) => record.event === 'died' && record.tick <= end).map((record) => record.agentId))
+  const survivors = [...agents].filter((agentId) => !dead.has(agentId)).sort()
+  const measured = {
+    shelterProgressAgentsBeforeNight: progressing.size,
+    shelterGoals: adopted.size,
+    shelterCompletions: completions,
+    coverQuality: Object.fromEntries(Object.entries(quality).sort()),
+    timeShelteredTicks: sheltered,
+    damageWhileSheltered: bodyRecords.filter((record) =>
+      record.event === 'damageWitnessed' && record.tick <= end && inside(record.agentId, record.tick)).length,
+    survivedExposure: survivors.length,
+    shelteredAtExposureEnd: survivors.filter((agentId) => inside(agentId, end - 1)).length
+  }
+  const bar = bars?.shelterProgressAgentsBeforeNight
+  return {
+    nightfallTick: nightfall ?? null,
+    endTick: end,
+    bars: bar === undefined ? null : { shelterProgressAgentsBeforeNight: bar },
+    measured,
+    progressingAgents: [...progressing].sort(),
+    verdict: bar === undefined ? 'unbarred' : measured.shelterProgressAgentsBeforeNight >= bar ? 'cleared' : 'notCleared'
+  }
+}
+
 /** The health the perception a decision answered showed, or -Infinity when none was recorded. */
 function perceivedHealthOf (own) {
   const health = own.find((record) => record.event === 'perceived')?.perception?.selfState?.health
@@ -1558,7 +1698,10 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
     disputes.length === 0 &&
     (exposure?.deathsAfter ?? []).length === 0
   const coherence = typed ? typedGoalCoherenceOf(bodyRecords, generation, bars) : undefined
-  const ready = mechanicallyReady && (coherence === undefined || coherence.verdict === 'coherent')
+  const shelter = generation >= 19 ? shelterOf(bodyRecords, exposure, bars) : undefined
+  const ready = mechanicallyReady && (coherence === undefined || coherence.verdict === 'coherent') &&
+    shelter?.verdict !== 'notCleared'
+
   return {
     version: [
       READINESS_VERSION,
@@ -1576,8 +1719,9 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       SURVIVAL_READINESS_VERSION,
       WATER_READINESS_VERSION,
       DANGER_READINESS_VERSION,
-      EXPOSURE_READINESS_VERSION
-    ][Math.min(Math.max(generation - 3, 0), 15)],
+      EXPOSURE_READINESS_VERSION,
+      SHELTER_READINESS_VERSION
+    ][Math.min(Math.max(generation - 3, 0), 16)],
     actions: {
       total,
       byClass: Object.fromEntries(Object.entries(byClass).sort()),
@@ -1607,6 +1751,7 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
         }
       : {}),
     ...(exposure === undefined ? {} : { exposure }),
+    ...(shelter === undefined ? {} : { shelter }),
     ...(typed
       ? { goalCoherence: coherence, mechanicalVerdict: mechanicallyReady ? 'ready' : 'notReady' }
       : { goalCoherence: goalCoherenceOf(bodyRecords) }),
@@ -1616,6 +1761,8 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
 
 module.exports = {
   BLOCKER_CLASSES,
+  SHELTER_GOAL_INCOHERENT_TAGS,
+  SHELTER_READINESS_VERSION,
   SURVIVAL_GOAL_INCOHERENT_TAGS,
   SURVIVAL_READINESS_VERSION,
   WATER_READINESS_VERSION,

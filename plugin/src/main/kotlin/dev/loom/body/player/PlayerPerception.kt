@@ -88,7 +88,12 @@ internal class PlayerPerception(
         capture(agentId, "threat scan").thenApplyOn(context.authority.main) { raw ->
             raw?.let { sceneFor(agentId, it) }?.let { scene ->
                 // The player body makes no route search toward a threat, so it states none.
-                val outcome = context.threatWatch.consider(agentId, scene.candidates) { null }
+                val outcome =
+                    if (scene.selfState.cover?.sealed == true) {
+                        context.threatWatch.sheltered(agentId, scene.candidates)
+                    } else {
+                        context.threatWatch.consider(agentId, scene.candidates) { null }
+                    }
                 outcome.suppressed.forEach { context.journal.recordSuppressedThreat(agentId, it) }
                 outcome.sighted?.let { trigger ->
                     commit(scene, trigger).also { sent ->

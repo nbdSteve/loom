@@ -102,6 +102,12 @@ class ObserverView(
                 )
             BodyEvent.EXPOSURE_ENDED ->
                 Note("the run's exposure ended; nothing new counts from here", ObserverLevel.CALM)
+            BodyEvent.SHELTER_CHANGED ->
+                if (record.outcome == EventTag.SHELTER_SEALED) {
+                    Note("is sealed in a shelter", ObserverLevel.CALM)
+                } else {
+                    Note("is not sealed in", ObserverLevel.CALM)
+                }
             BodyEvent.WITNESS_JOINED -> Note("connected to the server and has a body now", ObserverLevel.CALM)
             BodyEvent.WITNESS_QUIT ->
                 Note("disconnected. It is not dead; the agent continues.", ObserverLevel.CALM)
@@ -161,6 +167,7 @@ class ObserverView(
             BodyEvent.OWN_DROP_PICKUP,
             BodyEvent.GOAL_REVIEW_DEFERRED,
             BodyEvent.EXPOSURE_ENDED,
+            BodyEvent.SHELTER_CHANGED,
             // Names the creature and the request-scoped handle it was seen under. Neither
             // is a secret, and neither is a line: the bound that refused it is the whole
             // meaning, and that is a countable tag rather than prose.

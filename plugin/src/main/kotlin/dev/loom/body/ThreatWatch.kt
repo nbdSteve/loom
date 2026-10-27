@@ -161,6 +161,12 @@ enum class ThreatSuppressionReason(
      * more than 20 off either way, spending 22 of the run's 150 calls.
      */
     DISTANT_SEEN(EventTag.THREAT_DISTANT_SEEN),
+
+    /**
+     * The agent stands sealed in, by the server's ground: no hunter can reach it, and no flight can
+     * leave, so a sighting is no news it could act on (`Cover.kt`).
+     */
+    SHELTERED(EventTag.THREAT_SHELTERED),
 }
 
 /**
@@ -350,6 +356,22 @@ class ThreatWatch(
             }
         }
         return ThreatOutcome(suppressed = refused)
+    }
+
+    /**
+     * What [agent], standing sealed in, is told of the hunters in [candidates]: nothing, each
+     * suppressed as [ThreatSuppressionReason.SHELTERED], since none can reach it and no flight can
+     * leave. Threats no longer in view are forgotten as [consider] forgets them.
+     */
+    fun sheltered(
+        agent: AgentId,
+        candidates: List<ThreatCandidate>,
+    ): ThreatOutcome {
+        val hunters = candidates.filter { hunts(it.what) }
+        remembered[agent]?.keys?.retainAll(hunters.map { it.subject }.toSet())
+        return ThreatOutcome(
+            suppressed = hunters.map { ThreatSuppression(it.what, it.ref, ThreatSuppressionReason.SHELTERED) },
+        )
     }
 
     /**

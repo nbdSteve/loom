@@ -179,6 +179,105 @@ enum class BlockFace {
     EAST,
 }
 
+/** One of the nine faces around the two cells a standing body fills. */
+@Serializable
+enum class CoverFace {
+    @SerialName("feetNorth")
+    FEET_NORTH,
+
+    @SerialName("feetEast")
+    FEET_EAST,
+
+    @SerialName("feetSouth")
+    FEET_SOUTH,
+
+    @SerialName("feetWest")
+    FEET_WEST,
+
+    @SerialName("headNorth")
+    HEAD_NORTH,
+
+    @SerialName("headEast")
+    HEAD_EAST,
+
+    @SerialName("headSouth")
+    HEAD_SOUTH,
+
+    @SerialName("headWest")
+    HEAD_WEST,
+
+    @SerialName("roof")
+    ROOF,
+}
+
+/** Most faces around a standing body: four beside the feet, four beside the head, and the roof. */
+const val MAX_COVER_FACES: Int = 9
+
+/** Most solid-block items a cover reading names as obtainable now. */
+const val MAX_COVER_BLOCK_ITEMS: Int = 8
+
+/** One placement that would close an open face of the agent's cover. */
+@Serializable
+data class Closing(
+    /** The open face the placement closes. */
+    val face: CoverFace,
+    /** The sensed support block, in sight and in reach, to place against. */
+    val block: String,
+    /** The side of that support block to place against. */
+    val side: BlockFace,
+) {
+    init {
+        requireBoundedRef(block)
+    }
+}
+
+/** How enclosed the agent stands, read from the server's own ground. */
+@Serializable
+data class Cover(
+    /** Whether the open space the body stands in is closed on every side. */
+    val sealed: Boolean,
+    /** Whether a short walk leads out of where the body stands. */
+    val walkOut: Boolean,
+    /** The faces around the body the server gives no collision, each at most once. */
+    val open: List<CoverFace>,
+    /** For open faces a held block could close from here, one placement each. */
+    val closings: List<Closing>,
+    /** The block under the feet whose dig deepens the cover, when there is one. */
+    val descend: String? = null,
+    /** Items sight can give now that place as a solid block. */
+    val blockItems: List<String>,
+) {
+    init {
+        require(open.size <= MAX_COVER_FACES && open.distinct().size == open.size) {
+            "a cover names each of its nine faces at most once"
+        }
+        val closed = closings.map { it.face }
+        require(closed.size <= MAX_COVER_FACES && closed.distinct().size == closed.size && open.containsAll(closed)) {
+            "a cover closes each open face at most once, and only open ones"
+        }
+        descend?.let(::requireBoundedRef)
+        require(blockItems.size <= MAX_COVER_BLOCK_ITEMS) { "at most $MAX_COVER_BLOCK_ITEMS block items" }
+        require(blockItems.all { isItemName(it) && it != AIR_ITEM }) { "a block item is an item name, never air" }
+    }
+}
+
+/** A shelter goal's body-measured cover. */
+@Serializable
+data class CoverProgress(
+    /** How many of the nine faces around the body are closed. */
+    val closed: Long,
+    /** How many more a held block could close from where the body stands. */
+    val closable: Long,
+    /** Whether the space the body stands in is sealed. */
+    val sealed: Boolean,
+) {
+    init {
+        require(closed in 0..MAX_COVER_FACES && closable in 0..MAX_COVER_FACES) {
+            "cover counts are in 0..$MAX_COVER_FACES"
+        }
+    }
+}
+
 /** The bounded player equipment destination chosen by an equip intent. */
 @Serializable
 enum class EquipmentDestination {
@@ -275,6 +374,10 @@ data class InventoryStack(
     val count: Long,
     /** Whether the server says the stack can be eaten; absent reads as no. */
     val edible: Boolean? = null,
+    /** Whether the server says the stack places as a solid block; absent reads as no. */
+    val solid: Boolean? = null,
+    /** Whether the server says the stack is in the main hand; absent reads as no. */
+    val held: Boolean? = null,
 ) {
     init {
         requireBoundedRef(ref)
@@ -334,6 +437,8 @@ data class SelfState(
     val ownDrops: List<OwnDrop>,
     /** The bounded world clock the body reveals. */
     val world: WorldState,
+    /** How enclosed the agent stands, from the server's ground; absent where there is none. */
+    val cover: Cover? = null,
 ) {
     init {
         require(position.size == COORDINATE_DIMENSIONS) {
@@ -542,9 +647,17 @@ data class Observation(
      * list of player hunters: what a goal review may flee from.
      */
     val hunts: Boolean? = null,
+    /**
+     * For a block a body can stand at, how many of the nine faces around the cell it would stand in
+     * have collision: natural cover in sight. Present only for a standable block.
+     */
+    val cover: Long? = null,
 ) {
     init {
         requireBoundedRef(ref)
+        require(cover == null || (standable == true && cover in 0..MAX_COVER_FACES)) {
+            "cover is present only for a block a body can stand at, and counts 0..$MAX_COVER_FACES faces"
+        }
         require(hunts != false && (hunts == null || kind == ObservationKind.ENTITY)) {
             "hunts is present, and true, only for a creature"
         }
@@ -933,6 +1046,13 @@ data class GoalSummary(
      * reveals a useful resource no footing gives.
      */
     val discovery: Boolean = false,
+    /**
+     * Whether the goal is a shelter goal: no success item, met when the server's ground seals the
+     * space the agent stands in.
+     */
+    val shelter: Boolean = false,
+    /** For a resource subgoal, the goal id of the shelter goal it feeds. */
+    val feeds: String? = null,
     /** Body-measured evidence about the goal, once a later review can compare. */
     val progress: GoalProgress? = null,
 ) {
@@ -942,6 +1062,7 @@ data class GoalSummary(
         requireTypedSuccess(successItem, successCount)
         step?.let { requireBoundedText("goal step", it, MAX_GOAL_STATEMENT_CHARS) }
         stepRef?.let(::requireBoundedRef)
+        feeds?.let { requireBoundedText("goal feeds", it, MAX_GOAL_ID_CHARS) }
         require(revision >= 0) { "goal revision must not be negative, got $revision" }
         require(adoptedTick >= 0) { "goal adoptedTick must not be negative, got $adoptedTick" }
     }
@@ -979,6 +1100,8 @@ data class GoalProgress(
     val stepEvidence: StepEvidence,
     /** How many affirmed steps in a row advanced neither. */
     val stepsWithoutProgress: Long,
+    /** For a shelter goal, its cover as this review measured it. */
+    val cover: CoverProgress? = null,
 ) {
     init {
         require(conditionHeld >= 0) { "conditionHeld must not be negative, got $conditionHeld" }
@@ -1012,6 +1135,10 @@ enum class StepEvidence {
     /** A walk to the edge of sight arrived where a source of the goal's item was then in sight. */
     @SerialName("revealed")
     REVEALED,
+
+    /** A shelter goal's step left the agent more enclosed than the goal had yet been. */
+    @SerialName("covered")
+    COVERED,
 
     /** Nothing showed it: a dig that dropped nothing, a walk that did not arrive. */
     @SerialName("none")
@@ -1193,11 +1320,20 @@ data class GoalChoice(
      * of sight reveals a useful resource no footing gives. Present only as `true`.
      */
     val discover: Boolean? = null,
+    /**
+     * For an adopt or replace with no success item: a shelter goal, met when the server's ground
+     * seals the space the agent stands in. Present only as `true`.
+     */
+    val shelter: Boolean? = null,
+    /** For an adopt while a shelter goal is held: a resource subgoal that feeds it. Present only as `true`. */
+    val feeds: Boolean? = null,
 ) {
     init {
         requireTypedSuccess(successItem, successCount)
         step?.let { requireBoundedText("goal step", it, MAX_GOAL_STATEMENT_CHARS) }
-        require(discover != false) { "discover is present only as true" }
+        require(discover != false && shelter != false && feeds != false) {
+            "discover, shelter and feeds are present only as true"
+        }
     }
 }
 

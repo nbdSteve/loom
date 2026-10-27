@@ -54,14 +54,18 @@ const GOAL_OUTCOMES = [
   'goalReviseUnchanged',
   'goalDiscoveryNotOffered',
   'goalDeferred',
-  'goalSurvivalRequired'
+  'goalSurvivalRequired',
+  'goalShelterNotOffered',
+  'goalFeedsNotOffered',
+  'goalSubgoalReplaced'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // What a measured step showed, from routine-v22: the exact target reached, an item gained, a
 // new drop in sight, or nothing.
 // From routine-v27 a walk to the edge of sight that brought a source of the item into sight.
 // From routine-v28 a gain of a direct input of a recipe for the goal's item.
-const GOAL_STEP_EVIDENCE = ['arrived', 'gained', 'gainedInput', 'dropped', 'revealed', 'none']
+// From routine-v35 a shelter step that left the agent more enclosed than its goal had yet been.
+const GOAL_STEP_EVIDENCE = ['arrived', 'gained', 'gainedInput', 'dropped', 'revealed', 'covered', 'none']
 // Outcomes that act on the very goal the answered review was handed.
 const GOAL_CONTINUING_OUTCOMES = ['goalContinued', 'goalRevised', 'goalCompleted']
 
@@ -271,6 +275,13 @@ function validGoalId (value) {
     (typeof value === 'string' && value.length > 0 && value.length <= MAX_GOAL_ID_CHARS)
 }
 
+/** Whether [cover] is a shelter goal's measured cover: closed and closable sides of nine, and sealed. */
+function validCover (cover) {
+  const count = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 9
+  return cover !== null && typeof cover === 'object' && !Array.isArray(cover) &&
+    count(cover.closed) && count(cover.closable) && typeof cover.sealed === 'boolean'
+}
+
 function validateGoalEvidence (goal, event, label) {
   if (goal === null || typeof goal !== 'object' || Array.isArray(goal)) {
     throw new Error(`${label} goal evidence is not an object`)
@@ -280,7 +291,7 @@ function validateGoalEvidence (goal, event, label) {
   if (goal.disposition !== undefined && !GOAL_DISPOSITIONS.includes(goal.disposition)) {
     throw new Error(`${label} has an unknown goal disposition`)
   }
-  for (const field of ['presentedGoalId', 'goalId', 'expiredGoalId', 'chainedFrom', 'discoveredFrom']) {
+  for (const field of ['presentedGoalId', 'goalId', 'expiredGoalId', 'chainedFrom', 'discoveredFrom', 'feeds', 'resumed', 'steppedBy']) {
     if (!validGoalId(goal[field])) throw new Error(`${label} goal ${field} is not a bounded id`)
   }
   for (const field of ['presentedRevision', 'revision']) {
@@ -299,10 +310,13 @@ function validateGoalEvidence (goal, event, label) {
   if (goal.stepEvidence !== undefined && !GOAL_STEP_EVIDENCE.includes(goal.stepEvidence)) {
     throw new Error(`${label} has an unknown goal step evidence`)
   }
-  for (const field of ['conditionMet', 'conditionAdvanced', 'stepAdvanced', 'discovery', 'presentedDiscovery']) {
+  for (const field of ['conditionMet', 'conditionAdvanced', 'stepAdvanced', 'discovery', 'presentedDiscovery', 'shelter', 'presentedShelter']) {
     if (goal[field] !== undefined && typeof goal[field] !== 'boolean') {
       throw new Error(`${label} goal ${field} must be a boolean`)
     }
+  }
+  if (goal.cover !== undefined && !validCover(goal.cover)) {
+    throw new Error(`${label} goal cover must state closed and closable sides from 0 to 9 and whether it is sealed`)
   }
   if ((goal.presentedGoalId === undefined) !== (goal.presentedRevision === undefined) ||
     (goal.goalId === undefined) !== (goal.revision === undefined)) {
@@ -407,7 +421,8 @@ function normalizeBodyRecord (
     'retreat',
     'dispute',
     'movement',
-    'terrain'
+    'terrain',
+    'shelter'
   ]) {
     if (record[field] !== undefined && record[field] !== null) {
       normalized[field] = sanitizeValue(record[field], state)

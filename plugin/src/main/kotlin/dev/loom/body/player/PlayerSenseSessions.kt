@@ -68,14 +68,22 @@ internal data class PlayerScene(
         )
 }
 
+/** What one sense offered beyond its observations, each resolved when an action names it. */
+internal data class SenseTargets(
+    /** The cell each exploration ref of this sense names, where a walk to it ends. */
+    val exploreCells: Map<String, List<Int>> = emptyMap(),
+    /** The ref of the block under the feet this sense offered as a shelter's descent, if any. */
+    val descend: String? = null,
+)
+
 internal class HeldSense(
     val raw: RawSense,
     val entityIndex: Map<UUID, Int>,
     val entitySubjects: Map<Int, UUID>,
     val droppedItemSubjects: Map<Int, UUID>,
     val rememberedAt: Long,
-    /** The cell each exploration ref of this sense names, where a walk to it ends. */
-    val exploreCells: Map<String, List<Int>> = emptyMap(),
+    /** What this sense offered beyond its observations: exploration cells and a descent. */
+    val targets: SenseTargets = SenseTargets(),
 ) {
     private val closed = AtomicBoolean()
     var keepalive: ScheduledFuture<*>? = null
@@ -129,7 +137,13 @@ internal class PlayerSenseSessions(
             scene.entitySubjects,
             scene.droppedItemSubjects,
             scene.raw.capturedTick,
-            scene.explore.associate { (target, cell) -> target.ref to cell },
+            SenseTargets(
+                scene.explore.associate {
+                        (target, cell) ->
+                    target.ref to cell
+                },
+                scene.selfState.cover?.descend,
+            ),
         ).also { sense ->
             held.getOrPut(agentId) { LinkedHashMap() }[requestId] = sense
         }

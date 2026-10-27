@@ -158,6 +158,7 @@ mod tests {
                     is_day: true,
                     ticks_until_nightfall: 6_000,
                 },
+                cover: None,
             },
             surroundings: vec![],
             surroundings_omitted: 0,
@@ -222,7 +223,7 @@ mod tests {
         assert!(decided.reasoning.contains(DEEP));
         assert_eq!(decided.provenance.model, FAST);
         assert_eq!(decided.provenance.tier, DecisionImportance::Routine);
-        assert_eq!(decided.provenance.prompt_version, "routine-v34");
+        assert_eq!(decided.provenance.prompt_version, "routine-v35");
     }
 
     /// A backend that answers with one fixed intent, whatever it was offered.
@@ -259,6 +260,7 @@ mod tests {
             dig_safe: None,
             route_refused: None,
             hunts: Some(true),
+            cover: None,
         });
         for wrong in [
             Intent::Dig {
@@ -327,6 +329,8 @@ mod tests {
                     .then(|| "stand by the nearest tree".to_owned()),
                 step_result: (disposition != GoalDisposition::Adopt)
                     .then_some(GoalStepResult::Progressing),
+                shelter: None,
+                feeds: None,
             };
             let mind = Mind::new(router(), ChoosingBackend(choice.clone()));
             let decided = mind
@@ -336,7 +340,7 @@ mod tests {
             assert_eq!(decided.goal, Some(choice));
             assert_eq!(decided.intent, Intent::Idle);
             assert_eq!(decided.provenance.model, FAST);
-            assert_eq!(decided.provenance.prompt_version, "routine-v34");
+            assert_eq!(decided.provenance.prompt_version, "routine-v35");
         }
     }
 

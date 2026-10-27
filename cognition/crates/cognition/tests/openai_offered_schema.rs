@@ -249,6 +249,7 @@ fn the_widest_request_schema_stays_inside_the_providers_enum_limits() {
         dig_safe: Some(true),
         route_refused: None,
         hunts: None,
+        cover: None,
     };
     // Each block yields eight items of the contract's longest name, and one is unsafe to dig.
     seen.surroundings = (0..MAX_PERCEPTION_OBSERVATIONS)
@@ -381,6 +382,7 @@ fn with_bush(mut seen: Perception) -> Perception {
         dig_safe: Some(true),
         route_refused: None,
         hunts: None,
+        cover: None,
     });
     seen
 }
@@ -510,6 +512,8 @@ fn a_success_count_is_the_total_to_hold_bounded_by_what_is_held_and_what_sight_c
         what: stick.to_owned(),
         count: 3,
         edible: None,
+        solid: None,
+        held: None,
     });
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     // Three held and a bush expected to give one of its nought to two: a total of four (r15:
@@ -599,6 +603,7 @@ fn stick_drop(handle: &str, distance: f64) -> Observation {
         dig_safe: None,
         route_refused: None,
         hunts: None,
+        cover: None,
     }
 }
 
@@ -743,6 +748,7 @@ fn with_block(
         dig_safe: Some(true),
         route_refused: None,
         hunts: None,
+        cover: None,
     });
     seen
 }
@@ -903,6 +909,7 @@ fn widest_goal_review() -> Perception {
         dig_safe: Some(true),
         route_refused: None,
         hunts: None,
+        cover: None,
     };
     seen.surroundings = (0..MAX_PERCEPTION_OBSERVATIONS)
         .map(|index| Observation {
@@ -994,6 +1001,7 @@ fn the_widest_goal_review_beside_hunters_and_recalled_sources_stays_inside_the_e
             dig_safe: None,
             route_refused: None,
             hunts: Some(true),
+            cover: None,
         };
     }
     seen.explore = (0..8)
@@ -1213,6 +1221,7 @@ fn a_source_in_sight_beyond_dig_reach_is_walked_toward_by_its_edge_of_sight_cell
         dig_safe: Some(true),
         route_refused: None,
         hunts: None,
+        cover: None,
     });
     // The horizon the JVM grounds in the log sight shows.
     seen.horizon = vec![horizon_goal(
@@ -1532,6 +1541,7 @@ fn beside_a_hunter(mut seen: Perception) -> Perception {
         dig_safe: None,
         route_refused: None,
         hunts: Some(true),
+        cover: None,
     });
     holding_bread(seen)
 }
@@ -1542,6 +1552,8 @@ fn holding_bread(mut seen: Perception) -> Perception {
         what: "item.minecraft.bread".to_owned(),
         count: 2,
         edible: None,
+        solid: None,
+        held: None,
     });
     seen
 }
@@ -1679,6 +1691,8 @@ fn attacked_from(distance: f64, named: bool) -> Perception {
         what: "item.minecraft.stick".to_owned(),
         count: 1,
         edible: None,
+        solid: None,
+        held: None,
     }];
     seen
 }

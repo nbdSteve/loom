@@ -33,6 +33,7 @@ private val WIRE_NAMES =
         BodyEvent.OWN_DROP_PICKUP to "ownDropPickup",
         BodyEvent.GOAL_REVIEW_DEFERRED to "goalReviewDeferred",
         BodyEvent.EXPOSURE_ENDED to "exposureEnded",
+        BodyEvent.SHELTER_CHANGED to "shelterChanged",
         BodyEvent.DECIDED to "decided",
         BodyEvent.DECISION_DISCARDED to "decisionDiscarded",
         BodyEvent.COGNITION_UNAVAILABLE to "cognitionUnavailable",

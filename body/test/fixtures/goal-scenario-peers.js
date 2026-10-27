@@ -13,7 +13,9 @@
  * With `serveBreaks` the script is also the shared server for digs: the first finish written
  * for a block is the one break it takes, which it reports as a `{"broke":...}` line and then
  * broadcasts to every client, the way vanilla answers a finished dig to the digger and to every
- * player tracking the chunk. With `serveCrafts` it also answers crafts in the player's own grid.
+ * player tracking the chunk; with `dropsOnBreak` the breaker picks its drop up at once. With
+ * `servePlaces` a held block placed lands where its face points, reported as `{"placed":...}`, and
+ * the hand loses one. With `serveCrafts` it also answers crafts in the player's own grid.
  * Stops every body when stdin closes.
  */
 
@@ -30,18 +32,42 @@ const SERVER_ANSWER_MS = 50
 const COLUMNS = 2
 const FLOOR_Y = 63
 
-/** A stone floor at y 63 across every loaded column, as wide as a flight may run. */
-function floor (bot, columns) {
-  const stone = registry.blocksByName.stone.defaultState
+/**
+ * A floor at y 63 - stone unless the scene names its block - across every loaded column, as wide as
+ * a flight may run, with the scene's `depth` layers under it, top first.
+ */
+function floor (bot, columns, top = 'stone', depth = []) {
+  const layers = [top, ...depth].map((name, index) => [FLOOR_Y - index, registry.blocksByName[name].defaultState])
   for (let cx = -columns; cx <= columns; cx += 1) {
     for (let cz = -columns; cz <= columns; cz += 1) {
       const column = new Chunk(OVERWORLD)
       for (let x = 0; x < 16; x += 1) {
-        for (let z = 0; z < 16; z += 1) column.setBlockStateId(new Vec3(x, FLOOR_Y, z), stone)
+        for (let z = 0; z < 16; z += 1) {
+          for (const [y, state] of layers) column.setBlockStateId(new Vec3(x, y, z), state)
+        }
       }
       bot.world.setColumn(cx, cz, column)
     }
   }
+}
+
+/** The item a bare-hand break of each block gives, as vanilla's loot tables give it. */
+const DROPS = Object.freeze({ grass_block: 'dirt', dirt: 'dirt', oak_log: 'oak_log' })
+
+/** The block a `block_place` face points the placement into, as Mineflayer numbers the faces. */
+const FACES = Object.freeze([[0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1], [-1, 0, 0], [1, 0, 0]])
+
+/**
+ * Hands [peer] the stack a server pickup would: [what] added to the hand's hotbar slot when it is
+ * empty or holds the same item, else to the first empty slot of the hotbar and then the inventory.
+ */
+function given (peer, what) {
+  const slots = peer.bot.inventory.slots
+  const order = [36, 37, 38, 39, 40, 41, 42, 43, 44, ...Array.from({ length: 27 }, (_, index) => 9 + index)]
+  const slot = order.find((at) => slots[at]?.name === what) ?? order.find((at) => slots[at] == null)
+  if (slot === undefined) return
+  const count = (slots[slot]?.count ?? 0) + 1
+  peer.client.emit('set_slot', { windowId: 0, stateId: 1, slot, item: Item.toNotch(stack(what, count)) })
 }
 
 /**
@@ -97,9 +123,28 @@ async function main () {
   const serve = (agentId, location) => {
     if (broken.has(keyOf(location))) return
     broken.add(keyOf(location))
+    const breaker = started.find((peer) => peer.agentId === agentId)
+    const name = breaker?.bot.blockAt(new Vec3(location.x, location.y, location.z))?.name
     emit({ broke: { agentId, ...location } })
     setTimeout(() => {
       for (const { client } of started) client.emit('block_change', { location: { ...location }, type: 0 })
+      // With `dropsOnBreak` the breaker picks its drop up at once, as one standing on it does.
+      if (scene.dropsOnBreak && breaker !== undefined && DROPS[name] !== undefined) given(breaker, DROPS[name])
+    }, SERVER_ANSWER_MS)
+  }
+  /** Answers one `block_place` the way a server does: the held block lands, and the hand loses one. */
+  const placed = (peer, { location, direction }) => {
+    const face = FACES[direction]
+    const held = peer.bot.heldItem
+    const state = held === null ? undefined : registry.blocksByName[held.name]?.defaultState
+    if (face === undefined || state === undefined) return
+    const at = { x: location.x + face[0], y: location.y + face[1], z: location.z + face[2] }
+    emit({ placed: { agentId: peer.agentId, ...at, name: held.name } })
+    const slot = 36 + peer.bot.quickBarSlot
+    const item = held.count > 1 ? Item.toNotch(stack(held.name, held.count - 1)) : Item.toNotch(null)
+    setTimeout(() => {
+      for (const { client } of started) client.emit('block_change', { location: at, type: state })
+      peer.client.emit('set_slot', { windowId: 0, stateId: 1, slot, item })
     }, SERVER_ANSWER_MS)
   }
   for (const { agentId, username, feet } of scene.agents) {
@@ -124,16 +169,19 @@ async function main () {
         emit({ wrote: { agentId, status, x: location.x, y: location.y, z: location.z } })
         if (scene.serveBreaks && status === 2) serve(agentId, { x: location.x, y: location.y, z: location.z })
       }
+      if (name === 'block_place' && scene.servePlaces) placed(peer, parameters)
       return write(name, parameters)
     }
     spawned(peer.client, scene.vitals)
+    // A server names the held hotbar slot at login, so the hand holds what slot 36 holds.
+    peer.client.emit('held_item_slot', { slot: 0 })
     clockReported(peer.client, { timeOfDay: scene.timeOfDay ?? 6000, day: 1 })
     if (scene.border != null) {
       const { x, z, diameter } = scene.border
       peer.client.emit('initialize_world_border', { x, z, oldDiameter: diameter, newDiameter: diameter, speed: 0 })
     }
     peer.client.emit('position', positionPacket({ ...feet, yaw: 0, pitch: 0, teleportId: 1 }))
-    floor(peer.bot, scene.columns ?? COLUMNS)
+    floor(peer.bot, scene.columns ?? COLUMNS, scene.floor ?? 'stone', scene.depth ?? [])
     for (const { x, y, z, name } of scene.blocks ?? []) {
       peer.bot.world.setBlockStateId(new Vec3(x, y, z), registry.blocksByName[name].defaultState)
     }
@@ -150,7 +198,8 @@ async function main () {
     if (scene.inventory !== undefined) {
       stocked(peer.client, scene.inventory.map(({ slot, what, count }) => [slot, what, count]))
     }
-    started.push({ agentId, username, port: peer.port, body: peer.body, client: peer.client })
+    started.push({ agentId, username, port: peer.port, body: peer.body, client: peer.client, bot: peer.bot })
+    peer.agentId = agentId
   }
   await settled(300)
   emit({ ready: started.map(({ agentId, username, port }) => ({ agentId, username, port })) })

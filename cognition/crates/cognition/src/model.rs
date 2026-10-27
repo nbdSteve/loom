@@ -379,6 +379,8 @@ impl ScriptedBackend {
             success_count: None,
             step: Some(SCRIPTED_STEP.to_owned()),
             step_result,
+            shelter: None,
+            feeds: None,
         };
         let digging = matches!(
             intent,
@@ -922,6 +924,7 @@ mod tests {
                     is_day: true,
                     ticks_until_nightfall: 6_000,
                 },
+                cover: None,
             },
             surroundings: vec![],
             surroundings_omitted: 0,
@@ -965,6 +968,7 @@ mod tests {
             dig_safe: None,
             route_refused: None,
             hunts: (what.ends_with("zombie") || what.ends_with("skeleton")).then_some(true),
+            cover: None,
         });
         seen
     }
@@ -1108,6 +1112,7 @@ mod tests {
             dig_safe: None,
             route_refused: None,
             hunts: Some(hunts),
+            cover: None,
         };
         let mut seen = perception(
             Trigger::Damaged {
@@ -1213,6 +1218,7 @@ mod tests {
             dig_safe: Some(true),
             route_refused: None,
             hunts: None,
+            cover: None,
         }];
         let digging = ScriptedBackend::draft_now(&route, &first);
         assert_eq!(
@@ -1233,6 +1239,8 @@ mod tests {
             what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
             count: 1,
             edible: None,
+            solid: None,
+            held: None,
         }];
         let more = ScriptedBackend::draft_now(&route, &first).goal.unwrap();
         assert_eq!(more.success_count, Some(2));
@@ -1251,6 +1259,8 @@ mod tests {
             step_action: None,
             step_ref: None,
             progress: None,
+            shelter: false,
+            feeds: None,
         });
         // With nothing left in reach to dig for it, the goal is abandoned, not idled on.
         let abandoned = ScriptedBackend::draft_now(&route, &later).goal.unwrap();
@@ -1281,6 +1291,8 @@ mod tests {
             step_action: None,
             step_ref: None,
             progress: None,
+            shelter: false,
+            feeds: None,
         });
         let bush = |handle: &str, distance: f64| loom_contract::Observation {
             kind: ObservationKind::Block,
@@ -1301,6 +1313,7 @@ mod tests {
             dig_safe: Some(true),
             route_refused: None,
             hunts: None,
+            cover: None,
         };
         seen.surroundings = vec![bush("b9", 9.0), bush("b7", 7.0)];
         let walking = ScriptedBackend::draft_now(&route, &seen);
@@ -1406,12 +1419,16 @@ mod tests {
                 what: "bread".to_owned(),
                 count: 3,
                 edible: None,
+                solid: None,
+                held: None,
             },
             InventoryStack {
                 slot_ref: "i2".to_owned(),
                 what: "iron pickaxe".to_owned(),
                 count: 1,
                 edible: None,
+                solid: None,
+                held: None,
             },
         ];
 
@@ -1457,6 +1474,7 @@ mod tests {
             dig_safe: Some(true),
             route_refused: None,
             hunts: None,
+            cover: None,
         }];
         seen.horizon = vec![loom_contract::HorizonGoal {
             what: "item.minecraft.oak_log".to_owned(),
@@ -1512,6 +1530,7 @@ mod tests {
             dig_safe: Some(true),
             route_refused: None,
             hunts: None,
+            cover: None,
         }];
         seen.horizon = vec![loom_contract::HorizonGoal {
             what: "item.minecraft.birch_log".to_owned(),
@@ -1525,6 +1544,8 @@ mod tests {
             what: "item.minecraft.light_gray_dye".to_owned(),
             count: 1,
             edible: None,
+            solid: None,
+            held: None,
         }];
         let goal = seen.goal.as_mut().unwrap();
         goal.discovery = false;
@@ -1559,6 +1580,8 @@ mod tests {
             what: "item.minecraft.bread".to_owned(),
             count: 3,
             edible: None,
+            solid: None,
+            held: None,
         }];
         let path = format!(
             "{}/../../../contract/fixtures/valid/perception-goal-discovery-held.json",
@@ -1695,6 +1718,7 @@ mod tests {
                 dig_safe: Some(true),
                 route_refused: None,
                 hunts: None,
+                cover: None,
             });
         }
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);

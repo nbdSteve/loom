@@ -13,6 +13,7 @@ import dev.loom.body.WorldTargetRefBinding
 import dev.loom.body.blocksApart
 import dev.loom.body.horizontalBearing
 import dev.loom.body.huntsPlayers
+import dev.loom.contract.Cover
 import dev.loom.contract.CraftingOption
 import dev.loom.contract.InventoryStack
 import dev.loom.contract.MAX_BLOCK_YIELDS
@@ -44,11 +45,7 @@ internal class PlayerSceneTranslator(
         attacker: UUID? = null,
     ): PlayerScene {
         context.authority.serverState.auditSense(raw.identity, raw.auditSnapshot, raw.report)
-        val serverSubjects =
-            context.authority.serverState.subjectsOf(
-                raw.identity,
-                raw.report.entities,
-            )
+        val serverSubjects = context.authority.serverState.subjectsOf(raw.identity, raw.report.entities)
         val subjects = subjectsOf(raw, serverSubjects)
         val itemSubjects = context.authority.serverState.itemSubjectsOf(raw.identity, raw.report.items)
         val scene = SceneGround(context.authority.ground, raw.report.position)
@@ -56,11 +53,9 @@ internal class PlayerSceneTranslator(
         val entityOffers = selected.filter { it.kind == ObservationKind.ENTITY }
         val blockOffers = selected.filter { it.kind == ObservationKind.BLOCK }
         val itemOffers = selected.filter { it.kind == ObservationKind.DROPPED_ITEM }
-        val creatureBindings =
-            context.refs.creatures.mint(entityOffers.map { requireNotNull(it.subject) })
+        val creatureBindings = context.refs.creatures.mint(entityOffers.map { requireNotNull(it.subject) })
         val blockBindings = context.refs.blocks.mint(blockOffers.map(SceneOffer::sourceIndex))
-        val droppedItemBindings =
-            context.refs.droppedItems.mint(itemOffers.map(SceneOffer::sourceIndex))
+        val droppedItemBindings = context.refs.droppedItems.mint(itemOffers.map(SceneOffer::sourceIndex))
         val slotBindings = context.refs.slots.mint(raw.report.inventory.map { it.slot })
         val recipeBindings = context.refs.recipes.mint(raw.report.recipes.indices.toList())
         val refs =
@@ -70,6 +65,9 @@ internal class PlayerSceneTranslator(
                 itemOffers to droppedItemBindings.map { it.handle },
             )
         val surroundings = selected.map { observationOf(raw, it, requireNotNull(refs[it.key])) }
+        val blockRefs = blockOffers.map { it to requireNotNull(refs[it.key]) }
+        val cover = sceneCover(raw, scene, blockRefs, surroundings, context.authority.solidity)
+        val itemRefs = itemRefsOf(itemOffers, droppedItemBindings)
         return PlayerScene(
             raw = raw,
             creatureBindings = creatureBindings,
@@ -77,25 +75,20 @@ internal class PlayerSceneTranslator(
             droppedItemBindings = droppedItemBindings,
             slotBindings = slotBindings,
             recipeBindings = recipeBindings,
-            entityIndex =
-                entityOffers.associate { offer ->
-                    requireNotNull(offer.subject) to offer.sourceIndex
-                },
+            entityIndex = entityOffers.associate { offer -> requireNotNull(offer.subject) to offer.sourceIndex },
             entitySubjects =
                 entityOffers.mapNotNull { offer ->
                     serverSubjects.getOrNull(offer.sourceIndex)?.let { offer.sourceIndex to it }
                 }.toMap(),
-            droppedItemSubjects =
-                itemOffers.mapNotNull { offer ->
-                    offer.subject?.let { offer.sourceIndex to it }
-                }.toMap(),
+            droppedItemSubjects = itemOffers.mapNotNull { o -> o.subject?.let { o.sourceIndex to it } }.toMap(),
             surroundings = surroundings,
             attackerRef = refOfSubject(attacker, entityOffers, refs),
             surroundingsOmitted = omittedOf(raw, selected.size),
             perceptionAudit = perceptionAuditOf(raw, entityOffers.size, blockOffers.size, itemOffers.size),
             candidates = candidatesOf(selected, surroundings),
-            selfState = selfStateOf(raw, slotBindings, recipeBindings, itemRefsOf(itemOffers, droppedItemBindings)),
-            explore = context.exploreFor(raw, selected, scene),
+            selfState = selfStateOf(raw, slotBindings, recipeBindings, itemRefs, cover),
+            // No walk leaves where no short walk leads out: a pit or a sealed shelter.
+            explore = context.exploreFor(raw, selected, scene).takeIf { cover?.walkOut != false }.orEmpty(),
             recalled = context.recall.recalled(raw.report.position, selected),
         )
     }
@@ -217,6 +210,10 @@ internal class PlayerSceneTranslator(
                     position = block.position.map { it + BLOCK_CENTER_OFFSET },
                     visible = block.visible,
                     standable = scene.ground.standCell(block.position) != null,
+                    cover =
+                        scene.ground.standCell(block.position)
+                            ?.takeIf { context.authority.ground !== BlockGround.UNKNOWN }
+                            ?.let { closedFacesAt(scene.ground, it).toLong() },
                     yields = context.authority.yields.of(block.position, raw.identity).take(MAX_BLOCK_YIELDS),
                     digSafe = !unreached && digSafeAt(scene.ground, raw.report.position, block.position),
                 )
@@ -262,6 +259,7 @@ internal class PlayerSceneTranslator(
             digSafe = offer.digSafe,
             routeRefused = offer.routeRefused,
             hunts = huntsPlayers(offer.what).takeIf { it && offer.kind == ObservationKind.ENTITY },
+            cover = offer.cover,
         )
     }
 
@@ -287,8 +285,10 @@ internal class PlayerSceneTranslator(
         bindings: List<InventorySlotBinding>,
         recipeBindings: List<WorldTargetRefBinding>,
         itemRefs: Map<UUID, String>,
-    ): SelfState =
-        SelfState(
+        cover: Cover?,
+    ): SelfState {
+        val mainHand = context.authority.players.mainHandSlotOf(raw.identity)
+        return SelfState(
             health = raw.report.vitals.health,
             food = raw.report.vitals.food,
             saturation = raw.report.vitals.saturation,
@@ -300,6 +300,8 @@ internal class PlayerSceneTranslator(
                         what = itemDescriptionId(stack.what),
                         count = stack.count.toLong(),
                         edible = context.authority.edibility.edible(stack.what),
+                        solid = context.authority.solidity.solid(stack.what),
+                        held = (stack.slot == mainHand).takeIf { it },
                     )
                 },
             craftingOptions =
@@ -321,7 +323,9 @@ internal class PlayerSceneTranslator(
                     ticksUntilNightfall =
                         WorldClock.ticksUntilNightfall(raw.report.time.timeOfDay.toLong()),
                 ),
+            cover = cover,
         )
+    }
 }
 
 /** Each offered dropped item's server entity, by the ref this perception gave it. */
@@ -366,6 +370,12 @@ private fun entityDescriptionId(resource: String): String {
 private fun blockDescriptionId(resource: String): String {
     val (namespace, path) = splitResource(resource)
     return "block.$namespace.${path.replace('/', '.')}"
+}
+
+/** The resource an item description names: `item.minecraft.dirt` is `minecraft:dirt`. */
+internal fun resourceOfItem(description: String): String {
+    val parts = description.removePrefix("item.").split('.', limit = 2)
+    return if (parts.size == 2) "${parts[0]}:${parts[1].replace('.', '/')}" else description
 }
 
 private fun itemDescriptionId(resource: String): String {

@@ -241,6 +241,8 @@ private fun bodilessAfter(
         BodyEvent.OWN_DROP_PICKUP,
         BodyEvent.GOAL_REVIEW_DEFERRED,
         BodyEvent.EXPOSURE_ENDED,
+        // Whether the ground seals a body in is a fact about the body it already has.
+        BodyEvent.SHELTER_CHANGED,
         // A body that looked around is a body: the record says nothing either way about
         // whether the agent still has one, so what was already known stands.
         BodyEvent.THREAT_SUPPRESSED,
@@ -317,6 +319,8 @@ private fun activityAfter(
         BodyEvent.OWN_DROP_PICKUP,
         BodyEvent.GOAL_REVIEW_DEFERRED,
         BodyEvent.EXPOSURE_ENDED,
+        // The ground closed or opened around the agent; what it is doing is unchanged.
+        BodyEvent.SHELTER_CHANGED,
         -> state.activity
         // Nothing was asked of the body and no mind was woken, so the agent is doing
         // exactly what it was already doing. Saying otherwise would show a suppression as

@@ -1,6 +1,7 @@
 // The typed record of what one decision did to its agent's short-term goal.
 package dev.loom.body
 
+import dev.loom.contract.CoverProgress
 import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.StepEvidence
@@ -69,6 +70,18 @@ data class GoalEvidence(
     val discovery: Boolean? = null,
     /** The met discovery goal this item goal replaced: the resource goal a discovery became. */
     val discoveredFrom: String? = null,
+    /** Whether the presented goal was a shelter goal. */
+    val presentedShelter: Boolean? = null,
+    /** Whether the goal held after this decision is a shelter goal. */
+    val shelter: Boolean? = null,
+    /** The shelter goal the item goal this decision adopted feeds, as a resource subgoal under it. */
+    val feeds: String? = null,
+    /** The shelter goal held again once the resource subgoal this decision ended had fed it. */
+    val resumed: String? = null,
+    /** The request whose step the presented goal's progress measured: its last step. */
+    val steppedBy: String? = null,
+    /** For a presented shelter goal, its cover as this review measured it from the server's ground. */
+    val cover: CoverProgress? = null,
 ) {
     /** The tags [outcome] takes. */
     companion object {
@@ -216,6 +229,21 @@ data class GoalEvidence(
          */
         const val SURVIVAL_REQUIRED: String = "goalSurvivalRequired"
 
+        /**
+         * A shelter goal set while none is offered - night not near, the agent already sealed in, or
+         * no shelter step in sight - over a held one, or with a success item.
+         */
+        const val SHELTER_NOT_OFFERED: String = "goalShelterNotOffered"
+
+        /**
+         * A resource subgoal adopted where none can feed a shelter: no held unmet shelter goal, no
+         * open face to close, a solid stack already held, or an item that places no solid block.
+         */
+        const val FEEDS_NOT_OFFERED: String = "goalFeedsNotOffered"
+
+        /** A replace of a resource subgoal, which would drop the shelter goal it feeds. */
+        const val SUBGOAL_REPLACED: String = "goalSubgoalReplaced"
+
         /** The outcomes that refuse the decision's intent along with its goal choice. */
         val REFUSING: Set<String> =
             setOf(
@@ -235,6 +263,9 @@ data class GoalEvidence(
                 CROWDS_EXPLORATION,
                 DISCOVERY_NOT_OFFERED,
                 SURVIVAL_REQUIRED,
+                SHELTER_NOT_OFFERED,
+                FEEDS_NOT_OFFERED,
+                SUBGOAL_REPLACED,
             )
 
         /** The outcomes that settle a decision with nothing its next review needs to be told. */

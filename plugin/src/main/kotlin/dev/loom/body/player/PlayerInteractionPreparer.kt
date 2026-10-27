@@ -47,7 +47,7 @@ internal class PlayerInteractionPreparer(
                     EventTag.DIG_BLOCK_UNNAMED,
                 )
             is WorldTargetResolution.Bound ->
-                if (trapsBody(context.authority.ground, sense, resolved.index)) {
+                if (trapsBody(context.authority.ground, sense, resolved.index, intent.block)) {
                     rejectedInteraction(
                         "digging the block underfoot would leave no way out",
                         EventTag.DIG_WOULD_TRAP,
@@ -373,10 +373,14 @@ private fun trapsBody(
     ground: BlockGround,
     sense: HeldSense?,
     index: Int,
+    named: String,
 ): Boolean {
     val report = sense?.raw?.report
     val block = report?.blocks?.getOrNull(index)
-    return report != null && block != null && !digLeavesExit(ground, report.position, block.position)
+    // A shelter's descent leaves no walk out by design: the pit it digs is the shelter, so it is
+    // held to the descent's own safety rather than to a way out (`Cover.kt`).
+    val descends = named == sense?.targets?.descend && report != null && descentSafe(ground, report.position)
+    return report != null && block != null && !descends && !digLeavesExit(ground, report.position, block.position)
 }
 
 /** Whether digging the sensed block at [index] would let water flood a cell the body occupies. */

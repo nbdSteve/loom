@@ -75,6 +75,169 @@ pub enum BlockFace {
     East,
 }
 
+/// One of the nine faces around the two cells a standing body fills.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CoverFace {
+    #[serde(rename = "feetNorth")]
+    FeetNorth,
+    #[serde(rename = "feetEast")]
+    FeetEast,
+    #[serde(rename = "feetSouth")]
+    FeetSouth,
+    #[serde(rename = "feetWest")]
+    FeetWest,
+    #[serde(rename = "headNorth")]
+    HeadNorth,
+    #[serde(rename = "headEast")]
+    HeadEast,
+    #[serde(rename = "headSouth")]
+    HeadSouth,
+    #[serde(rename = "headWest")]
+    HeadWest,
+    #[serde(rename = "roof")]
+    Roof,
+}
+
+/// Most faces around a standing body: four beside the feet, four beside the head, and the roof.
+pub const MAX_COVER_FACES: usize = 9;
+
+/// Most solid-block items a cover reading names as obtainable now.
+pub const MAX_COVER_BLOCK_ITEMS: usize = 8;
+
+/// One placement that would close an open face of the agent's cover.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Closing {
+    /// The open face the placement closes.
+    pub face: CoverFace,
+    /// The sensed support block, in sight and in reach, to place against.
+    #[serde(deserialize_with = "bounded_ref")]
+    pub block: String,
+    /// The side of that support block to place against.
+    pub side: BlockFace,
+}
+
+/// How enclosed the agent stands, read from the server's own ground.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Cover {
+    /// Whether the open space the body stands in is closed on every side.
+    pub sealed: bool,
+    /// Whether a short walk leads out of where the body stands.
+    pub walk_out: bool,
+    /// The faces around the body the server gives no collision, each at most once.
+    pub open: Vec<CoverFace>,
+    /// For open faces a held block could close from here, one placement each.
+    pub closings: Vec<Closing>,
+    /// The block under the feet whose dig deepens the cover, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descend: Option<String>,
+    /// Items sight can give now that place as a solid block.
+    pub block_items: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CoverWire {
+    sealed: bool,
+    walk_out: bool,
+    open: Vec<CoverFace>,
+    closings: Vec<Closing>,
+    #[serde(default, deserialize_with = "bounded_optional_ref")]
+    descend: Option<String>,
+    block_items: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for Cover {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = CoverWire::deserialize(deserializer)?;
+        let distinct = |faces: &[CoverFace]| {
+            faces
+                .iter()
+                .enumerate()
+                .all(|(index, face)| !faces[..index].contains(face))
+        };
+        let closed: Vec<CoverFace> = raw.closings.iter().map(|closing| closing.face).collect();
+        if raw.open.len() > MAX_COVER_FACES
+            || !distinct(&raw.open)
+            || raw.closings.len() > MAX_COVER_FACES
+            || !distinct(&closed)
+            || closed.iter().any(|face| !raw.open.contains(face))
+        {
+            return Err(de::Error::custom(
+                "a cover names each of its nine faces at most once, and closes only open ones",
+            ));
+        }
+        if raw.block_items.len() > MAX_COVER_BLOCK_ITEMS {
+            return Err(de::Error::custom("at most 8 block items"));
+        }
+        for item in &raw.block_items {
+            refuse_non_item(item)?;
+            if item == AIR_ITEM {
+                return Err(de::Error::custom("a block item is never air"));
+            }
+        }
+        Ok(Self {
+            sealed: raw.sealed,
+            walk_out: raw.walk_out,
+            open: raw.open,
+            closings: raw.closings,
+            descend: raw.descend,
+            block_items: raw.block_items,
+        })
+    }
+}
+
+/// A shelter goal's body-measured cover.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CoverProgress {
+    /// How many of the nine faces around the body are closed.
+    #[serde(deserialize_with = "bounded_cover_count")]
+    pub closed: i64,
+    /// How many more a held block could close from where the body stands.
+    #[serde(deserialize_with = "bounded_cover_count")]
+    pub closable: i64,
+    /// Whether the space the body stands in is sealed.
+    pub sealed: bool,
+}
+
+/// The most faces a cover count may name.
+const MAX_COVER_COUNT: i64 = 9;
+
+fn bounded_cover_count<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = i64::deserialize(deserializer)?;
+    if !(0..=MAX_COVER_COUNT).contains(&value) {
+        return Err(de::Error::invalid_value(
+            de::Unexpected::Signed(value),
+            &"a count of cover faces from 0 to 9",
+        ));
+    }
+    Ok(value)
+}
+
+fn bounded_optional_cover_count<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<i64>::deserialize(deserializer)?;
+    if let Some(value) = value {
+        if !(0..=MAX_COVER_COUNT).contains(&value) {
+            return Err(de::Error::invalid_value(
+                de::Unexpected::Signed(value),
+                &"a count of cover faces from 0 to 9",
+            ));
+        }
+    }
+    Ok(value)
+}
+
 /// The bounded player equipment destination chosen by an equip intent.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EquipmentDestination {
@@ -434,6 +597,14 @@ pub struct InventoryStack {
     /// spent hundreds of ticks at low health with food below the healing threshold).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edible: Option<bool>,
+    /// Whether the server says the stack places as a solid block. Absent when the body did not
+    /// say, which reads as no: a shelter is closed only with a stack the server named solid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solid: Option<bool>,
+    /// Whether the server says the stack is in the main hand, which a placement must already be
+    /// holding. Absent when the body did not say, which reads as no.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<bool>,
 }
 
 /// One exact currently craftable recipe offered by this perception.
@@ -488,6 +659,9 @@ pub struct SelfState {
     pub own_drops: Vec<OwnDrop>,
     /// The bounded world clock the body reveals.
     pub world: WorldState,
+    /// How enclosed the agent stands, from the server's ground; absent where there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<Cover>,
 }
 
 /// Most of an agent's own recent dig drops one perception tells it about.
@@ -731,6 +905,10 @@ pub struct Observation {
     /// list of player hunters: what a goal review may flee from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hunts: Option<bool>,
+    /// For a block a body can stand at, how many of the nine faces around the cell it would stand
+    /// in have collision: natural cover in sight. Present only for a standable block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -756,6 +934,8 @@ struct ObservationWire {
     route_refused: Option<bool>,
     #[serde(default)]
     hunts: Option<bool>,
+    #[serde(default, deserialize_with = "bounded_optional_cover_count")]
+    cover: Option<i64>,
 }
 
 impl<'de> Deserialize<'de> for Observation {
@@ -796,6 +976,11 @@ impl<'de> Deserialize<'de> for Observation {
                 "a dropped-item observation must hold at least one item",
             ));
         }
+        if raw.cover.is_some() && raw.standable != Some(true) {
+            return Err(de::Error::custom(
+                "cover is present only for a block a body can stand at",
+            ));
+        }
         Ok(Self {
             kind: raw.kind,
             what: raw.what,
@@ -810,6 +995,7 @@ impl<'de> Deserialize<'de> for Observation {
             dig_safe: raw.dig_safe,
             route_refused: raw.route_refused,
             hunts: raw.hunts,
+            cover: raw.cover,
         })
     }
 }
@@ -1211,6 +1397,17 @@ where
     Ok(text)
 }
 
+fn bounded_optional_goal_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let text = Option::<String>::deserialize(deserializer)?;
+    if let Some(text) = &text {
+        refuse_unbounded_text(text, MAX_GOAL_ID_CHARS)?;
+    }
+    Ok(text)
+}
+
 fn bounded_goal_action<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
@@ -1458,6 +1655,17 @@ pub struct GoalSummary {
     /// sight reveals a useful resource no footing gives.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub discovery: bool,
+    /// Whether the goal is a shelter goal: no success item, met when the server's ground seals the
+    /// space the agent stands in.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shelter: bool,
+    /// For a resource subgoal, the goal id of the shelter goal it feeds.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_optional_goal_id"
+    )]
+    pub feeds: Option<String>,
     /// Body-measured evidence about that step, once a later review can compare.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<GoalProgress>,
@@ -1484,6 +1692,9 @@ pub struct GoalProgress {
     /// How many affirmed steps in a row advanced neither.
     #[serde(deserialize_with = "nonnegative_goal_count")]
     pub steps_without_progress: i64,
+    /// For a shelter goal, its cover as this review measured it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<CoverProgress>,
 }
 
 /// What showed the goal's last step was carried out.
@@ -1504,6 +1715,9 @@ pub enum StepEvidence {
     /// A walk to the edge of sight arrived where a source of the goal's item was then in sight.
     #[serde(rename = "revealed")]
     Revealed,
+    /// A shelter goal's step left the agent more enclosed than the goal had yet been.
+    #[serde(rename = "covered")]
+    Covered,
     /// Nothing showed it: a dig that dropped nothing, a walk that did not arrive.
     #[serde(rename = "none")]
     None,
@@ -1620,6 +1834,22 @@ pub struct GoalChoice {
         deserialize_with = "only_true"
     )]
     pub discover: Option<bool>,
+    /// For an adopt or replace with no success item: a shelter goal, met when the server's ground
+    /// seals the space the agent stands in. Present only as `true`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "only_true"
+    )]
+    pub shelter: Option<bool>,
+    /// For an adopt while a shelter goal is held: a resource subgoal that feeds it. Present only as
+    /// `true`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "only_true"
+    )]
+    pub feeds: Option<bool>,
 }
 
 fn only_true<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
@@ -1627,7 +1857,9 @@ where
     D: Deserializer<'de>,
 {
     match Option::<bool>::deserialize(deserializer)? {
-        Some(false) => Err(de::Error::custom("discover is present only as true")),
+        Some(false) => Err(de::Error::custom(
+            "discover, shelter and feeds are present only as true",
+        )),
         other => Ok(other),
     }
 }

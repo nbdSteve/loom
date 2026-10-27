@@ -29,6 +29,8 @@ internal data class SceneOffer(
     val yields: List<BlockYield>? = null,
     val digSafe: Boolean? = null,
     val routeRefused: Boolean? = null,
+    /** For a standable block, the closed faces around the cell a body would stand in there. */
+    val cover: Long? = null,
 ) {
     val key: Pair<ObservationKind, Int> = kind to sourceIndex
 }

@@ -27,8 +27,8 @@
 //! offered. `tests/offered_reach_parity.rs` reads every bound below from the body and JVM source.
 
 use loom_contract::{
-    is_item_name, Bearing, DropFate, Intent, Observation, ObservationKind, Perception, Trigger,
-    AIR_ITEM, MAX_SUCCESS_COUNT,
+    is_item_name, Bearing, BlockFace, DayPhase, DropFate, Intent, Observation, ObservationKind,
+    Perception, Trigger, AIR_ITEM, MAX_SUCCESS_COUNT,
 };
 
 use crate::prompt::{MAX_CRAFTING_LINES, MAX_INVENTORY_LINES, MAX_OBSERVATIONS};
@@ -139,6 +139,201 @@ pub const HUNGRY_FOOD_LEVEL: i64 = 7;
 /// way back to healing before it starves (r33: every agent's food fell below 18 and stayed there,
 /// and the agents spent hundreds of ticks at 0.8 to 4.8 health). `HEALING_FOOD_LEVEL` in the JVM.
 pub const HEALING_FOOD_LEVEL: i64 = 18;
+
+/// How long before nightfall a shelter goal is offered, in server ticks, and through the night that
+/// follows: a pit of three digs and a placement takes a few follow-up reviews, and r36's first
+/// hostile struck about 200 ticks after nightfall. `SHELTER_LEAD_TICKS` in the JVM's `Shelter.kt`.
+pub const SHELTER_LEAD_TICKS: i64 = 3_000;
+
+/// The most sites of natural cover a shelter step may walk onto, the most enclosed first.
+pub const MAX_SHELTER_SITES: usize = 4;
+
+/// Where a perception stands with shelter, read from the server's ground: how enclosed the agent
+/// stands and the one-shot steps a shelter goal may take now (r36: all ten agents died at night in
+/// the open). Mirrors the JVM's `CoverObservation`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ShelterOffer {
+    /// How the agent stands, by its cover reading.
+    pub standing: Standing,
+    /// Whether night is here or within [`SHELTER_LEAD_TICKS`].
+    pub night_near: bool,
+    /// How many of the nine faces around the agent are closed.
+    pub closed: i64,
+    /// The dig underfoot that deepens the cover.
+    pub descend: Option<String>,
+    /// The placements that close an open face: the support block's ref and its side.
+    pub closings: Vec<(String, BlockFace)>,
+    /// The stacks the agent carries that place as a solid block, by ref.
+    pub solid: Vec<String>,
+    /// Of [`Self::solid`], the one in the main hand, which a placement must already be holding.
+    pub solid_held: Vec<String>,
+    /// Standable blocks out of the agent's own column more enclosed than where it stands.
+    pub sites: Vec<String>,
+    /// Items sight can give now that place as a solid block.
+    pub block_items: Vec<String>,
+    /// For each of [`Self::block_items`], the fewest and most a resource subgoal of it may ask:
+    /// one more than is held, up to what is held plus what sight can be counted on to give.
+    pub feed_bounds: Vec<(String, i64, i64)>,
+}
+
+/// How an agent stands, by its cover reading.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Standing {
+    /// The perception carried no cover reading.
+    #[default]
+    Unread,
+    /// Not sealed in, with a short walk out.
+    Open,
+    /// Not sealed in, and no short walk leads out of where it stands: no flight can run.
+    Trapped,
+    /// Sealed in: nothing can walk, climb or swim in.
+    Sealed,
+}
+
+impl ShelterOffer {
+    /// Whether the agent stands sealed in.
+    #[must_use]
+    pub fn sealed(&self) -> bool {
+        self.standing == Standing::Sealed
+    }
+
+    /// Whether no short walk leads out of where the agent stands and it is not sealed in.
+    #[must_use]
+    pub fn trapped(&self) -> bool {
+        self.standing == Standing::Trapped
+    }
+
+    /// What `perception`'s cover reading offers.
+    #[must_use]
+    pub fn of(perception: &Perception) -> Self {
+        let Some(cover) = &perception.self_state.cover else {
+            return Self::default();
+        };
+        let closed = i64::try_from(loom_contract::MAX_COVER_FACES.saturating_sub(cover.open.len()))
+            .unwrap_or(0);
+        let world = &perception.self_state.world;
+        let standing = match (cover.sealed, cover.walk_out) {
+            (true, _) => Standing::Sealed,
+            (false, false) => Standing::Trapped,
+            (false, true) => Standing::Open,
+        };
+        Self {
+            standing,
+            night_near: matches!(world.day_phase, DayPhase::Night)
+                || world.ticks_until_nightfall <= SHELTER_LEAD_TICKS,
+            closed,
+            descend: cover.descend.clone(),
+            closings: cover
+                .closings
+                .iter()
+                .map(|closing| (closing.block.clone(), closing.side))
+                .collect(),
+            solid: perception
+                .self_state
+                .inventory_summary
+                .iter()
+                .take(MAX_INVENTORY_LINES)
+                .filter(|stack| stack.solid == Some(true))
+                .map(|stack| stack.slot_ref.clone())
+                .collect(),
+            solid_held: perception
+                .self_state
+                .inventory_summary
+                .iter()
+                .take(MAX_INVENTORY_LINES)
+                .filter(|stack| stack.solid == Some(true) && stack.held == Some(true))
+                .map(|stack| stack.slot_ref.clone())
+                .collect(),
+            sites: sites_of(perception, closed),
+            block_items: cover.block_items.clone(),
+            feed_bounds: Vec::new(),
+        }
+    }
+
+    /// Whether any shelter step is offered now: a descent, a closing with a solid stack in hand or
+    /// the equip that puts one there, or a site.
+    #[must_use]
+    pub fn stepped(&self) -> bool {
+        self.descend.is_some()
+            || (!self.closings.is_empty() && !self.solid.is_empty())
+            || !self.sites.is_empty()
+    }
+
+    /// The solid stacks an equip may put in the main hand, so a closing can be placed: every one,
+    /// while none is held and an open face can be closed.
+    #[must_use]
+    pub fn to_equip(&self) -> Vec<String> {
+        if self.closings.is_empty() || !self.solid_held.is_empty() {
+            Vec::new()
+        } else {
+            self.solid.clone()
+        }
+    }
+
+    /// Whether a shelter goal may be set: night is near, the agent is not sealed, and a step exists.
+    #[must_use]
+    pub fn offered(&self) -> bool {
+        self.standing != Standing::Unread && self.night_near && !self.sealed() && self.stepped()
+    }
+
+    /// Whether a held shelter goal may adopt a resource subgoal: faces to close, nothing solid to
+    /// close them with, and a solid-block item sight can give.
+    #[must_use]
+    pub fn feedable(&self) -> bool {
+        !self.sealed()
+            && !self.closings.is_empty()
+            && self.solid.is_empty()
+            && !self.block_items.is_empty()
+    }
+
+    /// Whether `intent` is a shelter step this perception offers.
+    #[must_use]
+    pub fn steps(&self, intent: &Intent) -> bool {
+        match intent {
+            Intent::Dig { block } => self.descend.as_deref() == Some(block.as_str()),
+            Intent::Place { block, item, face } => {
+                self.closings
+                    .iter()
+                    .any(|(support, side)| support == block && side == face)
+                    && self.solid_held.contains(item)
+            }
+            Intent::Equip { item, destination } => {
+                *destination == loom_contract::EquipmentDestination::Hand
+                    && self.to_equip().contains(item)
+            }
+            Intent::MoveTo { onto } => self.sites.contains(onto),
+            _ => false,
+        }
+    }
+
+    /// Whether `intent` closes the agent's own cover, or readies the block that does, where no
+    /// flight can run: a survival response.
+    #[must_use]
+    pub fn shuts_out(&self, intent: &Intent) -> bool {
+        self.trapped()
+            && matches!(intent, Intent::Place { .. } | Intent::Equip { .. })
+            && self.steps(intent)
+    }
+}
+
+/// The standable blocks out of the agent's own column more enclosed than where it stands: the most
+/// enclosed first, the nearest of those first as sight lists them, at most [`MAX_SHELTER_SITES`].
+fn sites_of(perception: &Perception, closed: i64) -> Vec<String> {
+    let mut sites: Vec<&Observation> = perception
+        .surroundings
+        .iter()
+        .take(MAX_OBSERVATIONS)
+        .filter(|seen| {
+            seen.direction != Bearing::Here && seen.cover.is_some_and(|faces| faces > closed)
+        })
+        .collect();
+    sites.sort_by_key(|seen| std::cmp::Reverse(seen.cover));
+    sites
+        .into_iter()
+        .take(MAX_SHELTER_SITES)
+        .map(|seen| seen.target_ref.clone())
+        .collect()
+}
 
 /// The steps one goal item may be pursued by, by action: what in sight can give that item.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -289,6 +484,22 @@ pub struct OfferedRefs {
     /// The stacks a goal review may eat from before any goal step: every offered stack while its
     /// food is at or below [`HUNGRY_FOOD_LEVEL`], and none otherwise.
     pub meals: Vec<String>,
+    /// Where the perception stands with shelter, from the server's ground.
+    pub shelter: ShelterOffer,
+    /// Where a goal review stands with a shelter goal or its resource subgoal.
+    pub sheltering: Sheltering,
+}
+
+/// Where a goal review stands with a shelter goal (r36: all ten agents died at night in the open).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Sheltering {
+    /// No shelter goal is held.
+    #[default]
+    Unheld,
+    /// The held goal is a shelter goal.
+    Held,
+    /// The held goal is a resource subgoal that feeds a shelter goal.
+    Feeding,
 }
 
 /// Where a goal review stands with a discovery goal (r23: 17 of 70 reviews could set no goal at
@@ -350,6 +561,7 @@ impl OfferedRefs {
                 .cloned()
                 .collect();
         }
+        offered.sheltered();
     }
 
     /// Whether only a survival response may be offered: an immediate hunter stands near.
@@ -363,10 +575,28 @@ impl OfferedRefs {
     #[must_use]
     pub fn survives(&self, intent: &Intent) -> bool {
         match intent {
-            Intent::Flee { from } => self.danger.contains(from),
+            Intent::Flee { from } => !self.shelter.trapped() && self.danger.contains(from),
             Intent::Attack { target, .. } => self.danger.contains(target),
             Intent::Eat { slot_ref } => self.meals.contains(slot_ref),
+            Intent::Place { .. } | Intent::Equip { .. } => self.shelter.shuts_out(intent),
             _ => false,
+        }
+    }
+
+    /// What the agent's cover makes of its danger: sealed in, nothing can reach it and no flight
+    /// can leave; where no short walk leads out no flight can run, closing the cover is the
+    /// response, and with nothing to close it with nothing is due before the agent's own choice.
+    /// Mirrors the JVM's `SurvivalOffer.of`.
+    fn sheltered(&mut self) {
+        if self.shelter.sealed() {
+            self.danger.clear();
+            self.immediate.clear();
+            self.flee_targets.clear();
+        } else if self.shelter.trapped() {
+            self.flee_targets.clear();
+            if self.shelter.closings.is_empty() || self.shelter.solid.is_empty() {
+                self.immediate.clear();
+            }
         }
     }
 
@@ -631,6 +861,7 @@ impl OfferedRefs {
                     .clamp(1, loom_contract::MAX_CRAFTS_PER_INTENT),
             ));
         }
+        offered.shelter = ShelterOffer::of(perception);
         offered.survival(perception);
         let totals = totals_of(perception, sources);
         // What sight can be counted on for is the expected yield, whole items only: a block's best
@@ -652,6 +883,7 @@ impl OfferedRefs {
             .take(MAX_OBTAINABLE_ITEMS)
             .collect();
         offered.count_bounds = offered.count_bounds_for(perception);
+        offered.shelter.feed_bounds = offered.feed_bounds_for(perception);
         offered.switch_bounds = offered.switch_bounds_for(perception);
         offered.obtainable = offered
             .count_bounds
@@ -659,7 +891,16 @@ impl OfferedRefs {
             .map(|(item, ..)| item.clone())
             .collect();
         offered.item_steps = offered.item_steps_for(perception, &gives);
+        offered.descent();
         offered
+    }
+
+    /// Offers the shelter's descent to `dig`: the block underfoot, which no other goal digs.
+    fn descent(&mut self) {
+        if let Some(descend) = self.shelter.descend.clone() {
+            self.kept_blocks.retain(|kept| *kept != descend);
+            offer(&mut self.dig_blocks, &descend);
+        }
     }
 
     /// The steps of each item a goal review may set or pursue: its own dig, collect, craft and
@@ -675,7 +916,12 @@ impl OfferedRefs {
                 .any(|(given, what)| given == handle && *what == item)
         };
         let mut items: Vec<&String> = self.pursued.iter().collect();
-        for (item, ..) in self.count_bounds.iter().chain(&self.switch_bounds) {
+        for (item, ..) in self
+            .count_bounds
+            .iter()
+            .chain(&self.switch_bounds)
+            .chain(&self.shelter.feed_bounds)
+        {
             if !items.contains(&item) {
                 items.push(item);
             }
@@ -848,6 +1094,27 @@ impl OfferedRefs {
             .collect()
     }
 
+    /// The counts a resource subgoal of each solid-block item may ask, while a held shelter goal
+    /// can be fed: a block that closes a shelter is the shelter's, never a goal that crowds out
+    /// looking further.
+    fn feed_bounds_for(&self, perception: &Perception) -> Vec<(String, i64, i64)> {
+        if self.sheltering != Sheltering::Held || !self.shelter.feedable() {
+            return Vec::new();
+        }
+        self.shelter
+            .block_items
+            .iter()
+            .filter_map(|item| {
+                let held = held_of(perception, item);
+                let fewest = held.saturating_add(1);
+                let most = held
+                    .saturating_add(self.capacity_of(item))
+                    .min(MAX_SUCCESS_COUNT);
+                (fewest <= most).then(|| (item.clone(), fewest, most))
+            })
+            .collect()
+    }
+
     /// The recipe goals of the horizon made from an item held now, while an unmet goal of another
     /// item is held: the switch a replace may make before the stall bound.
     fn switch_bounds_for(&self, perception: &Perception) -> Vec<(String, i64, i64)> {
@@ -892,6 +1159,20 @@ impl OfferedRefs {
         let at_bound = goal.progress.as_ref().is_some_and(|seen| {
             seen.steps_without_progress >= loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS
         });
+        let met = goal
+            .progress
+            .as_ref()
+            .is_some_and(|seen| seen.condition_met);
+        if goal.feeds.is_some() {
+            self.sheltering = Sheltering::Feeding;
+        }
+        // A shelter goal names no item: it is stepped by what its cover reading offers, and stalls
+        // like any other goal.
+        if goal.shelter {
+            self.sheltering = Sheltering::Held;
+            self.stalled = at_bound && !met;
+            return;
+        }
         // A discovery goal names no item: it is stepped by a walk to the edge of sight until one
         // reveals a source, and stalls like any other goal.
         if goal.discovery {
@@ -1164,6 +1445,7 @@ mod tests {
             dig_safe: (kind == ObservationKind::Block).then_some(true),
             route_refused: None,
             hunts: None,
+            cover: None,
         }
     }
 
@@ -1179,6 +1461,8 @@ mod tests {
                 what: "item.minecraft.stone_sword".to_owned(),
                 count: 1,
                 edible: None,
+                solid: None,
+                held: None,
             });
         perception.self_state.crafting_options.push(CraftingOption {
             recipe_ref: "r1".to_owned(),

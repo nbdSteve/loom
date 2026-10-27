@@ -27,6 +27,15 @@ fun interface BlockGround {
      */
     fun holdsWater(position: List<Int>): Boolean = false
 
+    /**
+     * Whether the cell at [position] holds nothing at all, so a held block placed into it lands
+     * there: air, never a plant a body walks through. `false` where the ground cannot say.
+     */
+    fun holdsNothing(position: List<Int>): Boolean = false
+
+    /** Whether a body can break the block at [position] at all: not bedrock or a barrier. */
+    fun breakable(position: List<Int>): Boolean = true
+
     /** Where a body stands on the block at [position], or `null` when no body can. */
     fun standCell(position: List<Int>): List<Int>? = standCellOn(this, position)
 
@@ -51,11 +60,17 @@ internal fun BlockGround.cached(): BlockGround {
     if (source === BlockGround.UNKNOWN) return source
     val open = HashMap<List<Int>, Boolean>()
     val water = HashMap<List<Int>, Boolean>()
+    val empty = HashMap<List<Int>, Boolean>()
     val stands = HashMap<List<Int>, List<Int>?>()
     return object : BlockGround {
         override fun standsIn(position: List<Int>): Boolean = open.getOrPut(position) { source.standsIn(position) }
 
         override fun holdsWater(position: List<Int>): Boolean = water.getOrPut(position) { source.holdsWater(position) }
+
+        override fun holdsNothing(position: List<Int>): Boolean =
+            empty.getOrPut(position) { source.holdsNothing(position) }
+
+        override fun breakable(position: List<Int>): Boolean = source.breakable(position)
 
         // The source's own answer, which a ground may state its own way, read once a cell.
         override fun standCell(position: List<Int>): List<Int>? =

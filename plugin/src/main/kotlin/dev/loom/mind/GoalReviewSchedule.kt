@@ -81,6 +81,12 @@ const val MAX_FOLLOW_UPS_PER_REVIEW: Int = 2
 /** Follow-ups a discovery's walks and transition may claim per scheduled review, outside the allowance. */
 const val MAX_DISCOVERY_FOLLOW_UPS: Int = 3
 
+/**
+ * Follow-ups a shelter's steps may claim per scheduled review, outside the allowance: a pit is three
+ * digs and a placement, and a resource subgoal a dig more, before night falls.
+ */
+const val MAX_SHELTER_FOLLOW_UPS: Int = 6
+
 /** Earned follow-ups an ordinary step leaves unspent, for a review owed to a lying drop or a completion. */
 const val OWED_RESERVE: Int = 1
 
@@ -101,6 +107,15 @@ fun interface StepSettlement {
      * resource goal it became - settled at [tick], owed a review outside the ordinary allowance.
      */
     fun discovered(
+        agent: AgentId,
+        tick: Long,
+    ) = settled(agent, tick, owed = true)
+
+    /**
+     * [agent]'s shelter goal's step, or its resource subgoal's, settled at [tick], accepted or
+     * refused, owed a review outside the ordinary allowance.
+     */
+    fun sheltered(
         agent: AgentId,
         tick: Long,
     ) = settled(agent, tick, owed = true)
@@ -231,6 +246,7 @@ class GoalReviewSchedule(
             followUpDue.remove(it)
             followUps.remove(it)
             discoveryFollowUps.remove(it)
+            shelterFollowUps.remove(it)
             allowance[it] = (allowance[it] ?: 0) + followUpsPerReview
         }
         return claimed
@@ -280,6 +296,24 @@ class GoalReviewSchedule(
     }
 
     private val discoveryFollowUps = mutableMapOf<AgentId, Int>()
+
+    /**
+     * Owes [agent] a follow-up [FOLLOW_UP_DELAY_TICKS] after [tick] for a shelter step, from its own
+     * bounded chain of [MAX_SHELTER_FOLLOW_UPS] rather than the earned allowance, as a discovery is.
+     */
+    override fun sheltered(
+        agent: AgentId,
+        tick: Long,
+    ) {
+        val spent = shelterFollowUps[agent] ?: 0
+        if (agent !in lastReview || spent >= MAX_SHELTER_FOLLOW_UPS) return
+        if (followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS) == null) {
+            shelterFollowUps[agent] = spent + 1
+            allowance[agent] = (allowance[agent] ?: 0) + 1
+        }
+    }
+
+    private val shelterFollowUps = mutableMapOf<AgentId, Int>()
 
     /**
      * The owed follow-up reviews due by [now], out of [living], in agent order. A due one [ready]

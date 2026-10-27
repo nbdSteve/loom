@@ -348,6 +348,17 @@ PROFILES['balanced-follow-up-10m-10'] = Object.freeze({
   ...PROFILES['balanced-envelope-10m-10'],
   followUpsPerReview: 2
 })
+// The balanced follow-up profile's scene, bounds, exposure, plan and every bar unchanged, with the
+// shelter bar pre-registered here before any run (the r36 audit: all ten agents died at night in
+// the open): at least three agents' own adopted shelter goals took a server-witnessed step that
+// left them more enclosed before nightfall, measured by gate generation 19.
+PROFILES['shelter-goal-10m-10'] = Object.freeze({
+  ...PROFILES['balanced-follow-up-10m-10'],
+  coherenceBars: Object.freeze({
+    ...PROFILES['balanced-follow-up-10m-10'].coherenceBars,
+    shelterProgressAgentsBeforeNight: 3
+  })
+})
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */
