@@ -149,6 +149,8 @@ test('a witnessed death ends only that agent while its peers continue', () => {
   const decided = (requestId) => ({ event: 'decided', agentId: 'tribe-alpha', requestId })
   const applied = (requestId) => ({ event: 'intentApplied', agentId: 'tribe-alpha', requestId })
   const report = (event) => ({ event, agentId: 'tribe-alpha' })
+  const witness = (requestId) =>
+    ({ event: 'worldInteraction', agentId: 'tribe-alpha', requestId, outcome: 'serverEffectConfirmed' })
   const orderings = [
     [[decided('r1'), died, applied('r1'), report('moved'), report('retreating')], null],
     [[decided('r1'), decided('r2'), died, applied('r2'), applied('r1'), report('moved'), report('moved')], null],
@@ -159,7 +161,14 @@ test('a witnessed death ends only that agent while its peers continue', () => {
     [[decided('r1'), died, applied('r1'), applied('r1')], /recorded intentApplied after its witnessed death/],
     [[decided('r1'), died, applied('r1'), report('moved'), report('moved')], /recorded moved after its witnessed death/],
     [[died, report('moved')], /recorded moved after its witnessed death/],
-    [[decided('r1'), died, { event: 'worldInteraction', agentId: 'tribe-alpha', requestId: 'r1', outcome: 'serverEffectConfirmed' }],
+    // The server's witness of a settled request's interaction follows its settlement, once (the
+    // v35 shelter rehearsal: delta was killed while its closing was in flight).
+    [[decided('r1'), died, applied('r1'), witness('r1')], null],
+    [[decided('r1'), died, applied('r1'), report('moved'), witness('r1')], null],
+    [[decided('r1'), died, witness('r1')], /recorded worldInteraction after its witnessed death/],
+    [[decided('r1'), died, applied('r1'), witness('r1'), witness('r1')], /recorded worldInteraction after its witnessed death/],
+    [[decided('r1'), died, applied('r1'), witness('r2')], /recorded worldInteraction after its witnessed death/],
+    [[decided('r1'), died, { event: 'decisionDiscarded', agentId: 'tribe-alpha', requestId: 'r1' }, witness('r1')],
       /recorded worldInteraction after its witnessed death/],
     [[died, { event: 'decisionDiscarded', agentId: 'tribe-alpha', requestId: 'r9' }], /recorded decisionDiscarded after its witnessed death/]
   ]

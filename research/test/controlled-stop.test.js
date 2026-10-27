@@ -921,10 +921,14 @@ test('an action settled after its agent died is typed and never counted as behav
   assert.deepEqual(published.metrics.witnessedDeaths.byAgent['tribe-alpha'].settledAfterDeath, ['tribe-alpha:native-1'])
   assert.equal(published.metrics.behaviorGate.meaningfulBehaviorByAgent['tribe-alpha'], undefined)
   assert.deepEqual(Object.keys(published.metrics.behaviorGate.meaningfulBehaviorByAgent), ['tribe-beta', 'tribe-gamma'])
-  // A server effect first recorded after the death is not a settlement.
+  // The server's witness of the settled request's own interaction is its settlement's evidence;
+  // one of any request not settled after the death is a server effect the dead agent began.
+  const witnessed = structuredClone(raw)
+  const moved = witnessed.body.findIndex((record) => record.agentId === 'tribe-alpha' && record.event === 'moved')
+  witnessed.body.splice(moved + 1, 0, bodyRecord(1, 'tribe-alpha', 'worldInteraction', 'dig', { requestId: 'native-1', outcome: 'serverEffectConfirmed' }))
+  assert.deepEqual(validateArtifact(publish({ raw: witnessed, stopReason: 'durationElapsed' }).artifactDirectory).errors, [])
   const effect = structuredClone(raw)
-  const moved = effect.body.findIndex((record) => record.agentId === 'tribe-alpha' && record.event === 'moved')
-  effect.body.splice(moved + 1, 0, bodyRecord(1, 'tribe-alpha', 'worldInteraction', 'dig', { requestId: 'native-1', outcome: 'serverEffectConfirmed' }))
+  effect.body.splice(moved + 1, 0, bodyRecord(1, 'tribe-alpha', 'worldInteraction', 'dig', { requestId: 'native-9', outcome: 'serverEffectConfirmed' }))
   rejects(effect, /recorded worldInteraction after its witnessed death/)
 })
 

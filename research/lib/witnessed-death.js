@@ -13,9 +13,14 @@ const AFTER_DEATH_DAMAGE_OUTCOMES = Object.freeze(['damageDiedBeforeCognition', 
 // Permadeath is absolute: after a death nothing new may begin. The one exception is the typed
 // terminal settlement of a request the agent provably decided before it died: its single
 // intentApplied or decisionDiscarded, and at most one movement and one retreat report per
-// such request, because a flight in progress reports how it ended. A server effect first
-// recorded after the death (worldInteraction), a new perception, decision or cognition, and
-// any record for a request not pending at the death stay fatal.
+// such request, because a flight in progress reports how it ended; and, after that request's
+// own intentApplied, at most one server witness of the interaction it ended
+// (worldInteraction), because the JVM audits an interaction when its report arrives and a dead
+// player can take no further action, so that witness can only state what the request did while
+// the agent lived (the v35 shelter rehearsal: delta, trapped and under attack, was killed while
+// the closing it chose was in flight). A server witness of any other request, or one before its
+// settlement, a new perception, decision or cognition, and any record for a request
+// not pending at the death stay fatal.
 //
 // A perception the agent took before it died whose answer came after is pending too, and may
 // end once with the JVM's decisionDiscarded or cognitionUnavailable and nothing else: the JVM
@@ -36,6 +41,7 @@ class DeathSettlement {
     this.perceived = new Map()
     this.reportsLeft = new Map()
     this.settled = new Map()
+    this.witnessable = new Set()
   }
 
   pendingOf (agentId) {
@@ -68,10 +74,15 @@ class DeathSettlement {
       return null
     }
     if (allowedAfterDeath(record) && record.event !== 'decisionDiscarded') return null
+    if (record.event === 'worldInteraction' && this.witnessable.has(key)) {
+      this.witnessable.delete(key)
+      return null
+    }
     if (['intentApplied', 'decisionDiscarded'].includes(record.event) && pending.has(key)) {
       pending.delete(key)
       if (!this.settled.has(agentId)) this.settled.set(agentId, [])
       this.settled.get(agentId).push(key)
+      if (record.event === 'intentApplied') this.witnessable.add(key)
       return null
     }
     if (['decisionDiscarded', 'cognitionUnavailable'].includes(record.event) && perceived.has(key)) {
