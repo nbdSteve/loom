@@ -9,7 +9,7 @@ const { EventEmitter } = require('node:events')
 const { afterEach, test } = require('node:test')
 
 const H = require('./harness')
-const { BORDER_EXCLUDED, borderExclusion, columnInside, trackWorldBorder, worldBorderOf } = require('../src/border')
+const { BORDER_EXCLUDED, blockInside, borderExclusion, columnInside, trackWorldBorder, worldBorderOf } = require('../src/border')
 
 afterEach(H.disconnected)
 
@@ -52,6 +52,19 @@ test('a column is inside only when a body standing in it is wholly inside', () =
   assert.equal(excluded({ position: { x: 0, y: 64, z: 64 } }), BORDER_EXCLUDED)
   assert.equal(excluded({ position: { x: 0, y: 64, z: 63 } }), 0)
   assert.equal(excluded({}), 0)
+})
+
+test('a block is inside when any of it is inside, as the server judges an interaction', () => {
+  // r36 zeta's short grass stood at x -65, one column past a 128-block border centred on (0, 0).
+  const border = { x: 0, z: 0, diameter: 128 }
+  assert.equal(blockInside(border, -64, -36), true)
+  assert.equal(blockInside(border, -65, -36), false)
+  assert.equal(blockInside(border, 63, 63), true)
+  assert.equal(blockInside(border, 64, 0), false)
+  assert.equal(blockInside(border, 0, -65), false)
+  // An off-grid border keeps a block it cuts, which a standing body's column would not be.
+  assert.equal(blockInside({ x: 0.5, z: 0, diameter: 128 }, -64, 0), true)
+  assert.equal(columnInside({ x: 0.5, z: 0, diameter: 128 }, -64, 0), false)
 })
 
 test('a walk past the border has no route, and one inside it arrives', async () => {

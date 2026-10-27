@@ -4,8 +4,8 @@
  * Real body processes for the JVM's offline goal-scenario acceptance test. Not a suite.
  *
  * Takes one JSON scene argument naming the agents, where each stands, the blocks on the stone
- * floor at y 63 - five chunk columns across - the creatures and dropped items in view, and what
- * each body carries. Starts one real body
+ * floor at y 63 - five chunk columns across - the creatures and dropped items in view, what
+ * each body carries, and the world border the server states. Starts one real body
  * per agent, each driving real Mineflayer with the real pathfinder and physics over the fake
  * protocol client, on its own loopback control port. Prints one `{"ready":[...]}` line, then one `{"wrote":...}` line per
  * dig packet a client writes - the fake server's view of the wire.
@@ -128,6 +128,10 @@ async function main () {
     }
     spawned(peer.client, scene.vitals)
     clockReported(peer.client, { timeOfDay: scene.timeOfDay ?? 6000, day: 1 })
+    if (scene.border != null) {
+      const { x, z, diameter } = scene.border
+      peer.client.emit('initialize_world_border', { x, z, oldDiameter: diameter, newDiameter: diameter, speed: 0 })
+    }
     peer.client.emit('position', positionPacket({ ...feet, yaw: 0, pitch: 0, teleportId: 1 }))
     floor(peer.bot, scene.columns ?? COLUMNS)
     for (const { x, y, z, name } of scene.blocks ?? []) {

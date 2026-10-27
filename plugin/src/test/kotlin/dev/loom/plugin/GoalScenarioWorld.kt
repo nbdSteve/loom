@@ -94,6 +94,13 @@ internal data class SceneStack(
     val count: Int,
 )
 
+/** The world border the server states, centred on ([x], [z]) and [diameter] blocks across. */
+internal data class SceneBorder(
+    val x: Double,
+    val z: Double,
+    val diameter: Double,
+)
+
 /**
  * One scene: who stands where, every block beside the stone floor at y 63, the creatures and
  * dropped items in view, what the bodies carry, the time of day, whether the peers serve dig
@@ -115,6 +122,8 @@ internal data class Scene(
     val servePickups: Boolean = false,
     /** The bodies' health and food at spawn, vanilla's full bars when absent. */
     val health: Double? = null,
+    /** The world border the server states before the bodies are placed, none when absent. */
+    val border: SceneBorder? = null,
 ) {
     /** The scene as the peers script reads it. */
     fun json(identities: Map<AgentId, PlayerIdentity>): String =
@@ -138,6 +147,7 @@ internal data class Scene(
             "serveCrafts" to serveCrafts,
             "servePickups" to servePickups,
             "vitals" to health?.let { jsonOf("health" to it, "food" to 20, "foodSaturation" to 5) },
+            "border" to border?.let { jsonOf("x" to it.x, "z" to it.z, "diameter" to it.diameter) },
             "items" to
                 JsonArray(
                     items.map {
@@ -221,6 +231,8 @@ private class LedgerDrops(
 internal data class DigWrite(
     val agentId: String,
     val status: Int,
+    /** The block the packet names. */
+    val at: List<Int>,
 )
 
 /** A scripted mind: [answer] picks each perception's intent and goal choice. */
@@ -295,6 +307,7 @@ internal class ScenarioWorld(
                         DigWrite(
                             wrote.getValue("agentId").jsonPrimitive.content,
                             wrote.getValue("status").jsonPrimitive.int,
+                            listOf("x", "y", "z").map { wrote.getValue(it).jsonPrimitive.int },
                         )
                 }
                 read["broke"]?.jsonObject?.let { broke += it.getValue("agentId").jsonPrimitive.content }

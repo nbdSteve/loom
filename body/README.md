@@ -825,6 +825,8 @@ A body that starts dry still treats water as a wall.
 Mineflayer keeps no border state and Prismarine's physics collides with blocks alone, so a search that did not know the border routed over it, and the server put the player back on every step until the stall bound ended the request.
 `src/border.js` reads the four border packets, takes the smaller end of a changing border, and prices every cell of a column a body's box would cross the border from as more than the search will pay.
 The v29 plains rehearsal's theta stalled three times against the 128-block border and iota died against it; `test/native-flee-border.test.js` replays theta's crater flight on its converged ground, and the JVM's `BukkitBlockGround` closes the same cells so no walk past the border is offered.
+The border also bounds what a body may touch: vanilla refuses every dig of, and placement against, a block outside it (`WorldBorder.isWithinBounds`) and puts the block back, so a sense reports no block past it (`blockInside`), and a dig or placement the border has since moved past answers `notDiggable` or `destinationBlocked` with no packet written.
+r36 zeta was offered short grass one column past the 128-block border, and Mineflayer's predicted break waited out the 20 s deadline as `libraryFailure`; `test/native-dig-border.test.js` replays it on zeta's ground.
 
 **A flight may end only on safe ground.**
 `SafeFlightGoal` holds the library's inverted goal to an end at least `FLIGHT_BORDER_MARGIN_BLOCKS` (3) inside the world border and no more than `MAX_FLIGHT_DESCENT_BLOCKS` (4) below the lower of where the flight began and the ground around it (`flightFloorOf`: the median standing height of sixteen columns six blocks off, with trees read through); the route may pass anywhere.

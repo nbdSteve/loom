@@ -75,6 +75,19 @@ function columnInside (border, x, z) {
 }
 
 /**
+ * Whether the block in column (`x`, `z`) lies inside `border` as vanilla's own interaction check
+ * reads it (`WorldBorder.isWithinBounds`): any part of the block inside the wall. The server
+ * refuses every dig of, and placement against, a block outside it and puts the block back, so a
+ * dig the client library predicted waited out its whole deadline for a break that never came
+ * (r36 zeta's short grass at x -65, a block past the 128-block border, `digLibraryFailure`).
+ */
+function blockInside (border, x, z) {
+  const half = border.diameter / 2
+  const inside = (cell, centre) => cell + 1 > centre - half && cell < centre + half
+  return inside(x, border.x) && inside(z, border.z)
+}
+
+/**
  * The step exclusion a route is searched under: every cell of a column outside `border` costs
  * [BORDER_EXCLUDED], so no move enters one. The pathfinder prices each cell a move passes
  * through with it, and drops a move whose cost passes a hundred.
@@ -90,6 +103,7 @@ function borderExclusion (border) {
 module.exports = {
   BORDER_EXCLUDED,
   PLAYER_HALF_WIDTH,
+  blockInside,
   borderExclusion,
   columnInside,
   trackWorldBorder,

@@ -26,6 +26,7 @@ const {
   stackMatchesOffer,
   visibleBlock
 } = require('./interaction')
+const { blockInside, worldBorderOf } = require('./border')
 
 /** The one installation each player gets; a second would duplicate packet listeners. */
 const installations = new WeakSet()
@@ -108,6 +109,14 @@ function placeHeldBlock (bot, {
   }
   if (before === null || before === undefined) return undefined
   if (!isAirBlock(before)) return refused('destinationBlocked', startedAt, now)
+  // The server refuses a use of a block past its world border and puts back a block placed past
+  // it, so the wall blocks a placement against or into a cell outside it, as it blocked r36
+  // zeta's dig of short grass past the border.
+  const border = worldBorderOf(bot)
+  if (border !== undefined && [resolvedBlock.block.position, destination]
+    .some(({ x, z }) => !blockInside(border, x, z))) {
+    return refused('destinationBlocked', startedAt, now)
+  }
 
   let settled = false
   let abort

@@ -11,6 +11,9 @@ import dev.loom.contract.Intent
 import dev.loom.contract.ObservationKind
 import dev.loom.contract.Trigger
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -285,6 +288,38 @@ class GoalScenarioEndToEndTest {
     }
 
     @Test
+    fun `a block past the world border is never offered, so the dig r36 zeta waited out is never sent`() {
+        // r36 zeta was offered short grass one column past the border, which the server put back
+        // after Mineflayer predicted its break, and the dig waited out its deadline
+        // (`digLibraryFailure`, `body:00000551`). Here the border is 60 blocks across, so column
+        // -31 is past it and column -29 inside, with the same kind of grass in both.
+        val past = Cell(-31, 64, 0, "short_grass")
+        val inside = Cell(-29, 64, 1, "short_grass")
+        val scene =
+            Scene(
+                listOf(Stand(ALPHA, -29.5, 64.0, 0.5)),
+                blocks = listOf(past, inside),
+                serveBreaks = true,
+                border = SceneBorder(0.0, 0.0, BORDER_DIAMETER),
+            )
+        val world = world(scene)
+        world.mind.answer = { perception, _ ->
+            Intent.Dig(perception.surroundings.first { it.what == "block.minecraft.short_grass" }.ref) to null
+        }
+        world.review(ALPHA)
+        val applied = world.awaitRecord { it.event == BodyEvent.INTENT_APPLIED }
+        val grass = world.mind.seen[0].surroundings.filter { it.what == "block.minecraft.short_grass" }
+        assertEquals(1, grass.size, "only the grass inside the border is offered")
+        assertEquals(EventTag.ACCEPTED, applied.outcome)
+        assertEquals(listOf(listOf(-29, 64, 1)), world.digWrites().filter { it.status == DIG_STARTED }.map { it.at })
+        assertEquals(listOf(ALPHA.value), world.breaks())
+        val witnessed = world.awaitRecord { it.event == BodyEvent.WORLD_INTERACTION }
+        assertEquals(EventTag.SERVER_EFFECT_CONFIRMED, witnessed.outcome)
+        val readiness = world.readiness(GATE_GENERATION)
+        assertEquals(0, readiness["blockers"]!!.jsonObject["protocolError"]!!.jsonPrimitive.int)
+    }
+
+    @Test
     fun `beside an immediate hunter a dig is withheld before the body is asked, and a flight is taken`() {
         // r24: seven reviews beside a near hunter dug, crafted or walked; delta's crafted beside a spider.
         val zombie =
@@ -338,6 +373,8 @@ class GoalScenarioEndToEndTest {
         const val DIG_STARTED = 0
         const val DIG_FINISHED = 2
         const val STAGGER_MS = 300L
+        const val BORDER_DIAMETER = 60.0
+        const val GATE_GENERATION = 18
         val ALPHA = AgentId("agent-alpha")
         val KAPPA = AgentId("agent-kappa")
         val IOTA = AgentId("agent-iota")

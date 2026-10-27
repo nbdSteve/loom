@@ -44,6 +44,7 @@ const {
   visibleBlock
 } = require('./interaction')
 const { holdSimulation, releaseAtRest, standsOnSupport } = require('./movement')
+const { blockInside, worldBorderOf } = require('./border')
 
 /**
  * How many simulation steps a standing body is given to establish its ground state before the
@@ -198,6 +199,12 @@ function digOfferedBlock (bot, {
   const inReach = blockWithinReach(bot, resolved.block)
   if (inReach === undefined) return undefined
   if (!inReach) return refused('outOfReach', startedAt, now)
+  // The server puts back any block past its world border a body digs, so no dig of one is sent:
+  // r36 zeta's predicted break of short grass at x -65 waited out its deadline.
+  const border = worldBorderOf(bot)
+  if (border !== undefined && !blockInside(border, resolved.block.position.x, resolved.block.position.z)) {
+    return refused('notDiggable', startedAt, now)
+  }
   const visible = visibleBlock(bot, resolved.block)
   if (visible === undefined) return undefined
   if (!visible) return refused('notVisible', startedAt, now)

@@ -41,6 +41,7 @@ const {
   MIN_STACK_COUNT,
   isResourceName
 } = require('./protocol')
+const { blockInside, worldBorderOf } = require('./border')
 
 /** Mineflayer's native direct interaction reach, in blocks. */
 const INTERACTION_REACH_BLOCKS = 5.1
@@ -331,6 +332,7 @@ function soughtBlocks (bot, eyes, standing, { radius, seek, bound }) {
         if (name === undefined) continue
         const away = cell.offset(0.5, 0.5, 0.5).distanceTo(eyes)
         if (away <= INTERACTION_REACH_BLOCKS || !realWithin(away, 0, reach)) continue
+        if (!withinBorder(bot, cell)) continue
         if (!byKind.has(name)) byKind.set(name, [])
         byKind.get(name).push({ cell, away })
       }
@@ -363,6 +365,17 @@ function soughtBlocks (bot, eyes, standing, { radius, seek, bound }) {
   return found.sort((one, other) => one.away - other.away)
 }
 
+/**
+ * Whether a block at `position` is one the server would let a body touch at all: inside the world
+ * border the server stated, or any block while it has stated none. A block past the border is
+ * neither reported nor counted as omitted, for the reason an unseen one is not: no dig or place
+ * may name it (r36 zeta's dig of short grass past the border waited out its deadline).
+ */
+function withinBorder (bot, position) {
+  const border = worldBorderOf(bot)
+  return border === undefined || blockInside(border, position.x, position.z)
+}
+
 function nearestBlocks (bot, eyes, standing, { radius, limit, seek }) {
   const reach = Math.min(radius, INTERACTION_REACH_BLOCKS)
   const span = Math.ceil(reach)
@@ -377,6 +390,7 @@ function nearestBlocks (bot, eyes, standing, { radius, limit, seek }) {
         if (!Number.isInteger(block.type) || !Number.isInteger(block.stateId)) continue
         const away = block.position.offset(0.5, 0.5, 0.5).distanceTo(eyes)
         if (!realWithin(away, 0, reach)) continue
+        if (!withinBorder(bot, block.position)) continue
         if (!blockInSight(bot, eyes, block)) continue
         within.push({ block, away })
       }
