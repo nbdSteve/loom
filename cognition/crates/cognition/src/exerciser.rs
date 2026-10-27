@@ -153,11 +153,15 @@ impl PathExerciser {
     }
 }
 
-/// The answer to anything but a goal review: a flight from the nearest hunter close enough to be
-/// immediate danger, beside which the body takes nothing else, else an idle, since only a goal
+/// The answer to anything but a goal review: where no walk leads out, the stand-in's closing of the
+/// cover; else a flight from the nearest hunter close enough to be immediate danger, beside which
+/// the body takes nothing else; else an idle, since only a goal
 /// review moves a path (the v34 rehearsal answered kappa's sighting of its creeper 3.2 blocks off
 /// with an idle, which the body refused as `survivalRequired`).
 fn beset(perception: &Perception) -> Draft {
+    if let Some(closing) = crate::model::cornered(perception) {
+        return closing;
+    }
     OfferedRefs::of(perception).immediate.first().map_or_else(
         || answer(Intent::Idle, None, "only a goal review moves a path"),
         |hunter| {

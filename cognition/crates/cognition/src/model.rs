@@ -24,8 +24,8 @@
 use std::future::Future;
 
 use loom_contract::{
-    Bearing, GoalChoice, GoalDisposition, GoalStepResult, Intent, Observation, ObservationKind,
-    Perception, Trigger, MAX_GOAL_STEPS_WITHOUT_PROGRESS,
+    Bearing, EquipmentDestination, GoalChoice, GoalDisposition, GoalStepResult, Intent,
+    Observation, ObservationKind, Perception, Trigger, MAX_GOAL_STEPS_WITHOUT_PROGRESS,
 };
 use serde::Serialize;
 
@@ -483,6 +483,15 @@ impl ScriptedBackend {
 
     /// The per-trigger action rule, before any goal choice is attached.
     fn step_now(route: &ModelRoute, perception: &Perception) -> Draft {
+        // Danger where no walk leads out is answered by closing the cover, never by a flight.
+        if matches!(
+            perception.trigger,
+            Trigger::Damaged { .. } | Trigger::ThreatSighted { .. }
+        ) {
+            if let Some(closing) = cornered(perception) {
+                return closing;
+            }
+        }
         match &perception.trigger {
             // Never a reply: two stand-ins answering speech with speech would be a chat loop.
             Trigger::Spoken { from, text } => Draft {
@@ -514,6 +523,7 @@ impl ScriptedBackend {
                 ..
             } => match attacker_ref
                 .clone()
+                .filter(|handle| fleeable(perception, handle))
                 .or_else(|| nearest_ref(perception, source))
             {
                 Some(handle) => Draft {
@@ -539,12 +549,18 @@ impl ScriptedBackend {
             // a `Flee` naming this threat may use.
             Trigger::ThreatSighted {
                 threat, entity_ref, ..
-            } => Draft {
+            } if fleeable(perception, entity_ref) => Draft {
                 goal: None,
                 intent: Intent::Flee {
                     from: entity_ref.clone(),
                 },
                 reasoning: format!("{threat} hunts my kind and is in view; retreat from it"),
+            },
+            // Sealed in, nothing can reach the agent and no flight is offered.
+            Trigger::ThreatSighted { threat, .. } => Draft {
+                goal: None,
+                intent: Intent::Idle,
+                reasoning: format!("{threat} is in view, but no flight from it is offered; hold still"),
             },
             // A walk names a block the body observed, so the stand-in walks onto the
             // nearest observation of the sighted kind. It has no spatial reasoning:
@@ -613,12 +629,16 @@ impl ScriptedBackend {
     /// lies in reach, as the body requires; else dig the nearest offered block that can drop
     /// something, the held goal's item first; else do nothing.
     fn review_step(route: &ModelRoute, perception: &Perception) -> Draft {
-        // A hunter upon the agent is answered first, by a flight from the nearest one.
+        // A hunter upon the agent is answered first, by a flight from the nearest one, or where
+        // no walk leads out, by closing its cover.
         if let Some(from) = crate::offered::OfferedRefs::of(perception)
             .immediate
             .first()
             .cloned()
         {
+            if let Some(closing) = cornered(perception) {
+                return closing;
+            }
             return Draft {
                 goal: None,
                 intent: Intent::Flee { from },
@@ -863,6 +883,55 @@ fn nearest_block_ref(perception: &Perception, block: &str) -> Option<String> {
         .map(|seen| seen.target_ref.clone())
 }
 
+/// Whether `perception` offers a flight from `handle`: never while the agent is sealed in.
+fn fleeable(perception: &Perception, handle: &str) -> bool {
+    crate::offered::OfferedRefs::of(perception)
+        .flee_targets
+        .iter()
+        .any(|offered| offered == handle)
+}
+
+/// Where no short walk leads out of where the agent stands no flight can run, so danger is answered
+/// by closing its cover - the placement its cover names with the solid stack in hand, or the equip
+/// that puts one there - else by holding still. `None` while a flight can run (the v35 shelter
+/// rehearsal: zeta, damaged in a pit, fled, and the mind refused the flight).
+pub(crate) fn cornered(perception: &Perception) -> Option<Draft> {
+    let offered = crate::offered::OfferedRefs::of(perception);
+    let shelter = &offered.shelter;
+    if !shelter.trapped() {
+        return None;
+    }
+    let placed = shelter
+        .closings
+        .first()
+        .zip(shelter.solid_held.first())
+        .map(|((block, face), item)| Intent::Place {
+            block: block.clone(),
+            item: item.clone(),
+            face: *face,
+        });
+    let readied = || {
+        shelter.to_equip().first().map(|item| Intent::Equip {
+            item: item.clone(),
+            destination: EquipmentDestination::Hand,
+        })
+    };
+    Some(
+        match placed.or_else(readied).filter(|intent| offered.admits(intent)) {
+            Some(intent) => Draft {
+                goal: None,
+                intent,
+                reasoning: "no walk leads out of where I stand, so I close my cover against what hunts me".to_owned(),
+            },
+            None => Draft {
+                goal: None,
+                intent: Intent::Idle,
+                reasoning: "no walk leads out of where I stand and nothing I hold closes my cover, so I hold still".to_owned(),
+            },
+        },
+    )
+}
+
 /// The nearest creature to flee from after damage: one of the kind that dealt it, else any that
 /// hunts the agent's kind, and never a peer or a creature that hunts nothing (the v29 rehearsal:
 /// the stand-in fled the nearest thing with a ref, a peer, twice).
@@ -1066,6 +1135,73 @@ mod tests {
             .await
             .expect("the stand-in backend always drafts");
         assert_eq!(idle.intent, Intent::Idle);
+    }
+
+    fn shelter_scene(name: &str) -> Perception {
+        let path = format!(
+            "{}/tests/fixtures/shelter-{name}.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn damage_where_no_walk_leads_out_closes_the_cover_rather_than_fleeing() {
+        // The v35 shelter rehearsal: zeta, damaged in a pit with no walk out, fled, and the mind
+        // refused the flight, which ended the run as a failed decision.
+        let mut pit = shelter_scene("pit-damaged");
+        let answer = |seen: &Perception| {
+            let draft = ScriptedBackend::draft_now(&router().route(seen.importance), seen);
+            assert!(
+                crate::offered::OfferedRefs::of(seen).admits(&draft.intent),
+                "the mind would refuse {:?}",
+                draft.intent
+            );
+            draft.intent
+        };
+        assert_eq!(
+            answer(&pit),
+            Intent::Place {
+                block: "b2".to_owned(),
+                item: "s1".to_owned(),
+                face: loom_contract::BlockFace::West
+            }
+        );
+        // The dirt carried but not in hand is readied first.
+        pit.self_state.inventory_summary[0].held = None;
+        assert_eq!(
+            answer(&pit),
+            Intent::Equip {
+                item: "s1".to_owned(),
+                destination: loom_contract::EquipmentDestination::Hand
+            }
+        );
+        // Nothing solid to close it with: it holds still.
+        pit.self_state.inventory_summary.clear();
+        assert_eq!(answer(&pit), Intent::Idle);
+        // A sighting there, and a goal review beside the hunter, close the cover the same way.
+        let mut sighted = shelter_scene("pit-damaged");
+        sighted.trigger = Trigger::ThreatSighted {
+            threat: "entity.minecraft.zombie".to_owned(),
+            entity_ref: "e1".to_owned(),
+            distance: 2.6,
+            direction: Bearing::North,
+            visible: true,
+            reachable: None,
+        };
+        assert!(matches!(answer(&sighted), Intent::Place { .. }));
+        let mut reviewed = shelter_scene("pit-damaged");
+        reviewed.trigger = Trigger::GoalReview;
+        assert!(matches!(answer(&reviewed), Intent::Place { .. }));
+        // Sealed in, neither the attacker nor the creature sighted is fled.
+        let mut sealed = shelter_scene("pit-damaged");
+        let cover = sealed.self_state.cover.as_mut().unwrap();
+        cover.sealed = true;
+        cover.open.clear();
+        cover.closings.clear();
+        assert_eq!(answer(&sealed), Intent::Idle);
+        sealed.trigger = sighted.trigger.clone();
+        assert_eq!(answer(&sealed), Intent::Idle);
     }
 
     #[test]
