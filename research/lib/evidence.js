@@ -59,12 +59,14 @@ const GOAL_OUTCOMES = [
   'goalShelterNotOffered',
   'goalFeedsNotOffered',
   'goalSubgoalReplaced',
-  // From routine-v36: an objective one step meets, a replace by the held goal's own item, and an
-  // end stated without a reason or with one its evidence does not support.
+  // From routine-v36: an objective one step meets, a replace by the held goal's own item, an end
+  // stated without a reason or with one its evidence does not support, and an idle or rest at a
+  // goal review while the edge of sight is offered.
   'goalTrivial',
   'goalReplaceSameItem',
   'goalReasonMissing',
-  'goalReasonUnsupported'
+  'goalReasonUnsupported',
+  'goalPassiveBesideExploration'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 // Why a replace or an abandon ended its goal, from routine-v36.

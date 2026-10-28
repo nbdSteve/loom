@@ -74,12 +74,20 @@ internal class PlayerActuation(
         return answer
     }
 
+    /** The order this agent's perceptions were asked in, which dates each decision applied. */
+    val newest: NewestDecisions get() = preparer.newest
+
     /**
-     * Stops whatever cancellable work [agentId]'s body is carrying out, off the main thread, with the
-     * same halt an idle decision sends; nothing is recorded, since no decision of its own asked.
+     * Stops whatever cancellable work [agentId]'s body is carrying out for decision [decidedBy], off
+     * the main thread, with the same halt an idle decision sends; nothing is recorded, since no
+     * decision of its own asked. A decision a newer one of the agent's own has replaced halts nothing.
      */
-    fun halt(agentId: AgentId): CompletionStage<Boolean> {
-        val runtime = registry.ready(agentId) ?: return completedBodyOperation(false)
+    fun halt(
+        agentId: AgentId,
+        decidedBy: String?,
+    ): CompletionStage<Boolean> {
+        val replaced = decidedBy != null && preparer.newest.outdated(agentId, decidedBy)
+        val runtime = registry.ready(agentId)?.takeUnless { replaced } ?: return completedBodyOperation(false)
         val stopping = preparer.prepare(runtime, Intent.Idle, null, null)
         return CompletableFuture
             .supplyAsync(stopping, context.infrastructure.io)
@@ -174,10 +182,10 @@ internal class PlayerActionPreparer(
                     }
                 }
             is Intent.Idle -> {
-                { halt(runtime, "standing still") }
+                { halt(runtime, "standing still", requestId) }
             }
             is Intent.Rest -> {
-                { halt(runtime, "resting") }
+                { halt(runtime, "resting", requestId) }
             }
             is Intent.MoveTo -> prepareMove(runtime, intent, requestId, sense)
             is Intent.Eat -> prepareEat(runtime, intent, requestId, sense)
@@ -191,11 +199,20 @@ internal class PlayerActionPreparer(
             is Intent.Sleep -> survival.prepare(runtime, intent, requestId, sense)
         }
 
+    /**
+     * Halts the body's work, for decision [decidedBy] when one asked: an idle or a rest leaves the
+     * work of a decision asked after its own running, since that one governs the body (the r39
+     * offline audit: an older review's idle halted a newer danger answer's flight).
+     */
     private fun halt(
         runtime: PlayerRuntime,
         effect: String,
-    ): ActionExecution =
-        withControl(runtime, null) { connection ->
+        decidedBy: String? = null,
+    ): ActionExecution {
+        if (decidedBy != null && newest.outdated(runtime.identity.agentId, decidedBy)) {
+            return ActionExecution(IntentOutcome.Accepted("left a newer decision's work running"))
+        }
+        return withControl(runtime, null) { connection ->
             connection.request(
                 BodyRequest.Halt(
                     protocol = BODY_CONTROL_PROTOCOL_VERSION,
@@ -207,6 +224,7 @@ internal class PlayerActionPreparer(
                 ?: throw BodyControlFailure.ProtocolViolation()
             ActionExecution(IntentOutcome.Accepted(effect))
         }
+    }
 
     /**
      * Resolves the block a walk names, on the main thread, to where a body stands on it: the
@@ -544,25 +562,59 @@ internal fun otherHuntersOf(
         .take(dev.loom.bodycontrol.MAX_FLIGHT_AVOID)
 
 /**
- * The newest decision applied to each agent's body, by its perception's request: a flight still being
- * carried out for an older decision never halts or replaces the body's newer work (r34 beta: an older
- * sighting's flight, retried after notReady, halted the newer damage's flight and ran in its place).
- * Written on the main thread as each decision is applied, read from the I/O thread a flight retries on.
+ * The newest decision applied to each agent's body, dated by when its perception was asked - the
+ * order the research record writes `perceived` in - and never by when its answer arrived, since
+ * answers arrive in whatever order the minds return them. A flight still being carried out for an
+ * older decision never halts or replaces the body's newer work (r34 beta: an older sighting's flight,
+ * retried after notReady, halted the newer damage's flight and ran in its place), and neither does a
+ * routine answer asked before a danger and applied while that danger's flight runs (the r39 offline
+ * audit: dated by its arrival, it halted the newer flight). A request never told to [asked] is dated
+ * when first seen. Asked and applied on the main thread, read from the I/O thread an action retries on.
  */
 internal class NewestDecisions {
-    private val newest = java.util.concurrent.ConcurrentHashMap<AgentId, String>()
+    private val dates =
+        object : LinkedHashMap<String, Long>() {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean =
+                size > MAX_DATED_REQUESTS
+        }
+    private var asked = 0L
+    private val newest = HashMap<AgentId, String>()
 
-    /** [requestId]'s decision is the newest applied to [agentId]'s body. */
+    /** [requestId]'s perception is the newest asked of its agent's mind. */
+    @Synchronized
+    fun asked(requestId: String) {
+        dateOf(requestId)
+    }
+
+    /** [requestId]'s decision is applied to [agentId]'s body, and governs it unless a newer one already does. */
+    @Synchronized
     fun applied(
         agentId: AgentId,
         requestId: String,
     ) {
-        newest[agentId] = requestId
+        // Dated before the comparison, so a request seen first here is never dated after the one it is weighed against.
+        val date = dateOf(requestId)
+        val governing = newest[agentId]
+        if (governing == null || date >= dateOf(governing)) newest[agentId] = requestId
     }
 
-    /** Whether a decision newer than [requestId]'s has been applied to [agentId]'s body since. */
+    /** Whether a decision asked after [requestId]'s has been applied to [agentId]'s body. */
+    @Synchronized
     fun outdated(
         agentId: AgentId,
         requestId: String,
-    ): Boolean = newest[agentId].let { it != null && it != requestId }
+    ): Boolean {
+        val governing = newest[agentId] ?: return false
+        return governing != requestId && dateOf(governing) > dateOf(requestId)
+    }
+
+    private fun dateOf(requestId: String): Long = dates.getOrPut(requestId) { ++asked }
+
+    private companion object {
+        /**
+         * Requests dated at once: far more than one agent's perceptions can still be answered within
+         * the bridge's deadline, so a request is never forgotten while its decision can still arrive.
+         */
+        const val MAX_DATED_REQUESTS = 256
+    }
 }

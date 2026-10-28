@@ -310,8 +310,14 @@ class GoalLedgerTest {
         x: Double,
         vararg stacks: Pair<String, Long>,
     ): GoalObservation =
-        // A bush in sight could give up to eight more sticks, as the r11 and r13 scenes' bushes did.
-        GoalObservation(mapOf(*stacks), listOf(x, 64.0, 0.0), capacity = mapOf(STICK to 8L))
+        // A bush in sight could give up to eight more sticks, as the r11 and r13 scenes' bushes did,
+        // and a dig of it is a step offered now.
+        GoalObservation(
+            mapOf(*stacks),
+            listOf(x, 64.0, 0.0),
+            capacity = mapOf(STICK to 8L),
+            stepSources = mapOf("bush" to setOf(STICK)),
+        )
 
     private fun affirm(
         requestId: String,
@@ -426,6 +432,22 @@ class GoalLedgerTest {
         val ended =
             affirm("r6", 500, barren, goalChoice(GoalDisposition.ABANDON, reason = GoalReason.IMPOSSIBLE), Intent.Idle)
         assertEquals(GoalEvidence.ABANDONED, ended.second?.outcome)
+    }
+
+    @Test
+    fun anIdleOrRestBesideTheEdgeOfSightIsRefusedAsTheSchemaWithholdsIt() {
+        // The r39 offline audit: beta's abandon was paired with an idle beside eight cells at the
+        // edge of sight (body:00000292), which the strict schema never offers there.
+        val looking = GoalObservation(emptyMap(), listOf(0.0, 64.0, 0.0), explore = setOf("x1"))
+        val impossible = goalChoice(GoalDisposition.ABANDON, reason = GoalReason.IMPOSSIBLE)
+        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT))
+        val idled = affirm("r2", 200, looking, impossible, Intent.Idle)
+        assertEquals(GoalEvidence.PASSIVE_BESIDE_EXPLORATION, idled.second?.outcome)
+        val walked = affirm("r3", 300, looking, impossible, Intent.MoveTo("x1"))
+        assertEquals(GoalEvidence.ABANDONED, walked.second?.outcome)
+        // With no goal held, a rest there is refused the same way.
+        val rested = affirm("r4", 400, looking, null, Intent.Rest)
+        assertEquals(GoalEvidence.PASSIVE_BESIDE_EXPLORATION, rested.second?.outcome)
     }
 
     @Test

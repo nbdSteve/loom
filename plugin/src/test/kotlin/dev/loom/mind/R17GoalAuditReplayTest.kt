@@ -49,6 +49,7 @@ class R17GoalAuditReplayTest {
                 capacity = scene.capacity,
                 visible = setOf("bush"),
                 gives = mapOf("bush" to setOf(STICK)),
+                stepSources = mapOf("bush" to setOf(STICK)),
             )
         val carried = ledger.present(agent, review, review.substringAfter('-').toLong(), observed)
         val decision = decisionFor(perception(requestId = review, agentId = agent.value), intent).copy(goal = choice)

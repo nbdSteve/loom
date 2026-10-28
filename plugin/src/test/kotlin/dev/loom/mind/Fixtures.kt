@@ -126,7 +126,8 @@ fun perceptionNearBush(
 
 /**
  * A dead bush in sight that digging with a bare hand yields sticks from: what makes the sticks
- * the goal helpers name obtainable, as the r11 and r13 scenes' bushes did.
+ * the goal helpers name obtainable, as the r11 and r13 scenes' bushes did. It gives one stick a
+ * dig, so no one dig meets the two an objective asks.
  */
 val STICK_BUSH: Observation =
     Observation(
@@ -138,7 +139,7 @@ val STICK_BUSH: Observation =
         visible = true,
         ref = "bush",
         standable = true,
-        yields = listOf(BlockYield("item.minecraft.stick", 0, 2, 100)),
+        yields = listOf(BlockYield("item.minecraft.stick", 1, 1, 100)),
         digSafe = true,
     )
 

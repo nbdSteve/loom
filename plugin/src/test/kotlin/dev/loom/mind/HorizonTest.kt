@@ -152,7 +152,8 @@ class HorizonTest {
                 it.copy(selfState = it.selfState.copy(craftingOptions = listOf(sticks)))
             }
         val horizon = horizonOf(craft, recipes).associateBy { it.what }
-        assertEquals(HorizonGoal(STICK, HorizonGrounding.RECIPE, PLANKS, HORIZON_SPAN, false), horizon[STICK])
+        // It reaches past the four its one craft makes, since one craft is one step (the r39 offline audit).
+        assertEquals(HorizonGoal(STICK, HorizonGrounding.RECIPE, PLANKS, 4 + HORIZON_SPAN, false), horizon[STICK])
         // r23 eta: a log goal holding logs switches into planks before its stall bound, and the
         // planks goal is chained to it.
         val ledger = GoalLedger(recipes = recipes)

@@ -244,17 +244,21 @@ fun interface DamagePerception {
 }
 
 /**
- * Stops whatever cancellable movement or interaction one agent's body is carrying out, and answers
- * whether anything was stopped: how a newer danger answer that is not itself a flight takes the body
- * from an older flight of the agent's own, which would otherwise refuse it as not ready (r34
- * epsilon's attack behind its own older flight).
+ * Stops whatever cancellable movement or interaction one agent's body is carrying out for decision
+ * `decidedBy`, and answers whether anything was stopped: how a newer danger answer that is not itself
+ * a flight takes the body from an older flight of the agent's own, which would otherwise refuse it as
+ * not ready (r34 epsilon's attack behind its own older flight). A decision asked before one the body
+ * already carries out halts nothing of it.
  */
 fun interface BodyHalt {
-    fun halt(agentId: AgentId): CompletionStage<Boolean>
+    fun halt(
+        agentId: AgentId,
+        decidedBy: String?,
+    ): CompletionStage<Boolean>
 
     companion object {
         /** A port with nothing to halt. */
-        val NONE: BodyHalt = BodyHalt { completedBodyOperation(false) }
+        val NONE: BodyHalt = BodyHalt { _, _ -> completedBodyOperation(false) }
     }
 }
 

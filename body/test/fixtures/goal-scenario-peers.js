@@ -52,7 +52,7 @@ function floor (bot, columns, top = 'stone', depth = []) {
 }
 
 /** The item a bare-hand break of each block gives, as vanilla's loot tables give it. */
-const DROPS = Object.freeze({ grass_block: 'dirt', dirt: 'dirt', oak_log: 'oak_log' })
+const DROPS = Object.freeze({ grass_block: 'dirt', dirt: 'dirt', oak_log: 'oak_log', dead_bush: 'stick' })
 
 /** The block a `block_place` face points the placement into, as Mineflayer numbers the faces. */
 const FACES = Object.freeze([[0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1], [-1, 0, 0], [1, 0, 0]])

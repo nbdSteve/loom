@@ -80,7 +80,7 @@ internal class DangerReplay(
                 }
 
                 override val halts =
-                    dev.loom.body.BodyHalt {
+                    dev.loom.body.BodyHalt { _, _ ->
                         halted += 1
                         CompletableFuture.completedFuture(true)
                     }

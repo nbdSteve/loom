@@ -104,8 +104,8 @@ class FlightAndPreemptionTest {
                 }
 
                 override val halts =
-                    dev.loom.body.BodyHalt {
-                        calls += "halt"
+                    dev.loom.body.BodyHalt { _, decidedBy ->
+                        calls += "halt for $decidedBy"
                         flights.getValue("zi").complete(IntentOutcome.Accepted("flight was cancelled after moving"))
                         CompletableFuture.completedFuture(true)
                     }
@@ -141,7 +141,7 @@ class FlightAndPreemptionTest {
         decisions.getValue("10j").complete(decisionFor(bitten, Intent.Attack("e2", "i4", 4, false)))
         main.drain()
 
-        assertEquals(listOf("apply zi", "halt", "apply 10j"), calls)
+        assertEquals(listOf("apply zi", "halt for 10j", "apply 10j"), calls)
     }
 
     @Test

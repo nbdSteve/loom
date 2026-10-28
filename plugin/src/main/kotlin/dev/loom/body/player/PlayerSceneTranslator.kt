@@ -48,7 +48,7 @@ internal class PlayerSceneTranslator(
         val serverSubjects = context.authority.serverState.subjectsOf(raw.identity, raw.report.entities)
         val subjects = subjectsOf(raw, serverSubjects)
         val itemSubjects = context.authority.serverState.itemSubjectsOf(raw.identity, raw.report.items)
-        val scene = SceneGround(context.authority.ground, raw.report.position)
+        val scene = SceneGround(context.authority.ground, raw.report.position, raw.identity.uuid)
         val selected = selectedOffers(raw, subjects, itemSubjects, attacker, scene)
         val entityOffers = selected.filter { it.kind == ObservationKind.ENTITY }
         val blockOffers = selected.filter { it.kind == ObservationKind.BLOCK }

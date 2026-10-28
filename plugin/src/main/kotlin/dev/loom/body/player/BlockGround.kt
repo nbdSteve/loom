@@ -4,6 +4,8 @@
  */
 package dev.loom.body.player
 
+import java.util.UUID
+
 /**
  * The server's ground, read on the main thread at exact sensed positions.
  *
@@ -35,6 +37,15 @@ fun interface BlockGround {
 
     /** Whether a body can break the block at [position] at all: not bedrock or a barrier. */
     fun breakable(position: List<Int>): Boolean = true
+
+    /**
+     * Whether the server holds a living body other than the player [besides] whose box reaches into
+     * the cell at [position], where vanilla places no block. `false` where the ground cannot say.
+     */
+    fun bodyIn(
+        position: List<Int>,
+        besides: UUID?,
+    ): Boolean = false
 
     /** Where a body stands on the block at [position], or `null` when no body can. */
     fun standCell(position: List<Int>): List<Int>? = standCellOn(this, position)
@@ -72,9 +83,39 @@ internal fun BlockGround.cached(): BlockGround {
 
         override fun breakable(position: List<Int>): Boolean = source.breakable(position)
 
+        override fun bodyIn(
+            position: List<Int>,
+            besides: UUID?,
+        ): Boolean = source.bodyIn(position, besides)
+
         // The source's own answer, which a ground may state its own way, read once a cell.
         override fun standCell(position: List<Int>): List<Int>? =
             if (position in stands) stands[position] else source.standCell(position).also { stands[position] = it }
+    }
+}
+
+/**
+ * [this] ground as the player [self] reads it: a living body in a cell is another's, since the
+ * player's own box is where its own sense reported it, not where the server last heard of it.
+ */
+internal fun BlockGround.besides(self: UUID): BlockGround {
+    val source = this
+    if (source === BlockGround.UNKNOWN) return source
+    return object : BlockGround {
+        override fun standsIn(position: List<Int>): Boolean = source.standsIn(position)
+
+        override fun holdsWater(position: List<Int>): Boolean = source.holdsWater(position)
+
+        override fun holdsNothing(position: List<Int>): Boolean = source.holdsNothing(position)
+
+        override fun breakable(position: List<Int>): Boolean = source.breakable(position)
+
+        override fun bodyIn(
+            position: List<Int>,
+            besides: UUID?,
+        ): Boolean = source.bodyIn(position, besides ?: self)
+
+        override fun standCell(position: List<Int>): List<Int>? = source.standCell(position)
     }
 }
 

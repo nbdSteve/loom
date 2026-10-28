@@ -246,6 +246,35 @@ class ShelterTest {
     }
 
     @Test
+    fun `a gather is the shelter's step only where the mind offers it, a dig in reach or a collect with a route`() {
+        // The r39 offline audit: the mind narrowed the reading's gathers to its own digs and collects,
+        // while the ledger took the reading's list whole.
+        val far = block("b4", Bearing.EAST).copy(distance = 9.0)
+        val refused =
+            Observation(
+                kind = ObservationKind.DROPPED_ITEM,
+                what = DIRT,
+                distance = 4.0,
+                direction = Bearing.WEST,
+                verticalOffset = 0.0,
+                visible = true,
+                ref = "d1",
+                count = 1,
+                routeRefused = true,
+            )
+        val headWest = Closing(CoverFace.HEAD_WEST, "b2", BlockFace.UP)
+        val alcove = open(listOf(CoverFace.HEAD_WEST, CoverFace.ROOF), closings = listOf(headWest))
+        val site =
+            scene(
+                "r1",
+                100,
+                alcove.copy(gathers = listOf("b3", "b4", "d1")),
+                seen = listOf(block("b2", Bearing.NORTH), block("b3", Bearing.EAST), far, refused),
+            )
+        assertEquals(setOf("b3"), CoverObservation.of(site)?.gathers)
+    }
+
+    @Test
     fun `a closing is credited against the most the goal has been where the agent stands, not where it stood`() {
         // r39 alpha 5922: after a descent the goal's best cover was the cell above's, so the closing
         // it then placed below was credited nothing, and the goal stalled into an abandon at 6011.
@@ -291,6 +320,40 @@ class ShelterTest {
         val credited = ledger.present(agent, "r3", 300, GoalObservation.of(closed))
         assertEquals(StepEvidence.COVERED, credited?.progress?.stepEvidence)
         assertEquals(0L, credited?.progress?.stepsWithoutProgress)
+    }
+
+    @Test
+    fun `cover the agent was carried into is no step, and rebuilt where it landed is credited only past its best`() {
+        // The r39 offline audit: cover improved by a flight credited the shelter, and a closing in a
+        // cell a flight had carried the agent into was credited against that cell alone.
+        val ledger = GoalLedger()
+
+        fun Perception.cell(z: Double) = copy(selfState = selfState.copy(position = listOf(3.5, 64.0, z)))
+        val north = Closing(CoverFace.FEET_NORTH, "b2", BlockFace.SOUTH)
+        // Six faces open, the north one among them, and three closed.
+        val six = allOpen.take(1) + allOpen.drop(4)
+        val start = scene("r0", 50, open(six, closings = listOf(north)), listOf(dirt))
+        val closing = Intent.Place("b2", "s1", BlockFace.SOUTH)
+        assertEquals(GoalEvidence.ADOPTED, ledger.answer(start, closing, shelter)?.outcome)
+        ledger.step("r0", "place")
+        // Carried five blocks south by a flight, into a cell with less cover: the closing it placed
+        // back there cannot be read here, so it is no step, and the stall is not reset.
+        val landed = scene("r1", 100, open(allOpen, closings = listOf(north)), listOf(dirt)).cell(8.5)
+        val carried = ledger.present(agent, "r1", 100, GoalObservation.of(landed))?.progress
+        assertEquals(StepEvidence.NONE, carried?.stepEvidence)
+        assertEquals(false, carried?.conditionAdvanced)
+        assertEquals(1L, carried?.stepsWithoutProgress)
+        ledger.forget(agent, "r1")
+        assertEquals(
+            GoalEvidence.CONTINUED,
+            ledger.answer(landed, Intent.Place("b2", "s1", BlockFace.SOUTH), continued)?.outcome,
+        )
+        ledger.step("r1", "place")
+        // Rebuilt to the three sides it had closed before the flight: no more enclosed than the goal
+        // has been, so no step either.
+        val rebuilt = scene("r2", 200, open(six, closings = listOf(north)), listOf(dirt)).cell(8.5)
+        val measured = ledger.present(agent, "r2", 200, GoalObservation.of(rebuilt))?.progress
+        assertEquals(StepEvidence.NONE, measured?.stepEvidence)
     }
 
     @Test

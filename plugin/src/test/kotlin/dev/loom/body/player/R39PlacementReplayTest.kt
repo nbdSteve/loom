@@ -52,3 +52,44 @@ class R39PlacementReplayTest {
         assertEquals(true, bodyReaches(listOf(3.5, 68.0, -29.701), listOf(3, 68, -31)))
     }
 }
+
+/**
+ * The r39 offline audit: a closing into a cell another body stood in was offered, so its refusal as
+ * blocked read as a race with a cell that was never free. The cover now asks the server's ground.
+ */
+class OccupiedClosingTest {
+    private val self = java.util.UUID.randomUUID()
+    private val zombie = listOf(3, 68, -29)
+
+    /** Open grass at y 67, with another body the server holds at the cell south of the agent's feet. */
+    private val ground =
+        object : BlockGround {
+            override fun standsIn(position: List<Int>): Boolean = position[1] >= 68
+
+            override fun holdsNothing(position: List<Int>): Boolean = standsIn(position)
+
+            override fun bodyIn(
+                position: List<Int>,
+                besides: java.util.UUID?,
+            ): Boolean = position == zombie && besides == self
+        }
+
+    private val supports: Map<List<Int>, CoverSupport> =
+        (1..5).flatMap { x -> (-33..-26).map { z -> listOf(x, 67, z) } }
+            .withIndex()
+            .associate { (index, cell) -> cell to CoverSupport("b$index", cell, visible = true) }
+
+    @Test
+    fun `a face another living body stands in is never offered as a closing`() {
+        val centred = listOf(3.5, 68.0, -29.5)
+        val closable =
+            requireNotNull(
+                coverOf(SceneGround(ground, centred, self).ground, centred, supports, listOf("item.minecraft.dirt")),
+            )
+                .closings
+                .map { it.face }
+                .toSet()
+        assertFalse(CoverFace.FEET_SOUTH in closable, "the zombie's cell")
+        assertEquals(setOf(CoverFace.FEET_NORTH, CoverFace.FEET_EAST, CoverFace.FEET_WEST), closable)
+    }
+}

@@ -106,12 +106,17 @@ private class HorizonBuilder(
         return chosen.values.take(MAX_HORIZON_GOALS)
     }
 
-    /** The crafts the agent can make now, each made from an input it holds. */
+    /**
+     * The crafts the agent can make now, each made from an input it holds, reaching [HORIZON_SPAN]
+     * past what the craft gives: an objective asks more than one step could give, and one craft of
+     * every application is one step (the r39 offline audit), so a goal of a craftable item reaches
+     * past it or is no goal at all.
+     */
     private fun craftableNow(): List<HorizonGoal> =
         perception.selfState.craftingOptions.mapNotNull { option ->
             recipes.inputsOf(option.what).sorted().firstOrNull { held(it) > 0 }?.let { via ->
                 val crafted = held(option.what) + option.resultCount * option.maxCrafts
-                recipe(option.what, via, maxOf(held(option.what) + HORIZON_SPAN, crafted))
+                recipe(option.what, via, crafted + HORIZON_SPAN)
             }
         }
 

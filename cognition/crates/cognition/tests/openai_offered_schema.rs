@@ -375,10 +375,11 @@ fn with_bush(mut seen: Perception) -> Perception {
         target_ref: "b9".to_owned(),
         count: None,
         standable: Some(true),
+        // One stick a dig, so no one dig meets the two an objective asks.
         yields: Some(vec![loom_contract::BlockYield {
             what: "item.minecraft.stick".to_owned(),
-            least: 0,
-            most: 2,
+            least: 1,
+            most: 1,
             per_hundred: 100,
         }]),
         dig_safe: Some(true),
@@ -972,8 +973,9 @@ fn widest_goal_review() -> Perception {
                     .map(|item| loom_contract::BlockYield {
                         what: format!("item.minecraft.{:0>49}", (index + item) % 24),
                         least: 0,
-                        most: 64,
-                        per_hundred: 6400,
+                        // Eight a dig at most, so a goal of any of them asks past one dig.
+                        most: 8,
+                        per_hundred: 800,
                     })
                     .collect(),
             ),
@@ -1140,16 +1142,35 @@ fn a_goal_for_a_craftable_or_dropped_item_is_stepped_by_its_craft_or_its_collect
     let mut seen = fixture("perception-crafting");
     seen.surroundings.push(stick_drop("d1", 1.0));
     seen.surroundings.push(stick_drop("d2", 6.0));
+    // One craft of the three logs makes twelve, so the objective asks thirteen, which the horizon
+    // the JVM grounds in the held logs reaches (the r39 offline audit: four was one craft's worth).
+    // The sticks lying in sight ground a goal of their own.
+    seen.horizon = vec![
+        horizon_goal(
+            "item.minecraft.oak_planks",
+            loom_contract::HorizonGrounding::Recipe,
+            Some("item.minecraft.oak_log"),
+            20,
+        ),
+        horizon_goal(
+            "item.minecraft.stick",
+            loom_contract::HorizonGrounding::Sight,
+            None,
+            10,
+        ),
+    ];
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     let validator = jsonschema::validator_for(&schema).unwrap();
-    let planks = json!({ "disposition": "adopt", "successItem": "item.minecraft.oak_planks", "successCount": 4 });
-    // The two sticks lying are two collects, so an objective of them both.
+    let planks = json!({ "disposition": "adopt", "successItem": "item.minecraft.oak_planks", "successCount": 13 });
+    let trivial = json!({ "disposition": "adopt", "successItem": "item.minecraft.oak_planks", "successCount": 12 });
+    // The two stacks of two lying are two collects, so an objective asks three, past one of them.
     let sticks =
-        json!({ "disposition": "adopt", "successItem": "item.minecraft.stick", "successCount": 2 });
+        json!({ "disposition": "adopt", "successItem": "item.minecraft.stick", "successCount": 3 });
     let craft = json!({ "action": "craft", "recipe": "r1", "crafts": 1 });
     let beside = json!({ "action": "collect", "item": "d1", "approach": false });
     let walking = json!({ "action": "collect", "item": "d2", "approach": true });
     assert!(validator.is_valid(&answer_in(&schema, &craft, &planks)));
+    assert!(!validator.is_valid(&answer_in(&schema, &craft, &trivial)));
     assert!(!validator.is_valid(&answer_in(&schema, &craft, &sticks)));
     assert!(validator.is_valid(&answer_in(&schema, &beside, &sticks)));
     assert!(validator.is_valid(&answer_in(&schema, &walking, &sticks)));
@@ -1490,14 +1511,19 @@ fn a_held_goal_may_switch_before_its_stall_bound_into_a_recipe_made_from_what_is
     seen.self_state.inventory_summary = crafting.self_state.inventory_summary.clone();
     let made = seen.self_state.crafting_options[0].what.clone();
     let input = seen.self_state.inventory_summary[0].what.clone();
+    // The JVM's horizon reaches past the twelve one craft of the three logs makes.
     seen.horizon = vec![horizon_goal(
         &made,
         loom_contract::HorizonGrounding::Recipe,
         Some(&input),
-        8,
+        20,
     )];
     let offered = OfferedRefs::of(&seen);
     assert_eq!(offered.switch_bounds.len(), 1, "{made} from held {input}");
+    assert_eq!(
+        offered.switch_bounds[0].1, 13,
+        "past what one craft of every application makes"
+    );
     let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
     assert!(dispositions(&schema).contains(&"replace".to_owned()));
     assert_eq!(count_bounds(&schema, "replace", &made).len(), 1);

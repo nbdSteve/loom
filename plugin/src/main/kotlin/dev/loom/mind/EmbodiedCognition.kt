@@ -487,7 +487,10 @@ private fun BodyPort.governing(
     afterOlderFlight: Boolean,
 ): CompletionStage<IntentOutcome> =
     if (afterOlderFlight && decision.intent !is Intent.Flee) {
-        halts.halt(agentId).handle { _, _ -> Unit }.thenCompose { apply(agentId, decision.intent, decision.requestId) }
+        halts
+            .halt(agentId, decision.requestId)
+            .handle { _, _ -> Unit }
+            .thenCompose { apply(agentId, decision.intent, decision.requestId) }
     } else {
         apply(agentId, decision.intent, decision.requestId)
     }

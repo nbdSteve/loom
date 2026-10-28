@@ -97,15 +97,17 @@ internal fun diggableFrom(
 private const val SIGHT_WALK_RADIUS_BLOCKS = 20
 
 /**
- * One sense's reads of the ground: each cell's verdict taken from the server once, and where a
- * body standing at [feet] can walk to, searched only when a far source asks - a search on every
+ * One sense's reads of the ground, as the player [self] reads it: each cell's verdict taken from the
+ * server once, and where a body standing at [feet] can walk to, searched only when a far source
+ * asks - a search on every
  * threat scan stalled the server's tick (the v34 path rehearsal).
  */
 internal class SceneGround(
     source: BlockGround,
     feet: List<Double>,
+    self: java.util.UUID? = null,
 ) {
-    val ground: BlockGround = source.cached()
+    val ground: BlockGround = (self?.let(source::besides) ?: source).cached()
 
     val walkable: Set<List<Int>> by lazy(LazyThreadSafetyMode.NONE) {
         walkableFrom(ground, feet.map { floor(it).toInt() }, SIGHT_WALK_RADIUS_BLOCKS)

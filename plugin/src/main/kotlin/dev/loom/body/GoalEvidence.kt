@@ -266,6 +266,13 @@ data class GoalEvidence(
          */
         const val REASON_UNSUPPORTED: String = "goalReasonUnsupported"
 
+        /**
+         * An idle or a rest at a goal review while cells at the edge of sight are offered, which the
+         * strict schema never offers there: a walk to look further is (r17 eta; the r39 offline
+         * audit found the ledger accepted the stand-in's idle beside an abandon).
+         */
+        const val PASSIVE_BESIDE_EXPLORATION: String = "goalPassiveBesideExploration"
+
         /** The outcomes that refuse the decision's intent along with its goal choice. */
         val REFUSING: Set<String> =
             setOf(
@@ -292,6 +299,7 @@ data class GoalEvidence(
                 REPLACE_SAME_ITEM,
                 REASON_MISSING,
                 REASON_UNSUPPORTED,
+                PASSIVE_BESIDE_EXPLORATION,
             )
 
         /** The outcomes that settle a decision with nothing its next review needs to be told. */

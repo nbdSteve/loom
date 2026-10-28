@@ -62,7 +62,7 @@ use loom_contract::{
 };
 
 use crate::model::{BackendError, Draft, ModelBackend, ScriptedBackend};
-use crate::offered::{held_of, own_lying, OfferedRefs, MIN_OBJECTIVE_ADVANCE};
+use crate::offered::{fewest_objective, held_of, OfferedRefs};
 use crate::router::ModelRoute;
 
 /// The model id the exerciser stamps on its decisions.
@@ -71,7 +71,7 @@ pub const EXERCISER_MODEL_ID: &str = "scripted-path-exerciser";
 const LOG: &str = "item.minecraft.oak_log";
 const DIRT: &str = "item.minecraft.dirt";
 const PLANKS: &str = "item.minecraft.oak_planks";
-const STICK: &str = "item.minecraft.stick";
+const TABLE: &str = "item.minecraft.crafting_table";
 const IDLE_ROLE: &str = "nothing on this path to do";
 
 /// The deterministic path exerciser.
@@ -135,10 +135,10 @@ fn abandoned(reason: GoalReason) -> GoalChoice {
     }
 }
 
-/// The fewest of `item` an objective may ask: more than is held and lying as the agent's own by
-/// the floor one step cannot meet (`offered::MIN_OBJECTIVE_ADVANCE`).
+/// The fewest of `item` an objective may ask: more than one offered step could meet
+/// (`offered::fewest_objective`).
 fn objective(perception: &Perception, item: &str) -> i64 {
-    held_of(perception, item) + own_lying(perception, item) + MIN_OBJECTIVE_ADVANCE
+    fewest_objective(perception, item)
 }
 
 /// A choice under `disposition` that sets no target.
@@ -164,7 +164,7 @@ impl PathExerciser {
             return beset(perception);
         }
         let role = perception.agent_id.rsplit('-').next().unwrap_or_default();
-        match role {
+        let drafted = match role {
             "alpha" => crafter(perception),
             "beta" => dropper(perception),
             "gamma" => crowder(perception),
@@ -181,7 +181,8 @@ impl PathExerciser {
                 "speak, so an agent nearby perceives now",
             ),
             _ => ScriptedBackend::draft_now(route, perception),
-        }
+        };
+        crate::model::looking_further(perception, drafted)
     }
 }
 
@@ -233,6 +234,15 @@ fn own_drop_of(perception: &Perception, item: &str) -> Option<(String, bool)> {
         .iter()
         .find(|(_, what)| what == item)
         .map(|(handle, _)| (handle.clone(), !offered.pickup_items.contains(handle)))
+}
+
+/// A dig the mind offers the goal of `item` toward what its recipe path makes it from.
+fn input_dig_of(perception: &Perception, item: &str) -> Option<String> {
+    OfferedRefs::of(perception)
+        .item_steps
+        .iter()
+        .find(|steps| steps.item == item)
+        .and_then(|steps| steps.dig.first().cloned())
 }
 
 /// Any drop of `item` offered to collect, and whether collecting it needs a walk.
@@ -339,11 +349,11 @@ fn pursue(perception: &Perception, item: &str) -> Option<Draft> {
             "craft the goal's item",
         ));
     }
-    if let Some(block) = dig_of(perception, item) {
+    if let Some(block) = dig_of(perception, item).or_else(|| input_dig_of(perception, item)) {
         return Some(answer(
             Intent::Dig { block },
             continuing(),
-            "dig a source of the goal's item",
+            "dig a source of the goal's item, or of what it is made from",
         ));
     }
     if let Some((drop, approach)) = drop_of(perception, item) {
@@ -406,7 +416,9 @@ fn finish(perception: &Perception) -> Draft {
     }
 }
 
-/// alpha: two logs, then planks, then sticks, each met goal replaced by the next in one answer.
+/// alpha: two logs, then planks, then crafting tables, each met goal replaced by the next in one
+/// answer for more than one step gives, and the last abandoned as impossible once nothing is left
+/// to make it from.
 fn crafter(perception: &Perception) -> Draft {
     let Some(goal) = &perception.goal else {
         return dig_of(perception, LOG).map_or_else(
@@ -425,27 +437,29 @@ fn crafter(perception: &Perception) -> Draft {
         // The chain's next item, made from this one; at its end, more of it or whatever sight offers.
         let next = match item {
             LOG => PLANKS,
-            PLANKS => STICK,
+            PLANKS => TABLE,
             _ => return finish(perception),
         };
-        if let Some((recipe, makes, most)) = recipe_of(perception, next) {
+        let bounds = OfferedRefs::of(perception).count_bounds_of(next);
+        if let (Some((recipe, _, most)), Some((fewest, _))) = (recipe_of(perception, next), bounds)
+        {
             // Every application the recipe offers, at most two, so a craft of several
-            // applications meets a real server (r19 theta body:00000310, epsilon 352).
+            // applications meets a real server (r19 theta body:00000310, epsilon 352), for a goal
+            // asking past what that craft makes (the r39 offline audit).
             let crafts = most.clamp(1, 2);
-            let count = held_of(perception, next) + makes * crafts;
             return answer(
                 Intent::Craft { recipe, crafts },
-                Some(replaced(next, count, GoalReason::Completed)),
-                "complete the met goal and adopt the next by crafting it",
+                Some(replaced(next, fewest, GoalReason::Completed)),
+                "complete the met goal and adopt the next, past what one craft makes",
             );
         }
         return finish(perception);
     }
     pursue(perception, item).unwrap_or_else(|| {
-        answer(
-            Intent::Idle,
+        look_further(
+            perception,
             Some(abandoned(GoalReason::Impossible)),
-            "nothing gives it",
+            "nothing left gives it",
         )
     })
 }
@@ -852,7 +866,9 @@ fn restater(perception: &Perception) -> Draft {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{PathExerciser, LOG, PLANKS, STICK};
+    use super::{PathExerciser, LOG, PLANKS, TABLE};
+
+    const STICK: &str = "item.minecraft.stick";
     use crate::offered::OfferedRefs;
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
@@ -988,7 +1004,7 @@ mod tests {
     }
 
     #[test]
-    fn alpha_digs_two_logs_then_completes_into_planks_by_crafting() {
+    fn alpha_digs_two_logs_then_completes_into_planks_past_what_one_craft_makes() {
         let mut seen = review("alpha");
         seen.surroundings = vec![log("b1"), log("b2")];
         let first = draft(&seen);
@@ -1007,6 +1023,14 @@ mod tests {
             max_crafts: 2,
             requires_table: false,
         });
+        // Its horizon reaches past the eight one craft of both logs makes.
+        seen.horizon.push(loom_contract::HorizonGoal {
+            what: PLANKS.to_owned(),
+            grounding: loom_contract::HorizonGrounding::Recipe,
+            via: Some(LOG.to_owned()),
+            most: 16,
+            frontier: false,
+        });
         let next = draft(&seen);
         assert_eq!(
             next.intent,
@@ -1018,28 +1042,42 @@ mod tests {
         let replace = next.goal.unwrap();
         assert_eq!(replace.disposition, GoalDisposition::Replace);
         assert_eq!(replace.success_item.as_deref(), Some(PLANKS));
-        assert_eq!(replace.success_count, Some(8));
+        // The r39 offline audit: eight, all that craft makes, was an objective one step met.
+        assert_eq!(replace.success_count, Some(9));
     }
 
     #[test]
-    fn alpha_at_the_chain_end_revises_its_met_stick_goal_for_more_never_replaces_it_with_itself() {
-        // The v36 path rehearsal: alpha's met "hold 8 sticks" was replaced by sticks again, which
-        // the ledger refuses as goalReplaceSameItem.
+    fn alpha_digs_a_log_for_its_planks_and_abandons_its_tables_as_impossible_once_nothing_makes_one(
+    ) {
         let mut seen = review("alpha");
-        holding(&mut seen, STICK, 8, 8, StepEvidence::Gained);
-        seen.self_state.crafting_options.push(CraftingOption {
-            recipe_ref: "r2".to_owned(),
-            what: STICK.to_owned(),
-            result_count: 4,
-            max_crafts: 2,
-            requires_table: false,
+        seen.surroundings = vec![log("b1")];
+        holding(&mut seen, PLANKS, 8, 9, StepEvidence::Gained);
+        seen.horizon.push(loom_contract::HorizonGoal {
+            what: PLANKS.to_owned(),
+            grounding: loom_contract::HorizonGrounding::Recipe,
+            via: Some(LOG.to_owned()),
+            most: 16,
+            frontier: false,
         });
-        let next = draft(&seen);
-        assert!(matches!(next.intent, Intent::Craft { .. }));
-        let more = next.goal.unwrap();
-        assert_eq!(more.disposition, GoalDisposition::Revise);
-        assert_eq!(more.success_item.as_deref(), Some(STICK));
-        assert_eq!(more.success_count, Some(10));
+        // No log held, so no craft of planks: its step is the log a craft makes them from.
+        assert_eq!(
+            draft(&seen).intent,
+            Intent::Dig {
+                block: "b1".to_owned()
+            }
+        );
+        let mut spent = review("alpha");
+        holding(&mut spent, TABLE, 3, 4, StepEvidence::Gained);
+        spent.explore = vec![edge("x1", Bearing::East, 12.0)];
+        let ended = draft(&spent);
+        assert!(
+            matches!(ended.intent, Intent::MoveTo { .. }),
+            "{:?}",
+            ended.intent
+        );
+        let abandon = ended.goal.unwrap();
+        assert_eq!(abandon.disposition, GoalDisposition::Abandon);
+        assert_eq!(abandon.reason, Some(GoalReason::Impossible));
     }
 
     #[test]
@@ -1074,7 +1112,17 @@ mod tests {
         );
         assert_eq!(ignored.goal.unwrap().disposition, GoalDisposition::Continue);
         seen.last_refusal = Some(refusal("goalOwnDropIgnored"));
-        assert_eq!(draft(&seen).intent, Intent::Idle);
+        // Its one pickup found no route, so the drop is left lying: beside the edge of sight it
+        // looks further rather than idling, which no goal review there may do.
+        seen.surroundings[0].route_refused = Some(true);
+        let left = draft(&seen);
+        assert_eq!(
+            left.intent,
+            Intent::MoveTo {
+                onto: "x3".to_owned()
+            }
+        );
+        assert_eq!(left.goal.unwrap().disposition, GoalDisposition::Continue);
     }
 
     #[test]
@@ -1116,13 +1164,30 @@ mod tests {
             Some(super::DIRT)
         );
         clear.last_refusal = Some(refusal("goalCrowdsExploration"));
-        assert_eq!(draft(&clear).intent, Intent::Idle);
-        // delta completes its met goal where it stands.
+        // Told, it looks further rather than idling beside the frontier.
+        assert_eq!(
+            draft(&clear).intent,
+            Intent::MoveTo {
+                onto: "x1".to_owned()
+            }
+        );
+        // delta completes its met goal, and with the edge of sight offered walks on to look.
         let mut met = review("delta");
         holding(&mut met, STICK, 1, 1, StepEvidence::Gained);
-        let stay = draft(&met);
-        assert_eq!(stay.intent, Intent::Idle);
-        assert_eq!(stay.goal.unwrap().disposition, GoalDisposition::Complete);
+        met.explore = vec![edge("x1", Bearing::East, 12.0)];
+        let done = draft(&met);
+        assert!(
+            matches!(done.intent, Intent::MoveTo { .. }),
+            "{:?}",
+            done.intent
+        );
+        assert_eq!(done.goal.unwrap().disposition, GoalDisposition::Complete);
+        met.explore.clear();
+        assert_eq!(
+            draft(&met).intent,
+            Intent::Idle,
+            "with nowhere to look it completes where it stands"
+        );
     }
 
     #[test]
@@ -1222,8 +1287,15 @@ mod tests {
         let mut met = first.clone();
         met.last_refusal = None;
         holding(&mut met, LOG, 2, 2, StepEvidence::Gained);
+        // Its deliberate plain completion beside a log walks to look further, as no review beside
+        // the edge of sight may idle; the ledger refuses it for the log still in sight.
         let plain = draft(&met);
-        assert_eq!(plain.intent, Intent::Idle);
+        assert_eq!(
+            plain.intent,
+            Intent::MoveTo {
+                onto: "x1".to_owned()
+            }
+        );
         assert_eq!(plain.goal.unwrap().disposition, GoalDisposition::Complete);
         met.last_refusal = Some(refusal("goalCompletedWithoutNext"));
         // The horizon still offers logs, so the met goal is revised for more, which keeps it.
@@ -1250,10 +1322,11 @@ mod tests {
     #[test]
     fn iota_collects_the_drop_in_its_nook_with_approach_and_then_waits() {
         let mut seen = review("iota");
-        seen.surroundings = vec![Observation {
-            count: Some(2),
-            ..dropped("d1", "item.minecraft.dirt", 1.506, 0.0)
-        }];
+        // Two single stacks, which no one collect meets an objective of.
+        seen.surroundings = vec![
+            dropped("d1", "item.minecraft.dirt", 1.506, 0.0),
+            dropped("d2", "item.minecraft.dirt", 1.6, 0.0),
+        ];
         let fetched = draft(&seen);
         assert_eq!(
             fetched.intent,

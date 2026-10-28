@@ -28,7 +28,8 @@ internal val STEPPING =
  * success condition neither completed nor revised to a target [observed]'s inventory does not
  * already meet, a completion the inventory does not show, a held goal left unanswered by a
  * decision that acts, a success condition already met or more than what is held and in sight
- * could give, a step that is no step, or a dig or collect that cannot give the goal's item or a
+ * could give, a step that is no step, an idle or rest while the edge of sight is offered, or a dig
+ * or collect that cannot give the goal's item or a
  * direct input of a recipe for it, by [recipes]. Each refuses the decision before its intent
  * reaches the body.
  */
@@ -48,11 +49,28 @@ internal fun incoherenceOf(
         ?: conditionRefusalOf(presented, choice, intent, observed)
         ?: successRefusalOf(presented, choice, observed)
         ?: objectiveRefusalOf(presented, choice, observed)
-        ?: GoalEvidence.STEP_IDLE.takeIf { stepping && intent.action in PASSIVE }
+        ?: passiveRefusalOf(stepping, intent, observed)
         ?: GoalEvidence.STEP_UNPRODUCTIVE.takeIf { stepping && !canGive(presented, choice, intent, observed, recipes) }
         ?: GoalEvidence.OWN_DROP_IGNORED.takeIf { ownDropIgnored(presented, choice, intent, observed) }
         ?: reviseUnchangedOf(presented, choice)
 }
+
+/**
+ * Why a passive [intent] cannot stand at a goal review, or `null`: as the step of a goal it is
+ * [stepping], or while [observed] offers cells at the edge of sight, where the strict schema offers
+ * no idle or rest.
+ */
+private fun passiveRefusalOf(
+    stepping: Boolean,
+    intent: Intent,
+    observed: GoalObservation?,
+): String? =
+    when {
+        intent.action !in PASSIVE -> null
+        stepping -> GoalEvidence.STEP_IDLE
+        observed?.explore?.isNotEmpty() == true -> GoalEvidence.PASSIVE_BESIDE_EXPLORATION
+        else -> null
+    }
 
 /** The dispositions that keep pursuing the held goal's item, rather than set a new goal. */
 private val PURSUING = setOf(GoalDisposition.CONTINUE, GoalDisposition.REVISE)

@@ -161,7 +161,8 @@ class R16GoalAuditReplayTest {
     fun `a goal sized to a bush's best case is beyond what sight can be counted on to give`() {
         // beta body:00000228: three sticks held and one bush of nought to two in sight; a goal of
         // five needed two maximum rolls and failed. Replayed beside a second such bush, since from
-        // routine-v36 the one stick one bush gives is no objective: six needs best cases, five not.
+        // routine-v36 the one stick one bush gives is no objective: six needs best cases, and five
+        // is met by one dig at a bush's most.
         val bush =
             Observation(
                 kind = ObservationKind.BLOCK,
@@ -202,7 +203,9 @@ class R16GoalAuditReplayTest {
                 beta,
                 decision.copy(requestId = "beta-229", goal = sticks(GoalDisposition.ADOPT, 5)),
             )
-        assertEquals(GoalEvidence.ADOPTED, five?.outcome)
+        // Five is all sight can be counted on for, and one dig at the bush's most gives the two it
+        // asks past the three held: one step meets it, so it is no objective (the r39 offline audit).
+        assertEquals(GoalEvidence.TRIVIAL, five?.outcome)
     }
 
     private companion object {

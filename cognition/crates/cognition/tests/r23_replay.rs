@@ -67,8 +67,15 @@ fn epsilon_with_nothing_grounded_at_body_36_sets_a_discovery_goal_rather_than_no
 
 #[test]
 fn eta_holding_two_logs_at_body_1532_may_switch_its_sapling_goal_into_planks() {
-    // body:00001542 could only abandon its unmet sapling goal before crafting eight planks.
-    let seen = shown("body:00001532", "body:00001542");
+    // body:00001542 could only abandon its unmet sapling goal before crafting eight planks. Eight is
+    // all one craft of both logs makes, so the objective asks nine (the r39 offline audit), which
+    // the horizon today's JVM grounds in the logs reaches: past the craft by its span.
+    let mut seen = shown("body:00001532", "body:00001542");
+    for goal in &mut seen.horizon {
+        if goal.what == "item.minecraft.oak_planks" {
+            goal.most = 8 + 8;
+        }
+    }
     assert_eq!(
         seen.goal
             .as_ref()
@@ -80,11 +87,14 @@ fn eta_holding_two_logs_at_body_1532_may_switch_its_sapling_goal_into_planks() {
     let switch = json!({
         "disposition": "replace",
         "successItem": "item.minecraft.oak_planks",
-        "successCount": 8,
+        "successCount": 9,
         "stepResult": "noProgress",
         "reason": "superseded",
     });
     assert!(valid(&schema, &craft, &switch));
+    let mut trivial = switch.clone();
+    trivial["successCount"] = json!(8);
+    assert!(!valid(&schema, &craft, &trivial));
 }
 
 #[test]

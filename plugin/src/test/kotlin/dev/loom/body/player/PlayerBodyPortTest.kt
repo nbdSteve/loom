@@ -3024,6 +3024,48 @@ class PlayerWalkResolutionTest {
     }
 
     @Test
+    fun `answers asked before a danger and applied during its flight never halt that flight`() {
+        // The r39 offline audit: a review asked, then a sighting asked and its flight applied, then
+        // the review's dig applied and refused not ready behind that flight. Dated by its arrival the
+        // dig was the newest decision and halted the flight; dated by when it was asked it is older.
+        val agent = AgentId("agent-late-routine")
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        when (request) {
+                            is BodyRequest.Sense -> interactionSense(request)
+                            is BodyRequest.Dig -> throw BodyControlFailure.Refused(ErrorCode.NOT_READY)
+                            else -> null
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val shown = { trigger: Trigger ->
+            requireNotNull(harness.port.perceive(agent, trigger).await()).also { harness.port.held.shown(agent, it) }
+        }
+        val idling = shown(Trigger.GoalReview)
+        val digging = shown(Trigger.GoalReview)
+        val sighting = shown(Trigger.GoalReview)
+        val threat = sighting.surroundings.first { it.kind == ObservationKind.ENTITY }.ref
+        val stone = digging.surroundings.first { it.what == "block.minecraft.stone" }.ref
+
+        val fled = harness.port.apply(agent, Intent.Flee(threat), sighting.requestId).await()
+        val dug = harness.port.apply(agent, Intent.Dig(stone), digging.requestId).await()
+        val idled = harness.port.apply(agent, Intent.Idle, idling.requestId).await()
+
+        assertTrue(fled is IntentOutcome.Accepted, fled.toString())
+        assertEquals(EventTag.CONTROL_NOT_READY, (dug as IntentOutcome.Rejected).tag)
+        assertEquals(IntentOutcome.Accepted("left a newer decision's work running"), idled)
+        // Neither older answer halted the flight, and the refused dig was not asked again.
+        assertTrue(harness.connector.requests.none { it is BodyRequest.Halt }, "${harness.connector.requests}")
+        assertEquals(1, harness.connector.requests.count { it is BodyRequest.Dig })
+        assertEquals(false, harness.port.halts.halt(agent, digging.requestId).await(), "nor does its own halt")
+    }
+
+    @Test
     fun `a covered block is offered as not standable and a walk onto it is refused before the body`() {
         val agent = AgentId("agent-walk-covered")
         val server = FakePlayerServerState().apply { buried += listOf(4, 63, 2) }

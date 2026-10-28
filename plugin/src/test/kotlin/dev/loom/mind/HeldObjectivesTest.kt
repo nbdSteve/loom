@@ -56,6 +56,8 @@ class HeldObjectivesTest {
         position = listOf(0.5, 64.0, 0.5),
         capacity = mapOf(DIRT to capacity, LOG to 4L),
         ownLying = if (lying > 0) mapOf(DIRT to lying) else emptyMap(),
+        // Dirt to dig and a log beside it: a step toward either is offered now.
+        stepSources = mapOf("b1" to setOf(DIRT), "b2" to setOf(LOG)),
     )
 
     private fun choice(
@@ -93,6 +95,68 @@ class HeldObjectivesTest {
     }
 
     @Test
+    fun `a goal one craft, one dig at its most or one collect of a stack meets is no objective`() {
+        // The r39 offline audit: alpha body:00000106 set "hold 2 oak_planks" holding a log, and the
+        // craft paired with it made four; a dig of a bush at its most or a stack picked up is the same.
+        val planks = "item.minecraft.oak_planks"
+        val crafted = seen(have = 0, capacity = 6).copy(oneStep = mapOf(planks to 4L))
+        assertEquals(5L, crafted.fewestObjective(planks))
+        val adopt = { item: String, count: Long -> choice(GoalDisposition.ADOPT, item = item, count = count) }
+        assertEquals(GoalEvidence.TRIVIAL, objectiveRefusalOf(null, adopt(planks, 4), crafted))
+        assertNull(objectiveRefusalOf(null, adopt(planks, 5), crafted))
+        // One step at its most counts past what is held, and the lying-drop floor still holds beside it.
+        val dug = seen(have = 3, capacity = 6, lying = 2).copy(oneStep = mapOf(DIRT to 2L))
+        assertEquals(3L + 2 + MIN_OBJECTIVE_ADVANCE, dug.fewestObjective(DIRT))
+        val stack = seen(have = 3, capacity = 6).copy(oneStep = mapOf(DIRT to 5L))
+        assertEquals(9L, stack.fewestObjective(DIRT))
+        assertEquals(GoalEvidence.TRIVIAL, objectiveRefusalOf(null, adopt(DIRT, 8), stack))
+    }
+
+    @Test
+    fun `the most one offered step gives is read from the perception the mind was shown`() {
+        val bush =
+            dev.loom.contract.Observation(
+                kind = dev.loom.contract.ObservationKind.BLOCK,
+                what = "block.minecraft.dead_bush",
+                distance = 2.0,
+                direction = dev.loom.contract.Bearing.NORTH,
+                verticalOffset = 0.0,
+                visible = true,
+                ref = "b1",
+                standable = true,
+                yields = listOf(dev.loom.contract.BlockYield(STICK, 0, 2, 100)),
+                digSafe = true,
+            )
+        val far = bush.copy(ref = "b2", distance = 9.0)
+        val stack =
+            dev.loom.contract.Observation(
+                kind = dev.loom.contract.ObservationKind.DROPPED_ITEM,
+                what = STICK,
+                distance = 6.0,
+                direction = dev.loom.contract.Bearing.EAST,
+                verticalOffset = 0.0,
+                visible = true,
+                ref = "d1",
+                count = 3,
+            )
+        val sticks = dev.loom.contract.CraftingOption("r1", STICK, 4, 2, false)
+        val seen =
+            perception().let {
+                it.copy(
+                    surroundings = listOf(bush, far, stack),
+                    selfState = it.selfState.copy(craftingOptions = listOf(sticks)),
+                )
+            }
+        // A dig in reach gives two at most, the stack three, and one craft of both applications eight;
+        // a bush out of reach is a walk first, so no one step.
+        assertEquals(mapOf(STICK to 8L), GoalObservation.of(seen).oneStep)
+        assertEquals(
+            mapOf(STICK to 3L),
+            GoalObservation.of(seen.copy(selfState = seen.selfState.copy(craftingOptions = emptyList()))).oneStep,
+        )
+    }
+
+    @Test
     fun `more of the held goal's own item is a revise, never a replace`() {
         // r39 alpha 10106 to 10574 and kappa 9511 to 10218: every met dirt goal replaced by one more.
         val met = held(count = 10, have = 10)
@@ -102,6 +166,22 @@ class HeldObjectivesTest {
         assertNull(objectiveRefusalOf(met, choice(GoalDisposition.REVISE, count = 12), observed))
         val other = choice(GoalDisposition.REPLACE, item = LOG, count = 2, reason = GoalReason.COMPLETED)
         assertNull(objectiveRefusalOf(met, other, observed))
+    }
+
+    @Test
+    fun `a goal no step offered now advances may be abandoned as impossible, as the mind offers it`() {
+        // The r39 offline audit: "hold 4 oak_log" with a recalled log out of sight and nowhere to
+        // look further was offered only its abandon as impossible, which the ledger refused.
+        val unmet = held(count = 4, have = 1, item = LOG)
+        val abandon = choice(GoalDisposition.ABANDON, item = null, reason = GoalReason.IMPOSSIBLE)
+        val recalled = seen(have = 0, capacity = 0).copy(inventory = mapOf(LOG to 1L), stepSources = emptyMap())
+        assertEquals(true, recalled.steplessFor(LOG))
+        assertNull(objectiveRefusalOf(unmet, abandon, recalled))
+        // A cell at the edge of sight, a craft of it, or a dig of a source of it is a step.
+        val looking = recalled.copy(explore = setOf("x1"))
+        assertEquals(GoalEvidence.REASON_UNSUPPORTED, objectiveRefusalOf(unmet, abandon, looking))
+        assertEquals(false, recalled.copy(craftable = setOf(LOG)).steplessFor(LOG))
+        assertEquals(false, recalled.copy(stepSources = mapOf("b2" to setOf(LOG))).steplessFor(LOG))
     }
 
     @Test
@@ -126,7 +206,8 @@ class HeldObjectivesTest {
                 Triple(unmet, replace(GoalReason.STALE), false),
                 Triple(stalled, replace(GoalReason.STALE), true),
                 Triple(stalled, abandon(GoalReason.STALE), true),
-                // Impossible only once what is held and sight could give no longer reach it.
+                // Impossible only once what is held and sight could give no longer reach it, or no
+                // step offered now advances it.
                 Triple(unmet, abandon(GoalReason.IMPOSSIBLE), false),
                 Triple(held(count = 12, have = 3), abandon(GoalReason.IMPOSSIBLE), true),
                 // Unsafe and superseded name what replaces the goal, so no abandon states them.
@@ -189,5 +270,6 @@ class HeldObjectivesTest {
     private companion object {
         const val DIRT = "item.minecraft.dirt"
         const val LOG = "item.minecraft.oak_log"
+        const val STICK = "item.minecraft.stick"
     }
 }

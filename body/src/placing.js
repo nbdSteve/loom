@@ -50,6 +50,9 @@ const { writeShift } = require('./movement')
 const PLAYER_WIDTH = 0.6
 const PLAYER_HEIGHT = 1.8
 
+/** The last sequence a placement packet carried: each is fresh, and the library's own are all 0. */
+let lastSequence = 0
+
 /** The one installation each player gets; a second would duplicate packet listeners. */
 const installations = new WeakSet()
 
@@ -93,6 +96,23 @@ function bodyStandsIn (bot, destination) {
       position.y < destination.y + 1 && position.y + height > destination.y &&
       position.z - half < destination.z + 1 && position.z + half > destination.z
   })
+}
+
+/**
+ * Runs [place], which writes its one placement packet before its first await, with that packet
+ * carrying [sequence]: the library writes none of its own.
+ */
+function withSequence (client, sequence, place) {
+  const write = client?.write
+  if (typeof write !== 'function') return place()
+  client.write = function (name, parameters) {
+    return write.call(this, name, name === 'block_place' ? { ...parameters, sequence } : parameters)
+  }
+  try {
+    return place()
+  } finally {
+    client.write = write
+  }
 }
 
 /** A checked pre-application answer. */
@@ -224,24 +244,27 @@ function placeHeldBlock (bot, {
       if (observedPlacement() !== undefined) finish('libraryFailure')
     }
 
-    // The server has answered the packet: the destination it resent is the placement's result.
+    // The server has answered this packet: the destination it resent is the placement's result.
     // A refusal is a body standing in the cell when one does, which the server saw first, and
     // otherwise the library's operation ending without the confirmation it was owed.
-    function acknowledged () {
-      if (sent) finish(bodyStandsIn(bot, destination) ? 'destinationBlocked' : 'libraryFailure')
+    function acknowledged (packet) {
+      if (sent && packet?.sequenceId >= sequence) {
+        finish(bodyStandsIn(bot, destination) ? 'destinationBlocked' : 'libraryFailure')
+      }
     }
 
     bot.on(eventName, updated)
     client?.on?.('acknowledge_player_digging', acknowledged)
+    const sequence = ++lastSequence
     try {
       writeShift(bot, true)
       shifted = true
       sent = true
-      Promise.resolve(bot._genericPlace(
+      Promise.resolve(withSequence(client, sequence, () => bot._genericPlace(
         resolvedBlock.block,
         vector,
         { forceLook: 'ignore', swingArm: 'right' }
-      )).then(
+      ))).then(
         () => {
           if (observedPlacement() !== undefined) finish('libraryFailure')
         },

@@ -935,6 +935,17 @@ test('place refuses blocked or remote support and bounds an unacknowledged packe
   assert.equal((await reportOf(aborted)).outcome, 'cancelled')
 })
 
+/** The library's one placement packet, written as Mineflayer writes it: its sequence always 0. */
+function writePlacement (bot) {
+  bot._client.write('block_place', { sequence: 0 })
+}
+
+/** The server's acknowledgement of the last placement packet the body wrote, as the server sent it. */
+function acknowledge (bot) {
+  const placed = bot._client.writes.filter((write) => write.name === 'block_place').at(-1)
+  bot._client.emit('acknowledge_player_digging', { sequenceId: placed?.parameters.sequence ?? 0 })
+}
+
 test('place settles at the server acknowledgement, placed or refused, and never waits out its deadline', async () => {
   // r39 iota: on real Paper the server refused a placement into a cell the player's own box
   // reached into, resent the destination as air and acknowledged it 54 ms after the packet.
@@ -953,6 +964,7 @@ test('place settles at the server acknowledgement, placed or refused, and never 
   const destination = new Vec3(1, 65, 0)
   const answer = (placed) => {
     bot._genericPlace = async () => {
+      writePlacement(bot)
       setImmediate(() => {
         if (placed) {
           const block = bot.putBlock(solidBlock(destination, 'dirt', { type: 3 }))
@@ -960,7 +972,7 @@ test('place settles at the server acknowledgement, placed or refused, and never 
         } else {
           bot.emit(`blockUpdate:${destination}`, airBlock(destination), airBlock(destination))
         }
-        bot._client.emit('acknowledge_player_digging', { sequenceId: 0 })
+        acknowledge(bot)
       })
     }
   }
@@ -970,7 +982,8 @@ test('place settles at the server acknowledgement, placed or refused, and never 
   // A creature that walked into the cell after the check is the refusal the server saw.
   bot.entities[8] = { id: 8, type: 'hostile', position: new Vec3(1.5, 65, 0.5), width: 0.6, height: 1.95 }
   bot._genericPlace = async () => {
-    setImmediate(() => bot._client.emit('acknowledge_player_digging', { sequenceId: 0 }))
+    writePlacement(bot)
+    setImmediate(() => acknowledge(bot))
   }
   // The pre-packet check sees the creature first and sends nothing.
   bot._client.writes.length = 0
@@ -979,8 +992,9 @@ test('place settles at the server acknowledgement, placed or refused, and never 
   let raced = false
   bot._genericPlace = async () => {
     raced = true
+    writePlacement(bot)
     bot.entities[8] = { id: 8, type: 'hostile', position: new Vec3(1.5, 65, 0.5), width: 0.6, height: 1.95 }
-    setImmediate(() => bot._client.emit('acknowledge_player_digging', { sequenceId: 0 }))
+    setImmediate(() => acknowledge(bot))
   }
   assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'destinationBlocked')
   assert.equal(raced, true)
@@ -993,6 +1007,43 @@ test('place settles at the server acknowledgement, placed or refused, and never 
   bot.emit(`blockUpdate:${destination}`, airBlock(destination), airBlock(destination))
   bot._client.emit('acknowledge_player_digging', { sequenceId: 0 })
   assert.equal(placed.outcome, 'placed')
+})
+
+test('place settles only at the acknowledgement of its own packet, never at an earlier one', async () => {
+  // The r39 offline audit: Mineflayer writes every block sequence as 0, and the server acknowledges
+  // the highest sequence it handled in a tick, so the acknowledgement of a dig cancelled for this
+  // placement, handled a tick before the placement's packet, ended it as a libraryFailure.
+  const bot = worldBot()
+  const held = itemStack('dirt', 2)
+  bot.inventory.slots[HOTBAR_SLOT] = held
+  const support = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))
+  const common = {
+    blockOffers: [blockOffer(support)],
+    slots: slotOffers(HOTBAR_SLOT, held),
+    block: 0,
+    slot: HOTBAR_SLOT,
+    face: 'up',
+    timeoutMs: 60_000
+  }
+  const destination = new Vec3(1, 65, 0)
+  bot._genericPlace = async () => {
+    writePlacement(bot)
+    setImmediate(() => {
+      bot._client.emit('acknowledge_player_digging', { sequenceId: 0 })
+      setImmediate(() => {
+        const block = bot.putBlock(solidBlock(destination, 'dirt', { type: 3 }))
+        bot.emit(`blockUpdate:${destination}`, airBlock(destination), block)
+        acknowledge(bot)
+      })
+    })
+  }
+  bot._client.writes.length = 0
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'placed')
+  bot.removeBlock(destination)
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'placed')
+  const sequences = bot._client.writes.filter((write) => write.name === 'block_place').map((write) => write.parameters.sequence)
+  assert.equal(sequences.length, 2)
+  assert.ok(sequences[0] > 0 && sequences[1] > sequences[0], `each packet carries a fresh sequence: ${sequences}`)
 })
 
 test('place holds the shift key for its one packet and releases it at settlement, whatever ends it', async () => {
@@ -1017,7 +1068,8 @@ test('place holds the shift key for its one packet and releases it at settlement
   let order
   bot._genericPlace = async () => {
     order = shifts().length
-    setImmediate(() => bot._client.emit('acknowledge_player_digging', { sequenceId: 0 }))
+    writePlacement(bot)
+    setImmediate(() => acknowledge(bot))
   }
   bot._client.writes.length = 0
   assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'libraryFailure')
@@ -1060,7 +1112,8 @@ test('place refuses a destination its own body or a creature stands in, before a
   bot.entity.position = new Vec3(0.5, 64, 0.5)
   bot._genericPlace = async () => {
     packets += 1
-    setImmediate(() => bot._client.emit('acknowledge_player_digging', { sequenceId: 0 }))
+    writePlacement(bot)
+    setImmediate(() => acknowledge(bot))
   }
   assert.equal((await reportOf(placeHeldBlock(bot, own))).outcome, 'libraryFailure')
   assert.equal(packets, 1)

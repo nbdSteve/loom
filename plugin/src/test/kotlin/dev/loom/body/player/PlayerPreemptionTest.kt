@@ -65,9 +65,35 @@ class PlayerPreemptionTest {
 
     @Test
     fun `a refusal stands once a newer decision of the agent's own governs, for any other code, or past the bound`() {
-        val newest = NewestDecisions().also { it.applied(AgentId("tribe-iota"), "sense-vb") }
+        val newest =
+            NewestDecisions().also {
+                it.asked("sense-v0")
+                it.asked("sense-vb")
+                it.applied(AgentId("tribe-iota"), "sense-vb")
+            }
         assertEquals(1, refusedTries(ErrorCode.NOT_READY, newest), "the newer decision holds the body")
         assertEquals(1, refusedTries(ErrorCode.UNKNOWN_OPERATION))
         assertEquals(PREEMPT_ATTEMPTS, refusedTries(ErrorCode.NOT_READY))
+    }
+
+    @Test
+    fun `a decision is dated by when its perception was asked, never by when its answer arrived`() {
+        // The r39 offline audit: review v0 was asked before sighting vb, vb's flight was applied, and
+        // v0's answer arrived after it. Dated by arrival v0 governed and halted the flight.
+        val iota = AgentId("tribe-iota")
+        val newest =
+            NewestDecisions().also {
+                it.asked("sense-v0")
+                it.asked("sense-vb")
+                it.applied(iota, "sense-vb")
+                it.applied(iota, "sense-v0")
+            }
+        assertEquals(true, newest.outdated(iota, "sense-v0"))
+        assertEquals(false, newest.outdated(iota, "sense-vb"), "the later-asked flight still governs")
+        assertEquals(1, refusedTries(ErrorCode.NOT_READY, newest), "the late answer is refused, never retried")
+        assertEquals(emptyList<String>(), halts, "and halts nothing of the newer flight's")
+        newest.asked("sense-vc")
+        newest.applied(iota, "sense-vc")
+        assertEquals(true, newest.outdated(iota, "sense-vb"), "a decision asked later governs once applied")
     }
 }

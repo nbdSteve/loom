@@ -96,7 +96,8 @@ internal data class CoverReading(
  * The cover around feet cell [feet] for a body standing at [standing], whose eyes reach the
  * [supports] a placement may name. A face whose cell the body's own box reaches into has no
  * closing from here, since vanilla places no block where a body stands (r39 iota: 0.227 of a block
- * past its feet cell's north edge, offered feetNorth, and refused by the server).
+ * past its feet cell's north edge, offered feetNorth, and refused by the server), and neither has
+ * one the server holds another living body in, so a closing refused as blocked was free when offered.
  */
 internal fun coverAt(
     ground: BlockGround,
@@ -110,7 +111,8 @@ internal fun coverAt(
     val closings =
         open.mapNotNull { (face, offset) ->
             val cell = feet.offset(offset)
-            if (!ground.holdsNothing(cell) || bodyReaches(standing, cell)) return@mapNotNull null
+            val blocked = !ground.holdsNothing(cell) || bodyReaches(standing, cell) || ground.bodyIn(cell, null)
+            if (blocked) return@mapNotNull null
             SUPPORT_SIDES.firstNotNullOfOrNull { (toward, side) ->
                 val at = cell.offset(toward)
                 supports[at]
@@ -205,6 +207,11 @@ internal fun BlockGround.opening(cell: List<Int>): BlockGround {
         override fun holdsNothing(position: List<Int>): Boolean = position == cell || source.holdsNothing(position)
 
         override fun breakable(position: List<Int>): Boolean = source.breakable(position)
+
+        override fun bodyIn(
+            position: List<Int>,
+            besides: java.util.UUID?,
+        ): Boolean = source.bodyIn(position, besides)
     }
 }
 

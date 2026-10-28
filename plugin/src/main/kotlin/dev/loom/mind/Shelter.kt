@@ -137,7 +137,12 @@ data class CoverObservation(
                         .map { it.ref }
                         .toSet(),
                 nightNear = world.dayPhase == DayPhase.NIGHT || world.ticksUntilNightfall <= SHELTER_LEAD_TICKS,
-                gathers = cover.gathers.toSet(),
+                // Narrowed as the mind narrows them, to a dig in reach that leaves a way out or a
+                // collect with a route (the r39 offline audit: the two runtimes read different lists).
+                gathers =
+                    cover.gathers
+                        .filter { ref -> perception.surroundings.any { it.ref == ref && stepNow(it) } }
+                        .toSet(),
                 solidCount = perception.selfState.inventorySummary.filter { it.solid == true }.sumOf { it.count },
             )
         }
@@ -248,13 +253,16 @@ internal fun shelterProgressOf(
     val rank = observed.cover?.rank
     val improved = rank != null && (reference == null || rank > reference)
     val accepted = goal.lastStep?.outcome == EventTag.ACCEPTED
-    val covered = improved && accepted && goal.stepAction in SHELTER_ACTIONS
+    // Carried elsewhere since the step was chosen, the step's own effect cannot be read where it stands.
+    val covered = improved && accepted && goal.stepAction in SHELTER_ACTIONS && !displaced(goal, before, observed)
     val gathered = !covered && accepted && gathered(goal, before, observed)
+    // Cover the agent came to stand in by anything but its own accepted step - a flight, a fall, a
+    // peer's block - advances nothing and resets no stall (the r39 offline audit).
     return GoalProgress(
         conditionMet = rank?.sealed == true,
         conditionHeld = 0,
         inventoryDelta = deltaOf(before.inventory, observed.inventory),
-        conditionAdvanced = improved,
+        conditionAdvanced = covered,
         stepAdvanced = covered || gathered,
         stepEvidence =
             when {
@@ -262,7 +270,7 @@ internal fun shelterProgressOf(
                 gathered -> StepEvidence.GAINED_INPUT
                 else -> StepEvidence.NONE
             },
-        stepsWithoutProgress = if (improved || gathered) 0 else priorCount + 1,
+        stepsWithoutProgress = if (covered || gathered) 0 else priorCount + 1,
         cover = rank?.progress,
     )
 }
@@ -279,21 +287,6 @@ private fun gathered(
 ): Boolean =
     goal.stepAction in GATHER_ACTIONS && goal.stepRef in before.cover?.gathers.orEmpty() &&
         (observed.cover?.solidCount ?: 0) > (before.cover?.solidCount ?: 0)
-
-/**
- * The reference a shelter step measured at [now] must pass: the most enclosed the goal has been at
- * the cell the agent now stands in, by [bestByCell], and for a step that moved it the cover it
- * left, [from].
- */
-internal fun shelterReferenceOf(
-    bestByCell: Map<List<Int>, CoverRank>,
-    from: GoalObservation?,
-    now: GoalObservation?,
-): CoverRank? {
-    val cell = now?.cell ?: return null
-    val left = from?.cover?.rank?.takeIf { from.cell != cell }
-    return listOfNotNull(bestByCell[cell], left).maxOrNull()
-}
 
 /** The actions a shelter step takes: a descent, a closing, or a walk onto natural cover. */
 private val SHELTER_ACTIONS = setOf(IntentAction.DIG, IntentAction.PLACE, IntentAction.MOVE_TO)

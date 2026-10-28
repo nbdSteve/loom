@@ -19,8 +19,8 @@ import dev.loom.contract.GoalSummary
 import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
 
 /**
- * How many more than it holds and its own drops of the item lying an item objective must ask: a
- * goal one step could meet is no objective. `MIN_OBJECTIVE_ADVANCE` in the mind's `offered.rs`.
+ * How many more than it holds and its own drops of the item lying an item objective must ask, at
+ * least: a goal one step could meet is no objective. `MIN_OBJECTIVE_ADVANCE` in the mind's `offered.rs`.
  */
 const val MIN_OBJECTIVE_ADVANCE: Long = 2
 
@@ -45,8 +45,8 @@ internal fun objectiveRefusalOf(
         ?: reasonRefusalOf(presented, choice, observed)
 
 /**
- * An item objective [choice] sets that asks fewer than [MIN_OBJECTIVE_ADVANCE] beyond what
- * [observed] holds and has lying.
+ * An item objective [choice] sets that asks fewer than [GoalObservation.fewestObjective] by what
+ * [observed] saw: one step could meet it.
  */
 private fun trivialOf(
     presented: GoalSummary?,
@@ -54,8 +54,7 @@ private fun trivialOf(
     observed: GoalObservation?,
 ): String? {
     val (item, count) = objectiveSetBy(presented, choice) ?: return null
-    val have = observed?.let { (it.inventory[item] ?: 0) + (it.ownLying[item] ?: 0) }
-    return GoalEvidence.TRIVIAL.takeIf { have != null && count < have + MIN_OBJECTIVE_ADVANCE }
+    return GoalEvidence.TRIVIAL.takeIf { observed != null && count < observed.fewestObjective(item) }
 }
 
 /**
@@ -126,7 +125,8 @@ private fun supports(
 /**
  * Whether nothing held or in reach could meet [presented] now, by [observed]: a shelter no step can
  * close, a discovery with nowhere left to look, or an item goal asking more than is held plus what
- * sight could give - the converse of the rule an abandon of an achievable goal is refused by.
+ * sight could give, or one no step offered now advances - the converse of the rule an abandon of an
+ * achievable goal is refused by.
  */
 private fun unreachable(
     presented: GoalSummary,
@@ -138,7 +138,8 @@ private fun unreachable(
     return when {
         presented.shelter -> observed.cover?.let { !it.rank.sealed && !it.stepped } == true
         presented.discovery -> observed.explore.isEmpty()
-        item != null && count != null -> count > (observed.inventory[item] ?: 0) + (observed.capacity[item] ?: 0)
+        item != null && count != null ->
+            count > (observed.inventory[item] ?: 0) + (observed.capacity[item] ?: 0) || observed.steplessFor(item)
         else -> false
     }
 }

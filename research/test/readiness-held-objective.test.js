@@ -118,6 +118,40 @@ test('an older decision refused behind the agent\'s own newer one is superseded,
   assert.equal(classesOf(ended, 20)[key('a', 'r1')], 'concurrent')
 })
 
+test('requests are dated as the plugin dates them, by when each was asked, never by when its answer came', () => {
+  // The r39 offline audit: a review asked before a sighting whose flight was applied first. Its late
+  // dig is refused behind the newer flight and never halts it: superseded, as the plugin decides it.
+  const lateRoutine = [
+    perceived('b', 'r1', 100),
+    perceived('b', 'r2', 110),
+    decided('b', 'r2', 120, 'flee', { action: 'flee', from: 'e1' }),
+    applied('b', 'r2', 121),
+    decided('b', 'r1', 130, 'dig', { action: 'dig', block: 'b1' }),
+    applied('b', 'r1', 131, 'controlNotReady'),
+    { event: 'retreating', agentId: 'b', tick: 200, requestKey: key('b', 'r2'), outcome: 'retreatSafe' }
+  ]
+  assert.equal(classesOf(lateRoutine, 20)[key('b', 'r1')], 'superseded')
+  // A third, newer decision governs even while an earlier request still runs: the plugin neither
+  // halts nor asks again for an answer a newer one replaced, so the refusal is not the overlap.
+  const thirdNewer = [
+    perceived('b', 'r0', 50),
+    decided('b', 'r0', 50, 'dig', { action: 'dig', block: 'b0' }),
+    perceived('b', 'r1', 100),
+    perceived('b', 'r2', 110),
+    decided('b', 'r2', 120, 'idle'),
+    applied('b', 'r2', 121),
+    decided('b', 'r1', 130, 'place', { action: 'place', block: 'b2', item: 's1', face: 'up' }),
+    applied('b', 'r1', 131, 'controlNotReady'),
+    applied('b', 'r0', 139),
+    witnessed('b', 'r0', 140)
+  ]
+  assert.equal(classesOf(thirdNewer, 20)[key('b', 'r1')], 'superseded')
+  // A newer decision its own goal ledger refused never reached the body, so the earlier work is the overlap.
+  const refusedNewer = thirdNewer.map((record) =>
+    record.event === 'intentApplied' && record.requestKey === key('b', 'r2') ? { ...record, outcome: 'goalTrivial' } : record)
+  assert.equal(classesOf(refusedNewer, 20)[key('b', 'r1')], 'dangerOverlap')
+})
+
 test('a placement blocked at a closing its cover offered is a target race, any other is inapplicable', () => {
   const cover = { sealed: false, walkOut: true, open: ['roof'], closings: [{ face: 'roof', block: 'b7', side: 'down' }] }
   const offered = [

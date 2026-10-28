@@ -77,19 +77,20 @@ private fun completionRefusalOf(
 
 /**
  * Whether a replace or a revise could set a next objective from what sight gives without crowding
- * out looking further: [MIN_OBJECTIVE_ADVANCE] more of an item than is held and lying as the
- * agent's own. A horizon alone does not refuse a plain completion: its goal may have no step now,
- * and the schema offers a plain completion only when it offers no replace at all.
+ * out looking further: as many of an item as [GoalObservation.fewestObjective] asks. A horizon alone
+ * does not refuse a plain completion: its goal may have no step now, and the schema offers a plain
+ * completion only when it offers no replace at all.
  */
 private fun nextGoalOffered(observed: GoalObservation): Boolean =
     observed.capacity.any { (item, capacity) ->
-        !observed.crowdsExploration(item) && capacity >= (observed.ownLying[item] ?: 0) + MIN_OBJECTIVE_ADVANCE
+        val reach = (observed.inventory[item] ?: 0) + capacity
+        !observed.crowdsExploration(item) && reach >= observed.fewestObjective(item)
     }
 
 /**
- * Whether the goal [presented] carries could still be met from what [observed] holds and sees,
- * and is neither met nor at the stall bound: a goal to pursue, not to abandon (r17 theta
- * body:00000333 abandoned a goal one stick short with a bush in sight, and fled a peer).
+ * Whether the goal [presented] carries could still be met from what [observed] holds and sees, by
+ * a step offered now, and is neither met nor at the stall bound: a goal to pursue, not to abandon
+ * (r17 theta body:00000333 abandoned a goal one stick short with a bush in sight, and fled a peer).
  */
 private fun achievable(
     presented: GoalSummary?,
@@ -101,5 +102,5 @@ private fun achievable(
     val atBound = (progress?.stepsWithoutProgress ?: 0) >= MAX_GOAL_STEPS_WITHOUT_PROGRESS
     val reach = item?.let { (observed?.inventory?.get(it) ?: 0) + (observed?.capacity?.get(it) ?: 0) }
     return observed != null && count != null && reach != null && progress?.conditionMet != true && !atBound &&
-        count <= reach
+        count <= reach && item?.let(observed::steplessFor) != true
 }

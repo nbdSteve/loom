@@ -80,8 +80,9 @@ class R23GoalAuditReplayTest {
     @Test
     fun `eta's eight planks from its own logs at body 1532 are a switch its held goal may make`() {
         // body:00001542 abandoned its unmet sapling goal to craft planks from its two logs, with no
-        // goal held after, because only a stalled goal could be replaced.
-        val seen = shown("body:00001532", "body:00001542")
+        // goal held after, because only a stalled goal could be replaced. Its horizon is today's,
+        // which reaches past what one craft of the logs makes.
+        val seen = shown("body:00001532", "body:00001542").let { it.copy(horizon = horizonOf(it, recipes)) }
         val held = requireNotNull(r23.shownGoal("body:00001542"))
         assertEquals(SAPLING, held.successItem)
         assertTrue(seen.selfState.inventorySummary.any { it.what == LOG && it.count == 2L })
@@ -90,11 +91,17 @@ class R23GoalAuditReplayTest {
             GoalChoice(
                 GoalDisposition.REPLACE,
                 successItem = PLANKS,
-                successCount = 8,
+                successCount = 9,
                 stepResult = GoalStepResult.NO_PROGRESS,
                 reason = GoalReason.SUPERSEDED,
             )
         assertEquals(null, incoherenceOf(held, switch, craft, GoalObservation.of(seen), recipes))
+        // The eight its one craft of both logs makes are no objective: that craft meets them (the
+        // r39 offline audit), so the switch asks one past it, which another log then gives.
+        assertEquals(
+            GoalEvidence.TRIVIAL,
+            incoherenceOf(held, switch.copy(successCount = 8), craft, GoalObservation.of(seen), recipes),
+        )
         // Ending the unmet sapling goal says why: the switch is a different objective, chosen.
         assertEquals(
             GoalEvidence.REASON_MISSING,

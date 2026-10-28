@@ -36,6 +36,7 @@ import dev.loom.mind.CognitionBridge
 import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.MainThread
+import dev.loom.mind.RecipeInputs
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -131,6 +132,8 @@ internal data class Scene(
     /** Whether a served break hands the breaker its drop at once, and a placement is served. */
     val dropsOnBreak: Boolean = false,
     val servePlaces: Boolean = false,
+    /** Whether the ledger knows vanilla's wood recipes, so a craft's horizon reaches past it. */
+    val woodRecipes: Boolean = false,
 ) {
     /** The scene as the peers script reads it. */
     fun json(identities: Map<AgentId, PlayerIdentity>): String =
@@ -212,13 +215,16 @@ internal data class Scene(
             override fun holdsNothing(position: List<Int>): Boolean = blockAt(position) == null
         }
 
-    /** What digging each block with a bare hand drops: a dead bush nought to two sticks, dirt or a log one. */
+    /**
+     * What digging each block with a bare hand drops: a dead bush, dirt or a log one, so no one dig
+     * meets the two more an objective asks.
+     */
     val yields: BlockYields =
         BlockYields { position, _ ->
             val (x, y, z) = position
             val block = blocks.firstOrNull { it.x == x && it.y == y && it.z == z }
             when (block?.name ?: blockAt(position)) {
-                "dead_bush" -> listOf(BlockYield("item.minecraft.stick", 0, 2, 100))
+                "dead_bush" -> listOf(BlockYield("item.minecraft.stick", 1, 1, 100))
                 "dirt", "grass_block" -> listOf(BlockYield("item.minecraft.dirt", 1, 1, 100))
                 "oak_log" -> listOf(BlockYield("item.minecraft.oak_log", 1, 1, 100))
                 else -> emptyList()
@@ -385,6 +391,7 @@ internal class ScenarioWorld(
                 dev.loom.mind.CognitionCallbacks(
                     onStepSettled = { agent, at, owed -> settlements += Triple(agent, at, owed) },
                 ),
+                goals = dev.loom.mind.GoalLedger(recipes = if (scene.woodRecipes) WOOD_RECIPES else RecipeInputs.NONE),
             )
         ids.forEach { port.spawn(it).toCompletableFuture().await() }
         // The body's per-tick hook, as Paper's timer calls it, at the world's own tick: the tests
@@ -685,3 +692,23 @@ private const val FIRST_HOTBAR_SLOT = 36
 
 /** Vanilla's tick, at which the fake server drives the body's per-tick hook. */
 private const val SERVER_TICK_MILLIS = 50L
+
+/** Vanilla's wood recipes: planks from a log, and sticks and a crafting table from planks. */
+private val WOOD_RECIPES =
+    object : RecipeInputs {
+        private val planks = "item.minecraft.oak_planks"
+        private val log = "item.minecraft.oak_log"
+
+        override fun inputsOf(item: String): Set<String> =
+            mapOf(
+                planks to setOf(log),
+                "item.minecraft.stick" to setOf(planks),
+                "item.minecraft.crafting_table" to setOf(planks),
+            )[item].orEmpty()
+
+        override fun madeFrom(input: String): List<String> =
+            mapOf(
+                log to listOf(planks),
+                planks to listOf("item.minecraft.stick", "item.minecraft.crafting_table"),
+            )[input].orEmpty()
+    }

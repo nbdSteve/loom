@@ -45,7 +45,6 @@ import dev.loom.contract.SelfState
 import dev.loom.contract.StepEvidence
 import dev.loom.contract.isItemName
 import kotlin.math.floor
-import kotlin.math.sqrt
 
 /** Capacity is summed in hundredths of an item, the unit a block's sampled mean is stated in. */
 private const val HUNDRED = 100L
@@ -124,6 +123,17 @@ data class GoalObservation(
     val cover: CoverObservation? = null,
     /** How many of each item the agent's own drops have lying, wherever they lie: no objective's to ask. */
     val ownLying: Map<String, Long> = emptyMap(),
+    /**
+     * The most of each item one offered step could give: a collect of one stack in route reach, a
+     * dig in reach at its most, or one craft of every application it allows. An objective asks more
+     * (the r39 offline audit: "hold 2 oak_planks" beside a held log, met by the craft paired with it).
+     */
+    val oneStep: Map<String, Long> = emptyMap(),
+    /**
+     * The refs a step offered now takes, with the items each gives: a dig in reach, a collect with a
+     * route, or a walk onto a visible dig-safe block out of reach. What the mind offers a goal's steps from.
+     */
+    val stepSources: Map<String, Set<String>> = emptyMap(),
 ) {
     /** Whether a discovery goal may be set: cells at the edge of sight, and no horizon goal at all. */
     val discoveryOffered: Boolean get() = explore.isNotEmpty() && horizon.isEmpty()
@@ -175,6 +185,27 @@ data class GoalObservation(
     /** Whether a block in reach can be counted on to give one of [items] at a dig. */
     fun digsFor(items: Set<String>): Boolean = productive.values.any { gives -> gives.any(items::contains) }
 
+    /**
+     * The fewest of [item] an objective may ask: [MIN_OBJECTIVE_ADVANCE] beyond what is held and the
+     * agent's own drops of it lying, and more than what is held plus the most one offered step could
+     * give. `offered::fewest_objective` in the mind.
+     */
+    fun fewestObjective(item: String): Long =
+        (inventory[item] ?: 0) +
+            maxOf((ownLying[item] ?: 0) + MIN_OBJECTIVE_ADVANCE, (oneStep[item] ?: 0) + 1)
+
+    /**
+     * Whether no step offered now could give [item] or what its horizon path makes it from: no cell
+     * at the edge of sight to look further from, no craft of it, and no dig, collect or walk to a
+     * source of it - so the mind can offer the goal only its abandon, as impossible now, however much
+     * a source remembered or seen beyond reach would give (the r39 offline audit).
+     */
+    fun steplessFor(item: String): Boolean {
+        val wanted = setOf(item) + horizon.pathOf(item)
+        return explore.isEmpty() && craftable.none { it in wanted } &&
+            stepSources.values.none { gives -> gives.any { it in wanted } }
+    }
+
     /** How many of [item] sight itself could give: none for an item only recalled out of sight. */
     fun inSight(item: String): Long = if (item in recalledOnly) 0 else capacity[item] ?: 0
 
@@ -199,6 +230,7 @@ data class GoalObservation(
             // walked toward (r20: no agent without a log in sight could set a log goal).
             val recalled = perception.recalled.map { it.what to it.perHundred }
             val reachable = drops.map { it.ref }.toSet()
+            val reachedBlocks = seen.filter { it.kind == ObservationKind.BLOCK && it.visible && inReach(it) }
             return GoalObservation(
                 inventory = inventoryOf(perception.selfState),
                 position = perception.selfState.position,
@@ -225,12 +257,7 @@ data class GoalObservation(
                         .mapNotNull { drop -> drop.ref?.takeIf { it in reachable }?.let { it to drop.what } }
                         .toMap(),
                 explore = perception.explore.map { it.ref }.toSet(),
-                inReach =
-                    seen
-                        .filter { it.kind == ObservationKind.BLOCK && it.visible }
-                        .filter { fromEyes(it) <= INTERACTION_REACH_BLOCKS }
-                        .map { it.ref }
-                        .toSet(),
+                inReach = reachedBlocks.map { it.ref }.toSet(),
                 recalledOnly =
                     recalled.map { it.first }.toSet() -
                         (drops.map { it.what } + crafted.map { it.first } + dug.map { it.first }).toSet(),
@@ -245,8 +272,28 @@ data class GoalObservation(
                         .filter { it.fate == DropFate.LYING }
                         .groupBy({ it.what }, { it.count })
                         .mapValues { (_, counts) -> counts.sum() },
+                oneStep = oneStepOf(perception, drops, digs),
+                stepSources = stepSourcesOf(seen),
             )
         }
+
+        /**
+         * The most of each item one step [perception] offers could give: a stack among [drops], a
+         * dig among [digs] in reach at its most, or a craft of every application its recipe allows.
+         */
+        private fun oneStepOf(
+            perception: Perception,
+            drops: List<Observation>,
+            digs: List<Observation>,
+        ): Map<String, Long> =
+            (
+                drops.map { it.what to (it.count ?: 1) } +
+                    digs.filter { fromEyes(it) <= INTERACTION_REACH_BLOCKS }.flatMap { block ->
+                        block.yields.orEmpty().map { it.what to it.most }
+                    } +
+                    perception.selfState.craftingOptions.map { it.what to it.resultCount * it.maxCrafts }
+            ).groupBy({ it.first }, { it.second })
+                .mapValues { (_, gives) -> gives.max() }
 
         /** The visible dig-safe blocks in reach among [digs] that give an item at least once a dig, by ref. */
         private fun productiveOf(digs: List<Observation>): Map<String, Set<String>> =
@@ -256,16 +303,6 @@ data class GoalObservation(
                     val sure = block.yields.orEmpty().filter { it.perHundred >= HUNDRED }
                     block.ref to sure.map { it.what }.toSet()
                 }.filterValues { it.isNotEmpty() }
-
-        /** The distance from the eyes to [seen], from its feet-relative reading, as the mind measures it. */
-        private fun fromEyes(seen: Observation): Double {
-            val horizontal =
-                (seen.distance * seen.distance - seen.verticalOffset * seen.verticalOffset).coerceAtLeast(
-                    0.0,
-                )
-            val rise = seen.verticalOffset - EYE_HEIGHT_BLOCKS
-            return sqrt(horizontal + rise * rise)
-        }
 
         private fun inventoryOf(state: SelfState): Map<String, Long> =
             state.inventorySummary.groupBy({ it.what }, { it.count }).mapValues { (_, counts) -> counts.sum() }

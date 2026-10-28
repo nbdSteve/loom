@@ -32,9 +32,9 @@ import java.nio.file.Path
  * injected into any live profile: a scripted mind stands in for the model, and the scene is the
  * whole of what it is given.
  *
- * - two obtainable items and a crafting step: planks crafted from held logs, then sticks crafted
- *   from those planks, each goal completed at its original total and the second adopted in the
- *   same answer that completed the first;
+ * - two objectives no one step meets: planks crafted from a held log and a log dug, then sticks
+ *   crafted from those planks and dug from bushes, the first completed at its original total and
+ *   the second adopted in the same answer, then revised for more;
  * - an agent with nothing in sight worth doing walks to a cell at the edge of sight to look
  *   further, rather than idling;
  * - a goal at the stall bound with nothing in sight to replace it by is abandoned, and an
@@ -58,52 +58,49 @@ class GoalPursuitEndToEndTest {
     }
 
     @Test
-    fun `planks then sticks are two obtainable items and two crafts, and the met stick goal is revised for more`() {
+    fun `planks then sticks are two objectives no one step meets, and the met stick goal is revised for more`() {
+        // The r39 offline audit: a planks goal one craft of the held logs met, and a stick goal its
+        // paired craft met, each counted as an objective. Here each asks past what one step gives.
+        val bushes = listOf(Cell(10, 64, 10, "dead_bush"), Cell(7, 64, 8, "dead_bush"), Cell(8, 64, 10, "dead_bush"))
         val scene =
             Scene(
                 listOf(Stand(ALPHA, 8.5, 64.0, 8.5)),
-                blocks = listOf(Cell(10, 64, 8, "dead_bush")),
-                inventory = listOf(SceneStack(36, "oak_log", 2)),
+                blocks = listOf(Cell(10, 64, 8, "oak_log")) + bushes,
+                inventory = listOf(SceneStack(36, "oak_log", 1)),
                 serveCrafts = true,
+                serveBreaks = true,
+                dropsOnBreak = true,
+                woodRecipes = true,
             )
         val world = world(scene)
-        world.mind.answer = { seen, index ->
-            when (index) {
-                // Planks from the held logs: two crafts of four, a total of eight from none.
-                0 -> craft(seen, "item.minecraft.oak_planks", 2) to target(GoalDisposition.ADOPT, PLANKS, 8)
-                // Eight planks held: complete that goal and adopt four sticks, crafted from them.
-                1 ->
-                    craft(seen, "item.minecraft.stick", 1) to
-                        target(GoalDisposition.REPLACE, STICK, 4).copy(reason = GoalReason.COMPLETED)
-                // Four sticks held with planks and a bush still in sight: from routine-v28 a plain
-                // completion here is refused, and from routine-v36 more sticks are a revise, which
-                // keeps the goal rather than replacing it with itself.
-                else -> craft(seen, "item.minecraft.stick", 1) to target(GoalDisposition.REVISE, STICK, 8)
-            }
-        }
-        for (review in 1..3) {
+        world.mind.answer = ::planksThenSticks
+        for (review in 1..6) {
             world.review(ALPHA)
             world.awaitDecided(review)
             world.awaitApplied(review)
         }
-        val first = world.mind.seen[0]
-        val obtainable = first.selfState.craftingOptions.map { it.what }.toSet()
-        assertTrue(PLANKS in obtainable, "planks are craftable from the held logs: $obtainable")
-        assertTrue(first.surroundings.any { it.yields.orEmpty().any { yielded -> yielded.what == STICK } })
+        val start = world.mind.seen[0]
+        assertTrue(PLANKS in start.selfState.craftingOptions.map { it.what }, "planks are craftable from the held log")
         val decided = world.records.filter { it.event == BodyEvent.DECIDED }
         assertEquals(
-            listOf(GoalEvidence.ADOPTED, GoalEvidence.COMPLETED_ADOPTED, GoalEvidence.REVISED),
+            listOf(
+                GoalEvidence.ADOPTED,
+                GoalEvidence.CONTINUED,
+                GoalEvidence.CONTINUED,
+                GoalEvidence.COMPLETED_ADOPTED,
+                GoalEvidence.CONTINUED,
+                GoalEvidence.REVISED,
+            ),
             decided.map { it.goal?.outcome },
         )
-        assertEquals(decided[1].requestId, decided[2].goal?.goalId)
+        assertEquals(decided[3].requestId, decided[5].goal?.goalId)
         val applied = world.records.filter { it.event == BodyEvent.INTENT_APPLIED }.map { it.outcome }
-        assertEquals(listOf(EventTag.ACCEPTED, EventTag.ACCEPTED, EventTag.ACCEPTED), applied)
-        val held = world.mind.seen[2].selfState.inventorySummary.associate { it.what to it.count }
-        // Four sticks take two of the eight planks.
-        assertEquals(6L, held[PLANKS])
-        assertEquals(4L, held[STICK])
-        // The planks goal was completed at its original total, two or more above what was held;
-        // the stick goal, met, is still held, so it is no completion yet.
+        assertEquals(List(6) { EventTag.ACCEPTED }, applied)
+        val held = world.mind.seen[5].selfState.inventorySummary.associate { it.what to it.count }
+        assertEquals(null, held[PLANKS], "the sixteen sticks took all eight planks")
+        assertEquals(17L, held[STICK])
+        // The planks goal was completed at its original total; the stick goal, met, is still held,
+        // so it is no completion yet.
         val pursuit =
             world
                 .readiness(GATE_GENERATION)
@@ -114,6 +111,27 @@ class GoalPursuitEndToEndTest {
                 .getValue("measured")
                 .jsonObject
         assertEquals(1, pursuit.getValue("originalTargetCompletions").jsonPrimitive.int)
+    }
+
+    /** The planks-then-sticks chain's [index]th answer to [seen]. */
+    private fun planksThenSticks(
+        seen: Perception,
+        index: Int,
+    ): Pair<Intent, GoalChoice?> {
+        val first = { what: String -> seen.surroundings.first { it.what == what }.ref }
+        return when (index) {
+            // One craft of the held log makes four planks: the objective asks five.
+            0 -> craft(seen, PLANKS, 1) to target(GoalDisposition.ADOPT, PLANKS, 5)
+            1 -> Intent.Dig(first("block.minecraft.oak_log")) to continuing()
+            2 -> craft(seen, PLANKS, 1) to continuing()
+            // Eight planks held: complete that goal and adopt seventeen sticks, past the sixteen one
+            // craft of every application makes.
+            3 -> craft(seen, STICK, 4) to target(GoalDisposition.REPLACE, STICK, 17).copy(reason = GoalReason.COMPLETED)
+            4 -> Intent.Dig(first("block.minecraft.dead_bush")) to continuing()
+            // Seventeen sticks held with two bushes still in sight: more sticks are a revise, which
+            // keeps the goal rather than replacing it with itself.
+            else -> Intent.Dig(first("block.minecraft.dead_bush")) to target(GoalDisposition.REVISE, STICK, 19)
+        }
     }
 
     @Test
@@ -154,9 +172,10 @@ class GoalPursuitEndToEndTest {
                         )
                 2, 3 -> Intent.MoveTo(bush.ref) to continuing()
                 // At the bound only sticks are in sight, and a stalled stick goal may not be set
-                // again, so nothing replaces it: it is abandoned as stale.
+                // again, so nothing replaces it: it is abandoned as stale, walking on to look
+                // further, since no review beside the edge of sight may idle.
                 else ->
-                    Intent.Idle to
+                    Intent.MoveTo(seen.explore.first().ref) to
                         GoalChoice(
                             GoalDisposition.ABANDON,
                             stepResult = GoalStepResult.NO_PROGRESS,

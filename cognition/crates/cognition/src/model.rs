@@ -335,6 +335,64 @@ pub const SCRIPTED_SUCCESS_ITEM: &str = "item.minecraft.stick";
 /// The stand-in's step, worded as its own for the same reason.
 pub const SCRIPTED_STEP: &str = "scripted stand-in step: act on the trigger in front of me";
 
+/// `draft` as a goal review beside the edge of sight may answer it: the strict schema offers no idle
+/// or rest there and the body refuses one (`goalPassiveBesideExploration`), so a scripted answer
+/// that would wait walks to look further instead - keeping a completion or an abandon, holding no
+/// goal with no choice, and continuing a held goal it had left unanswered, or abandoning it as stale
+/// at its stall bound (the r39 offline audit: the stand-in idled beside an abandon). Any other draft
+/// is returned as it is.
+#[must_use]
+pub fn looking_further(perception: &Perception, mut draft: Draft) -> Draft {
+    let passive = matches!(draft.intent, Intent::Idle | Intent::Rest);
+    let Some(onto) = perception
+        .explore
+        .first()
+        .map(|cell| cell.target_ref.clone())
+        .filter(|_| passive && perception.trigger.reviews_goal())
+    else {
+        return draft;
+    };
+    let goal = match (&perception.goal, draft.goal.take()) {
+        (_, Some(choice))
+            if matches!(
+                choice.disposition,
+                GoalDisposition::Complete | GoalDisposition::Abandon
+            ) =>
+        {
+            Some(choice)
+        }
+        (None, None) => None,
+        (Some(held), None) => {
+            let stalled = held
+                .progress
+                .as_ref()
+                .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS);
+            Some(GoalChoice {
+                discover: None,
+                disposition: if stalled {
+                    GoalDisposition::Abandon
+                } else {
+                    GoalDisposition::Continue
+                },
+                success_item: None,
+                success_count: None,
+                step: None,
+                step_result: Some(GoalStepResult::NoProgress),
+                shelter: None,
+                feeds: None,
+                reason: stalled.then_some(GoalReason::Stale),
+            })
+        }
+        (_, other) => {
+            draft.goal = other;
+            return draft;
+        }
+    };
+    draft.intent = Intent::MoveTo { onto };
+    draft.goal = goal;
+    draft
+}
+
 /// The deterministic stand-in backend: a rule per trigger, no inference.
 ///
 /// It exists so the routing structure and the contract round-trip can be real
@@ -352,11 +410,11 @@ impl ScriptedBackend {
     #[must_use]
     pub fn draft_now(route: &ModelRoute, perception: &Perception) -> Draft {
         if let Some(sheltering) = Self::shelter_now(perception) {
-            return sheltering;
+            return looking_further(perception, sheltering);
         }
         let mut draft = Self::step_now(route, perception);
         draft.goal = Self::goal_now(perception, &draft.intent);
-        draft
+        looking_further(perception, draft)
     }
 
     /// The stand-in's shelter as night nears: at a goal review with no hunter upon it, the one
@@ -1597,6 +1655,86 @@ mod tests {
     }
 
     #[test]
+    fn a_scripted_wait_beside_the_edge_of_sight_walks_to_look_further() {
+        // The r39 offline audit: beta's abandon was paired with an idle beside eight cells at the
+        // edge of sight (body:00000292), which no strict schema offers and the body refuses.
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.explore = vec![loom_contract::ExploreTarget {
+            target_ref: "x1".to_owned(),
+            distance: 12.0,
+            direction: Bearing::East,
+            vertical_offset: 0.0,
+        }];
+        let wait = |goal: Option<loom_contract::GoalChoice>| super::Draft {
+            intent: Intent::Idle,
+            reasoning: "wait".to_owned(),
+            goal,
+        };
+        let walk = Intent::MoveTo {
+            onto: "x1".to_owned(),
+        };
+        assert_eq!(super::looking_further(&seen, wait(None)).intent, walk);
+        let abandon = loom_contract::GoalChoice {
+            discover: None,
+            disposition: GoalDisposition::Abandon,
+            success_item: None,
+            success_count: None,
+            step: None,
+            step_result: Some(loom_contract::GoalStepResult::NoProgress),
+            shelter: None,
+            feeds: None,
+            reason: Some(loom_contract::GoalReason::Impossible),
+        };
+        let kept = super::looking_further(&seen, wait(Some(abandon.clone())));
+        assert_eq!((kept.intent, kept.goal), (walk.clone(), Some(abandon)));
+        // A held goal left unanswered is continued by the walk, and abandoned as stale at its bound.
+        seen.goal = Some(GoalSummary {
+            discovery: false,
+            goal_id: "g".to_owned(),
+            statement: "hold 3 item.minecraft.stick".to_owned(),
+            revision: 0,
+            adopted_tick: 0,
+            last_step: None,
+            success_item: Some("item.minecraft.stick".to_owned()),
+            success_count: Some(3),
+            step: None,
+            step_action: None,
+            step_ref: None,
+            progress: None,
+            shelter: false,
+            feeds: None,
+        });
+        let continued = super::looking_further(&seen, wait(None)).goal.unwrap();
+        assert_eq!(continued.disposition, GoalDisposition::Continue);
+        if let Some(goal) = seen.goal.as_mut() {
+            goal.progress = Some(loom_contract::GoalProgress {
+                condition_met: false,
+                condition_held: 0,
+                inventory_delta: vec![],
+                condition_advanced: false,
+                step_advanced: false,
+                step_evidence: loom_contract::StepEvidence::None,
+                steps_without_progress: loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS,
+                cover: None,
+            });
+        }
+        let stale = super::looking_further(&seen, wait(None)).goal.unwrap();
+        assert_eq!(
+            (stale.disposition, stale.reason),
+            (
+                GoalDisposition::Abandon,
+                Some(loom_contract::GoalReason::Stale)
+            )
+        );
+        // With nowhere to look, a wait stands.
+        seen.explore.clear();
+        assert_eq!(
+            super::looking_further(&seen, wait(None)).intent,
+            Intent::Idle
+        );
+    }
+
+    #[test]
     fn the_stand_in_adopts_at_its_first_review_and_continues_at_the_next() {
         let route = router().route(DecisionImportance::Routine);
         let mut first = perception(Trigger::GoalReview, DecisionImportance::Routine);
@@ -1604,8 +1742,9 @@ mod tests {
         let idle = ScriptedBackend::draft_now(&route, &first);
         assert_eq!(idle.intent, Intent::Idle);
         assert_eq!(idle.goal, None);
-        // A bush in reach that drops nought to two sticks: it digs it, for one more than it holds.
-        first.surroundings = vec![loom_contract::Observation {
+        // Two bushes in reach that drop one or two sticks each: it digs one, for more than one dig
+        // could give.
+        let bush = loom_contract::Observation {
             kind: ObservationKind::Block,
             what: "block.minecraft.dead_bush".to_owned(),
             distance: 1.0,
@@ -1618,14 +1757,21 @@ mod tests {
             yields: Some(vec![loom_contract::BlockYield {
                 what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
                 least: 1,
-                most: 3,
-                per_hundred: 200,
+                most: 2,
+                per_hundred: 150,
             }]),
             dig_safe: Some(true),
             route_refused: None,
             hunts: None,
             cover: None,
-        }];
+        };
+        first.surroundings = vec![
+            bush.clone(),
+            loom_contract::Observation {
+                target_ref: "b2".to_owned(),
+                ..bush
+            },
+        ];
         let digging = ScriptedBackend::draft_now(&route, &first);
         assert_eq!(
             digging.intent,
@@ -1639,8 +1785,9 @@ mod tests {
             adopted.success_item.as_deref(),
             Some(super::SCRIPTED_SUCCESS_ITEM)
         );
-        // Never fewer than the objective floor past what is held (r39: alpha's one-more goals).
-        assert_eq!(adopted.success_count, Some(2));
+        // Never fewer than the objective floor past what is held (r39: alpha's one-more goals), nor
+        // what one dig at its most could meet (the r39 offline audit).
+        assert_eq!(adopted.success_count, Some(3));
         first.self_state.inventory_summary = vec![loom_contract::InventoryStack {
             slot_ref: "i1".to_owned(),
             what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
@@ -1650,7 +1797,7 @@ mod tests {
             held: None,
         }];
         let more = ScriptedBackend::draft_now(&route, &first).goal.unwrap();
-        assert_eq!(more.success_count, Some(3));
+        assert_eq!(more.success_count, Some(4));
 
         let mut later = perception(Trigger::GoalReview, DecisionImportance::Routine);
         later.goal = Some(GoalSummary {

@@ -100,8 +100,8 @@ class PlayerBodyPort(
         }
 
     override val halts: dev.loom.body.BodyHalt =
-        dev.loom.body.BodyHalt { agentId ->
-            instances[agentId]?.halts?.halt(agentId) ?: completedBodyOperation(false)
+        dev.loom.body.BodyHalt { agentId, decidedBy ->
+            instances[agentId]?.halts?.halt(agentId, decidedBy) ?: completedBodyOperation(false)
         }
 
     override val held: HeldPerceptions =
@@ -117,7 +117,12 @@ class PlayerBodyPort(
                 agentId: AgentId,
                 perception: Perception,
             ) {
-                instances[agentId]?.perceptions?.shown(perception)
+                // Recorded as the mind is shown it, and its decision dated by that moment, the order the
+                // research record writes perceptions in.
+                instances[agentId]?.let {
+                    it.perceptions.shown(perception)
+                    it.decisions.asked(perception.requestId)
+                }
             }
 
             override fun dangerSubjectOf(
@@ -201,6 +206,9 @@ private class PlayerBodyInstance(
 
     /** This agent's held perception records, written as the mind is shown each. */
     val perceptions: PendingPerceptions get() = context.perceptions
+
+    /** The order this agent's perceptions were asked in, which dates each decision applied. */
+    val decisions: NewestDecisions get() = actuation.newest
 
     fun spawn(agentId: AgentId): CompletionStage<BodySpawnResult> = lifecycle.spawn(agentId)
 

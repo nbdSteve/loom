@@ -177,10 +177,12 @@ const SURVIVAL_GOAL_INCOHERENT_TAGS = new Set([...DISCOVERY_GOAL_INCOHERENT_TAGS
 const SHELTER_GOAL_INCOHERENT_TAGS = new Set([
   ...SURVIVAL_GOAL_INCOHERENT_TAGS, 'goalShelterNotOffered', 'goalFeedsNotOffered', 'goalSubgoalReplaced'
 ])
-// From generation 20, an objective one step meets, a replace by the held goal's own item, and an
-// end stated without a reason or with one its evidence does not support.
+// From generation 20, an objective one step meets, a replace by the held goal's own item, an end
+// stated without a reason or with one its evidence does not support, and an idle or rest at a
+// goal review while the edge of sight is offered.
 const HELD_OBJECTIVE_GOAL_INCOHERENT_TAGS = new Set([
-  ...SHELTER_GOAL_INCOHERENT_TAGS, 'goalTrivial', 'goalReplaceSameItem', 'goalReasonMissing', 'goalReasonUnsupported'
+  ...SHELTER_GOAL_INCOHERENT_TAGS, 'goalTrivial', 'goalReplaceSameItem', 'goalReasonMissing', 'goalReasonUnsupported',
+  'goalPassiveBesideExploration'
 ])
 // The generation-13 bars that cannot fail a run that pursued anything at all: from generation 14
 // they are measured and reported, and no verdict rests on them.
@@ -449,23 +451,32 @@ function ownFlightRunning (bodyRecords, decision, refusal) {
 const EXCLUSIVE_INTENTS = new Set(['moveTo', 'flee', ...INTERACTION_INTENTS])
 
 /**
- * Which of the agent's own other requests held its body when [refusal] came, from generation 20:
- * `earlier` when one asked before [decision] was, and decided before the refusal, had not ended by
- * it - its own earlier work kept the body, which the newest decision is owed (r39 iota sense-u5
- * held its placement 330 ticks under skeleton fire, and three later placements were refused) -
- * `newer` when only one asked after it had, so the newer decision took the body as it should, and
+ * Which of the agent's own requests explains [refusal], a `controlNotReady` of [decision], from
+ * generation 20, each dated as the plugin dates it (`NewestDecisions`): by when its perception was
+ * asked, never by when its answer arrived. `newer` when a decision asked after [decision] reached the
+ * body before the refusal: the newer decision governs, and the plugin neither halts nor asks again for
+ * an older one, so the refusal is the superseded answer's. Otherwise `earlier` when an exclusive
+ * request asked before it, and decided before the refusal, had not ended by it: its own earlier work
+ * kept the body past the plugin's bounded preemption, which the newest decision is owed (r39 iota
+ * sense-u5 held its placement 330 ticks under skeleton fire, and three later placements were refused).
  * `undefined` when neither.
  */
-function ownRequestRunning (bodyRecords, decision, refusal) {
+function ownRequestRunning (bodyRecords, decision, refusal, generation) {
   const ended = new Map()
   const decided = new Map()
   // A request's age is when it was asked: answers arrive in whatever order the minds return them.
   const asked = new Map()
+  // A decision refused before the body, by its own goal ledger, or discarded, never governed it.
+  const unapplied = new Set()
+  const beforeBody = goalIncoherentTagsOf(generation)
   bodyRecords.forEach((record, index) => {
     if (record.agentId !== decision.agentId || record.requestKey === undefined) return
     if (record.event === 'perceived' && !asked.has(record.requestKey)) asked.set(record.requestKey, index)
     if (record.event === 'decided' && !decided.has(record.requestKey)) {
       decided.set(record.requestKey, { record, index, asked: asked.get(record.requestKey) ?? index })
+    }
+    if (record.event === 'decisionDiscarded' || (record.event === 'intentApplied' && beforeBody.has(record.outcome))) {
+      unapplied.add(record.requestKey)
     }
     const settled = ['retreating', 'moved', 'decisionDiscarded'].includes(record.event) ||
       (record.event === 'intentApplied' &&
@@ -475,11 +486,12 @@ function ownRequestRunning (bodyRecords, decision, refusal) {
   const own = decided.get(decision.requestKey)
   const refusedAt = bodyRecords.indexOf(refusal)
   if (own === undefined || refusedAt < 0) return undefined
-  const holding = [...decided.values()].filter(({ record, index }) =>
-    record.requestKey !== decision.requestKey && EXCLUSIVE_INTENTS.has(record.intent) && index < refusedAt &&
-    (ended.get(record.requestKey) ?? Infinity) > refusedAt)
-  if (holding.some((held) => held.asked < own.asked)) return 'earlier'
-  return holding.length > 0 ? 'newer' : undefined
+  const others = [...decided.values()].filter(({ record, index }) =>
+    record.requestKey !== decision.requestKey && index < refusedAt)
+  if (others.some((other) => other.asked > own.asked && !unapplied.has(other.record.requestKey))) return 'newer'
+  const holding = others.filter(({ record }) =>
+    EXCLUSIVE_INTENTS.has(record.intent) && (ended.get(record.requestKey) ?? Infinity) > refusedAt)
+  return holding.some((held) => held.asked < own.asked) ? 'earlier' : undefined
 }
 
 // The actions whose acceptance starts work the body ends later, with its own record.
@@ -487,7 +499,9 @@ const MOVEMENT_INTENT_SET = new Set(['moveTo', 'flee'])
 
 /**
  * Whether [decision] placed at a closing its own perception's cover offered: the support and side
- * the cover named, from generation 20.
+ * the cover named, from generation 20. The cover offers no closing into a cell the agent's own box
+ * reaches or the server held another living body in (`Cover.kt` `coverAt`), so a closing refused as
+ * blocked was free when offered and something moved into it after: a race with the target.
  */
 function offeredClosing (decision, own) {
   const intent = decision.decision?.intent
@@ -1699,7 +1713,7 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       }
       if (generation >= 16 && ending.class === TERRAIN_CLASS && inWater(own)) ending.class = 'waterTrapped'
       if (generation >= 20 && terminals[0].outcome === 'controlNotReady') {
-        const running = ownRequestRunning(bodyRecords, decision, terminals[0])
+        const running = ownRequestRunning(bodyRecords, decision, terminals[0], generation)
         if (running === 'earlier') ending.class = 'dangerOverlap'
         if (running === 'newer') ending.class = 'superseded'
       } else if (generation >= 17 && terminals[0].outcome === 'controlNotReady' && decision.intent === 'flee' &&

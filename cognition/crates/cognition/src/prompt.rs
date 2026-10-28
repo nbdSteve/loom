@@ -635,7 +635,10 @@ fn refusal_line(refusal: &GoalRefusal) -> String {
             "it adopted a resource subgoal under a shelter, which is no goal of its own: gather a closer as a step of the shelter goal instead"
         }
         "goalTrivial" => {
-            "its total was one step's worth: ask at least two more than you hold and your own drops of it lying"
+            "its total was one step's worth: ask more than one craft, dig or collect could give, and at least two more than you hold and your own drops of it lying"
+        }
+        "goalPassiveBesideExploration" => {
+            "it idled or rested while cells at the edge of sight were offered: walk to one to look further instead"
         }
         "goalReplaceSameItem" => {
             "it replaced the goal with more of its own item, which is a new goal for nothing new: revise it instead"

@@ -680,6 +680,50 @@ fn goal_total(perception: &Perception, item: &str) -> Option<i64> {
         .flatten()
 }
 
+/// The most of `item` one step `perception` offers could give: a collect of one stack in route
+/// reach, a dig in reach at its most, or one craft of every application its recipe allows. An
+/// objective asks more (the r39 offline audit: "hold 2 `oak_planks`" beside a held log, met by the
+/// craft paired with it). `GoalObservation.oneStep` in the JVM.
+#[must_use]
+pub fn one_step(perception: &Perception, item: &str) -> i64 {
+    let seen = perception.surroundings.iter().take(MAX_OBSERVATIONS);
+    let collected = seen
+        .clone()
+        .filter(|seen| {
+            seen.kind == ObservationKind::DroppedItem && seen.route_refused != Some(true)
+        })
+        .filter(|seen| seen.distance <= MOVE_REACH_BLOCKS && seen.what == item)
+        .map(|seen| seen.count.unwrap_or(1));
+    let dug = seen
+        .filter(|seen| {
+            seen.kind == ObservationKind::Block && seen.visible && seen.dig_safe == Some(true)
+        })
+        .filter(|seen| from_eyes(seen) <= INTERACTION_REACH_BLOCKS)
+        .flat_map(|seen| seen.yields.iter().flatten())
+        .filter(|given| given.what == item)
+        .map(|given| given.most);
+    let crafted = perception
+        .self_state
+        .crafting_options
+        .iter()
+        .take(MAX_CRAFTING_LINES)
+        .filter(|option| option.what == item)
+        .map(|option| option.result_count.saturating_mul(option.max_crafts));
+    collected.chain(dug).chain(crafted).max().unwrap_or(0)
+}
+
+/// The fewest of `item` an objective may ask: [`MIN_OBJECTIVE_ADVANCE`] beyond what is held and the
+/// agent's own drops of it lying, and more than what is held plus the most one offered step could
+/// give. `GoalObservation.fewestObjective` in the JVM.
+#[must_use]
+pub fn fewest_objective(perception: &Perception, item: &str) -> i64 {
+    held_of(perception, item).saturating_add(
+        own_lying(perception, item)
+            .saturating_add(MIN_OBJECTIVE_ADVANCE)
+            .max(one_step(perception, item).saturating_add(1)),
+    )
+}
+
 /// How many of `item` the agent's own drops have lying, wherever they lie.
 #[must_use]
 pub fn own_lying(perception: &Perception, item: &str) -> i64 {
@@ -1101,10 +1145,9 @@ impl OfferedRefs {
                 }
                 // An objective asks more than one step could give: two beyond what is held and the
                 // agent's own drops of it lying (r39: alpha replaced "hold 9 dirt" by "hold 10 dirt"
-                // at every step, and no held time ever counted).
-                let fewest = held
-                    .saturating_add(own_lying(perception, item))
-                    .saturating_add(MIN_OBJECTIVE_ADVANCE);
+                // at every step, and no held time ever counted), and more than the most one offered
+                // step gives (the r39 offline audit: a planks goal one paired craft met).
+                let fewest = fewest_objective(perception, item);
                 let most = held
                     .saturating_add(*capacity)
                     .max(horizon_most(item))
@@ -1136,9 +1179,7 @@ impl OfferedRefs {
                     .any(|input| held_of(perception, input) > 0)
             })
             .filter_map(|goal| {
-                let fewest = held_of(perception, &goal.what)
-                    .saturating_add(own_lying(perception, &goal.what))
-                    .saturating_add(MIN_OBJECTIVE_ADVANCE);
+                let fewest = fewest_objective(perception, &goal.what);
                 (fewest <= goal.most).then(|| (goal.what.clone(), fewest, goal.most))
             })
             .collect()
@@ -1795,24 +1836,65 @@ mod tests {
     }
 
     #[test]
+    fn an_objective_asks_past_the_most_one_offered_step_gives() {
+        // The r39 offline audit: "hold 2 oak_planks" beside a held log was met by its paired craft,
+        // and a dig at a bush's most or one stack picked up meets a goal the same way.
+        const STICK: &str = "item.minecraft.stick";
+        let mut bush = seen(ObservationKind::Block, "b1", 2.0, 0.0);
+        bush.yields = Some(vec![loom_contract::BlockYield {
+            least: 0,
+            most: 2,
+            per_hundred: 100,
+            ..yielding(STICK)
+        }]);
+        let far = Observation {
+            target_ref: "b2".to_owned(),
+            distance: 9.0,
+            ..bush.clone()
+        };
+        let stack = Observation {
+            what: STICK.to_owned(),
+            count: Some(3),
+            ..seen(ObservationKind::DroppedItem, "d1", 6.0, 0.0)
+        };
+        let mut perception = scene(vec![bush, far, stack]);
+        // The scene's stick recipe makes four in its one application.
+        assert_eq!(super::one_step(&perception, STICK), 4);
+        perception.self_state.crafting_options.clear();
+        // The stack's three beat the bush in reach's two; the bush out of reach is a walk first.
+        assert_eq!(super::one_step(&perception, STICK), 3);
+        assert_eq!(super::fewest_objective(&perception, STICK), 4);
+        perception.surroundings.truncate(1);
+        assert_eq!(super::fewest_objective(&perception, STICK), 3);
+    }
+
+    #[test]
     fn the_success_items_offered_are_bounded_however_much_the_blocks_yield() {
         let blocks = (0..48)
             .map(|index| {
                 let mut block = seen(ObservationKind::Block, &format!("b{index}"), 1.0, 0.0);
-                // Two blocks of each kind, so each item is one an objective can ask more than one
-                // dig of.
+                // Two blocks of each kind, each giving one of every item a dig, so each item is one
+                // an objective can ask more than one dig of.
                 let kind = index / 2;
                 block.yields = Some(
                     (0..8)
-                        .map(|item| yielding(&format!("item.minecraft.thing_{kind}_{item}")))
+                        .map(|item| loom_contract::BlockYield {
+                            least: 1,
+                            most: 1,
+                            ..yielding(&format!("item.minecraft.thing_{kind}_{item}"))
+                        })
                         .collect(),
                 );
                 block
             })
             .collect();
         let offered = OfferedRefs::of(&scene(blocks));
-        assert_eq!(offered.obtainable.len(), super::MAX_OBTAINABLE_ITEMS);
-        assert_eq!(offered.obtainable[0], "item.minecraft.stick");
-        assert_eq!(offered.obtainable[1], "item.minecraft.thing_0_0");
+        // The scene's one stick recipe gives every stick sight could: a goal one craft meets is no
+        // objective (the r39 offline audit), so it is cut from what is offered, the rest bounded.
+        assert_eq!(offered.obtainable.len(), super::MAX_OBTAINABLE_ITEMS - 1);
+        assert!(!offered
+            .obtainable
+            .contains(&"item.minecraft.stick".to_owned()));
+        assert_eq!(offered.obtainable[0], "item.minecraft.thing_0_0");
     }
 }

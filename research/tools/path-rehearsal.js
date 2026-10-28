@@ -223,6 +223,10 @@ function pathsOf (records, readiness) {
   // A replace of a met goal states that it was completed, and stands.
   const statedReason = body.find((record) => record.event === 'decided' && record.goal?.outcome === 'goalCompletedAdopted' &&
     record.goal?.reason === 'completed')
+  // An abandon states it impossible once nothing held or in sight could make its item, and stands
+  // (alpha's crafting tables, once its last planks were made into them).
+  const statedImpossible = body.find((record) => record.event === 'decided' && record.goal?.outcome === 'goalAbandoned' &&
+    record.goal?.reason === 'impossible')
   // gamma holds an oak pressure plate (D1, r39: reported solid though it has no collision): every
   // perception that lists it reports it not solid, and the dirt its digs gave is.
   const gammaSeen = of('tribe-gamma', 'perceived').map((record) => record.perception?.selfState?.inventorySummary ?? [])
@@ -243,6 +247,7 @@ function pathsOf (records, readiness) {
     trivialGoalRefused: evidence(applied('tribe-iota', 'goalTrivial')),
     metGoalRevisedKeepingItsId: evidence(revisedForMore),
     replaceStatedItsReason: evidence(statedReason),
+    abandonStatedImpossible: evidence(statedImpossible),
     nonCollidingItemNeverSolid: evidence(plateNeverSolid),
     placementSettledAtTheServersAnswer: evidence(settledPromptly),
     shelterAdoptedAsNightNeared: evidence(shelterAdopted),

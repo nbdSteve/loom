@@ -125,7 +125,7 @@ class GoalLedger(
             val progress = progressOf(summary, observed, now, step, stepsWithoutProgress) ?: earlier
             val shown = summary.copy(progress = progress)
             val settled = summary.lastStep != null && progress != null
-            val bests = if (summary.shelter) bestByCell.passedAt(now) else bestByCell
+            val bests = if (summary.shelter) bestByCell.passedAt(now, displaced(summary, observed, now)) else bestByCell
             return shown to if (settled) copy(summary = shown, measured = true, bestByCell = bests) else this
         }
 
@@ -683,12 +683,18 @@ private fun acceptedTag(
 
 /**
  * These bests with the cover [now] read recorded at the cell it was read at, kept to the
- * [MAX_GOAL_CELLS] most recent cells.
+ * [MAX_GOAL_CELLS] most recent cells. A cell the agent was [displaced] into starts at the most
+ * enclosed the goal has been anywhere, so cover lost to a flight and rebuilt where it landed is no
+ * step (the r39 offline audit).
  */
-private fun Map<List<Int>, CoverRank>.passedAt(now: GoalObservation?): Map<List<Int>, CoverRank> {
+private fun Map<List<Int>, CoverRank>.passedAt(
+    now: GoalObservation?,
+    displaced: Boolean = false,
+): Map<List<Int>, CoverRank> {
     val rank = now?.cover?.rank ?: return this
     val cell = now.cell
-    val passed = listOfNotNull(this[cell], rank).max()
+    val floor = values.maxOrNull().takeIf { displaced && cell !in this }
+    val passed = listOfNotNull(this[cell], rank, floor).max()
     return (this - setOf(cell) + (cell to passed)).entries.toList().takeLast(MAX_GOAL_CELLS).associate { it.toPair() }
 }
 

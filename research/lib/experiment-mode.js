@@ -151,7 +151,9 @@ const ROUTINE_V34_REACHED_SOURCE_MODE = 'routine-v34-reached-source'
 // agent is told of no hunter; and a refused goal step owes a review (gate generation 19).
 const ROUTINE_V35_SHELTER_GOAL_MODE = 'routine-v35-shelter-goal'
 // v36 keeps v35 and answers the r39 audit: an objective asks at least two more than is held and
-// lying as the agent's own, so no goal one step meets is offered; more of the held goal's own item
+// lying as the agent's own, and more than one craft, dig or collect could give, so no goal one step
+// meets is offered; an idle or rest at a review beside the edge of sight is refused as the schema
+// withholds it; the newest decision is dated by when it was asked; more of the held goal's own item
 // is a revise, which keeps the goal, and never a replace; every replace and abandon states why its
 // goal ends - completed, impossible, unsafe, stale or superseded - and only a reason its evidence
 // supports is offered or accepted; a shelter is one objective, its closer gathered as a step of its
