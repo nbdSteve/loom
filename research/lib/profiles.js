@@ -359,6 +359,12 @@ PROFILES['shelter-goal-10m-10'] = Object.freeze({
     shelterProgressAgentsBeforeNight: 3
   })
 })
+// The shelter-goal profile's scene, bounds, exposure, plan and every bar unchanged - progressing
+// held time at least 0.50 and every agent's at least 0.25, three substantive completions and
+// multi-step agents, and the shelter bar - under a name of its own, so r39's committed evidence
+// keeps the profile it ran (the r39 audit: every structural bar met, held time missed with goals
+// that never stayed held), measured by gate generation 20.
+PROFILES['held-objective-10m-10'] = Object.freeze({ ...PROFILES['shelter-goal-10m-10'] })
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

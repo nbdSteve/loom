@@ -107,8 +107,9 @@ class R15GoalAuditReplayTest {
     @Test
     fun `a step is measured once, so a review that took no new step neither re-credits nor recounts it`() {
         // kappa body:00000248 dug and dropped a stick; body:00000253 answered with no choice, and
-        // body:00000291 credited body:00000248's drop a second time.
-        review("kappa-248", Scene(inventory = mapOf(STICK to 4L)), sticks(GoalDisposition.ADOPT, 5), dig)
+        // body:00000291 credited body:00000248's drop a second time. Its goal of five is replayed at
+        // six, two past the four it held (routine-v36).
+        review("kappa-248", Scene(inventory = mapOf(STICK to 4L)), sticks(GoalDisposition.ADOPT, 6), dig)
         val scene = Scene(inventory = mapOf(STICK to 4L), dropped = setOf("kappa-248"))
         val (first, measured) = review("kappa-253", scene, null, Intent.Idle)
         assertEquals(StepEvidence.DROPPED, first?.progress?.stepEvidence)
@@ -126,7 +127,7 @@ class R15GoalAuditReplayTest {
     @Test
     fun `a decision that acts while ignoring the goal it holds is refused`() {
         // kappa body:00000253: a null goal choice beside a dig, which was never measured.
-        review("kappa-248", Scene(inventory = mapOf(STICK to 4L)), sticks(GoalDisposition.ADOPT, 5), dig)
+        review("kappa-248", Scene(inventory = mapOf(STICK to 4L)), sticks(GoalDisposition.ADOPT, 6), dig)
         val (_, refused) = review("kappa-253", Scene(inventory = mapOf(STICK to 4L)), null, dig)
         assertEquals(GoalEvidence.CHOICE_MISSING, refused?.outcome)
         assertTrue(GoalEvidence.CHOICE_MISSING in GoalEvidence.REFUSING)
@@ -176,16 +177,17 @@ class R15GoalAuditReplayTest {
 
     @Test
     fun `a goal's wording is its typed total, so the two cannot disagree`() {
-        // epsilon body:00000184 revised to three while its statement still said eight sticks.
+        // epsilon body:00000184 revised to three while its statement still said eight sticks;
+        // replayed at four, two past the two it held, since routine-v36 asks no less.
         review(
             "epsilon-120",
             Scene(inventory = mapOf(STICK to 1L), capacity = mapOf(STICK to 8L)),
             sticks(GoalDisposition.ADOPT, 8),
             dig,
         )
-        review("epsilon-184", Scene(inventory = mapOf(STICK to 2L)), sticks(GoalDisposition.REVISE, 3), dig)
+        review("epsilon-184", Scene(inventory = mapOf(STICK to 2L)), sticks(GoalDisposition.REVISE, 4), dig)
         val held = ledger.present(AgentId("epsilon"), "epsilon-231", 231, null)
-        assertEquals("hold 3 item.minecraft.stick", held?.statement)
+        assertEquals("hold 4 item.minecraft.stick", held?.statement)
     }
 
     @Test

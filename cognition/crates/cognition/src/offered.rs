@@ -148,6 +148,10 @@ pub const SHELTER_LEAD_TICKS: i64 = 3_000;
 /// The most sites of natural cover a shelter step may walk onto, the most enclosed first.
 pub const MAX_SHELTER_SITES: usize = 4;
 
+/// How many more than it holds and its own drops of the item lying an item objective must ask: a
+/// goal one step could meet is no objective. `MIN_OBJECTIVE_ADVANCE` in the JVM's `HeldObjectives.kt`.
+pub const MIN_OBJECTIVE_ADVANCE: i64 = 2;
+
 /// Where a perception stands with shelter, read from the server's ground: how enclosed the agent
 /// stands and the one-shot steps a shelter goal may take now (r36: all ten agents died at night in
 /// the open). Mirrors the JVM's `CoverObservation`.
@@ -171,9 +175,9 @@ pub struct ShelterOffer {
     pub sites: Vec<String>,
     /// Items sight can give now that place as a solid block.
     pub block_items: Vec<String>,
-    /// For each of [`Self::block_items`], the fewest and most a resource subgoal of it may ask:
-    /// one more than is held, up to what is held plus what sight can be counted on to give.
-    pub feed_bounds: Vec<(String, i64, i64)>,
+    /// For a cover nothing held can close, the blocks and drops whose gathering is a shelter step:
+    /// those of the cover's own that this perception offers to dig or collect.
+    pub gathers: Vec<String>,
 }
 
 /// How an agent stands, by its cover reading.
@@ -246,17 +250,18 @@ impl ShelterOffer {
                 .collect(),
             sites: sites_of(perception, closed),
             block_items: cover.block_items.clone(),
-            feed_bounds: Vec::new(),
+            gathers: cover.gathers.clone(),
         }
     }
 
     /// Whether any shelter step is offered now: a descent, a closing with a solid stack in hand or
-    /// the equip that puts one there, or a site.
+    /// the equip that puts one there, a site, or the gathering of a closer.
     #[must_use]
     pub fn stepped(&self) -> bool {
         self.descend.is_some()
             || (!self.closings.is_empty() && !self.solid.is_empty())
             || !self.sites.is_empty()
+            || !self.gathers.is_empty()
     }
 
     /// The solid stacks an equip may put in the main hand, so a closing can be placed: every one,
@@ -276,21 +281,14 @@ impl ShelterOffer {
         self.standing != Standing::Unread && self.night_near && !self.sealed() && self.stepped()
     }
 
-    /// Whether a held shelter goal may adopt a resource subgoal: faces to close, nothing solid to
-    /// close them with, and a solid-block item sight can give.
-    #[must_use]
-    pub fn feedable(&self) -> bool {
-        !self.sealed()
-            && !self.closings.is_empty()
-            && self.solid.is_empty()
-            && !self.block_items.is_empty()
-    }
-
     /// Whether `intent` is a shelter step this perception offers.
     #[must_use]
     pub fn steps(&self, intent: &Intent) -> bool {
         match intent {
-            Intent::Dig { block } => self.descend.as_deref() == Some(block.as_str()),
+            Intent::Dig { block } => {
+                self.descend.as_deref() == Some(block.as_str()) || self.gathers.contains(block)
+            }
+            Intent::Collect { item, .. } => self.gathers.contains(item),
             Intent::Place { block, item, face } => {
                 self.closings
                     .iter()
@@ -446,7 +444,7 @@ pub struct OfferedRefs {
     /// met, or replaced by a new goal in the same answer.
     pub stalled: bool,
     /// For each item a success condition may name now, the fewest and most of it the count may
-    /// ask: one more than is held, and what is held plus [`Self::capacity`], never above
+    /// ask: two beyond what is held and lying, and what is held plus [`Self::capacity`], never above
     /// [`MAX_SUCCESS_COUNT`]. A count is the total to hold, counting what is held already.
     pub count_bounds: Vec<(String, i64, i64)>,
     /// While a goal is held, the horizon recipe goals made from what the agent already holds that
@@ -682,6 +680,18 @@ fn goal_total(perception: &Perception, item: &str) -> Option<i64> {
         .flatten()
 }
 
+/// How many of `item` the agent's own drops have lying, wherever they lie.
+#[must_use]
+pub fn own_lying(perception: &Perception, item: &str) -> i64 {
+    perception
+        .self_state
+        .own_drops
+        .iter()
+        .filter(|drop| drop.fate == DropFate::Lying && drop.what == item)
+        .map(|drop| drop.count)
+        .sum()
+}
+
 /// How many of `item` the agent's whole inventory holds, as the body counts a success condition.
 #[must_use]
 pub fn held_of(perception: &Perception, item: &str) -> i64 {
@@ -861,7 +871,7 @@ impl OfferedRefs {
                     .clamp(1, loom_contract::MAX_CRAFTS_PER_INTENT),
             ));
         }
-        offered.shelter = ShelterOffer::of(perception);
+        offered.shelter = offered.shelter_of(perception);
         offered.survival(perception);
         let totals = totals_of(perception, sources);
         // What sight can be counted on for is the expected yield, whole items only: a block's best
@@ -883,7 +893,6 @@ impl OfferedRefs {
             .take(MAX_OBTAINABLE_ITEMS)
             .collect();
         offered.count_bounds = offered.count_bounds_for(perception);
-        offered.shelter.feed_bounds = offered.feed_bounds_for(perception);
         offered.switch_bounds = offered.switch_bounds_for(perception);
         offered.obtainable = offered
             .count_bounds
@@ -916,12 +925,7 @@ impl OfferedRefs {
                 .any(|(given, what)| given == handle && *what == item)
         };
         let mut items: Vec<&String> = self.pursued.iter().collect();
-        for (item, ..) in self
-            .count_bounds
-            .iter()
-            .chain(&self.switch_bounds)
-            .chain(&self.shelter.feed_bounds)
-        {
+        for (item, ..) in self.count_bounds.iter().chain(&self.switch_bounds) {
             if !items.contains(&item) {
                 items.push(item);
             }
@@ -1046,10 +1050,22 @@ impl OfferedRefs {
             .collect()
     }
 
+    /// The shelter the cover reading offers, its gathering steps narrowed to those this perception
+    /// offers: a dig that leaves a way out, or a collect.
+    fn shelter_of(&self, perception: &Perception) -> ShelterOffer {
+        let mut shelter = ShelterOffer::of(perception);
+        shelter.gathers.retain(|handle| {
+            self.dig_blocks.contains(handle)
+                || self.pickup_items.contains(handle)
+                || self.route_items.contains(handle)
+        });
+        shelter
+    }
+
     /// For each item [`Self::capacity`] or the perception's horizon names, the fewest and most a
-    /// success count may ask now: one more than is held, up to what is held plus capacity or the
-    /// horizon's most, whichever is more. While cells at the edge of sight are offered, an item no
-    /// horizon goal is grounded in or made from is not offered at all.
+    /// success count may ask now: two beyond what is held and lying, up to what is held plus
+    /// capacity or the horizon's most, whichever is more. While cells at the edge of sight are
+    /// offered, an item no horizon goal is grounded in or made from is not offered at all.
     fn count_bounds_for(&self, perception: &Perception) -> Vec<(String, i64, i64)> {
         let horizon_most = |item: &str| {
             perception
@@ -1083,7 +1099,12 @@ impl OfferedRefs {
                 {
                     return None;
                 }
-                let fewest = held.saturating_add(1);
+                // An objective asks more than one step could give: two beyond what is held and the
+                // agent's own drops of it lying (r39: alpha replaced "hold 9 dirt" by "hold 10 dirt"
+                // at every step, and no held time ever counted).
+                let fewest = held
+                    .saturating_add(own_lying(perception, item))
+                    .saturating_add(MIN_OBJECTIVE_ADVANCE);
                 let most = held
                     .saturating_add(*capacity)
                     .max(horizon_most(item))
@@ -1091,27 +1112,6 @@ impl OfferedRefs {
                 (fewest <= most).then(|| (item.clone(), fewest, most))
             })
             .take(MAX_OBTAINABLE_ITEMS)
-            .collect()
-    }
-
-    /// The counts a resource subgoal of each solid-block item may ask, while a held shelter goal
-    /// can be fed: a block that closes a shelter is the shelter's, never a goal that crowds out
-    /// looking further.
-    fn feed_bounds_for(&self, perception: &Perception) -> Vec<(String, i64, i64)> {
-        if self.sheltering != Sheltering::Held || !self.shelter.feedable() {
-            return Vec::new();
-        }
-        self.shelter
-            .block_items
-            .iter()
-            .filter_map(|item| {
-                let held = held_of(perception, item);
-                let fewest = held.saturating_add(1);
-                let most = held
-                    .saturating_add(self.capacity_of(item))
-                    .min(MAX_SUCCESS_COUNT);
-                (fewest <= most).then(|| (item.clone(), fewest, most))
-            })
             .collect()
     }
 
@@ -1136,7 +1136,9 @@ impl OfferedRefs {
                     .any(|input| held_of(perception, input) > 0)
             })
             .filter_map(|goal| {
-                let fewest = held_of(perception, &goal.what).saturating_add(1);
+                let fewest = held_of(perception, &goal.what)
+                    .saturating_add(own_lying(perception, &goal.what))
+                    .saturating_add(MIN_OBJECTIVE_ADVANCE);
                 (fewest <= goal.most).then(|| (goal.what.clone(), fewest, goal.most))
             })
             .collect()
@@ -1779,11 +1781,9 @@ mod tests {
         named.what = "block.minecraft.dead_bush".to_owned();
         let offered = OfferedRefs::of(&scene(vec![bush, hidden, drop, named]));
         // Craftable first, then what the surroundings would give; a held item alone, a hidden
-        // block and a block name never.
-        assert_eq!(
-            offered.obtainable,
-            handles(&["item.minecraft.stick", "item.minecraft.wheat_seeds"])
-        );
+        // block and a block name never, and nothing one collect could meet: the one seed lying
+        // is no objective (r39: alpha and kappa held goals every step completed).
+        assert_eq!(offered.obtainable, handles(&["item.minecraft.stick"]));
         // The recipe's four sticks and the bush's expected one; its two are only the best case
         // (r16: goals sized to every bush's most failed three times of four).
         assert_eq!(offered.capacity_of("item.minecraft.stick"), 5);
@@ -1799,9 +1799,12 @@ mod tests {
         let blocks = (0..48)
             .map(|index| {
                 let mut block = seen(ObservationKind::Block, &format!("b{index}"), 1.0, 0.0);
+                // Two blocks of each kind, so each item is one an objective can ask more than one
+                // dig of.
+                let kind = index / 2;
                 block.yields = Some(
                     (0..8)
-                        .map(|item| yielding(&format!("item.minecraft.thing_{index}_{item}")))
+                        .map(|item| yielding(&format!("item.minecraft.thing_{kind}_{item}")))
                         .collect(),
                 );
                 block

@@ -131,10 +131,10 @@ class R16GoalAuditReplayTest {
         // body:00000240 walked onto terracotta with four bushes in sight).
         val terracotta = mapOf("b00" to emptySet<String>(), "b01" to emptySet(), "bush" to setOf(STICK))
         val start = Scene(inventory = mapOf(STICK to 2L), gives = terracotta, at = listOf(8.97, 100.0, 7.01))
-        val (_, refused) = review("delta-178", start, sticks(GoalDisposition.ADOPT, 3), Intent.MoveTo("b00"))
+        val (_, refused) = review("delta-178", start, sticks(GoalDisposition.ADOPT, 4), Intent.MoveTo("b00"))
         assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, refused?.outcome)
         // A walk onto the bush out of dig reach, somewhere new, is the arrival.
-        review("delta-184", start, sticks(GoalDisposition.ADOPT, 3), Intent.MoveTo("bush"))
+        review("delta-184", start, sticks(GoalDisposition.ADOPT, 4), Intent.MoveTo("bush"))
         val (bush, _) =
             review(
                 "delta-239",
@@ -145,7 +145,7 @@ class R16GoalAuditReplayTest {
         assertEquals(StepEvidence.ARRIVED, bush?.progress?.stepEvidence)
         // r18: all seven arrivals were onto bushes already in dig reach; such a walk is none.
         val near = start.copy(inReach = setOf("bush"))
-        review("theta-504", near, sticks(GoalDisposition.ADOPT, 3), Intent.MoveTo("bush"))
+        review("theta-504", near, sticks(GoalDisposition.ADOPT, 4), Intent.MoveTo("bush"))
         val (walked, _) =
             review(
                 "theta-512",
@@ -160,7 +160,8 @@ class R16GoalAuditReplayTest {
     @Test
     fun `a goal sized to a bush's best case is beyond what sight can be counted on to give`() {
         // beta body:00000228: three sticks held and one bush of nought to two in sight; a goal of
-        // five needed two maximum rolls and failed.
+        // five needed two maximum rolls and failed. Replayed beside a second such bush, since from
+        // routine-v36 the one stick one bush gives is no objective: six needs best cases, five not.
         val bush =
             Observation(
                 kind = ObservationKind.BLOCK,
@@ -177,7 +178,7 @@ class R16GoalAuditReplayTest {
         val seen =
             perception().let {
                 it.copy(
-                    surroundings = listOf(bush),
+                    surroundings = listOf(bush, bush.copy(ref = "b2", direction = Bearing.SOUTH)),
                     selfState =
                         it.selfState.copy(
                             inventorySummary = listOf(dev.loom.contract.InventoryStack("i1", STICK, 3)),
@@ -189,19 +190,19 @@ class R16GoalAuditReplayTest {
                 )
             }
         val observed = GoalObservation.of(seen)
-        assertEquals(mapOf(STICK to 1L), observed.capacity)
+        assertEquals(mapOf(STICK to 2L), observed.capacity)
         val beta = AgentId("beta")
         ledger.present(beta, "beta-228", 228, observed)
         val decision = decisionFor(perception(requestId = "beta-228", agentId = "beta"), Intent.Dig("b1"))
-        val five = ledger.resolve(beta, decision.copy(goal = sticks(GoalDisposition.ADOPT, 5)))
-        assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, five?.outcome)
+        val six = ledger.resolve(beta, decision.copy(goal = sticks(GoalDisposition.ADOPT, 6)))
+        assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, six?.outcome)
         ledger.present(beta, "beta-229", 229, observed)
-        val four =
+        val five =
             ledger.resolve(
                 beta,
-                decision.copy(requestId = "beta-229", goal = sticks(GoalDisposition.ADOPT, 4)),
+                decision.copy(requestId = "beta-229", goal = sticks(GoalDisposition.ADOPT, 5)),
             )
-        assertEquals(GoalEvidence.ADOPTED, four?.outcome)
+        assertEquals(GoalEvidence.ADOPTED, five?.outcome)
     }
 
     private companion object {

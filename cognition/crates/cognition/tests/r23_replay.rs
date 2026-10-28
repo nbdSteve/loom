@@ -82,6 +82,7 @@ fn eta_holding_two_logs_at_body_1532_may_switch_its_sapling_goal_into_planks() {
         "successItem": "item.minecraft.oak_planks",
         "successCount": 8,
         "stepResult": "noProgress",
+        "reason": "superseded",
     });
     assert!(valid(&schema, &craft, &switch));
 }

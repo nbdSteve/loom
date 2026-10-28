@@ -78,12 +78,13 @@ class R14GoalAuditReplayTest {
             val (_, refused) = review(review, holding, sticks(GoalDisposition.ADOPT, 1), intent)
             assertEquals(GoalEvidence.ALREADY_MET, refused?.outcome, review)
         }
-        // eta's idle step is refused on its own too, for a goal not yet met.
+        // eta's idle step is refused on its own too, for a goal not yet met, at the two sticks an
+        // objective asks from routine-v36.
         val (_, idled) =
             review(
                 "eta-198",
                 Scene(capacity = mapOf(STICK to 2L)),
-                sticks(GoalDisposition.ADOPT, 1),
+                sticks(GoalDisposition.ADOPT, 2),
                 Intent.Idle,
             )
         assertEquals(GoalEvidence.STEP_IDLE, idled?.outcome)
@@ -105,8 +106,9 @@ class R14GoalAuditReplayTest {
             """{"disposition":"adopt","statement":"collect","successItem":"item.minecraft.stick",""" +
                 """"successCount":2,"step":"walk","stepAction":"moveTo","stepRef":"d4a"}"""
         assertThrows(SerializationException::class.java) { LoomJson.decodeFromString(GoalChoice.serializer(), claimed) }
-        val dropInSight = Scene(inventory = mapOf(STICK to 1L), capacity = mapOf(STICK to 1L))
-        review("gamma-164", dropInSight, sticks(GoalDisposition.ADOPT, 2), Intent.MoveTo("b9ur"))
+        // Its goal is replayed at three, two past the stick it held (routine-v36).
+        val dropInSight = Scene(inventory = mapOf(STICK to 1L), capacity = mapOf(STICK to 2L))
+        review("gamma-164", dropInSight, sticks(GoalDisposition.ADOPT, 3), Intent.MoveTo("b9ur"))
         val (held, _) = review("gamma-200", dropInSight, null, Intent.Collect("d7o", approach = true))
         assertEquals(IntentAction.MOVE_TO, held?.stepAction)
         assertEquals("b9ur", held?.stepRef)
@@ -116,7 +118,7 @@ class R14GoalAuditReplayTest {
     fun `a dig is credited for its own server drop and never for another agent's`() {
         // delta body:00000033 dug bkv, which dropped nothing; body:00000107 saw beta's two sticks
         // (d6, from beta's dig at body:00000105) 17.8 blocks off and was credited as dropped.
-        review("delta-33", Scene(capacity = mapOf(STICK to 2L)), sticks(GoalDisposition.ADOPT, 1), Intent.Dig("bkv"))
+        review("delta-33", Scene(capacity = mapOf(STICK to 2L)), sticks(GoalDisposition.ADOPT, 2), Intent.Dig("bkv"))
         val (others, _) =
             review(
                 "delta-107",
@@ -138,7 +140,7 @@ class R14GoalAuditReplayTest {
         assertEquals(StepEvidence.GAINED, collected?.progress?.stepEvidence)
         // beta body:00000103 dug b4v5, and the server dropped two sticks for it that delta took
         // before beta's next review at body:00000150; told of its own drop, beta's dig yielded.
-        review("beta-28", Scene(capacity = mapOf(STICK to 2L)), sticks(GoalDisposition.ADOPT, 1), Intent.Dig("bdr"))
+        review("beta-28", Scene(capacity = mapOf(STICK to 2L)), sticks(GoalDisposition.ADOPT, 2), Intent.Dig("bdr"))
         review(
             "beta-103",
             Scene(capacity = mapOf(STICK to 2L)),

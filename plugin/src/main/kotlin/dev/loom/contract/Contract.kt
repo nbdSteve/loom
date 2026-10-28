@@ -216,6 +216,9 @@ const val MAX_COVER_FACES: Int = 9
 /** Most solid-block items a cover reading names as obtainable now. */
 const val MAX_COVER_BLOCK_ITEMS: Int = 8
 
+/** The most refs a cover may name to gather a closer from. */
+const val MAX_COVER_GATHERS: Int = 8
+
 /** One placement that would close an open face of the agent's cover. */
 @Serializable
 data class Closing(
@@ -246,8 +249,12 @@ data class Cover(
     val descend: String? = null,
     /** Items sight can give now that place as a solid block. */
     val blockItems: List<String>,
+    /** For a shelter nothing held can close, the blocks and drops whose gathering is its step. */
+    val gathers: List<String> = emptyList(),
 ) {
     init {
+        require(gathers.size <= MAX_COVER_GATHERS) { "a cover gathers from at most $MAX_COVER_GATHERS refs" }
+        gathers.forEach(::requireBoundedRef)
         require(open.size <= MAX_COVER_FACES && open.distinct().size == open.size) {
             "a cover names each of its nine faces at most once"
         }
@@ -1276,6 +1283,30 @@ enum class GoalStepResult {
     NO_PROGRESS,
 }
 
+/** Why a replace or an abandon ends the held goal. */
+@Serializable
+enum class GoalReason {
+    /** The success condition is met; a replace only. */
+    @SerialName("completed")
+    COMPLETED,
+
+    /** What is held and could be given no longer reaches it, or no shelter step exists. */
+    @SerialName("impossible")
+    IMPOSSIBLE,
+
+    /** A shelter goal replaces another as night nears and the agent stands exposed. */
+    @SerialName("unsafe")
+    UNSAFE,
+
+    /** It advanced nothing for the stall bound's steps in a row. */
+    @SerialName("stale")
+    STALE,
+
+    /** A replace by a different objective, chosen deliberately. */
+    @SerialName("superseded")
+    SUPERSEDED,
+}
+
 /** What a decision does with the agent's short-term goal. */
 @Serializable
 enum class GoalDisposition {
@@ -1327,6 +1358,8 @@ data class GoalChoice(
     val shelter: Boolean? = null,
     /** For an adopt while a shelter goal is held: a resource subgoal that feeds it. Present only as `true`. */
     val feeds: Boolean? = null,
+    /** Why a replace or an abandon ends the held goal, which the body checks against its evidence. */
+    val reason: GoalReason? = null,
 ) {
     init {
         requireTypedSuccess(successItem, successCount)

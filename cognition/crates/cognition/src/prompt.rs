@@ -39,13 +39,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v35";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v36";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v35";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v36";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v35";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v36";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -182,19 +182,21 @@ why, once. Judge it against that evidence, not against a wish to look busy:
 - adopt: take up a new goal when you hold none and the evidence gives you one worth having. Name \
 the item and the total of it you must hold; your action is the step, which your body words. The \
 total must be more than you hold and no more than you hold plus what sight can be counted on to \
-give you, as you are told; only items something in sight could give are offered. A one-more goal \
-ends at its first pickup; where sight can give several, a total of several makes it a plan of \
-several steps. Holding no goal is a legitimate state. With none held you may make no goal choice.
+give you, as you are told; only items something in sight could give are offered. A goal one \
+step could meet is not offered: ask two or more beyond what you hold and your own drops of it \
+lying. Holding no goal is a legitimate state. With none held you may make no goal choice.
 - continue: keep the held goal, judge the previous step, and take its next step with this \
 answer's action. The step is one toward a source of its item, collecting your own drop of it \
 first; while what you hold plus what is in sight could not meet all of it, the step may instead be a \
 walk to the edge of sight to look for more, which advances the goal only when it brings a source \
 into sight.
 - revise: change the held goal's total, never its item, and its step, when the evidence showed \
-the old target will not work, and judge the previous step. Revising keeps the count of steps \
-that advanced nothing.
-- replace: drop the held goal and take up a new one in the same answer - name the new item and \
-total, take its step with this answer's action, and judge the previous step. Once the held goal \
+the old target will not work, or for more of the same item once met, and judge the previous \
+step. A revise keeps the goal, so more of the same item is never a replace. Revising keeps the \
+count of steps that advanced nothing.
+- replace: drop the held goal and take up one for a different item in the same answer - name \
+it and its total, take its step with this answer's action, judge the previous step, and state \
+why the held goal ends. Once the held goal \
 has advanced nothing for three steps in a row, replace with a goal for a different item is the \
 only way to keep acting toward a goal, and an item made from the stalled one is not offered, \
 because it needs the same source first; a replace made from an unmet goal's item keeps its count \
@@ -202,8 +204,9 @@ of steps that advanced nothing. When the held goal's condition is met, replace c
 it and adopts the next in one answer, so finishing one goal need not cost a review.
 - complete: drop the held goal because your body shows its success condition met, when nothing \
 in sight gives a next goal; while something does, replace it with the next goal instead.
-- abandon: drop the held goal because sight can no longer meet it and looking further has not \
-found a source. A goal sight can still meet is pursued, not abandoned.
+- abandon: drop the held goal, stating why, because sight can no longer meet it and looking \
+further has not found a source, or it stalled. A goal sight can still meet is pursued, not \
+abandoned.
 While you hold a goal every answer must say what it does with it, and your action is the goal's \
 step. Each goal item is offered only its own steps: digging a block in reach that can drop it, \
 collecting a drop of it, crafting it, or walking onto a block out of dig reach that can drop it. \
@@ -250,11 +253,10 @@ drops you into more enclosed ground - three digs down on open grass leave one si
 your head, closable from inside - placing a solid block you hold against a named support so it \
 closes an open side, equipping a solid block into your main hand first when none is there, or \
 walking onto a block whose cell is more enclosed than yours, which is natural cover. A step \
-counts only when the ground then shows you more enclosed than the shelter goal had yet been, so \
-moving away and back counts nothing. When sides are left to close and you hold nothing solid, \
-you may adopt a resource subgoal that feeds the shelter goal: a goal for a solid block sight can \
-give, such as dirt from a dig; the shelter goal waits under it and is held again once you \
-complete or abandon the subgoal, with that answer's action as the shelter's next step. Once \
+counts only when the ground then shows you more enclosed than the shelter goal had yet been where \
+you stand, so moving away and back counts nothing. When sides are left to close and you hold \
+nothing solid, digging a block that drops a solid block, never a side of your shelter or the block \
+under you, or collecting one lying near, is a step of the shelter goal itself. Once \
 sealed in, complete the shelter goal and stay: rest is a fine answer then, and creatures outside \
 are not news. In a pit you cannot walk out of, no flight is offered; closing it is your defence.";
 
@@ -630,7 +632,17 @@ fn refusal_line(refusal: &GoalRefusal) -> String {
             "it set a shelter goal where none was offered: night was not near, you were already sealed in, or your cover offered no step"
         }
         "goalFeedsNotOffered" => {
-            "it adopted a resource subgoal where none could feed a shelter: no shelter goal held, no side to close, a solid block already held, or an item that places no solid block"
+            "it adopted a resource subgoal under a shelter, which is no goal of its own: gather a closer as a step of the shelter goal instead"
+        }
+        "goalTrivial" => {
+            "its total was one step's worth: ask at least two more than you hold and your own drops of it lying"
+        }
+        "goalReplaceSameItem" => {
+            "it replaced the goal with more of its own item, which is a new goal for nothing new: revise it instead"
+        }
+        "goalReasonMissing" => "it ended the held goal without saying why",
+        "goalReasonUnsupported" => {
+            "the reason it gave for ending the held goal was not true of what your body measured"
         }
         "goalSubgoalReplaced" => {
             "it replaced a resource subgoal, which would drop the shelter goal it feeds: complete or abandon it instead"
@@ -1025,18 +1037,18 @@ fn capacity_line(perception: &Perception) -> String {
     }
     if offered.stalled {
         lines.push(
-            "Your goal advanced nothing for three steps in a row: replace it with a goal for a different item in this answer, whose step is your action, or abandon it."
+            "Your goal advanced nothing for three steps in a row: replace it as stale with a goal for a different item in this answer, whose step is your action, or abandon it as stale."
                 .to_owned(),
         );
     }
     if offered.explore_continue() && offered.discovering() {
         lines.push(
-            "Continue your discovery goal by walking to a cell at the edge of sight you have not looked from, or abandon it."
+            "Continue your discovery goal by walking to a cell at the edge of sight you have not looked from."
                 .to_owned(),
         );
     } else if offered.explore_continue() {
         lines.push(
-            "Nothing in sight can give the rest of your goal's item: continue the goal by walking to the edge of sight to look for a source, or abandon it."
+            "Nothing in sight can give the rest of your goal's item: continue the goal by walking to the edge of sight to look for a source, or abandon it as impossible."
                 .to_owned(),
         );
     }
@@ -2142,6 +2154,27 @@ mod tests {
         assert!(system.contains("Holding no goal is a legitimate state."));
         assert!(system.contains("not against a wish to look busy"));
         assert!(system.contains("idle is correct only when nowhere is offered to look"));
+    }
+
+    #[test]
+    fn the_brief_holds_one_objective_across_its_steps_and_ends_it_only_for_a_stated_reason() {
+        // r39: alpha and kappa replaced a met dirt goal by the same item one higher at every step,
+        // gamma abandoned shelters while taking their own steps, and alpha's dirt subgoal dug its
+        // own shelter's wall.
+        let seen = goal_review_holding(None);
+        let system = render(&router().route(seen.importance), &seen).system;
+        for rule in [
+            "A goal one step could meet is not offered",
+            "more of the same item is never a replace",
+            "state why the held goal ends",
+            "- abandon: drop the held goal, stating why",
+            "is a step of the shelter goal itself",
+        ] {
+            assert!(system.contains(rule), "missing {rule:?}");
+        }
+        for retired in ["resource subgoal", "A one-more goal"] {
+            assert!(!system.contains(retired), "still says {retired:?}");
+        }
     }
 
     #[test]

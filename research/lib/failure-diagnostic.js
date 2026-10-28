@@ -50,7 +50,8 @@ const MODES = new Set([
   'routine-v32-survival-discovery',
   'routine-v33-sighted-exposure',
   'routine-v34-reached-source',
-  'routine-v35-shelter-goal'
+  'routine-v35-shelter-goal',
+  'routine-v36-held-objective'
 ])
 const MAX_INPUT_LINE_BYTES = 256 * 1024
 const BODY_EVENTS = new Set([

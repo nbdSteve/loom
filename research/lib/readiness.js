@@ -139,6 +139,19 @@ const EXPOSURE_READINESS_VERSION = 'loom-readiness-gate/18'
 // step credited `covered` before nightfall - and, reported, completions, cover quality, time
 // sheltered through the night, damage taken while sealed in, and who survived to the exposure's end.
 const SHELTER_READINESS_VERSION = 'loom-readiness-gate/19'
+// Gate generation 20 (the r39 audit): every structural bar was met and progressing held time was
+// missed by a wide margin with goals that never stayed held - alpha and kappa replaced a met dirt
+// goal by the same item one higher at every step, gamma abandoned shelter goals while taking their
+// own steps, and a one-block placement held iota's body under skeleton fire until it died, so three
+// later placements were refused as `controlNotReady` and read as concurrent races. Every metric,
+// denominator and bar of 19 is kept. From 20 a goal one step meets, a replace by the held goal's
+// own item, and an end stated without a reason or with one its evidence does not support are goal
+// incoherence; a `controlNotReady` refusal while the agent's own earlier request still ran is the
+// `dangerOverlap` blocker for any action, not only a flight, and one behind the agent's own newer
+// request is `superseded`; and a placement refused `placeDestinationBlocked` at a closing its
+// perception's cover offered is a `targetRace`, since a body moved into the cell after the
+// perception, where any other is inapplicable as before.
+const HELD_OBJECTIVE_READINESS_VERSION = 'loom-readiness-gate/20'
 // From generation 18, the approach endings judged as a walk's or flight's own.
 const APPROACH_MOVEMENT_TAGS = new Set(['collectStalled', 'collectOverTravelled', 'attackStalled', 'attackOverTravelled'])
 // From generation 18, a collect's no-route the server's ground did not verify.
@@ -163,6 +176,11 @@ const SURVIVAL_GOAL_INCOHERENT_TAGS = new Set([...DISCOVERY_GOAL_INCOHERENT_TAGS
 // shelter, and a subgoal replaced from under the shelter it fed.
 const SHELTER_GOAL_INCOHERENT_TAGS = new Set([
   ...SURVIVAL_GOAL_INCOHERENT_TAGS, 'goalShelterNotOffered', 'goalFeedsNotOffered', 'goalSubgoalReplaced'
+])
+// From generation 20, an objective one step meets, a replace by the held goal's own item, and an
+// end stated without a reason or with one its evidence does not support.
+const HELD_OBJECTIVE_GOAL_INCOHERENT_TAGS = new Set([
+  ...SHELTER_GOAL_INCOHERENT_TAGS, 'goalTrivial', 'goalReplaceSameItem', 'goalReasonMissing', 'goalReasonUnsupported'
 ])
 // The generation-13 bars that cannot fail a run that pursued anything at all: from generation 14
 // they are measured and reported, and no verdict rests on them.
@@ -189,6 +207,7 @@ const COMPLETING_OUTCOMES = new Set(['goalCompleted', 'goalCompletedAdopted'])
 
 /** The goal ledger refusals gate [generation] counts as incoherent decisions. */
 function goalIncoherentTagsOf (generation) {
+  if (generation >= 20) return HELD_OBJECTIVE_GOAL_INCOHERENT_TAGS
   if (generation >= 19) return SHELTER_GOAL_INCOHERENT_TAGS
   if (generation >= 15) return SURVIVAL_GOAL_INCOHERENT_TAGS
   if (generation >= 14) return DISCOVERY_GOAL_INCOHERENT_TAGS
@@ -424,6 +443,57 @@ function ownFlightRunning (bodyRecords, decision, refusal) {
     record.event === 'decided' && record.intent === 'flee' && record.agentId === decision.agentId &&
     record.requestKey !== decision.requestKey && record.tick <= refusal.tick &&
     (ended.get(record.requestKey) ?? Infinity) > refusal.tick)
+}
+
+// The actions that take a body's one exclusive owner: movement and the seven native interactions.
+const EXCLUSIVE_INTENTS = new Set(['moveTo', 'flee', ...INTERACTION_INTENTS])
+
+/**
+ * Which of the agent's own other requests held its body when [refusal] came, from generation 20:
+ * `earlier` when one asked before [decision] was, and decided before the refusal, had not ended by
+ * it - its own earlier work kept the body, which the newest decision is owed (r39 iota sense-u5
+ * held its placement 330 ticks under skeleton fire, and three later placements were refused) -
+ * `newer` when only one asked after it had, so the newer decision took the body as it should, and
+ * `undefined` when neither.
+ */
+function ownRequestRunning (bodyRecords, decision, refusal) {
+  const ended = new Map()
+  const decided = new Map()
+  // A request's age is when it was asked: answers arrive in whatever order the minds return them.
+  const asked = new Map()
+  bodyRecords.forEach((record, index) => {
+    if (record.agentId !== decision.agentId || record.requestKey === undefined) return
+    if (record.event === 'perceived' && !asked.has(record.requestKey)) asked.set(record.requestKey, index)
+    if (record.event === 'decided' && !decided.has(record.requestKey)) {
+      decided.set(record.requestKey, { record, index, asked: asked.get(record.requestKey) ?? index })
+    }
+    const settled = ['retreating', 'moved', 'decisionDiscarded'].includes(record.event) ||
+      (record.event === 'intentApplied' &&
+        (record.outcome !== 'accepted' || !MOVEMENT_INTENT_SET.has(decided.get(record.requestKey)?.record.intent)))
+    if (settled && !ended.has(record.requestKey)) ended.set(record.requestKey, index)
+  })
+  const own = decided.get(decision.requestKey)
+  const refusedAt = bodyRecords.indexOf(refusal)
+  if (own === undefined || refusedAt < 0) return undefined
+  const holding = [...decided.values()].filter(({ record, index }) =>
+    record.requestKey !== decision.requestKey && EXCLUSIVE_INTENTS.has(record.intent) && index < refusedAt &&
+    (ended.get(record.requestKey) ?? Infinity) > refusedAt)
+  if (holding.some((held) => held.asked < own.asked)) return 'earlier'
+  return holding.length > 0 ? 'newer' : undefined
+}
+
+// The actions whose acceptance starts work the body ends later, with its own record.
+const MOVEMENT_INTENT_SET = new Set(['moveTo', 'flee'])
+
+/**
+ * Whether [decision] placed at a closing its own perception's cover offered: the support and side
+ * the cover named, from generation 20.
+ */
+function offeredClosing (decision, own) {
+  const intent = decision.decision?.intent
+  if (decision.intent !== 'place' || intent === undefined) return false
+  const closings = own.find((record) => record.event === 'perceived')?.perception?.selfState?.cover?.closings ?? []
+  return closings.some((closing) => closing.block === intent.block && closing.side === intent.face)
 }
 
 /** The terminal of one accepted action, and the record that states it. */
@@ -1628,9 +1698,16 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
         ending.class = 'selfTrapped'
       }
       if (generation >= 16 && ending.class === TERRAIN_CLASS && inWater(own)) ending.class = 'waterTrapped'
-      if (generation >= 17 && terminals[0].outcome === 'controlNotReady' && decision.intent === 'flee' &&
+      if (generation >= 20 && terminals[0].outcome === 'controlNotReady') {
+        const running = ownRequestRunning(bodyRecords, decision, terminals[0])
+        if (running === 'earlier') ending.class = 'dangerOverlap'
+        if (running === 'newer') ending.class = 'superseded'
+      } else if (generation >= 17 && terminals[0].outcome === 'controlNotReady' && decision.intent === 'flee' &&
           ownFlightRunning(bodyRecords, decision, terminals[0])) {
         ending.class = 'dangerOverlap'
+      }
+      if (generation >= 20 && terminals[0].outcome === 'placeDestinationBlocked' && offeredClosing(decision, own)) {
+        ending.class = 'targetRace'
       }
       if (generation >= 16 && ending.class === 'inapplicable' && REACH_REFUSAL.test(terminals[0].outcome) &&
           movedAfterPerception(bodyRecords, decision, own, terminals[0])) {
@@ -1720,8 +1797,9 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
       WATER_READINESS_VERSION,
       DANGER_READINESS_VERSION,
       EXPOSURE_READINESS_VERSION,
-      SHELTER_READINESS_VERSION
-    ][Math.min(Math.max(generation - 3, 0), 16)],
+      SHELTER_READINESS_VERSION,
+      HELD_OBJECTIVE_READINESS_VERSION
+    ][Math.min(Math.max(generation - 3, 0), 17)],
     actions: {
       total,
       byClass: Object.fromEntries(Object.entries(byClass).sort()),
@@ -1761,6 +1839,8 @@ function readinessMetrics ({ bodyRecords, harnessRecords, metrics, generation = 
 
 module.exports = {
   BLOCKER_CLASSES,
+  HELD_OBJECTIVE_GOAL_INCOHERENT_TAGS,
+  HELD_OBJECTIVE_READINESS_VERSION,
   SHELTER_GOAL_INCOHERENT_TAGS,
   SHELTER_READINESS_VERSION,
   SURVIVAL_GOAL_INCOHERENT_TAGS,

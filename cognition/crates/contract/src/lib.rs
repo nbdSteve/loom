@@ -104,6 +104,9 @@ pub const MAX_COVER_FACES: usize = 9;
 /// Most solid-block items a cover reading names as obtainable now.
 pub const MAX_COVER_BLOCK_ITEMS: usize = 8;
 
+/// The most refs a cover may name to gather a closer from.
+pub const MAX_COVER_GATHERS: usize = 8;
+
 /// One placement that would close an open face of the agent's cover.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -134,6 +137,9 @@ pub struct Cover {
     pub descend: Option<String>,
     /// Items sight can give now that place as a solid block.
     pub block_items: Vec<String>,
+    /// For a shelter nothing held can close, the blocks and drops whose gathering is its step.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gathers: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -146,6 +152,8 @@ struct CoverWire {
     #[serde(default, deserialize_with = "bounded_optional_ref")]
     descend: Option<String>,
     block_items: Vec<String>,
+    #[serde(default)]
+    gathers: Option<Vec<String>>,
 }
 
 impl<'de> Deserialize<'de> for Cover {
@@ -180,6 +188,19 @@ impl<'de> Deserialize<'de> for Cover {
                 return Err(de::Error::custom("a block item is never air"));
             }
         }
+        // Present only to name something: an empty list states nothing absence does not.
+        let gathers = match raw.gathers {
+            Some(gathers) if gathers.is_empty() || gathers.len() > MAX_COVER_GATHERS => {
+                return Err(de::Error::custom(
+                    "a cover gathers from 1 to 8 refs when it names any",
+                ));
+            }
+            Some(gathers) => gathers,
+            None => Vec::new(),
+        };
+        for gather in &gathers {
+            refuse_unbounded_ref(gather)?;
+        }
         Ok(Self {
             sealed: raw.sealed,
             walk_out: raw.walk_out,
@@ -187,6 +208,7 @@ impl<'de> Deserialize<'de> for Cover {
             closings: raw.closings,
             descend: raw.descend,
             block_items: raw.block_items,
+            gathers,
         })
     }
 }
@@ -1850,6 +1872,29 @@ pub struct GoalChoice {
         deserialize_with = "only_true"
     )]
     pub feeds: Option<bool>,
+    /// Why a replace or an abandon ends the held goal, which the body checks against its evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<GoalReason>,
+}
+
+/// Why a replace or an abandon ends the held goal.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GoalReason {
+    /// The success condition is met; a replace only.
+    #[serde(rename = "completed")]
+    Completed,
+    /// What is held and could be given no longer reaches it, or no shelter step exists.
+    #[serde(rename = "impossible")]
+    Impossible,
+    /// A shelter goal replaces another as night nears and the agent stands exposed.
+    #[serde(rename = "unsafe")]
+    Unsafe,
+    /// It advanced nothing for the stall bound's steps in a row.
+    #[serde(rename = "stale")]
+    Stale,
+    /// A replace by a different objective, chosen deliberately.
+    #[serde(rename = "superseded")]
+    Superseded,
 }
 
 fn only_true<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>

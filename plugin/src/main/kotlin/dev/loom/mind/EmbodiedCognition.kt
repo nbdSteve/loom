@@ -374,10 +374,10 @@ class EmbodiedCognition(
             callbacks.onApplied(AppliedDecision(decision, refused))
             return
         }
-        // A plain completion leaves no goal held: it owes a review soon after, so the next goal is
-        // not a whole cadence away (r19: six completions left their agent goal-less for 2100 to
-        // 2400 ticks).
-        if (goal?.outcome == GoalEvidence.COMPLETED) {
+        // A plain completion or an abandon leaves no goal held: it owes a review soon after, so the
+        // next goal is not a whole cadence away (r19: six completions left their agent goal-less
+        // for 2100 to 2400 ticks; r39: zeta held nothing for 2291 ticks after its abandon at 3611).
+        if (goal?.outcome in GOAL_ENDING_OUTCOMES) {
             callbacks.onStepSettled.settled(agentId, journal.tick(), owed = true)
         }
         // A flight, and any answer to danger, holds the agent's reviews until the body has carried it out.
@@ -610,3 +610,6 @@ private fun missingBoth(perception: Perception): Throwable =
  * only.
  */
 fun EmbodiedCognition.canReview(agentId: AgentId): Boolean = !isShutDown && reviewHoldOf(agentId) == null
+
+/** The goal outcomes that leave no goal held, each owing a review soon after. */
+private val GOAL_ENDING_OUTCOMES = setOf(GoalEvidence.COMPLETED, GoalEvidence.ABANDONED)

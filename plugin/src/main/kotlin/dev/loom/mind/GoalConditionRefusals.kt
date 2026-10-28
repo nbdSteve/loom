@@ -76,12 +76,15 @@ private fun completionRefusalOf(
 }
 
 /**
- * Whether a replace could adopt a next goal from what sight gives without crowding out looking
- * further. A horizon alone does not refuse a plain completion: its goal may have no step now, and
- * the schema offers a plain completion only when it offers no replace at all.
+ * Whether a replace or a revise could set a next objective from what sight gives without crowding
+ * out looking further: [MIN_OBJECTIVE_ADVANCE] more of an item than is held and lying as the
+ * agent's own. A horizon alone does not refuse a plain completion: its goal may have no step now,
+ * and the schema offers a plain completion only when it offers no replace at all.
  */
 private fun nextGoalOffered(observed: GoalObservation): Boolean =
-    observed.capacity.keys.any { !observed.crowdsExploration(it) }
+    observed.capacity.any { (item, capacity) ->
+        !observed.crowdsExploration(item) && capacity >= (observed.ownLying[item] ?: 0) + MIN_OBJECTIVE_ADVANCE
+    }
 
 /**
  * Whether the goal [presented] carries could still be met from what [observed] holds and sees,

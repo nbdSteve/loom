@@ -4,6 +4,7 @@ import dev.loom.body.AgentId
 import dev.loom.body.GoalEvidence
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalReason
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
@@ -67,9 +68,10 @@ class R23GoalAuditReplayTest {
 
     @Test
     fun `epsilon's walk past two logs in dig reach at body 88 is no step of its log goal`() {
-        // body:00000089 adopted one oak log and walked to x2 with b57m and b57r 3.4 and 3.2 off.
+        // body:00000089 adopted one oak log and walked to x2 with b57m and b57r 3.4 and 3.2 off;
+        // replayed at the two logs in reach, since from routine-v36 one dig's log is no objective.
         val seen = shown("body:00000088", "body:00000089")
-        val adopt = GoalChoice(GoalDisposition.ADOPT, successItem = LOG, successCount = 1)
+        val adopt = GoalChoice(GoalDisposition.ADOPT, successItem = LOG, successCount = 2)
         val ledger = GoalLedger(recipes = recipes)
         assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, ledger.answer(seen, Intent.MoveTo("x2"), adopt)?.outcome)
         assertEquals(GoalEvidence.ADOPTED, ledger.answer(seen, Intent.Dig("b57r"), adopt)?.outcome)
@@ -90,8 +92,14 @@ class R23GoalAuditReplayTest {
                 successItem = PLANKS,
                 successCount = 8,
                 stepResult = GoalStepResult.NO_PROGRESS,
+                reason = GoalReason.SUPERSEDED,
             )
         assertEquals(null, incoherenceOf(held, switch, craft, GoalObservation.of(seen), recipes))
+        // Ending the unmet sapling goal says why: the switch is a different objective, chosen.
+        assertEquals(
+            GoalEvidence.REASON_MISSING,
+            incoherenceOf(held, switch.copy(reason = null), craft, GoalObservation.of(seen), recipes),
+        )
     }
 
     @Test

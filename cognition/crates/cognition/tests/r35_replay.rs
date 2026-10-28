@@ -64,10 +64,12 @@ fn alpha_could_never_ask_two_crafts_of_a_recipe_its_planks_made_once() {
     assert_eq!(offered.crafts_of("rct"), 1);
     assert_eq!(offered.crafts_of("rcr"), 2);
     let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
-    let goal = decided["decision"]
+    // Its replace of the met stick goal, as routine-v36 words it: stating that it was completed.
+    let mut goal = decided["decision"]
         .get("goal")
         .cloned()
         .unwrap_or(Value::Null);
+    goal["reason"] = json!("completed");
     assert_eq!(decided["decision"]["intent"]["crafts"], 2);
     assert!(
         !valid(&schema, &decided["decision"]["intent"], &goal),

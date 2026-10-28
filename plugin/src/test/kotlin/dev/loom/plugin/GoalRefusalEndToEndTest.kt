@@ -8,6 +8,7 @@ import dev.loom.body.ShownGoal
 import dev.loom.contract.Bearing
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalReason
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.Intent
 import dev.loom.contract.ObservationKind
@@ -54,21 +55,27 @@ class GoalRefusalEndToEndTest {
         val scene =
             Scene(
                 listOf(Stand(ALPHA, 8.5, 64.0, 8.5)),
-                blocks = listOf(BUSH, TERRACOTTA),
+                blocks = listOf(BUSH, SECOND_BUSH, TERRACOTTA),
                 inventory = listOf(SceneStack(36, "stick", 2)),
             )
         val world = world(scene)
         world.mind.answer = { seen, index ->
             when (index) {
-                // Twelve sticks: two held, a bush expected to give one, and the eight a horizon may
-                // reach past it onto the frontier cannot reach it.
-                0 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 12)
+                // Thirteen sticks: two held, two bushes expected to give one each, and the eight a
+                // horizon may reach past them onto the frontier cannot reach it.
+                0 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 13)
                 // Two sticks are already held.
                 1 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 2)
-                2 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 3)
+                2 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 4)
                 // An action beside no goal choice while a goal is held.
                 3 -> walkTo(seen, "terracotta") to null
-                else -> Intent.Idle to GoalChoice(GoalDisposition.ABANDON, stepResult = GoalStepResult.NO_PROGRESS)
+                else ->
+                    Intent.Idle to
+                        GoalChoice(
+                            GoalDisposition.ABANDON,
+                            stepResult = GoalStepResult.NO_PROGRESS,
+                            reason = GoalReason.IMPOSSIBLE,
+                        )
             }
         }
         for (review in 1..5) {
@@ -83,7 +90,8 @@ class GoalRefusalEndToEndTest {
                 GoalEvidence.ALREADY_MET,
                 GoalEvidence.ADOPTED,
                 GoalEvidence.CHOICE_MISSING,
-                // Three sticks with two held and a bush in sight is still achievable (r17 theta).
+                // Four sticks with two held and two bushes in sight is still achievable (r17 theta),
+                // whatever reason the abandon claims.
                 GoalEvidence.ABANDONED_ACHIEVABLE,
             ),
             outcomes,
@@ -91,7 +99,7 @@ class GoalRefusalEndToEndTest {
         val told = world.mind.seen.map { it.lastRefusal }
         assertEquals(null, told[0])
         assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, told[1]?.outcome)
-        assertEquals(listOf(12L, 2L, 1L), listOf(told[1]?.asked, told[1]?.held, told[1]?.capacity))
+        assertEquals(listOf(13L, 2L, 2L), listOf(told[1]?.asked, told[1]?.held, told[1]?.capacity))
         assertEquals(GoalEvidence.ALREADY_MET, told[2]?.outcome)
         assertEquals(null, told[3])
         assertEquals(GoalEvidence.CHOICE_MISSING, told[4]?.outcome)
@@ -147,15 +155,16 @@ class GoalRefusalEndToEndTest {
         val scene =
             Scene(
                 listOf(Stand(ALPHA, 8.5, 64.0, 8.5)),
-                blocks = listOf(BUSH, TERRACOTTA),
+                blocks = listOf(BUSH, SECOND_BUSH, TERRACOTTA),
                 items = listOf(stick),
                 ownDrops = mapOf("req-old" to stick),
             )
         val world = world(scene)
         world.mind.answer = { seen, index ->
             when (index) {
-                // A walk onto the bush is a step toward sticks, though no arrival.
-                0 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 2)
+                // A walk onto the bush is a step toward sticks, though no arrival: three, two past
+                // the agent's own stick lying.
+                0 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 3)
                 1 -> walkTo(seen, "dead_bush") to goalChoice(GoalDisposition.CONTINUE)
                 else -> Intent.Idle to GoalChoice(GoalDisposition.ABANDON, stepResult = GoalStepResult.NO_PROGRESS)
             }
@@ -179,7 +188,7 @@ class GoalRefusalEndToEndTest {
         // three replaces set the stalled stick goal again at one more. Walks onto bushes already
         // in dig reach are no arrival, so they stall the goal; the replace names dirt instead.
         val bushes = listOf(BUSH, Cell(7, 64, 10, "dead_bush"), Cell(10, 64, 10, "dead_bush"))
-        val scene = Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = bushes + DIRT)
+        val scene = Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = bushes + DIRT + Cell(11, 64, 6, "dirt"))
         val world = world(scene)
         world.mind.answer = { seen, index ->
             val bush =
@@ -188,7 +197,7 @@ class GoalRefusalEndToEndTest {
                     .sortedBy { it.ref }
                     .let { it[index % it.size] }
             when (index) {
-                0 -> Intent.MoveTo(bush.ref) to sticks(GoalDisposition.ADOPT, 1)
+                0 -> Intent.MoveTo(bush.ref) to sticks(GoalDisposition.ADOPT, 2)
                 1, 2 -> Intent.MoveTo(bush.ref) to goalChoice(GoalDisposition.CONTINUE)
                 3 -> walkTo(seen, "dirt") to dirt(GoalDisposition.REPLACE)
                 else -> Intent.Idle to GoalChoice(GoalDisposition.ABANDON, stepResult = GoalStepResult.NO_PROGRESS)
@@ -222,16 +231,18 @@ class GoalRefusalEndToEndTest {
         const val STICK_ID = 50
         val ALPHA = AgentId("agent-alpha")
         val BUSH = Cell(10, 64, 8, "dead_bush")
+        val SECOND_BUSH = Cell(10, 64, 10, "dead_bush")
         val TERRACOTTA = Cell(8, 64, 11, "terracotta")
         val DIRT = Cell(10, 64, 6, "dirt")
 
-        /** A goal choice holding one dirt, under [disposition]. */
+        /** A goal choice holding two dirt, under [disposition], ending the held goal as stale. */
         fun dirt(disposition: GoalDisposition) =
             GoalChoice(
                 disposition = disposition,
                 successItem = "item.minecraft.dirt",
-                successCount = 1,
+                successCount = 2,
                 stepResult = GoalStepResult.NO_PROGRESS,
+                reason = GoalReason.STALE,
             )
 
         fun sticks(

@@ -3,6 +3,7 @@ package dev.loom.body
 
 import dev.loom.contract.CoverProgress
 import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalReason
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.StepEvidence
 import kotlinx.serialization.Serializable
@@ -82,6 +83,8 @@ data class GoalEvidence(
     val steppedBy: String? = null,
     /** For a presented shelter goal, its cover as this review measured it from the server's ground. */
     val cover: CoverProgress? = null,
+    /** Why the decision's replace or abandon ended the held goal, as the mind stated it. */
+    val reason: GoalReason? = null,
 ) {
     /** The tags [outcome] takes. */
     companion object {
@@ -244,6 +247,25 @@ data class GoalEvidence(
         /** A replace of a resource subgoal, which would drop the shelter goal it feeds. */
         const val SUBGOAL_REPLACED: String = "goalSubgoalReplaced"
 
+        /**
+         * An item objective one step could meet: fewer than [dev.loom.mind.MIN_OBJECTIVE_ADVANCE]
+         * beyond what is held and the agent's own drops of it lying (r39: alpha replaced "hold 9
+         * dirt" by "hold 10 dirt" at every step from tick 10106, and no held time ever counted).
+         */
+        const val TRIVIAL: String = "goalTrivial"
+
+        /** A replace that names the held goal's own item: more of it is a revise, which keeps the goal. */
+        const val REPLACE_SAME_ITEM: String = "goalReplaceSameItem"
+
+        /** A replace or abandon that does not say why it ends the held goal. */
+        const val REASON_MISSING: String = "goalReasonMissing"
+
+        /**
+         * A replace or abandon whose stated reason the evidence does not support (r39: gamma
+         * abandoned three shelter goals while taking their own offered step, the last its seal).
+         */
+        const val REASON_UNSUPPORTED: String = "goalReasonUnsupported"
+
         /** The outcomes that refuse the decision's intent along with its goal choice. */
         val REFUSING: Set<String> =
             setOf(
@@ -266,6 +288,10 @@ data class GoalEvidence(
                 SHELTER_NOT_OFFERED,
                 FEEDS_NOT_OFFERED,
                 SUBGOAL_REPLACED,
+                TRIVIAL,
+                REPLACE_SAME_ITEM,
+                REASON_MISSING,
+                REASON_UNSUPPORTED,
             )
 
         /** The outcomes that settle a decision with nothing its next review needs to be told. */

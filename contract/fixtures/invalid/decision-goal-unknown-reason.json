@@ -1,0 +1,1 @@
+{"requestId":"req-goal-9","agentId":"agent-delta","intent":{"action":"idle"},"reasoning":"bored","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"},"goal":{"disposition":"abandon","stepResult":"noProgress","reason":"bored"}}

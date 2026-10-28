@@ -98,8 +98,8 @@ class GoalLedger(
         val explored: Boolean = false,
         val inputs: Set<String> = emptySet(),
         val settledTick: Long? = null,
-        /** For a shelter goal, the most enclosed it has been, which a step must pass to be credited. */
-        val best: CoverRank? = null,
+        /** For a shelter goal, the most enclosed it has been at each cell, which a step there must pass. */
+        val bestByCell: Map<List<Int>, CoverRank> = emptyMap(),
         /** For a resource subgoal, the shelter goal it feeds, held again once the subgoal ends. */
         val parent: Held? = null,
     ) {
@@ -118,13 +118,15 @@ class GoalLedger(
             }
             // A reveal is the walk's own: seen at the review right after it, never at a later one.
             val fresh = settledTick != null && at - settledTick <= REVEAL_WINDOW_TICKS
-            val step = StepRecord(visited, stepVisible, reached, towardSource, explored, inputs, fresh, best)
+            // A shelter is credited only past the most enclosed it has been where it stands, and a move
+            // only past the cover it left, so a return is no step.
+            val reference = shelterReferenceOf(bestByCell, observed, now).takeIf { summary.shelter }
+            val step = StepRecord(visited, stepVisible, reached, towardSource, explored, inputs, fresh, reference)
             val progress = progressOf(summary, observed, now, step, stepsWithoutProgress) ?: earlier
             val shown = summary.copy(progress = progress)
             val settled = summary.lastStep != null && progress != null
-            // A shelter is credited only past the most enclosed it has been, so a return is no step.
-            val passed = listOfNotNull(best, now?.cover?.rank?.takeIf { summary.shelter }).maxOrNull()
-            return shown to if (settled) copy(summary = shown, measured = true, best = passed) else this
+            val bests = if (summary.shelter) bestByCell.passedAt(now) else bestByCell
+            return shown to if (settled) copy(summary = shown, measured = true, bestByCell = bests) else this
         }
 
         /**
@@ -220,6 +222,7 @@ class GoalLedger(
                 presentedShelter = presented?.shelter?.takeIf { it },
                 steppedBy = presented?.lastStep?.requestId?.takeIf { fresh },
                 cover = presented?.progress?.cover,
+                reason = choice?.reason,
             )
         }
     }
@@ -357,7 +360,12 @@ class GoalLedger(
                         explored = explored,
                         inputs =
                             item?.let { recipes.inputsOf(it) + basis.observed?.horizon.orEmpty().pathOf(it) }.orEmpty(),
-                        best = if (fresh) basis.observed?.cover?.rank?.takeIf { _ -> it.shelter } else before?.best,
+                        bestByCell =
+                            if (fresh) {
+                                emptyMap<List<Int>, CoverRank>().passedAt(basis.observed.takeIf { _ -> it.shelter })
+                            } else {
+                                before?.bestByCell.orEmpty()
+                            },
                         // A subgoal keeps the shelter goal it feeds; any other new goal stands alone.
                         parent = if (feeds(choice)) before else before?.parent?.takeIf { !fresh },
                     )
@@ -672,6 +680,17 @@ private fun acceptedTag(
         GoalDisposition.COMPLETE -> GoalEvidence.COMPLETED
         GoalDisposition.ABANDON -> GoalEvidence.ABANDONED
     }
+
+/**
+ * These bests with the cover [now] read recorded at the cell it was read at, kept to the
+ * [MAX_GOAL_CELLS] most recent cells.
+ */
+private fun Map<List<Int>, CoverRank>.passedAt(now: GoalObservation?): Map<List<Int>, CoverRank> {
+    val rank = now?.cover?.rank ?: return this
+    val cell = now.cell
+    val passed = listOfNotNull(this[cell], rank).max()
+    return (this - setOf(cell) + (cell to passed)).entries.toList().takeLast(MAX_GOAL_CELLS).associate { it.toPair() }
+}
 
 /** Applies the lifecycle clearing rule to one appended record. */
 fun GoalLedger.saw(record: BodyEventRecord) {

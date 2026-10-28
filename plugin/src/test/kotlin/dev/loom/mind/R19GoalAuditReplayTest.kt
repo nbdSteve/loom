@@ -9,6 +9,7 @@ import dev.loom.contract.BlockYield
 import dev.loom.contract.EquipmentDestination
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalReason
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.Intent
@@ -153,10 +154,15 @@ class R19GoalAuditReplayTest {
     fun `a log gained toward a planks goal is a recipe input, and the planks goal chains to it`() {
         // r19: no goal built on another goal's item. A log goal met, then planks from it.
         val tree = Scene(capacity = mapOf(LOG to 2L), gives = mapOf("log" to setOf(LOG)))
-        review("alpha-100", tree, target(GoalDisposition.ADOPT, LOG, 1), Intent.Dig("log"))
-        val held = Scene(inventory = mapOf(LOG to 1L), capacity = mapOf(LOG to 1L, PLANKS to 4L), gives = tree.gives)
+        review("alpha-100", tree, target(GoalDisposition.ADOPT, LOG, 2), Intent.Dig("log"))
+        val held = Scene(inventory = mapOf(LOG to 2L), capacity = mapOf(PLANKS to 8L), gives = tree.gives)
         val (met, replaced) =
-            review("alpha-140", held, target(GoalDisposition.REPLACE, PLANKS, 4), Intent.Craft("planks", 1))
+            review(
+                "alpha-140",
+                held,
+                target(GoalDisposition.REPLACE, PLANKS, 4).copy(reason = GoalReason.COMPLETED),
+                Intent.Craft("planks", 1),
+            )
         assertEquals(true, met?.progress?.conditionMet)
         assertEquals(GoalEvidence.COMPLETED_ADOPTED, replaced?.outcome)
         assertEquals("alpha-100", replaced?.chainedFrom)
@@ -181,7 +187,7 @@ class R19GoalAuditReplayTest {
         review(
             "eta-230",
             Scene(capacity = mapOf(PLANKS to 4L), gives = tree),
-            target(GoalDisposition.ADOPT, PLANKS, 1),
+            target(GoalDisposition.ADOPT, PLANKS, 2),
             Intent.Craft("planks", 1),
         )
         val met = Scene(inventory = mapOf(PLANKS to 4L), capacity = mapOf(LOG to 2L), gives = tree)
@@ -224,11 +230,13 @@ class R19GoalAuditReplayTest {
     @Test
     fun `delta's own stick lying when it replaced its goal owes a review from the reserve`() {
         // delta body:00000254 replaced a stick goal with its own stick lying, and no review came.
+        // From routine-v36 more of the same item is a revise, which records the drop the same way.
         val lying = Scene(ownDrops = mapOf("d1" to STICK), gives = mapOf("d1" to setOf(STICK), "bush" to setOf(STICK)))
         review("delta-200", Scene(), target(GoalDisposition.ADOPT, STICK, 2), Intent.Dig("bush"))
-        val (_, replaced) =
-            review("delta-254", lying, target(GoalDisposition.REPLACE, STICK, 3), Intent.Collect("d1", approach = true))
-        assertEquals(true, replaced?.ownGoalDropLying)
+        val (_, revised) =
+            review("delta-254", lying, target(GoalDisposition.REVISE, STICK, 3), Intent.Collect("d1", approach = true))
+        assertEquals(GoalEvidence.REVISED, revised?.outcome)
+        assertEquals(true, revised?.ownGoalDropLying)
         // The schedule keeps the last earned follow-up for an owed review.
         val schedule = GoalReviewSchedule()
         val delta = AgentId("delta")

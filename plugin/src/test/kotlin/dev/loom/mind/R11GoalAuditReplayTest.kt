@@ -6,6 +6,7 @@ import dev.loom.body.GoalEvidence
 import dev.loom.body.tagOf
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalReason
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.Intent
 import dev.loom.contract.IntentAction
@@ -24,7 +25,9 @@ import org.junit.jupiter.api.Test
  * coherent choice. Under the typed goal each is refused, measured as no progress, or - for the
  * two honest chains - accepted. From routine-v23 a step is typed from its decision's own intent,
  * so the misnamed steps the audit cited can no longer be stated at all: each case shows the step
- * the ledger holds is the intent's own.
+ * the ledger holds is the intent's own. From routine-v36 a goal one step meets is no objective, so
+ * the r11 goal of one stick is replayed at two, the fewest an objective may ask, and every abandon
+ * states the reason its evidence supports.
  */
 class R11GoalAuditReplayTest {
     private val ledger = GoalLedger()
@@ -155,12 +158,12 @@ class R11GoalAuditReplayTest {
         val (met, ignored) =
             review(
                 "delta-120",
-                Scene(at, mapOf(STICK to 1L)),
+                Scene(at, mapOf(STICK to 2L)),
                 onward(),
                 Intent.Dig("b9hd"),
             )
         assertEquals(true, met?.progress?.conditionMet)
-        assertEquals(1L, met?.progress?.conditionHeld)
+        assertEquals(2L, met?.progress?.conditionHeld)
         assertEquals(GoalEvidence.CONDITION_MET_IGNORED, ignored?.outcome)
         // body:00000241: the step said collect the dropped stick d5r while the intent idled. The
         // step is now the intent's own, and idling is no step: refused before the body acts.
@@ -182,7 +185,7 @@ class R11GoalAuditReplayTest {
         val (_, completed) =
             review(
                 "delta-166",
-                Scene(at, mapOf(STICK to 1L), capacity = emptyMap()),
+                Scene(at, mapOf(STICK to 2L), capacity = emptyMap()),
                 goalChoice(GoalDisposition.COMPLETE),
                 Intent.Idle,
             )
@@ -203,7 +206,7 @@ class R11GoalAuditReplayTest {
         val (_, continued) =
             review(
                 "epsilon-122",
-                Scene(epsilon, mapOf(STICK to 1L)),
+                Scene(epsilon, mapOf(STICK to 2L)),
                 goalChoice(GoalDisposition.CONTINUE),
                 Intent.Dig("b9ob"),
             )
@@ -221,7 +224,7 @@ class R11GoalAuditReplayTest {
         val (_, reworded) =
             review(
                 "zeta-148",
-                Scene(zeta, mapOf(STICK to 1L)),
+                Scene(zeta, mapOf(STICK to 2L)),
                 revise(),
                 Intent.Dig("basn"),
             )
@@ -230,7 +233,7 @@ class R11GoalAuditReplayTest {
         val (_, raised) =
             review(
                 "zeta-211",
-                Scene(zeta, mapOf(STICK to 1L)),
+                Scene(zeta, mapOf(STICK to 2L)),
                 goalChoice(GoalDisposition.REVISE, success = STICK to 4L),
                 Intent.Dig("bfbd"),
             )
@@ -268,14 +271,19 @@ class R11GoalAuditReplayTest {
         // body:00000048: the step named b140 while the intent walked to b142; the goal now holds b142.
         review("gamma-48", Scene(start, emptyMap()), adopt(), Intent.MoveTo("b142"))
         assertEquals(IntentAction.MOVE_TO to "b142", heldStep("gamma"))
-        review("gamma-90", Scene(start, emptyMap()), goalChoice(GoalDisposition.ABANDON), Intent.Idle)
+        review(
+            "gamma-90",
+            Scene(start, emptyMap()),
+            goalChoice(GoalDisposition.ABANDON, reason = GoalReason.IMPOSSIBLE),
+            Intent.Idle,
+        )
         review("gamma-91", Scene(start, emptyMap()), adopt(), Intent.MoveTo("b5k3"))
         // body:00000252: nothing left to dig and nothing dropped, so gamma abandons.
         val (_, abandoned) =
             review(
                 "gamma-252",
                 Scene(listOf(5.5, 102.0, 11.5), emptyMap(), capacity = emptyMap()),
-                goalChoice(GoalDisposition.ABANDON),
+                goalChoice(GoalDisposition.ABANDON, reason = GoalReason.IMPOSSIBLE),
                 Intent.Idle,
             )
         assertEquals(GoalEvidence.ABANDONED, abandoned?.outcome)
@@ -316,7 +324,7 @@ class R11GoalAuditReplayTest {
         val (met, completed) =
             review(
                 "kappa-140",
-                Scene(listOf(13.3, 107.0, -6.5), mapOf(STICK to 1L), capacity = emptyMap()),
+                Scene(listOf(13.3, 107.0, -6.5), mapOf(STICK to 2L), capacity = emptyMap()),
                 goalChoice(GoalDisposition.COMPLETE),
                 Intent.Idle,
             )
@@ -330,7 +338,7 @@ class R11GoalAuditReplayTest {
         val (_, refused) =
             review(
                 "kappa-193",
-                Scene(listOf(13.3, 107.0, -6.5), mapOf(STICK to 1L)),
+                Scene(listOf(13.3, 107.0, -6.5), mapOf(STICK to 2L)),
                 positional,
                 Intent.MoveTo("bewu"),
             )
@@ -374,7 +382,7 @@ class R11GoalAuditReplayTest {
         val (_, adopted) = review("theta-63", Scene(at, emptyMap()), adopt(), Intent.Dig("b1mo"))
         assertEquals(GoalEvidence.ADOPTED, adopted?.outcome)
         val (dug, _) =
-            review("theta-64", Scene(at, mapOf(STICK to 1L)), goalChoice(GoalDisposition.COMPLETE), Intent.Idle)
+            review("theta-64", Scene(at, mapOf(STICK to 2L)), goalChoice(GoalDisposition.COMPLETE), Intent.Idle)
         assertEquals(true, dug?.progress?.stepAdvanced)
         assertEquals(true, dug?.progress?.conditionMet)
     }

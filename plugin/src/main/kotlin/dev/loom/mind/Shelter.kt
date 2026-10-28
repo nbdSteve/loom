@@ -8,9 +8,12 @@
  * actions the cover reading names: the dig underfoot that deepens a pit, a placement of a solid
  * held stack that closes an open face, or a walk onto natural cover more enclosed than where the
  * agent stands. A step is credited only when the ground then shows the agent more enclosed than
- * the goal had yet been, so a flight away and a walk back re-credit nothing. When nothing held can
- * close the cover, an item goal for a solid block sight can give may be adopted under it as a
- * resource subgoal that feeds it; the shelter goal waits and is held again once the subgoal ends.
+ * the goal had yet been where it stands, and a move only when it lands more enclosed than where it
+ * left, so a flight away and a walk back re-credit nothing. When nothing held can close the cover,
+ * gathering a closer - a safe dig of a block in reach that yields a solid block, never one of the
+ * shelter's own faces, roof or floor, or a collect of a solid drop - is a step of the shelter goal
+ * itself, credited when the agent then holds more solid items (routine-v36: r39 alpha's dirt
+ * subgoal took its shelter's identity twice and dug the shelter's own west wall for dirt).
  * Engine-free and stateless, like `Discovery.kt`; the ledger owns the state.
  */
 package dev.loom.mind
@@ -78,11 +81,16 @@ data class CoverObservation(
     val blockItems: Set<String> = emptySet(),
     val sites: Set<String> = emptySet(),
     val nightNear: Boolean = false,
+    /** The blocks and drops whose gathering gives a closer, while faces can close and nothing solid is held. */
+    val gathers: Set<String> = emptySet(),
+    /** How many solid items the agent holds, which a gathering step must raise. */
+    val solidCount: Long = 0,
 ) {
     /** Whether [intent] is a step a shelter goal may take now. */
     fun steps(intent: Intent): Boolean =
         when (intent) {
-            is Intent.Dig -> intent.block == descend
+            is Intent.Dig -> intent.block == descend || intent.block in gathers
+            is Intent.Collect -> intent.item in gathers
             is Intent.Place -> (intent.block to intent.face) in closings && intent.item in solidHeld
             is Intent.Equip -> intent.destination == EquipmentDestination.HAND && intent.item in toEquip
             is Intent.MoveTo -> intent.onto in sites
@@ -94,14 +102,12 @@ data class CoverObservation(
 
     /** Whether any shelter step is offered now. */
     val stepped: Boolean
-        get() = descend != null || (closings.isNotEmpty() && solid.isNotEmpty()) || sites.isNotEmpty()
+        get() =
+            descend != null || (closings.isNotEmpty() && solid.isNotEmpty()) || sites.isNotEmpty() ||
+                gathers.isNotEmpty()
 
     /** Whether a shelter goal may be set: night is near, the agent is not sealed, and a step exists. */
     val offered: Boolean get() = nightNear && !rank.sealed && stepped
-
-    /** Whether a held shelter goal may adopt a resource subgoal: faces to close, nothing solid to close them. */
-    val feedable: Boolean
-        get() = !rank.sealed && closings.isNotEmpty() && solid.isEmpty() && blockItems.isNotEmpty()
 
     companion object {
         /** What [perception]'s cover reading shows, or `null` when it carried none. */
@@ -131,6 +137,8 @@ data class CoverObservation(
                         .map { it.ref }
                         .toSet(),
                 nightNear = world.dayPhase == DayPhase.NIGHT || world.ticksUntilNightfall <= SHELTER_LEAD_TICKS,
+                gathers = cover.gathers.toSet(),
+                solidCount = perception.selfState.inventorySummary.filter { it.solid == true }.sumOf { it.count },
             )
         }
     }
@@ -197,21 +205,13 @@ private fun subgoalRefusalOf(
     val resumesAstray =
         subgoal && disposition == GoalDisposition.COMPLETE && intent.action !in PASSIVE && cover?.steps(intent) != true
     return when {
-        feeds(choice) && !feedsShelter(presented, choice, cover) -> GoalEvidence.FEEDS_NOT_OFFERED
+        // From routine-v36 gathering a closer is the shelter's own step, and no subgoal is offered.
+        feeds(choice) -> GoalEvidence.FEEDS_NOT_OFFERED
         subgoal && disposition == GoalDisposition.REPLACE -> GoalEvidence.SUBGOAL_REPLACED
         resumesAstray -> GoalEvidence.STEP_UNPRODUCTIVE
         else -> null
     }
 }
-
-/** Whether [choice] adopts a subgoal that can feed the shelter goal [presented]: one [cover] can use. */
-private fun feedsShelter(
-    presented: GoalSummary?,
-    choice: GoalChoice?,
-    cover: CoverObservation?,
-): Boolean =
-    presented?.shelter == true && presented.progress?.conditionMet != true && cover?.feedable == true &&
-        choice?.disposition == GoalDisposition.ADOPT && choice.successItem in cover.blockItems
 
 /** The shelter goal a decision [requestId] sets, its perception taken at [capturedTick] and its step [intent]. */
 internal fun shelterGoalOf(
@@ -232,32 +232,71 @@ internal fun shelterGoalOf(
 
 /**
  * The body-measured effect of a shelter goal's last step: met when the ground seals the agent in,
- * and covered when an accepted step left it more enclosed than [best], the most the goal had yet
- * been. Moving away and back, a refused step, or cover a survival response closed is credited to
- * no step; the condition still reads what the ground shows.
+ * covered when an accepted step left it more enclosed than [reference] - the most the goal had yet
+ * been where it now stands, and for a move the cover it left as well - and gainedInput when an
+ * accepted step its affirming review offered as a gather left it holding more solid items. Moving
+ * away and back, a refused step, or cover a survival response closed is credited to no step; the
+ * condition still reads what the ground shows.
  */
 internal fun shelterProgressOf(
     goal: GoalSummary,
     before: GoalObservation,
     observed: GoalObservation,
-    best: CoverRank?,
+    reference: CoverRank?,
     priorCount: Long,
 ): GoalProgress {
     val rank = observed.cover?.rank
-    val improved = rank != null && (best == null || rank > best)
+    val improved = rank != null && (reference == null || rank > reference)
     val accepted = goal.lastStep?.outcome == EventTag.ACCEPTED
     val covered = improved && accepted && goal.stepAction in SHELTER_ACTIONS
+    val gathered = !covered && accepted && gathered(goal, before, observed)
     return GoalProgress(
         conditionMet = rank?.sealed == true,
         conditionHeld = 0,
         inventoryDelta = deltaOf(before.inventory, observed.inventory),
         conditionAdvanced = improved,
-        stepAdvanced = covered,
-        stepEvidence = if (covered) StepEvidence.COVERED else StepEvidence.NONE,
-        stepsWithoutProgress = if (improved) 0 else priorCount + 1,
+        stepAdvanced = covered || gathered,
+        stepEvidence =
+            when {
+                covered -> StepEvidence.COVERED
+                gathered -> StepEvidence.GAINED_INPUT
+                else -> StepEvidence.NONE
+            },
+        stepsWithoutProgress = if (improved || gathered) 0 else priorCount + 1,
         cover = rank?.progress,
     )
 }
 
+/**
+ * Whether [goal]'s last step was a gather its affirming review [before] offered, and left the agent
+ * holding more solid items by [observed]: never a descent or any other dig that happened to give a
+ * solid block.
+ */
+private fun gathered(
+    goal: GoalSummary,
+    before: GoalObservation,
+    observed: GoalObservation,
+): Boolean =
+    goal.stepAction in GATHER_ACTIONS && goal.stepRef in before.cover?.gathers.orEmpty() &&
+        (observed.cover?.solidCount ?: 0) > (before.cover?.solidCount ?: 0)
+
+/**
+ * The reference a shelter step measured at [now] must pass: the most enclosed the goal has been at
+ * the cell the agent now stands in, by [bestByCell], and for a step that moved it the cover it
+ * left, [from].
+ */
+internal fun shelterReferenceOf(
+    bestByCell: Map<List<Int>, CoverRank>,
+    from: GoalObservation?,
+    now: GoalObservation?,
+): CoverRank? {
+    val cell = now?.cell ?: return null
+    val left = from?.cover?.rank?.takeIf { from.cell != cell }
+    return listOfNotNull(bestByCell[cell], left).maxOrNull()
+}
+
 /** The actions a shelter step takes: a descent, a closing, or a walk onto natural cover. */
 private val SHELTER_ACTIONS = setOf(IntentAction.DIG, IntentAction.PLACE, IntentAction.MOVE_TO)
+
+/** The actions that gather a closer for a shelter: a dig for a solid block, or a collect of one. */
+private val GATHER_ACTIONS = setOf(IntentAction.DIG, IntentAction.COLLECT)

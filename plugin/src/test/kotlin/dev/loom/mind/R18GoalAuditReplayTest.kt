@@ -6,6 +6,7 @@ import dev.loom.body.GoalEvidence
 import dev.loom.body.tagOf
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalReason
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.Intent
@@ -84,9 +85,12 @@ class R18GoalAuditReplayTest {
     fun `beta's dig that dropped two sticks is no stall while they lie, so its collect is a continue`() {
         // beta body:00000194 and 246 advanced nothing; body:00000272's dig dropped two own sticks,
         // and body:00000282 found the goal at the bound and replaced it at one more stick.
-        review("beta-183", Scene(), sticks(GoalDisposition.ADOPT, 1), dig)
-        review("beta-194", Scene(), judged(GoalDisposition.CONTINUE), dig)
-        review("beta-272", Scene(), sticks(GoalDisposition.REVISE, 2), dig)
+        // Its goals are replayed two sticks higher, since from routine-v36 an objective asks two
+        // past what is held.
+        val bushes = Scene(capacity = mapOf(STICK to 4L))
+        review("beta-183", bushes, sticks(GoalDisposition.ADOPT, 2), dig)
+        review("beta-194", bushes, judged(GoalDisposition.CONTINUE), dig)
+        review("beta-272", bushes, sticks(GoalDisposition.REVISE, 3), dig)
         val lying = Scene(dropped = setOf("beta-272"), ownDrops = mapOf("dn" to STICK), gives = GIVES)
         val collect = Intent.Collect("dn", approach = true)
         val (carried, collecting) = review("beta-282", lying, judged(GoalDisposition.CONTINUE), collect)
@@ -96,7 +100,7 @@ class R18GoalAuditReplayTest {
         // A dig whose drop is no longer lying in reach is a step that advanced nothing.
         val held = Scene(inventory = mapOf(STICK to 2L), capacity = mapOf(STICK to 2L))
         val taken = held.copy(dropped = setOf("beta-284"))
-        val (collected, _) = review("beta-284", held, sticks(GoalDisposition.REVISE, 3), dig)
+        val (collected, _) = review("beta-284", held, sticks(GoalDisposition.REVISE, 4), dig)
         assertEquals(StepEvidence.GAINED, collected?.progress?.stepEvidence)
         val (after, _) = review("beta-290", taken, judged(GoalDisposition.CONTINUE), dig)
         assertEquals(StepEvidence.DROPPED, after?.progress?.stepEvidence)
@@ -106,7 +110,7 @@ class R18GoalAuditReplayTest {
     @Test
     fun `gamma's goal sight could not meet is continued by a walk to look, credited when it reveals a bush`() {
         // gamma body:00000069 abandoned its stick goal to walk to the edge of sight, x1.
-        review("gamma-59", Scene(), sticks(GoalDisposition.ADOPT, 1), dig)
+        review("gamma-59", Scene(), sticks(GoalDisposition.ADOPT, 2), dig)
         val bare = Scene(capacity = emptyMap(), gives = emptyMap(), explore = setOf("x1"))
         val walk = Intent.MoveTo("x1")
         val (_, looking) = review("gamma-69", bare, judged(GoalDisposition.CONTINUE), walk, reached = true)
@@ -122,13 +126,13 @@ class R18GoalAuditReplayTest {
         assertEquals(StepEvidence.REVEALED, found?.progress?.stepEvidence)
         assertEquals(0L, found?.progress?.stepsWithoutProgress)
         // A walk that reveals nothing is a step that advanced nothing.
-        review("delta-480", Scene(), sticks(GoalDisposition.ADOPT, 1), dig)
+        review("delta-480", Scene(), sticks(GoalDisposition.ADOPT, 2), dig)
         review("delta-485", bare, judged(GoalDisposition.CONTINUE), walk, reached = true)
         val (empty, _) =
             review(
                 "delta-500",
                 bare.copy(at = listOf(12.5, 64.0, 0.5)),
-                judged(GoalDisposition.ABANDON),
+                judged(GoalDisposition.ABANDON).copy(reason = GoalReason.IMPOSSIBLE),
                 walk,
             )
         assertEquals(StepEvidence.NONE, empty?.progress?.stepEvidence)
@@ -138,39 +142,46 @@ class R18GoalAuditReplayTest {
     @Test
     fun `zeta's revise of a scute goal into sticks is refused, a replace is the way`() {
         // zeta body:00000543 adopted one armadillo scute; body:00000569 revised it to four sticks.
+        // Replayed with two scutes in sight and a goal of both, the fewest an objective asks.
         val scute = "item.minecraft.armadillo_scute"
         val sight =
             Scene(
-                capacity = mapOf(scute to 1L, STICK to 4L),
+                capacity = mapOf(scute to 2L, STICK to 4L),
                 gives = mapOf("bush" to setOf(STICK), "drop" to setOf(scute)),
             )
         review(
             "zeta-543",
             sight,
-            GoalChoice(GoalDisposition.ADOPT, successItem = scute, successCount = 1),
+            GoalChoice(GoalDisposition.ADOPT, successItem = scute, successCount = 2),
             Intent.Collect("drop", true),
         )
         val (_, refused) = review("zeta-569", sight, sticks(GoalDisposition.REVISE, 4), dig)
         assertEquals(GoalEvidence.REVISE_ITEM_CHANGED, refused?.outcome)
-        val (_, replaced) = review("zeta-570", sight, sticks(GoalDisposition.REPLACE, 4), dig)
+        // A replace is the way, and says why: a different objective, chosen while the scutes are unmet.
+        val (_, unstated) = review("zeta-570", sight, sticks(GoalDisposition.REPLACE, 4), dig)
+        assertEquals(GoalEvidence.REASON_MISSING, unstated?.outcome)
+        val (_, replaced) =
+            review("zeta-571", sight, sticks(GoalDisposition.REPLACE, 4).copy(reason = GoalReason.SUPERSEDED), dig)
         assertEquals(GoalEvidence.REPLACED, replaced?.outcome)
+        assertEquals(GoalReason.SUPERSEDED, replaced?.reason)
     }
 
     @Test
     fun `delta's cut from three to two states what sight could give, so the gate reads it as forced`() {
         // delta body:00000053 revised three sticks to two: it held none and sight could give one.
-        review("delta-39", Scene(capacity = mapOf(STICK to 4L)), sticks(GoalDisposition.ADOPT, 3), dig)
-        val (_, cut) = review("delta-53", Scene(capacity = mapOf(STICK to 1L)), sticks(GoalDisposition.REVISE, 1), dig)
+        // Replayed two higher, as routine-v36 asks: four cut to the two sight could give.
+        review("delta-39", Scene(capacity = mapOf(STICK to 4L)), sticks(GoalDisposition.ADOPT, 4), dig)
+        val (_, cut) = review("delta-53", Scene(capacity = mapOf(STICK to 2L)), sticks(GoalDisposition.REVISE, 2), dig)
         assertEquals(GoalEvidence.REVISED, cut?.outcome)
         assertEquals(0L, cut?.targetHeld)
-        assertEquals(1L, cut?.targetCapacity)
+        assertEquals(2L, cut?.targetCapacity)
     }
 
     @Test
     fun `epsilon's dig of terracotta for a stick goal is refused, and theta's walk onto it`() {
         // epsilon body:00000046 adopted a stick goal and dug terracotta; theta body:00000240 walked
         // onto terracotta with four bushes in sight.
-        val (_, dug) = review("epsilon-46", Scene(), sticks(GoalDisposition.ADOPT, 1), Intent.Dig("terra"))
+        val (_, dug) = review("epsilon-46", Scene(), sticks(GoalDisposition.ADOPT, 2), Intent.Dig("terra"))
         assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, dug?.outcome)
         review("theta-162", Scene(), sticks(GoalDisposition.ADOPT, 2), dig)
         val (_, walked) = review("theta-240", Scene(), judged(GoalDisposition.CONTINUE), Intent.MoveTo("terra"))

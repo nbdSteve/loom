@@ -6,9 +6,9 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v35 shelter-goal pilot,
-`research/config/first-tribe-routine-v35-agency-pilot.json`, and its
-provider-free twin, `research/config/first-tribe-routine-v35-agency-pilot-scripted.json`.
+The runnable configurations are the routine-v36 held-objective pilot,
+`research/config/first-tribe-routine-v36-agency-pilot.json`, and its
+provider-free twin, `research/config/first-tribe-routine-v36-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
 command. Its only cognition sources are Loom's native `GoalReviewSchedule` and
 native event drivers. It uses the v29 prompts, which show each agent its own
@@ -199,7 +199,7 @@ executable.
 ```sh
 npm --prefix research ci
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v35-agency-pilot-scripted.json
+  --config research/config/first-tribe-routine-v36-agency-pilot-scripted.json
 ```
 
 The default path verifies and caches the pinned Paper jar, installs and checks
@@ -218,8 +218,8 @@ inspection, then run once without `--artifact-root` to publish:
 
 ```sh
 npm --prefix research run tribe -- run \
-  --config research/config/first-tribe-routine-v35-agency-pilot-scripted.json \
-  --artifact-root .scratch/routine-v35-agency-pilot-rehearsal \
+  --config research/config/first-tribe-routine-v36-agency-pilot-scripted.json \
+  --artifact-root .scratch/routine-v36-agency-pilot-rehearsal \
   --skip-build
 ```
 
@@ -349,6 +349,7 @@ From r36 the shakedown runs the `balanced-follow-up-10m-10` profile, configured 
 From r37 it runs the `shelter-goal-10m-10` profile, configured by `research/config/tribe-shelter-goal-10m-10.json` and its provider-free twin under the routine-v35 mode, and the r36 configurations are historical: the balanced follow-up profile's scene, bounds, exposure, plan and every bar unchanged, with one bar pre-registered beside them before any run, `shelterProgressAgentsBeforeNight` at 3, because all ten of r36's agents died at night in the open and none ever held a goal a hiding place could meet.
 r37 was consumed integrity-invalid and unpublished by a 265 s host idle sleep 11 s before its window's end, so r38 runs the same configuration under its own fresh id.
 r38 was consumed integrity-invalid 33 s in, when gamma's first perception no longer matched its pinned conditions after an idle wait beside chickens, so the server now witnesses those conditions at `begin` and r39 runs the same configuration under its own fresh id.
+From r40 it runs the `held-objective-10m-10` profile, configured by `research/config/tribe-held-objective-10m-10.json` and its provider-free twin under the routine-v36 mode, and the r37 to r39 configurations are historical: the shelter-goal profile's scene, bounds, exposure, plan and every bar unchanged, under a name of its own, because r39 met every structural bar and missed progressing held time with goals that never stayed held.
 A profile may pin its own `followUpsPerReview` in place of its mode's, and the JVM spends up to that many on ordinary steps a review, past the one it keeps for an owed review.
 
 ## Tier fallback
@@ -498,12 +499,19 @@ The report adds `shelter`, measured from the agents' own goal evidence and the s
 A profile that pre-registers the bar is `ready` only when it is met; nightfall is the first daylight perception's tick plus the ticks it stated to nightfall.
 Generation 18 is frozen, so r36 re-derives exactly as published (`test/readiness-r36.test.js`), and `test/readiness-shelter.test.js` holds r36's evidence to generation 19, where no agent held a shelter goal.
 
+Generation 20 (`loom-readiness-gate/20`) answers the r39 audit and keeps every metric, denominator and bar of 19.
+A goal one step meets (`goalTrivial`: under two beyond what is held and lying as the agent's own), a replace by the held goal's own item (`goalReplaceSameItem`), and a replace or abandon that states no reason (`goalReasonMissing`) or one its evidence does not support (`goalReasonUnsupported`) are goal-incoherent.
+A `controlNotReady` refusal while a request of the agent's own asked before it still held the body is the `dangerOverlap` blocker for any action, not only a flight, and one behind a request of its own asked after it is `superseded`, since the newest decision takes the body; with neither it stays the `concurrent` race (r39 iota: a placement held the body 330 ticks under skeleton fire, and three later placements were refused and read as races).
+A placement refused `placeDestinationBlocked` at a closing its perception's cover offered is a `targetRace`, since the cover never offers a cell the body's own box reaches, and any other is `inapplicable` as before.
+Normalized goal evidence carries each accepted end's `reason`, and `goalContinuity.endReasons` counts them when any record states one.
+Generation 19 is frozen, so r37 to r39 re-derive exactly as published, and `test/readiness-held-objective.test.js` holds each new class to its r39 case.
+
 ## The path rehearsal
 
 `research/tools/path-rehearsal.js` is a deterministic live rehearsal of the goal paths no research run has reached by itself, and it is not a research run.
 It starts one real Paper server with the Loom plugin and ten real bodies on a flat world laid out by the console commands in `research/tools/path-rehearsal.json`, with the cognition service answering as the path exerciser (`LOOM_COGNITION_BACKEND=scripted-paths`).
-Each agent walks one path, and the run's own evidence, normalized and judged by readiness gate generation 19, must show each one as the server witnessed it.
-The paths are: a craft of two applications accepted and confirmed, and a goal completed and the next adopted in one answer, chained to the goal whose item its recipe uses; an own drop ignored and refused; that drop still told lying more than 4,800 ticks after the dig; a collect without moving that vanilla's own pickup ends; a walk to the edge of sight credited `revealed`; a walk to the cell beside a log that walk showed out of dig reach credited `arrived`; a revise to another item refused; a revise to the held total refused; a plain completion beside a source refused; a plain completion with nothing in sight accepted and followed by the review it owed; a block beside the support under an overhang reported unsafe to dig; a drop in a one-high nook beside a one-cell pit, just past vanilla's reach from where the agent stands, collected by a final step inside the pit cell; a goal review beside a creeper that cannot move fleeing it with no goal choice; and, once a console command brings dusk 1,500 ticks in (`timed`), a shelter goal set as night nears, dug down through the grass and two dirt layers and roofed with the dirt those digs gave, each step one its cover reading named and credited `covered` before nightfall, sealed in by the server's ground (`shelterChanged`) and completed there.
+Each agent walks one path, and the run's own evidence, normalized and judged by readiness gate generation 20, must show each one as the server witnessed it.
+The paths are: a craft of two applications accepted and confirmed, and a goal completed and the next adopted in one answer, chained to the goal whose item its recipe uses; an own drop ignored and refused; that drop still told lying more than 4,800 ticks after the dig; a collect without moving that vanilla's own pickup ends; a walk to the edge of sight credited `revealed`; a walk to the cell beside a log that walk showed out of dig reach credited `arrived`; a revise to another item refused; a revise to the held total refused; a plain completion beside a source refused; a plain completion with nothing in sight accepted and followed by the review it owed; a block beside the support under an overhang reported unsafe to dig; a drop in a one-high nook beside a one-cell pit, just past vanilla's reach from where the agent stands, collected by a final step inside the pit cell; a goal review beside a creeper that cannot move fleeing it with no goal choice; and, once a console command brings dusk 1,500 ticks in (`timed`), a shelter goal set as night nears, dug down through the grass and two dirt layers and roofed with the dirt those digs gave, each step one its cover reading named and credited `covered` before nightfall, sealed in by the server's ground (`shelterChanged`) and completed there, its roof applied within 40 ticks of its decision; a goal one collect meets refused as `goalTrivial`; a met goal revised for more of its own item under the same goal id; a replace of a met goal stating it was completed; and an oak pressure plate `give`n to gamma (`gives`) reported not solid in every perception that lists it while the dirt its digs gave is.
 The creeper stands 9.1 blocks east of its agent along the border, past the 8 that make a hunter immediate danger, because the exerciser answers any sighting of an immediate hunter with a flight, as the body requires, and one that close would send the agent off before its review.
 A flight from a peer is no longer rehearsed, because no request schema offers one: `flee` may name only a hunter, a sighted threat or the creature that hurt the agent (r27 delta), and the gate's `peerFlight` class stands for any that reached a body anyway.
 No other decision may fail, no claim may be disputed, and no action may end in a class the paths do not explain.

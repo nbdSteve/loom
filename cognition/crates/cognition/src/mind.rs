@@ -91,8 +91,8 @@ mod tests {
     use crate::model::{BackendError, Draft, ModelBackend, ScriptedBackend};
     use crate::router::{ModelCatalog, ModelRoute, Router};
     use loom_contract::{
-        DayPhase, DecisionImportance, GoalChoice, GoalDisposition, GoalStepResult, Intent,
-        Perception, SelfState, Trigger, WorldState,
+        DayPhase, DecisionImportance, GoalChoice, GoalDisposition, GoalReason, GoalStepResult,
+        Intent, Perception, SelfState, Trigger, WorldState,
     };
 
     const FAST: &str = "a-small-model";
@@ -223,7 +223,7 @@ mod tests {
         assert!(decided.reasoning.contains(DEEP));
         assert_eq!(decided.provenance.model, FAST);
         assert_eq!(decided.provenance.tier, DecisionImportance::Routine);
-        assert_eq!(decided.provenance.prompt_version, "routine-v35");
+        assert_eq!(decided.provenance.prompt_version, "routine-v36");
     }
 
     /// A backend that answers with one fixed intent, whatever it was offered.
@@ -331,6 +331,7 @@ mod tests {
                     .then_some(GoalStepResult::Progressing),
                 shelter: None,
                 feeds: None,
+                reason: (disposition == GoalDisposition::Abandon).then_some(GoalReason::Stale),
             };
             let mind = Mind::new(router(), ChoosingBackend(choice.clone()));
             let decided = mind
@@ -340,7 +341,7 @@ mod tests {
             assert_eq!(decided.goal, Some(choice));
             assert_eq!(decided.intent, Intent::Idle);
             assert_eq!(decided.provenance.model, FAST);
-            assert_eq!(decided.provenance.prompt_version, "routine-v35");
+            assert_eq!(decided.provenance.prompt_version, "routine-v36");
         }
     }
 

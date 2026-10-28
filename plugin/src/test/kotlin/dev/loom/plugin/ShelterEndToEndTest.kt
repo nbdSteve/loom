@@ -27,8 +27,8 @@ import java.nio.file.Path
  *
  * - constructed cover: on open grass at dusk, three digs down and the dirt they gave placed over
  *   the head seal the agent in, every step one its cover reading named;
- * - natural cover: a walk into an alcove, a resource subgoal for the dirt to close it, and two
- *   placements seal it in, the shelter goal held again when the subgoal is met.
+ * - natural cover: a walk into an alcove, then the dirt beside it gathered and placed, twice, seal
+ *   it in, every step one of the one shelter goal and each gather credited as an input gained.
  *
  * r36's ten agents all died at night in the open. Runs whenever `node` and `body/node_modules` exist.
  */
@@ -87,7 +87,7 @@ class ShelterEndToEndTest {
     }
 
     @Test
-    fun `an alcove walked into, fed by a dirt subgoal, is closed by two placements and seals the agent in`() {
+    fun `an alcove walked into, closed by two gathers and two placements, seals the agent in under one goal`() {
         val stone = { x: Int, y: Int, z: Int -> Cell(x, y, z, "stone") }
         val alcove =
             listOf(
@@ -112,21 +112,24 @@ class ShelterEndToEndTest {
         val outcomes = decided.map { it.goal?.outcome }
         assertEquals(
             listOf(
-                // the shelter goal, by a walk into the alcove, then the dirt subgoal that feeds it
-                GoalEvidence.ADOPTED,
+                // the shelter goal, by a walk into the alcove, then each closer gathered and placed
                 GoalEvidence.ADOPTED,
                 GoalEvidence.CONTINUED,
-                // met: the shelter is held again, closed at the feet
-                GoalEvidence.COMPLETED,
+                GoalEvidence.CONTINUED,
+                GoalEvidence.CONTINUED,
                 GoalEvidence.CONTINUED,
                 GoalEvidence.COMPLETED,
             ),
             outcomes,
         )
-        val fed = decided[1].goal
-        assertEquals(decided[0].requestId, fed?.feeds)
-        assertEquals(decided[0].requestId, decided[3].goal?.resumed)
-        assertEquals(listOf("moveTo", "dig", "dig", "place", "place", "rest"), decided.map { it.intent })
+        assertEquals(listOf("moveTo", "dig", "place", "dig", "place", "rest"), decided.map { it.intent })
+        // One goal throughout (r39: alpha's dirt subgoal changed the objective's identity twice).
+        assertEquals(setOf(decided[0].requestId), decided.mapNotNull { it.goal?.goalId }.toSet())
+        assertEquals(
+            listOf(StepEvidence.COVERED, StepEvidence.GAINED_INPUT, StepEvidence.COVERED, StepEvidence.GAINED_INPUT),
+            decided.drop(1).take(4).map { it.goal?.stepEvidence },
+        )
+        assertTrue(decided.none { it.goal?.feeds != null })
         assertEquals(true, world.mind.seen.last().selfState.cover?.sealed)
     }
 
@@ -159,21 +162,19 @@ class ShelterEndToEndTest {
         }
     }
 
-    /** The scripted natural shelter: walk into the alcove, feed it dirt, close it, complete once sealed. */
+    /**
+     * The scripted natural shelter: walk into the alcove, then gather a closer the cover reading
+     * offers and place it, until sealed, and complete.
+     */
     private fun naturalStep(perception: Perception): Pair<Intent, GoalChoice?> {
         val cover = requireNotNull(perception.selfState.cover)
         val goal = perception.goal
         val held = perception.selfState.inventorySummary.firstOrNull { it.solid == true && it.held == true }
-        val dirt = perception.surroundings.filter { it.what == "block.minecraft.dirt" && it.visible }
         val site = perception.surroundings.filter { (it.cover ?: 0) >= ALCOVE_COVER }.minByOrNull { it.distance }
         return when {
             goal == null -> Intent.MoveTo(requireNotNull(site).ref) to shelter
-            goal.shelter && goal.progress?.conditionMet == true -> Intent.Rest to complete
-            goal.feeds != null && goal.progress?.conditionMet == true -> closing(cover, held) to complete
-            goal.feeds != null -> Intent.Dig(dirt.maxBy { it.verticalOffset }.ref) to continued
-            held == null ->
-                Intent.Dig(dirt.maxBy { it.verticalOffset }.ref) to
-                    GoalChoice(GoalDisposition.ADOPT, successItem = DIRT, successCount = 2, feeds = true)
+            goal.progress?.conditionMet == true -> Intent.Rest to complete
+            held == null -> Intent.Dig(cover.gathers.first()) to continued
             else -> closing(cover, held) to continued
         }
     }
@@ -194,7 +195,6 @@ class ShelterEndToEndTest {
     }
 
     private companion object {
-        const val DIRT = "item.minecraft.dirt"
         const val DUSK = 12_500
         const val ALCOVE_COVER = 7L
         const val SETTLE_MS = 250L

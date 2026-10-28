@@ -31,8 +31,8 @@ import org.junit.jupiter.api.Test
 /**
  * r36: all ten agents died at night in the open, every death under hostile attack, and none ever
  * held a goal a hiding place could meet. A shelter goal is the model's own choice, met only when the
- * server's ground seals the agent in, stepped only by what its cover reading names, and fed by a
- * resource subgoal when nothing it holds can close it.
+ * server's ground seals the agent in, stepped only by what its cover reading names - gathering a
+ * closer among them when nothing it holds can close it - and held under one identity throughout.
  */
 class ShelterTest {
     private val agent = AgentId("agent-zeta")
@@ -199,11 +199,11 @@ class ShelterTest {
     }
 
     @Test
-    fun `with nothing solid to close natural cover, a resource subgoal feeds it and hands it back once met`() {
+    fun `with nothing solid to close natural cover, gathering a closer is a step of the shelter itself`() {
         val ledger = GoalLedger()
         val headWest = Closing(CoverFace.HEAD_WEST, "b2", BlockFace.UP)
         val alcove = open(listOf(CoverFace.HEAD_WEST, CoverFace.ROOF), closings = listOf(headWest))
-        val site = scene("r1", 100, alcove)
+        val nearby = listOf(block("b1", Bearing.HERE), block("b2", Bearing.NORTH), block("b3", Bearing.EAST))
         // Natural cover reached by a walk is a shelter step, as a site the cover reading names.
         val grass =
             scene(
@@ -214,36 +214,100 @@ class ShelterTest {
             )
         assertEquals(GoalEvidence.ADOPTED, ledger.answer(grass, Intent.MoveTo("b9"), shelter)?.outcome)
         ledger.step("r0", "moveTo")
+        // Nothing solid is held, so the closing cannot be placed: the reading offers the dirt beside
+        // it to gather, and that dig is the shelter's own step (r39: alpha's dirt subgoal changed the
+        // objective's identity twice and dug its own shelter's wall).
+        val site = scene("r1", 100, alcove.copy(gathers = listOf("b3")), seen = nearby)
         val reached = ledger.present(agent, "r1", 100, GoalObservation.of(site))
         assertEquals(StepEvidence.COVERED, reached?.progress?.stepEvidence)
         ledger.forget(agent, "r1")
-        // Nothing solid is held, so the closing cannot be placed: a dirt subgoal feeds the shelter.
-        val feeds = GoalChoice(GoalDisposition.ADOPT, successItem = DIRT, successCount = 1, feeds = true)
-        val fed = ledger.answer(site, Intent.Dig("b2"), feeds)
-        assertEquals(GoalEvidence.ADOPTED, fed?.outcome)
-        assertEquals("r0", fed?.feeds)
+        // A dig the reading does not offer is no step of it, and a resource subgoal is no goal of its own.
+        assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, ledger.answer(site, Intent.Dig("b2"), continued)?.outcome)
+        val feeds = GoalChoice(GoalDisposition.ADOPT, successItem = DIRT, successCount = 2, feeds = true)
+        assertEquals(GoalEvidence.FEEDS_NOT_OFFERED, ledger.answer(site, Intent.Dig("b3"), feeds)?.outcome)
+        assertEquals(GoalEvidence.CONTINUED, ledger.answer(site, Intent.Dig("b3"), continued)?.outcome)
         ledger.step("r1", "dig")
-        // A stick closes nothing, so it is no subgoal; nor is one replaced once held.
-        val met = scene("r2", 200, alcove, listOf(dirt))
-        val replaced =
-            GoalChoice(GoalDisposition.REPLACE, successItem = DIRT, successCount = 2, stepResult = GoalStepResult.DONE)
-        assertEquals(GoalEvidence.SUBGOAL_REPLACED, ledger.answer(met, Intent.Dig("b2"), replaced)?.outcome)
-        // Met, completed beside the closing: the shelter goal is held again, with the placement as its step.
-        val complete = GoalChoice(GoalDisposition.COMPLETE, stepResult = GoalStepResult.DONE)
-        val resumed = ledger.answer(met, Intent.Place("b2", "s1", BlockFace.UP), complete)
-        assertEquals(GoalEvidence.COMPLETED, resumed?.outcome)
-        assertEquals("r0", resumed?.resumed)
-        assertEquals("r0", resumed?.goalId)
+        // The dirt it gave is the shelter's progress, under the one goal it has held throughout.
+        val holding = scene("r2", 200, alcove, listOf(dirt), seen = nearby)
+        val gained = ledger.present(agent, "r2", 200, GoalObservation.of(holding))
+        assertEquals("r0", gained?.goalId)
+        assertEquals(StepEvidence.GAINED_INPUT, gained?.progress?.stepEvidence)
+        assertEquals(0L, gained?.progress?.stepsWithoutProgress)
+        ledger.forget(agent, "r2")
+        // The closing is its next step, and the placement is credited as cover.
+        val placed = ledger.answer(holding, Intent.Place("b2", "s1", BlockFace.UP), continued)
+        assertEquals(GoalEvidence.CONTINUED, placed?.outcome)
         ledger.step("r2", "place")
         val after = scene("r3", 300, open(listOf(CoverFace.ROOF)), listOf(dirt.copy(count = 2)))
         val shown = ledger.present(agent, "r3", 300, GoalObservation.of(after))
-        assertTrue(shown?.shelter == true)
+        assertEquals("r0", shown?.goalId)
         assertNull(shown?.feeds)
         assertEquals(StepEvidence.COVERED, shown?.progress?.stepEvidence)
     }
 
     @Test
-    fun `a subgoal is fed only where nothing solid is held and the item closes a shelter`() {
+    fun `a closing is credited against the most the goal has been where the agent stands, not where it stood`() {
+        // r39 alpha 5922: after a descent the goal's best cover was the cell above's, so the closing
+        // it then placed below was credited nothing, and the goal stalled into an abandon at 6011.
+        val ledger = GoalLedger()
+
+        fun Perception.cell(
+            y: Double,
+            z: Double,
+        ) = copy(selfState = selfState.copy(position = listOf(3.5, y, z)))
+        val grass =
+            scene(
+                "r0",
+                50,
+                open(allOpen),
+                seen = listOf(block("b1", Bearing.HERE), block("b9", Bearing.SOUTH, cover = 7)),
+            )
+        assertEquals(GoalEvidence.ADOPTED, ledger.answer(grass, Intent.MoveTo("b9"), shelter)?.outcome)
+        ledger.step("r0", "moveTo")
+        // The walk south reached seven closed sides.
+        val alcove = scene("r1", 100, open(allOpen.take(2), descend = "b1")).cell(64.0, 4.5)
+        assertEquals(
+            StepEvidence.COVERED,
+            ledger.present(agent, "r1", 100, GoalObservation.of(alcove))?.progress?.stepEvidence,
+        )
+        ledger.forget(agent, "r1")
+        assertEquals(GoalEvidence.CONTINUED, ledger.answer(alcove, Intent.Dig("b1"), continued)?.outcome)
+        ledger.step("r1", "dig")
+        // Down a block, five closed: less enclosed than where it left, so the descent is no step.
+        val roof = Closing(CoverFace.ROOF, "b3", BlockFace.DOWN)
+        val openBelow = listOf(CoverFace.FEET_NORTH, CoverFace.FEET_EAST, CoverFace.HEAD_NORTH, CoverFace.ROOF)
+        val pit = open(openBelow, closings = listOf(roof))
+        val below = scene("r2", 200, pit, listOf(dirt)).cell(63.0, 4.5)
+        val descended = ledger.present(agent, "r2", 200, GoalObservation.of(below))
+        assertEquals(StepEvidence.NONE, descended?.progress?.stepEvidence)
+        ledger.forget(agent, "r2")
+        assertEquals(
+            GoalEvidence.CONTINUED,
+            ledger.answer(below, Intent.Place("b3", "s1", BlockFace.DOWN), continued)?.outcome,
+        )
+        ledger.step("r2", "place")
+        // Six closed where it now stands: past the five this cell has shown, so the closing counts.
+        val closed = scene("r3", 300, open(openBelow - CoverFace.ROOF), listOf(dirt.copy(count = 2))).cell(63.0, 4.5)
+        val credited = ledger.present(agent, "r3", 300, GoalObservation.of(closed))
+        assertEquals(StepEvidence.COVERED, credited?.progress?.stepEvidence)
+        assertEquals(0L, credited?.progress?.stepsWithoutProgress)
+    }
+
+    @Test
+    fun `a descent that gives a solid block is credited only as cover, never as a gather`() {
+        val ledger = GoalLedger()
+        val grass = scene("r0", 50, open(allOpen, descend = "b1"))
+        ledger.answer(grass, Intent.Dig("b1"), shelter)
+        ledger.step("r0", "dig")
+        // The descent deepened nothing, though it gave dirt: no gather was offered, so no progress.
+        val same = scene("r1", 100, open(allOpen, descend = "b1"), listOf(dirt))
+        val shown = ledger.present(agent, "r1", 100, GoalObservation.of(same))
+        assertEquals(StepEvidence.NONE, shown?.progress?.stepEvidence)
+        assertEquals(1L, shown?.progress?.stepsWithoutProgress)
+    }
+
+    @Test
+    fun `a resource subgoal is never offered, and a solid block carried is equipped as a shelter step`() {
         val ledger = GoalLedger()
         val headWest = Closing(CoverFace.HEAD_WEST, "b2", BlockFace.UP)
         val grass = scene("r0", 50, open(allOpen, descend = "b1"))
@@ -257,7 +321,7 @@ class ShelterTest {
         val pocketed = scene("r1b", 100, alcove, listOf(dirt.copy(held = null)))
         val equip = Intent.Equip("s1", EquipmentDestination.HAND)
         assertEquals(GoalEvidence.CONTINUED, ledger.answer(pocketed, equip, continued)?.outcome)
-        // Feeding an item goal held without a shelter is no subgoal either.
+        // Nor is one under an item goal held without a shelter.
         val other = GoalLedger()
         val elsewhere = other.answer(holding.copy(requestId = "r9"), Intent.Dig("b2"), feeds)
         assertEquals(GoalEvidence.FEEDS_NOT_OFFERED, elsewhere?.outcome)

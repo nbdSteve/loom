@@ -85,6 +85,13 @@
           "type": "array",
           "maxItems": 8,
           "items": { "allOf": [{ "$ref": "#/$defs/ItemName" }, { "not": { "const": "item.minecraft.air" } }] }
+        },
+        "gathers": {
+          "description": "For a shelter whose faces can close but nothing held can close them: the refs of blocks in reach a safe dig of which yields a solid block - none of the shelter's own faces, its roof or its floor - and of solid dropped items in sight, whose gathering is a step of the shelter goal itself rather than a goal of its own. Absent when there is nothing to gather or nothing to close.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/EntityRef" }
         }
       }
     },
@@ -887,8 +894,14 @@
       "enum": ["done", "progressing", "noProgress"]
     },
 
+    "GoalReason": {
+      "description": "Why a replace or an abandon ends the held goal, by evidence the body checks: completed, its success condition is met (a replace only); impossible, what is held and could be given no longer reaches it, or no shelter step exists; stale, it advanced nothing for the stall bound's steps in a row; unsafe, a shelter goal replaces another as night nears and the agent stands exposed; superseded, a replace by a different objective, chosen deliberately for the reason the decision's reasoning states.",
+      "type": "string",
+      "enum": ["completed", "impossible", "unsafe", "stale", "superseded"]
+    },
+
     "GoalChoice": {
-      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. successItem and successCount are the goal and its success condition: holding that many of that item in total, counting what is held now, which the body measures and words itself. Both are for adopt, revise and replace, and the body refuses a count the inventory already holds or one more than it holds plus what is in sight could give, and applies that same bound to a continue. step words the one concrete next step this decision's intent takes toward the goal, for adopt, continue, revise and replace; the body types that step from the intent itself, and refuses one that cannot produce the goal's item. stepResult judges the carried goal's previous step, for every disposition except adopt. The body refuses a choice missing a field its disposition requires, and ignores the rest.",
+      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. successItem and successCount are the goal and its success condition: holding that many of that item in total, counting what is held now, which the body measures and words itself. Both are for adopt, revise and replace, and the body refuses a count fewer than two beyond what the inventory holds plus the agent's own drops of the item lying in reach - a goal one step could meet is no objective - or one more than it holds plus what is in sight could give, and applies the upper bound to a continue; more of the held goal's own item is a revise, which keeps the goal, never a replace. step words the one concrete next step this decision's intent takes toward the goal, for adopt, continue, revise and replace; the body types that step from the intent itself, and refuses one that cannot produce the goal's item. stepResult judges the carried goal's previous step, for every disposition except adopt. The body refuses a choice missing a field its disposition requires, and ignores the rest. reason states why a replace or an abandon ends the held goal, and the body refuses either without one, or with one its evidence does not support.",
       "type": "object",
       "additionalProperties": false,
       "required": ["disposition"],
@@ -907,9 +920,10 @@
           "const": true
         },
         "feeds": {
-          "description": "For an adopt while a shelter goal is held and nothing held can close it: the item goal adopted is a resource subgoal that feeds the shelter goal, which waits under it and is held again once the subgoal is completed or abandoned.",
+          "description": "For an adopt while a shelter goal is held and nothing held can close it: the item goal adopted is a resource subgoal that feeds the shelter goal, which waits under it and is held again once the subgoal is completed or abandoned. Historical: from routine-v36 gathering a closer is a step of the shelter goal itself, and no subgoal is offered.",
           "const": true
-        }
+        },
+        "reason": { "$ref": "#/$defs/GoalReason" }
       }
     },
 

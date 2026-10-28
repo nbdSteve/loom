@@ -8,6 +8,7 @@ import dev.loom.contract.BlockYield
 import dev.loom.contract.ExploreTarget
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalReason
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.HorizonGoal
 import dev.loom.contract.HorizonGrounding
@@ -174,6 +175,7 @@ class HorizonTest {
                 successItem = PLANKS,
                 successCount = 8,
                 stepResult = GoalStepResult.PROGRESSING,
+                reason = GoalReason.SUPERSEDED,
             )
         val replaced = ledger.resolve(agent, decisionFor(holding, Intent.Dig("b1")).copy(goal = switch))
         assertEquals(GoalEvidence.REPLACED, replaced?.outcome)

@@ -1,5 +1,6 @@
 //! The shelter goal through the strict request schema: what a review is offered as night nears,
-//! inside a pit it cannot walk out of, sealed in, and while a resource subgoal feeds the shelter.
+//! inside a pit it cannot walk out of, sealed in, while it gathers a closer, and while a resource
+//! subgoal an older routine set feeds the shelter.
 //!
 //! r36's ten agents all died at night in the open, every death under hostile attack, and none was
 //! ever offered anything a hiding place could meet. These pin, scene by scene, that a shelter goal
@@ -145,29 +146,30 @@ fn sealed_in_a_shelter_is_completed_and_stayed_in_and_no_flight_is_offered() {
 }
 
 #[test]
-fn nothing_solid_to_close_natural_cover_with_feeds_it_a_resource_subgoal_stepped_by_its_own_dig() {
-    let cover = scene("shelter-cover-feedable");
+fn nothing_solid_to_close_natural_cover_with_is_gathered_as_a_step_of_the_shelter_itself() {
+    let cover = scene("shelter-cover-gathers");
     let offered = OfferedRefs::of(&cover);
-    assert!(offered.shelter.feedable());
+    assert_eq!(offered.shelter.gathers, vec!["b8".to_owned()]);
     let schema = schema_of(&cover);
-    let feeds = json!({ "disposition": "adopt", "successItem": "item.minecraft.dirt", "successCount": 1, "feeds": true });
+    let continued = json!({ "disposition": "continue", "stepResult": "progressing" });
     assert!(accepts(
         &schema,
         &json!({ "action": "dig", "block": "b8" }),
-        &feeds
+        &continued
     ));
-    // Stone gives a bare hand nothing, so it is no step of a dirt subgoal.
+    // Stone gives a bare hand nothing, so it gathers nothing to close a face with.
     assert!(!accepts(
         &schema,
         &json!({ "action": "dig", "block": "b7" }),
-        &feeds
+        &continued
     ));
-    // An item no shelter can be closed with is no subgoal of it.
-    let other = json!({ "disposition": "adopt", "successItem": "item.minecraft.stick", "successCount": 1, "feeds": true });
+    // Gathering is no goal of its own: a resource subgoal under the shelter is not offered (r39:
+    // alpha's dirt subgoal changed the objective's identity twice and dug its own shelter's wall).
+    let feeds = json!({ "disposition": "adopt", "successItem": "item.minecraft.dirt", "successCount": 2, "feeds": true });
     assert!(!accepts(
         &schema,
         &json!({ "action": "dig", "block": "b8" }),
-        &other
+        &feeds
     ));
 }
 

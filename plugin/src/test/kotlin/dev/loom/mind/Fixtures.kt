@@ -8,6 +8,7 @@ import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalReason
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.Intent
 import dev.loom.contract.Observation
@@ -111,7 +112,7 @@ fun perception(
         surroundingsOmitted = 0,
     )
 
-/** [perception] with a dead bush in sight that yields sticks, which makes a stick goal obtainable. */
+/** [perception] with two dead bushes in sight that yield sticks, which makes a two-stick goal obtainable. */
 fun perceptionNearBush(
     requestId: String = "req-1",
     agentId: String = "agent-alpha",
@@ -121,7 +122,7 @@ fun perceptionNearBush(
         requestId = requestId,
         agentId = agentId,
         trigger = trigger,
-    ).copy(surroundings = listOf(STICK_BUSH))
+    ).copy(surroundings = listOf(STICK_BUSH, SECOND_STICK_BUSH))
 
 /**
  * A dead bush in sight that digging with a bare hand yields sticks from: what makes the sticks
@@ -140,6 +141,9 @@ val STICK_BUSH: Observation =
         yields = listOf(BlockYield("item.minecraft.stick", 0, 2, 100)),
         digSafe = true,
     )
+
+/** A second [STICK_BUSH] beside the first, so sight gives the two sticks an objective asks. */
+val SECOND_STICK_BUSH: Observation = STICK_BUSH.copy(ref = "bush2", direction = Bearing.SOUTH)
 
 /**
  * The sighting trigger a body would put on a perception that found [seen].
@@ -191,7 +195,8 @@ fun decisionFor(
 fun goalChoice(
     disposition: GoalDisposition,
     stepResult: GoalStepResult = GoalStepResult.PROGRESSING,
-    success: Pair<String, Long> = "item.minecraft.stick" to 1L,
+    success: Pair<String, Long> = "item.minecraft.stick" to 2L,
+    reason: GoalReason? = null,
 ): GoalChoice {
     val worded = disposition in setOf(GoalDisposition.ADOPT, GoalDisposition.REVISE, GoalDisposition.REPLACE)
     val stepped = worded || disposition == GoalDisposition.CONTINUE
@@ -201,6 +206,7 @@ fun goalChoice(
         successCount = if (worded) success.second else null,
         step = if (stepped) "the next concrete step" else null,
         stepResult = if (disposition == GoalDisposition.ADOPT) null else stepResult,
+        reason = reason,
     )
 }
 

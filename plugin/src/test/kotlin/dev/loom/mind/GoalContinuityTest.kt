@@ -94,7 +94,7 @@ class GoalContinuityTest {
         assertNull(seen[0].goal)
         val carried = seen[1].goal
         assertEquals("r1", carried?.goalId)
-        assertEquals("hold 1 item.minecraft.stick", carried?.statement)
+        assertEquals("hold 2 item.minecraft.stick", carried?.statement)
         assertEquals(GoalStep("r1", EventTag.DIG, EventTag.ACCEPTED), carried?.lastStep)
 
         val (first, second) = decidedGoals()

@@ -150,6 +150,16 @@ class R34ReplayTest {
     fun aStalledGoalsProductKeepsItsStallCount() {
         // body:00000222: oak log three steps without progress, replaced by two oak buttons, which need
         // the same unreached log; r34 started the button goal at none and it was abandoned two walks on.
+        // Each decision is r34's own, restated as routine-v36 asks: every count at least two past
+        // what is held, and every replace and abandon stating the reason its evidence supports.
+        val restated =
+            mapOf<String, (dev.loom.contract.GoalChoice) -> dev.loom.contract.GoalChoice>(
+                "48" to { it.copy(successCount = 2, reason = dev.loom.contract.GoalReason.COMPLETED) },
+                "4z" to { it.copy(successCount = 3) },
+                "bq" to { it.copy(successCount = 2) },
+                "ch" to { it.copy(reason = dev.loom.contract.GoalReason.STALE) },
+                "jw" to { it.copy(reason = dev.loom.contract.GoalReason.STALE) },
+            )
         val zeta = dev.loom.body.AgentId("tribe-zeta")
         val ledger = GoalLedger(recipes = woodRecipes)
         val outcomes = mutableListOf<String?>()
@@ -168,7 +178,7 @@ class R34ReplayTest {
                 dev.loom.contract.LoomJson.decodeFromJsonElement(
                     dev.loom.contract.Decision.serializer(),
                     requireNotNull(decided["decision"]),
-                )
+                ).let { raw -> raw.copy(goal = raw.goal?.let { restated[sense]?.invoke(it) ?: it }) }
             outcomes += ledger.resolve(zeta, decision)?.outcome
             val applied = recordOf("intentApplied", key)
             val outcome = requireNotNull(applied["outcome"]).jsonPrimitive.content

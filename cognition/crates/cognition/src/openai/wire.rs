@@ -309,6 +309,17 @@ fn checked_goal(goal: Option<GoalChoice>) -> Result<Option<GoalChoice>, String> 
         return Ok(None);
     };
     let fields = goal_fields(choice.disposition);
+    // A replace or an abandon says why it ends the held goal, and no other disposition does.
+    let ending = matches!(
+        choice.disposition,
+        GoalDisposition::Replace | GoalDisposition::Abandon
+    );
+    if ending && choice.reason.is_none() {
+        return Err("the model's goal choice ended its goal without saying why".to_owned());
+    }
+    if !ending && choice.reason.is_some() {
+        return Err("the model's goal choice gave a reason its disposition forbids".to_owned());
+    }
     if choice.discover.is_some() || choice.shelter.is_some() {
         return checked_discovery(choice, fields);
     }
@@ -918,6 +929,35 @@ fn goal_variant(
     })
 }
 
+/// The reasons a replace or an abandon may give, each as the body judges it.
+const COMPLETED: &str = "completed";
+const IMPOSSIBLE: &str = "impossible";
+const UNSAFE: &str = "unsafe";
+const STALE: &str = "stale";
+const SUPERSEDED: &str = "superseded";
+
+/// What each reason means, as the shape that offers it states.
+const REASON: &str = "Why you end the held goal: completed, its condition is met; impossible, nothing you hold or could get now meets it; unsafe, night nears and you take up a shelter instead; stale, its last three steps advanced nothing; superseded, you choose a different objective, for the reason your reasoning gives.";
+
+/// `variants`, each a replace or abandon shape, required to give one of `reasons`.
+fn reasoned(variants: Vec<Value>, reasons: &[&str]) -> Vec<Value> {
+    variants
+        .into_iter()
+        .map(|mut variant| {
+            if let Some(properties) = variant["properties"].as_object_mut() {
+                properties.insert(
+                    "reason".to_owned(),
+                    json!({ "type": "string", "enum": reasons, "description": REASON }),
+                );
+            }
+            if let Some(required) = variant["required"].as_array_mut() {
+                required.push(json!("reason"));
+            }
+            variant
+        })
+        .collect()
+}
+
 /// The discovery goal shape of an adopt or a replace: no success item, met when a walk to the edge
 /// of sight reveals a useful resource no footing gives (r23: 17 of 70 reviews could set no goal).
 fn discovery_variant(disposition: GoalDisposition, name: &str) -> Value {
@@ -981,33 +1021,6 @@ fn shelter_variant(disposition: GoalDisposition, name: &str) -> Value {
         "required": required,
         "additionalProperties": false,
     })
-}
-
-/// The resource subgoal shape: an adopt of a goal for `item`, a solid block your held shelter goal
-/// can be closed with, that feeds the shelter goal, which waits and is held again once it ends.
-fn feeds_variant(item: &str, fewest: i64, most: i64) -> Value {
-    let mut variant = goal_variant(
-        goal_fields(GoalDisposition::Adopt),
-        "adopt",
-        FEEDS,
-        json!({ "type": "string", "enum": [item] }),
-        fewest,
-        most,
-    );
-    if let Some(properties) = variant["properties"].as_object_mut() {
-        properties.insert(
-            "feeds".to_owned(),
-            json!({
-                "type": "boolean",
-                "enum": [true],
-                "description": "This goal feeds your held shelter goal: nothing you hold can close it, and this item can.",
-            }),
-        );
-    }
-    if let Some(required) = variant["required"].as_array_mut() {
-        required.push(json!("feeds"));
-    }
-    variant
 }
 
 /// The previous step's verdict field, which every disposition that answers a carried goal states.
@@ -1100,11 +1113,10 @@ impl GoalOffer {
 
 const ADOPT: &str = "Take up a new goal when you hold none.";
 const CONTINUE: &str = "Keep the held goal and take its next step.";
-const REVISE: &str = "Keep pursuing the held goal's item with a new total and step; when its condition is met, a revise must name a total you do not yet hold.";
+const REVISE: &str = "Keep pursuing the held goal's item with a new total and step, under the same goal: more of the same item is always a revise, never a new goal; when its condition is met, a revise must name a total you do not yet hold.";
 const DISCOVER: &str = "Set a discovery goal when nothing you see, remember or hold grounds an item goal: walk to the edge of sight until a useful resource comes into view.";
-const REPLACE: &str = "End the held goal - one that advanced nothing for three steps, or one whose condition is met - and take up a new one in this same answer, whose step is this answer's action.";
+const REPLACE: &str = "End the held goal and take up a different one in this same answer, whose step is this answer's action, for the reason given.";
 const SHELTER: &str = "Set a shelter goal as night nears: seal the space you stand in by the steps your cover offers - dig down, close an open face with a solid block you hold, or walk onto more enclosed ground.";
-const FEEDS: &str = "Take up a resource subgoal for a solid block your shelter can be closed with, when you hold none; your shelter goal waits and is held again once this goal is complete or abandoned.";
 
 /// The goal choices one phase offers: `null`, or one closed disposition shape the body would
 /// accept now.
@@ -1126,11 +1138,14 @@ fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
             "The held goal's success condition is met; drop it.",
         )
     };
-    let abandon = || {
-        variants(
-            GoalDisposition::Abandon,
-            "abandon",
-            "The held goal is no longer worth pursuing; drop it.",
+    let abandon = |reasons: &[&str]| {
+        reasoned(
+            variants(
+                GoalDisposition::Abandon,
+                "abandon",
+                "End the held goal with nothing to take up in its place, for the reason given.",
+            ),
+            reasons,
         )
     };
     let continued = || variants(GoalDisposition::Continue, "continue", CONTINUE);
@@ -1144,30 +1159,47 @@ fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
         };
     }
     let Some(refs) = offered.filter(|_| phase.coupled()) else {
+        let every = [COMPLETED, IMPOSSIBLE, UNSAFE, STALE, SUPERSEDED];
         let by_item = vec![(
             String::new(),
             [
                 variants(GoalDisposition::Adopt, "adopt", ADOPT),
                 continued(),
                 variants(GoalDisposition::Revise, "revise", REVISE),
-                variants(GoalDisposition::Replace, "replace", REPLACE),
+                reasoned(
+                    variants(GoalDisposition::Replace, "replace", REPLACE),
+                    &every,
+                ),
             ]
             .concat(),
         )];
-        let discovery = vec![
-            discovery_variant(GoalDisposition::Adopt, "adopt"),
-            discovery_variant(GoalDisposition::Replace, "replace"),
-        ];
-        let shelter = vec![
-            shelter_variant(GoalDisposition::Adopt, "adopt"),
-            shelter_variant(GoalDisposition::Replace, "replace"),
-            feeds_variant_reference(),
-        ];
+        let discovery = [
+            vec![discovery_variant(GoalDisposition::Adopt, "adopt")],
+            reasoned(
+                vec![discovery_variant(GoalDisposition::Replace, "replace")],
+                &every,
+            ),
+        ]
+        .concat();
+        let shelter = [
+            vec![shelter_variant(GoalDisposition::Adopt, "adopt")],
+            reasoned(
+                vec![shelter_variant(GoalDisposition::Replace, "replace")],
+                &every,
+            ),
+        ]
+        .concat();
         return GoalOffer {
             by_item,
             exploring: Vec::new(),
             sheltering: shelter,
-            any: [none(), complete(), abandon(), discovery].concat(),
+            any: [
+                none(),
+                complete(),
+                abandon(&[COMPLETED, IMPOSSIBLE, STALE]),
+                discovery,
+            ]
+            .concat(),
         };
     };
     coupled_offer(phase, refs, continued, complete, abandon, none)
@@ -1215,30 +1247,15 @@ fn coupled_offer(
     refs: &OfferedRefs,
     continued: impl Fn() -> Vec<Value>,
     complete: impl Fn() -> Vec<Value>,
-    abandon: impl Fn() -> Vec<Value>,
+    abandon: impl Fn(&[&str]) -> Vec<Value>,
     none: impl Fn() -> Vec<Value>,
 ) -> GoalOffer {
     if let Some(offer) = shelter_offer(phase, refs, &continued, &complete, &abandon) {
         return offer;
     }
-    let held = refs.held_item.clone();
-    let shaped = |disposition, name, description, item: &str| {
-        shaped_choices(refs, disposition, name, description, item)
-    };
-    let each_item =
-        |disposition, name, description| each_item_choices(refs, disposition, name, description);
-    let revise_held = || revise_held_choices(refs);
-    // A shelter goal may be set in place of any other while night nears and the cover offers a step.
-    let shelter_replace = || {
-        if refs.shelter.offered() && refs.sheltering == Sheltering::Unheld {
-            vec![shelter_variant(GoalDisposition::Replace, "replace")]
-        } else {
-            Vec::new()
-        }
-    };
-    match (phase, refs.sheltering) {
+    match phase {
         // The reference shape and an event are never coupled, so never reach here.
-        (GoalPhase::Any | GoalPhase::Event, _) => GoalOffer {
+        GoalPhase::Any | GoalPhase::Event => GoalOffer {
             by_item: Vec::new(),
             exploring: Vec::new(),
             sheltering: Vec::new(),
@@ -1246,70 +1263,31 @@ fn coupled_offer(
         },
         // With no item goal grounded, a review sets a discovery goal and walks to look further,
         // rather than act with no goal at all (r23: 17 of 70 reviews held none).
-        (GoalPhase::Unheld, _) if refs.discovery_offered() => GoalOffer {
-            by_item: each_item(GoalDisposition::Adopt, "adopt", ADOPT),
+        GoalPhase::Unheld if refs.discovery_offered() => GoalOffer {
+            by_item: each_item_choices(refs, GoalDisposition::Adopt, "adopt", ADOPT),
             exploring: vec![discovery_variant(GoalDisposition::Adopt, "adopt")],
             sheltering: shelter_adopt(refs),
             any: Vec::new(),
         },
-        (GoalPhase::Unheld, _) => GoalOffer {
-            by_item: each_item(GoalDisposition::Adopt, "adopt", ADOPT),
+        GoalPhase::Unheld => GoalOffer {
+            by_item: each_item_choices(refs, GoalDisposition::Adopt, "adopt", ADOPT),
             exploring: Vec::new(),
             sheltering: shelter_adopt(refs),
             any: none(),
         },
-        // A held goal must be answered: a decision that acts while ignoring its goal is refused,
-        // so null is not offered (r15 kappa). It is stepped toward its own item whether or not
-        // sight can meet all of it; one sight can meet is not abandoned (r17 theta), and one it
-        // cannot may instead look further, or be abandoned (r18: five goals abandoned to look).
-        (GoalPhase::Held, _) => {
-            let mut by_item = continue_first(revise_held(), held.as_ref(), continued());
-            // A switch into a recipe made from what is already held, before the stall bound.
-            for (item, ..) in &refs.switch_bounds {
-                by_item.push((
-                    item.clone(),
-                    shaped(GoalDisposition::Replace, "replace", REPLACE, item),
-                ));
-            }
-            // A discovery goal with somewhere to look is walked until its stall bound, never
-            // abandoned first (r24: six of nine were abandoned after one or two walks).
-            let looking = refs.discovering() && refs.explore_continue();
-            let exploring = if refs.explore_continue() {
-                continued()
+        GoalPhase::Held => held_offer(refs, &continued, &abandon),
+        GoalPhase::Met => met_offer(refs, &complete, &abandon),
+        // With nothing in sight to give a goal for another item, the stalled one can only go.
+        // Nor can a stalled item goal with no item grounded look further but by a discovery goal.
+        GoalPhase::Stalled => {
+            let by_item = replace_other(refs, &[STALE]);
+            let exploring = discovery_replace(refs, &[STALE]);
+            let sheltering = shelter_replace(refs, &[STALE, UNSAFE]);
+            let any = if !pairable(refs, &by_item, &exploring) && sheltering.is_empty() {
+                abandon(&[STALE])
             } else {
                 Vec::new()
             };
-            let sheltering = shelter_replace();
-            let short = (!refs.goal_obtainable && !looking)
-                || (!pairable(refs, &by_item, &exploring) && sheltering.is_empty());
-            GoalOffer {
-                by_item,
-                exploring,
-                sheltering,
-                any: short.then(&abandon).unwrap_or_default(),
-            }
-        }
-        // A met goal is completed, or completed and the next adopted in one answer by a replace,
-        // or revised to a total not yet held (r17 and r18: every completion idled).
-        (GoalPhase::Met, _) => {
-            let mut by_item = each_item(GoalDisposition::Replace, "replace", REPLACE);
-            for (item, choices) in revise_held() {
-                match by_item.iter_mut().find(|(name, _)| *name == item) {
-                    Some((_, existing)) => existing.extend(choices),
-                    None => by_item.push((item, choices)),
-                }
-            }
-            // A met discovery goal becomes a goal for what it revealed, and a met item goal with no
-            // next item in sight becomes a discovery goal; a plain complete only when neither can
-            // be set (r19: eight plain completes, two beside a filler equip).
-            let exploring = discovery_replace(refs);
-            let sheltering = shelter_replace();
-            let unpaired = !pairable(refs, &by_item, &exploring) && sheltering.is_empty();
-            let any = match (unpaired, refs.discovering()) {
-                (false, _) => Vec::new(),
-                (true, false) => complete(),
-                (true, true) => abandon(),
-            };
             GoalOffer {
                 by_item,
                 exploring,
@@ -1317,22 +1295,112 @@ fn coupled_offer(
                 any,
             }
         }
-        // With nothing in sight to give a goal for another item, the stalled one can only go.
-        // Nor can a stalled item goal with no item grounded look further but by a discovery goal.
-        (GoalPhase::Stalled, _) => {
-            let by_item = each_item(GoalDisposition::Replace, "replace", REPLACE);
-            let exploring = discovery_replace(refs);
-            let sheltering = shelter_replace();
-            let any = (!pairable(refs, &by_item, &exploring) && sheltering.is_empty())
-                .then(&abandon)
-                .unwrap_or_default();
-            GoalOffer {
-                by_item,
-                exploring,
-                sheltering,
-                any,
-            }
+    }
+}
+
+/// Every offered item's replace shapes but the held goal's own, each stating one of `reasons`:
+/// more of the held item is a revise, which keeps the goal (r39: alpha replaced "hold 9 dirt" by
+/// "hold 10 dirt" at every step, and no held time counted).
+fn replace_other(refs: &OfferedRefs, reasons: &[&str]) -> Vec<(String, Vec<Value>)> {
+    each_item_choices(refs, GoalDisposition::Replace, "replace", REPLACE)
+        .into_iter()
+        .filter(|(item, _)| refs.held_item.as_ref() != Some(item))
+        .map(|(item, choices)| (item, reasoned(choices, reasons)))
+        .collect()
+}
+
+/// A shelter goal set in place of any other, stating one of `reasons`, while night nears and the
+/// cover offers a step.
+fn shelter_replace(refs: &OfferedRefs, reasons: &[&str]) -> Vec<Value> {
+    if refs.shelter.offered() && refs.sheltering == Sheltering::Unheld {
+        reasoned(
+            vec![shelter_variant(GoalDisposition::Replace, "replace")],
+            reasons,
+        )
+    } else {
+        Vec::new()
+    }
+}
+
+/// The choices of a review holding an unmet goal short of its stall bound. It must be answered: a
+/// decision that acts while ignoring its goal is refused, so null is not offered (r15 kappa). It is
+/// stepped toward its own item whether or not sight can meet all of it; one sight can meet is not
+/// abandoned (r17 theta), and one it cannot may instead look further, or be abandoned as
+/// impossible (r18: five goals abandoned to look). A switch to another objective is superseded,
+/// and a shelter as night nears unsafe.
+fn held_offer(
+    refs: &OfferedRefs,
+    continued: &impl Fn() -> Vec<Value>,
+    abandon: &impl Fn(&[&str]) -> Vec<Value>,
+) -> GoalOffer {
+    let mut by_item = continue_first(
+        revise_held_choices(refs),
+        refs.held_item.as_ref(),
+        continued(),
+    );
+    // A switch into a recipe made from what is already held, before the stall bound.
+    for (item, ..) in &refs.switch_bounds {
+        by_item.push((
+            item.clone(),
+            reasoned(
+                shaped_choices(refs, GoalDisposition::Replace, "replace", REPLACE, item),
+                &[SUPERSEDED],
+            ),
+        ));
+    }
+    // A discovery goal with somewhere to look is walked until its stall bound, never abandoned
+    // first (r24: six of nine were abandoned after one or two walks).
+    let looking = refs.discovering() && refs.explore_continue();
+    let exploring = if refs.explore_continue() {
+        continued()
+    } else {
+        Vec::new()
+    };
+    let sheltering = shelter_replace(refs, &[UNSAFE]);
+    let short = (!refs.goal_obtainable && !looking)
+        || (!pairable(refs, &by_item, &exploring) && sheltering.is_empty());
+    GoalOffer {
+        by_item,
+        exploring,
+        sheltering,
+        any: if short {
+            abandon(&[IMPOSSIBLE])
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+/// The choices of a review whose goal is met: completed, or completed and the next adopted in one
+/// answer by a replace, or revised to a total not yet held (r17 and r18: every completion idled).
+/// A met discovery goal becomes a goal for what it revealed, and a met item goal with no next item
+/// in sight a discovery goal; a plain complete only when neither can be set (r19: eight plain
+/// completes, two beside a filler equip).
+fn met_offer(
+    refs: &OfferedRefs,
+    complete: &impl Fn() -> Vec<Value>,
+    abandon: &impl Fn(&[&str]) -> Vec<Value>,
+) -> GoalOffer {
+    let mut by_item = replace_other(refs, &[COMPLETED]);
+    for (item, choices) in revise_held_choices(refs) {
+        match by_item.iter_mut().find(|(name, _)| *name == item) {
+            Some((_, existing)) => existing.extend(choices),
+            None => by_item.push((item, choices)),
         }
+    }
+    let exploring = discovery_replace(refs, &[COMPLETED]);
+    let sheltering = shelter_replace(refs, &[COMPLETED]);
+    let unpaired = !pairable(refs, &by_item, &exploring) && sheltering.is_empty();
+    let any = match (unpaired, refs.discovering()) {
+        (false, _) => Vec::new(),
+        (true, false) => complete(),
+        (true, true) => abandon(&[COMPLETED]),
+    };
+    GoalOffer {
+        by_item,
+        exploring,
+        sheltering,
+        any,
     }
 }
 
@@ -1387,34 +1455,42 @@ fn revise_held_choices(refs: &OfferedRefs) -> Vec<(String, Vec<Value>)> {
         .collect()
 }
 
-/// The goal choices of a review holding a shelter goal or its resource subgoal, or `None` for any
-/// other: a shelter goal is stepped by what its cover offers, fed by a subgoal when nothing held
-/// can close it, completed once sealed, or let go; a subgoal is pursued like any goal of its item
-/// but never replaced, since a replace would drop the shelter it feeds.
+/// The goal choices of a review holding a shelter goal, or a resource subgoal an older routine
+/// adopted, or `None` for any other: a shelter goal is stepped by what its cover offers - gathering
+/// a closer among them - completed once sealed, and let go only when no step can close it; a
+/// subgoal is pursued like any goal of its item but never replaced, since a replace would drop the
+/// shelter it feeds.
 fn shelter_offer(
     phase: GoalPhase,
     refs: &OfferedRefs,
     continued: &impl Fn() -> Vec<Value>,
     complete: &impl Fn() -> Vec<Value>,
-    abandon: &impl Fn() -> Vec<Value>,
+    abandon: &impl Fn(&[&str]) -> Vec<Value>,
 ) -> Option<GoalOffer> {
     let held = refs.held_item.clone();
     let offer = match (phase, refs.sheltering) {
-        // A held shelter goal is stepped by what its cover reading offers, fed by a resource
-        // subgoal when nothing held can close it, or let go.
-        (GoalPhase::Held, Sheltering::Held) => GoalOffer {
-            by_item: feeding(refs),
-            exploring: Vec::new(),
-            sheltering: if refs.shelter.stepped() {
-                continued()
-            } else {
-                Vec::new()
-            },
-            any: abandon(),
-        },
+        // A held shelter goal is stepped by what its cover reading offers, or let go as impossible
+        // only when nothing can close it (r39: gamma abandoned three shelter goals while taking
+        // their own offered step, the last of them its seal).
+        (GoalPhase::Held, Sheltering::Held) => {
+            let stepped = refs.shelter.stepped();
+            GoalOffer {
+                by_item: Vec::new(),
+                exploring: Vec::new(),
+                sheltering: if stepped { continued() } else { Vec::new() },
+                any: if stepped {
+                    Vec::new()
+                } else {
+                    abandon(&[IMPOSSIBLE])
+                },
+            }
+        }
         // A sealed shelter is completed to be stayed in, or replaced by a goal sight gives.
         (GoalPhase::Met, Sheltering::Held) => GoalOffer {
-            by_item: each_item_choices(refs, GoalDisposition::Replace, "replace", REPLACE),
+            by_item: each_item_choices(refs, GoalDisposition::Replace, "replace", REPLACE)
+                .into_iter()
+                .map(|(item, choices)| (item, reasoned(choices, &[COMPLETED])))
+                .collect(),
             exploring: Vec::new(),
             sheltering: Vec::new(),
             any: complete(),
@@ -1425,7 +1501,7 @@ fn shelter_offer(
             by_item: continue_first(revise_held_choices(refs), held.as_ref(), continued()),
             exploring: Vec::new(),
             sheltering: Vec::new(),
-            any: abandon(),
+            any: abandon(&[IMPOSSIBLE]),
         },
         // A met subgoal is completed, and the shelter it fed takes this answer's step.
         (GoalPhase::Met, Sheltering::Feeding) => GoalOffer {
@@ -1446,7 +1522,7 @@ fn shelter_offer(
             by_item: Vec::new(),
             exploring: Vec::new(),
             sheltering: Vec::new(),
-            any: abandon(),
+            any: abandon(&[STALE]),
         },
         _ => return None,
     };
@@ -1462,30 +1538,13 @@ fn shelter_adopt(refs: &OfferedRefs) -> Vec<Value> {
     }
 }
 
-/// The resource subgoals a held shelter goal may adopt: one per solid-block item sight can give,
-/// at the counts that item admits, each paired with that item's own steps.
-fn feeding(refs: &OfferedRefs) -> Vec<(String, Vec<Value>)> {
-    if !refs.shelter.feedable() {
-        return Vec::new();
-    }
-    refs.shelter
-        .feed_bounds
-        .iter()
-        .map(|(item, fewest, most)| (item.clone(), vec![feeds_variant(item, *fewest, *most)]))
-        .collect()
-}
-
-/// The reference shape of a resource subgoal: any item, at any count.
-fn feeds_variant_reference() -> Value {
-    let mut variant = feeds_variant("", 1, MAX_SUCCESS_COUNT);
-    variant["properties"]["successItem"] = json!({ "type": "string" });
-    variant
-}
-
-/// The replace into a discovery goal, offered when nothing grounds an item goal.
-fn discovery_replace(refs: &OfferedRefs) -> Vec<Value> {
+/// The replace into a discovery goal, offered when nothing grounds an item goal, for `reasons`.
+fn discovery_replace(refs: &OfferedRefs, reasons: &[&str]) -> Vec<Value> {
     if refs.discovery_offered() {
-        vec![discovery_variant(GoalDisposition::Replace, "replace")]
+        reasoned(
+            vec![discovery_variant(GoalDisposition::Replace, "replace")],
+            reasons,
+        )
     } else {
         Vec::new()
     }
@@ -1860,7 +1919,8 @@ fn survival_intents(
 }
 
 /// A shelter goal's step intents, each ref list defined once under `$defs`: the descent underfoot,
-/// each closing of an open face with a solid held stack, and a walk onto more enclosed ground.
+/// each closing of an open face with a solid held stack, a walk onto more enclosed ground, and the
+/// gathering of a closer while nothing held can close a face.
 fn shelter_step_variants(
     offered: &OfferedRefs,
     table: &mut serde_json::Map<String, Value>,
@@ -1888,9 +1948,53 @@ fn shelter_step_variants(
         shelter.sites.clone(),
         "A block to stand on whose cell is more enclosed than where you stand: natural cover.",
     );
+    // Gathering a closer while nothing held can close a face: a dig that yields a solid block, or a
+    // collect of a solid drop, each a step of the shelter itself rather than a goal of its own.
+    let gathered = |from: &[String]| -> Vec<String> {
+        shelter
+            .gathers
+            .iter()
+            .filter(|handle| from.contains(handle))
+            .cloned()
+            .collect()
+    };
+    let gather_dig = named(
+        "shelterGatherDigRef",
+        gathered(&offered.dig_blocks),
+        "A block in reach whose dig gives a solid block to close your shelter with.",
+    );
+    let gather_pickup = named(
+        "shelterGatherPickupRef",
+        gathered(&offered.pickup_items),
+        "A solid block lying within pickup reach, to close your shelter with.",
+    );
+    let gather_route = named(
+        "shelterGatherRouteRef",
+        gathered(&offered.route_items),
+        "A solid block lying within walking reach, to close your shelter with.",
+    );
     let mut variants: Vec<Value> = [
         dig.and_then(|block| intent_variant("dig", vec![("block", Some(block))])),
         site.and_then(|onto| intent_variant("moveTo", vec![("onto", Some(onto))])),
+        gather_dig.and_then(|block| intent_variant("dig", vec![("block", Some(block))])),
+        gather_pickup.and_then(|item| {
+            intent_variant(
+                "collect",
+                vec![
+                    ("item", Some(item)),
+                    ("approach", approach_field(COLLECT_APPROACH, Some(false))),
+                ],
+            )
+        }),
+        gather_route.and_then(|item| {
+            intent_variant(
+                "collect",
+                vec![
+                    ("item", Some(item)),
+                    ("approach", approach_field(COLLECT_APPROACH, Some(true))),
+                ],
+            )
+        }),
     ]
     .into_iter()
     .flatten()
@@ -2084,10 +2188,10 @@ mod tests {
     use crate::prompt::{render, Prompt};
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
-        DecisionImportance, GoalChoice, GoalDisposition, GoalProgress, GoalStep, GoalStepResult,
-        GoalSummary, Intent, IntentAction, InventoryChange, Perception, Trigger, MAX_GOAL_ID_CHARS,
-        MAX_GOAL_STATEMENT_CHARS, MAX_INVENTORY_CHANGES, MAX_ITEM_NAME_CHARS, MAX_SUCCESS_COUNT,
-        REF_MAX_CHARS,
+        DecisionImportance, GoalChoice, GoalDisposition, GoalProgress, GoalReason, GoalStep,
+        GoalStepResult, GoalSummary, Intent, IntentAction, InventoryChange, Perception, Trigger,
+        MAX_GOAL_ID_CHARS, MAX_GOAL_STATEMENT_CHARS, MAX_INVENTORY_CHANGES, MAX_ITEM_NAME_CHARS,
+        MAX_SUCCESS_COUNT, REF_MAX_CHARS,
     };
     use serde_json::Value;
 
@@ -2334,6 +2438,7 @@ mod tests {
             step_result: result,
             shelter: None,
             feeds: None,
+            reason: None,
         };
         let cases = [
             (
@@ -2373,13 +2478,16 @@ mod tests {
                 ),
             ),
             (
-                r#"{"disposition":"abandon","stepResult":"noProgress"}"#,
-                choice(
-                    GoalDisposition::Abandon,
-                    false,
-                    None,
-                    Some(GoalStepResult::NoProgress),
-                ),
+                r#"{"disposition":"abandon","stepResult":"noProgress","reason":"stale"}"#,
+                GoalChoice {
+                    reason: Some(GoalReason::Stale),
+                    ..choice(
+                        GoalDisposition::Abandon,
+                        false,
+                        None,
+                        Some(GoalStepResult::NoProgress),
+                    )
+                },
             ),
         ];
         for (text, expected) in cases {
@@ -2390,7 +2498,7 @@ mod tests {
     #[test]
     fn a_coupled_answer_lifts_its_decision_beside_the_reasoning() {
         let draft = draft_from_answer(
-            r#"{"decision":{"intent":{"action":"collect","item":"d7","approach":true},"goal":{"disposition":"replace","successItem":"item.minecraft.stick","successCount":2,"step":"collect my stick","stepResult":"noProgress"}},"reasoning":"stalled; my stick lies here"}"#,
+            r#"{"decision":{"intent":{"action":"collect","item":"d7","approach":true},"goal":{"disposition":"replace","successItem":"item.minecraft.stick","successCount":2,"step":"collect my stick","stepResult":"noProgress","reason":"stale"}},"reasoning":"stalled; my stick lies here"}"#,
         )
         .unwrap();
         assert_eq!(
@@ -2405,7 +2513,7 @@ mod tests {
         assert_eq!(goal.success_count, Some(2));
         // A replace sets a new goal and judges the old one's last step, so it needs both.
         let unjudged = draft_from_answer(
-            r#"{"decision":{"intent":{"action":"idle"},"goal":{"disposition":"replace","successItem":"item.minecraft.stick","successCount":2,"step":"s"}},"reasoning":"r"}"#,
+            r#"{"decision":{"intent":{"action":"idle"},"goal":{"disposition":"replace","successItem":"item.minecraft.stick","successCount":2,"step":"s","reason":"stale"}},"reasoning":"r"}"#,
         )
         .expect_err("a replace judges the previous step");
         assert!(unjudged.contains("needs a step result"), "{unjudged}");
@@ -2443,7 +2551,10 @@ mod tests {
                 "step result",
             ),
             (r#"{"disposition":"complete"}"#.to_owned(), "step result"),
-            (r#"{"disposition":"abandon"}"#.to_owned(), "step result"),
+            (
+                r#"{"disposition":"abandon","reason":"stale"}"#.to_owned(),
+                "step result",
+            ),
         ] {
             let reason = goal_of(&missing).expect_err(&missing);
             assert!(
@@ -2478,23 +2589,56 @@ mod tests {
     }
 
     #[test]
+    fn a_replace_or_abandon_states_why_and_nothing_else_may() {
+        for ending in [
+            r#"{"disposition":"abandon","stepResult":"noProgress"}"#,
+            r#"{"disposition":"replace","successItem":"item.minecraft.stick","successCount":2,"stepResult":"done"}"#,
+        ] {
+            let refused = goal_of(ending).expect_err(ending);
+            assert!(
+                refused.contains("without saying why"),
+                "{ending}: {refused}"
+            );
+        }
+        for unended in [
+            r#"{"disposition":"continue","stepResult":"done","reason":"stale"}"#,
+            r#"{"disposition":"complete","stepResult":"done","reason":"completed"}"#,
+            r#"{"disposition":"revise","successItem":"item.minecraft.stick","successCount":4,"stepResult":"done","reason":"superseded"}"#,
+            r#"{"disposition":"adopt","successItem":"item.minecraft.stick","successCount":2,"reason":"completed"}"#,
+        ] {
+            let refused = goal_of(unended).expect_err(unended);
+            assert!(refused.contains("forbids"), "{unended}: {refused}");
+        }
+        let stated =
+            goal_of(r#"{"disposition":"abandon","stepResult":"noProgress","reason":"impossible"}"#)
+                .unwrap()
+                .unwrap();
+        assert_eq!(stated.reason, Some(GoalReason::Impossible));
+        // The contract refuses a reason it does not define.
+        assert!(
+            goal_of(r#"{"disposition":"abandon","stepResult":"done","reason":"bored"}"#).is_err()
+        );
+    }
+
+    #[test]
     fn a_discovery_choice_is_an_adopt_or_replace_with_no_success_item() {
         let adopt = goal_of(r#"{"disposition":"adopt","discover":true}"#)
             .unwrap()
             .unwrap();
         assert_eq!(adopt.discover, Some(true));
         assert_eq!(adopt.success_item, None);
-        let replace =
-            goal_of(r#"{"disposition":"replace","discover":true,"stepResult":"progressing"}"#)
-                .unwrap()
-                .unwrap();
+        let replace = goal_of(
+            r#"{"disposition":"replace","discover":true,"stepResult":"progressing","reason":"completed"}"#,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(replace.step_result, Some(GoalStepResult::Progressing));
         for bad in [
             r#"{"disposition":"continue","discover":true,"stepResult":"done"}"#,
             r#"{"disposition":"revise","discover":true,"stepResult":"done"}"#,
             r#"{"disposition":"adopt","discover":true,"successItem":"item.minecraft.dirt","successCount":2}"#,
             r#"{"disposition":"adopt","discover":true,"stepResult":"done"}"#,
-            r#"{"disposition":"replace","discover":true}"#,
+            r#"{"disposition":"replace","discover":true,"reason":"completed"}"#,
         ] {
             assert!(goal_of(bad).is_err(), "{bad}");
         }

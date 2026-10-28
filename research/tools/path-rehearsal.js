@@ -7,7 +7,7 @@
 // laid out by console commands (`tools/path-rehearsal.json`), with the cognition service answering
 // as the path exerciser (`LOOM_COGNITION_BACKEND=scripted-paths`, `cognition/src/exerciser.rs`).
 // Each agent walks one path; the server witnesses what each body did, and the run's own evidence,
-// normalized and judged by readiness gate generation 19, must show every path as the exerciser
+// normalized and judged by readiness gate generation 20, must show every path as the exerciser
 // drove it: a craft of two applications and a goal completed and the next adopted in one answer,
 // each chained to the goal whose item its recipe is made from, an own drop ignored and refused,
 // an own drop still told lying past 4800 ticks, a collect
@@ -17,7 +17,10 @@
 // plain completion beside a source refused, a plain completion with none accepted and followed by
 // the review it owed, a block beside the support under an overhang reported unsafe to dig, and,
 // once a console command brings dusk, a shelter goal dug down and roofed over the agent's head,
-// each step one its cover reading named, until the server's ground seals it in.
+// each step one its cover reading named, until the server's ground seals it in. From generation 20
+// a goal one collect meets is refused, a met goal is revised for more of its own item under the
+// same goal, a replace states that the goal it ends was completed, and the oak pressure plate gamma
+// holds - no collision, so never a closer - is never reported solid where the dirt it digs is.
 // Its window closes as a research run's does: admission closes before Paper stops, and every
 // decision reaches one typed terminal, so `untypedTerminal` must be zero.
 //
@@ -48,12 +51,15 @@ const { readinessMetrics } = require('../lib/readiness.js')
 
 const REPO = path.resolve(__dirname, '..', '..')
 const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'path-rehearsal.json'), 'utf8'))
-const GENERATION = 19
+const GENERATION = 20
 const RETENTION_TICKS = 4800
 const POLL_MS = 500
 // How long admitted work may take to reach its typed terminals once admission closes: the longest
 // body action deadline (a sleep's 20 s) and its control round trip, with room for a late answer.
 const DRAIN_MS = 60_000
+// How soon after its decision a placement must be applied: one at the server's answer takes a few
+// ticks, where r39's held its body 330.
+const PLACEMENT_SETTLE_TICKS = 40
 
 function serverConfig () {
   return {
@@ -209,7 +215,36 @@ function pathsOf (records, readiness) {
   // A dig that dropped its goal's own item made its one body pickup, which the server confirmed.
   const pickedUp = records.find((record) => record.source === 'body' && record.event === 'ownDropPickup' &&
     record.outcome === 'accepted')
+  // A met goal revised for more of its own item keeps its identity and what it advanced (r39: alpha
+  // and kappa replaced a met dirt goal by the same item one higher at every step).
+  const revisedForMore = body.find((record) => record.event === 'decided' && record.goal?.outcome === 'goalRevised' &&
+    record.goal?.conditionMet === true && record.goal?.goalId === record.goal?.presentedGoalId &&
+    byKey(record.requestKey).some((entry) => entry.event === 'intentApplied' && entry.outcome === 'accepted'))
+  // A replace of a met goal states that it was completed, and stands.
+  const statedReason = body.find((record) => record.event === 'decided' && record.goal?.outcome === 'goalCompletedAdopted' &&
+    record.goal?.reason === 'completed')
+  // gamma holds an oak pressure plate (D1, r39: reported solid though it has no collision): every
+  // perception that lists it reports it not solid, and the dirt its digs gave is.
+  const gammaSeen = of('tribe-gamma', 'perceived').map((record) => record.perception?.selfState?.inventorySummary ?? [])
+  const plates = gammaSeen.flat().filter((stack) => stack.what === 'item.minecraft.oak_pressure_plate')
+  const dirt = gammaSeen.flat().filter((stack) => stack.what === 'item.minecraft.dirt')
+  const plateNeverSolid = plates.length > 0 && plates.every((stack) => stack.solid !== true) &&
+    dirt.length > 0 && dirt.every((stack) => stack.solid === true)
+    ? of('tribe-gamma', 'perceived').find((record) =>
+      (record.perception?.selfState?.inventorySummary ?? []).some((stack) => stack.what === 'item.minecraft.oak_pressure_plate'))
+    : undefined
+  // A placement settles at the server's answer (D2, r39: iota's held its body 330 ticks): gamma's
+  // roof is applied within two seconds of its decision.
+  const settledPromptly = roofed === undefined
+    ? undefined
+    : byKey(roofed.requestKey).find((entry) => entry.event === 'intentApplied' && entry.outcome === 'accepted' &&
+      entry.tick - roofed.tick <= PLACEMENT_SETTLE_TICKS)
   return {
+    trivialGoalRefused: evidence(applied('tribe-delta', 'goalTrivial')),
+    metGoalRevisedKeepingItsId: evidence(revisedForMore),
+    replaceStatedItsReason: evidence(statedReason),
+    nonCollidingItemNeverSolid: evidence(plateNeverSolid),
+    placementSettledAtTheServersAnswer: evidence(settledPromptly),
     shelterAdoptedAsNightNeared: evidence(shelterAdopted),
     shelterStepCoveredBeforeNight: evidence(coveredBeforeNight),
     roofPlacedFromItsOwnDigs: evidence(roofed),
@@ -268,7 +303,7 @@ function faultsOf (records, readiness) {
       .map((entry) => entry.evidence?.outcome)
       .filter((outcome) => ![
         'goalOwnDropIgnored', 'goalReviseItemChanged', 'goalReviseUnchanged', 'goalCompletedWithoutNext',
-        'goalCrowdsExploration'
+        'goalCrowdsExploration', 'goalTrivial'
       ].includes(outcome))
   }
 }
@@ -365,6 +400,7 @@ async function rehearse () {
     for (const agent of configuredAgents(config)) {
       command(`clear ${agent.username}`)
       command(`tp ${agent.username} ${config.positions[agent.agentId].join(' ')}`)
+      for (const item of config.gives?.[agent.agentId] ?? []) command(`give ${agent.username} ${item}`)
     }
     await delay(2000)
     for (const line of config.afterPlacement) command(line)

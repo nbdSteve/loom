@@ -47,6 +47,7 @@ internal fun incoherenceOf(
         ?: reviseItemOf(presented, choice)
         ?: conditionRefusalOf(presented, choice, intent, observed)
         ?: successRefusalOf(presented, choice, observed)
+        ?: objectiveRefusalOf(presented, choice, observed)
         ?: GoalEvidence.STEP_IDLE.takeIf { stepping && intent.action in PASSIVE }
         ?: GoalEvidence.STEP_UNPRODUCTIVE.takeIf { stepping && !canGive(presented, choice, intent, observed, recipes) }
         ?: GoalEvidence.OWN_DROP_IGNORED.takeIf { ownDropIgnored(presented, choice, intent, observed) }

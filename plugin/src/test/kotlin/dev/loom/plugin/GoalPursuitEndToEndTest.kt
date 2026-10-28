@@ -8,6 +8,7 @@ import dev.loom.contract.Bearing
 import dev.loom.contract.DropFate
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalReason
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.Intent
 import dev.loom.contract.ObservationKind
@@ -57,7 +58,7 @@ class GoalPursuitEndToEndTest {
     }
 
     @Test
-    fun `planks then sticks are two obtainable items and two crafts, each goal met at its original total`() {
+    fun `planks then sticks are two obtainable items and two crafts, and the met stick goal is revised for more`() {
         val scene =
             Scene(
                 listOf(Stand(ALPHA, 8.5, 64.0, 8.5)),
@@ -71,10 +72,13 @@ class GoalPursuitEndToEndTest {
                 // Planks from the held logs: two crafts of four, a total of eight from none.
                 0 -> craft(seen, "item.minecraft.oak_planks", 2) to target(GoalDisposition.ADOPT, PLANKS, 8)
                 // Eight planks held: complete that goal and adopt four sticks, crafted from them.
-                1 -> craft(seen, "item.minecraft.stick", 1) to target(GoalDisposition.REPLACE, STICK, 4)
+                1 ->
+                    craft(seen, "item.minecraft.stick", 1) to
+                        target(GoalDisposition.REPLACE, STICK, 4).copy(reason = GoalReason.COMPLETED)
                 // Four sticks held with planks and a bush still in sight: from routine-v28 a plain
-                // completion here is refused, so the met goal is replaced by the next one.
-                else -> craft(seen, "item.minecraft.stick", 1) to target(GoalDisposition.REPLACE, STICK, 8)
+                // completion here is refused, and from routine-v36 more sticks are a revise, which
+                // keeps the goal rather than replacing it with itself.
+                else -> craft(seen, "item.minecraft.stick", 1) to target(GoalDisposition.REVISE, STICK, 8)
             }
         }
         for (review in 1..3) {
@@ -86,18 +90,20 @@ class GoalPursuitEndToEndTest {
         val obtainable = first.selfState.craftingOptions.map { it.what }.toSet()
         assertTrue(PLANKS in obtainable, "planks are craftable from the held logs: $obtainable")
         assertTrue(first.surroundings.any { it.yields.orEmpty().any { yielded -> yielded.what == STICK } })
-        val outcomes = world.records.filter { it.event == BodyEvent.DECIDED }.map { it.goal?.outcome }
+        val decided = world.records.filter { it.event == BodyEvent.DECIDED }
         assertEquals(
-            listOf(GoalEvidence.ADOPTED, GoalEvidence.COMPLETED_ADOPTED, GoalEvidence.COMPLETED_ADOPTED),
-            outcomes,
+            listOf(GoalEvidence.ADOPTED, GoalEvidence.COMPLETED_ADOPTED, GoalEvidence.REVISED),
+            decided.map { it.goal?.outcome },
         )
+        assertEquals(decided[1].requestId, decided[2].goal?.goalId)
         val applied = world.records.filter { it.event == BodyEvent.INTENT_APPLIED }.map { it.outcome }
         assertEquals(listOf(EventTag.ACCEPTED, EventTag.ACCEPTED, EventTag.ACCEPTED), applied)
         val held = world.mind.seen[2].selfState.inventorySummary.associate { it.what to it.count }
         // Four sticks take two of the eight planks.
         assertEquals(6L, held[PLANKS])
         assertEquals(4L, held[STICK])
-        // Both goals were met at their original totals, two or more above what was held.
+        // The planks goal was completed at its original total, two or more above what was held;
+        // the stick goal, met, is still held, so it is no completion yet.
         val pursuit =
             world
                 .readiness(GATE_GENERATION)
@@ -107,7 +113,7 @@ class GoalPursuitEndToEndTest {
                 .jsonObject
                 .getValue("measured")
                 .jsonObject
-        assertEquals(2, pursuit.getValue("originalTargetCompletions").jsonPrimitive.int)
+        assertEquals(1, pursuit.getValue("originalTargetCompletions").jsonPrimitive.int)
     }
 
     @Test
@@ -137,13 +143,25 @@ class GoalPursuitEndToEndTest {
                     .sortedBy { it.ref }
                     .let { it[index % it.size] }
             when (index) {
-                0 -> Intent.MoveTo(bush.ref) to target(GoalDisposition.ADOPT, STICK, 1)
-                // An abandon of a goal the bush can still meet is refused.
-                1 -> Intent.Idle to GoalChoice(GoalDisposition.ABANDON, stepResult = GoalStepResult.NO_PROGRESS)
+                0 -> Intent.MoveTo(bush.ref) to target(GoalDisposition.ADOPT, STICK, 2)
+                // An abandon of a goal the bushes can still meet is refused, whatever it claims.
+                1 ->
+                    Intent.Idle to
+                        GoalChoice(
+                            GoalDisposition.ABANDON,
+                            stepResult = GoalStepResult.NO_PROGRESS,
+                            reason = GoalReason.IMPOSSIBLE,
+                        )
                 2, 3 -> Intent.MoveTo(bush.ref) to continuing()
                 // At the bound only sticks are in sight, and a stalled stick goal may not be set
-                // again, so nothing replaces it.
-                else -> Intent.Idle to GoalChoice(GoalDisposition.ABANDON, stepResult = GoalStepResult.NO_PROGRESS)
+                // again, so nothing replaces it: it is abandoned as stale.
+                else ->
+                    Intent.Idle to
+                        GoalChoice(
+                            GoalDisposition.ABANDON,
+                            stepResult = GoalStepResult.NO_PROGRESS,
+                            reason = GoalReason.STALE,
+                        )
             }
         }
         for (review in 1..5) {
@@ -222,35 +240,36 @@ class GoalPursuitEndToEndTest {
     @Test
     fun `a goal sight cannot meet is continued by a walk to look, credited when it reveals a bush`() {
         // r18 gamma body:00000069, delta 127 and 485 abandoned their goals to walk to the edge of
-        // sight. The near bush is broken by the first dig; the far one lies past what is sensed,
-        // beside the cell east at the edge of sight.
+        // sight. The two near bushes are broken by the first digs; the far one lies past what is
+        // sensed, beside the cell east at the edge of sight.
         val far = Cell(22, 64, 8, "dead_bush")
-        val scene = Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(BUSH, far), serveBreaks = true)
+        val near = Cell(8, 64, 10, "dead_bush")
+        val scene = Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(BUSH, near, far), serveBreaks = true)
         val world = world(scene)
         world.mind.answer = { seen, index ->
+            val bush = { seen.surroundings.first { it.what == "block.minecraft.dead_bush" }.ref }
             when (index) {
-                0 ->
-                    Intent.Dig(seen.surroundings.single { it.what == "block.minecraft.dead_bush" }.ref) to
-                        target(GoalDisposition.ADOPT, STICK, 1)
-                1 -> Intent.MoveTo(seen.explore.single { it.direction == Bearing.EAST }.ref) to continuing()
+                0 -> Intent.Dig(bush()) to target(GoalDisposition.ADOPT, STICK, 2)
+                1 -> Intent.Dig(bush()) to continuing()
+                2 -> Intent.MoveTo(seen.explore.single { it.direction == Bearing.EAST }.ref) to continuing()
                 // The revealed bush is in reach: it is dug, never walked away from (r23 epsilon).
                 else ->
                     Intent.Dig(seen.surroundings.first { it.what == "block.minecraft.dead_bush" }.ref) to continuing()
             }
         }
-        for (review in 1..3) {
+        for (review in 1..4) {
             world.review(ALPHA)
             world.awaitDecided(review)
             world.awaitApplied(review)
-            if (review == 2) world.awaitRecord { it.event == BodyEvent.MOVED }
+            if (review == 3) world.awaitRecord { it.event == BodyEvent.MOVED }
         }
         val seen = world.mind.seen
-        assertTrue(seen[1].surroundings.none { it.what == "block.minecraft.dead_bush" }, "the near bush is gone")
-        assertTrue(seen[2].surroundings.any { it.what == "block.minecraft.dead_bush" }, "the far bush is in sight")
+        assertTrue(seen[2].surroundings.none { it.what == "block.minecraft.dead_bush" }, "the near bushes are gone")
+        assertTrue(seen[3].surroundings.any { it.what == "block.minecraft.dead_bush" }, "the far bush is in sight")
         val decided = world.records.filter { it.event == BodyEvent.DECIDED }.map { it.goal }
-        assertEquals(GoalEvidence.CONTINUED, decided[1]?.outcome)
-        assertEquals(StepEvidence.REVEALED, decided[2]?.stepEvidence)
-        assertEquals(0L, decided[2]?.stepsWithoutProgress)
+        assertEquals(GoalEvidence.CONTINUED, decided[2]?.outcome)
+        assertEquals(StepEvidence.REVEALED, decided[3]?.stepEvidence)
+        assertEquals(0L, decided[3]?.stepsWithoutProgress)
         // The gate reads both walks as goal steps, and no review idled beside a cell to look from.
         val pursuit =
             world.readiness(WOODED_GENERATION).getValue("goalCoherence").jsonObject.getValue("pursuit").jsonObject
@@ -263,12 +282,13 @@ class GoalPursuitEndToEndTest {
     fun `a revise to another item is refused before the body acts, and the gate counts it`() {
         // r18 zeta body:00000569 revised a scute goal into sticks under the same goal.
         val dirt = Cell(10, 64, 6, "dirt")
-        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(BUSH, dirt)))
+        val bushes = listOf(BUSH, Cell(8, 64, 10, "dead_bush"))
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = bushes + dirt))
         world.mind.answer = { seen, index ->
             when (index) {
                 0 ->
                     Intent.MoveTo(seen.surroundings.first { it.what == "block.minecraft.dead_bush" }.ref) to
-                        target(GoalDisposition.ADOPT, STICK, 1)
+                        target(GoalDisposition.ADOPT, STICK, 2)
                 else ->
                     Intent.MoveTo(seen.surroundings.first { it.what == "block.minecraft.dirt" }.ref) to
                         target(GoalDisposition.REVISE, "item.minecraft.dirt", 1)
@@ -367,7 +387,7 @@ class GoalPursuitEndToEndTest {
                 // r34 zeta: the log in sight beyond dig reach is walked to by the cell beside it.
                 1 ->
                     Intent.MoveTo(seen.explore.filter { it.direction == Bearing.EAST }.minBy { it.distance }.ref) to
-                        target(GoalDisposition.REPLACE, LOG, 1)
+                        target(GoalDisposition.REPLACE, LOG, 2).copy(reason = GoalReason.COMPLETED)
                 else ->
                     Intent.Dig(seen.surroundings.first { it.what == "block.minecraft.oak_log" }.ref) to
                         GoalChoice(GoalDisposition.CONTINUE, stepResult = GoalStepResult.PROGRESSING)

@@ -51,11 +51,12 @@ class GoalScenarioEndToEndTest {
 
     @Test
     fun `a goal pursued by idling is refused before the body acts and told at the next review`() {
-        val bush = Cell(10, 64, 8, "dead_bush")
-        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(bush)))
+        val bushes = listOf(Cell(10, 64, 8, "dead_bush"), Cell(10, 64, 10, "dead_bush"))
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = bushes))
         world.mind.answer = { _, index ->
-            // Adopted beside an idle, which takes no step (r14 eta, untested in r15).
-            val adopted = GoalChoice(GoalDisposition.ADOPT, STICK, 1, step = "wait for a stick")
+            // Adopted beside an idle, which takes no step (r14 eta, untested in r15), for the two
+            // sticks two bushes give.
+            val adopted = GoalChoice(GoalDisposition.ADOPT, STICK, 2, step = "wait for a stick")
             Intent.Idle to adopted.takeIf { index == 0 }
         }
         world.review(ALPHA)
@@ -71,7 +72,7 @@ class GoalScenarioEndToEndTest {
         assertEquals(GoalEvidence.STEP_IDLE, told?.outcome)
         assertEquals(STICK, told?.successItem)
         assertEquals(0L, told?.held)
-        assertEquals(1L, told?.capacity)
+        assertEquals(2L, told?.capacity)
         // Told once.
         world.review(ALPHA)
         world.awaitDecided(3)

@@ -58,9 +58,17 @@ const GOAL_OUTCOMES = [
   'goalSurvivalRequired',
   'goalShelterNotOffered',
   'goalFeedsNotOffered',
-  'goalSubgoalReplaced'
+  'goalSubgoalReplaced',
+  // From routine-v36: an objective one step meets, a replace by the held goal's own item, and an
+  // end stated without a reason or with one its evidence does not support.
+  'goalTrivial',
+  'goalReplaceSameItem',
+  'goalReasonMissing',
+  'goalReasonUnsupported'
 ]
 const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
+// Why a replace or an abandon ended its goal, from routine-v36.
+const GOAL_REASONS = ['completed', 'impossible', 'unsafe', 'stale', 'superseded']
 // What a measured step showed, from routine-v22: the exact target reached, an item gained, a
 // new drop in sight, or nothing.
 // From routine-v27 a walk to the edge of sight that brought a source of the item into sight.
@@ -69,6 +77,8 @@ const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
 const GOAL_STEP_EVIDENCE = ['arrived', 'gained', 'gainedInput', 'dropped', 'revealed', 'covered', 'none']
 // Outcomes that act on the very goal the answered review was handed.
 const GOAL_CONTINUING_OUTCOMES = ['goalContinued', 'goalRevised', 'goalCompleted']
+// Outcomes that ended the goal the answered review was handed for a stated reason.
+const GOAL_ENDING_OUTCOMES = ['goalReplaced', 'goalCompletedAdopted', 'goalAbandoned']
 
 const PUBLIC_SCAN_PATTERNS = [
   {
@@ -310,6 +320,9 @@ function validateGoalEvidence (goal, event, label) {
   }
   if (goal.stepEvidence !== undefined && !GOAL_STEP_EVIDENCE.includes(goal.stepEvidence)) {
     throw new Error(`${label} has an unknown goal step evidence`)
+  }
+  if (goal.reason !== undefined && !GOAL_REASONS.includes(goal.reason)) {
+    throw new Error(`${label} has an unknown goal end reason`)
   }
   for (const field of ['conditionMet', 'conditionAdvanced', 'stepAdvanced', 'discovery', 'presentedDiscovery', 'shelter', 'presentedShelter']) {
     if (goal[field] !== undefined && typeof goal[field] !== 'boolean') {
@@ -946,6 +959,14 @@ function goalContinuityMetrics (records) {
     agentsWithContinuity: sortedAgents
       .filter((agent) => agent.continuingReviews > 0)
       .map((agent) => agent.agentId)
+  }
+  // From routine-v36 every accepted replace and abandon states why its goal ended; derived only when
+  // a record carries a reason, so evidence from before it re-derives unchanged.
+  const ended = records.filter((record) => record.goal.reason !== undefined && GOAL_ENDING_OUTCOMES.includes(record.goal.outcome))
+  if (ended.length > 0) {
+    const endReasons = {}
+    for (const record of ended) increment(endReasons, record.goal.reason)
+    continuity.endReasons = sortedValue(endReasons)
   }
   const working = workingGoalMetrics(records)
   return working === undefined ? continuity : { ...continuity, workingGoal: working }

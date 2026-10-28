@@ -122,6 +122,8 @@ data class GoalObservation(
     val productive: Map<String, Set<String>> = emptyMap(),
     /** The agent's cover, from the server's ground, when the perception read one (`Shelter.kt`). */
     val cover: CoverObservation? = null,
+    /** How many of each item the agent's own drops have lying, wherever they lie: no objective's to ask. */
+    val ownLying: Map<String, Long> = emptyMap(),
 ) {
     /** Whether a discovery goal may be set: cells at the edge of sight, and no horizon goal at all. */
     val discoveryOffered: Boolean get() = explore.isNotEmpty() && horizon.isEmpty()
@@ -238,6 +240,11 @@ data class GoalObservation(
                 survival = SurvivalOffer.of(perception),
                 productive = productiveOf(digs),
                 cover = CoverObservation.of(perception),
+                ownLying =
+                    perception.selfState.ownDrops
+                        .filter { it.fate == DropFate.LYING }
+                        .groupBy({ it.what }, { it.count })
+                        .mapValues { (_, counts) -> counts.sum() },
             )
         }
 

@@ -24,7 +24,7 @@
 use std::future::Future;
 
 use loom_contract::{
-    Bearing, EquipmentDestination, GoalChoice, GoalDisposition, GoalStepResult, Intent,
+    Bearing, EquipmentDestination, GoalChoice, GoalDisposition, GoalReason, GoalStepResult, Intent,
     Observation, ObservationKind, Perception, Trigger, MAX_GOAL_STEPS_WITHOUT_PROGRESS,
 };
 use serde::Serialize;
@@ -351,13 +351,163 @@ impl ScriptedBackend {
     /// they are - a table from trigger to intent - with no runtime involved.
     #[must_use]
     pub fn draft_now(route: &ModelRoute, perception: &Perception) -> Draft {
+        if let Some(sheltering) = Self::shelter_now(perception) {
+            return sheltering;
+        }
         let mut draft = Self::step_now(route, perception);
         draft.goal = Self::goal_now(perception, &draft.intent);
         draft
     }
 
-    /// The scripted goal rule: adopt one placeholder goal of holding one more of what the block
-    /// it digs can drop, continue it while it digs, and complete it once met.
+    /// The stand-in's shelter as night nears: at a goal review with no hunter upon it, the one
+    /// shelter goal - set in place of what it holds, for the reason that goal's evidence supports -
+    /// stepped by what its cover names (the descent, the closing with a solid block in hand, the
+    /// equip that readies one, the gathering of a closer, or a walk onto natural cover), completed
+    /// once sealed and stayed in. `None` where no shelter is held or offered.
+    fn shelter_now(perception: &Perception) -> Option<Draft> {
+        let offered = crate::offered::OfferedRefs::of(perception);
+        if !perception.trigger.reviews_goal() || !offered.immediate.is_empty() {
+            return None;
+        }
+        let shelter = &offered.shelter;
+        let held = perception.goal.as_ref();
+        let holding = held.is_some_and(|goal| goal.shelter);
+        let progress = held.and_then(|goal| goal.progress.as_ref());
+        let met = progress.is_some_and(|seen| seen.condition_met);
+        let step_result = match progress {
+            Some(seen) if !seen.condition_advanced && !seen.step_advanced => {
+                GoalStepResult::NoProgress
+            }
+            _ if met => GoalStepResult::Done,
+            _ => GoalStepResult::Progressing,
+        };
+        let choice = |disposition, shelter: Option<bool>, reason| GoalChoice {
+            discover: None,
+            disposition,
+            success_item: None,
+            success_count: None,
+            step: None,
+            step_result: (disposition != GoalDisposition::Adopt).then_some(step_result),
+            shelter,
+            feeds: None,
+            reason,
+        };
+        let answer = |intent, goal, why: &str| Draft {
+            intent,
+            reasoning: format!("scripted stand-in: {why}"),
+            goal,
+        };
+        // Sealed in with nothing held, it stays: rest is a fine answer, and digging out is no step.
+        if !holding && held.is_none() && shelter.sealed() && shelter.night_near {
+            return Some(answer(
+                Intent::Rest,
+                None,
+                "sealed in as night nears, so stay",
+            ));
+        }
+        if holding && met {
+            return Some(answer(
+                Intent::Rest,
+                Some(choice(GoalDisposition::Complete, None, None)),
+                "sealed in: complete the shelter and stay in it",
+            ));
+        }
+        if !holding && !shelter.offered() {
+            return None;
+        }
+        let Some(intent) = Self::shelter_step(&offered).filter(|intent| offered.admits(intent))
+        else {
+            // A shelter no step of its cover can advance cannot be met now.
+            return holding.then(|| {
+                answer(
+                    Intent::Idle,
+                    Some(choice(
+                        GoalDisposition::Abandon,
+                        None,
+                        Some(GoalReason::Impossible),
+                    )),
+                    "nothing my cover offers can close this shelter now",
+                )
+            });
+        };
+        let stalled = progress
+            .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS);
+        let goal = match held {
+            Some(_) if holding => choice(GoalDisposition::Continue, None, None),
+            None => choice(GoalDisposition::Adopt, Some(true), None),
+            // Night nears: the held goal ends for what its evidence states, and a shelter takes its place.
+            Some(_) => choice(
+                GoalDisposition::Replace,
+                Some(true),
+                Some(if met {
+                    GoalReason::Completed
+                } else if stalled {
+                    GoalReason::Stale
+                } else {
+                    GoalReason::Unsafe
+                }),
+            ),
+        };
+        Some(answer(
+            intent,
+            Some(goal),
+            "night nears: take the step my cover names toward a shelter",
+        ))
+    }
+
+    /// The step the cover in `offered` names first: the descent underfoot, the closing with the
+    /// solid block in hand, the equip that puts one there, the gathering of a closer, or a walk
+    /// onto a more enclosed site.
+    fn shelter_step(offered: &crate::offered::OfferedRefs) -> Option<Intent> {
+        let shelter = &offered.shelter;
+        let descend = shelter.descend.clone().map(|block| Intent::Dig { block });
+        let placed = || {
+            shelter
+                .closings
+                .first()
+                .zip(shelter.solid_held.first())
+                .map(|((block, face), item)| Intent::Place {
+                    block: block.clone(),
+                    item: item.clone(),
+                    face: *face,
+                })
+        };
+        let readied = || {
+            shelter.to_equip().first().map(|item| Intent::Equip {
+                item: item.clone(),
+                destination: EquipmentDestination::Hand,
+            })
+        };
+        let gathered = || {
+            shelter.gathers.first().map(|handle| {
+                if offered.dig_blocks.contains(handle) {
+                    Intent::Dig {
+                        block: handle.clone(),
+                    }
+                } else {
+                    Intent::Collect {
+                        item: handle.clone(),
+                        approach: !offered.pickup_items.contains(handle),
+                    }
+                }
+            })
+        };
+        let walked = || {
+            shelter
+                .sites
+                .first()
+                .map(|onto| Intent::MoveTo { onto: onto.clone() })
+        };
+        descend
+            .or_else(placed)
+            .or_else(readied)
+            .or_else(gathered)
+            .or_else(walked)
+    }
+
+    /// The scripted goal rule: adopt one placeholder goal of holding the fewest an objective asks
+    /// of what the block it digs can drop, continue it while it digs, revise it for more of its own
+    /// item once met or replace it as completed by another, and complete it when sight offers none.
     ///
     /// It exists so the goal round trip - choice, ledger, carried summary, next choice, and the
     /// follow-up review a settled step owes - is exercised deterministically without credentials.
@@ -381,6 +531,7 @@ impl ScriptedBackend {
             step_result,
             shelter: None,
             feeds: None,
+            reason: None,
         };
         let digging = matches!(
             intent,
@@ -398,7 +549,9 @@ impl ScriptedBackend {
                     ..step(GoalDisposition::Adopt, None)
                 });
             }
-            // One more of what the dig drops, or one craft's worth of what the recipe makes.
+            // A craft's worth of what the recipe makes, and never fewer than the objective floor
+            // the perception offers: a goal one dig could meet is no objective (r39: alpha and
+            // kappa held "one more dirt" goals that every step completed).
             let (item, more) = match intent {
                 Intent::Dig { block } => (yield_of(perception, block, None)?, 1),
                 Intent::Craft { recipe, .. } => {
@@ -412,11 +565,13 @@ impl ScriptedBackend {
                 _ => return None,
             };
             let have = held_count(perception, &item);
-            return offered.count_bounds_of(&item).map(|(_, most)| GoalChoice {
-                success_item: Some(item),
-                success_count: Some((have + more).min(most)),
-                ..step(GoalDisposition::Adopt, None)
-            });
+            return offered
+                .count_bounds_of(&item)
+                .map(|(fewest, most)| GoalChoice {
+                    success_item: Some(item),
+                    success_count: Some(fewest.max((have + more).min(most))),
+                    ..step(GoalDisposition::Adopt, None)
+                });
         };
         let progress = held.progress.as_ref();
         let step_result = match progress {
@@ -425,9 +580,24 @@ impl ScriptedBackend {
             }
             _ => GoalStepResult::Progressing,
         };
-        let ended = |disposition| GoalChoice {
+        let ended = |disposition, reason| GoalChoice {
             step: None,
+            reason,
             ..step(disposition, Some(step_result))
+        };
+        let stalled = progress
+            .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS);
+        // An unmet goal ends only for what its evidence states: stale at the stall bound, else
+        // impossible, which the ledger refuses while sight could still meet it.
+        let abandoned = || {
+            ended(
+                GoalDisposition::Abandon,
+                Some(if stalled {
+                    GoalReason::Stale
+                } else {
+                    GoalReason::Impossible
+                }),
+            )
         };
         // A met condition is completed; a goal at the no-progress bound, with no step to take for
         // it, or that what is in sight could no longer meet, is abandoned rather than continued
@@ -437,34 +607,60 @@ impl ScriptedBackend {
         // A goal sight cannot meet is continued by a walk to the edge of sight, as the body
         // accepts, and abandoned only once nowhere is offered to look or it stalls.
         Some(if progress.is_some_and(|seen| seen.condition_met) {
-            // A met goal with a next one in sight is completed by adopting it in the same answer:
-            // what this step gives when sight offers a count of it, else the first item it does.
-            let made = Self::item_of(perception, intent)
-                .filter(|item| offered.count_bounds_of(item).is_some());
-            match made.or_else(|| offered.count_bounds.first().map(|(item, ..)| item.clone())) {
-                Some(item) => {
-                    let (fewest, _) = offered.count_bounds_of(&item).unwrap_or((1, 1));
-                    GoalChoice {
-                        success_item: Some(item),
-                        success_count: Some(fewest),
-                        step: None,
-                        ..step(GoalDisposition::Replace, Some(step_result))
-                    }
-                }
-                // A met discovery goal is never completed bare: it is replaced or, with nothing to
-                // replace it by, abandoned.
-                None if held.discovery => ended(GoalDisposition::Abandon),
-                None => ended(GoalDisposition::Complete),
-            }
-        } else if !acting
-            || (unobtainable && !exploring)
-            || progress
-                .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS)
-        {
-            ended(GoalDisposition::Abandon)
+            Self::moved_on(perception, intent, held, &offered, step_result)
+        } else if !acting || (unobtainable && !exploring) || stalled {
+            abandoned()
         } else {
             step(GoalDisposition::Continue, Some(step_result))
         })
+    }
+
+    /// The stand-in's answer to the met goal `held`: completed by adopting the next goal in sight
+    /// in the same answer - what `intent` gives when sight offers a count of it, else the first
+    /// item it does - by a revise when that is more of the goal's own item, which keeps the
+    /// objective's identity, and by a replace as completed when it is another.
+    fn moved_on(
+        perception: &Perception,
+        intent: &Intent,
+        held: &loom_contract::GoalSummary,
+        offered: &crate::offered::OfferedRefs,
+        step_result: GoalStepResult,
+    ) -> GoalChoice {
+        let judged = |disposition, reason| GoalChoice {
+            discover: None,
+            disposition,
+            success_item: None,
+            success_count: None,
+            step: None,
+            step_result: Some(step_result),
+            shelter: None,
+            feeds: None,
+            reason,
+        };
+        let made = Self::item_of(perception, intent)
+            .filter(|item| offered.count_bounds_of(item).is_some());
+        match made.or_else(|| offered.count_bounds.first().map(|(item, ..)| item.clone())) {
+            Some(item) => {
+                let (fewest, _) = offered.count_bounds_of(&item).unwrap_or((1, 1));
+                let more = held.success_item.as_ref() == Some(&item);
+                GoalChoice {
+                    success_item: Some(item),
+                    success_count: Some(fewest),
+                    ..judged(
+                        if more {
+                            GoalDisposition::Revise
+                        } else {
+                            GoalDisposition::Replace
+                        },
+                        (!more).then_some(GoalReason::Completed),
+                    )
+                }
+            }
+            // A met discovery goal is never completed bare: it is replaced or, with nothing to
+            // replace it by, abandoned as completed.
+            None if held.discovery => judged(GoalDisposition::Abandon, Some(GoalReason::Completed)),
+            None => judged(GoalDisposition::Complete, None),
+        }
     }
 
     /// What `intent` makes or digs for: a dig's yield, or a craft's result.
@@ -1137,6 +1333,57 @@ mod tests {
         assert_eq!(idle.intent, Intent::Idle);
     }
 
+    #[test]
+    fn as_night_nears_the_stand_in_holds_one_shelter_goal_stepped_by_its_cover() {
+        use loom_contract::{GoalDisposition, GoalReason};
+        let route = router().route(DecisionImportance::Routine);
+        // Open grass at dusk: the shelter is adopted by the descent underfoot.
+        let dusk = shelter_scene("dusk-open-grass");
+        let adopted = ScriptedBackend::draft_now(&route, &dusk);
+        assert_eq!(
+            adopted.intent,
+            Intent::Dig {
+                block: "b1".to_owned()
+            }
+        );
+        let choice = adopted.goal.unwrap();
+        assert_eq!(choice.disposition, GoalDisposition::Adopt);
+        assert_eq!(choice.shelter, Some(true));
+        // Holding an unmet item goal, the shelter takes its place as unsafe to keep.
+        let mut holding = dusk.clone();
+        holding.goal = shelter_scene("cover-gathers")
+            .goal
+            .map(|goal| loom_contract::GoalSummary {
+                shelter: false,
+                success_item: Some("item.minecraft.oak_log".to_owned()),
+                success_count: Some(4),
+                ..goal
+            });
+        let replaced = ScriptedBackend::draft_now(&route, &holding).goal.unwrap();
+        assert_eq!(replaced.disposition, GoalDisposition::Replace);
+        assert_eq!(replaced.shelter, Some(true));
+        assert_eq!(replaced.reason, Some(GoalReason::Unsafe));
+        // With nothing solid held, gathering the closer its cover offers is the shelter's own step.
+        let gathering = ScriptedBackend::draft_now(&route, &shelter_scene("cover-gathers"));
+        assert_eq!(
+            gathering.intent,
+            Intent::Dig {
+                block: "b8".to_owned()
+            }
+        );
+        assert_eq!(
+            gathering.goal.unwrap().disposition,
+            GoalDisposition::Continue
+        );
+        // Sealed in, it is completed and stayed in.
+        let sealed = ScriptedBackend::draft_now(&route, &shelter_scene("sealed-met"));
+        assert_eq!(sealed.intent, Intent::Rest);
+        assert_eq!(sealed.goal.unwrap().disposition, GoalDisposition::Complete);
+        // By day no shelter is offered, so the ordinary rule answers.
+        let midday = ScriptedBackend::draft_now(&route, &shelter_scene("midday-open-grass"));
+        assert_ne!(midday.goal.and_then(|goal| goal.shelter), Some(true));
+    }
+
     fn shelter_scene(name: &str) -> Perception {
         let path = format!(
             "{}/tests/fixtures/shelter-{name}.json",
@@ -1347,9 +1594,9 @@ mod tests {
             standable: Some(true),
             yields: Some(vec![loom_contract::BlockYield {
                 what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
-                least: 0,
-                most: 2,
-                per_hundred: 100,
+                least: 1,
+                most: 3,
+                per_hundred: 200,
             }]),
             dig_safe: Some(true),
             route_refused: None,
@@ -1369,7 +1616,8 @@ mod tests {
             adopted.success_item.as_deref(),
             Some(super::SCRIPTED_SUCCESS_ITEM)
         );
-        assert_eq!(adopted.success_count, Some(1));
+        // Never fewer than the objective floor past what is held (r39: alpha's one-more goals).
+        assert_eq!(adopted.success_count, Some(2));
         first.self_state.inventory_summary = vec![loom_contract::InventoryStack {
             slot_ref: "i1".to_owned(),
             what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
@@ -1379,7 +1627,7 @@ mod tests {
             held: None,
         }];
         let more = ScriptedBackend::draft_now(&route, &first).goal.unwrap();
-        assert_eq!(more.success_count, Some(2));
+        assert_eq!(more.success_count, Some(3));
 
         let mut later = perception(Trigger::GoalReview, DecisionImportance::Routine);
         later.goal = Some(GoalSummary {

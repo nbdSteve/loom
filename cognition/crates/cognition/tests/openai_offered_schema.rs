@@ -40,15 +40,17 @@ fn answer_in(schema: &Value, intent: &Value, goal: &Value) -> Value {
     }
 }
 
-/// Whether `schema` admits `intent` beside no goal choice or an abandon, whichever it offers.
+/// Whether `schema` admits `intent` beside no goal choice or an abandon for any reason, whichever
+/// it offers.
 fn accepts(schema: &Value, intent: &Value) -> bool {
     let validator = jsonschema::validator_for(schema).expect("the request schema compiles");
-    [
-        json!(null),
-        json!({ "disposition": "abandon", "stepResult": "done" }),
-    ]
-    .iter()
-    .any(|goal| validator.is_valid(&answer_in(schema, intent, goal)))
+    std::iter::once(json!(null))
+        .chain(
+            ["completed", "impossible", "unsafe", "stale", "superseded"]
+                .iter()
+                .map(|reason| json!({ "disposition": "abandon", "stepResult": "done", "reason": reason })),
+        )
+        .any(|goal| validator.is_valid(&answer_in(schema, intent, &goal)))
 }
 
 /// Every intent variant `schema` offers.
@@ -387,6 +389,18 @@ fn with_bush(mut seen: Perception) -> Perception {
     seen
 }
 
+/// [`with_bush`] with a second bush beside the first, so sight gives two sticks.
+fn with_bushes(seen: Perception) -> Perception {
+    let mut seen = with_bush(seen);
+    let second = Observation {
+        target_ref: "b10".to_owned(),
+        direction: loom_contract::Bearing::South,
+        ..seen.surroundings.last().unwrap().clone()
+    };
+    seen.surroundings.push(second);
+    seen
+}
+
 #[test]
 fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     let of = |seen: &Perception| decision_schema_for(&OfferedRefs::of(seen), GoalPhase::of(seen));
@@ -394,7 +408,9 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     // there is no success item to name, so no goal can be worded.
     let review = fixture("perception-goal-review");
     assert_eq!(dispositions(&of(&review)), ["none"]);
-    assert_eq!(dispositions(&of(&with_bush(review))), ["adopt", "none"]);
+    // Nor is one bush's one stick an objective, which one dig could meet (r39); two bushes are.
+    assert_eq!(dispositions(&of(&with_bush(review.clone()))), ["none"]);
+    assert_eq!(dispositions(&of(&with_bushes(review))), ["adopt", "none"]);
     // An unmet condition is never completed, and a held goal is always answered. Eight oak logs
     // with nothing in sight to give one cannot be met, so it is not offered a continue (r15: a
     // continue was the one disposition the obtainability rule did not reach). A revise never
@@ -413,16 +429,23 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     // 31 revises restated the total they were shown).
     assert_eq!(dispositions(&of(&with_bush(sticks.clone()))), ["continue"]);
     // Two sticks are one more than a bush's expected yield (r16 calibration): the bush is still
-    // dug toward the goal, and the goal may be revised to what sight gives, or abandoned (the
-    // path rehearsal: a goal one log short was refused the collect of its own lying log).
+    // dug toward the goal, or the goal abandoned as impossible (the path rehearsal: a goal one log
+    // short was refused the collect of its own lying log). A revise to the one stick sight gives
+    // would be an objective one dig meets, so none is offered (r39).
     sticks.goal.as_mut().unwrap().success_count = Some(2);
     assert_eq!(
-        dispositions(&of(&with_bush(sticks))),
+        dispositions(&of(&with_bush(sticks.clone()))),
+        ["continue", "abandon"]
+    );
+    // Two bushes give the two: the goal may be revised past them, never to what one dig meets.
+    sticks.goal.as_mut().unwrap().success_count = Some(3);
+    assert_eq!(
+        dispositions(&of(&with_bushes(sticks))),
         ["continue", "revise", "abandon"]
     );
     // r11: delta, epsilon and zeta held the stick their goal named and went on. A met
     // condition is completed or revised; nothing else, not even no choice, is offered.
-    let met = with_bush(fixture("perception-goal-condition-met"));
+    let met = with_bushes(fixture("perception-goal-condition-met"));
     // A replace on a met goal completes it and adopts the next in one answer (r17: every one of
     // eleven completes idled for a full cycle). While sight gives a next goal no plain complete
     // is offered at all (r19: two completes beside a filler equip, six leaving their agent
@@ -474,7 +497,7 @@ fn a_review_is_offered_only_the_goal_choices_the_body_would_accept() {
     assert!(beside.is_valid(&answer_in(
         &of(&looking),
         &json!({ "action": "moveTo", "onto": "x1" }),
-        &json!({ "disposition": "replace", "discover": true, "stepResult": "done" }),
+        &json!({ "disposition": "replace", "discover": true, "stepResult": "done", "reason": "completed" }),
     )));
     // A settled step reviews the goal just as a scheduled review does.
     let mut settled = fixture("perception-goal-carried");
@@ -506,7 +529,7 @@ fn count_bounds(schema: &Value, disposition: &str, item: &str) -> Vec<(i64, i64)
 #[test]
 fn a_success_count_is_the_total_to_hold_bounded_by_what_is_held_and_what_sight_could_give() {
     let stick = "item.minecraft.stick";
-    let mut seen = with_bush(fixture("perception-goal-review"));
+    let mut seen = with_bushes(fixture("perception-goal-review"));
     seen.self_state.inventory_summary.push(InventoryStack {
         slot_ref: "i9".to_owned(),
         what: stick.to_owned(),
@@ -515,10 +538,17 @@ fn a_success_count_is_the_total_to_hold_bounded_by_what_is_held_and_what_sight_c
         solid: None,
         held: None,
     });
+    let one = with_bush(fixture("perception-goal-review"));
+    let mut lone = one.clone();
+    lone.self_state.inventory_summary = seen.self_state.inventory_summary.clone();
+    // Three held and one bush expected to give one of its nought to two: four is one dig's
+    // objective, so none is offered (r39).
+    let alone = decision_schema_for(&OfferedRefs::of(&lone), GoalPhase::of(&lone));
+    assert!(count_bounds(&alone, "adopt", stick).is_empty());
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
-    // Three held and a bush expected to give one of its nought to two: a total of four (r15:
-    // counts were read as more to gather; r16: goals sized to every bush's best case failed).
-    assert_eq!(count_bounds(&schema, "adopt", stick), [(4, 4)]);
+    // Three held and two bushes expected to give one each: a total of five, two past what is held
+    // (r15: counts were read as more to gather; r16: goals sized to every bush's best case failed).
+    assert_eq!(count_bounds(&schema, "adopt", stick), [(5, 5)]);
     let validator = jsonschema::validator_for(&schema).unwrap();
     let adopt = |intent: Value, count: i64| {
         answer_in(
@@ -528,14 +558,14 @@ fn a_success_count_is_the_total_to_hold_bounded_by_what_is_held_and_what_sight_c
         )
     };
     let dig = json!({ "action": "dig", "block": "b9" });
-    assert!(validator.is_valid(&adopt(dig.clone(), 4)));
-    assert!(!validator.is_valid(&adopt(dig.clone(), 3)));
-    assert!(!validator.is_valid(&adopt(dig, 5)));
+    assert!(validator.is_valid(&adopt(dig.clone(), 5)));
+    assert!(!validator.is_valid(&adopt(dig.clone(), 4)));
+    assert!(!validator.is_valid(&adopt(dig, 6)));
     // An adopt takes the answer's action as its step, so it never travels with idle or rest
     // (r16: gamma and theta adopted beside idle).
     for passive in ["idle", "rest"] {
         assert!(
-            !validator.is_valid(&adopt(json!({ "action": passive }), 4)),
+            !validator.is_valid(&adopt(json!({ "action": passive }), 5)),
             "{passive}"
         );
     }
@@ -634,7 +664,7 @@ fn a_goal_at_the_stall_bound_is_offered_only_a_replace_beside_an_action() {
     let sticks = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     assert_eq!(dispositions(&sticks), ["abandon"]);
     assert!(count_bounds(&sticks, "replace", "item.minecraft.stick").is_empty());
-    // A block in reach that drops dirt gives a goal for another item.
+    // Blocks in reach that drop dirt give a goal for another item, of more than one dig meets.
     let mut dirt = seen.surroundings[0].clone();
     dirt.what = "block.minecraft.dirt".to_owned();
     dirt.target_ref = "b8".to_owned();
@@ -644,16 +674,32 @@ fn a_goal_at_the_stall_bound_is_offered_only_a_replace_beside_an_action() {
         most: 1,
         per_hundred: 100,
     }]);
+    let mut more = dirt.clone();
+    more.target_ref = "b7".to_owned();
     seen.surroundings.push(dirt);
+    seen.surroundings.push(more);
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     assert_eq!(dispositions(&schema), ["replace"]);
     assert_eq!(
         count_bounds(&schema, "replace", "item.minecraft.dirt"),
-        [(1, 1)]
+        [(2, 2)]
     );
     let validator = jsonschema::validator_for(&schema).unwrap();
     let replace = json!({ "disposition": "replace", "successItem": "item.minecraft.dirt",
-        "successCount": 1, "stepResult": "noProgress" });
+        "successCount": 2, "stepResult": "noProgress", "reason": "stale" });
+    // The stall bound is the one reason it is offered for.
+    for unsupported in ["completed", "impossible", "unsafe", "superseded"] {
+        let other = json!({ "disposition": "replace", "successItem": "item.minecraft.dirt",
+            "successCount": 2, "stepResult": "noProgress", "reason": unsupported });
+        assert!(
+            !validator.is_valid(&answer_in(
+                &schema,
+                &json!({ "action": "dig", "block": "b8" }),
+                &other
+            )),
+            "{unsupported}"
+        );
+    }
     let dig = json!({ "action": "dig", "block": "b8" });
     // Its step is one of its own item's: the bush cannot give dirt.
     assert!(!validator.is_valid(&answer_in(
@@ -714,7 +760,8 @@ fn an_own_drop_of_the_goal_item_in_reach_is_collected_before_any_dig() {
     let walk = json!({ "action": "moveTo", "onto": "b9" });
     assert!(!validator.is_valid(&answer_in(&schema, &walk, &continuing)));
     // An achievable goal is not abandoned either (r17 theta body:00000333).
-    let abandon = json!({ "disposition": "abandon", "stepResult": "noProgress" });
+    let abandon =
+        json!({ "disposition": "abandon", "stepResult": "noProgress", "reason": "impossible" });
     assert!(!validator.is_valid(&answer_in(&schema, &walk, &abandon)));
 }
 
@@ -769,7 +816,7 @@ fn an_adopted_goal_is_stepped_only_by_its_own_items_sources() {
     // r18 epsilon body:00000046: it adopted a stick goal standing in a dead bush and dug
     // terracotta, which gives nothing, refused as goalStepUnproductive at body:00000047.
     let seen = with_block(
-        with_bush(fixture("perception-goal-review")),
+        with_bushes(fixture("perception-goal-review")),
         "bqr",
         "terracotta",
         None,
@@ -777,7 +824,7 @@ fn an_adopted_goal_is_stepped_only_by_its_own_items_sources() {
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     let validator = jsonschema::validator_for(&schema).unwrap();
     let adopt =
-        json!({ "disposition": "adopt", "successItem": "item.minecraft.stick", "successCount": 1 });
+        json!({ "disposition": "adopt", "successItem": "item.minecraft.stick", "successCount": 2 });
     assert!(validator.is_valid(&answer_in(
         &schema,
         &json!({ "action": "dig", "block": "b9" }),
@@ -795,11 +842,16 @@ fn an_adopted_goal_is_stepped_only_by_its_own_items_sources() {
         &json!(null)
     )));
     // A dirt block gives dirt, and dirt's own goal steps only by it.
-    let both = with_block(seen, "b8", "dirt", Some(("item.minecraft.dirt", 1, 1)));
+    let both = with_block(
+        with_block(seen, "b8", "dirt", Some(("item.minecraft.dirt", 1, 1))),
+        "b7",
+        "dirt",
+        Some(("item.minecraft.dirt", 1, 1)),
+    );
     let schema = decision_schema_for(&OfferedRefs::of(&both), GoalPhase::of(&both));
     let validator = jsonschema::validator_for(&schema).unwrap();
     let dirt =
-        json!({ "disposition": "adopt", "successItem": "item.minecraft.dirt", "successCount": 1 });
+        json!({ "disposition": "adopt", "successItem": "item.minecraft.dirt", "successCount": 2 });
     assert!(validator.is_valid(&answer_in(
         &schema,
         &json!({ "action": "dig", "block": "b8" }),
@@ -827,7 +879,8 @@ fn a_held_goal_sight_cannot_meet_continues_only_by_looking_further() {
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     let validator = jsonschema::validator_for(&schema).unwrap();
     let continuing = json!({ "disposition": "continue", "stepResult": "noProgress" });
-    let abandon = json!({ "disposition": "abandon", "stepResult": "noProgress" });
+    let abandon =
+        json!({ "disposition": "abandon", "stepResult": "noProgress", "reason": "impossible" });
     let walk = json!({ "action": "moveTo", "onto": "x1" });
     assert!(validator.is_valid(&answer_in(&schema, &walk, &continuing)));
     assert!(validator.is_valid(&answer_in(&schema, &walk, &abandon)));
@@ -1090,8 +1143,9 @@ fn a_goal_for_a_craftable_or_dropped_item_is_stepped_by_its_craft_or_its_collect
     let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
     let validator = jsonschema::validator_for(&schema).unwrap();
     let planks = json!({ "disposition": "adopt", "successItem": "item.minecraft.oak_planks", "successCount": 4 });
+    // The two sticks lying are two collects, so an objective of them both.
     let sticks =
-        json!({ "disposition": "adopt", "successItem": "item.minecraft.stick", "successCount": 1 });
+        json!({ "disposition": "adopt", "successItem": "item.minecraft.stick", "successCount": 2 });
     let craft = json!({ "action": "craft", "recipe": "r1", "crafts": 1 });
     let beside = json!({ "action": "collect", "item": "d1", "approach": false });
     let walking = json!({ "action": "collect", "item": "d2", "approach": true });
@@ -1249,7 +1303,7 @@ fn a_source_in_sight_beyond_dig_reach_is_walked_toward_by_its_edge_of_sight_cell
     assert_eq!(logs.toward, vec!["x1".to_owned()]);
     let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
     let validator = jsonschema::validator_for(&schema).unwrap();
-    let adopt = json!({ "disposition": "adopt", "successItem": "item.minecraft.oak_log", "successCount": 1 });
+    let adopt = json!({ "disposition": "adopt", "successItem": "item.minecraft.oak_log", "successCount": 2 });
     let step = |intent: Value| answer_in(&schema, &intent, &adopt);
     assert!(validator.is_valid(&step(json!({ "action": "moveTo", "onto": "x1" }))));
     assert!(!validator.is_valid(&step(json!({ "action": "moveTo", "onto": "x2" }))));
@@ -1334,8 +1388,13 @@ fn guaranteed_dirt_does_not_crowd_out_looking_further_unless_a_horizon_goal_is_m
     // r22: every goal was dirt from underfoot, and no agent looked for wood.
     const DIRT: &str = "item.minecraft.dirt";
     let ground = with_block(
-        fixture("perception-goal-review"),
-        "g1",
+        with_block(
+            fixture("perception-goal-review"),
+            "g1",
+            "grass_block",
+            Some((DIRT, 1, 1)),
+        ),
+        "g2",
         "grass_block",
         Some((DIRT, 1, 1)),
     );
@@ -1346,7 +1405,7 @@ fn guaranteed_dirt_does_not_crowd_out_looking_further_unless_a_horizon_goal_is_m
             "adopt",
             DIRT
         ),
-        vec![(1, 1)]
+        vec![(2, 2)]
     );
     // Beside a cell at the edge of sight, it is not: the review may only look further.
     let looking = with_edge(ground.clone());
@@ -1362,10 +1421,10 @@ fn guaranteed_dirt_does_not_crowd_out_looking_further_unless_a_horizon_goal_is_m
         8,
     )];
     let schema = decision_schema_for(&OfferedRefs::of(&feeding), GoalPhase::of(&feeding));
-    assert_eq!(count_bounds(&schema, "adopt", DIRT), vec![(1, 1)]);
+    assert_eq!(count_bounds(&schema, "adopt", DIRT), vec![(2, 2)]);
     assert_eq!(
         count_bounds(&schema, "adopt", "item.minecraft.coarse_dirt"),
-        vec![(1, 8)]
+        vec![(2, 8)]
     );
 }
 
@@ -1390,9 +1449,10 @@ fn a_horizon_goal_asks_past_what_sight_gives_and_is_stepped_now_by_a_dig_or_a_lo
     ];
     let offered = OfferedRefs::of(&seen);
     let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
-    // One log in sight, and eight more the frontier may hold: the cap, not the sky.
-    assert_eq!(count_bounds(&schema, "adopt", LOG), vec![(1, 9)]);
-    assert_eq!(count_bounds(&schema, "adopt", PLANKS), vec![(1, 8)]);
+    // One log in sight, and eight more the frontier may hold: the cap, not the sky, and never
+    // the one log one dig meets.
+    assert_eq!(count_bounds(&schema, "adopt", LOG), vec![(2, 9)]);
+    assert_eq!(count_bounds(&schema, "adopt", PLANKS), vec![(2, 8)]);
     let steps = |item: &str| {
         offered
             .item_steps
@@ -1466,11 +1526,11 @@ fn a_discovery_goal_is_walked_to_the_edge_of_sight_and_replaced_by_what_it_revea
     assert!(!validator.is_valid(&answer_in(
         &schema,
         &walk,
-        &json!({ "disposition": "abandon", "stepResult": "noProgress" })
+        &json!({ "disposition": "abandon", "stepResult": "noProgress", "reason": "stale" })
     )));
     for refused in [
         json!({ "disposition": "complete", "stepResult": "done" }),
-        json!({ "disposition": "replace", "discover": true, "stepResult": "noProgress" }),
+        json!({ "disposition": "replace", "discover": true, "stepResult": "noProgress", "reason": "superseded" }),
         json!(null),
     ] {
         assert!(
@@ -1494,7 +1554,7 @@ fn a_discovery_goal_is_walked_to_the_edge_of_sight_and_replaced_by_what_it_revea
     }
     let schema = decision_schema_for(&OfferedRefs::of(&met), GoalPhase::of(&met));
     assert_eq!(dispositions(&schema), ["replace"]);
-    assert_eq!(count_bounds(&schema, "replace", LOG), vec![(1, 9)]);
+    assert_eq!(count_bounds(&schema, "replace", LOG), vec![(2, 9)]);
     let validator = jsonschema::validator_for(&schema).unwrap();
     assert!(!validator.is_valid(&answer_in(
         &schema,
@@ -1504,7 +1564,7 @@ fn a_discovery_goal_is_walked_to_the_edge_of_sight_and_replaced_by_what_it_revea
     assert!(validator.is_valid(&answer_in(
         &schema,
         &json!({ "action": "dig", "block": "b1" }),
-        &json!({ "disposition": "replace", "successItem": LOG, "successCount": 4, "stepResult": "done" })
+        &json!({ "disposition": "replace", "successItem": LOG, "successCount": 4, "stepResult": "done", "reason": "completed" })
     )));
 }
 
@@ -1521,7 +1581,7 @@ fn a_stalled_item_goal_with_nothing_grounded_may_become_a_discovery_goal() {
     assert!(validator.is_valid(&answer_in(
         &schema,
         &json!({ "action": "moveTo", "onto": "x1" }),
-        &json!({ "disposition": "replace", "discover": true, "stepResult": "noProgress" })
+        &json!({ "disposition": "replace", "discover": true, "stepResult": "noProgress", "reason": "stale" })
     )));
 }
 
@@ -1775,10 +1835,11 @@ fn a_met_goal_whose_next_source_lies_where_no_cell_is_offered_still_has_an_answe
             .unwrap();
         assert!(!pairings.is_empty(), "{name}");
         let validator = jsonschema::validator_for(&schema).unwrap();
+        let (fewest, _) = count_bounds(&schema, "replace", item)[0];
         let answer = answer_in(
             &schema,
             &json!({ "action": "moveTo", "onto": "x1" }),
-            &json!({ "disposition": "replace", "stepResult": "progressing", "successItem": item, "successCount": 1 }),
+            &json!({ "disposition": "replace", "stepResult": "progressing", "successItem": item, "successCount": fewest, "reason": "completed" }),
         );
         assert!(validator.is_valid(&answer), "{name}: {schema}");
     }

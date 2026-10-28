@@ -705,6 +705,61 @@ class EmbodiedCognitionTest {
     }
 
     @Test
+    @DisplayName("an abandon leaves no goal held, so it owes a review soon after, as a plain completion does")
+    fun anAbandonOwesItsFollowUp() {
+        // r39 zeta held nothing for 2291 ticks after its abandon at 3611.
+        var bushes = listOf(STICK_BUSH, SECOND_STICK_BUSH)
+        val body =
+            RecordingBody(
+                { trigger -> perception(agentId = agent.value, trigger = trigger).copy(surroundings = bushes) },
+                main::drainingThread,
+            )
+        val settled = mutableListOf<Boolean>()
+        val answers =
+            ArrayDeque(
+                listOf(
+                    dev.loom.contract.GoalChoice(
+                        dev.loom.contract.GoalDisposition.ADOPT,
+                        successItem = "item.minecraft.stick",
+                        successCount = 2,
+                    ),
+                    dev.loom.contract.GoalChoice(
+                        dev.loom.contract.GoalDisposition.ABANDON,
+                        stepResult = dev.loom.contract.GoalStepResult.NO_PROGRESS,
+                        reason = dev.loom.contract.GoalReason.IMPOSSIBLE,
+                    ),
+                ),
+            )
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p ->
+                    val goal = answers.removeFirst()
+                    val intent =
+                        if (goal.disposition == dev.loom.contract.GoalDisposition.ADOPT) {
+                            Intent.Dig(
+                                "bush",
+                            )
+                        } else {
+                            Intent.Idle
+                        }
+                    CompletableFuture.completedFuture(decisionFor(p, intent).copy(goal = goal))
+                },
+                mainThread = main,
+                journal = silentJournal(),
+                callbacks = CognitionCallbacks(onStepSettled = { _, _, owed -> settled.add(owed) }),
+            )
+        cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+        settled.clear()
+        // The bushes are gone: nothing in sight can meet the goal, so the abandon stands.
+        bushes = emptyList()
+        cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+        assertEquals(listOf(true), settled, "the abandon owes one review")
+    }
+
+    @Test
     @DisplayName("a dig that leaves its goal's own item lying is reviewed once at once, then control returns")
     fun aGoalItemLeftLyingIsReviewedAtOnce() {
         // r24: all three of epsilon's logs were taken by idle peers before its follow-up came.
@@ -728,7 +783,7 @@ class EmbodiedCognitionTest {
                             dev.loom.contract.GoalChoice(
                                 dev.loom.contract.GoalDisposition.ADOPT,
                                 successItem = "item.minecraft.stick",
-                                successCount = 1,
+                                successCount = 2,
                             )
                         } else {
                             null

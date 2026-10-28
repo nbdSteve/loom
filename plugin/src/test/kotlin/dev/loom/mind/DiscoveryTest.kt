@@ -8,6 +8,7 @@ import dev.loom.contract.BlockYield
 import dev.loom.contract.ExploreTarget
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalReason
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.Intent
 import dev.loom.contract.Observation
@@ -108,7 +109,13 @@ class DiscoveryTest {
             ledger.resolve(agent, decisionFor(after, Intent.Dig("b1")).copy(goal = done))?.outcome,
         )
         val logs =
-            GoalChoice(GoalDisposition.REPLACE, successItem = LOG, successCount = 4, stepResult = GoalStepResult.DONE)
+            GoalChoice(
+                GoalDisposition.REPLACE,
+                successItem = LOG,
+                successCount = 4,
+                stepResult = GoalStepResult.DONE,
+                reason = GoalReason.COMPLETED,
+            )
         val replaced = ledger.answer(after, Intent.Dig("b1"), logs)
         assertEquals(GoalEvidence.COMPLETED_ADOPTED, replaced?.outcome)
         assertEquals(true, replaced?.presentedDiscovery)

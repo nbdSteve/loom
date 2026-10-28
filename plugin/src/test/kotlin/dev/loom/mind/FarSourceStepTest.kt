@@ -52,7 +52,7 @@ class FarSourceStepTest {
     private val logHorizon =
         dev.loom.contract.HorizonGoal(LOG, dev.loom.contract.HorizonGrounding.SIGHT, most = 9, frontier = true)
 
-    private val adopt = GoalChoice(GoalDisposition.ADOPT, successItem = LOG, successCount = 1)
+    private val adopt = GoalChoice(GoalDisposition.ADOPT, successItem = LOG, successCount = 2)
     private val continuing = GoalChoice(GoalDisposition.CONTINUE, stepResult = GoalStepResult.PROGRESSING)
 
     @Test

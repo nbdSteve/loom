@@ -52,7 +52,11 @@ const { readinessMetrics } = require('./readiness.js')
 // Generation 19 counts a shelter goal apart from item goals, credits its covered steps, refuses a
 // shelter or subgoal set where none was offered or a subgoal replaced, and measures the run's
 // shelter from the server's sealed record against the profile's pre-registered shelter bar.
-const GATE_GENERATION = 19
+// Generation 20 refuses an objective one step meets, a replace by the held goal's own item and an
+// end stated without a supported reason as goal incoherence, classes any action refused behind the
+// agent's own earlier running request as the dangerOverlap blocker and one behind its own newer
+// request as superseded, and a placement blocked at a closing its cover offered as a target race.
+const GATE_GENERATION = 20
 // The goal outcomes of a decision whose action was a step of a goal it held or took up.
 const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised', 'goalReplaced', 'goalCompletedAdopted'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`

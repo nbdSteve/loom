@@ -13,9 +13,10 @@
 //!   sticks, each completing the met goal and adopting the next in one answer;
 //! - `beta` digs a log atop a three-high pillar, whose one body pickup finds no route, and then
 //!   leaves the drop lying, so a perception past retention still tells it;
-//! - `delta` collects, without moving, an item lying at its feet that vanilla delays picking up,
-//!   and `theta` does the same where nothing else in sight gives anything, so its met goal is
-//!   completed plainly and owes a review;
+//! - `delta` sets a goal of one more than it holds once (refused `goalTrivial`, since one collect
+//!   meets it), then collects, without moving, the items lying at its feet that vanilla delays
+//!   picking up, and `theta` does the same where nothing else in sight gives anything, so its met
+//!   goal is completed plainly and owes a review;
 //! - `epsilon` digs the one log in reach, and once the other log it counted on is gone walks east
 //!   to the edge of sight to look for another, which comes into sight out of dig reach, walks to
 //!   the cell beside it, then revises its log goal to planks once (refused) before finishing it;
@@ -39,9 +40,15 @@
 //!   open);
 //! - `kappa`, once clear of its creeper with nothing in sight to ground an item goal, sets a
 //!   discovery goal and walks toward a tree line the rehearsal lays out past what it senses, and
-//!   once a walk reveals a log replaces the discovery with a log goal stepped by its dig, or by
-//!   the walk beside it while it lies out of dig reach (r23: 17 of 70 reviews could set no goal
-//!   at all).
+//!   once a walk reveals a log replaces the discovery, as completed, with a log goal stepped by its
+//!   dig, or by the walk beside it while it lies out of dig reach (r23: 17 of 70 reviews could set
+//!   no goal at all), and once that goal is met revises it for more logs, which keeps the goal
+//!   (r39: alpha and kappa replaced a met goal by the same item one higher at every step).
+//!
+//! Every goal it sets asks at least `MIN_OBJECTIVE_ADVANCE` beyond what is held and lying as the
+//! agent's own but delta's one refused goal, every replace and abandon states the reason its
+//! evidence supports, and a met goal moves on to more of its own item by a revise, never a
+//! replace.
 //!
 //! Anything but a goal review is answered by a flight from a hunter close enough to be immediate
 //! danger, else an idle. Any other agent is answered by [`ScriptedBackend`].
@@ -49,12 +56,12 @@
 use std::future::Future;
 
 use loom_contract::{
-    Bearing, EquipmentDestination, GoalChoice, GoalDisposition, GoalStepResult, Intent,
+    Bearing, EquipmentDestination, GoalChoice, GoalDisposition, GoalReason, GoalStepResult, Intent,
     ObservationKind, Perception, StepEvidence,
 };
 
 use crate::model::{BackendError, Draft, ModelBackend, ScriptedBackend};
-use crate::offered::{held_of, OfferedRefs};
+use crate::offered::{held_of, own_lying, OfferedRefs, MIN_OBJECTIVE_ADVANCE};
 use crate::router::ModelRoute;
 
 /// The model id the exerciser stamps on its decisions.
@@ -107,7 +114,30 @@ fn target(disposition: GoalDisposition, item: &str, count: i64) -> GoalChoice {
         step_result: (disposition != GoalDisposition::Adopt).then_some(GoalStepResult::Progressing),
         shelter: None,
         feeds: None,
+        reason: None,
     }
+}
+
+/// A replace of the held goal by `count` of `item`, for `reason`.
+fn replaced(item: &str, count: i64, reason: GoalReason) -> GoalChoice {
+    GoalChoice {
+        reason: Some(reason),
+        ..target(GoalDisposition::Replace, item, count)
+    }
+}
+
+/// An abandon of the held goal, for `reason`.
+fn abandoned(reason: GoalReason) -> GoalChoice {
+    GoalChoice {
+        reason: Some(reason),
+        ..judged(GoalDisposition::Abandon)
+    }
+}
+
+/// The fewest of `item` an objective may ask: more than is held and lying as the agent's own by
+/// the floor one step cannot meet (`offered::MIN_OBJECTIVE_ADVANCE`).
+fn objective(perception: &Perception, item: &str) -> i64 {
+    held_of(perception, item) + own_lying(perception, item) + MIN_OBJECTIVE_ADVANCE
 }
 
 /// A choice under `disposition` that sets no target.
@@ -121,6 +151,7 @@ const fn judged(disposition: GoalDisposition) -> GoalChoice {
         step_result: Some(GoalStepResult::Progressing),
         shelter: None,
         feeds: None,
+        reason: None,
     }
 }
 
@@ -333,18 +364,33 @@ fn pursue(perception: &Perception, item: &str) -> Option<Draft> {
     })
 }
 
-/// A met goal ended: replaced by the next goal sight offers, stepped toward by its own step or a
-/// walk to look further, or completed with a walk to look further when sight offers none.
+/// A met goal moved on: revised for more of its own item while sight offers it, which keeps the
+/// objective's identity, else replaced as completed by the next goal sight offers, stepped toward
+/// by its own step or a walk to look further, or completed with a walk to look further when sight
+/// offers none.
 fn finish(perception: &Perception) -> Draft {
     let offered = OfferedRefs::of(perception);
-    let Some((item, fewest, _)) = offered.count_bounds.first().cloned() else {
+    let held = perception
+        .goal
+        .as_ref()
+        .and_then(|goal| goal.success_item.clone());
+    let own = held.as_ref().and_then(|item| {
+        offered
+            .count_bounds_of(item)
+            .map(|(fewest, most)| (item.clone(), fewest, most))
+    });
+    let Some((item, fewest, _)) = own.or_else(|| offered.count_bounds.first().cloned()) else {
         return look_further(
             perception,
             Some(judged(GoalDisposition::Complete)),
             "complete the goal and look further",
         );
     };
-    let next = Some(target(GoalDisposition::Replace, &item, fewest));
+    let next = Some(if held.as_ref() == Some(&item) {
+        target(GoalDisposition::Revise, &item, fewest)
+    } else {
+        replaced(&item, fewest, GoalReason::Completed)
+    });
     match pursue(perception, &item) {
         Some(step) => answer(
             step.intent,
@@ -383,7 +429,7 @@ fn crafter(perception: &Perception) -> Draft {
             let count = held_of(perception, next) + makes * crafts;
             return answer(
                 Intent::Craft { recipe, crafts },
-                Some(target(GoalDisposition::Replace, next, count)),
+                Some(replaced(next, count, GoalReason::Completed)),
                 "complete the met goal and adopt the next by crafting it",
             );
         }
@@ -392,7 +438,7 @@ fn crafter(perception: &Perception) -> Draft {
     pursue(perception, item).unwrap_or_else(|| {
         answer(
             Intent::Idle,
-            Some(judged(GoalDisposition::Abandon)),
+            Some(abandoned(GoalReason::Impossible)),
             "nothing gives it",
         )
     })
@@ -406,7 +452,11 @@ fn dropper(perception: &Perception) -> Draft {
             |block| {
                 answer(
                     Intent::Dig { block },
-                    Some(target(GoalDisposition::Adopt, LOG, 1)),
+                    Some(target(
+                        GoalDisposition::Adopt,
+                        LOG,
+                        objective(perception, LOG),
+                    )),
                     "dig a log",
                 )
             },
@@ -452,7 +502,7 @@ fn crowder(perception: &Perception) -> Draft {
     match dig_of(perception, DIRT).filter(|_| crowding) {
         Some(block) => answer(
             Intent::Dig { block },
-            Some(target(GoalDisposition::Adopt, DIRT, 1)),
+            Some(target(GoalDisposition::Adopt, DIRT, objective(perception, DIRT))),
             "dig the dirt underfoot for a goal while there is ground to look at, which the body must refuse",
         ),
         None => answer(Intent::Idle, None, IDLE_ROLE),
@@ -515,13 +565,27 @@ fn shelterer(perception: &Perception) -> Option<Draft> {
     ))
 }
 
-/// delta: an item at its feet collected without moving, which vanilla picks up once its delay ends.
+/// delta: an item at its feet collected without moving, which vanilla picks up once its delay ends,
+/// after one goal for one more than it holds, which one step meets and the body must refuse.
 fn collector(perception: &Perception) -> Draft {
     let offered = OfferedRefs::of(perception);
     let lying = perception.surroundings.iter().find(|seen| {
         seen.kind == ObservationKind::DroppedItem && offered.pickup_items.contains(&seen.target_ref)
     });
+    let trivial = perception.agent_id.ends_with("-delta") && perception.last_refusal.is_none();
     match (lying, &perception.goal) {
+        (Some(item), None) if trivial => answer(
+            Intent::Collect {
+                item: item.target_ref.clone(),
+                approach: false,
+            },
+            Some(target(
+                GoalDisposition::Adopt,
+                &item.what,
+                held_of(perception, &item.what) + 1,
+            )),
+            "set a goal one collect meets, which the body must refuse",
+        ),
         (Some(item), None) => answer(
             Intent::Collect {
                 item: item.target_ref.clone(),
@@ -530,9 +594,10 @@ fn collector(perception: &Perception) -> Draft {
             Some(target(
                 GoalDisposition::Adopt,
                 &item.what,
-                held_of(perception, &item.what) + item.count.unwrap_or(1),
+                (held_of(perception, &item.what) + item.count.unwrap_or(1))
+                    .max(objective(perception, &item.what)),
             )),
-            "collect the item at my feet without moving",
+            "collect the items at my feet without moving",
         ),
         // A met goal is completed where the agent stands.
         (_, Some(_)) if met(perception) => answer(
@@ -594,7 +659,7 @@ fn discoverer(perception: &Perception) -> Draft {
     if offered.stalled {
         return answer(
             Intent::Idle,
-            Some(judged(GoalDisposition::Abandon)),
+            Some(abandoned(GoalReason::Stale)),
             "the discovery advanced nothing for three walks; abandon it",
         );
     }
@@ -603,14 +668,14 @@ fn discoverer(perception: &Perception) -> Draft {
             if let Some(block) = dig_of(perception, LOG) {
                 return answer(
                     Intent::Dig { block },
-                    Some(target(GoalDisposition::Replace, LOG, fewest)),
+                    Some(replaced(LOG, fewest, GoalReason::Completed)),
                     "the walk revealed a log: replace the discovery with a log goal and dig it",
                 );
             }
             if let Some(onto) = toward_of(perception, LOG) {
                 return answer(
                     Intent::MoveTo { onto },
-                    Some(target(GoalDisposition::Replace, LOG, fewest)),
+                    Some(replaced(LOG, fewest, GoalReason::Completed)),
                     "the walk revealed a log out of reach: replace the discovery and walk beside it",
                 );
             }
@@ -676,7 +741,8 @@ fn fetcher(perception: &Perception) -> Draft {
                     Some(target(
                         GoalDisposition::Adopt,
                         &item.what,
-                        held_of(perception, &item.what) + item.count.unwrap_or(1),
+                        (held_of(perception, &item.what) + item.count.unwrap_or(1))
+                            .max(objective(perception, &item.what)),
                     )),
                     "collect the drop in the nook beside my pit",
                 )
@@ -764,7 +830,7 @@ fn restater(perception: &Perception) -> Draft {
     let Some(step) = pursue(perception, item) else {
         return answer(
             Intent::Idle,
-            Some(judged(GoalDisposition::Abandon)),
+            Some(abandoned(GoalReason::Impossible)),
             "nothing gives it",
         );
     };
@@ -793,7 +859,7 @@ mod tests {
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
         Bearing, BlockYield, CraftingOption, DecisionImportance, DropFate, ExploreTarget,
-        GoalDisposition, GoalProgress, GoalRefusal, GoalSummary, Intent, Observation,
+        GoalDisposition, GoalProgress, GoalReason, GoalRefusal, GoalSummary, Intent, Observation,
         ObservationKind, OwnDrop, Perception, StepEvidence,
     };
 
@@ -1141,16 +1207,34 @@ mod tests {
         assert_eq!(plain.intent, Intent::Idle);
         assert_eq!(plain.goal.unwrap().disposition, GoalDisposition::Complete);
         met.last_refusal = Some(refusal("goalCompletedWithoutNext"));
-        assert_eq!(
-            draft(&met).goal.unwrap().disposition,
-            GoalDisposition::Replace
-        );
+        // The horizon still offers logs, so the met goal is revised for more, which keeps it.
+        let more = draft(&met).goal.unwrap();
+        assert_eq!(more.disposition, GoalDisposition::Revise);
+        assert_eq!(more.success_item.as_deref(), Some(LOG));
+        assert_eq!(more.success_count, Some(4));
+        assert_eq!(more.reason, None);
+        // With no more logs to ask and nowhere further to look, the next item replaces it, as
+        // completed.
+        met.horizon.clear();
+        met.explore.clear();
+        met.surroundings.retain(|seen| seen.target_ref == "g1");
+        met.surroundings.push(Observation {
+            target_ref: "g2".to_owned(),
+            ..met.surroundings[0].clone()
+        });
+        let next = draft(&met).goal.unwrap();
+        assert_eq!(next.disposition, GoalDisposition::Replace);
+        assert_eq!(next.success_item.as_deref(), Some(super::DIRT));
+        assert_eq!(next.reason, Some(GoalReason::Completed));
     }
 
     #[test]
     fn iota_collects_the_drop_in_its_nook_with_approach_and_then_waits() {
         let mut seen = review("iota");
-        seen.surroundings = vec![dropped("d1", "item.minecraft.dirt", 1.506, 0.0)];
+        seen.surroundings = vec![Observation {
+            count: Some(2),
+            ..dropped("d1", "item.minecraft.dirt", 1.506, 0.0)
+        }];
         let fetched = draft(&seen);
         assert_eq!(
             fetched.intent,
@@ -1161,7 +1245,7 @@ mod tests {
         );
         let adopt = fetched.goal.unwrap();
         assert_eq!(adopt.disposition, GoalDisposition::Adopt);
-        assert_eq!(adopt.success_count, Some(1));
+        assert_eq!(adopt.success_count, Some(2));
         // Nothing to collect, or a goal it holds and has not met: it waits.
         assert_eq!(draft(&review("iota")).intent, Intent::Idle);
         let mut holding_goal = review("iota");
