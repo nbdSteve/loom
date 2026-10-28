@@ -6,9 +6,19 @@
  *
  * The body never equips or searches for a block here. Both handles are revalidated
  * immediately before the packet, the named inventory slot must already be the main
- * hand, and one packet is followed only by a bounded wait for the destination block
- * update. `forceLook: 'ignore'` is deliberate: inactive physics emits no ticks, so the
- * public helper's look task would otherwise wait on simulation this request does not own.
+ * hand, and a destination a body stands in is refused before any packet, as vanilla
+ * refuses it. One packet is then answered by the server, which resends the destination,
+ * placed or not, and acknowledges the packet's sequence (`acknowledge_player_digging`):
+ * the placement settles at that acknowledgement, and only a server that never answers
+ * waits out the bounded deadline. `forceLook: 'ignore'` is deliberate: inactive physics
+ * emits no ticks, so the public helper's look task would otherwise wait on simulation this
+ * request does not own.
+ *
+ * r39 iota closed a face whose cell its own box reached into, 0.227 of a block past its
+ * feet cell's edge. On real Paper the server refused that placement, resent the destination
+ * as air and acknowledged it 54 ms after the packet; the body read only a placed block as an
+ * answer, so it held the body's one exclusive owner for 330 ticks under skeleton fire, until
+ * the agent died, and three survival placements were refused behind it.
  */
 
 const { performance } = require('node:perf_hooks')
@@ -27,6 +37,11 @@ const {
   visibleBlock
 } = require('./interaction')
 const { blockInside, worldBorderOf } = require('./border')
+const { LIVING_ENTITY_TYPES } = require('./combat')
+
+/** A player's own collision box, for a body Mineflayer states no size for: 0.6 wide, 1.8 tall. */
+const PLAYER_WIDTH = 0.6
+const PLAYER_HEIGHT = 1.8
 
 /** The one installation each player gets; a second would duplicate packet listeners. */
 const installations = new WeakSet()
@@ -51,6 +66,27 @@ const FACE_VECTORS = Object.freeze({
   west: new Vec3(-1, 0, 0),
   east: new Vec3(1, 0, 0)
 })
+
+/**
+ * Whether a body - the bot's own, or a living creature's it can see - stands in the cell at
+ * [destination], which vanilla will not place a block into (`Level.isUnobstructed`). Boxes that
+ * only touch the cell's faces do not stand in it.
+ */
+function bodyStandsIn (bot, destination) {
+  const own = bot.entity
+  return Object.values(bot.entities ?? {}).some((entity) => {
+    if (entity !== own && !LIVING_ENTITY_TYPES.has(entity?.type)) return false
+    const position = entity?.position
+    if (position === undefined || position === null) return false
+    const width = Number.isFinite(entity.width) ? entity.width : entity === own ? PLAYER_WIDTH : undefined
+    const height = Number.isFinite(entity.height) ? entity.height : entity === own ? PLAYER_HEIGHT : undefined
+    if (width === undefined || height === undefined) return false
+    const half = width / 2
+    return position.x - half < destination.x + 1 && position.x + half > destination.x &&
+      position.y < destination.y + 1 && position.y + height > destination.y &&
+      position.z - half < destination.z + 1 && position.z + half > destination.z
+  })
+}
 
 /** A checked pre-application answer. */
 function refused (outcome, startedAt, now) {
@@ -108,7 +144,7 @@ function placeHeldBlock (bot, {
     return undefined
   }
   if (before === null || before === undefined) return undefined
-  if (!isAirBlock(before)) return refused('destinationBlocked', startedAt, now)
+  if (!isAirBlock(before) || bodyStandsIn(bot, destination)) return refused('destinationBlocked', startedAt, now)
   // The server refuses a use of a block past its world border and puts back a block placed past
   // it, so the wall blocks a placement against or into a cell outside it, as it blocked r36
   // zeta's dig of short grass past the border.
@@ -123,10 +159,13 @@ function placeHeldBlock (bot, {
   const promise = new Promise((resolve) => {
     const eventName = `blockUpdate:${destination}`
     const timer = setTimeout(() => finish('timedOut'), timeoutMs)
+    const client = bot._client
+    let sent = false
 
     function cleanup () {
       clearTimeout(timer)
       bot.off(eventName, updated)
+      client?.off?.('acknowledge_player_digging', acknowledged)
     }
 
     function observedPlacement () {
@@ -169,8 +208,17 @@ function placeHeldBlock (bot, {
       if (observedPlacement() !== undefined) finish('libraryFailure')
     }
 
+    // The server has answered the packet: the destination it resent is the placement's result.
+    // A refusal is a body standing in the cell when one does, which the server saw first, and
+    // otherwise the library's operation ending without the confirmation it was owed.
+    function acknowledged () {
+      if (sent) finish(bodyStandsIn(bot, destination) ? 'destinationBlocked' : 'libraryFailure')
+    }
+
     bot.on(eventName, updated)
+    client?.on?.('acknowledge_player_digging', acknowledged)
     try {
+      sent = true
       Promise.resolve(bot._genericPlace(
         resolvedBlock.block,
         vector,

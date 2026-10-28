@@ -935,6 +935,99 @@ test('place refuses blocked or remote support and bounds an unacknowledged packe
   assert.equal((await reportOf(aborted)).outcome, 'cancelled')
 })
 
+test('place settles at the server acknowledgement, placed or refused, and never waits out its deadline', async () => {
+  // r39 iota: on real Paper the server refused a placement into a cell the player's own box
+  // reached into, resent the destination as air and acknowledged it 54 ms after the packet.
+  const bot = worldBot()
+  const held = itemStack('dirt', 2)
+  bot.inventory.slots[HOTBAR_SLOT] = held
+  const support = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))
+  const common = {
+    blockOffers: [blockOffer(support)],
+    slots: slotOffers(HOTBAR_SLOT, held),
+    block: 0,
+    slot: HOTBAR_SLOT,
+    face: 'up',
+    timeoutMs: 60_000
+  }
+  const destination = new Vec3(1, 65, 0)
+  const answer = (placed) => {
+    bot._genericPlace = async () => {
+      setImmediate(() => {
+        if (placed) {
+          const block = bot.putBlock(solidBlock(destination, 'dirt', { type: 3 }))
+          bot.emit(`blockUpdate:${destination}`, airBlock(destination), block)
+        } else {
+          bot.emit(`blockUpdate:${destination}`, airBlock(destination), airBlock(destination))
+        }
+        bot._client.emit('acknowledge_player_digging', { sequenceId: 0 })
+      })
+    }
+  }
+  const started = Date.now()
+  answer(false)
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'libraryFailure')
+  // A creature that walked into the cell after the check is the refusal the server saw.
+  bot.entities[8] = { id: 8, type: 'hostile', position: new Vec3(1.5, 65, 0.5), width: 0.6, height: 1.95 }
+  bot._genericPlace = async () => {
+    setImmediate(() => bot._client.emit('acknowledge_player_digging', { sequenceId: 0 }))
+  }
+  // The pre-packet check sees the creature first and sends nothing.
+  bot._client.writes.length = 0
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'destinationBlocked')
+  delete bot.entities[8]
+  let raced = false
+  bot._genericPlace = async () => {
+    raced = true
+    bot.entities[8] = { id: 8, type: 'hostile', position: new Vec3(1.5, 65, 0.5), width: 0.6, height: 1.95 }
+    setImmediate(() => bot._client.emit('acknowledge_player_digging', { sequenceId: 0 }))
+  }
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'destinationBlocked')
+  assert.equal(raced, true)
+  delete bot.entities[8]
+  answer(true)
+  const placed = await reportOf(placeHeldBlock(bot, common))
+  assert.equal(placed.outcome, 'placed')
+  assert.ok(Date.now() - started < 1000, 'every answer settled at its acknowledgement, not its deadline')
+  // A late update after settlement changes nothing it reported.
+  bot.emit(`blockUpdate:${destination}`, airBlock(destination), airBlock(destination))
+  bot._client.emit('acknowledge_player_digging', { sequenceId: 0 })
+  assert.equal(placed.outcome, 'placed')
+})
+
+test('place refuses a destination its own body or a creature stands in, before any packet', async () => {
+  const bot = worldBot()
+  const held = itemStack('dirt', 1)
+  bot.inventory.slots[HOTBAR_SLOT] = held
+  // The body stands 0.227 of a block past its feet cell's north edge, as r39 iota did: its box
+  // reaches the cell north of its feet.
+  bot.entity.position = new Vec3(0.5, 64, -0.073)
+  const support = bot.putBlock(solidBlock(new Vec3(0, 63, -1)))
+  let packets = 0
+  bot._genericPlace = async () => { packets += 1 }
+  const own = {
+    blockOffers: [blockOffer(support)],
+    slots: slotOffers(HOTBAR_SLOT, held),
+    block: 0,
+    slot: HOTBAR_SLOT,
+    face: 'up',
+    timeoutMs: 100
+  }
+  assert.equal((await reportOf(placeHeldBlock(bot, own))).outcome, 'destinationBlocked')
+  // Standing back at its cell's centre, the same cell is clear of it, and a packet is sent.
+  bot.entity.position = new Vec3(0.5, 64, 0.5)
+  bot._genericPlace = async () => {
+    packets += 1
+    setImmediate(() => bot._client.emit('acknowledge_player_digging', { sequenceId: 0 }))
+  }
+  assert.equal((await reportOf(placeHeldBlock(bot, own))).outcome, 'libraryFailure')
+  assert.equal(packets, 1)
+  // An item lying in the cell is no body: vanilla places over it.
+  bot.entities[9] = { id: 9, type: 'object', name: 'item', position: new Vec3(0.5, 64, -0.5), width: 0.25, height: 0.25 }
+  assert.equal((await reportOf(placeHeldBlock(bot, own))).outcome, 'libraryFailure')
+  assert.equal(packets, 2)
+})
+
 test('equip revalidates one offered stack and reports Mineflayer actual destination slot', async () => {
   const bot = worldBot()
   const offered = itemStack('iron_helmet', 1)

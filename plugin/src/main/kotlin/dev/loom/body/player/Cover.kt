@@ -92,19 +92,25 @@ internal data class CoverReading(
         compareValuesBy(this, other, { it.sealed }, { it.closed }, { it.closable })
 }
 
-/** The cover around feet cell [feet], where [eyes] reach the [supports] a placement may name. */
+/**
+ * The cover around feet cell [feet] for a body standing at [standing], whose eyes reach the
+ * [supports] a placement may name. A face whose cell the body's own box reaches into has no
+ * closing from here, since vanilla places no block where a body stands (r39 iota: 0.227 of a block
+ * past its feet cell's north edge, offered feetNorth, and refused by the server).
+ */
 internal fun coverAt(
     ground: BlockGround,
     feet: List<Int>,
-    eyes: List<Double>,
+    standing: List<Double>,
     supports: Map<List<Int>, CoverSupport>,
 ): CoverReading {
+    val eyes = eyesAt(standing)
     val own = setOf(feet, feet.offset(listOf(0, 1, 0)))
     val open = COVER_OFFSETS.filter { (_, offset) -> ground.standsIn(feet.offset(offset)) }
     val closings =
         open.mapNotNull { (face, offset) ->
             val cell = feet.offset(offset)
-            if (!ground.holdsNothing(cell)) return@mapNotNull null
+            if (!ground.holdsNothing(cell) || bodyReaches(standing, cell)) return@mapNotNull null
             SUPPORT_SIDES.firstNotNullOfOrNull { (toward, side) ->
                 val at = cell.offset(toward)
                 supports[at]
@@ -170,7 +176,7 @@ internal fun descendOf(
     val under = supportCellOf(position)
     val support = supports[under]?.takeIf { it.visible && descentSafe(ground, position) } ?: return null
     val landing = listOf(position[0], under[1].toDouble(), position[2])
-    val after = coverAt(ground.opening(under), under, eyesAt(landing), supports - setOf(under))
+    val after = coverAt(ground.opening(under), under, landing, supports - setOf(under))
     return support.ref.takeIf { after > current }
 }
 
@@ -215,7 +221,7 @@ internal fun coverOf(
 ): Cover? {
     if (ground === BlockGround.UNKNOWN) return null
     val feet = position.map { floor(it).toInt() }
-    val reading = coverAt(ground, feet, eyesAt(position), supports)
+    val reading = coverAt(ground, feet, position, supports)
     return Cover(
         sealed = reading.sealed,
         walkOut = escapesFrom(ground, feet),

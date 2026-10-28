@@ -628,6 +628,9 @@ Counting only cells that reached the item from every point of their floor (`cove
 `noRoute` therefore means no point a body can stand at within pickup reach of the item has a route.
 `place` names one support block, one offered slot and one face; the exact offered stack must
 already be in the selected main hand, so placement never equips or searches.
+A destination a body stands in - the bot's own box, or a living creature's it can see - is refused as `destinationBlocked` before any packet, because vanilla will not place a block into it.
+The server answers one placement packet by resending the destination, placed or not, and then acknowledging the packet's sequence (`acknowledge_player_digging`), so the placement settles at that acknowledgement: `placed` when the destination now holds a block, `destinationBlocked` when a body stands in it, and `libraryFailure` otherwise. Only a server that never answers waits out the deadline.
+r39 iota closed a face its own box reached 0.227 of a block into; on real Paper the server refused it, resent air and acknowledged it in 54 ms, and a body that read only a placed block as an answer held its one exclusive owner for 330 ticks under fire, until the agent died.
 `equip` names one offered slot and one of the closed destinations `hand`, `offHand`, `head`,
 `torso`, `legs` or `feet`; Mineflayer may choose the concrete hotbar slot for `hand`, and the
 report states the slot it actually used.

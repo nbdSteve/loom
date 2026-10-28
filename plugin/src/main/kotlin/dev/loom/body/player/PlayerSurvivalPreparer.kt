@@ -22,6 +22,7 @@ private const val COMBAT_MIN_HEALTH = 4.5
 /** Resolves survival refs on the main thread, then returns one immutable socket operation. */
 internal class PlayerSurvivalPreparer(
     private val context: PlayerBodyContext,
+    private val preemption: PlayerPreemption,
 ) {
     fun prepare(
         runtime: PlayerRuntime,
@@ -131,7 +132,7 @@ internal class PlayerSurvivalPreparer(
                     EventTag.SLEEP_BED_UNNAMED,
                 )
             is WorldTargetResolution.Bound ->
-                withSenseOrReject(sense, requestId, EventTag.SLEEP_SENSE_FORGOTTEN, "bed") {
+                withSenseOrReject(AppliedDecision(runtime, sense, requestId), EventTag.SLEEP_SENSE_FORGOTTEN, "bed") {
                     BodyRequest.Sleep(
                         protocol = BODY_CONTROL_PROTOCOL_VERSION,
                         requestId = context.infrastructure.requestIds.next("sleep"),
@@ -164,7 +165,11 @@ internal class PlayerSurvivalPreparer(
                     EventTag.CRAFT_QUANTITY_EXCEEDED,
                 )
             else ->
-                withSenseOrReject(sense, requestId, EventTag.CRAFT_SENSE_FORGOTTEN, "recipe") {
+                withSenseOrReject(
+                    AppliedDecision(runtime, sense, requestId),
+                    EventTag.CRAFT_SENSE_FORGOTTEN,
+                    "recipe",
+                ) {
                     BodyRequest.Craft(
                         protocol = BODY_CONTROL_PROTOCOL_VERSION,
                         requestId = context.infrastructure.requestIds.next("craft"),
@@ -199,8 +204,7 @@ internal class PlayerSurvivalPreparer(
                 )
             else ->
                 withSenseOrReject(
-                    sense,
-                    resolved.requestId,
+                    AppliedDecision(runtime, sense, resolved.requestId),
                     EventTag.ATTACK_SENSE_FORGOTTEN,
                     "target and weapon",
                 ) {
@@ -223,13 +227,13 @@ internal class PlayerSurvivalPreparer(
     }
 
     private fun withSenseOrReject(
-        sense: HeldSense?,
-        requestId: String?,
+        applied: AppliedDecision,
         forgottenTag: String,
         target: String,
         request: () -> BodyRequest,
-    ): () -> ActionExecution =
-        if (sense == null || requestId == null) {
+    ): () -> ActionExecution {
+        val (runtime, sense, requestId) = applied
+        return if (sense == null || requestId == null) {
             rejectedSurvival(
                 "the sense connection that named that $target is no longer open",
                 forgottenTag,
@@ -237,20 +241,22 @@ internal class PlayerSurvivalPreparer(
         } else {
             val prepared = request()
             val startedTick = context.authority.currentTick()
-            val operation: () -> ActionExecution = { interact(sense, prepared, startedTick) }
+            val operation: () -> ActionExecution = { interact(runtime, sense, prepared, startedTick, requestId) }
             operation
         }
+    }
 
     private fun interact(
+        runtime: PlayerRuntime,
         sense: HeldSense,
-        request: BodyRequest,
+        prepared: BodyRequest,
         startedTick: Long,
+        decidedBy: String,
     ): ActionExecution {
-        val response =
-            sense.raw.connection.request(
-                request,
-                context.infrastructure.settings.movementTimeout,
-            )
+        val (request, response) =
+            preemption.send(runtime, decidedBy, prepared) {
+                sense.raw.connection.request(it, context.infrastructure.settings.movementTimeout)
+            }
         return when (request) {
             is BodyRequest.Craft -> craftExecution(sense, request, response, startedTick)
             is BodyRequest.Attack -> attackExecution(sense, request, response, startedTick)

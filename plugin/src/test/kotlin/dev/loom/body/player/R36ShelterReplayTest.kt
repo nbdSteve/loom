@@ -77,7 +77,7 @@ class R36ShelterReplayTest {
         repeat(3) {
             val ground = ground(opened)
             val supports = supports(ground)
-            val reading = coverAt(ground, at(feet).map { kotlin.math.floor(it).toInt() }, eyesAt(at(feet)), supports)
+            val reading = coverAt(ground, at(feet).map { kotlin.math.floor(it).toInt() }, at(feet), supports)
             ranks += reading
             val descend = requireNotNull(descendOf(ground, at(feet), supports, reading))
             assertEquals(supports.entries.single { it.value.ref == descend }.key, listOf(-64, feet.toInt() - 1, -36))
@@ -86,7 +86,7 @@ class R36ShelterReplayTest {
         }
         val pit = ground(opened)
         val supports = supports(pit)
-        val bottom = coverAt(pit, listOf(-64, 61, -36), eyesAt(at(61.0)), supports)
+        val bottom = coverAt(pit, listOf(-64, 61, -36), at(61.0), supports)
         ranks += bottom
         // Each dig left zeta more enclosed than the last, the last by making the roof closable.
         assertEquals(ranks.sorted(), ranks)

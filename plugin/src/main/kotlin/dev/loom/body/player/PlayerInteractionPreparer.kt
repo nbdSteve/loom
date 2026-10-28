@@ -19,6 +19,7 @@ private const val INTERACTION_DEADLINE_MS = 20_000
 /** Resolves offered refs on the main thread, then returns one immutable socket operation. */
 internal class PlayerInteractionPreparer(
     private val context: PlayerBodyContext,
+    private val preemption: PlayerPreemption,
 ) {
     fun prepare(
         runtime: PlayerRuntime,
@@ -63,7 +64,8 @@ internal class PlayerInteractionPreparer(
                         EventTag.DIG_DROP_UNREACHABLE,
                     )
                 } else {
-                    withSenseOrReject(sense, requestId, EventTag.DIG_SENSE_FORGOTTEN, "block") {
+                    val applied = AppliedDecision(runtime, sense, requestId)
+                    withSenseOrReject(applied, EventTag.DIG_SENSE_FORGOTTEN, "block") {
                         BodyRequest.Dig(
                             protocol = BODY_CONTROL_PROTOCOL_VERSION,
                             requestId = context.infrastructure.requestIds.next("dig"),
@@ -105,8 +107,7 @@ internal class PlayerInteractionPreparer(
                 )
             is WorldTargetResolution.Bound ->
                 withSenseOrReject(
-                    sense,
-                    requestId,
+                    AppliedDecision(runtime, sense, requestId),
                     EventTag.COLLECT_SENSE_FORGOTTEN,
                     "dropped item",
                 ) {
@@ -166,8 +167,7 @@ internal class PlayerInteractionPreparer(
                 )
             block is WorldTargetResolution.Bound && slot is SlotResolution.Bound ->
                 withSenseOrReject(
-                    sense,
-                    requestId,
+                    AppliedDecision(runtime, sense, requestId),
                     EventTag.PLACE_SENSE_FORGOTTEN,
                     "block and stack",
                 ) {
@@ -213,7 +213,7 @@ internal class PlayerInteractionPreparer(
                     EventTag.EQUIP_SLOT_UNNAMED,
                 )
             is SlotResolution.Bound ->
-                withSenseOrReject(sense, requestId, EventTag.EQUIP_SENSE_FORGOTTEN, "stack") {
+                withSenseOrReject(AppliedDecision(runtime, sense, requestId), EventTag.EQUIP_SENSE_FORGOTTEN, "stack") {
                     BodyRequest.Equip(
                         protocol = BODY_CONTROL_PROTOCOL_VERSION,
                         requestId = context.infrastructure.requestIds.next("equip"),
@@ -228,13 +228,13 @@ internal class PlayerInteractionPreparer(
     }
 
     private fun withSenseOrReject(
-        sense: HeldSense?,
-        requestId: String?,
+        applied: AppliedDecision,
         forgottenTag: String,
         target: String,
         request: () -> BodyRequest,
-    ): () -> ActionExecution =
-        if (sense == null || requestId == null) {
+    ): () -> ActionExecution {
+        val (runtime, sense, requestId) = applied
+        return if (sense == null || requestId == null) {
             rejectedInteraction(
                 "the sense connection that named that $target is no longer open",
                 forgottenTag,
@@ -242,20 +242,22 @@ internal class PlayerInteractionPreparer(
         } else {
             val prepared = request()
             val startedTick = context.authority.currentTick()
-            val operation: () -> ActionExecution = { interact(sense, prepared, startedTick) }
+            val operation: () -> ActionExecution = { interact(runtime, sense, prepared, startedTick, requestId) }
             operation
         }
+    }
 
     private fun interact(
+        runtime: PlayerRuntime,
         sense: HeldSense,
-        request: BodyRequest,
+        prepared: BodyRequest,
         startedTick: Long,
+        decidedBy: String,
     ): ActionExecution {
-        val response =
-            sense.raw.connection.request(
-                request,
-                context.infrastructure.settings.movementTimeout,
-            )
+        val (request, response) =
+            preemption.send(runtime, decidedBy, prepared) {
+                sense.raw.connection.request(it, context.infrastructure.settings.movementTimeout)
+            }
         return when (request) {
             is BodyRequest.Dig -> digExecution(sense, request, response, startedTick)
             is BodyRequest.Collect -> collectExecution(sense, request, response, startedTick)

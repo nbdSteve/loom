@@ -28,12 +28,6 @@ import java.util.concurrent.CompletionStage
 private const val MOVEMENT_DEADLINE_MS = 20_000
 private const val FLEE_DISTANCE_BLOCKS = 24
 
-/** Flight attempts against a busy body: the first, one after the halt, and settling retries. */
-private const val PREEMPT_ATTEMPTS = 6
-
-/** How long a halted interaction is given to settle between flight attempts. */
-private const val PREEMPT_SETTLE_MS = 100L
-
 /** From a block's corner coordinate to its centre on a horizontal axis. */
 private const val BLOCK_CENTER_OFFSET = 0.5
 
@@ -155,12 +149,17 @@ internal class PlayerActuation(
 /** Resolves main-thread handles before returning one immutable I/O operation. */
 internal class PlayerActionPreparer(
     private val context: PlayerBodyContext,
-    private val interactions: PlayerInteractionPreparer = PlayerInteractionPreparer(context),
-    private val survival: PlayerSurvivalPreparer = PlayerSurvivalPreparer(context),
     private val speech: PlayerSpeech = PlayerSpeech(context),
     /** The newest decision applied to each agent's body; an older flight never halts or replaces it. */
     val newest: NewestDecisions = NewestDecisions(),
 ) {
+    private val preemption =
+        PlayerPreemption(newest, context.infrastructure.requestIds::next) { runtime ->
+            halt(runtime, "halted earlier work for a newer decision")
+        }
+    private val interactions = PlayerInteractionPreparer(context, preemption)
+    private val survival = PlayerSurvivalPreparer(context, preemption)
+
     fun prepare(
         runtime: PlayerRuntime,
         intent: Intent,
@@ -239,7 +238,7 @@ internal class PlayerActionPreparer(
             (resolved as? WorldTargetResolution.Bound)?.let { sense?.raw?.report?.blocks?.getOrNull(it.index) }
         return when {
             explored != null -> {
-                { move(runtime, explored, sense) }
+                { move(runtime, explored, sense, requestId) }
             }
             resolved == WorldTargetResolution.Unknown ->
                 rejectedAction("that request never named such a block", EventTag.MOVE_BLOCK_UNNAMED)
@@ -261,7 +260,7 @@ internal class PlayerActionPreparer(
                             EventTag.MOVE_NOT_STANDABLE,
                         )
                 val destination = cell.map(Int::toDouble)
-                val operation: () -> ActionExecution = { move(runtime, destination, sense) }
+                val operation: () -> ActionExecution = { move(runtime, destination, sense, requestId) }
                 operation
             }
         }
@@ -282,8 +281,9 @@ internal class PlayerActionPreparer(
         runtime: PlayerRuntime,
         destination: List<Double>,
         sense: HeldSense?,
+        decidedBy: String?,
     ): ActionExecution {
-        val request =
+        val prepared =
             BodyRequest.MoveTo(
                 protocol = BODY_CONTROL_PROTOCOL_VERSION,
                 requestId = context.infrastructure.requestIds.next("move"),
@@ -294,15 +294,14 @@ internal class PlayerActionPreparer(
                 sprint = false,
             )
         return withControl(runtime, sense) { connection ->
-            val report =
-                connection.request(
-                    request,
-                    context.infrastructure.settings.movementTimeout,
-                ) as? BodyResponse.MoveReport
-                    ?: throw BodyControlFailure.ProtocolViolation()
+            val (request, response) =
+                preemption.send(runtime, decidedBy, prepared) {
+                    connection.request(it, context.infrastructure.settings.movementTimeout)
+                }
+            val report = response as? BodyResponse.MoveReport ?: throw BodyControlFailure.ProtocolViolation()
             ActionExecution(
                 outcome = movementOutcome(report.outcome, WALK),
-                moveRequest = request,
+                moveRequest = request as BodyRequest.MoveTo,
                 moveReport = report,
             )
         }
