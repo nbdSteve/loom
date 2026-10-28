@@ -11,13 +11,14 @@ import org.bukkit.block.Block
 import org.bukkit.block.data.Waterlogged
 
 /**
- * Paper's own collision verdict for the block at a position in the overworld, with every cell
- * past the world border closed, because the server lets no body stand there.
+ * Paper's own collision verdict for the block at a position in the overworld, by [collides], with
+ * every cell past the world border closed, because the server lets no body stand there.
  */
 class BukkitBlockGround(
     private val server: Server,
 ) : BlockGround {
-    override fun standsIn(position: List<Int>): Boolean = insideBorder(position)?.isPassable == true
+    override fun standsIn(position: List<Int>): Boolean =
+        insideBorder(position)?.let { !collides(it.blockData, it.location) } == true
 
     override fun holdsNothing(position: List<Int>): Boolean = insideBorder(position)?.type?.isAir == true
 

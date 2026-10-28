@@ -5,6 +5,9 @@ import org.bukkit.Server
 import org.bukkit.World
 import org.bukkit.WorldBorder
 import org.bukkit.block.Block
+import org.bukkit.block.data.BlockData
+import org.bukkit.util.BoundingBox
+import org.bukkit.util.VoxelShape
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -31,7 +34,17 @@ class BukkitBlockGroundTest {
                     else -> null
                 }
             }
-        val air = proxy<Block> { name, _ -> if (name == "isPassable") true else null }
+        // Air: vanilla's collision shape for it is empty, which is all the shared rule reads.
+        val shape = proxy<VoxelShape> { name, _ -> if (name == "getBoundingBoxes") emptyList<BoundingBox>() else null }
+        val data = proxy<BlockData> { name, _ -> if (name == "getCollisionShape") shape else null }
+        val air =
+            proxy<Block> { name, _ ->
+                when (name) {
+                    "getBlockData" -> data
+                    "getLocation" -> Location(null, 0.0, 0.0, 0.0)
+                    else -> null
+                }
+            }
         val world =
             proxy<World> { name, _ ->
                 when (name) {

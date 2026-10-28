@@ -266,7 +266,7 @@ class LoomPlugin : JavaPlugin() {
                 yields = BukkitBlockYields(server),
                 edibility = BukkitItemEdibility,
                 ownDrops = ownDrops,
-                solidity = BukkitItemSolidity,
+                solidity = BukkitItemSolidity.readFrom(server.worlds.first()),
                 players = BukkitServerPlayerView(server),
             )
         val infrastructures =
