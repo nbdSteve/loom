@@ -865,7 +865,42 @@ function sourceIdentity (repositoryRoot) {
   }
 }
 
-async function runExperiment ({
+// macOS's own helper for a power assertion scoped to one process.
+const CAFFEINATE = '/usr/bin/caffeinate'
+
+/**
+ * Holds macOS's idle-sleep assertion until the returned release is called or this process exits,
+ * so an idle host cannot suspend a run: r37 was cut 11 s before its window's end by a 265 s idle
+ * sleep. A closed lid still sleeps the host, which no assertion prevents, and the suspension watch
+ * ends such a run as `hostSuspended`. Elsewhere it holds nothing.
+ */
+async function holdIdleSleepAssertion ({ platform = process.platform, spawnProcess = spawn, pid = process.pid } = {}) {
+  if (platform !== 'darwin') return () => {}
+  const child = spawnProcess(CAFFEINATE, ['-i', '-w', String(pid)], { stdio: 'ignore' })
+  try {
+    await new Promise((resolve, reject) => {
+      child.once('spawn', resolve)
+      child.once('error', reject)
+    })
+  } catch (cause) {
+    throw new Error(`the idle-sleep assertion could not be held: ${cause.message}`)
+  }
+  return () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+  }
+}
+
+/** Runs one experiment with the host held awake for the whole of it, builds included. */
+async function runExperiment (options) {
+  const release = await holdIdleSleepAssertion()
+  try {
+    return await runHeldExperiment(options)
+  } finally {
+    release()
+  }
+}
+
+async function runHeldExperiment ({
   repositoryRoot,
   configFile,
   artifactRoot,
@@ -1256,6 +1291,11 @@ async function runExperiment ({
         throw explained(cause)
       }
     }
+    // A suspension that spans the deadline ends the loop by its own clock before the loop could see
+    // it, and the drain after it is the first to wake (r37: a 265 s idle sleep 11 s before the
+    // window's end failed the drain as `cognitionUpstreamUnavailable`), so both ask the watch too.
+    const suspendedAtEnd = explained(null)
+    if (suspendedAtEnd !== null) throw suspendedAtEnd
     if (controlledStop === undefined && isPrimaryBehaviorMode(config)) {
       pollEvidence()
       proxy.closeAdmission({
@@ -1267,13 +1307,17 @@ async function runExperiment ({
     }
     if (controlledStop !== undefined || isPrimaryBehaviorMode(config)) {
       if (controlledStop !== undefined) stopReason = CONTROLLED_STOP_REASON
-      await drainControlledStop({
-        proxy,
-        poll: pollEvidence,
-        settlement,
-        exposureRecorded: () => !isPrimaryBehaviorMode(config) || config.agents.every((agentId) => guard.exposureEnded.has(agentId)),
-        signal: controller.signal
-      })
+      try {
+        await drainControlledStop({
+          proxy,
+          poll: () => explained(null) ?? pollEvidence(),
+          settlement,
+          exposureRecorded: () => !isPrimaryBehaviorMode(config) || config.agents.every((agentId) => guard.exposureEnded.has(agentId)),
+          signal: controller.signal
+        })
+      } catch (cause) {
+        throw explained(cause)
+      }
     }
     endedAt = new Date().toISOString()
     const invalidPrimaryBehavior = primaryBehaviorRunFailure(
@@ -1447,6 +1491,7 @@ module.exports = {
   exposureEnder,
   ensurePaper,
   findJava21,
+  holdIdleSleepAssertion,
   importProviderUsage,
   keychainCredentialProvider,
   nativeCognitionStartOf,

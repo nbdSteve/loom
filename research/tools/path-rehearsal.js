@@ -37,6 +37,7 @@ const {
   buildComponents,
   ensurePaper,
   findJava21,
+  holdIdleSleepAssertion,
   verifyNoListeners,
   writeServerFiles
 } = require('../lib/harness.js')
@@ -283,6 +284,15 @@ function drained (records, agents, settlement = new RequestSettlement()) {
 }
 
 async function main () {
+  const release = await holdIdleSleepAssertion()
+  try {
+    await rehearse()
+  } finally {
+    release()
+  }
+}
+
+async function rehearse () {
   const skipBuild = process.argv.includes('--skip-build')
   const keep = process.argv.includes('--keep')
   const config = serverConfig()

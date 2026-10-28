@@ -486,6 +486,66 @@ test('a host suspension mid-run ends the run integrity-invalid, whatever else ha
   // The poll loop throws the suspension it sees, before it reads any more evidence.
   const harness = fs.readFileSync(path.join(__dirname, '..', 'lib', 'harness.js'), 'utf8')
   assert.match(harness, /const suspended = explained\(null\)\n\s+if \(suspended !== null\) throw suspended/)
+  // A suspension that spans the deadline ends the loop by its clock, so the loop's end asks the
+  // watch before admission closes, and the drain asks it at every poll and explains its failure
+  // (r37: a 265 s idle sleep 11 s before the window's end failed the drain as upstream unavailable).
+  assert.match(harness, /const suspendedAtEnd = explained\(null\)\n\s+if \(suspendedAtEnd !== null\) throw suspendedAtEnd\n\s+if \(controlledStop === undefined && isPrimaryBehaviorMode\(config\)\) \{\n\s+pollEvidence\(\)\n\s+proxy\.closeAdmission/)
+  assert.match(harness, /await drainControlledStop\(\{\n\s+proxy,\n\s+poll: \(\) => explained\(null\) \?\? pollEvidence\(\),[\s\S]{0,400}\} catch \(cause\) \{\n\s+throw explained\(cause\)/)
+})
+
+test('a suspension the drain sees ends it as the suspension, not as its own timeout', async () => {
+  const { drainControlledStop } = require('../lib/harness.js')
+  const { SuspensionWatch } = require('../lib/paper-runtime.js')
+  let now = 0
+  const watch = new SuspensionWatch({ now: () => now })
+  const proxy = { snapshot: () => ({ outstandingCalls: 1 }) }
+  // r37's call was still with the mind when the host woke 265 s later.
+  now += 265_000
+  await assert.rejects(
+    drainControlledStop({ proxy, poll: () => watch.check(), settlement: { unsettled: new Set() }, timeoutMilliseconds: 1_000 }),
+    (failure) => failure.code === 'hostSuspended' && /suspended for 265 s/.test(failure.message)
+  )
+})
+
+test('the harness holds the host awake on macOS for as long as it runs', async () => {
+  const { EventEmitter } = require('node:events')
+  const { holdIdleSleepAssertion } = require('../lib/harness.js')
+  const spawned = []
+  const child = () => Object.assign(new EventEmitter(), {
+    exitCode: null,
+    signalCode: null,
+    killed: [],
+    kill (signal) { this.killed.push(signal) }
+  })
+  const starting = (fake) => (command, args, options) => {
+    spawned.push({ command, args, options })
+    setImmediate(() => fake.emit('spawn'))
+    return fake
+  }
+  // An idle-sleep assertion scoped to this process, so it ends with the harness however it ends.
+  const held = child()
+  const release = await holdIdleSleepAssertion({ platform: 'darwin', spawnProcess: starting(held), pid: 4242 })
+  assert.deepEqual(spawned, [{ command: '/usr/bin/caffeinate', args: ['-i', '-w', '4242'], options: { stdio: 'ignore' } }])
+  release()
+  assert.deepEqual(held.killed, ['SIGTERM'])
+  // An assertion that cannot be held stops the run before anything is built.
+  const failing = child()
+  await assert.rejects(
+    holdIdleSleepAssertion({
+      platform: 'darwin',
+      spawnProcess: () => {
+        setImmediate(() => failing.emit('error', new Error('spawn /usr/bin/caffeinate ENOENT')))
+        return failing
+      },
+      pid: 4242
+    }),
+    /the idle-sleep assertion could not be held: spawn \/usr\/bin\/caffeinate ENOENT/
+  )
+  // Elsewhere nothing is spawned.
+  spawned.length = 0
+  const none = await holdIdleSleepAssertion({ platform: 'linux', spawnProcess: starting(child()), pid: 4242 })
+  none()
+  assert.deepEqual(spawned, [])
 })
 
 test('a primary behavior run holds native cognition until its initial conditions are applied', () => {
