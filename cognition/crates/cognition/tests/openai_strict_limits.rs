@@ -15,7 +15,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use loom_cognition::offered::OfferedRefs;
-use loom_cognition::openai::wire::{decision_schema_for, GoalPhase};
+use loom_cognition::openai::wire::{chat_request, decision_schema_for, GoalPhase};
+use loom_cognition::prompt::render;
+use loom_cognition::router::{ModelCatalog, Router};
 use loom_contract::Perception;
 use serde_json::Value;
 
@@ -316,5 +318,45 @@ fn every_request_schema_a_perception_produces_is_one_strict_mode_accepts() {
             .cloned()
             .collect::<Vec<_>>()
             .join("\n")
+    );
+}
+
+/// The request bound every live research configuration pins (`cognition.maxRequestBytes`), which
+/// the harness also prices as the input-token ceiling a spend bound is proved against.
+const LIVE_MAX_REQUEST_BYTES: usize = 65_536;
+
+/// The output bound those configurations pin (`cognition.maxOutputTokens`).
+const LIVE_MAX_OUTPUT_TOKENS: u32 = 2_048;
+
+#[test]
+fn every_request_a_perception_produces_fits_the_live_request_bound() {
+    // The routine-v36 rehearsal: an r39 review restated under the new end reasons came within
+    // 1,816 bytes of the bound, which a refused request would have spent as a cognition failure.
+    let router = Router::new(ModelCatalog::new("gpt-5.4-nano", "gpt-5.4"));
+    let mut widest = (0, String::new());
+    let mut over = Vec::new();
+    for (id, perception) in &corpus() {
+        let route = router.route(perception.importance);
+        let schema = decision_schema_for(&OfferedRefs::of(perception), GoalPhase::of(perception));
+        let prompt = render(&route, perception);
+        let request = chat_request(route.model(), &prompt, LIVE_MAX_OUTPUT_TOKENS, schema);
+        let bytes = serde_json::to_vec(&request).unwrap().len();
+        if bytes > widest.0 {
+            widest = (bytes, id.clone());
+        }
+        if bytes > LIVE_MAX_REQUEST_BYTES {
+            over.push(format!("{id}: {bytes} bytes"));
+        }
+    }
+    eprintln!(
+        "widest request: {} bytes ({}), {} inside the bound",
+        widest.0,
+        widest.1,
+        LIVE_MAX_REQUEST_BYTES - widest.0.min(LIVE_MAX_REQUEST_BYTES)
+    );
+    assert!(
+        over.is_empty(),
+        "requests past the live bound:\n{}",
+        over.join("\n")
     );
 }

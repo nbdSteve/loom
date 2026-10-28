@@ -896,7 +896,9 @@ fn goal_variant(
         if let Some(schema) = item.as_object_mut() {
             schema.insert(
                 "description".to_owned(),
-                json!("The item the goal is achieved by holding, named exactly as the item is listed. Your body measures it from your own inventory."),
+                json!(
+                    "The item to hold, named as listed; your body measures it from your inventory."
+                ),
             );
         }
         properties.insert("successItem".to_owned(), item);
@@ -906,7 +908,7 @@ fn goal_variant(
                 "type": "integer",
                 "minimum": fewest,
                 "maximum": most,
-                "description": "How many of that item the goal is achieved by holding in total, counting what you hold now: more than you hold, and no more than you hold plus what is in sight could give you.",
+                "description": "The total of it to hold, counting what you hold now.",
             }),
         );
     }
@@ -916,7 +918,7 @@ fn goal_variant(
             json!({
                 "type": "string",
                 "enum": ["done", "progressing", "noProgress"],
-                "description": "Your verdict on the previous step, from the progress evidence the carried goal states: done finished it, progressing moved it forward, noProgress did not.",
+                "description": "Your verdict on the previous step, from its progress evidence: done finished it, progressing moved it forward, noProgress did not.",
             }),
         );
     }
@@ -936,18 +938,38 @@ const UNSAFE: &str = "unsafe";
 const STALE: &str = "stale";
 const SUPERSEDED: &str = "superseded";
 
-/// What each reason means, as the shape that offers it states.
-const REASON: &str = "Why you end the held goal: completed, its condition is met; impossible, nothing you hold or could get now meets it; unsafe, night nears and you take up a shelter instead; stale, its last three steps advanced nothing; superseded, you choose a different objective, for the reason your reasoning gives.";
+/// What one reason means, as the shape that offers it states it.
+fn reason_meaning(reason: &str) -> &'static str {
+    match reason {
+        COMPLETED => "completed, its condition is met",
+        IMPOSSIBLE => "impossible, nothing you hold or could get now meets it",
+        UNSAFE => "unsafe, night nears and a shelter takes its place",
+        STALE => "stale, its last three steps advanced nothing",
+        _ => "superseded, you choose a different objective, for the reason your reasoning gives",
+    }
+}
+
+/// Why the held goal ends, worded from only the `reasons` a shape offers: each reason is stated
+/// where it may be given and nowhere else, which also keeps the widest request inside its bound
+/// (the full list on every replace cost the widest r39 review 2,691 bytes).
+fn reason_description(reasons: &[&str]) -> String {
+    let meanings: Vec<&str> = reasons
+        .iter()
+        .map(|reason| reason_meaning(reason))
+        .collect();
+    format!("Why the held goal ends: {}.", meanings.join("; "))
+}
 
 /// `variants`, each a replace or abandon shape, required to give one of `reasons`.
 fn reasoned(variants: Vec<Value>, reasons: &[&str]) -> Vec<Value> {
+    let description = reason_description(reasons);
     variants
         .into_iter()
         .map(|mut variant| {
             if let Some(properties) = variant["properties"].as_object_mut() {
                 properties.insert(
                     "reason".to_owned(),
-                    json!({ "type": "string", "enum": reasons, "description": REASON }),
+                    json!({ "type": "string", "enum": reasons, "description": description }),
                 );
             }
             if let Some(required) = variant["required"].as_array_mut() {
@@ -981,7 +1003,7 @@ fn discovery_variant(disposition: GoalDisposition, name: &str) -> Value {
             json!({
                 "type": "string",
                 "enum": ["done", "progressing", "noProgress"],
-                "description": "Your verdict on the previous step, from the progress evidence the carried goal states: done finished it, progressing moved it forward, noProgress did not.",
+                "description": "Your verdict on the previous step, from its progress evidence: done finished it, progressing moved it forward, noProgress did not.",
             }),
         );
     }
@@ -1028,7 +1050,7 @@ fn step_result_field() -> Value {
     json!({
         "type": "string",
         "enum": ["done", "progressing", "noProgress"],
-        "description": "Your verdict on the previous step, from the progress evidence the carried goal states: done finished it, progressing moved it forward, noProgress did not.",
+        "description": "Your verdict on the previous step, from its progress evidence: done finished it, progressing moved it forward, noProgress did not.",
     })
 }
 
@@ -2585,6 +2607,20 @@ mod tests {
         ] {
             let reason = goal_of(&stated).expect_err(&stated);
             assert!(reason.contains("wrong shape"), "{stated}: {reason}");
+        }
+    }
+
+    #[test]
+    fn a_reason_is_worded_only_where_it_may_be_given() {
+        let completed = super::reason_description(&[super::COMPLETED]);
+        assert_eq!(
+            completed,
+            "Why the held goal ends: completed, its condition is met."
+        );
+        let stalled = super::reason_description(&[super::STALE, super::UNSAFE]);
+        assert!(stalled.contains("stale, ") && stalled.contains("unsafe, "));
+        for absent in ["completed", "impossible", "superseded"] {
+            assert!(!stalled.contains(absent), "{stalled}");
         }
     }
 

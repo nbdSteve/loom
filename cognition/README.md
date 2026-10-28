@@ -118,7 +118,11 @@ a goal review carrying the widest legal goal (160-character statement, success c
 step, 64-character ids and item names, a 32-character step action, all 46 inventory changes, the widest refusal it can be
 told of, and all eight cells at the edge of sight at the widest number a distance can render) renders a 45,606-byte request,
 19,930 bytes inside the 65,536-byte quarter of the
-256 KiB ceiling that `openai::wire` tests pin. At `routine-v12`, local `o200k_base`
+256 KiB ceiling that `openai::wire` tests pin. From `routine-v36` `tests/openai_strict_limits.rs`
+also renders and wraps every committed and `LOOM_STRICT_CORPUS` perception exactly as it is sent
+and holds it to the 65,536 bytes every live research configuration pins as
+`cognition.maxRequestBytes`: the widest is r39's `body:00000766` at 60,708 bytes, where routine-v35
+built r39's widest at 63,596, because each end reason is worded only where it may be given. At `routine-v12`, local `o200k_base`
 tokenization measured 4,842 tokens for the system and situation text and 5,895 for the
 serialized request JSON; those are reproducible local tokenizer counts, not a claim about provider-billed chat framing. On an Apple M3
 Pro, Corretto 21 averaged 183 microseconds to decode and 57 microseconds to encode the
