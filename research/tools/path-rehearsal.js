@@ -146,11 +146,12 @@ function pathsOf (records, readiness) {
       record.tick - dugAt >= RETENTION_TICKS &&
       (record.perception?.selfState?.ownDrops ?? []).some((drop) =>
         drop.requestId === firstDig.requestId && drop.fate === 'lying'))
-  // theta's plain completion owes a review: a perception it settles into, triggered stepSettled.
-  const completed = of('tribe-theta', 'decided').find((record) => record.goal?.outcome === 'goalCompleted')
+  // A plain completion owes a review: a perception its agent settles into, triggered stepSettled.
+  // Only with nowhere to look is one offered, so it is iota's, in its pit with no walk out.
+  const completed = body.find((record) => record.event === 'decided' && record.goal?.outcome === 'goalCompleted')
   const owed = completed === undefined
     ? undefined
-    : of('tribe-theta', 'perceived').find((record) =>
+    : of(completed.agentId, 'perceived').find((record) =>
       record.tick > completed.tick && (record.trigger ?? record.perception?.trigger?.event) === 'stepSettled')
   // eta's block east of its support, one below its feet, has stone two above it: unsafe to dig.
   const pocket = of('tribe-eta', 'perceived').find((record) =>

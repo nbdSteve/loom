@@ -14,8 +14,9 @@
 //! - `beta` digs a log atop a three-high pillar, whose one body pickup finds no route, and then
 //!   leaves the drop lying, so a perception past retention still tells it;
 //! - `delta` collects, without moving, the items lying at its feet that vanilla delays picking up,
-//!   and `theta` does the same where nothing else in sight gives anything, so its met goal is
-//!   completed plainly and owes a review;
+//!   and `theta` does the same where nothing else in sight gives anything, each met goal moving on
+//!   to what sight or the horizon offers next, since beside the edge of sight a plain completion is
+//!   offered only with nothing to set next;
 //! - `epsilon` digs the one log in reach, and once the other log it counted on is gone walks east
 //!   to the edge of sight to look for another, which comes into sight out of dig reach, walks to
 //!   the cell beside it, then revises its log goal to planks once (refused) before finishing it;
@@ -25,7 +26,8 @@
 //!   reach from where it stands, and collects it with approach (r28 plains rehearsal alpha,
 //!   tick 9765: refused `collectNoRoute`, because no cell covered the item from every point),
 //!   after setting a goal of one more than it holds once (refused `goalTrivial`, one collect meets
-//!   it);
+//!   it), and once both of its logs are collected completes the goal plainly, with nowhere to look,
+//!   which owes a review;
 //! - `kappa` stands against the world border beside a creeper that cannot move and, at its goal
 //!   review, flees from it with no goal choice, as a review beside a hunter now may (r20: kappa
 //!   reviewed beside a zombie and a skeleton, was offered only dirt digs, and died), along the
@@ -57,8 +59,8 @@
 use std::future::Future;
 
 use loom_contract::{
-    Bearing, EquipmentDestination, GoalChoice, GoalDisposition, GoalReason, GoalStepResult, Intent,
-    ObservationKind, Perception, StepEvidence,
+    Bearing, EquipmentDestination, ExploreTarget, GoalChoice, GoalDisposition, GoalReason,
+    GoalStepResult, Intent, ObservationKind, Perception, StepEvidence,
 };
 
 use crate::model::{BackendError, Draft, ModelBackend, ScriptedBackend};
@@ -391,11 +393,18 @@ fn finish(perception: &Perception) -> Draft {
             .map(|(fewest, most)| (item.clone(), fewest, most))
     });
     let Some((item, fewest, _)) = own.or_else(|| offered.count_bounds.first().cloned()) else {
-        return look_further(
-            perception,
-            Some(judged(GoalDisposition::Complete)),
-            "complete the goal and look further",
-        );
+        // With nothing in sight or on the horizon to set next, beside the edge of sight a discovery
+        // goal takes its place, and only with nowhere to look is the goal completed plainly.
+        let next = if offered.discovery_offered() {
+            GoalChoice {
+                discover: Some(true),
+                reason: Some(GoalReason::Completed),
+                ..judged(GoalDisposition::Replace)
+            }
+        } else {
+            judged(GoalDisposition::Complete)
+        };
+        return look_further(perception, Some(next), "complete the goal and look further");
     };
     let next = Some(if held.as_ref() == Some(&item) {
         target(GoalDisposition::Revise, &item, fewest)
@@ -468,7 +477,7 @@ fn crafter(perception: &Perception) -> Draft {
 fn dropper(perception: &Perception) -> Draft {
     if perception.goal.is_none() {
         return dig_of(perception, LOG).map_or_else(
-            || answer(Intent::Idle, None, IDLE_ROLE),
+            || stay_near(perception, None, IDLE_ROLE),
             |block| {
                 answer(
                     Intent::Dig { block },
@@ -504,7 +513,61 @@ fn dropper(perception: &Perception) -> Draft {
             );
         }
     }
-    answer(Intent::Idle, None, "leave my own drop lying")
+    // Left lying, its goal held: no review beside the edge of sight may idle, so it walks, toward
+    // where it started, which keeps it in earshot of zeta past the drop's retention; at the stall
+    // bound the goal ends as stale.
+    let stalled = perception
+        .goal
+        .as_ref()
+        .and_then(|goal| goal.progress.as_ref())
+        .is_some_and(|seen| {
+            seen.steps_without_progress >= loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS
+        });
+    let choice = if stalled {
+        abandoned(GoalReason::Stale)
+    } else {
+        judged(GoalDisposition::Continue)
+    };
+    stay_near(perception, Some(choice), "leave my own drop lying")
+}
+
+/// Where beta started, four blocks from zeta, whose speech it must stay within earshot of.
+const BETA_HOME: (f64, f64) = (0.5, 0.5);
+
+/// A walk to the cell at the edge of sight that brings the body nearest where beta started,
+/// beside `goal`; an idle with no choice when nowhere is offered.
+fn stay_near(perception: &Perception, goal: Option<GoalChoice>, why: &str) -> Draft {
+    let (x, z) = match perception.self_state.position.as_slice() {
+        [x, _, z] => (*x, *z),
+        _ => BETA_HOME,
+    };
+    let landing = |cell: &ExploreTarget| {
+        let (east, south) = match cell.direction {
+            Bearing::North => (0.0, -1.0),
+            Bearing::South => (0.0, 1.0),
+            Bearing::East => (1.0, 0.0),
+            Bearing::West => (-1.0, 0.0),
+            Bearing::Here => (0.0, 0.0),
+        };
+        (x + east * cell.distance - BETA_HOME.0).powi(2)
+            + (z + south * cell.distance - BETA_HOME.1).powi(2)
+    };
+    perception
+        .explore
+        .iter()
+        .min_by(|one, other| landing(one).total_cmp(&landing(other)))
+        .map_or_else(
+            || answer(Intent::Idle, None, why),
+            |cell| {
+                answer(
+                    Intent::MoveTo {
+                        onto: cell.target_ref.clone(),
+                    },
+                    goal,
+                    why,
+                )
+            },
+        )
 }
 
 /// gamma: a dirt goal beside the frontier, refused once. A flight from a peer is no longer one it
@@ -605,12 +668,8 @@ fn collector(perception: &Perception) -> Draft {
             )),
             "collect the items at my feet without moving",
         ),
-        // A met goal is completed where the agent stands.
-        (_, Some(_)) if met(perception) => answer(
-            Intent::Idle,
-            Some(judged(GoalDisposition::Complete)),
-            "complete the goal and stay",
-        ),
+        // A met goal moves on to what sight or the horizon offers next, or is completed.
+        (_, Some(_)) if met(perception) => finish(perception),
         _ => answer(Intent::Idle, None, IDLE_ROLE),
     }
 }
@@ -1171,7 +1230,8 @@ mod tests {
                 onto: "x1".to_owned()
             }
         );
-        // delta completes its met goal, and with the edge of sight offered walks on to look.
+        // delta's met goal, with nothing to set next and the edge of sight offered, becomes a
+        // discovery goal walked toward it: a plain completion is offered only with nowhere to look.
         let mut met = review("delta");
         holding(&mut met, STICK, 1, 1, StepEvidence::Gained);
         met.explore = vec![edge("x1", Bearing::East, 12.0)];
@@ -1181,13 +1241,23 @@ mod tests {
             "{:?}",
             done.intent
         );
-        assert_eq!(done.goal.unwrap().disposition, GoalDisposition::Complete);
-        met.explore.clear();
+        let replaced = done.goal.unwrap();
         assert_eq!(
-            draft(&met).intent,
+            (replaced.disposition, replaced.discover, replaced.reason),
+            (
+                GoalDisposition::Replace,
+                Some(true),
+                Some(GoalReason::Completed)
+            )
+        );
+        met.explore.clear();
+        let stay = draft(&met);
+        assert_eq!(
+            stay.intent,
             Intent::Idle,
             "with nowhere to look it completes where it stands"
         );
+        assert_eq!(stay.goal.unwrap().disposition, GoalDisposition::Complete);
     }
 
     #[test]

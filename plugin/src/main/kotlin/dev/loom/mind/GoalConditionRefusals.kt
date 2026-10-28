@@ -13,6 +13,7 @@ import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.Intent
 import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
+import dev.loom.contract.MAX_SUCCESS_COUNT
 import dev.loom.contract.action
 
 /**
@@ -58,7 +59,8 @@ private fun movesOnFrom(
 /**
  * Why a plain completion is refused, or `null`: an unmet condition, or a met one with a next goal
  * in sight, which a replace adopts in the same answer rather than beside a filler step (r19:
- * eight plain completes, two beside an equip, six leaving their agent goal-less for a cadence).
+ * eight plain completes, two beside an equip, six leaving their agent goal-less for a cadence), or
+ * with a discovery goal offered in its place, as the schema offers a met item goal one.
  */
 private fun completionRefusalOf(
     met: Boolean,
@@ -70,21 +72,23 @@ private fun completionRefusalOf(
     val leadsOn = presented?.shelter == true || presented?.feeds != null
     return when {
         !met -> GoalEvidence.COMPLETION_UNMET
-        !leadsOn && observed != null && nextGoalOffered(observed) -> GoalEvidence.COMPLETED_WITHOUT_NEXT
+        !leadsOn && observed != null && (nextGoalOffered(observed) || observed.discoveryOffered) ->
+            GoalEvidence.COMPLETED_WITHOUT_NEXT
         else -> null
     }
 }
 
 /**
- * Whether a replace or a revise could set a next objective from what sight gives without crowding
- * out looking further: as many of an item as [GoalObservation.fewestObjective] asks. A horizon alone
- * does not refuse a plain completion: its goal may have no step now, and the schema offers a plain
- * completion only when it offers no replace at all.
+ * Whether a replace or a revise could set a next objective, as the schema offers one in place of a
+ * plain completion: an item of sight or the horizon reaching as many as
+ * [GoalObservation.fewestObjective] asks, with a step offered toward it now, and not crowding out
+ * looking further (the r39 offline audit: the schema withheld a plain completion beside a horizon
+ * goal with a step, which the ledger accepted).
  */
 private fun nextGoalOffered(observed: GoalObservation): Boolean =
-    observed.capacity.any { (item, capacity) ->
-        val reach = (observed.inventory[item] ?: 0) + capacity
-        !observed.crowdsExploration(item) && reach >= observed.fewestObjective(item)
+    (observed.capacity.keys + observed.horizon.keys).any { item ->
+        val reach = minOf(observed.reachOf(item), MAX_SUCCESS_COUNT)
+        !observed.crowdsExploration(item) && !observed.steplessFor(item) && reach >= observed.fewestObjective(item)
     }
 
 /**

@@ -169,6 +169,32 @@ class HeldObjectivesTest {
     }
 
     @Test
+    fun `a plain completion beside a horizon goal a step now advances is refused, as the schema withholds it`() {
+        // The r39 offline audit: the schema offers a plain completion only when it offers no next
+        // goal, a horizon goal with a step among them, while the ledger read only what sight gives.
+        val met = held(count = 4, have = 4, item = LOG)
+        val complete = GoalChoice(GoalDisposition.COMPLETE, stepResult = GoalStepResult.DONE)
+        val planks = dev.loom.contract.HorizonGoal(PLANKS, dev.loom.contract.HorizonGrounding.RECIPE, LOG, 16, false)
+        val crafting =
+            GoalObservation(
+                inventory = mapOf(LOG to 4L),
+                position = listOf(0.5, 64.0, 0.5),
+                horizon = mapOf(PLANKS to planks),
+                craftable = setOf(PLANKS),
+                oneStep = mapOf(PLANKS to 16L),
+            )
+        // Sixteen is all one craft of the four logs makes, so the horizon's sixteen is no next goal.
+        assertNull(incoherenceOf(met, complete, Intent.Idle, crafting))
+        val further = crafting.copy(horizon = mapOf(PLANKS to planks.copy(most = 24)))
+        assertEquals(GoalEvidence.COMPLETED_WITHOUT_NEXT, incoherenceOf(met, complete, Intent.Idle, further))
+        // With no step toward it now, it is no next goal either.
+        assertNull(incoherenceOf(met, complete, Intent.Idle, further.copy(craftable = emptySet())))
+        // With nothing to set next beside the edge of sight, a discovery goal is offered in its place.
+        val looking = crafting.copy(horizon = emptyMap(), craftable = emptySet(), explore = setOf("x1"))
+        assertEquals(GoalEvidence.COMPLETED_WITHOUT_NEXT, incoherenceOf(met, complete, Intent.MoveTo("x1"), looking))
+    }
+
+    @Test
     fun `a goal no step offered now advances may be abandoned as impossible, as the mind offers it`() {
         // The r39 offline audit: "hold 4 oak_log" with a recalled log out of sight and nowhere to
         // look further was offered only its abandon as impossible, which the ledger refused.
@@ -271,5 +297,6 @@ class HeldObjectivesTest {
         const val DIRT = "item.minecraft.dirt"
         const val LOG = "item.minecraft.oak_log"
         const val STICK = "item.minecraft.stick"
+        const val PLANKS = "item.minecraft.oak_planks"
     }
 }

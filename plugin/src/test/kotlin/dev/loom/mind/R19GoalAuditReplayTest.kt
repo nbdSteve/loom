@@ -64,6 +64,8 @@ class R19GoalAuditReplayTest {
                 gives = scene.gives,
                 ownDrops = scene.ownDrops,
                 inReach = scene.gives.keys,
+                // Every source the scene names lies in reach: a dig of it is a step offered now.
+                stepSources = scene.gives,
             )
         val carried = ledger.present(agent, review, review.substringAfter('-').toLong(), observed)
         val decision = decisionFor(perception(requestId = review, agentId = agent.value), intent).copy(goal = choice)

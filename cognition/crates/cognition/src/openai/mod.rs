@@ -38,6 +38,7 @@
 //! inferences. A retry inside this module would reintroduce exactly that, one
 //! layer lower and invisibly. A lost decision is cheaper than a duplicated one.
 
+pub mod instance;
 pub mod settings;
 mod usage;
 pub mod wire;

@@ -28,6 +28,7 @@ use loom_contract::{
     Observation, ObservationKind, Perception, Trigger, MAX_GOAL_STEPS_WITHOUT_PROGRESS,
 };
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::config::{bounded, bounded_to, ConfigError, Env};
 use crate::router::ModelRoute;
@@ -335,6 +336,76 @@ pub const SCRIPTED_SUCCESS_ITEM: &str = "item.minecraft.stick";
 /// The stand-in's step, worded as its own for the same reason.
 pub const SCRIPTED_STEP: &str = "scripted stand-in step: act on the trigger in front of me";
 
+/// `draft` as the strict schema `perception` is asked under offers it. An answer no model could give
+/// is replaced by one the schema does: the draft's own intent beside the first goal choice offered
+/// with it - of the draft's own disposition where one is - else the schema's first answer, with the
+/// draft's reasoning kept. So a provider-free rehearsal exercises only answers a model could give
+/// (the r39 offline audit: the stand-in's idle beside an abandon was one no schema offered).
+#[must_use]
+pub fn offered_answer(perception: &Perception, draft: Draft) -> Draft {
+    use crate::openai::{instance, wire};
+    let schema = wire::decision_schema_for(
+        &crate::offered::OfferedRefs::of(perception),
+        wire::GoalPhase::of(perception),
+    );
+    if instance::admits(&schema, &instance::answer_of(&schema, &draft)) {
+        return draft;
+    }
+    let reasoning = Value::String(draft.reasoning.clone());
+    beside_its_intent(&schema, &draft)
+        .or_else(|| instance::first_instance(&schema))
+        .and_then(|mut answer| {
+            answer["reasoning"] = reasoning;
+            wire::draft_from_answer(&answer.to_string()).ok()
+        })
+        .unwrap_or(draft)
+}
+
+/// The answer `schema` offers with `draft`'s own intent, its goal choice the first offered beside
+/// that intent, of the draft's own disposition where one is.
+fn beside_its_intent(schema: &Value, draft: &Draft) -> Option<Value> {
+    use crate::openai::instance;
+    let intent = serde_json::to_value(&draft.intent).ok()?;
+    let disposition = draft
+        .goal
+        .as_ref()
+        .and_then(|choice| serde_json::to_value(choice.disposition).ok());
+    let goal_of = |goals: &Value| {
+        let options = goals["anyOf"]
+            .as_array()
+            .cloned()
+            .unwrap_or_else(|| vec![goals.clone()]);
+        let own = options.iter().find(|option| {
+            let offered =
+                &instance::resolved_part(schema, option)["properties"]["disposition"]["enum"];
+            match &disposition {
+                Some(disposition) => offered
+                    .as_array()
+                    .is_some_and(|names| names.contains(disposition)),
+                None => instance::admits_part(schema, option, &Value::Null),
+            }
+        });
+        own.into_iter()
+            .chain(options.iter())
+            .find_map(|option| instance::first_part_instance(schema, option))
+    };
+    if let Some(pairings) = schema["properties"]["decision"]["anyOf"].as_array() {
+        return pairings.iter().find_map(|pairing| {
+            let pairing = instance::resolved_part(schema, pairing);
+            if !instance::admits_part(schema, &pairing["properties"]["intent"], &intent) {
+                return None;
+            }
+            let goal = goal_of(&pairing["properties"]["goal"])?;
+            Some(serde_json::json!({ "decision": { "intent": intent, "goal": goal }, "reasoning": "" }))
+        });
+    }
+    if !instance::admits_part(schema, &schema["properties"]["intent"], &intent) {
+        return None;
+    }
+    let goal = goal_of(&schema["properties"]["goal"])?;
+    Some(serde_json::json!({ "intent": intent, "goal": goal, "reasoning": "" }))
+}
+
 /// `draft` as a goal review beside the edge of sight may answer it: the strict schema offers no idle
 /// or rest there and the body refuses one (`goalPassiveBesideExploration`), so a scripted answer
 /// that would wait walks to look further instead - keeping a completion or an abandon, holding no
@@ -410,11 +481,11 @@ impl ScriptedBackend {
     #[must_use]
     pub fn draft_now(route: &ModelRoute, perception: &Perception) -> Draft {
         if let Some(sheltering) = Self::shelter_now(perception) {
-            return looking_further(perception, sheltering);
+            return offered_answer(perception, looking_further(perception, sheltering));
         }
         let mut draft = Self::step_now(route, perception);
         draft.goal = Self::goal_now(perception, &draft.intent);
-        looking_further(perception, draft)
+        offered_answer(perception, looking_further(perception, draft))
     }
 
     /// The stand-in's shelter as night nears: at a goal review with no hunter upon it, the one
@@ -593,12 +664,14 @@ impl ScriptedBackend {
         {
             return None;
         }
+        // No free-text step: the strict schema offers none, since the body words the step from the
+        // intent (routine-v26), and the stand-in answers only what a model could.
         let step = |disposition, step_result| GoalChoice {
             discover: None,
             disposition,
             success_item: None,
             success_count: None,
-            step: Some(SCRIPTED_STEP.to_owned()),
+            step: None,
             step_result,
             shelter: None,
             feeds: None,
@@ -1803,12 +1876,12 @@ mod tests {
         later.goal = Some(GoalSummary {
             discovery: false,
             goal_id: "req-1".to_owned(),
-            statement: "hold 1 item.minecraft.stick".to_owned(),
+            statement: "hold 3 item.minecraft.stick".to_owned(),
             revision: 0,
             adopted_tick: 0,
             last_step: None,
-            success_item: None,
-            success_count: None,
+            success_item: Some(super::SCRIPTED_SUCCESS_ITEM.to_owned()),
+            success_count: Some(3),
             step: Some(SCRIPTED_STEP.to_owned()),
             step_action: None,
             step_ref: None,

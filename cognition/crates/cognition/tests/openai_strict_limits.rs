@@ -360,3 +360,42 @@ fn every_request_a_perception_produces_fits_the_live_request_bound() {
         over.join("\n")
     );
 }
+
+#[test]
+fn every_answer_the_scripted_stand_in_gives_is_one_its_own_request_offers() {
+    // The r39 offline audit: the stand-in idled beside an abandon with the edge of sight offered,
+    // which the strict schema never offers, so a provider-free rehearsal exercised answers no model
+    // could give. Every corpus perception's stand-in answer is held to the schema it was asked under.
+    let route =
+        Router::new(ModelCatalog::uniform("x")).route(loom_contract::DecisionImportance::Routine);
+    let mut refused = Vec::new();
+    let mut answered = 0;
+    for (id, perception) in &corpus() {
+        if !loom_cognition::openai::wire::request_offers_an_answer(perception) {
+            continue;
+        }
+        let schema = decision_schema_for(&OfferedRefs::of(perception), GoalPhase::of(perception));
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        let draft = loom_cognition::model::ScriptedBackend::draft_now(&route, perception);
+        answered += 1;
+        let answer = loom_cognition::openai::instance::answer_of(&schema, &draft);
+        if !validator.is_valid(&answer) {
+            refused.push(format!("{id}: {answer}"));
+        }
+    }
+    eprintln!(
+        "{answered} stand-in answers, {} outside their schema",
+        refused.len()
+    );
+    assert!(
+        refused.is_empty(),
+        "{} of {answered}:\n{}",
+        refused.len(),
+        refused
+            .iter()
+            .take(40)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}

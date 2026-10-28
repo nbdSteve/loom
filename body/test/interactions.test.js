@@ -1229,7 +1229,9 @@ test('craft applies only one retained recipe and revalidates ingredients and wor
       offered: stale.reading.recipeOffers,
       recipe: 0,
       crafts: 1,
-      timeoutMs: 100
+      timeoutMs: 100,
+      // A stopped clock: a loaded host takes measurable time to fingerprint the inventory.
+      now: () => 0
     })),
     {
       outcome: 'ingredientsChanged',
@@ -1867,7 +1869,8 @@ test('survival teardown preserves the exact death and disconnect causes', async 
     offered: craft.reading.recipeOffers,
     recipe: 0,
     crafts: 1,
-    timeoutMs: 1000
+    timeoutMs: 1000,
+    now: () => 0
   })
   assert.equal(dyingCraft.abort('bodyDied'), true)
   assert.deepEqual(await reportOf(dyingCraft), {
