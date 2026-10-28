@@ -37,10 +37,13 @@ fun followUpsPerReviewOf(value: String?): Int {
  * A one-shot latch over the native cognition sources.
  *
  * @param held whether [start] waits for [begin] rather than running from [enable].
+ * @param witnessBegin runs once, just before [start], only when a held run begins: the server's
+ *   reading of every agent at the tick its initial conditions must hold (`InitialConditionsWitness`).
  * @param start starts every native source. Runs exactly once, on the server main thread.
  */
 class NativeCognitionStart(
     private val held: Boolean,
+    private val witnessBegin: () -> Unit = {},
     private val start: () -> Unit,
 ) {
     private var started = false
@@ -54,6 +57,7 @@ class NativeCognitionStart(
     fun begin(): Boolean {
         if (started) return false
         started = true
+        if (held) witnessBegin()
         start()
         return true
     }
@@ -62,8 +66,9 @@ class NativeCognitionStart(
         /** A latch held or not by [NATIVE_COGNITION_ENV] in [environment]; see [heldBy]. */
         fun fromEnvironment(
             environment: Map<String, String> = System.getenv(),
+            witnessBegin: () -> Unit = {},
             start: () -> Unit,
-        ): NativeCognitionStart = NativeCognitionStart(heldBy(environment[NATIVE_COGNITION_ENV]), start)
+        ): NativeCognitionStart = NativeCognitionStart(heldBy(environment[NATIVE_COGNITION_ENV]), witnessBegin, start)
 
         /**
          * Whether [value] holds native cognition until `/loombody begin`.

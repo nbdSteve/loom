@@ -776,6 +776,73 @@ test('a failed run keeps the closed outcome tags of its failure records', () => 
   }
 })
 
+test('a failed run states which pinned initial condition each agent lost, and where', () => {
+  // r38's diagnostic said only that gamma lost one, 666 ticks after begin.
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-initial-diagnostic-'))
+  try {
+    fs.mkdirSync(path.join(directory, 'own'))
+    const files = rawFiles(path.join(directory, 'own'))
+    const config = openAiGoalContinuityConfig()
+    const pinned = config.primaryBehavior.initialPositions
+    const begin = (agentId, initial) => ({
+      tick: 12, agentId, event: 'initialConditionsWitnessed', detail: 'read', outcome: 'initialConditionsWitnessed', initial
+    })
+    const first = (agentId, position, inventorySummary) => ({
+      tick: 666,
+      agentId,
+      event: 'perceived',
+      detail: 'audited perception',
+      perception: { selfState: { position, inventorySummary } },
+      perceptionAudit: { worldClock: { timeOfDay: 6666, day: 0, isDay: true } }
+    })
+    writeJsonLines(files.bodyFile, [
+      begin('tribe-alpha', { position: pinned['tribe-alpha'], inventoryStacks: 0 }),
+      begin('tribe-beta', { position: pinned['tribe-beta'], inventoryStacks: 1 }),
+      { tick: 12, agentId: 'tribe-gamma', event: 'initialConditionsWitnessed', detail: 'none', outcome: 'initialConditionsAbsent' },
+      first('tribe-alpha', pinned['tribe-alpha'], [{ ref: 'i1', what: 'egg', count: 1 }]),
+      first('tribe-beta', [0.5, 64, 0.5], [])
+    ])
+    writeJsonLines(files.harnessFile, [])
+    writeJsonLines(files.providerUsageFile, [])
+    const retained = retain(directory, { ...files })
+    assertPrivate(retained.file)
+    assert.deepEqual(retained.diagnostic.initialConditions, {
+      'tribe-alpha': {
+        atBegin: 'held',
+        beginInventoryStacks: 0,
+        beginMoved: false,
+        firstPerceptionClock: true,
+        firstPerceptionInventoryStacks: 1,
+        firstPerceptionMoved: false,
+        firstPerceptionTick: 666
+      },
+      'tribe-beta': {
+        atBegin: 'notHeld',
+        beginInventoryStacks: 1,
+        beginMoved: false,
+        firstPerceptionClock: true,
+        firstPerceptionInventoryStacks: 0,
+        firstPerceptionMoved: true,
+        firstPerceptionTick: 666
+      },
+      'tribe-gamma': {
+        atBegin: 'absent',
+        beginInventoryStacks: null,
+        beginMoved: null,
+        firstPerceptionClock: null,
+        firstPerceptionInventoryStacks: null,
+        firstPerceptionMoved: null,
+        firstPerceptionTick: null
+      }
+    })
+    assert.deepEqual(retained.diagnostic.body.outcomesByEvent.initialConditionsWitnessed, {
+      initialConditionsAbsent: 1, initialConditionsWitnessed: 2
+    })
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('a disputed world interaction keeps its operation, body outcome and vanilla effect only', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-dispute-diagnostic-'))
   try {

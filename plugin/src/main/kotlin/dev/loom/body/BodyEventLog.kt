@@ -166,6 +166,18 @@ data class BodyEventRecord(
     val terrain: TerrainEvidence? = null,
     /** Whether the server's ground sealed the agent in, and its cover then; see [ShelterEvidence]. */
     val shelter: ShelterEvidence? = null,
+    /** The server's reading of the agent when the run began; see [InitialConditionsEvidence]. */
+    val initial: InitialConditionsEvidence? = null,
+)
+
+/**
+ * The server's own reading of an agent's player at `/loombody begin`, the tick a research run's
+ * pinned initial conditions must hold: its [position] and how many [inventoryStacks] it holds.
+ */
+@Serializable
+data class InitialConditionsEvidence(
+    val position: List<Double>,
+    val inventoryStacks: Int,
 )
 
 /**
@@ -414,6 +426,17 @@ enum class BodyEvent {
      */
     @SerialName("shelterChanged")
     SHELTER_CHANGED,
+
+    /**
+     * The server's reading of an agent's player when a held run began (`InitialConditionsWitness`):
+     * where it stood and what it held at `/loombody begin`, the one tick the run's pinned initial
+     * conditions must hold, before any native cognition source starts. One per agent, all on that
+     * tick. An agent's first perception can come a thousand ticks later, behind the review stagger,
+     * and vanilla may change an idle body in between (r38: gamma, beside chickens, failed the old
+     * first-perception check 666 ticks after begin).
+     */
+    @SerialName("initialConditionsWitnessed")
+    INITIAL_CONDITIONS_WITNESSED,
 
     /**
      * The mind answered a perception, and the body was about to be asked to act.

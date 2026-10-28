@@ -31,6 +31,7 @@ const {
   scanText
 } = require('./evidence.js')
 const { isCoalesced, isExposureEnding, isShutdownEnding, unansweredAccountedFor } = require('./danger.js')
+const { everyHeldAtBegin, heldAtBegin } = require('./initial-conditions.js')
 const { CADENCE, PROFILES, SCENES, exposureOf, placementOf, profileOf, ticksPerSecondOf } = require('./profiles.js')
 const { RunFailure } = require('./lifecycle.js')
 const {
@@ -757,6 +758,7 @@ function validateProspectiveManifest (config, source) {
 
 function initialConditionsMatch (config, metrics) {
   const observed = metrics.perceptionAudit?.initialByAgent ?? []
+  const witnessed = metrics.initialConditionsWitnessed
   if (
     metrics.primaryBehavior?.initialConditionAttestations !== 1 ||
     !sameJson(
@@ -771,6 +773,12 @@ function initialConditionsMatch (config, metrics) {
     observed.length !== config.agents.length
   ) {
     return false
+  }
+  // Where the server read every agent at begin, that reading witnesses the pinned conditions and
+  // each first perception states only the clock (`initial-conditions.js`).
+  if (witnessed !== undefined) {
+    return everyHeldAtBegin(witnessed, config.agents, config.primaryBehavior.initialPositions) &&
+      observed.every((entry) => entry.worldClock !== undefined)
   }
   return observed.every((entry) =>
     sameJson(entry.position, config.primaryBehavior.initialPositions[entry.agentId]) &&
@@ -850,9 +858,18 @@ function protocolFor (config, metrics) {
       startingInventories: config.primaryBehavior.startingInventories,
       observedFirstPerceptions:
         structuredClone(metrics.perceptionAudit?.initialByAgent ?? []),
-      attested: {
-        source: 'Paper setup commands plus exact first body perception for each agent'
-      }
+      ...(metrics.initialConditionsWitnessed === undefined
+        ? {
+            attested: {
+              source: 'Paper setup commands plus exact first body perception for each agent'
+            }
+          }
+        : {
+            witnessedAtBegin: structuredClone(metrics.initialConditionsWitnessed),
+            attested: {
+              source: 'Paper setup commands, the server reading of each agent when the run began, and each first body perception for its world clock'
+            }
+          })
     },
     injectedDirectives: structuredClone(config.primaryBehavior.injectedDirectives),
     ...(config.primaryBehavior.profile === undefined
@@ -1325,9 +1342,24 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
     (metrics.perceptionAudit?.initialByAgent ?? [])
       .map((entry) => [entry.agentId, entry])
   )
+  const witnessedAtBegin = metrics.initialConditionsWitnessed === undefined
+    ? undefined
+    : new Map(metrics.initialConditionsWitnessed.map((entry) => [entry.agentId, entry]))
+  if (witnessedAtBegin !== undefined && metrics.initialConditionsWitnessed.length !== witnessedAtBegin.size) {
+    errors.push('an agent was read more than once when the run began')
+  }
   for (const agent of manifest.agents) {
     const first = observed.get(agent.agentId)
     const configured = protocol.initialConditions?.configuredPositions?.[agent.agentId]
+    if (witnessedAtBegin !== undefined) {
+      if (!heldAtBegin(witnessedAtBegin.get(agent.agentId), configured)) {
+        errors.push(`${agent.agentId} did not hold its pinned initial conditions when the run began`)
+      }
+      if (first === undefined || first.worldClock === undefined) {
+        errors.push(`${agent.agentId} has no initial perception stating its world clock`)
+      }
+      continue
+    }
     if (
       first === undefined ||
       !sameJson(first.position, configured) ||

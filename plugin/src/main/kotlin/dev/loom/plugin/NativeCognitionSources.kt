@@ -23,6 +23,28 @@ import kotlin.time.Duration
 private const val MILLIS_PER_TICK = 50L
 
 /**
+ * The latch over the native sources: [start] runs at enable, or at `/loombody begin` for a held
+ * run, which first has the server read every configured agent at the tick its pinned initial
+ * conditions must hold (`InitialConditionsWitness`).
+ */
+internal fun LoomPlugin.nativeCognitionStart(
+    bodies: BodyPort,
+    eventLog: BodyEventLog,
+    start: () -> Unit,
+): NativeCognitionStart {
+    val witness =
+        InitialConditionsWitness(
+            eventLog = eventLog,
+            agents = { bodies.inspections().map { it.agentId } },
+            readingOf = { agent ->
+                managedPlayers.byAgent(agent)?.let { server.getPlayer(it.uuid) }?.let(::initialConditionsOf)
+            },
+            currentTick = { server.currentTick.toLong() },
+        )
+    return NativeCognitionStart.fromEnvironment(witnessBegin = witness::witness, start = start)
+}
+
+/**
  * Starts all three native sources on the main thread and answers the handle that stops them,
  * schedule first, then the threat scan, then the damage witness.
  */

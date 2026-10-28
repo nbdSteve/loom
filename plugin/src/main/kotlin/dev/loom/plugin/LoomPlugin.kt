@@ -132,7 +132,7 @@ class LoomPlugin : JavaPlugin() {
         cognition = mind
         hearer = hearerOf(port, mind)
         val native =
-            NativeCognitionStart.fromEnvironment { nativeSources = startNativeSources(port, mind, witnessed, witness) }
+            nativeCognitionStart(port, witnessed) { nativeSources = startNativeSources(port, mind, witnessed, witness) }
         val ending = guardExposure(port, witnessed)
         bind(
             BODY_COMMAND,

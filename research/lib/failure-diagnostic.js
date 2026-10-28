@@ -6,6 +6,7 @@ const path = require('node:path')
 
 const { REFUSAL_BOUNDS } = require('./budget-proxy.js')
 const { admissionEndMetrics, controlledStopMetrics } = require('./controlled-stop.js')
+const { INITIAL_CONDITIONS_EVENT, INITIAL_CONDITIONS_HELD, heldAtBegin, samePosition } = require('./initial-conditions.js')
 const { deathMetrics } = require('./witnessed-death.js')
 const { validatedCognitionFailure } = require('./cognition-failure.js')
 const { scanText } = require('./evidence.js')
@@ -75,7 +76,8 @@ const BODY_EVENTS = new Set([
   'goalReviewDeferred',
   'cognitionTierFallback',
   'exposureEnded',
-  'shelterChanged'
+  'shelterChanged',
+  'initialConditionsWitnessed'
 ])
 const HARNESS_EVENTS = new Set([
   'cleanupVerified',
@@ -229,7 +231,8 @@ const OUTCOME_EVENTS = new Set([
   'worldInteraction',
   'ownDropPickup',
   'goalReviewDeferred',
-  'cognitionTierFallback'
+  'cognitionTierFallback',
+  'initialConditionsWitnessed'
 ])
 const OUTCOME_TAG = /^[a-z][A-Za-z]{0,63}$/
 
@@ -442,6 +445,42 @@ function nativeReviewWindows (bodyRecords, harnessRecords, config) {
         ['cognitionForwarded', 'cognitionRefused'].includes(record.event) && record.agentId === agentId &&
         record.trigger === 'goalReview' && record.origin === 'nativeGoalReviewSchedule').length
       return [agentId, counted('plan', { attempted, minimum: expected, maximum: expected })]
+    }))
+  } catch {
+    return null
+  }
+}
+
+// Each configured agent's pinned conditions against the server's reading at begin and against its
+// first perception, as closed facts, so a run refused for a lost condition states which one and
+// where (r38's diagnostic said only that gamma lost one). Null outside a primary-behavior run, or
+// when the records cannot be read.
+function initialConditionFacts (bodyRecords, config) {
+  const positions = config.primaryBehavior?.initialPositions
+  if (positions === undefined) return null
+  try {
+    return Object.fromEntries([...config.agents].sort().map((agentId) => {
+      const pinned = positions[agentId]
+      const own = (event) => bodyRecords.find((record) => record?.agentId === agentId && record.event === event)
+      const begin = own(INITIAL_CONDITIONS_EVENT)
+      const first = own('perceived')
+      const reading = begin === undefined
+        ? undefined
+        : { outcome: begin.outcome, position: begin.initial?.position, inventoryStacks: begin.initial?.inventoryStacks }
+      const atBegin = reading === undefined
+        ? null
+        : heldAtBegin(reading, pinned) ? 'held' : begin.outcome === INITIAL_CONDITIONS_HELD ? 'notHeld' : 'absent'
+      const self = first?.perception?.selfState
+      const clock = first?.perceptionAudit?.worldClock
+      return [agentId, {
+        atBegin,
+        beginInventoryStacks: boundedCount(reading?.inventoryStacks),
+        beginMoved: reading?.position === undefined ? null : !samePosition(reading.position, pinned),
+        firstPerceptionTick: boundedCount(first?.tick),
+        firstPerceptionMoved: first === undefined ? null : !samePosition(self?.position, pinned),
+        firstPerceptionInventoryStacks: boundedCount(self?.inventorySummary?.length),
+        firstPerceptionClock: first === undefined ? null : clock !== null && typeof clock === 'object'
+      }]
     }))
   } catch {
     return null
@@ -917,6 +956,7 @@ function failureDiagnostic ({
       stopWindow: stopWindow(bodyInput.records, harnessInput.records, config.agents),
       nativeReviewWindows: nativeReviewWindows(bodyInput.records, harnessInput.records, config)
     },
+    initialConditions: initialConditionFacts(bodyInput.records, config),
     crashContainment: config.proof === undefined
       ? null
       : {

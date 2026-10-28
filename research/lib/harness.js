@@ -41,6 +41,7 @@ const { PaperClock } = require('./paper-clock.js')
 const { SuspensionWatch, seedPaperRuntime } = require('./paper-runtime.js')
 const { profileOf, ticksPerSecondOf } = require('./profiles.js')
 const { DeathSettlement } = require('./witnessed-death.js')
+const { INITIAL_CONDITIONS_EVENT, heldAtBegin } = require('./initial-conditions.js')
 const {
   BoundedJournal,
   ProcessSupervisor,
@@ -431,6 +432,7 @@ class PrimaryBehaviorGuard {
     this.closed = false
     this.providerStopped = false
     this.firstPerceptionChecked = new Set()
+    this.witnessedAtBegin = new Set()
     this.exposureEnded = new Set()
     this.failure = null
   }
@@ -472,6 +474,7 @@ class PrimaryBehaviorGuard {
       this.exposureEnded.add(record.agentId)
       return null
     }
+    if (record.event === INITIAL_CONDITIONS_EVENT) return this.beginFailure(record)
     // Admitted work that drained after the exposure ended ends typed, never applied.
     if (
       ['cognitionUnavailable', 'decisionDiscarded'].includes(record.event) &&
@@ -519,12 +522,41 @@ class PrimaryBehaviorGuard {
     return null
   }
 
+  // The server's reading at begin is where the pinned conditions must hold, so one that does not
+  // hold them stops the run there, and the agent's first perception is then held to its clock only.
+  beginFailure (witnessed) {
+    const expected = this.config.primaryBehavior.initialPositions[witnessed.agentId]
+    if (expected === undefined) return null
+    if (this.witnessedAtBegin.has(witnessed.agentId)) {
+      return new RunFailure('startupFailed', `${witnessed.agentId} was read twice when the run began`)
+    }
+    this.witnessedAtBegin.add(witnessed.agentId)
+    const entry = {
+      outcome: witnessed.outcome,
+      position: witnessed.initial?.position,
+      inventoryStacks: witnessed.initial?.inventoryStacks
+    }
+    if (!heldAtBegin(entry, expected)) {
+      return new RunFailure(
+        'startupFailed',
+        `${witnessed.agentId} did not hold its pinned initial conditions when the run began`
+      )
+    }
+    return null
+  }
+
   firstPerceptionFailure (first) {
     const expected = this.config.primaryBehavior.initialPositions[first.agentId]
     if (expected === undefined) return null
     const position = first.perception?.selfState?.position
     const inventory = first.perception?.selfState?.inventorySummary
     const worldClock = first.perceptionAudit?.worldClock
+    if (this.witnessedAtBegin.has(first.agentId)) {
+      if (worldClock === null || typeof worldClock !== 'object') {
+        return new RunFailure('startupFailed', `${first.agentId}'s first perception stated no world clock`)
+      }
+      return null
+    }
     if (
       !Array.isArray(position) ||
       position.length !== expected.length ||

@@ -357,6 +357,12 @@ object EventTag {
      */
     const val EXPOSURE_ENDED: String = "exposureEnded"
 
+    /** The server read the agent's player when the run began (`InitialConditionsWitness`). */
+    const val INITIAL_CONDITIONS_WITNESSED: String = "initialConditionsWitnessed"
+
+    /** The agent had no player on the server when the run began, so there was nothing to read. */
+    const val INITIAL_CONDITIONS_ABSENT: String = "initialConditionsAbsent"
+
     /**
      * An older flight that a newer danger answer of the same agent's was applied after, ended before
      * it could take the body: refused behind the newer one, or displaced from its takeover before it

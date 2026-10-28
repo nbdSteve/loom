@@ -241,6 +241,8 @@ private fun bodilessAfter(
         BodyEvent.OWN_DROP_PICKUP,
         BodyEvent.GOAL_REVIEW_DEFERRED,
         BodyEvent.EXPOSURE_ENDED,
+        // The server's reading at the run's start is a fact about the body it already has.
+        BodyEvent.INITIAL_CONDITIONS_WITNESSED,
         // Whether the ground seals a body in is a fact about the body it already has.
         BodyEvent.SHELTER_CHANGED,
         // A body that looked around is a body: the record says nothing either way about
@@ -319,6 +321,8 @@ private fun activityAfter(
         BodyEvent.OWN_DROP_PICKUP,
         BodyEvent.GOAL_REVIEW_DEFERRED,
         BodyEvent.EXPOSURE_ENDED,
+        // The run began around the agent; what it is doing is unchanged.
+        BodyEvent.INITIAL_CONDITIONS_WITNESSED,
         // The ground closed or opened around the agent; what it is doing is unchanged.
         BodyEvent.SHELTER_CHANGED,
         -> state.activity

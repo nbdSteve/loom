@@ -102,6 +102,8 @@ class ObserverView(
                 )
             BodyEvent.EXPOSURE_ENDED ->
                 Note("the run's exposure ended; nothing new counts from here", ObserverLevel.CALM)
+            BodyEvent.INITIAL_CONDITIONS_WITNESSED ->
+                Note("the run began; the server read where it stood and what it held", ObserverLevel.CALM)
             BodyEvent.SHELTER_CHANGED ->
                 if (record.outcome == EventTag.SHELTER_SEALED) {
                     Note("is sealed in a shelter", ObserverLevel.CALM)
@@ -167,6 +169,7 @@ class ObserverView(
             BodyEvent.OWN_DROP_PICKUP,
             BodyEvent.GOAL_REVIEW_DEFERRED,
             BodyEvent.EXPOSURE_ENDED,
+            BodyEvent.INITIAL_CONDITIONS_WITNESSED,
             BodyEvent.SHELTER_CHANGED,
             // Names the creature and the request-scoped handle it was seen under. Neither
             // is a secret, and neither is a line: the bound that refused it is the whole

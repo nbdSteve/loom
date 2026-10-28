@@ -532,6 +532,9 @@ scheduled review, threat scan or damage witness runs until the harness has
 applied the initial conditions and sent `loombody begin` after them. Without the
 hold, the first agent's first review could arrive while later agents were still
 starting, before the conditions existed; the `-r2` shakedown failed that way.
+On `begin`, before any native source starts, the plugin journals one `initialConditionsWitnessed` record per agent on that one tick: the server's own position for its player and how many stacks it holds (`InitialConditionsWitness`).
+That reading, not the agent's first perception, witnesses the pinned conditions: the run stops, and publication refuses, when one does not hold them, and each first perception then states only its world clock.
+A first perception can come a whole review stagger after `begin`, and vanilla may change an idle body in between: r38's gamma, idle beside chickens, no longer matched its pinned conditions 666 ticks after `begin`, which consumed the run. Evidence without these records is held to the first perception as before.
 One agent has at most one scheduled review and one event with the mind at a time: a
 further event is ended as `cognitionUnavailable` with outcome `cognitionCoalesced`
 (never sent, not a failure, counted under `cognitionCoalescing`), and a review that falls

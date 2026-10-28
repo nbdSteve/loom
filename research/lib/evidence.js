@@ -6,6 +6,7 @@ const path = require('node:path')
 const { behaviorGateMetrics } = require('./behavior-gate.js')
 const { admissionEndMetrics, controlledStopMetrics } = require('./controlled-stop.js')
 const { cognitionCoalescingMetrics, dangerEpisodeMetrics, isExposureEnding, isPreempted } = require('./danger.js')
+const { initialConditionsWitnessedOf } = require('./initial-conditions.js')
 const { maximumOf, minimumOf } = require('./log-tail.js')
 const { deathMetrics } = require('./witnessed-death.js')
 const { canonicalLine, sortedValue } = require('./util.js')
@@ -422,7 +423,8 @@ function normalizeBodyRecord (
     'dispute',
     'movement',
     'terrain',
-    'shelter'
+    'shelter',
+    'initial'
   ]) {
     if (record[field] !== undefined && record[field] !== null) {
       normalized[field] = sanitizeValue(record[field], state)
@@ -872,6 +874,9 @@ function deriveMetrics (records, configuredAgents = []) {
   if (perceptionAudits.length > 0) {
     result.perceptionAudit = perceptionAuditMetrics(perceptionAudits, byEvent.perceived ?? 0)
   }
+  // Absent unless the evidence holds the server's readings at begin, so earlier metrics re-derive.
+  const witnessedAtBegin = initialConditionsWitnessedOf(bodyRecords)
+  if (witnessedAtBegin !== undefined) result.initialConditionsWitnessed = witnessedAtBegin
   if (
     stimulusRecords.length > 0 ||
     harnessRecords.some((record) => record.origin !== undefined)

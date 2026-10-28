@@ -37,6 +37,22 @@ class NativeCognitionStartTest {
     }
 
     @Test
+    @DisplayName("a held run witnesses its initial conditions once, just before its sources start")
+    fun heldBeginWitnessesFirst() {
+        val order = mutableListOf<String>()
+        val held = NativeCognitionStart(held = true, witnessBegin = { order += "witness" }) { order += "start" }
+        held.enable()
+        assertEquals(emptyList<String>(), order)
+        assertTrue(held.begin())
+        assertFalse(held.begin())
+        assertEquals(listOf("witness", "start"), order)
+        // An operator's world starts at once and has no run conditions to witness.
+        order.clear()
+        NativeCognitionStart(held = false, witnessBegin = { order += "witness" }) { order += "start" }.enable()
+        assertEquals(listOf("start"), order)
+    }
+
+    @Test
     @DisplayName("the setting is immediate by default and refuses a misspelling")
     fun settingIsClosed() {
         assertFalse(NativeCognitionStart.heldBy(null))

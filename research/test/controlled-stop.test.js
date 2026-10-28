@@ -880,6 +880,79 @@ test('a slow host that ended before a review was due publishes as a no-go', () =
   )
 })
 
+// The server's reading of every agent at begin, as the JVM's `InitialConditionsWitness` journals it.
+function begun (raw, config = goalContinuityConfig(), changed = {}) {
+  const records = [...config.agents].sort().map((agentId) =>
+    bodyRecord(12, agentId, 'initialConditionsWitnessed', 'the server read the agent\'s player when the run began', {
+      outcome: 'initialConditionsWitnessed',
+      initial: { position: config.primaryBehavior.initialPositions[agentId], inventoryStacks: 0, ...changed[agentId] }
+    }))
+  raw.body.splice(raw.body.findIndex((record) => record.event === 'perceived'), 0, ...records)
+  return raw
+}
+
+// r38: gamma, idle beside chickens, no longer matched its pinned conditions 666 ticks after begin.
+function changedBeforeFirstPerception (raw, agentId) {
+  const first = raw.body.find((record) => record.agentId === agentId && record.event === 'perceived')
+  first.perception.selfState.inventorySummary = [{ ref: 'i1', what: 'egg', count: 1 }]
+  first.perception.selfState.position = first.perception.selfState.position.map((coordinate, index) =>
+    index === 0 ? coordinate + 0.25 : coordinate)
+  return raw
+}
+
+test('the server reading at begin witnesses the pinned conditions, so a first perception vanilla changed is no lost one', () => {
+  const config = goalContinuityConfig()
+  const published = publish({ raw: changedBeforeFirstPerception(begun(endedRaw()), 'tribe-gamma'), stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  assert.equal(published.manifest.integrityChecks.initialConditionsRecorded.passed, true)
+  const witnessed = published.metrics.initialConditionsWitnessed
+  assert.deepEqual(witnessed.map((entry) => entry.agentId), [...config.agents].sort())
+  assert.deepEqual(witnessed.find((entry) => entry.agentId === 'tribe-gamma'), {
+    agentId: 'tribe-gamma',
+    tick: 12,
+    outcome: 'initialConditionsWitnessed',
+    position: config.primaryBehavior.initialPositions['tribe-gamma'],
+    inventoryStacks: 0
+  })
+  const conditions = published.manifest.protocol.initialConditions
+  assert.deepEqual(conditions.witnessedAtBegin, witnessed)
+  assert.match(conditions.attested.source, /server reading of each agent when the run began/)
+  // Without the server's reading the first perception is still held to every condition.
+  rejects(changedBeforeFirstPerception(endedRaw(), 'tribe-gamma'), /tribe-gamma has no matching empty-inventory initial perception/)
+})
+
+test('a server reading at begin that does not hold the pinned conditions refuses the run and its publication', () => {
+  const config = goalContinuityConfig()
+  const holding = begun(endedRaw(), config, { 'tribe-gamma': { inventoryStacks: 1 } })
+  rejects(holding, /tribe-gamma did not hold its pinned initial conditions when the run began/)
+  const moved = begun(endedRaw(), config, { 'tribe-gamma': { position: [0.5, 64, 0.5] } })
+  rejects(moved, /tribe-gamma did not hold its pinned initial conditions when the run began/)
+  const guarded = (raw) => {
+    const guard = new PrimaryBehaviorGuard(config)
+    guard.observeHarness(raw.harness)
+    return guard.observeBody(raw.body)
+  }
+  assert.match(guarded(holding).message, /tribe-gamma did not hold its pinned initial conditions when the run began/)
+  const absent = begun(endedRaw(), config)
+  const reading = absent.body.find((record) => record.agentId === 'tribe-gamma' && record.event === 'initialConditionsWitnessed')
+  reading.outcome = 'initialConditionsAbsent'
+  delete reading.initial
+  assert.match(guarded(absent).message, /tribe-gamma did not hold its pinned initial conditions when the run began/)
+  const twice = begun(endedRaw(), config)
+  twice.body.splice(twice.body.indexOf(twice.body.find((record) => record.event === 'perceived')), 0,
+    structuredClone(twice.body.find((record) => record.agentId === 'tribe-gamma' && record.event === 'initialConditionsWitnessed')))
+  assert.match(guarded(twice).message, /tribe-gamma was read twice when the run began/)
+  rejects(twice, /an agent was read more than once when the run began/)
+  // The guard holds a run with the server's reading only to its clock at the first perception, and
+  // one without it to every pinned condition there.
+  assert.equal(guarded(changedBeforeFirstPerception(begun(endedRaw()), 'tribe-gamma')), null)
+  assert.match(guarded(changedBeforeFirstPerception(endedRaw(), 'tribe-gamma')).message,
+    /tribe-gamma lost a pinned initial condition before its first perception/)
+  const clockless = begun(endedRaw())
+  delete clockless.body.find((record) => record.agentId === 'tribe-gamma' && record.event === 'perceived').perceptionAudit.worldClock
+  assert.match(guarded(clockless).message, /tribe-gamma's first perception stated no world clock/)
+})
+
 test('a review the JVM refused at its agent\'s spent ceiling was due and typed, and counts toward the window', () => {
   // v35 shelter rehearsal: urgent danger may spend an agent's own ceiling ahead of its reviews
   // (r24), and gamma's spent all 40 of its calls before its fifth review, which the JVM then
