@@ -415,6 +415,21 @@ impl ScriptedBackend {
         if !holding && !shelter.offered() {
             return None;
         }
+        let stalled = progress
+            .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS);
+        // A shelter its last three steps advanced nothing is ended as stale, never continued into
+        // the body's refusal at the stall bound.
+        if holding && stalled {
+            return Some(answer(
+                Intent::Idle,
+                Some(choice(
+                    GoalDisposition::Abandon,
+                    None,
+                    Some(GoalReason::Stale),
+                )),
+                "my shelter advanced nothing for three steps",
+            ));
+        }
         let Some(intent) = Self::shelter_step(&offered).filter(|intent| offered.admits(intent))
         else {
             // A shelter no step of its cover can advance cannot be met now.
@@ -430,8 +445,6 @@ impl ScriptedBackend {
                 )
             });
         };
-        let stalled = progress
-            .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS);
         let goal = match held {
             Some(_) if holding => choice(GoalDisposition::Continue, None, None),
             None => choice(GoalDisposition::Adopt, Some(true), None),
@@ -1379,6 +1392,16 @@ mod tests {
         let sealed = ScriptedBackend::draft_now(&route, &shelter_scene("sealed-met"));
         assert_eq!(sealed.intent, Intent::Rest);
         assert_eq!(sealed.goal.unwrap().disposition, GoalDisposition::Complete);
+        // A shelter at the stall bound is ended as stale.
+        let mut stuck = shelter_scene("cover-gathers");
+        if let Some(progress) = stuck.goal.as_mut().and_then(|goal| goal.progress.as_mut()) {
+            progress.steps_without_progress = loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS;
+            progress.condition_advanced = false;
+            progress.step_advanced = false;
+        }
+        let stale = ScriptedBackend::draft_now(&route, &stuck).goal.unwrap();
+        assert_eq!(stale.disposition, GoalDisposition::Abandon);
+        assert_eq!(stale.reason, Some(GoalReason::Stale));
         // By day no shelter is offered, so the ordinary rule answers.
         let midday = ScriptedBackend::draft_now(&route, &shelter_scene("midday-open-grass"));
         assert_ne!(midday.goal.and_then(|goal| goal.shelter), Some(true));

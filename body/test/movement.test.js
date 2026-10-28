@@ -47,7 +47,8 @@ const {
   NO_SEARCH_SLICE,
   blocksApart,
   createMovement,
-  installMovement
+  installMovement,
+  writeShift
 } = require('../src/movement')
 const { CONTROL_IDLE_MS } = require('../src/body')
 const { MAX_MOVE_DEADLINE_MS, MAX_RETREAT_DISTANCE } = require('../src/protocol')
@@ -1661,4 +1662,23 @@ test('a final approach walks only a short straight step, and none at all past on
   const report = await stuck
   assert.equal(report.outcome, 'stalled')
   assert.equal(controls.forward, false)
+})
+
+test('a placement\'s shift reaches the server through the shut gate, and no unasked control does', async () => {
+  // The v36 rehearsal: an unshifted placement against a crafting table opens it and places
+  // nothing, so a placement holds the shift for its one packet; the gate still drops the rest.
+  const { bot, client } = await placedIn((built) => platform(built, 2))
+  await H.settled(100)
+  const start = client.writes.length
+  writeShift(bot, true)
+  bot._client.write('entity_action', { entityId: bot.entity.id, actionId: 3, jumpBoost: 0 })
+  writeShift(bot, false)
+  bot._client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
+  const passed = client.writes.slice(start).filter((write) => MOVEMENT_CONTROL_PACKETS.includes(write.name))
+  assert.equal(passed.length, 2, JSON.stringify(passed))
+  if (passed[0].name === 'entity_action') {
+    assert.deepEqual(passed.map((write) => write.parameters.actionId), [0, 1])
+  } else {
+    assert.deepEqual(passed.map((write) => write.parameters.inputs.shift), [true, false])
+  }
 })

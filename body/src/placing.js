@@ -14,6 +14,12 @@
  * emits no ticks, so the public helper's look task would otherwise wait on simulation this
  * request does not own.
  *
+ * The shift key is held for the one packet and released at settlement, as a player places
+ * against a block: unheld, vanilla uses an interactable support instead - a crafting table opens
+ * its window and nothing is placed, which the provider-free v36 rehearsal's delta met twelve
+ * times as `libraryFailure` closing its shelter against its own table. Held, the server places
+ * against any support, and the release passes the movement gate as the one packet it permits.
+ *
  * r39 iota closed a face whose cell its own box reached into, 0.227 of a block past its
  * feet cell's edge. On real Paper the server refused that placement, resent the destination
  * as air and acknowledged it 54 ms after the packet; the body read only a placed block as an
@@ -38,6 +44,7 @@ const {
 } = require('./interaction')
 const { blockInside, worldBorderOf } = require('./border')
 const { LIVING_ENTITY_TYPES } = require('./combat')
+const { writeShift } = require('./movement')
 
 /** A player's own collision box, for a body Mineflayer states no size for: 0.6 wide, 1.8 tall. */
 const PLAYER_WIDTH = 0.6
@@ -161,11 +168,20 @@ function placeHeldBlock (bot, {
     const timer = setTimeout(() => finish('timedOut'), timeoutMs)
     const client = bot._client
     let sent = false
+    let shifted = false
 
     function cleanup () {
       clearTimeout(timer)
       bot.off(eventName, updated)
       client?.off?.('acknowledge_player_digging', acknowledged)
+      if (shifted) {
+        shifted = false
+        try {
+          writeShift(bot, false)
+        } catch {
+          // A connection that cannot take the release has already ended, and the server with it.
+        }
+      }
     }
 
     function observedPlacement () {
@@ -218,6 +234,8 @@ function placeHeldBlock (bot, {
     bot.on(eventName, updated)
     client?.on?.('acknowledge_player_digging', acknowledged)
     try {
+      writeShift(bot, true)
+      shifted = true
       sent = true
       Promise.resolve(bot._genericPlace(
         resolvedBlock.block,

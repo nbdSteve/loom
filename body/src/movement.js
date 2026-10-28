@@ -461,6 +461,33 @@ function permitLeaveBed (bot) {
   return simulations.get(bot)?.permitOnce(isLeaveBed) ?? (() => {})
 }
 
+/** Vanilla's shift-key report, held or released, in whichever packet this version uses. */
+function isShift (pressed) {
+  return (name, parameters) =>
+    (name === 'entity_action' && parameters?.actionId === (pressed ? 0 : 1)) ||
+    (name === 'player_input' && parameters?.inputs?.shift === pressed && Object.keys(parameters.inputs).length === 1)
+}
+
+/**
+ * Writes the shift key held or released through the movement gate for a placement, while no
+ * movement owns the path: the one packet, and nothing else, passes. A bot without the gate,
+ * which writes nothing scoped, writes it directly.
+ */
+function writeShift (bot, pressed) {
+  const client = bot._client
+  if (client === null || client === undefined || typeof client.write !== 'function') return
+  const revoke = simulations.get(bot)?.permitOnce(isShift(pressed)) ?? (() => {})
+  try {
+    if (bot.supportFeature?.('newPlayerInputPacket')) {
+      client.write('player_input', { inputs: { shift: pressed } })
+    } else {
+      client.write('entity_action', { entityId: bot.entity?.id, actionId: pressed ? 0 : 1, jumpBoost: 0 })
+    }
+  } finally {
+    revoke()
+  }
+}
+
 /**
  * Runs the client simulation for one explicit operation that moves nothing, and answers the
  * release, or undefined when another owner holds the gate or the bot has none.
@@ -1983,6 +2010,7 @@ module.exports = {
   releaseAtRest,
   holdSimulation,
   permitLeaveBed,
+  writeShift,
   standsOnSupport,
   MAX_DROP_BLOCKS,
   MAX_STALL_RETRIES,

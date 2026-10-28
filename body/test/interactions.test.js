@@ -995,6 +995,48 @@ test('place settles at the server acknowledgement, placed or refused, and never 
   assert.equal(placed.outcome, 'placed')
 })
 
+test('place holds the shift key for its one packet and releases it at settlement, whatever ends it', async () => {
+  // The v36 rehearsal: delta closed its shelter against its own crafting table twelve times, and
+  // on real Paper an unshifted use of a table opens its window and places nothing.
+  const bot = worldBot()
+  bot.entity.id = 41
+  const held = itemStack('dirt', 3)
+  bot.inventory.slots[HOTBAR_SLOT] = held
+  const support = bot.putBlock(solidBlock(new Vec3(1, 64, 0), 'crafting_table'))
+  const common = {
+    blockOffers: [blockOffer(support)],
+    slots: slotOffers(HOTBAR_SLOT, held),
+    block: 0,
+    slot: HOTBAR_SLOT,
+    face: 'up',
+    timeoutMs: 60_000
+  }
+  const shifts = () => bot._client.writes
+    .filter((write) => write.name === 'entity_action')
+    .map((write) => [write.parameters.actionId, write.parameters.entityId])
+  let order
+  bot._genericPlace = async () => {
+    order = shifts().length
+    setImmediate(() => bot._client.emit('acknowledge_player_digging', { sequenceId: 0 }))
+  }
+  bot._client.writes.length = 0
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'libraryFailure')
+  assert.equal(order, 1, 'the shift is held before the packet')
+  assert.deepEqual(shifts(), [[0, 41], [1, 41]])
+  // Aborted in flight, as teardown does, the release is still written, and only once.
+  bot._genericPlace = async () => {}
+  bot._client.writes.length = 0
+  const aborted = placeHeldBlock(bot, { ...common, slots: slotOffers(HOTBAR_SLOT, held) })
+  assert.equal(aborted.abort(), true)
+  assert.equal((await reportOf(aborted)).outcome, 'cancelled')
+  assert.deepEqual(shifts(), [[0, 41], [1, 41]])
+  // A refusal before any packet holds no shift at all.
+  bot.entity.position = new Vec3(1.5, 65, 0.5)
+  bot._client.writes.length = 0
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'destinationBlocked')
+  assert.deepEqual(shifts(), [])
+})
+
 test('place refuses a destination its own body or a creature stands in, before any packet', async () => {
   const bot = worldBot()
   const held = itemStack('dirt', 1)
