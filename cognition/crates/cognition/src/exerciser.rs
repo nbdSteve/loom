@@ -13,10 +13,9 @@
 //!   sticks, each completing the met goal and adopting the next in one answer;
 //! - `beta` digs a log atop a three-high pillar, whose one body pickup finds no route, and then
 //!   leaves the drop lying, so a perception past retention still tells it;
-//! - `delta` sets a goal of one more than it holds once (refused `goalTrivial`, since one collect
-//!   meets it), then collects, without moving, the items lying at its feet that vanilla delays
-//!   picking up, and `theta` does the same where nothing else in sight gives anything, so its met
-//!   goal is completed plainly and owes a review;
+//! - `delta` collects, without moving, the items lying at its feet that vanilla delays picking up,
+//!   and `theta` does the same where nothing else in sight gives anything, so its met goal is
+//!   completed plainly and owes a review;
 //! - `epsilon` digs the one log in reach, and once the other log it counted on is gone walks east
 //!   to the edge of sight to look for another, which comes into sight out of dig reach, walks to
 //!   the cell beside it, then revises its log goal to planks once (refused) before finishing it;
@@ -24,7 +23,9 @@
 //!   own reaches;
 //! - `iota` stands in a pit beside a one-high nook its log lies in, just past vanilla's pickup
 //!   reach from where it stands, and collects it with approach (r28 plains rehearsal alpha,
-//!   tick 9765: refused `collectNoRoute`, because no cell covered the item from every point);
+//!   tick 9765: refused `collectNoRoute`, because no cell covered the item from every point),
+//!   after setting a goal of one more than it holds once (refused `goalTrivial`, one collect meets
+//!   it);
 //! - `kappa` stands against the world border beside a creeper that cannot move and, at its goal
 //!   review, flees from it with no goal choice, as a review beside a hunter now may (r20: kappa
 //!   reviewed beside a zombie and a skeleton, was offered only dirt digs, and died), along the
@@ -46,7 +47,7 @@
 //!   (r39: alpha and kappa replaced a met goal by the same item one higher at every step).
 //!
 //! Every goal it sets asks at least `MIN_OBJECTIVE_ADVANCE` beyond what is held and lying as the
-//! agent's own but delta's one refused goal, every replace and abandon states the reason its
+//! agent's own but iota's one refused goal, every replace and abandon states the reason its
 //! evidence supports, and a met goal moves on to more of its own item by a revise, never a
 //! replace.
 //!
@@ -421,7 +422,12 @@ fn crafter(perception: &Perception) -> Draft {
     };
     let item = goal.success_item.as_deref().unwrap_or(LOG);
     if met(perception) {
-        let next = if item == LOG { PLANKS } else { STICK };
+        // The chain's next item, made from this one; at its end, more of it or whatever sight offers.
+        let next = match item {
+            LOG => PLANKS,
+            PLANKS => STICK,
+            _ => return finish(perception),
+        };
         if let Some((recipe, makes, most)) = recipe_of(perception, next) {
             // Every application the recipe offers, at most two, so a craft of several
             // applications meets a real server (r19 theta body:00000310, epsilon 352).
@@ -565,27 +571,13 @@ fn shelterer(perception: &Perception) -> Option<Draft> {
     ))
 }
 
-/// delta: an item at its feet collected without moving, which vanilla picks up once its delay ends,
-/// after one goal for one more than it holds, which one step meets and the body must refuse.
+/// delta: an item at its feet collected without moving, which vanilla picks up once its delay ends.
 fn collector(perception: &Perception) -> Draft {
     let offered = OfferedRefs::of(perception);
     let lying = perception.surroundings.iter().find(|seen| {
         seen.kind == ObservationKind::DroppedItem && offered.pickup_items.contains(&seen.target_ref)
     });
-    let trivial = perception.agent_id.ends_with("-delta") && perception.last_refusal.is_none();
     match (lying, &perception.goal) {
-        (Some(item), None) if trivial => answer(
-            Intent::Collect {
-                item: item.target_ref.clone(),
-                approach: false,
-            },
-            Some(target(
-                GoalDisposition::Adopt,
-                &item.what,
-                held_of(perception, &item.what) + 1,
-            )),
-            "set a goal one collect meets, which the body must refuse",
-        ),
         (Some(item), None) => answer(
             Intent::Collect {
                 item: item.target_ref.clone(),
@@ -713,7 +705,9 @@ fn discoverer(perception: &Perception) -> Draft {
     }
 }
 
-/// iota: the first drop in route reach collected with approach, for a goal of holding it.
+/// iota: the first drop in route reach collected with approach, for a goal of holding it, after one
+/// goal for one more than it holds, which one step meets and the body must refuse: its drop lies
+/// just past vanilla's reach, so the cadence the refusal costs leaves it still lying.
 fn fetcher(perception: &Perception) -> Draft {
     if perception.goal.is_some() {
         return if met(perception) {
@@ -741,8 +735,12 @@ fn fetcher(perception: &Perception) -> Draft {
                     Some(target(
                         GoalDisposition::Adopt,
                         &item.what,
-                        (held_of(perception, &item.what) + item.count.unwrap_or(1))
-                            .max(objective(perception, &item.what)),
+                        if perception.last_refusal.is_none() {
+                            held_of(perception, &item.what) + 1
+                        } else {
+                            (held_of(perception, &item.what) + item.count.unwrap_or(1))
+                                .max(objective(perception, &item.what))
+                        },
                     )),
                     "collect the drop in the nook beside my pit",
                 )
@@ -1024,6 +1022,27 @@ mod tests {
     }
 
     #[test]
+    fn alpha_at_the_chain_end_revises_its_met_stick_goal_for_more_never_replaces_it_with_itself() {
+        // The v36 path rehearsal: alpha's met "hold 8 sticks" was replaced by sticks again, which
+        // the ledger refuses as goalReplaceSameItem.
+        let mut seen = review("alpha");
+        holding(&mut seen, STICK, 8, 8, StepEvidence::Gained);
+        seen.self_state.crafting_options.push(CraftingOption {
+            recipe_ref: "r2".to_owned(),
+            what: STICK.to_owned(),
+            result_count: 4,
+            max_crafts: 2,
+            requires_table: false,
+        });
+        let next = draft(&seen);
+        assert!(matches!(next.intent, Intent::Craft { .. }));
+        let more = next.goal.unwrap();
+        assert_eq!(more.disposition, GoalDisposition::Revise);
+        assert_eq!(more.success_item.as_deref(), Some(STICK));
+        assert_eq!(more.success_count, Some(10));
+    }
+
+    #[test]
     fn beta_walks_away_from_its_lying_drop_once_then_leaves_it() {
         let mut seen = review("beta");
         seen.surroundings = vec![log("b1")];
@@ -1243,7 +1262,12 @@ mod tests {
                 approach: true
             }
         );
-        let adopt = fetched.goal.unwrap();
+        // First a goal one collect meets, which the body must refuse; told so, the objective.
+        let trivial = fetched.goal.unwrap();
+        assert_eq!(trivial.disposition, GoalDisposition::Adopt);
+        assert_eq!(trivial.success_count, Some(1));
+        seen.last_refusal = Some(refusal("goalTrivial"));
+        let adopt = draft(&seen).goal.unwrap();
         assert_eq!(adopt.disposition, GoalDisposition::Adopt);
         assert_eq!(adopt.success_count, Some(2));
         // Nothing to collect, or a goal it holds and has not met: it waits.

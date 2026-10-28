@@ -240,7 +240,7 @@ function pathsOf (records, readiness) {
     : byKey(roofed.requestKey).find((entry) => entry.event === 'intentApplied' && entry.outcome === 'accepted' &&
       entry.tick - roofed.tick <= PLACEMENT_SETTLE_TICKS)
   return {
-    trivialGoalRefused: evidence(applied('tribe-delta', 'goalTrivial')),
+    trivialGoalRefused: evidence(applied('tribe-iota', 'goalTrivial')),
     metGoalRevisedKeepingItsId: evidence(revisedForMore),
     replaceStatedItsReason: evidence(statedReason),
     nonCollidingItemNeverSolid: evidence(plateNeverSolid),
