@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
-const { execFileSync, spawnSync } = require('node:child_process')
+const { spawn, spawnSync } = require('node:child_process')
 
 const {
   assertRunConfig,
@@ -46,8 +46,10 @@ const {
   ProcessSupervisor,
   RunFailure,
   delay,
+  signalProcessGroup,
   waitForCondition,
-  waitForPort
+  waitForPort,
+  waitForProcessGroupExit
 } = require('./lifecycle.js')
 const {
   commandOutput,
@@ -127,39 +129,76 @@ function findJava21 () {
   throw new Error('Java 21 was not found; set LOOM_JAVA_21 to its java executable')
 }
 
-function runBuild (command, args, options) {
-  execFileSync(command, args, {
-    cwd: options.cwd,
-    env: options.env,
-    stdio: 'inherit',
-    timeout: options.timeout
+// How long a build step's process group has to exit after SIGTERM before it is killed.
+const BUILD_STOP_GRACE_MILLIS = 5_000
+
+/**
+ * Runs one build step as its own process group and, past its bound, a failure or an abort, stops
+ * the whole group rather than only the process it started: a synchronous timeout signals that one
+ * process, so the v35 shelter rehearsal's body check, cut at its bound on a loaded host, left its
+ * test runner loading the host after the run had already failed.
+ */
+async function runBuild (command, args, { cwd, env, timeout, signal }) {
+  signal?.throwIfAborted()
+  const step = [command, ...args].join(' ')
+  const child = spawn(command, args, { cwd, env, stdio: 'inherit', detached: process.platform !== 'win32' })
+  const exited = new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('exit', (code, exitSignal) => resolve({ code, exitSignal }))
   })
+  let reason
+  let stopping
+  const stop = (cause) => {
+    reason ??= cause
+    stopping ??= (async () => {
+      signalProcessGroup(child, 'SIGTERM')
+      if (!(await waitForProcessGroupExit(child, BUILD_STOP_GRACE_MILLIS))) signalProcessGroup(child, 'SIGKILL')
+      await waitForProcessGroupExit(child, BUILD_STOP_GRACE_MILLIS)
+    })()
+    return stopping
+  }
+  const timer = setTimeout(() => stop(new Error(`${step} exceeded its ${timeout} ms build bound`)), timeout)
+  const aborted = () => stop(signal.reason)
+  signal?.addEventListener('abort', aborted, { once: true })
+  try {
+    const { code, exitSignal } = await exited
+    if (reason === undefined && code === 0) return
+    await stop(new Error(`${step} exited ${code ?? exitSignal}`))
+    throw reason
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', aborted)
+  }
 }
 
-function buildComponents (repositoryRoot, java, skipBuild) {
+async function buildComponents (repositoryRoot, java, skipBuild, signal) {
   const pluginJar = path.join(repositoryRoot, 'plugin', 'build', 'libs', 'loom-plugin-0.1.0.jar')
   const cognitionBinary = path.join(repositoryRoot, 'cognition', 'target', 'release', 'loom-cognition')
   if (!skipBuild) {
-    runBuild('npm', ['ci'], {
+    await runBuild('npm', ['ci'], {
       cwd: path.join(repositoryRoot, 'body'),
       env: process.env,
-      timeout: 180_000
+      timeout: 180_000,
+      signal
     })
-    runBuild('npm', ['run', 'check'], {
+    await runBuild('npm', ['run', 'check'], {
       cwd: path.join(repositoryRoot, 'body'),
       env: process.env,
-      timeout: 300_000
+      timeout: 300_000,
+      signal
     })
-    runBuild('cargo', ['build', '--release', '--bin', 'loom-cognition'], {
+    await runBuild('cargo', ['build', '--release', '--bin', 'loom-cognition'], {
       cwd: path.join(repositoryRoot, 'cognition'),
       env: process.env,
-      timeout: 300_000
+      timeout: 300_000,
+      signal
     })
     const javaHome = path.dirname(path.dirname(path.resolve(java)))
-    runBuild('./gradlew', ['check', 'shadowJar'], {
+    await runBuild('./gradlew', ['check', 'shadowJar'], {
       cwd: path.join(repositoryRoot, 'plugin'),
       env: { ...process.env, JAVA_HOME: javaHome },
-      timeout: 600_000
+      timeout: 600_000,
+      signal
     })
   }
   for (const file of [pluginJar, cognitionBinary]) {
@@ -848,7 +887,7 @@ async function runExperiment ({
   // Before any build, Paper, listener or credential: nothing has been spent yet.
   verifyFreeDisk(scratchRoot, config, statfs)
   const java = findJava21()
-  const components = buildComponents(absoluteRoot, java, skipBuild)
+  const components = await buildComponents(absoluteRoot, java, skipBuild, signal)
   const paperFile = await ensurePaper(absoluteRoot, config, paperJar)
   await verifyNoListeners(config, 'startup')
 
@@ -1412,6 +1451,7 @@ module.exports = {
   keychainCredentialProvider,
   nativeCognitionStartOf,
   primaryBehaviorRunFailure,
+  runBuild,
   runExperiment,
   sourceIdentity,
   toolVersions,

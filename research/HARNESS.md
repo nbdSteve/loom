@@ -541,6 +541,7 @@ most recent cognition traffic (`cognition.timeline`: per forwarded call its trig
 origin, outcome, outstanding count and latency; per body record its tick and outcome).
 It also keeps the stop window (`cognition.stopWindow`): each discard by a living agent that is not a typed `dangerPreempted`, with that agent's last sixteen records as one-line steps, and each call still with the mind when the stop began, with the body's ending for it.
 Requests in it are named by labels local to the diagnostic, and harness times are milliseconds from the first stop record.
+Each build step before startup runs as its own process group under its own bound, and a step past its bound, a failed step, or a cancellation stops the whole group, so no test runner a build started outlives it (the v35 shelter rehearsal's body check, cut at its bound on a loaded host, left its runner loading the host).
 A shared startup deadline covers the service, server, and all bodies. Any
 partial startup enters the same cleanup path as cancellation, timeout, disk
 failure, cognition failure, or Paper failure.

@@ -287,7 +287,7 @@ async function main () {
   const keep = process.argv.includes('--keep')
   const config = serverConfig()
   const java = findJava21()
-  const components = buildComponents(REPO, java, skipBuild)
+  const components = await buildComponents(REPO, java, skipBuild)
   const paperFile = await ensurePaper(REPO, config)
   await verifyNoListeners(config, 'startup')
   const root = path.join(REPO, '.scratch', 'path-rehearsal')

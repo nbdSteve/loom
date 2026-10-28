@@ -321,5 +321,6 @@ module.exports = {
   signalProcessGroup,
   waitForCondition,
   waitForExit,
-  waitForPort
+  waitForPort,
+  waitForProcessGroupExit
 }

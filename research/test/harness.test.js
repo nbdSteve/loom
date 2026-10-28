@@ -15,6 +15,7 @@ const {
   importProviderUsage,
   keychainCredentialProvider,
   primaryBehaviorRunFailure,
+  runBuild,
   verifyFreeDisk,
   verifyNoListeners
 } = require('../lib/harness.js')
@@ -25,6 +26,43 @@ const {
   proofConfig,
   writeJsonLines
 } = require('./fixtures.js')
+
+test('a build step past its bound, failed or aborted stops its whole process group', { skip: process.platform === 'win32' }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-build-'))
+  const options = { cwd: directory, env: process.env, timeout: 10_000 }
+  // Each step's shell starts a runner of its own, as npm starts a test runner, which outlives the
+  // shell unless the step's whole group is stopped (the v35 shelter rehearsal's body check).
+  const step = (name, rest) => ['-c', `sleep 30 & echo $! > ${name}; ${rest}`]
+  const runnerOf = async (name) => {
+    const file = path.join(directory, name)
+    while (!fs.existsSync(file) || fs.readFileSync(file, 'utf8').trim() === '') await new Promise((resolve) => setTimeout(resolve, 10))
+    return Number(fs.readFileSync(file, 'utf8'))
+  }
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  try {
+    await runBuild('sh', ['-c', 'exit 0'], options)
+    await assert.rejects(runBuild('sh', step('bound', 'wait'), { ...options, timeout: 200 }), /exceeded its 200 ms build bound/)
+    assert.equal(alive(await runnerOf('bound')), false)
+    await assert.rejects(runBuild('sh', step('failed', 'exit 3'), options), /exited 3$/)
+    assert.equal(alive(await runnerOf('failed')), false)
+    const controller = new AbortController()
+    const aborted = runBuild('sh', step('aborted', 'wait'), { ...options, signal: controller.signal })
+    const runner = await runnerOf('aborted')
+    controller.abort(new Error('received SIGINT'))
+    await assert.rejects(aborted, /received SIGINT/)
+    assert.equal(alive(runner), false)
+    await assert.rejects(runBuild('sh', ['-c', 'exit 0'], { ...options, signal: controller.signal }), /received SIGINT/)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
 
 test('the Java tool attestation keeps the version banner and drops runtime detail', () => {
   const full =
