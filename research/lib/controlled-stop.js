@@ -136,6 +136,22 @@ function heldReviewOf (bodyRecords, agentId, endTick) {
   return { heldAtEnd: deferred > -Infinity && deferred > lastOf('perceived') ? 1 : 0 }
 }
 
+// How many of `agentId`'s scheduled reviews the JVM refused at its call ceiling by `endTick`: a
+// `callReserved` goal review. Urgent danger may spend an agent's own ceiling ahead of its reviews
+// (r24), and a review the JVM then refuses was due and typed rather than lost, though it never
+// reached the proxy (v35 shelter rehearsal: gamma's danger spent all 40 of its calls before its
+// fifth review). Derived only when the evidence holds such a refusal, so evidence without one
+// derives exactly the metrics it always did.
+function reservedReviewsOf (bodyRecords, agentId, endTick) {
+  const reserved = (record) => record.event === 'cognitionUnavailable' && record.outcome === 'callReserved' &&
+    record.trigger === 'goalReview'
+  if (!bodyRecords.some(reserved)) return {}
+  return {
+    refusedAtCeiling: bodyRecords.filter((record) => reserved(record) && record.agentId === agentId &&
+      Number.isInteger(record.tick) && (endTick === null || record.tick <= endTick)).length
+  }
+}
+
 // Derived only when the evidence holds an admission closure, so evidence without one
 // derives exactly the metrics it always did.
 function controlledStopMetrics (bodyRecords, harnessRecords, firstTick) {
@@ -173,7 +189,13 @@ function controlledStopMetrics (bodyRecords, harnessRecords, firstTick) {
     const bounds = schedule === undefined || windowTicks === null
       ? { minimum: null, maximum: null }
       : reviewWindowBounds(schedule, agents.length, windowTicks)
-    reviewsByAgent[agentId] = { attempted, completed, ...bounds, ...heldReviewOf(bodyRecords, agentId, stopTick) }
+    reviewsByAgent[agentId] = {
+      attempted,
+      completed,
+      ...bounds,
+      ...heldReviewOf(bodyRecords, agentId, stopTick),
+      ...reservedReviewsOf(bodyRecords, agentId, stopTick)
+    }
   }
   const chains = new Map()
   for (const record of bodyRecords) {
@@ -272,7 +294,13 @@ function admissionEndMetrics (bodyRecords, harnessRecords, firstTick) {
     const bounds = schedule === undefined || windowTicks === null
       ? { minimum: null, maximum: null }
       : reviewWindowBounds(schedule, agents.length, windowTicks)
-    byAgent[agentId] = { attempted, completed, ...bounds, ...heldReviewOf(bodyRecords, agentId, endTick) }
+    byAgent[agentId] = {
+      attempted,
+      completed,
+      ...bounds,
+      ...heldReviewOf(bodyRecords, agentId, endTick),
+      ...reservedReviewsOf(bodyRecords, agentId, endTick)
+    }
   }
   return {
     closures: ends.length,
@@ -302,6 +330,7 @@ module.exports = {
   budgetStopFor,
   controlledStopMetrics,
   heldReviewOf,
+  reservedReviewsOf,
   providerStopFor,
   reviewWindowBounds
 }

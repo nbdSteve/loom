@@ -880,6 +880,45 @@ test('a slow host that ended before a review was due publishes as a no-go', () =
   )
 })
 
+test('a review the JVM refused at its agent\'s spent ceiling was due and typed, and counts toward the window', () => {
+  // v35 shelter rehearsal: urgent danger may spend an agent's own ceiling ahead of its reviews
+  // (r24), and gamma's spent all 40 of its calls before its fifth review, which the JVM then
+  // refused as `callReserved`, so it never reached the proxy.
+  const refused = (raw, tick) => {
+    const seen = perception('tribe-gamma', 'reserved-2', tick, goalContinuityConfig().primaryBehavior.initialPositions['tribe-gamma'])
+    const index = raw.body.findIndex((record) => record.tick > tick)
+    raw.body.splice(index === -1 ? raw.body.length : index, 0,
+      bodyRecord(tick, 'tribe-gamma', 'perceived', 'audited perception', {
+        requestId: 'reserved-2',
+        trigger: 'goalReview',
+        perception: seen,
+        perceptionAudit: perceptionAuditFixture('empty', { timeOfDay: tick, day: 0, isDay: true })
+      }),
+      bodyRecord(tick, 'tribe-gamma', 'cognitionUnavailable', 'cognition unavailable: callReserved', {
+        requestId: 'reserved-2', trigger: 'goalReview', outcome: 'callReserved', perception: seen
+      }))
+    return raw
+  }
+  const raw = refused(endedRaw({ endTick: 2900, drop: [['tribe-gamma', 'native-2']], lateAgent: null }), 2410)
+  const published = publish({ raw, stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  assert.deepEqual(published.metrics.admissionEnd.nativeReviews.byAgent['tribe-gamma'], {
+    attempted: 1, completed: 1, minimum: 2, maximum: 2, refusedAtCeiling: 1
+  })
+  assert.equal(published.metrics.admissionEnd.nativeReviews.byAgent['tribe-alpha'].refusedAtCeiling, 0)
+  assert.equal(published.manifest.integrityChecks.expectedNativeReviewsObserved.passed, true)
+  assert.equal(published.metrics.behaviorGate.pilotCriteria.completeNativeReviews, false)
+  // A follow-up or an event refused at the reserve excuses no scheduled review.
+  const followUp = refused(endedRaw({ endTick: 2900, drop: [['tribe-gamma', 'native-2']], lateAgent: null }), 2410)
+  for (const record of followUp.body.filter((entry) => entry.requestId === 'reserved-2')) record.trigger = 'stepSettled'
+  assert.throws(() => publish({ raw: followUp, stopReason: 'durationElapsed' }),
+    /tribe-gamma did not record the expected native scheduled reviews/)
+  // Nor does a refused review count past what the window allowed.
+  const extra = refused(endedRaw({ endTick: 2900, lateAgent: null }), 2410)
+  assert.throws(() => publish({ raw: extra, stopReason: 'durationElapsed' }),
+    /tribe-gamma did not record the expected native scheduled reviews/)
+})
+
 test('a normal ending refuses refusals before the end, untyped late refusals and wrong reasons', () => {
   const early = endedRaw()
   const refusal = early.harness.find((record) => record.event === 'cognitionRefused')

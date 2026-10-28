@@ -381,6 +381,7 @@ Work already admitted drains to typed terminals - a perception already captured 
 r34's delta and gamma were shot dead by skeletons 78 and 124 ticks after admission closed, in the drain, and both deaths counted.
 Validation then owes each agent the scheduled reviews the window up to the ending made due, so a slow host that ends before a second review is due still publishes; the behavioral gate still requires the full configured plan.
 A due review the agent could not take, behind its own review or follow-up, its flight, or a danger the mind was deciding, is journalled once as `goalReviewDeferred` with that reason, and one still held when the window closed counts toward what the window owes (`heldAtEnd`), because it was owed rather than lost.
+A due review the JVM refused because urgent danger had already spent its agent's own call ceiling, which is allowed since r24, ends as a typed `callReserved` and never reaches the proxy, so it counts as attempted (`refusedAtCeiling`) and never as completed (the v35 shelter rehearsal: gamma's danger spent all 40 of its calls before its fifth review).
 A held review delays only itself: the JVM counts the next from when this one was due, so holds never add up across a run (v32 plains rehearsal 14 ended with three agents owing reviews held behind flights).
 A refused integrity check stops a run as `publicationRefused` (`artifactIntegrityFailed`), and its failed-run diagnostic states each agent's window counts (`cognition.nativeReviewWindows`); a diagnostic over its byte bound halves its timeline before it falls back.
 

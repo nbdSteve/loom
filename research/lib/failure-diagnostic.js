@@ -407,6 +407,9 @@ function stopWindow (bodyRecords, harnessRecords, configuredAgentIds) {
 }
 
 const REVIEW_WINDOW_COUNTS = ['attempted', 'minimum', 'maximum']
+// What else the publication check counts toward a window, stated only where the window derived it
+// (the v35 shelter rehearsal's diagnostic could not say gamma's fifth review was refused at its ceiling).
+const REVIEW_WINDOW_ALLOWANCES = ['heldAtEnd', 'refusedAtCeiling']
 
 // Each configured agent's scheduled reviews against the window the publication check holds it
 // to - its death, a controlled stop, the end of admission, or the whole plan - as bare counts,
@@ -423,7 +426,10 @@ function nativeReviewWindows (bodyRecords, harnessRecords, config) {
     const expected = config.primaryBehavior?.nativeGoalReviewSchedule?.expectedReviewsPerAgent ?? null
     const counted = (window, entry) => ({
       window,
-      ...Object.fromEntries(REVIEW_WINDOW_COUNTS.map((count) => [count, boundedCount(entry?.[count])]))
+      ...Object.fromEntries(REVIEW_WINDOW_COUNTS.map((count) => [count, boundedCount(entry?.[count])])),
+      ...Object.fromEntries(REVIEW_WINDOW_ALLOWANCES
+        .filter((count) => entry?.[count] !== undefined)
+        .map((count) => [count, boundedCount(entry[count])]))
     })
     return Object.fromEntries([...config.agents].sort().map((agentId) => {
       const death = deaths[agentId]

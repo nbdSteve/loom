@@ -1,6 +1,6 @@
 'use strict'
 
-const { heldReviewOf, reviewWindowBounds } = require('./controlled-stop.js')
+const { heldReviewOf, reservedReviewsOf, reviewWindowBounds } = require('./controlled-stop.js')
 const { isExposureEnding, isPreempted } = require('./danger.js')
 
 // A server-witnessed death is an experiment outcome: that agent's chain ends and its
@@ -174,7 +174,8 @@ function deathMetrics (bodyRecords, harnessRecords, firstTick) {
       attempted: reviews.length,
       completed: reviews.filter((record) => record.event === 'cognitionForwarded' && record.outcome === 'decision').length,
       ...bounds,
-      ...heldReviewOf(bodyRecords, agentId, tick)
+      ...heldReviewOf(bodyRecords, agentId, tick),
+      ...reservedReviewsOf(bodyRecords, agentId, tick)
     }
   }
   return {

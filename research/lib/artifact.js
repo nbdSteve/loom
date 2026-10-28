@@ -784,13 +784,15 @@ function expectedNativeReviewsObserved (config, metrics) {
   return config.agents.every((agentId) => agentReviewsObserved(agentId, metrics, expected))
 }
 
-// A review held when the window closed was due and owed, so it counts toward the minimum.
+// A review held when the window closed was due and owed, so it counts toward the minimum; one the
+// JVM refused at its agent's spent ceiling was due and typed, so it counts as attempted.
 function windowEntryHolds (entry) {
-  return entry !== undefined &&
-    Number.isInteger(entry.minimum) &&
+  if (entry === undefined) return false
+  const attempted = entry.attempted + (entry.refusedAtCeiling ?? 0)
+  return Number.isInteger(entry.minimum) &&
     Number.isInteger(entry.maximum) &&
-    entry.attempted + (entry.heldAtEnd === 1 ? 1 : 0) >= entry.minimum &&
-    entry.attempted <= entry.maximum &&
+    attempted + (entry.heldAtEnd === 1 ? 1 : 0) >= entry.minimum &&
+    attempted <= entry.maximum &&
     entry.completed <= entry.attempted
 }
 
