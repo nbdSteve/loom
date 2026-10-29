@@ -19,8 +19,9 @@
 //!   offered only with nothing to set next;
 //! - `epsilon` digs the one log in reach, and once the other log it counted on is gone walks east
 //!   to the edge of sight to look for another, which comes into sight out of dig reach, walks to
-//!   the cell beside it, then revises its log goal to planks once (refused) and, told so, switches
-//!   it into planks made from the log it holds, as superseded;
+//!   the cell beside it, then revises its log goal to planks once (refused) before finishing it, and
+//!   once the planks goal it completes into is held switches that into what it can craft from what
+//!   it holds, as superseded;
 //! - `zeta` speaks at every goal review, so an agent nearby perceives at a time no review of its
 //!   own reaches;
 //! - `iota` stands in a pit beside a one-high nook its log lies in, just past vanilla's pickup
@@ -856,20 +857,18 @@ fn explorer(perception: &Perception) -> Draft {
             );
         }
     }
-    // Told the revise to planks changed the item, it switches the unmet log goal into planks made
-    // from the log it holds, a different objective, superseded rather than revised.
-    if refused_as(perception, "goalReviseItemChanged") {
+    // Once its log goal is met and completed into planks, it switches that unmet goal into what it
+    // can craft from what it holds, a different objective, superseded rather than revised.
+    if goal.success_item.as_deref() != Some(LOG) {
         let offered = OfferedRefs::of(perception);
-        let switch = offered
-            .switch_bounds
-            .iter()
-            .find(|(item, ..)| item == PLANKS);
-        if let (Some((_, fewest, _)), Some((recipe, ..))) = (switch, recipe_of(perception, PLANKS))
-        {
+        let switch = offered.switch_bounds.iter().find_map(|(item, fewest, _)| {
+            recipe_of(perception, item).map(|(recipe, ..)| (item.clone(), *fewest, recipe))
+        });
+        if let Some((item, fewest, recipe)) = switch {
             return answer(
                 Intent::Craft { recipe, crafts: 1 },
-                Some(replaced(PLANKS, *fewest, GoalReason::Superseded)),
-                "switch the unmet log goal into planks made from the log I hold",
+                Some(replaced(&item, fewest, GoalReason::Superseded)),
+                "switch the unmet goal into what I can craft from what I hold",
             );
         }
     }

@@ -229,7 +229,7 @@ function pathsOf (records, readiness) {
   const statedImpossible = body.find((record) => record.event === 'decided' && record.goal?.outcome === 'goalAbandoned' &&
     record.goal?.reason === 'impossible')
   // A switch of an unmet goal into a different objective states it superseded, and stands
-  // (epsilon's log goal into planks made from the log it holds).
+  // (epsilon's planks goal into what it can craft from what it holds).
   const statedSuperseded = body.find((record) => record.event === 'decided' && record.goal?.outcome === 'goalReplaced' &&
     record.goal?.reason === 'superseded')
   // gamma holds an oak pressure plate (D1, r39: reported solid though it has no collision): every
