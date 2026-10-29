@@ -78,6 +78,9 @@ function windowResponder (bot, client, { answerGrid = true, onGridClick = () => 
       }
     } else if (name === 'close_window') {
       setImmediate(() => restateInventory())
+    } else if (name === 'client_command' && parameters.actionId === 1) {
+      // Vanilla handles a statistics request after every click written before it.
+      setImmediate(() => client.emit('statistics', { entries: [] }))
     }
     return answered
   }
@@ -202,6 +205,13 @@ test('craft: a workstation recipe opens the exact retained table window and reac
     [TABLE.x, TABLE.y, TABLE.z])
   assert.ok(server.seen.some((packet) => packet.name === 'window_click' && packet.parameters.windowId === TABLE_WINDOW))
   assert.ok(server.seen.some((packet) => packet.name === 'close_window'), 'the table window is closed')
+  // The answer waited for the server to handle every click and the close: the statistics
+  // request is the last packet, after both, and asks with action 1, never the respawn's 0.
+  const last = server.seen.at(-1)
+  assert.equal(last.name, 'client_command')
+  assert.deepEqual(last.parameters, { actionId: 1 })
+  assert.ok(server.seen.findLastIndex((packet) => packet.name === 'close_window') < server.seen.length - 1)
+  assert.equal(client.listenerCount('statistics'), 0)
   assert.equal(bot.currentWindow, null)
   assert.equal(countOf(bot, 'oak_stairs'), 4)
   assert.equal(countOf(bot, 'oak_planks'), 0)

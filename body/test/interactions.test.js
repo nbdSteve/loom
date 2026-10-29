@@ -130,6 +130,10 @@ function worldBot (bot = new EventEmitter()) {
   bot._client.writes = []
   bot._client.write = (name, parameters) => {
     bot._client.writes.push({ name, parameters })
+    // A vanilla server answers a statistics request after every packet written before it.
+    if (name === 'client_command' && parameters?.actionId === 1 && bot._client.answersStatistics !== false) {
+      setImmediate(() => bot._client.emit('statistics', { entries: [] }))
+    }
   }
   bot.clickWindow = bot.clickWindow ?? (async () => {})
   bot.blockAt = (position) => blocks.get(blockKey(position)) ?? airBlock(position)
@@ -1252,6 +1256,92 @@ test('craft applies only one retained recipe and revalidates ingredients and wor
     crafts: 1,
     timeoutMs: 100
   }))).outcome, 'recipeUnnamed')
+})
+
+test('craft answers only once the server has handled the clicks its applications wrote', async () => {
+  // Mineflayer predicts a craft in the client's own window, so the delta shows before the
+  // server has handled a click: answered there, the witness disputed a craft Paper then applied
+  // (path rehearsal run-rd3c1K alpha body:00000229).
+  const bot = worldBot()
+  const { reading } = craftingSetup(bot, { logs: 2 })
+  bot._client.answersStatistics = false
+  bot.currentWindow = null
+  bot.closeWindow = () => {}
+  bot.craft = async () => {
+    bot._client.write('window_click', { slot: 1 })
+    applyCraft(bot)
+  }
+  let answered
+  const running = craftOfferedRecipe(bot, {
+    offered: reading.recipeOffers,
+    recipe: 0,
+    crafts: 2,
+    timeoutMs: 2000
+  })
+  running.promise.then((report) => { answered = report })
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  assert.equal(answered, undefined, 'the predicted craft is not answered before the server')
+  const names = bot._client.writes.map((write) => write.name)
+  assert.deepEqual(names, ['window_click', 'window_click', 'client_command'])
+  // Action 1 asks for statistics; action 0 would be the vanilla respawn.
+  assert.deepEqual(bot._client.writes.at(-1).parameters, { actionId: 1 })
+  bot._client.emit('statistics', { entries: [] })
+  const report = await reportOf(running)
+  assert.equal(report.outcome, 'crafted')
+  assert.equal(report.count, 8)
+  assert.equal(bot._client.listenerCount('statistics'), 0)
+  assert.equal(bot._client.listenerCount('end'), 0)
+
+  // A server that never answers is bounded, and the witness states what the server did.
+  const silentBot = worldBot()
+  const silent = craftingSetup(silentBot)
+  silentBot._client.answersStatistics = false
+  silentBot.craft = async () => applyCraft(silentBot)
+  const started = Date.now()
+  const unanswered = await reportOf(craftOfferedRecipe(silentBot, {
+    offered: silent.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 2000,
+    serverOrderMs: 40
+  }))
+  assert.equal(unanswered.outcome, 'crafted')
+  assert.ok(Date.now() - started >= 35, 'it waited out its bound')
+  assert.equal(silentBot._client.listenerCount('statistics'), 0)
+
+  // A halt while the server is asked ends the request at once.
+  const haltedBot = worldBot()
+  const halted = craftingSetup(haltedBot)
+  haltedBot._client.answersStatistics = false
+  haltedBot.craft = async () => applyCraft(haltedBot)
+  const haltedRun = craftOfferedRecipe(haltedBot, {
+    offered: halted.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 2000
+  })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(haltedBot._client.writes.at(-1)?.name, 'client_command')
+  assert.equal(haltedRun.cancel(), true)
+  assert.equal((await reportOf(haltedRun)).outcome, 'cancelled')
+
+  // A connection lost while the server is asked ends the wait at once.
+  const lostBot = worldBot()
+  const lost = craftingSetup(lostBot)
+  lostBot._client.answersStatistics = false
+  lostBot.craft = async () => applyCraft(lostBot)
+  const lostRun = craftOfferedRecipe(lostBot, {
+    offered: lost.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 2000
+  })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  const ended = Date.now()
+  lostBot._client.emit('end')
+  assert.equal((await reportOf(lostRun)).outcome, 'crafted')
+  assert.ok(Date.now() - ended < 200, 'a lost connection does not wait out the bound')
+  assert.equal(lostBot._client.listenerCount('end'), 0)
 })
 
 test('craft refuses a missing, changed, remote, or hidden retained workstation', async () => {

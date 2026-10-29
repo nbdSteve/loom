@@ -56,6 +56,25 @@ const CRAFT_SETTLE_POLL_MS = 25
 /** The packet Mineflayer's crafting primitive writes for every inventory click. */
 const CRAFT_PACKET = 'window_click'
 
+/**
+ * How long a craft's answer waits for the server to have handled the clicks it wrote.
+ *
+ * Mineflayer predicts a craft in the client's own window (its craft plugin writes the result
+ * slot itself before it takes the result), so the inventory shows the recipe's delta before the
+ * server has handled a single click. Answered there, the report could reach the plugin before
+ * Paper fired the craft's `CraftItemEvent`, and the witness disputed a craft the server then
+ * applied (path rehearsal run-rd3c1K alpha body:00000229). Ten vanilla ticks is generous on a
+ * loopback server; a server that has not answered by then is a fact the witness states.
+ */
+const CRAFT_SERVER_ORDER_MS = 500
+
+/**
+ * The `client_command` action that asks the server for the player's statistics.
+ *
+ * Action 0 of the same packet is the vanilla client's respawn, which this process never writes.
+ */
+const REQUEST_STATS = 1
+
 /** The one installation each player gets; a second would replace craft state. */
 const installations = new WeakSet()
 
@@ -232,6 +251,41 @@ function scopedCrafting (bot) {
     },
     restore
   }
+}
+
+/**
+ * Resolves true once the server has handled every packet [bot] wrote before this call, or
+ * false after [timeoutMs], on a lost connection, or when the client cannot ask.
+ *
+ * A vanilla server handles a container click and a statistics request on its main thread in
+ * the order they arrive on the connection, and answers the request with its `statistics`, so
+ * that answer follows every click and every event those clicks fired.
+ */
+function serverHandledEarlierPackets (bot, timeoutMs) {
+  const client = bot._client
+  if (!(timeoutMs > 0) || typeof client?.write !== 'function' ||
+      typeof client.on !== 'function' || typeof client.removeListener !== 'function') {
+    return Promise.resolve(false)
+  }
+  return new Promise((resolve) => {
+    const end = (handled) => {
+      clearTimeout(timer)
+      client.removeListener('statistics', answered)
+      client.removeListener('end', lost)
+      resolve(handled)
+    }
+    const answered = () => end(true)
+    const lost = () => end(false)
+    const timer = setTimeout(() => end(false), timeoutMs)
+    timer.unref?.()
+    client.on('statistics', answered)
+    client.on('end', lost)
+    try {
+      client.write('client_command', { actionId: REQUEST_STATS })
+    } catch {
+      end(false)
+    }
+  })
 }
 
 /** Ends an unsafe client whose stopped craft did not drain. */
@@ -582,6 +636,7 @@ function craftOfferedRecipe (bot, {
   crafts,
   timeoutMs,
   cleanupGraceMs = CRAFT_CLEANUP_GRACE_MS,
+  serverOrderMs = CRAFT_SERVER_ORDER_MS,
   now = () => performance.now()
 }) {
   const startedAt = now()
@@ -715,6 +770,12 @@ function craftOfferedRecipe (bot, {
         }
         expectedInventory = resultingInventory.fingerprint
       }
+      // The witness reads the server's craft events when this answer arrives, so the answer
+      // waits until the server has handled every click the applications wrote.
+      if (attempted && !settled) {
+        const remaining = timeoutMs - elapsedSince(startedAt, now)
+        await serverHandledEarlierPackets(bot, Math.min(serverOrderMs, remaining))
+      }
       finish(terminal ?? 'crafted')
     }).catch(() => {
       if (activeCraft === undefined) return finish(terminal ?? 'libraryFailure')
@@ -739,6 +800,7 @@ function craftOfferedRecipe (bot, {
 
 module.exports = {
   CRAFT_CLEANUP_GRACE_MS,
+  CRAFT_SERVER_ORDER_MS,
   CRAFT_SETTLE_MS,
   MAX_RECIPE_CANDIDATES,
   SENSE_BOUNDARY_HOLD_MS,
@@ -749,6 +811,7 @@ module.exports = {
   inventoryState,
   recipeFingerprint,
   recipeReading,
+  serverHandledEarlierPackets,
   settledApplication,
   whenInventorySettled
 }
