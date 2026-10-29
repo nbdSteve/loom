@@ -79,7 +79,7 @@ class BukkitBlockGroundTest {
         val spectator =
             proxy<Player> { name, _ ->
                 when (name) {
-                    "isDead" -> false
+                    "isInWorld" -> true
                     "getUniqueId" -> other
                     "getGameMode" -> GameMode.SPECTATOR
                     else -> null
@@ -88,7 +88,10 @@ class BukkitBlockGroundTest {
         val drop = proxy<Item> { name, _ -> if (name == "getUniqueId") other else null }
         assertTrue(groundWith(living(other)).bodyIn(cell, self))
         assertFalse(groundWith(living(self)).bodyIn(cell, self), "the player's own box is read from its own sense")
-        assertFalse(groundWith(living(other, dead = true), spectator, drop).bodyIn(cell, self))
+        assertFalse(groundWith(living(other, removed = true), spectator, drop).bodyIn(cell, self))
+        // The round 3 offline audit: a mob in its death animation, which Bukkit already calls dead,
+        // still blocks a placement until the server removes it.
+        assertTrue(groundWith(living(other, dying = true)).bodyIn(cell, self))
     }
 
     @Test
@@ -97,7 +100,7 @@ class BukkitBlockGroundTest {
         val minecart =
             proxy<org.bukkit.entity.Minecart> { name, _ ->
                 when (name) {
-                    "isDead" -> false
+                    "isInWorld" -> true
                     "getUniqueId" -> other
                     else -> null
                 }
@@ -111,10 +114,12 @@ class BukkitBlockGroundTest {
 
     private fun living(
         uuid: UUID,
-        dead: Boolean = false,
+        removed: Boolean = false,
+        dying: Boolean = false,
     ) = proxy<LivingEntity> { name, _ ->
         when (name) {
-            "isDead" -> dead
+            "isInWorld" -> !removed
+            "isDead" -> removed || dying
             "getUniqueId" -> uuid
             else -> null
         }

@@ -43,6 +43,7 @@ import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
+import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
 import dev.loom.contract.Decision
 import dev.loom.contract.GoalChoice
@@ -56,6 +57,19 @@ import dev.loom.contract.MAX_GOAL_ID_CHARS
 import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
 import dev.loom.contract.action
 import dev.loom.contract.targetRef
+
+/** The actions that may carry the body elsewhere: a walk, a flight, and an approach to collect or strike. */
+private val MOVING_ACTIONS = setOf(EventTag.MOVE_TO, EventTag.FLEE, EventTag.COLLECT, EventTag.ATTACK)
+
+/** The endings of a decision the body never began: refused before it, stale, or behind other work. */
+private val NEVER_MOVED =
+    GoalEvidence.REFUSING + setOf(EventTag.SURVIVAL_REQUIRED, EventTag.RETREAT_STALE, EventTag.CONTROL_NOT_READY)
+
+/** Whether a decision of [action] that ended [outcome] may have carried the body elsewhere. */
+private fun moves(
+    action: String,
+    outcome: String,
+): Boolean = action in MOVING_ACTIONS && outcome !in NEVER_MOVED
 
 /** A held goal survives one unaddressed review and expires at the one after. */
 const val GOAL_LIFETIME_TICKS: Long = 2L * DEFAULT_GOAL_REVIEW_CADENCE_TICKS
@@ -102,6 +116,8 @@ class GoalLedger(
         val bestByCell: Map<List<Int>, CoverRank> = emptyMap(),
         /** For a resource subgoal, the shelter goal it feeds, held again once the subgoal ends. */
         val parent: Held? = null,
+        /** Whether another decision's movement may have carried the agent since this step was chosen. */
+        val overtaken: Boolean = false,
     ) {
         /**
          * This goal as [now] shows it, and the goal to hold after: its settled step measured, once.
@@ -121,11 +137,13 @@ class GoalLedger(
             // A shelter is credited only past the most enclosed it has been where it stands, and a move
             // only past the cover it left, so a return is no step.
             val reference = shelterReferenceOf(bestByCell, observed, now).takeIf { summary.shelter }
-            val step = StepRecord(visited, stepVisible, reached, towardSource, explored, inputs, fresh, reference)
+            val step =
+                StepRecord(visited, stepVisible, reached, towardSource, explored, inputs, fresh, reference, overtaken)
             val progress = progressOf(summary, observed, now, step, stepsWithoutProgress) ?: earlier
             val shown = summary.copy(progress = progress)
             val settled = summary.lastStep != null && progress != null
-            val bests = if (summary.shelter) bestByCell.passedAt(now, displaced(summary, observed, now)) else bestByCell
+            val carried = summary.shelter && displaced(summary, observed, now, overtaken)
+            val bests = if (summary.shelter) bestByCell.passedAt(now, carried) else bestByCell
             return shown to if (settled) copy(summary = shown, measured = true, bestByCell = bests) else this
         }
 
@@ -155,6 +173,7 @@ class GoalLedger(
                 measured = false,
                 reached = null,
                 settledTick = null,
+                overtaken = false,
             )
     }
 
@@ -426,6 +445,10 @@ class GoalLedger(
         return presented
     }
 
+    /** The item [agentId]'s held goal asks for, or `null` when it holds none or one of no item. */
+    @Synchronized
+    fun heldItemOf(agentId: AgentId): String? = agents[agentId]?.held?.summary?.successItem
+
     /**
      * Why the ledger refused [agentId]'s last goal decision, told once: the next goal review's
      * perception carries it, and no later one does.
@@ -487,7 +510,10 @@ class GoalLedger(
     /**
      * Records the body's [outcome] tag for [action] when [requestId] is the held goal's latest
      * step, and answers the held goal when it was, `null` otherwise: only then has a step of the
-     * held goal settled.
+     * held goal settled. Any other decision's movement that reached the body - accepted, or ended
+     * short, superseded or timed out on the way - marks the held step overtaken, so
+     * where the agent then stands is not that step's doing (the round 3 offline audit: a shelter's
+     * walk, then a flight into an overhang, was credited as the walk's cover).
      */
     @Synchronized
     fun stepped(
@@ -499,6 +525,9 @@ class GoalLedger(
     ): GoalSummary? {
         val goals = agents[agentId]
         val held = goals?.held
+        if (held != null && held.affirmedBy != requestId && moves(action, outcome)) {
+            goals.held = held.copy(overtaken = true)
+        }
         if (held?.affirmedBy != requestId) return null
         val summary = held.summary.copy(lastStep = GoalStep(requestId, action, outcome))
         goals.held = held.copy(summary = summary, reached = reached)

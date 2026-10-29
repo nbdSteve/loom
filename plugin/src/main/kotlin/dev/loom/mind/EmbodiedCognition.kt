@@ -165,7 +165,7 @@ class EmbodiedCognition(
         if (shutDown) return
         val subject = dangerSubject ?: bodies.held.dangerSubjectOf(agentId, perception.requestId)
         // Recorded as shown: classified, a review with its horizon, which the ledger judges against.
-        val shown = perception.withHorizon(goals.recipes)
+        val shown = perception.withHorizon(goals.recipes, goals.heldItemOf(agentId))
         bodies.held.shown(agentId, shown)
         val coalesced = admission.coalescedOf(agentId, perception, subject, inFlight)
         if (coalesced != null) {

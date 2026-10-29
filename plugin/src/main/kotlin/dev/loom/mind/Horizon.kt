@@ -39,6 +39,9 @@ private const val RECIPES_PER_INPUT = 3
 /** How many results of a recipe-grounded item offer a second step of a typed path. */
 private const val SECOND_STEP_RECIPES = 2
 
+/** A held goal's item and the two steps of its recipe path, which the horizon keeps. */
+private const val PATH_ITEMS = 3
+
 /** The items the blocks under and beside the agent's feet give: its footing, guaranteed. */
 fun footingOf(perception: Perception): Set<String> =
     perception.surroundings
@@ -50,20 +53,27 @@ fun footingOf(perception: Perception): Set<String> =
         }.flatMap { seen -> seen.yields.orEmpty().filter { it.most >= 1 }.map { it.what } }
         .toSet()
 
-/** The horizon goals [perception] may set, by [recipes]: at most [MAX_HORIZON_GOALS], recipe paths first. */
+/**
+ * The horizon goals [perception] may set, by [recipes]: at most [MAX_HORIZON_GOALS], the [held] goal's
+ * own item and its recipe path first, then recipe paths.
+ */
 fun horizonOf(
     perception: Perception,
     recipes: RecipeInputs,
-): List<HorizonGoal> = HorizonBuilder(perception, recipes).build()
+    held: String? = null,
+): List<HorizonGoal> = HorizonBuilder(perception, recipes, held).build()
 
-/** [this] as a goal review is shown it, with its horizon; any other perception as it is. */
-fun Perception.withHorizon(recipes: RecipeInputs): Perception =
-    if (trigger.reviewsGoal) copy(horizon = horizonOf(this, recipes)) else this
+/** [this] as a goal review holding a goal of [held] is shown it, with its horizon; any other perception as it is. */
+fun Perception.withHorizon(
+    recipes: RecipeInputs,
+    held: String? = null,
+): Perception = if (trigger.reviewsGoal) copy(horizon = horizonOf(this, recipes, held)) else this
 
 /** One perception's horizon, assembled in its order of preference. */
 private class HorizonBuilder(
     private val perception: Perception,
     private val recipes: RecipeInputs,
+    private val held: String?,
 ) {
     private val observed = GoalObservation.of(perception)
     private val footing = footingOf(perception)
@@ -103,7 +113,36 @@ private class HorizonBuilder(
         for (step in firstSteps) {
             recipes.madeFrom(step.what).take(SECOND_STEP_RECIPES).forEach { add(recipe(it, step.what)) }
         }
-        return chosen.values.take(MAX_HORIZON_GOALS)
+        held?.let { heldPathOf(it, inputs) }
+        // The held goal's own item and its path are never cut: a horizon full of other items would
+        // read the held goal as one nothing reaches, and offer it impossible beside a source that
+        // meets it (the round 3 offline audit).
+        val kept = held?.let { generateSequence(it) { item -> chosen[item]?.via }.take(PATH_ITEMS).toSet() }.orEmpty()
+        val (first, rest) = chosen.values.partition { it.what in kept }
+        return (first + rest).take(MAX_HORIZON_GOALS)
+    }
+
+    /**
+     * The held goal [item]'s grounding when the cuts above passed it over: a recipe from a grounded
+     * input, or from a first step made from one, by every recipe rather than the fewest-slot few.
+     */
+    private fun heldPathOf(
+        item: String,
+        inputs: List<String>,
+    ) {
+        val direct = inputs.firstOrNull { item in recipes.madeFrom(it) }
+        val viaStep =
+            inputs.firstNotNullOfOrNull { input ->
+                recipes.madeFrom(input).firstOrNull { item in recipes.madeFrom(it) }?.let { input to it }
+            }
+        when {
+            item in chosen -> Unit
+            direct != null -> add(recipe(item, direct))
+            viaStep != null -> {
+                add(recipe(viaStep.second, viaStep.first))
+                add(recipe(item, viaStep.second))
+            }
+        }
     }
 
     /**

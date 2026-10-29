@@ -254,12 +254,20 @@ function scopedCrafting (bot) {
 }
 
 /**
+ * Per client: the statistics requests written and the answers counted, the waits still open by
+ * ordinal, and the listeners counting while any request is unanswered.
+ */
+const statisticsOrder = new WeakMap()
+
+/**
  * Resolves true once the server has handled every packet [bot] wrote before this call, or
  * false after [timeoutMs], on a lost connection, or when the client cannot ask.
  *
  * A vanilla server handles a container click and a statistics request on its main thread in
  * the order they arrive on the connection, and answers the request with its `statistics`, so
- * that answer follows every click and every event those clicks fired.
+ * that answer follows every click and every event those clicks fired. An answer names no
+ * request, so answers are matched to requests by their order: a late answer to an earlier wait
+ * that timed out never releases a later one (the round 3 offline audit).
  */
 function serverHandledEarlierPackets (bot, timeoutMs) {
   const client = bot._client
@@ -267,25 +275,61 @@ function serverHandledEarlierPackets (bot, timeoutMs) {
       typeof client.on !== 'function' || typeof client.removeListener !== 'function') {
     return Promise.resolve(false)
   }
+  let order = statisticsOrder.get(client)
+  if (order === undefined) {
+    order = { asked: 0, answered: 0, waits: new Map(), counted: null, lost: null }
+    statisticsOrder.set(client, order)
+  }
   return new Promise((resolve) => {
+    const ordinal = order.asked + 1
     const end = (handled) => {
       clearTimeout(timer)
-      client.removeListener('statistics', answered)
-      client.removeListener('end', lost)
+      order.waits.delete(ordinal)
+      quietWhenAnswered(client, order)
       resolve(handled)
     }
-    const answered = () => end(true)
-    const lost = () => end(false)
     const timer = setTimeout(() => end(false), timeoutMs)
     timer.unref?.()
-    client.on('statistics', answered)
-    client.on('end', lost)
+    order.waits.set(ordinal, end)
+    countAnswers(client, order)
     try {
       client.write('client_command', { actionId: REQUEST_STATS })
+      order.asked = ordinal
     } catch {
       end(false)
     }
   })
+}
+
+/** Counts [client]'s statistics answers in order, each releasing only the wait it answers. */
+function countAnswers (client, order) {
+  if (order.counted !== null) return
+  order.counted = () => {
+    // No more answers are counted than were asked for, so an unasked one releases nobody.
+    order.answered = Math.min(order.answered + 1, order.asked)
+    order.waits.get(order.answered)?.(true)
+    quietWhenAnswered(client, order)
+  }
+  order.lost = () => {
+    for (const end of [...order.waits.values()]) end(false)
+    statisticsOrder.delete(client)
+    quiet(client, order)
+  }
+  client.on('statistics', order.counted)
+  client.on('end', order.lost)
+}
+
+/** Stops counting once every request written is answered and no wait is open. */
+function quietWhenAnswered (client, order) {
+  if (order.waits.size === 0 && order.answered >= order.asked) quiet(client, order)
+}
+
+function quiet (client, order) {
+  if (order.counted === null) return
+  client.removeListener('statistics', order.counted)
+  client.removeListener('end', order.lost)
+  order.counted = null
+  order.lost = null
 }
 
 /** Ends an unsafe client whose stopped craft did not drain. */

@@ -247,14 +247,16 @@ internal fun shelterProgressOf(
     goal: GoalSummary,
     before: GoalObservation,
     observed: GoalObservation,
-    reference: CoverRank?,
+    step: StepRecord,
     priorCount: Long,
 ): GoalProgress {
     val rank = observed.cover?.rank
+    val reference = step.best
     val improved = rank != null && (reference == null || rank > reference)
     val accepted = goal.lastStep?.outcome == EventTag.ACCEPTED
     // Carried elsewhere since the step was chosen, the step's own effect cannot be read where it stands.
-    val covered = improved && accepted && goal.stepAction in SHELTER_ACTIONS && !displaced(goal, before, observed)
+    val covered =
+        improved && accepted && goal.stepAction in SHELTER_ACTIONS && !displaced(goal, before, observed, step.overtaken)
     val gathered = !covered && accepted && gathered(goal, before, observed)
     // Cover the agent came to stand in by anything but its own accepted step - a flight, a fall, a
     // peer's block - advances nothing and resets no stall (the r39 offline audit).

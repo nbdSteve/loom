@@ -27,15 +27,19 @@ internal fun shelterReferenceOf(
  * Whether [now] stands somewhere other than [from], the goal's affirming review, without [goal]'s
  * own accepted step having moved it there: a flight, a fall or a push carried it. Only a walk and
  * the descent [from]'s cover named move the agent; any other dig leaves it where it stood (the r39
- * offline audit: a side-face dig, then a flight into an overhang, was credited as the shelter's).
+ * offline audit: a side-face dig, then a flight into an overhang, was credited as the shelter's),
+ * and once another decision's accepted movement has [overtaken] the step, where the agent stands is
+ * no longer that step's doing (the round 3 offline audit: a walk, then a flight).
  */
 internal fun displaced(
     goal: GoalSummary,
     from: GoalObservation?,
     now: GoalObservation?,
+    overtaken: Boolean = false,
 ): Boolean {
     val moved = from != null && now != null && from.cell != now.cell
     val descended = goal.stepAction == IntentAction.DIG && goal.stepRef != null && goal.stepRef == from?.cover?.descend
-    val ownMove = goal.lastStep?.outcome == EventTag.ACCEPTED && (goal.stepAction == IntentAction.MOVE_TO || descended)
+    val accepted = goal.lastStep?.outcome == EventTag.ACCEPTED
+    val ownMove = !overtaken && accepted && (goal.stepAction == IntentAction.MOVE_TO || descended)
     return moved && !ownMove
 }

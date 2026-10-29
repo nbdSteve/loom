@@ -5,6 +5,7 @@ import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
 import dev.loom.contract.Bearing
 import dev.loom.contract.BlockYield
+import dev.loom.contract.CraftingOption
 import dev.loom.contract.ExploreTarget
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
@@ -14,6 +15,7 @@ import dev.loom.contract.HorizonGoal
 import dev.loom.contract.HorizonGrounding
 import dev.loom.contract.Intent
 import dev.loom.contract.InventoryStack
+import dev.loom.contract.MAX_HORIZON_GOALS
 import dev.loom.contract.Observation
 import dev.loom.contract.ObservationKind
 import dev.loom.contract.Perception
@@ -181,6 +183,39 @@ class HorizonTest {
         val replaced = ledger.resolve(agent, decisionFor(holding, Intent.Dig("b1")).copy(goal = switch))
         assertEquals(GoalEvidence.REPLACED, replaced?.outcome)
         assertEquals(first.requestId, replaced?.chainedFrom)
+    }
+
+    @Test
+    fun `a held goal's own item and its path are never cut from a full horizon`() {
+        // The round 3 offline audit: eight crafts made from the planks held filled the horizon, so
+        // "hold 9 oak_planks" beside a dig-safe log read as one nothing reaches, and impossible was
+        // offered and accepted.
+        val made = (1..MAX_HORIZON_GOALS).map { "item.minecraft.made_$it" }
+        val full =
+            object : RecipeInputs {
+                override fun inputsOf(item: String): Set<String> =
+                    if (item in made) setOf(PLANKS) else recipes.inputsOf(item)
+
+                override fun madeFrom(input: String): List<String> = if (input == LOG) listOf(PLANKS) else emptyList()
+            }
+        val base = scene(underfoot, tree, held = listOf(InventoryStack("i1", PLANKS, 4)))
+        val seen =
+            base.copy(
+                selfState =
+                    base.selfState.copy(
+                        craftingOptions =
+                            made.mapIndexed { index, item -> CraftingOption("r$index", item, 1, 1, false) },
+                    ),
+            )
+        val unheld = horizonOf(seen, full)
+        assertEquals(MAX_HORIZON_GOALS, unheld.size)
+        assertTrue(unheld.none { it.what == PLANKS }, unheld.toString())
+        val kept = horizonOf(seen, full, held = PLANKS)
+        assertEquals(MAX_HORIZON_GOALS, kept.size)
+        assertEquals(HorizonGoal(PLANKS, HorizonGrounding.RECIPE, LOG, 12, false), kept.first())
+        val observed = GoalObservation.of(seen.copy(horizon = kept))
+        assertTrue(observed.reachOf(PLANKS) >= 9)
+        assertTrue(!observed.steplessFor(PLANKS), "the log in reach is its step")
     }
 
     private companion object {

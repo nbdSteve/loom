@@ -379,6 +379,44 @@ class ShelterTest {
     }
 
     @Test
+    fun `cover a flight found after the shelter's own walk is not the walk's`() {
+        // The round 3 offline audit: a shelter walk, then an event flight into a never-visited cell
+        // more enclosed than the walk's own start, was credited as the walk's cover.
+        fun Perception.cell(z: Double) = copy(selfState = selfState.copy(position = listOf(3.5, 64.0, z)))
+        val seen = listOf(block("b1", Bearing.HERE), block("b9", Bearing.SOUTH, cover = 7))
+        val walked =
+            { flight: Boolean ->
+                val ledger = GoalLedger()
+                val grass = scene("r0", 50, open(allOpen), seen = seen)
+                assertEquals(GoalEvidence.ADOPTED, ledger.answer(grass, Intent.MoveTo("b9"), shelter)?.outcome)
+                ledger.step("r0", "moveTo")
+                // An event's flight, its own request, after the walk settled: one that ended short
+                // moved the body as surely as one that arrived.
+                if (flight) ledger.stepped(agent, "e1", EventTag.FLEE, EventTag.RETREAT_SHORT)
+                val landed = scene("r1", 100, open(allOpen.take(2))).cell(9.5)
+                ledger.present(agent, "r1", 100, GoalObservation.of(landed))?.progress
+            }
+        val alone = walked(false)
+        assertEquals(StepEvidence.COVERED, alone?.stepEvidence)
+        val overtaken = walked(true)
+        assertEquals(StepEvidence.NONE, overtaken?.stepEvidence)
+        assertEquals(false, overtaken?.conditionAdvanced)
+        assertEquals(1L, overtaken?.stepsWithoutProgress)
+        // A flight the body never began, or an idle, of another request carries nothing anywhere.
+        val ledger = GoalLedger()
+        ledger.answer(scene("r0", 50, open(allOpen), seen = seen), Intent.MoveTo("b9"), shelter)
+        ledger.step("r0", "moveTo")
+        ledger.stepped(agent, "e1", EventTag.FLEE, EventTag.RETREAT_STALE)
+        ledger.stepped(agent, "e3", EventTag.FLEE, EventTag.CONTROL_NOT_READY)
+        ledger.stepped(agent, "e2", EventTag.IDLE, EventTag.ACCEPTED)
+        val stood = scene("r1", 100, open(allOpen.take(2))).cell(9.5)
+        assertEquals(
+            StepEvidence.COVERED,
+            ledger.present(agent, "r1", 100, GoalObservation.of(stood))?.progress?.stepEvidence,
+        )
+    }
+
+    @Test
     fun `a descent that gives a solid block is credited only as cover, never as a gather`() {
         val ledger = GoalLedger()
         val grass = scene("r0", 50, open(allOpen, descend = "b1"))

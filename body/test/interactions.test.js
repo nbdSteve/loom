@@ -24,7 +24,8 @@ const {
 const {
   CRAFT_SETTLE_MS,
   craftOfferedRecipe,
-  recipeReading
+  recipeReading,
+  serverHandledEarlierPackets
 } = require('../src/crafting')
 const { digOfferedBlock } = require('../src/digging')
 const { equipOfferedStack } = require('../src/equipping')
@@ -1307,7 +1308,11 @@ test('craft answers only once the server has handled the clicks its applications
   }))
   assert.equal(unanswered.outcome, 'crafted')
   assert.ok(Date.now() - started >= 35, 'it waited out its bound')
+  // The answer it is still owed is counted when it comes, and only then does listening stop.
+  assert.equal(silentBot._client.listenerCount('statistics'), 1)
+  silentBot._client.emit('statistics', { entries: [] })
   assert.equal(silentBot._client.listenerCount('statistics'), 0)
+  assert.equal(silentBot._client.listenerCount('end'), 0)
 
   // A halt while the server is asked ends the request at once.
   const haltedBot = worldBot()
@@ -1342,6 +1347,30 @@ test('craft answers only once the server has handled the clicks its applications
   assert.equal((await reportOf(lostRun)).outcome, 'crafted')
   assert.ok(Date.now() - ended < 200, 'a lost connection does not wait out the bound')
   assert.equal(lostBot._client.listenerCount('end'), 0)
+})
+
+test('a late statistics answer to a wait that timed out never releases the next one', async () => {
+  // The round 3 offline audit: an answer names no request, so one owed to an earlier wait could
+  // answer a later craft before the server had handled that craft's clicks.
+  const bot = worldBot()
+  bot._client.answersStatistics = false
+  assert.equal(await serverHandledEarlierPackets(bot, 20), false)
+  let released
+  const next = serverHandledEarlierPackets(bot, 2000).then((handled) => { released = handled })
+  // The answer the first request was owed arrives after the second is written.
+  bot._client.emit('statistics', { entries: [] })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(released, undefined, 'the earlier request\'s answer does not release the later wait')
+  bot._client.emit('statistics', { entries: [] })
+  await next
+  assert.equal(released, true)
+  // Nothing more is owed, so counting has stopped, and a wait asked now is its own answer's.
+  assert.equal(bot._client.listenerCount('statistics'), 0)
+  const third = serverHandledEarlierPackets(bot, 2000)
+  bot._client.emit('statistics', { entries: [] })
+  assert.equal(await third, true)
+  const actions = bot._client.writes.filter(({ name }) => name === 'client_command')
+  assert.deepEqual(actions.map(({ parameters }) => parameters.actionId), [1, 1, 1])
 })
 
 test('craft refuses a missing, changed, remote, or hidden retained workstation', async () => {

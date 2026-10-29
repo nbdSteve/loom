@@ -341,6 +341,8 @@ internal data class StepRecord(
     val fresh: Boolean = true,
     /** For a shelter goal, the most enclosed the goal had yet been, which a step must pass. */
     val best: CoverRank? = null,
+    /** Whether another decision's accepted movement carried the agent since the step was chosen. */
+    val overtaken: Boolean = false,
 )
 
 /**
@@ -358,7 +360,7 @@ internal fun progressOf(
     if (before == null || observed == null) return null
     return when {
         goal.discovery -> discoveryProgressOf(goal, before, observed, step, priorCount)
-        goal.shelter -> shelterProgressOf(goal, before, observed, step.best, priorCount)
+        goal.shelter -> shelterProgressOf(goal, before, observed, step, priorCount)
         else -> itemProgressOf(goal, before, observed, step, priorCount)
     }
 }

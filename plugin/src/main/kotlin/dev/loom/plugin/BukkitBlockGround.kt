@@ -44,7 +44,9 @@ class BukkitBlockGround(
      * Vanilla's own obstruction test for a placement, `Level.isUnobstructed`: an entity that blocks
      * building, other than [besides], whose box overlaps the cell - a living body, a spectator
      * excepted, or a vehicle, a falling block, primed TNT or an end crystal, every entity vanilla
-     * marks `blocksBuilding`.
+     * marks `blocksBuilding` - until the server removes it. A body in its death animation still
+     * blocks, as vanilla reads it, though Bukkit already calls it dead (the round 3 offline audit),
+     * so presence is Paper's `isInWorld`, never `isDead`.
      */
     override fun bodyIn(
         position: List<Int>,
@@ -58,8 +60,8 @@ class BukkitBlockGround(
 
     private fun blocksBuilding(entity: Entity): Boolean =
         when (entity) {
-            is LivingEntity -> !entity.isDead && (entity as? Player)?.gameMode != GameMode.SPECTATOR
-            is Vehicle, is FallingBlock, is TNTPrimed, is EnderCrystal -> !entity.isDead
+            is LivingEntity -> entity.isInWorld && (entity as? Player)?.gameMode != GameMode.SPECTATOR
+            is Vehicle, is FallingBlock, is TNTPrimed, is EnderCrystal -> entity.isInWorld
             else -> false
         }
 
