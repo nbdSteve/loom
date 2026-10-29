@@ -57,7 +57,8 @@ const CRAFT_SETTLE_POLL_MS = 25
 const CRAFT_PACKET = 'window_click'
 
 /**
- * How long a craft's answer waits for the server to have handled the clicks it wrote.
+ * How long each craft application waits for the server to have handled the clicks it wrote, before
+ * a waiting sense reads its boundary or the craft answers.
  *
  * Mineflayer predicts a craft in the client's own window (its craft plugin writes the result
  * slot itself before it takes the result), so the inventory shows the recipe's delta before the
@@ -88,10 +89,11 @@ const activeCraftGates = new WeakSet()
  * address, and a client mid-application states an inventory the server only passes through
  * inside one tick: r29 beta's sense, answered between the clicks of its own yellow-dye craft,
  * claimed a dandelion in the grid and none in the hotbar, and was disputed. One application's
- * drain and settle together are bounded by [CRAFT_CLEANUP_GRACE_MS] and [CRAFT_SETTLE_MS], and
- * the controller's three-second request timeout leaves two seconds beside this wait.
+ * drain, settle and wait for the server together are bounded by [CRAFT_CLEANUP_GRACE_MS],
+ * [CRAFT_SETTLE_MS] and [CRAFT_SERVER_ORDER_MS], and the controller's three-second request timeout
+ * leaves a second and a half beside this wait.
  */
-const SENSE_SETTLE_MAX_MS = CRAFT_CLEANUP_GRACE_MS + CRAFT_SETTLE_MS
+const SENSE_SETTLE_MAX_MS = CRAFT_CLEANUP_GRACE_MS + CRAFT_SETTLE_MS + CRAFT_SERVER_ORDER_MS
 
 /**
  * How long a craft holds its next application after a sense read its settled boundary.
@@ -803,6 +805,13 @@ function craftOfferedRecipe (bot, {
           now,
           stopped: () => settled || terminal !== undefined
         })
+        // The client's inventory is Mineflayer's prediction until the server has handled this
+        // application's clicks, so a sense waiting for this boundary, and the witness reading the
+        // server for it, would otherwise describe two different inventories: the path rehearsal's
+        // epsilon claimed one log between two plank applications while the server still held both.
+        if (!settled && terminal === undefined) {
+          await serverHandledEarlierPackets(bot, Math.min(serverOrderMs, timeoutMs - elapsedSince(startedAt, now)))
+        }
         // The client now states what the server has confirmed, so a waiting sense reads here, and
         // the next application waits until the server has sampled the state that sense described.
         const served = applicationSettled(bot)
@@ -814,12 +823,8 @@ function craftOfferedRecipe (bot, {
         }
         expectedInventory = resultingInventory.fingerprint
       }
-      // The witness reads the server's craft events when this answer arrives, so the answer
-      // waits until the server has handled every click the applications wrote.
-      if (attempted && !settled) {
-        const remaining = timeoutMs - elapsedSince(startedAt, now)
-        await serverHandledEarlierPackets(bot, Math.min(serverOrderMs, remaining))
-      }
+      // Every application that settled waited for the server to handle its clicks, so the witness
+      // reading the server's craft events when this answer arrives finds them.
       finish(terminal ?? 'crafted')
     }).catch(() => {
       if (activeCraft === undefined) return finish(terminal ?? 'libraryFailure')

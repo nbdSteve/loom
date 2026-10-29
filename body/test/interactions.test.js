@@ -1447,10 +1447,15 @@ test('craft answers only once the server has handled the clicks its applications
   running.promise.then((report) => { answered = report })
   await new Promise((resolve) => setTimeout(resolve, 100))
   assert.equal(answered, undefined, 'the predicted craft is not answered before the server')
-  const names = bot._client.writes.map((write) => write.name)
-  assert.deepEqual(names, ['window_click', 'window_click', 'client_command'])
+  // Each application waits for the server before its boundary is read or the next one starts.
+  const names = () => bot._client.writes.map((write) => write.name)
+  assert.deepEqual(names(), ['window_click', 'client_command'])
   // Action 1 asks for statistics; action 0 would be the vanilla respawn.
   assert.deepEqual(bot._client.writes.at(-1).parameters, { actionId: 1 })
+  bot._client.emit('statistics', { entries: [] })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(answered, undefined)
+  assert.deepEqual(names(), ['window_click', 'client_command', 'window_click', 'client_command'])
   bot._client.emit('statistics', { entries: [] })
   const report = await reportOf(running)
   assert.equal(report.outcome, 'crafted')
