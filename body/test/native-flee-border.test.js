@@ -140,9 +140,19 @@ test('theta stood in a column inside the border, and the column north of it is p
 
 test('a flight searched as if the border were open ground stalls against it, as on real Paper', async () => {
   const { report, refused } = await flight({ border: false })
+  // The route runs into the wall: the server refuses its steps past the border.
+  assert.ok(refused.length > 0)
+  // Which bound ends the jumping in place is the host's: the body's stall bound counts ticks, and
+  // the library abandons a route as stuck after 3.5 s of wall clock (`index.js`, `lastNodeTime`),
+  // so a loaded host reaches the library's first, and the body then sidesteps off its start
+  // (`firstMoveStuck`) - which a coverage run under load did. Either way the border-unaware route
+  // itself got nowhere.
+  if (report.outcome === 'arrived') {
+    assert.equal(report.recovery?.cause, 'firstMoveStuck', JSON.stringify(report))
+    return
+  }
   assert.equal(report.outcome, 'stalled', JSON.stringify(report))
   assert.ok(Math.hypot(report.position[0] - FEET.x, report.position[2] - FEET.z) < 0.5, JSON.stringify(report))
-  assert.ok(refused.length > 0)
 })
 
 test('a flight that knows the border leaves the crater west and arrives, never stepping past it', async () => {
