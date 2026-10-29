@@ -152,3 +152,59 @@ test('cleanup escalates through the process group and leaves no managed child al
   assert.equal(await waitForExit(stubborn.child, 1000), true)
   assert.ok(run.events.some((event) => event.event === 'processExited' && event.expected === true))
 })
+
+/** Runs [body] with `process.kill` refusing as EPERM, as macOS can, each signal to [child]'s group [refuses] names. */
+async function refusingGroupSignals (child, refuses, body) {
+  const kill = process.kill
+  const sent = []
+  process.kill = (pid, signal) => {
+    if (pid === -child.pid) {
+      sent.push(signal)
+      if (refuses(signal, sent.length)) {
+        const refused = new Error('kill EPERM')
+        refused.code = 'EPERM'
+        throw refused
+      }
+    }
+    return kill.call(process, pid, signal)
+  }
+  try {
+    return await body()
+  } finally {
+    process.kill = kill
+  }
+}
+
+test('a stop signal the system refuses is journalled with its code and cleanup goes on', async () => {
+  // The path rehearsal: an EPERM from the first stop signal was thrown out of cleanup and took the
+  // place of the run's own failure.
+  const run = harness()
+  const first = run.start('cognition', 'setInterval(() => {}, 1000)')
+  const second = run.start('paper', 'setInterval(() => {}, 1000)')
+  await delay(100)
+  // Only the very first signal to cognition's group is refused; the escalation that follows stops it.
+  await refusingGroupSignals(first.child, (signal, count) => signal === 'SIGTERM' && count === 1, () =>
+    run.supervisor.stopAll(1000))
+  assert.equal(await waitForExit(first.child, 1000), true)
+  assert.equal(await waitForExit(second.child, 1000), true)
+  assert.deepEqual(
+    run.events.filter((event) => event.event === 'processGroupSignalFailed'),
+    [{ event: 'processGroupSignalFailed', component: 'cognition', signal: 'SIGTERM', code: 'EPERM' }]
+  )
+  assert.ok(run.events.some((event) => event.event === 'processGroupSignalled' && event.component === 'paper'))
+})
+
+test('a group that every stop signal is refused to survives as a cleanup failure naming the refusals', async () => {
+  const run = harness()
+  const stuck = run.start('cognition', 'setInterval(() => {}, 1000)')
+  await delay(100)
+  await refusingGroupSignals(stuck.child, (signal) => signal !== 0, async () => {
+    await assert.rejects(
+      run.supervisor.stopAll(300),
+      (failure) => failure instanceof RunFailure && failure.stopReason === 'startupFailed' &&
+        failure.message === 'managed process groups survived cleanup: cognition (SIGTERM EPERM, SIGTERM EPERM, SIGKILL EPERM)'
+    )
+  })
+  stuck.child.kill('SIGKILL')
+  assert.equal(await waitForExit(stuck.child, 1000), true)
+})

@@ -54,6 +54,9 @@ const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'path-rehearsal.j
 const GENERATION = 20
 const RETENTION_TICKS = 4800
 const POLL_MS = 500
+
+/** A gap between two polls this long is no slow server: this process itself was not running. */
+const SUSPENDED_GAP_MS = 10_000
 // How long admitted work may take to reach its typed terminals once admission closes: the longest
 // body action deadline (a sleep's 20 s) and its control round trip, with room for a late answer.
 const DRAIN_MS = 60_000
@@ -359,9 +362,12 @@ async function rehearse () {
   await seedPaperRuntime({ repositoryRoot: REPO, paperFile, config, java, runDirectory })
   const bodyFile = path.join(runDirectory, 'plugins', 'Loom', 'body-events.jsonl')
   let failure = null
+  // The supervisor's own record of every start, signal, refused signal and exit, kept beside the
+  // run as `lifecycle.jsonl` however the run ends, so a cleanup fault is evidence and not a guess.
+  const lifecycle = []
   const supervisor = new ProcessSupervisor({
     logBytes: config.bounds.logBytes,
-    journal: { append: () => {} },
+    journal: { append: (event, fields) => { lifecycle.push({ event, observedAt: new Date().toISOString(), ...fields }) } },
     onFailure: (fault) => { failure = fault }
   })
   let paper
@@ -374,6 +380,7 @@ async function rehearse () {
   const cancelled = () => {
     if (cancel.signal.aborted) throw new RunFailure('cancelled', 'the rehearsal was interrupted')
   }
+  let primary
   try {
     supervisor.start({
       name: 'cognition',
@@ -423,14 +430,28 @@ async function rehearse () {
     command('loombody begin')
     await delay(1000)
     const begin = latestTick(bodyFile)
-    const deadline = Date.now() + config.bounds.runSeconds * 1000
+    const windowStarted = Date.now()
+    const deadline = windowStarted + config.bounds.runSeconds * 1000
     // A console command due part way through, such as the dusk a shelter path needs once the
     // reviews that must come by day have been taken.
     const timed = [...(config.timed ?? [])].sort((one, other) => one.afterTicks - other.afterTicks)
+    // The longest wall-clock gap between two of this loop's own polls: one far past the poll
+    // interval means this process itself was not running, as when the whole host was suspended.
+    let lastPoll = Date.now()
+    let longestGap = 0
     for (let elapsed = 0; elapsed < config.bounds.runTicks; elapsed = latestTick(bodyFile) - begin) {
       if (failure !== null) throw failure
       cancelled()
-      if (Date.now() > deadline) throw new RunFailure('runFailed', 'the rehearsal did not reach its tick window in time')
+      const polled = Date.now()
+      longestGap = Math.max(longestGap, polled - lastPoll)
+      lastPoll = polled
+      if (polled > deadline) {
+        const seconds = (milliseconds) => (milliseconds / 1000).toFixed(1)
+        throw new RunFailure('runFailed', `the rehearsal did not reach its tick window in time: ${elapsed} of ` +
+          `${config.bounds.runTicks} ticks in ${seconds(polled - windowStarted)} s, ` +
+          `and the longest gap between two of its ${POLL_MS} ms polls was ${seconds(longestGap)} s`,
+        longestGap >= SUSPENDED_GAP_MS ? 'hostSuspended' : 'serverBehind')
+      }
       while (timed.length > 0 && elapsed >= timed[0].afterTicks) command(timed.shift().command)
       await delay(POLL_MS)
     }
@@ -450,13 +471,31 @@ async function rehearse () {
     })
     command('stop')
     await waitForCondition({ description: 'Paper to stop', timeoutMilliseconds: 60_000, signal, poll: async () => paper.child.exitCode !== null })
-  } finally {
+  } catch (fault) {
+    primary = fault
+  }
+  // Cleanup always runs, and a fault in it never takes the place of the run's own: an EPERM from a
+  // stop signal once hid that the rehearsal had not reached its tick window.
+  let cleanup
+  try {
     await supervisor.stopAll(10_000)
-    for (const handle of supervisor.processes) {
-      if (handle.child.exitCode === null) handle.child.kill('SIGKILL')
-    }
-    process.off('SIGINT', interrupted)
-    process.off('SIGTERM', interrupted)
+  } catch (fault) {
+    cleanup = fault
+  }
+  for (const handle of supervisor.processes) {
+    if (handle.child.exitCode === null) handle.child.kill('SIGKILL')
+  }
+  process.off('SIGINT', interrupted)
+  process.off('SIGTERM', interrupted)
+  fs.writeFileSync(path.join(runDirectory, 'lifecycle.jsonl'), lifecycle.map((entry) => `${JSON.stringify(entry)}\n`).join(''))
+  if (primary !== undefined) {
+    primary.runDirectory = path.relative(REPO, runDirectory)
+    if (cleanup !== undefined) primary.cleanup = cleanup.message
+    throw primary
+  }
+  if (cleanup !== undefined) {
+    cleanup.runDirectory = path.relative(REPO, runDirectory)
+    throw cleanup
   }
   const harnessFile = path.join(runDirectory, 'harness.jsonl')
   fs.writeFileSync(harnessFile, '')
@@ -494,6 +533,9 @@ async function rehearse () {
 if (require.main === module) {
   main().catch((fault) => {
     process.stderr.write(`${fault.stack ?? fault}\n`)
+    if (fault?.code !== undefined) process.stderr.write(`classified: ${fault.code}\n`)
+    if (fault?.cleanup !== undefined) process.stderr.write(`cleanup also failed: ${fault.cleanup}\n`)
+    if (fault?.runDirectory !== undefined) process.stderr.write(`run directory: ${fault.runDirectory}\n`)
     process.exitCode = 1
   })
 }

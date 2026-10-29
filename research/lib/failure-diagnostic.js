@@ -93,6 +93,7 @@ const HARNESS_EVENTS = new Set([
   'postCrashCallReserveReleased',
   'preflightValidated',
   'processExited',
+  'processGroupSignalFailed',
   'processGroupSignalled',
   'processStarted',
   'providerUsage',
@@ -307,9 +308,11 @@ const MAX_STOP_DISCARDS = 4
 const MAX_STOP_CONTEXT = 16
 const MAX_STOP_COMPLETIONS = 8
 // The harness records that mark where the stop began and how it went.
-const STOP_EVENTS = new Set(['runFailed', 'processGroupSignalled', 'processExited'])
+const STOP_EVENTS = new Set(['runFailed', 'processGroupSignalled', 'processGroupSignalFailed', 'processExited'])
 const COMPONENTS = new Set(['paper', 'cognition'])
 const SIGNALS = new Set(['SIGTERM', 'SIGKILL', 'SIGINT'])
+// The codes a refused group signal is journalled with (`processGroupSignalFailed`).
+const SIGNAL_REFUSALS = new Set(['EPERM', 'ESRCH', 'EINVAL', 'unknown'])
 
 function millisecondsBetween (from, to) {
   const start = Date.parse(from)
@@ -375,6 +378,7 @@ function stopWindow (bodyRecords, harnessRecords, configuredAgentIds) {
       millisecondsFromStop: millisecondsBetween(stopAt, record.observedAt),
       ...(COMPONENTS.has(record.component) ? { component: record.component } : {}),
       ...(SIGNALS.has(record.signal) ? { signal: record.signal } : {}),
+      ...(SIGNAL_REFUSALS.has(record.code) ? { code: record.code } : {}),
       ...(Number.isSafeInteger(record.exitCode) ? { exitCode: record.exitCode } : {}),
       ...(typeof record.expected === 'boolean' ? { expected: record.expected } : {})
     }))
