@@ -232,6 +232,10 @@ function pathsOf (records, readiness) {
   // (epsilon's planks goal into what it can craft from what it holds).
   const statedSuperseded = body.find((record) => record.event === 'decided' && record.goal?.outcome === 'goalReplaced' &&
     record.goal?.reason === 'superseded')
+  // A goal at its stall bound replaced by the shelter its cover offers as night nears states it
+  // stale, and stands (theta's ladder goal).
+  const statedStale = body.find((record) => record.event === 'decided' && record.goal?.outcome === 'goalReplaced' &&
+    record.goal?.reason === 'stale')
   // gamma holds an oak pressure plate (D1, r39: reported solid though it has no collision): every
   // perception that lists it reports it not solid, and the dirt its digs gave is.
   const gammaSeen = of('tribe-gamma', 'perceived').map((record) => record.perception?.selfState?.inventorySummary ?? [])
@@ -254,6 +258,7 @@ function pathsOf (records, readiness) {
     replaceStatedItsReason: evidence(statedReason),
     abandonStatedImpossible: evidence(statedImpossible),
     switchStatedSuperseded: evidence(statedSuperseded),
+    stallReplacedAsStale: evidence(statedStale),
     nonCollidingItemNeverSolid: evidence(plateNeverSolid),
     placementSettledAtTheServersAnswer: evidence(settledPromptly),
     shelterAdoptedAsNightNeared: evidence(shelterAdopted),

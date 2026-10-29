@@ -16,7 +16,8 @@
 //! - `delta` collects, without moving, the items lying at its feet that vanilla delays picking up,
 //!   and `theta` does the same where nothing else in sight gives anything, each met goal moving on
 //!   to what sight or the horizon offers next, since beside the edge of sight a plain completion is
-//!   offered only with nothing to set next;
+//!   offered only with nothing to set next, and once theta's next goal stalls as night nears, the
+//!   shelter its cover offers replaces it, as stale, and is stepped as gamma's is;
 //! - `epsilon` digs the one log in reach, and once the other log it counted on is gone walks east
 //!   to the edge of sight to look for another, which comes into sight out of dig reach, walks to
 //!   the cell beside it, then revises its log goal to planks once (refused) before finishing it, and
@@ -597,12 +598,15 @@ fn crowder(perception: &Perception) -> Draft {
 /// gamma, once night nears: a shelter goal stepped only by what its cover reading names - each dig
 /// down, the equip that puts a solid block in hand, then the placement that closes the open face -
 /// and completed once the server's ground seals it in (r36: all ten agents died at night in the
-/// open). `None` while no shelter is held or offered.
+/// open), set in place of an item goal at its stall bound as stale. `None` while no shelter is
+/// held or offered.
 fn shelterer(perception: &Perception) -> Option<Draft> {
     let offered = OfferedRefs::of(perception);
     let shelter = &offered.shelter;
     let held = perception.goal.as_ref().is_some_and(|goal| goal.shelter);
-    let settable = perception.goal.is_none() && shelter.offered();
+    // An item goal at its stall bound ends as stale for the shelter that takes its place.
+    let stale = !held && perception.goal.is_some() && offered.stalled;
+    let settable = (perception.goal.is_none() || stale) && shelter.offered();
     if !held && !settable {
         return None;
     }
@@ -636,6 +640,13 @@ fn shelterer(perception: &Perception) -> Option<Draft> {
         .or_else(readied)?;
     let choice = if held {
         judged(GoalDisposition::Continue)
+    } else if stale {
+        GoalChoice {
+            shelter: Some(true),
+            step_result: Some(GoalStepResult::NoProgress),
+            reason: Some(GoalReason::Stale),
+            ..judged(GoalDisposition::Replace)
+        }
     } else {
         GoalChoice {
             shelter: Some(true),
@@ -651,7 +662,14 @@ fn shelterer(perception: &Perception) -> Option<Draft> {
 }
 
 /// delta: an item at its feet collected without moving, which vanilla picks up once its delay ends.
+/// theta likewise, and once its goal stalls as night nears, the shelter its cover offers replaces
+/// it as stale.
 fn collector(perception: &Perception) -> Draft {
+    if perception.agent_id.ends_with("theta") {
+        if let Some(sheltering) = shelterer(perception) {
+            return sheltering;
+        }
+    }
     let offered = OfferedRefs::of(perception);
     let lying = perception.surroundings.iter().find(|seen| {
         seen.kind == ObservationKind::DroppedItem && offered.pickup_items.contains(&seen.target_ref)
@@ -1672,6 +1690,53 @@ mod tests {
         let sealed = draft(&shelter_scene("sealed-met"));
         assert_eq!(sealed.intent, Intent::Rest);
         assert_eq!(sealed.goal.unwrap().disposition, GoalDisposition::Complete);
+    }
+
+    #[test]
+    fn theta_replaces_its_stalled_goal_by_the_shelter_its_cover_offers_as_stale() {
+        // At dusk on open grass, holding a ladder goal its last three steps advanced nothing.
+        let mut seen = shelter_scene("dusk-open-grass");
+        seen.agent_id = "tribe-theta".to_owned();
+        holding(&mut seen, STICK, 2, 2, StepEvidence::None);
+        let goal = seen.goal.as_mut().unwrap();
+        goal.success_item = Some("item.minecraft.ladder".to_owned());
+        goal.statement = "hold 2 ladder".to_owned();
+        let progress = goal.progress.as_mut().unwrap();
+        progress.condition_met = false;
+        progress.condition_held = 0;
+        progress.steps_without_progress = loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS;
+        let stale = draft(&seen);
+        assert_eq!(
+            stale.intent,
+            Intent::Dig {
+                block: "b1".to_owned()
+            }
+        );
+        let choice = stale.goal.clone().unwrap();
+        assert_eq!(
+            (choice.disposition, choice.shelter, choice.reason),
+            (
+                GoalDisposition::Replace,
+                Some(true),
+                Some(GoalReason::Stale)
+            )
+        );
+        assert_eq!(
+            choice.step_result,
+            Some(loom_contract::GoalStepResult::NoProgress)
+        );
+        // The answer is one its own request schema offers.
+        let schema = crate::openai::wire::decision_schema_for(
+            &OfferedRefs::of(&seen),
+            crate::openai::wire::GoalPhase::of(&seen),
+        );
+        assert!(crate::openai::instance::admits(
+            &schema,
+            &crate::openai::instance::answer_of(&schema, &stale)
+        ));
+        // delta, holding the same goal, keeps to its own path.
+        seen.agent_id = "tribe-delta".to_owned();
+        assert!(draft(&seen).goal.is_none_or(|goal| goal.shelter.is_none()));
     }
 
     #[test]
