@@ -23,12 +23,11 @@ internal fun shelterReferenceOf(
     return listOfNotNull(bestByCell[cell], left).maxOrNull()
 }
 
-/** The shelter steps that move the agent: a descent, or a walk onto natural cover. */
-private val MOVING_SHELTER_ACTIONS = setOf(IntentAction.DIG, IntentAction.MOVE_TO)
-
 /**
  * Whether [now] stands somewhere other than [from], the goal's affirming review, without [goal]'s
- * own accepted step having moved it there: a flight, a fall or a push carried it.
+ * own accepted step having moved it there: a flight, a fall or a push carried it. Only a walk and
+ * the descent [from]'s cover named move the agent; any other dig leaves it where it stood (the r39
+ * offline audit: a side-face dig, then a flight into an overhang, was credited as the shelter's).
  */
 internal fun displaced(
     goal: GoalSummary,
@@ -36,6 +35,7 @@ internal fun displaced(
     now: GoalObservation?,
 ): Boolean {
     val moved = from != null && now != null && from.cell != now.cell
-    val ownMove = goal.lastStep?.outcome == EventTag.ACCEPTED && goal.stepAction in MOVING_SHELTER_ACTIONS
+    val descended = goal.stepAction == IntentAction.DIG && goal.stepRef != null && goal.stepRef == from?.cover?.descend
+    val ownMove = goal.lastStep?.outcome == EventTag.ACCEPTED && (goal.stepAction == IntentAction.MOVE_TO || descended)
     return moved && !ownMove
 }

@@ -39,8 +39,9 @@ fun interface BlockGround {
     fun breakable(position: List<Int>): Boolean = true
 
     /**
-     * Whether the server holds a living body other than the player [besides] whose box reaches into
-     * the cell at [position], where vanilla places no block. `false` where the ground cannot say.
+     * Whether the server holds a living body, or any other entity that blocks building, other than
+     * the player [besides], whose box reaches into the cell at [position], where vanilla places no
+     * block. `false` where the ground cannot say.
      */
     fun bodyIn(
         position: List<Int>,

@@ -343,6 +343,8 @@ pub const SCRIPTED_STEP: &str = "scripted stand-in step: act on the trigger in f
 /// (the r39 offline audit: the stand-in's idle beside an abandon was one no schema offered).
 #[must_use]
 pub fn offered_answer(perception: &Perception, draft: Draft) -> Draft {
+    const REPAIRED_ANSWER: &str =
+        "repaired: the stand-in's own answer was not one its schema offers";
     use crate::openai::{instance, wire};
     let schema = wire::decision_schema_for(
         &crate::offered::OfferedRefs::of(perception),
@@ -351,7 +353,9 @@ pub fn offered_answer(perception: &Perception, draft: Draft) -> Draft {
     if instance::admits(&schema, &instance::answer_of(&schema, &draft)) {
         return draft;
     }
-    let reasoning = Value::String(draft.reasoning.clone());
+    // The repair is said in the reasoning, so a rehearsal's record counts how often the stand-in's
+    // own rule drafted outside its schema, and no reasoning stands unmarked beside another intent.
+    let reasoning = Value::String(format!("{} [{REPAIRED_ANSWER}]", draft.reasoning));
     beside_its_intent(&schema, &draft)
         .or_else(|| instance::first_instance(&schema))
         .and_then(|mut answer| {
@@ -747,7 +751,7 @@ impl ScriptedBackend {
         // it, or that what is in sight could no longer meet, is abandoned rather than continued
         // into the body's refusal. One sight can still meet is walked toward instead, because the
         // body refuses its abandon (the v26 rehearsal's three `goalAbandonedAchievable`).
-        let unobtainable = held.success_item.is_some() && !offered.goal_obtainable;
+        let unobtainable = held.success_item.is_some() && !offered.goal_reachable();
         // A goal sight cannot meet is continued by a walk to the edge of sight, as the body
         // accepts, and abandoned only once nowhere is offered to look or it stalls.
         Some(if progress.is_some_and(|seen| seen.condition_met) {
@@ -1020,7 +1024,7 @@ impl ScriptedBackend {
         let discovering = offered.discovering() && !offered.stalled && !met;
         if (next.is_none()
             && wanted.is_some()
-            && !offered.goal_obtainable
+            && !offered.goal_obtainable()
             && offered.held_item.is_some())
             || discovering
             || (perception.goal.is_none() && offered.discovery_offered())

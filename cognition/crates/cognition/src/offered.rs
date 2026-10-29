@@ -152,6 +152,18 @@ pub const MAX_SHELTER_SITES: usize = 4;
 /// goal one step could meet is no objective. `MIN_OBJECTIVE_ADVANCE` in the JVM's `HeldObjectives.kt`.
 pub const MIN_OBJECTIVE_ADVANCE: i64 = 2;
 
+/// How far what a goal review holds and sees reaches toward its held item goal's total.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GoalReach {
+    /// No item goal is held, or neither sight nor its horizon reaches its total.
+    #[default]
+    Beyond,
+    /// Only its horizon reaches it, past what sight gives.
+    Horizon,
+    /// What is held and sight could give reaches it.
+    Sight,
+}
+
 /// Where a perception stands with shelter, read from the server's ground: how enclosed the agent
 /// stands and the one-shot steps a shelter goal may take now (r36: all ten agents died at night in
 /// the open). Mirrors the JVM's `CoverObservation`.
@@ -456,10 +468,8 @@ pub struct OfferedRefs {
     /// that item, and a revise may change only its count (r15: digs of blocks that could never
     /// drop the goal's item were taken as its steps).
     pub pursued: Option<String>,
-    /// Whether the held goal at a goal review could still be met from what is in sight - its
-    /// count no more than what is held plus what sight could give. A continue toward a source is
-    /// offered only then, by the same rule the body holds an adopt and a revise to.
-    pub goal_obtainable: bool,
+    /// How far what the goal review holds and sees reaches toward the held goal's total.
+    pub goal_reach: GoalReach,
     /// The steps each item a goal review may set or pursue can be stepped toward by, in the order
     /// of [`Self::count_bounds`], the held goal's item first when it is pursued: a goal's step is
     /// one of its own item's (r18 epsilon adopted a stick goal and dug terracotta).
@@ -1237,7 +1247,18 @@ impl OfferedRefs {
             .iter()
             .find(|(name, _)| name == item)
             .map_or(0, |(_, total)| *total);
-        self.goal_obtainable = count <= held.saturating_add(capacity);
+        let horizon_most = perception
+            .horizon
+            .iter()
+            .find(|goal| &goal.what == item)
+            .map_or(0, |goal| goal.most);
+        self.goal_reach = if count <= held.saturating_add(capacity) {
+            GoalReach::Sight
+        } else if count <= horizon_most {
+            GoalReach::Horizon
+        } else {
+            GoalReach::Beyond
+        };
         if held >= count {
             return;
         }
@@ -1278,11 +1299,28 @@ impl OfferedRefs {
     #[must_use]
     pub fn explore_continue(&self) -> bool {
         (self.held_item.is_some() || self.discovering())
-            && !self.goal_obtainable
+            && !self.goal_obtainable()
             && !self.stalled
             && !self.collect_required
             && self.productive.is_empty()
             && !self.explore_targets.is_empty()
+    }
+
+    /// Whether the held goal could still be met from what is in sight - its count no more than what
+    /// is held plus what sight could give. A continue toward a source is offered only then, by the
+    /// same rule the body holds an adopt and a revise to.
+    #[must_use]
+    pub fn goal_obtainable(&self) -> bool {
+        self.goal_reach == GoalReach::Sight
+    }
+
+    /// Whether the held goal could still be met at all: from sight, or up to its horizon's most.
+    /// Only a goal that cannot is offered its abandon as impossible (the r39 offline audit: every
+    /// goal asking past sight was "impossible" from its adoption, and three were abandoned beside
+    /// the logs and recipe that would have met them).
+    #[must_use]
+    pub fn goal_reachable(&self) -> bool {
+        self.goal_reach != GoalReach::Beyond
     }
 
     /// Whether a goal review may answer with an idle or a rest: only when no cell at the edge of

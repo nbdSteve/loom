@@ -1379,7 +1379,7 @@ fn held_offer(
         Vec::new()
     };
     let sheltering = shelter_replace(refs, &[UNSAFE]);
-    let short = (!refs.goal_obtainable && !looking)
+    let short = (!refs.goal_reachable() && !looking)
         || (!pairable(refs, &by_item, &exploring) && sheltering.is_empty());
     GoalOffer {
         by_item,

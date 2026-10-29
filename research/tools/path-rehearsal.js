@@ -228,6 +228,10 @@ function pathsOf (records, readiness) {
   // (alpha's crafting tables, once its last planks were made into them).
   const statedImpossible = body.find((record) => record.event === 'decided' && record.goal?.outcome === 'goalAbandoned' &&
     record.goal?.reason === 'impossible')
+  // A switch of an unmet goal into a different objective states it superseded, and stands
+  // (epsilon's log goal into planks made from the log it holds).
+  const statedSuperseded = body.find((record) => record.event === 'decided' && record.goal?.outcome === 'goalReplaced' &&
+    record.goal?.reason === 'superseded')
   // gamma holds an oak pressure plate (D1, r39: reported solid though it has no collision): every
   // perception that lists it reports it not solid, and the dirt its digs gave is.
   const gammaSeen = of('tribe-gamma', 'perceived').map((record) => record.perception?.selfState?.inventorySummary ?? [])
@@ -249,6 +253,7 @@ function pathsOf (records, readiness) {
     metGoalRevisedKeepingItsId: evidence(revisedForMore),
     replaceStatedItsReason: evidence(statedReason),
     abandonStatedImpossible: evidence(statedImpossible),
+    switchStatedSuperseded: evidence(statedSuperseded),
     nonCollidingItemNeverSolid: evidence(plateNeverSolid),
     placementSettledAtTheServersAnswer: evidence(settledPromptly),
     shelterAdoptedAsNightNeared: evidence(shelterAdopted),

@@ -9,6 +9,7 @@ package dev.loom.mind
 import dev.loom.contract.Bearing
 import dev.loom.contract.Observation
 import dev.loom.contract.ObservationKind
+import dev.loom.contract.Perception
 import kotlin.math.sqrt
 
 /** The distance from the eyes to [seen], from its feet-relative reading, as the mind measures it. */
@@ -36,6 +37,19 @@ internal fun stepNow(seen: Observation): Boolean =
 internal fun walkStep(seen: Observation): Boolean =
     seen.kind == ObservationKind.BLOCK && seen.visible && seen.digSafe == true && seen.standable == true &&
         seen.direction != Bearing.HERE && fromEyes(seen) > INTERACTION_REACH_BLOCKS
+
+/**
+ * The bearings of each item's sources [perception] recalls out of sight or shows beyond dig reach:
+ * the directions a walk to the edge of sight steps toward it, as `offered::source_bearings` reads them.
+ */
+internal fun sourceBearingsOf(perception: Perception): Map<String, Set<Bearing>> =
+    (
+        perception.recalled.map { it.what to it.direction } +
+            perception.surroundings
+                .filter { it.kind == ObservationKind.BLOCK && it.visible && it.digSafe == true && !inReach(it) }
+                .flatMap { block -> block.yields.orEmpty().map { it.what to block.direction } }
+    ).groupBy({ it.first }, { it.second })
+        .mapValues { (_, bearings) -> bearings.toSet() }
 
 /** The refs among [seen] a step offered now takes, with the items each gives. */
 internal fun stepSourcesOf(seen: List<Observation>): Map<String, Set<String>> =

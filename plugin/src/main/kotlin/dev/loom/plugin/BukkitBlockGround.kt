@@ -10,8 +10,13 @@ import org.bukkit.Material
 import org.bukkit.Server
 import org.bukkit.block.Block
 import org.bukkit.block.data.Waterlogged
+import org.bukkit.entity.EnderCrystal
+import org.bukkit.entity.Entity
+import org.bukkit.entity.FallingBlock
 import org.bukkit.entity.LivingEntity
 import org.bukkit.entity.Player
+import org.bukkit.entity.TNTPrimed
+import org.bukkit.entity.Vehicle
 import org.bukkit.util.BoundingBox
 import java.util.UUID
 
@@ -36,8 +41,10 @@ class BukkitBlockGround(
     }
 
     /**
-     * Vanilla's own obstruction test for a placement, `Level.isUnobstructed`: a living body other
-     * than [besides] whose box overlaps the cell, a spectator excepted.
+     * Vanilla's own obstruction test for a placement, `Level.isUnobstructed`: an entity that blocks
+     * building, other than [besides], whose box overlaps the cell - a living body, a spectator
+     * excepted, or a vehicle, a falling block, primed TNT or an end crystal, every entity vanilla
+     * marks `blocksBuilding`.
      */
     override fun bodyIn(
         position: List<Int>,
@@ -46,12 +53,15 @@ class BukkitBlockGround(
         val (x, y, z) = position
         val world = server.worlds.firstOrNull() ?: return false
         val cell = BoundingBox(x.toDouble(), y.toDouble(), z.toDouble(), x + 1.0, y + 1.0, z + 1.0)
-        return world
-            .getNearbyEntities(cell) { entity ->
-                entity is LivingEntity && !entity.isDead && entity.uniqueId != besides &&
-                    (entity as? Player)?.gameMode != GameMode.SPECTATOR
-            }.isNotEmpty()
+        return world.getNearbyEntities(cell) { it.uniqueId != besides && blocksBuilding(it) }.isNotEmpty()
     }
+
+    private fun blocksBuilding(entity: Entity): Boolean =
+        when (entity) {
+            is LivingEntity -> !entity.isDead && (entity as? Player)?.gameMode != GameMode.SPECTATOR
+            is Vehicle, is FallingBlock, is TNTPrimed, is EnderCrystal -> !entity.isDead
+            else -> false
+        }
 
     private fun blockAt(position: List<Int>): Block? {
         val (x, y, z) = position

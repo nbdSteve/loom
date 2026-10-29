@@ -27,6 +27,7 @@ package dev.loom.mind
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
 import dev.loom.contract.AIR_ITEM
+import dev.loom.contract.Bearing
 import dev.loom.contract.DropFate
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
@@ -134,6 +135,10 @@ data class GoalObservation(
      * route, or a walk onto a visible dig-safe block out of reach. What the mind offers a goal's steps from.
      */
     val stepSources: Map<String, Set<String>> = emptyMap(),
+    /** The bearing of each cell at the edge of sight offered, by ref. */
+    val exploreBearings: Map<String, Bearing> = emptyMap(),
+    /** The bearings of each item's sources recalled out of sight or seen beyond dig reach. */
+    val sourceBearings: Map<String, Set<Bearing>> = emptyMap(),
 ) {
     /** Whether a discovery goal may be set: cells at the edge of sight, and no horizon goal at all. */
     val discoveryOffered: Boolean get() = explore.isNotEmpty() && horizon.isEmpty()
@@ -202,8 +207,12 @@ data class GoalObservation(
      */
     fun steplessFor(item: String): Boolean {
         val wanted = setOf(item) + horizon.pathOf(item)
-        return explore.isEmpty() && craftable.none { it in wanted } &&
-            stepSources.values.none { gives -> gives.any { it in wanted } }
+        val near = craftable.any { it in wanted } || stepSources.values.any { gives -> gives.any { it in wanted } }
+        // A walk to look further steps toward it only past the edge of sight a source of it was seen
+        // or remembered beyond, or, for a horizon goal, any way at all, as the mind offers that walk.
+        val bearings = wanted.flatMap { sourceBearings[it].orEmpty() }.toSet()
+        val toward = item in horizon || exploreBearings.values.any { it in bearings }
+        return !near && (explore.isEmpty() || !toward)
     }
 
     /** How many of [item] sight itself could give: none for an item only recalled out of sight. */
@@ -274,6 +283,8 @@ data class GoalObservation(
                         .mapValues { (_, counts) -> counts.sum() },
                 oneStep = oneStepOf(perception, drops, digs),
                 stepSources = stepSourcesOf(seen),
+                exploreBearings = perception.explore.associate { it.ref to it.direction },
+                sourceBearings = sourceBearingsOf(perception),
             )
         }
 

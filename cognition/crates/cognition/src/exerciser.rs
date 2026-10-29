@@ -19,7 +19,8 @@
 //!   offered only with nothing to set next;
 //! - `epsilon` digs the one log in reach, and once the other log it counted on is gone walks east
 //!   to the edge of sight to look for another, which comes into sight out of dig reach, walks to
-//!   the cell beside it, then revises its log goal to planks once (refused) before finishing it;
+//!   the cell beside it, then revises its log goal to planks once (refused) and, told so, switches
+//!   it into planks made from the log it holds, as superseded;
 //! - `zeta` speaks at every goal review, so an agent nearby perceives at a time no review of its
 //!   own reaches;
 //! - `iota` stands in a pit beside a one-high nook its log lies in, just past vanilla's pickup
@@ -852,6 +853,23 @@ fn explorer(perception: &Perception) -> Draft {
                 Intent::Dig { block },
                 Some(target(GoalDisposition::Revise, PLANKS, 1)),
                 "revise the log goal to planks, which the body must refuse",
+            );
+        }
+    }
+    // Told the revise to planks changed the item, it switches the unmet log goal into planks made
+    // from the log it holds, a different objective, superseded rather than revised.
+    if refused_as(perception, "goalReviseItemChanged") {
+        let offered = OfferedRefs::of(perception);
+        let switch = offered
+            .switch_bounds
+            .iter()
+            .find(|(item, ..)| item == PLANKS);
+        if let (Some((_, fewest, _)), Some((recipe, ..))) = (switch, recipe_of(perception, PLANKS))
+        {
+            return answer(
+                Intent::Craft { recipe, crafts: 1 },
+                Some(replaced(PLANKS, *fewest, GoalReason::Superseded)),
+                "switch the unmet log goal into planks made from the log I hold",
             );
         }
     }

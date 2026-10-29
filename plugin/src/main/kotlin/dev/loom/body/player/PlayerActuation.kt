@@ -435,7 +435,16 @@ internal class PlayerActionPreparer(
                             // out, so a refused flight never stops a valid one (r33 gamma).
                             replace = true,
                         )
-                    val operation: () -> ActionExecution = { flee(runtime, sense, request, sprint, requestId) }
+                    // A flight asked before a decision that already governs the body never replaces
+                    // its work, even on the first attempt, whose replace would end it (the r39
+                    // offline audit: an older review's flight took over a newer danger flight).
+                    val operation: () -> ActionExecution = {
+                        if (newest.outdated(runtime.identity.agentId, requestId)) {
+                            ActionExecution(STALE_FLIGHT)
+                        } else {
+                            flee(runtime, sense, request, sprint, requestId)
+                        }
+                    }
                     operation
                 }
             }

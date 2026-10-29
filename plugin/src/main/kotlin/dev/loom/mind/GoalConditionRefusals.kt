@@ -104,7 +104,8 @@ private fun achievable(
     val count = presented?.successCount
     val progress = presented?.progress
     val atBound = (progress?.stepsWithoutProgress ?: 0) >= MAX_GOAL_STEPS_WITHOUT_PROGRESS
-    val reach = item?.let { (observed?.inventory?.get(it) ?: 0) + (observed?.capacity?.get(it) ?: 0) }
+    // What is held and sight could give, or the horizon's most: a goal asking past sight may still be met.
+    val reach = item?.let { observed?.reachOf(it) }
     return observed != null && count != null && reach != null && progress?.conditionMet != true && !atBound &&
         count <= reach && item?.let(observed::steplessFor) != true
 }

@@ -1118,7 +1118,7 @@ fn a_goal_sight_cannot_meet_still_collects_its_own_lying_drop_before_looking_fur
         drop_ref: Some("d7".to_owned()),
     });
     let offered = OfferedRefs::of(&seen);
-    assert!(!offered.goal_obtainable);
+    assert!(!offered.goal_obtainable());
     assert!(offered.collect_required);
     assert!(!offered.explore_continue());
     let schema = decision_schema_for(&offered, GoalPhase::of(&seen));
@@ -1869,4 +1869,32 @@ fn a_met_goal_whose_next_source_lies_where_no_cell_is_offered_still_has_an_answe
         );
         assert!(validator.is_valid(&answer), "{name}: {schema}");
     }
+}
+
+#[test]
+fn a_goal_its_horizon_reaches_is_never_offered_its_abandon_as_impossible() {
+    // The r39 offline audit, round 2: every goal asking past what sight gives was offered, and
+    // accepted, an abandon as impossible from its adoption (delta body:00000162 abandoned "hold 9
+    // oak_planks" beside a planks recipe and a dig-safe log).
+    let mut seen = stick_goal(6, 0);
+    let offered = OfferedRefs::of(&seen);
+    assert!(!offered.goal_reachable());
+    let beyond = decision_schema_for(&offered, GoalPhase::of(&seen)).to_string();
+    assert!(
+        beyond.contains("\"impossible\""),
+        "a goal nothing reaches may be abandoned so"
+    );
+    seen.horizon = vec![horizon_goal(
+        "item.minecraft.stick",
+        loom_contract::HorizonGrounding::Sight,
+        None,
+        10,
+    )];
+    let offered = OfferedRefs::of(&seen);
+    assert!(offered.goal_reachable() && !offered.goal_obtainable());
+    let reached = decision_schema_for(&offered, GoalPhase::of(&seen)).to_string();
+    assert!(
+        !reached.contains("\"impossible\""),
+        "its horizon reaches it: no abandon as impossible"
+    );
 }

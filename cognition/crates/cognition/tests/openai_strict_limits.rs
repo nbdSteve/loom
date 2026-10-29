@@ -370,6 +370,7 @@ fn every_answer_the_scripted_stand_in_gives_is_one_its_own_request_offers() {
         Router::new(ModelCatalog::uniform("x")).route(loom_contract::DecisionImportance::Routine);
     let mut refused = Vec::new();
     let mut answered = 0;
+    let mut repaired = 0;
     for (id, perception) in &corpus() {
         if !loom_cognition::openai::wire::request_offers_an_answer(perception) {
             continue;
@@ -378,13 +379,16 @@ fn every_answer_the_scripted_stand_in_gives_is_one_its_own_request_offers() {
         let validator = jsonschema::validator_for(&schema).unwrap();
         let draft = loom_cognition::model::ScriptedBackend::draft_now(&route, perception);
         answered += 1;
+        if draft.reasoning.contains("[repaired:") {
+            repaired += 1;
+        }
         let answer = loom_cognition::openai::instance::answer_of(&schema, &draft);
         if !validator.is_valid(&answer) {
             refused.push(format!("{id}: {answer}"));
         }
     }
     eprintln!(
-        "{answered} stand-in answers, {} outside their schema",
+        "{answered} stand-in answers, {repaired} repaired to one their schema offers, {} outside it",
         refused.len()
     );
     assert!(

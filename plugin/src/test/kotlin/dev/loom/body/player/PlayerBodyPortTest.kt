@@ -3066,6 +3066,30 @@ class PlayerWalkResolutionTest {
     }
 
     @Test
+    fun `a flight asked before a newer danger answer's flight never replaces it, even at its first attempt`() {
+        // The r39 offline audit: a goal review beside a hunter answered with a flight after a newer
+        // sighting's flight was applied, and its first attempt, sent to replace, ended the newer one.
+        val agent = AgentId("agent-late-flight")
+        val harness = harness(agent, HarnessOptions())
+        harness.port.spawn(agent).await()
+        val shown = {
+            requireNotNull(
+                harness.port.perceive(agent, Trigger.GoalReview).await(),
+            ).also { harness.port.held.shown(agent, it) }
+        }
+        val review = shown()
+        val sighting = shown()
+        val threatIn = { seen: Perception -> seen.surroundings.first { it.kind == ObservationKind.ENTITY }.ref }
+
+        val newer = harness.port.apply(agent, Intent.Flee(threatIn(sighting)), sighting.requestId).await()
+        val older = harness.port.apply(agent, Intent.Flee(threatIn(review)), review.requestId).await()
+
+        assertTrue(newer is IntentOutcome.Accepted, newer.toString())
+        assertEquals(EventTag.RETREAT_STALE, (older as IntentOutcome.Rejected).tag)
+        assertEquals(1, harness.connector.requests.count { it is BodyRequest.Flee }, "the older flight was never sent")
+    }
+
+    @Test
     fun `a covered block is offered as not standable and a walk onto it is refused before the body`() {
         val agent = AgentId("agent-walk-covered")
         val server = FakePlayerServerState().apply { buried += listOf(4, 63, 2) }

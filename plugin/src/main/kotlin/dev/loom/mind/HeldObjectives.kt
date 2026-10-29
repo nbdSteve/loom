@@ -125,8 +125,9 @@ private fun supports(
 /**
  * Whether nothing held or in reach could meet [presented] now, by [observed]: a shelter no step can
  * close, a discovery with nowhere left to look, or an item goal asking more than is held plus what
- * sight could give, or one no step offered now advances - the converse of the rule an abandon of an
- * achievable goal is refused by.
+ * sight could give and more than its horizon reaches, or one no step offered now advances - the
+ * converse of the rule an abandon of an achievable goal is refused by (the r39 offline audit: a goal
+ * asking past sight was "impossible" from its adoption, beside the logs and recipe that met it).
  */
 private fun unreachable(
     presented: GoalSummary,
@@ -138,8 +139,7 @@ private fun unreachable(
     return when {
         presented.shelter -> observed.cover?.let { !it.rank.sealed && !it.stepped } == true
         presented.discovery -> observed.explore.isEmpty()
-        item != null && count != null ->
-            count > (observed.inventory[item] ?: 0) + (observed.capacity[item] ?: 0) || observed.steplessFor(item)
+        item != null && count != null -> count > observed.reachOf(item) || observed.steplessFor(item)
         else -> false
     }
 }

@@ -97,7 +97,8 @@ internal data class CoverReading(
  * [supports] a placement may name. A face whose cell the body's own box reaches into has no
  * closing from here, since vanilla places no block where a body stands (r39 iota: 0.227 of a block
  * past its feet cell's north edge, offered feetNorth, and refused by the server), and neither has
- * one the server holds another living body in, so a closing refused as blocked was free when offered.
+ * one the server holds another body or building-blocking entity in, so a closing refused as blocked
+ * was free when offered.
  */
 internal fun coverAt(
     ground: BlockGround,

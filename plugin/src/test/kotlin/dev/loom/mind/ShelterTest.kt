@@ -357,6 +357,28 @@ class ShelterTest {
     }
 
     @Test
+    fun `a side dig moves no one, so cover a flight found after it is not the shelter's`() {
+        // The r39 offline audit, round 2: any accepted dig counted as the agent's own move, so a
+        // gather beside it and then a flight into an overhang were credited as cover.
+        val ledger = GoalLedger()
+        val headWest = Closing(CoverFace.HEAD_WEST, "b2", BlockFace.UP)
+        val nearby = listOf(block("b1", Bearing.HERE), block("b2", Bearing.NORTH), block("b3", Bearing.EAST))
+        val site =
+            scene("r0", 50, open(allOpen, closings = listOf(headWest)).copy(gathers = listOf("b3")), seen = nearby)
+        assertEquals(GoalEvidence.ADOPTED, ledger.answer(site, Intent.Dig("b3"), shelter)?.outcome)
+        ledger.step("r0", "dig")
+        val overhang =
+            scene("r1", 100, open(listOf(CoverFace.HEAD_WEST, CoverFace.ROOF)), listOf(dirt), seen = nearby)
+                .copy(
+                    selfState = site.selfState.copy(position = listOf(9.5, 64.0, 3.5), inventorySummary = listOf(dirt)),
+                )
+        val progress = ledger.present(agent, "r1", 100, GoalObservation.of(overhang))?.progress
+        // The dirt it gave is the gather's own credit; the cover the flight found is no step.
+        assertEquals(StepEvidence.GAINED_INPUT, progress?.stepEvidence)
+        assertEquals(false, progress?.conditionAdvanced)
+    }
+
+    @Test
     fun `a descent that gives a solid block is credited only as cover, never as a gather`() {
         val ledger = GoalLedger()
         val grass = scene("r0", 50, open(allOpen, descend = "b1"))

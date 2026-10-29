@@ -203,9 +203,27 @@ class HeldObjectivesTest {
         val recalled = seen(have = 0, capacity = 0).copy(inventory = mapOf(LOG to 1L), stepSources = emptyMap())
         assertEquals(true, recalled.steplessFor(LOG))
         assertNull(objectiveRefusalOf(unmet, abandon, recalled))
-        // A cell at the edge of sight, a craft of it, or a dig of a source of it is a step.
-        val looking = recalled.copy(explore = setOf("x1"))
+        // A cell at the edge of sight the way it was remembered, a craft of it, or a dig of a source
+        // of it is a step.
+        val north = dev.loom.contract.Bearing.NORTH
+        val looking =
+            recalled.copy(
+                explore = setOf("x1"),
+                exploreBearings = mapOf("x1" to north),
+                sourceBearings = mapOf(LOG to setOf(north)),
+            )
         assertEquals(GoalEvidence.REASON_UNSUPPORTED, objectiveRefusalOf(unmet, abandon, looking))
+        // Remembered north with only an eastward cell offered, and no horizon goal of it, no walk
+        // steps toward it, so the mind offers only its abandon, which stands (round 2's N4).
+        val eastOnly = looking.copy(exploreBearings = mapOf("x1" to dev.loom.contract.Bearing.EAST))
+        assertNull(objectiveRefusalOf(unmet, abandon, eastOnly))
+        // A goal its horizon reaches is no impossible one, though it asks past sight (round 2's N1:
+        // delta abandoned "hold 9 oak_planks" beside its recipe and a log).
+        val far = held(count = 12, have = 3)
+        val reaching = dev.loom.contract.HorizonGoal(DIRT, dev.loom.contract.HorizonGrounding.SIGHT, null, 12, true)
+        val beside = seen(have = 3, capacity = 6).copy(horizon = mapOf(DIRT to reaching))
+        assertEquals(GoalEvidence.REASON_UNSUPPORTED, objectiveRefusalOf(far, abandon, beside))
+        assertNull(objectiveRefusalOf(far, abandon, seen(have = 3, capacity = 6)))
         assertEquals(false, recalled.copy(craftable = setOf(LOG)).steplessFor(LOG))
         assertEquals(false, recalled.copy(stepSources = mapOf("b2" to setOf(LOG))).steplessFor(LOG))
     }
