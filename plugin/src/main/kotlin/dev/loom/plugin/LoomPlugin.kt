@@ -45,6 +45,7 @@ import dev.loom.witness.WitnessRegistry
 import dev.loom.witness.bukkit.livePlaceOf
 import dev.loom.witness.bukkit.playerWitnessSeam
 import dev.loom.witness.bukkit.speechWitnessSeam
+import org.bukkit.Server
 import org.bukkit.command.CommandExecutor
 import org.bukkit.plugin.java.JavaPlugin
 import org.bukkit.scheduler.BukkitTask
@@ -112,7 +113,7 @@ class LoomPlugin : JavaPlugin() {
 
         val watched = Observatory()
         observatory = watched
-        val goals = GoalLedger(recipes = BukkitRecipeInputs(server))
+        val goals = goalLedgerOf(server, logger)
         val log =
             ObservedEventLog(goals.watching(file), watched::saw) { failure ->
                 logger.warning("observer display failed: ${failure.message}")
@@ -487,4 +488,17 @@ private fun namedDaemonThreads(prefix: String): ThreadFactory {
             isDaemon = true
         }
     }
+}
+
+/**
+ * The goal ledger, judging by a recipe index read from [server] once, at enable on the main thread
+ * before any review, and logged with its own build time.
+ */
+private fun goalLedgerOf(
+    server: Server,
+    logger: Logger,
+): GoalLedger {
+    val recipes = BukkitRecipeInputs(server)
+    logger.info("Loom recipe index ready: ${recipes.recipes} server recipes read once in ${recipes.buildMillis} ms")
+    return GoalLedger(recipes = recipes)
 }

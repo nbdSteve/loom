@@ -218,7 +218,37 @@ class HorizonTest {
         assertTrue(!observed.steplessFor(PLANKS), "the log in reach is its step")
     }
 
+    @Test
+    fun `a held goal's horizon over a registry-sized recipe map is a few map reads, never a stall`() {
+        // The path rehearsal's main thread stopped at tick 1310 for 509 s, which the host's own power
+        // log showed was a clamshell sleep. This bounds what the held goal's path search costs: 1290
+        // results over 600 sole inputs, the size of the 1.21.1 registry, with a goal nothing cut-free
+        // grounds, so every input and every first step is searched.
+        val items = (0 until 600).map { "item.minecraft.input_$it" }
+        val results = (0 until 1290).map { "item.minecraft.result_$it" }
+        val made =
+            items.withIndex().associate { (index, item) ->
+                item to (0 until 3).map { results[(index * 3 + it) % results.size] }
+            }
+        val wide =
+            object : RecipeInputs {
+                override fun inputsOf(item: String): Set<String> = emptySet()
+
+                override fun madeFrom(input: String): List<String> = made[input].orEmpty()
+            }
+        val held = items.take(36).mapIndexed { index, item -> InventoryStack("i$index", item, 1) }
+        val seen = scene(underfoot, tree, held = held)
+        val goal = "item.minecraft.unreachable"
+        val started = System.nanoTime()
+        repeat(TIMED_PASSES) { horizonOf(seen, wide, held = goal) }
+        val millis = (System.nanoTime() - started) / 1_000_000
+        assertTrue(millis < TIMED_BUDGET_MILLIS, "$TIMED_PASSES horizons took $millis ms")
+    }
+
     private companion object {
+        /** Two hundred reviews' horizons, under a second: five milliseconds each at the very most. */
+        const val TIMED_PASSES = 200
+        const val TIMED_BUDGET_MILLIS = 1000L
         const val DIRT = "item.minecraft.dirt"
         const val LOG = "item.minecraft.oak_log"
         const val PLANKS = "item.minecraft.oak_planks"

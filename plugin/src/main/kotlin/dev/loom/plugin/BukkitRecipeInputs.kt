@@ -6,31 +6,37 @@ package dev.loom.plugin
 import dev.loom.mind.RecipeInputs
 import org.bukkit.Material
 import org.bukkit.Server
-import org.bukkit.inventory.ItemStack
 import org.bukkit.inventory.RecipeChoice
 import org.bukkit.inventory.ShapedRecipe
 import org.bukkit.inventory.ShapelessRecipe
 
 /**
- * The direct inputs of every server recipe for an item, as item names, read from Paper's own
- * recipe registry the first time an item is asked about and kept, at most [MAX_CACHED] items,
- * the oldest forgotten first. Main thread only, like the registry it reads.
+ * The direct inputs of every server recipe for an item, and every sole-input recipe's result by its
+ * one input, as item names, read from Paper's own recipe registry in one pass when the plugin is
+ * enabled and immutable after: no goal review scans the registry on the server's main thread, and
+ * any thread may read the answer. [recipes] and [buildMillis] state what the one pass read and
+ * how long it took, which the plugin logs.
  */
 class BukkitRecipeInputs(
-    private val server: Server,
+    server: Server,
+    clock: () -> Long = System::nanoTime,
 ) : RecipeInputs {
-    private val known =
-        object : LinkedHashMap<String, Set<String>>(MAX_CACHED, LOAD_FACTOR, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Set<String>>?): Boolean =
-                size > MAX_CACHED
-        }
+    private val inputsByResult: Map<String, Set<String>>
+    private val soleInput: Map<String, List<String>>
 
-    override fun inputsOf(item: String): Set<String> = known.getOrPut(item) { read(item) }
+    /** How many server recipes the one pass read. */
+    val recipes: Int
 
-    /** Every sole-input recipe's result, by its one input, read once from the whole registry. */
-    private val soleInput: Map<String, List<String>> by lazy {
+    /** How long the one pass took, in milliseconds. */
+    val buildMillis: Long
+
+    init {
+        val started = clock()
+        val inputs = mutableMapOf<String, MutableSet<String>>()
         val made = mutableMapOf<String, MutableMap<String, Int>>()
+        var read = 0
         server.recipeIterator().forEach { recipe ->
+            read += 1
             val slots =
                 when (recipe) {
                     is ShapedRecipe -> recipe.choiceMap.values.filterNotNull()
@@ -38,48 +44,36 @@ class BukkitRecipeInputs(
                     else -> emptyList()
                 }
             val result = recipe.result.type
+            if (result.isAir) return@forEach
+            val resultName = itemNameOf(result)
+            inputs.getOrPut(resultName) { mutableSetOf() } +=
+                slots.flatMap(::materialsOf).filter { it != result && !it.isAir }.map(::itemNameOf)
             // Sole input: every slot accepts the same materials, so one item fills the recipe.
             val accepted = slots.map { materialsOf(it).toSet() }.distinct()
-            if (slots.isEmpty() || accepted.size != 1 || result.isAir) return@forEach
+            if (slots.isEmpty() || accepted.size != 1) return@forEach
             for (material in accepted.single().filter { it != result && !it.isAir }) {
                 val outputs = made.getOrPut(itemNameOf(material)) { mutableMapOf() }
-                val name = itemNameOf(result)
-                outputs[name] = minOf(outputs[name] ?: Int.MAX_VALUE, slots.size)
+                outputs[resultName] = minOf(outputs[resultName] ?: Int.MAX_VALUE, slots.size)
             }
         }
-        made.mapValues {
-                (_, outputs) ->
-            outputs.entries.sortedWith(compareBy({ it.value }, { it.key })).map { it.key }
-        }
+        inputsByResult = inputs.mapValues { (_, names) -> names.toSet() }
+        soleInput =
+            made.mapValues {
+                    (_, outputs) ->
+                outputs.entries.sortedWith(compareBy({ it.value }, { it.key })).map { it.key }
+            }
+        recipes = read
+        buildMillis = (clock() - started) / NANOS_PER_MILLI
     }
+
+    override fun inputsOf(item: String): Set<String> = inputsByResult[item].orEmpty()
 
     override fun madeFrom(input: String): List<String> = soleInput[input].orEmpty()
 
-    private fun read(item: String): Set<String> {
-        val material = materialOf(item) ?: return emptySet()
-        return server
-            .getRecipesFor(ItemStack(material))
-            .flatMap { recipe ->
-                when (recipe) {
-                    is ShapedRecipe -> recipe.choiceMap.values.filterNotNull()
-                    is ShapelessRecipe -> recipe.choiceList
-                    else -> emptyList()
-                }
-            }.flatMap(::materialsOf)
-            .filter { it != material && !it.isAir }
-            .map(::itemNameOf)
-            .toSet()
-    }
-
     private companion object {
-        const val MAX_CACHED = 256
-        const val LOAD_FACTOR = 0.75f
+        const val NANOS_PER_MILLI = 1_000_000L
     }
 }
-
-/** The material an inventory item name (`item.minecraft.oak_planks`) names, if any. */
-internal fun materialOf(item: String): Material? =
-    item.removePrefix("item.").replaceFirst('.', ':').let(Material::matchMaterial)
 
 /** The materials one recipe slot accepts. */
 private fun materialsOf(choice: RecipeChoice): List<Material> =
