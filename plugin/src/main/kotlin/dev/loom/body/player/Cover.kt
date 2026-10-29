@@ -29,6 +29,9 @@ private const val COVER_REACH_MARGIN_BLOCKS = 0.1
 
 /** The middle of a cell along one axis, and Mineflayer's eye height above the feet. */
 private const val CELL_MIDDLE = 0.5
+
+/** How far above its feet cell's floor a body may stand and still stand on that floor. */
+private const val STANDING_FLOOR_BLOCKS = 1e-3
 private const val COVER_EYE_HEIGHT_BLOCKS = 1.62
 
 /** `INTERACTION_REACH_BLOCKS` in `body/src/sensing.js`: eyes to a block's centre. */
@@ -94,11 +97,15 @@ internal data class CoverReading(
 
 /**
  * The cover around feet cell [feet] for a body standing at [standing], whose eyes reach the
- * [supports] a placement may name. A face whose cell the body's own box reaches into has no
- * closing from here, since vanilla places no block where a body stands (r39 iota: 0.227 of a block
- * past its feet cell's north edge, offered feetNorth, and refused by the server), and neither has
- * one the server holds another body or building-blocking entity in, so a closing refused as blocked
- * was free when offered.
+ * [supports] a placement may name. Vanilla places no block where a body stands (r39 iota: 0.227 of
+ * a block past its feet cell's north edge, offered feetNorth, and refused by the server), so a face
+ * whose cell the body's own box reaches into is closed from the centre of the body's own cell,
+ * the one step the body takes first, and has no closing where that step cannot be taken on the
+ * same support or does not clear the cell (the provider-free v36 rehearsal's delta stood 0.3 off
+ * its centre and could close neither east face). A face the server holds another body or
+ * building-blocking entity in has none either, so a closing refused as blocked was free when
+ * offered, and nor has one whose cell holds what a placed block does not replace: a flower, never
+ * short grass (the same delta's south faces).
  */
 internal fun coverAt(
     ground: BlockGround,
@@ -106,14 +113,22 @@ internal fun coverAt(
     standing: List<Double>,
     supports: Map<List<Int>, CoverSupport>,
 ): CoverReading {
-    val eyes = eyesAt(standing)
     val own = setOf(feet, feet.offset(listOf(0, 1, 0)))
+    val centre = listOf(feet[0] + CELL_MIDDLE, standing[1], feet[2] + CELL_MIDDLE)
+    val centrable = standing[1] - feet[1] < STANDING_FLOOR_BLOCKS && !ground.standsIn(feet.offset(listOf(0, -1, 0)))
     val open = COVER_OFFSETS.filter { (_, offset) -> ground.standsIn(feet.offset(offset)) }
     val closings =
         open.mapNotNull { (face, offset) ->
             val cell = feet.offset(offset)
-            val blocked = !ground.holdsNothing(cell) || bodyReaches(standing, cell) || ground.bodyIn(cell, null)
-            if (blocked) return@mapNotNull null
+            // Closed from where the body stands, or from its cell's centre when only its own box is in the way.
+            val from =
+                when {
+                    !bodyReaches(standing, cell) -> standing
+                    centrable && !bodyReaches(centre, cell) -> centre
+                    else -> null
+                }
+            if (from == null || !ground.takesPlacement(cell) || ground.bodyIn(cell, null)) return@mapNotNull null
+            val eyes = eyesAt(from)
             SUPPORT_SIDES.firstNotNullOfOrNull { (toward, side) ->
                 val at = cell.offset(toward)
                 supports[at]
@@ -205,7 +220,7 @@ internal fun BlockGround.opening(cell: List<Int>): BlockGround {
 
         override fun holdsWater(position: List<Int>): Boolean = position != cell && source.holdsWater(position)
 
-        override fun holdsNothing(position: List<Int>): Boolean = position == cell || source.holdsNothing(position)
+        override fun takesPlacement(position: List<Int>): Boolean = position == cell || source.takesPlacement(position)
 
         override fun breakable(position: List<Int>): Boolean = source.breakable(position)
 

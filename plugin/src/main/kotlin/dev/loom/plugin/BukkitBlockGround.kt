@@ -10,6 +10,7 @@ import org.bukkit.Material
 import org.bukkit.Server
 import org.bukkit.block.Block
 import org.bukkit.block.data.Waterlogged
+import org.bukkit.block.data.type.Snow
 import org.bukkit.entity.EnderCrystal
 import org.bukkit.entity.Entity
 import org.bukkit.entity.FallingBlock
@@ -30,7 +31,17 @@ class BukkitBlockGround(
     override fun standsIn(position: List<Int>): Boolean =
         insideBorder(position)?.let { !collides(it.blockData, it.location) } == true
 
-    override fun holdsNothing(position: List<Int>): Boolean = insideBorder(position)?.type?.isAir == true
+    /**
+     * What vanilla's `BlockState.canBeReplaced` lets a placed block replace (Paper's
+     * `isReplaceable`): air, short grass, ferns, water, a vine. Snow is replaced by any item but
+     * snow only as a single layer, which the placement context decides and the context-free test
+     * does not.
+     */
+    override fun takesPlacement(position: List<Int>): Boolean {
+        val block = insideBorder(position) ?: return false
+        val snow = block.blockData as? Snow
+        return block.isReplaceable && (snow == null || snow.layers == 1)
+    }
 
     override fun breakable(position: List<Int>): Boolean = (blockAt(position)?.type?.hardness ?: -1f) >= 0f
 

@@ -7,6 +7,7 @@ import org.bukkit.World
 import org.bukkit.WorldBorder
 import org.bukkit.block.Block
 import org.bukkit.block.data.BlockData
+import org.bukkit.block.data.type.Snow
 import org.bukkit.entity.Entity
 import org.bukkit.entity.Item
 import org.bukkit.entity.LivingEntity
@@ -70,6 +71,61 @@ class BukkitBlockGroundTest {
         assertFalse(ground.standsIn(listOf(64, 66, 0)))
         // Open air everywhere, so nothing inside has a floor and nothing past it is open.
         assertNull(ground.standCell(listOf(27, 65, -65)))
+    }
+
+    @Test
+    fun aPlacedBlockLandsInAirOrWhatVanillaReplacesAndInSnowOnlyAsOneLayer() {
+        // The provider-free v36 rehearsal's delta: short grass in its shelter's south faces, which a
+        // placed block replaces, was offered no closing, so the shelter could not be finished.
+        fun cell(
+            replaceable: Boolean,
+            layers: Int? = null,
+        ): Block {
+            val data: BlockData =
+                if (layers == null) {
+                    proxy<BlockData> { _, _ -> null }
+                } else {
+                    proxy<Snow> { name, _ -> if (name == "getLayers") layers else null }
+                }
+            return proxy { name, _ ->
+                when (name) {
+                    "isReplaceable" -> replaceable
+                    "getBlockData" -> data
+                    else -> null
+                }
+            }
+        }
+        val cells =
+            mapOf(
+                // Air, short grass, one snow layer, two snow layers, a dandelion.
+                listOf(0, 64, 0) to cell(true),
+                listOf(1, 64, 0) to cell(true),
+                listOf(2, 64, 0) to cell(true, layers = 1),
+                listOf(3, 64, 0) to cell(true, layers = 2),
+                listOf(4, 64, 0) to cell(false),
+            )
+        val border =
+            proxy<WorldBorder> { name, _ ->
+                when (name) {
+                    "getCenter" -> Location(null, 0.0, 0.0, 0.0)
+                    "getSize" -> 128.0
+                    else -> null
+                }
+            }
+        val world =
+            proxy<World> { name, args ->
+                when (name) {
+                    "getWorldBorder" -> border
+                    "getBlockAt" -> cells[listOf(args[0] as Int, args[1] as Int, args[2] as Int)]
+                    else -> null
+                }
+            }
+        val ground = BukkitBlockGround(proxy { name, _ -> if (name == "getWorlds") listOf(world) else null })
+        assertEquals(
+            listOf(true, true, true, false, false),
+            (0..4).map { ground.takesPlacement(listOf(it, 64, 0)) },
+            "air, short grass and one snow layer take a block; two layers and a flower do not",
+        )
     }
 
     @Test

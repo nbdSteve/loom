@@ -1238,6 +1238,8 @@ function createBody (options) {
         slot: request.slot,
         face: request.face,
         timeoutMs: request.timeoutMs,
+        movement,
+        owner,
         now
       })
     } else if (request.op === 'equip') {

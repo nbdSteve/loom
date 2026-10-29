@@ -212,7 +212,7 @@ internal data class Scene(
         object : BlockGround {
             override fun standsIn(position: List<Int>): Boolean = blockAt(position).let { it == null || it in PASSABLE }
 
-            override fun holdsNothing(position: List<Int>): Boolean = blockAt(position) == null
+            override fun takesPlacement(position: List<Int>): Boolean = blockAt(position) == null
         }
 
     /**
@@ -313,8 +313,8 @@ internal class ScenarioWorld(
             override fun standsIn(position: List<Int>): Boolean =
                 changed[position]?.let { it == AIR } ?: scene.ground.standsIn(position)
 
-            override fun holdsNothing(position: List<Int>): Boolean =
-                changed[position]?.let { it == AIR } ?: scene.ground.holdsNothing(position)
+            override fun takesPlacement(position: List<Int>): Boolean =
+                changed[position]?.let { it == AIR } ?: scene.ground.takesPlacement(position)
         }
 
     private val log = BodyEventLog { record -> kept += record }

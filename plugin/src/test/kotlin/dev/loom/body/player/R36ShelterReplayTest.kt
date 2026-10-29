@@ -45,7 +45,7 @@ class R36ShelterReplayTest {
             override fun standsIn(position: List<Int>): Boolean =
                 position[0] >= borderWest && (changed[position] ?: (position !in solid))
 
-            override fun holdsNothing(position: List<Int>): Boolean = standsIn(position)
+            override fun takesPlacement(position: List<Int>): Boolean = standsIn(position)
         }
     }
 

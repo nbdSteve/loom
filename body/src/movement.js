@@ -567,9 +567,9 @@ function untilAtRest (bot, reportedStanding, done, maxTicks = REST_SETTLE_MAX_TI
   const timer = setTimeout(finish, maxTicks * 50 + 500)
 }
 
-/** Whether a collision box of the block under the feet has its top exactly at the feet. */
-function standsOnSupport (bot) {
-  const feet = bot.entity?.position
+/** Whether a collision box of the block under the feet, or under `at`, has its top exactly there. */
+function standsOnSupport (bot, at = bot.entity?.position) {
+  const feet = at
   if (feet === undefined || feet === null) return false
   let below
   try {
@@ -1696,8 +1696,14 @@ function createMovement (bot, {
           ticks += 1
           const dx = point[0] - here[0]
           const dz = point[2] - here[2]
-          // Within the tolerance, or past the point along the step: the step is done.
-          if (Math.hypot(dx, dz) <= FINAL_APPROACH_TOLERANCE_BLOCKS || dx * towards[0] + dz * towards[1] < 0) {
+          // Within the tolerance of where the glide it is carrying ends, or past the point along the
+          // step: the step is done, and the body comes to rest on the point rather than past it (the
+          // real-Paper placement probe: a centring step released at the point glided 0.27 beyond it).
+          // The velocity the library holds is already this step's after friction, so the glide still
+          // to come is all of it and every later step's share: over what friction takes each step.
+          const speed = Math.hypot(bot.entity?.velocity?.x ?? 0, bot.entity?.velocity?.z ?? 0)
+          const glide = FINAL_APPROACH_TOLERANCE_BLOCKS + speed * FINAL_APPROACH_GLIDE_PER_SPEED
+          if (Math.hypot(dx, dz) <= glide || dx * towards[0] + dz * towards[1] < 0) {
             finish('arrived')
             return
           }
@@ -1955,6 +1961,14 @@ class SafeFlightGoal extends goals.Goal {
 const FINAL_APPROACH_MAX_BLOCKS = 1
 const FINAL_APPROACH_MAX_TICKS = 20
 const FINAL_APPROACH_TOLERANCE_BLOCKS = 0.08
+
+/**
+ * How far a final approach glides once forward is released, per block per tick of the velocity the
+ * library holds: that velocity has already lost this step's friction, so the glide is it and the
+ * 0.546 each later step keeps, over what each step loses (the real-Paper placement probe: released
+ * at 0.6 of this, a 0.3 step from rest glided 0.19 past its point).
+ */
+const FINAL_APPROACH_GLIDE_PER_SPEED = 1 / (1 - 0.546)
 
 /** The one wrapper each bot has, so a second install cannot mint a second owner of one path. */
 const installations = new WeakMap()

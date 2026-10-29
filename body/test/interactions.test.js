@@ -1128,6 +1128,124 @@ test('place refuses a destination its own body or a creature stands in, before a
   assert.equal(packets, 2)
 })
 
+test('place steps to its own cell centre when only its own box reaches the destination, then places', async () => {
+  // The provider-free v36 rehearsal's delta stood 0.3 off its centre after a pickup, its box 0.1
+  // into the cell east of its feet: no closing there could be placed, and it died in the open.
+  const bot = worldBot()
+  const held = itemStack('dirt', 3)
+  bot.inventory.slots[HOTBAR_SLOT] = held
+  // The ground under the feet cell, a full block whose top is the feet.
+  bot.putBlock({ ...solidBlock(new Vec3(0, 63, 0)), shapes: [[0, 0, 0, 1, 1, 1]] })
+  const support = bot.putBlock({ ...solidBlock(new Vec3(1, 63, 0)), shapes: [[0, 0, 0, 1, 1, 1]] })
+  const steps = []
+  const movement = {
+    finalApproach ({ point }) {
+      steps.push(point)
+      bot.entity.position = new Vec3(point[0], point[1], point[2])
+      return Promise.resolve({ outcome: 'arrived' })
+    },
+    halt () { steps.push('halt') }
+  }
+  bot._genericPlace = async () => {
+    writePlacement(bot)
+    bot.putBlock(solidBlock(new Vec3(1, 64, 0), 'dirt', { type: 3 }))
+    bot.emit('blockUpdate:(1, 64, 0)')
+    setImmediate(() => acknowledge(bot))
+  }
+  const east = {
+    blockOffers: [blockOffer(support)],
+    slots: slotOffers(HOTBAR_SLOT, held),
+    block: 0,
+    slot: HOTBAR_SLOT,
+    face: 'up',
+    timeoutMs: 1000,
+    movement
+  }
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  const placed = await reportOf(placeHeldBlock(bot, east))
+  assert.equal(placed.outcome, 'placed', JSON.stringify(placed))
+  assert.deepEqual(steps, [[0.5, 64, 0.5]], 'one step, to the centre of its own cell')
+  // Off the centre over no support of its own, the step is not taken and nothing is sent.
+  bot.removeBlock(new Vec3(1, 64, 0))
+  bot.removeBlock(new Vec3(0, 63, 0))
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  steps.length = 0
+  assert.equal((await reportOf(placeHeldBlock(bot, east))).outcome, 'destinationBlocked')
+  assert.deepEqual(steps, [])
+  bot.putBlock({ ...solidBlock(new Vec3(0, 63, 0)), shapes: [[0, 0, 0, 1, 1, 1]] })
+  // A creature that walked into the cell during the step is refused before any packet.
+  let packets = 0
+  bot._genericPlace = async () => { packets += 1 }
+  movement.finalApproach = ({ point }) => {
+    bot.entity.position = new Vec3(point[0], point[1], point[2])
+    bot.entities[8] = { id: 8, type: 'hostile', position: new Vec3(1.5, 64, 0.5), width: 0.6, height: 1.95 }
+    return Promise.resolve({ outcome: 'arrived' })
+  }
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  assert.equal((await reportOf(placeHeldBlock(bot, east))).outcome, 'destinationBlocked')
+  assert.equal(packets, 0)
+  delete bot.entities[8]
+  // A halt while the step is in flight stops it cleanly: nothing reached the server.
+  let resolveStep
+  steps.length = 0
+  movement.finalApproach = () => new Promise((resolve) => { resolveStep = resolve })
+  movement.halt = () => { steps.push('halt'); resolveStep({ outcome: 'cancelled' }) }
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  const halted = placeHeldBlock(bot, east)
+  assert.equal(halted.cancel(), true)
+  assert.equal((await reportOf(halted)).outcome, 'cancelled')
+  assert.deepEqual(steps, ['halt'])
+  assert.equal(packets, 0)
+  // Without a movement to take the step, the old refusal stands.
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  assert.equal((await reportOf(placeHeldBlock(bot, { ...east, movement: undefined }))).outcome, 'destinationBlocked')
+})
+
+test('place lands in a cell vanilla replaces, short grass or one snow layer, and never in a flower', async () => {
+  const bot = worldBot()
+  const held = itemStack('dirt', 3)
+  bot.inventory.slots[HOTBAR_SLOT] = held
+  const support = bot.putBlock(solidBlock(new Vec3(1, 63, 0)))
+  const destination = new Vec3(1, 64, 0)
+  let packets = 0
+  bot._genericPlace = async () => {
+    packets += 1
+    writePlacement(bot)
+    bot.putBlock(solidBlock(destination, 'dirt', { type: 3 }))
+    setImmediate(() => acknowledge(bot))
+  }
+  const common = {
+    blockOffers: [blockOffer(support)],
+    slots: slotOffers(HOTBAR_SLOT, held),
+    block: 0,
+    slot: HOTBAR_SLOT,
+    face: 'up',
+    timeoutMs: 1000
+  }
+  bot.putBlock({ name: 'short_grass', type: 31, stateId: 2000, diggable: true, position: destination })
+  const grass = await reportOf(placeHeldBlock(bot, common))
+  assert.equal(grass.outcome, 'placed', JSON.stringify(grass))
+  assert.equal(grass.what, 'dirt')
+  // A server that keeps the grass places nothing, and the grass is no placed block.
+  bot.putBlock({ name: 'short_grass', type: 31, stateId: 2000, diggable: true, position: destination })
+  bot._genericPlace = async () => {
+    packets += 1
+    writePlacement(bot)
+    setImmediate(() => acknowledge(bot))
+  }
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'libraryFailure')
+  const snow = (layers) => ({ name: 'snow', type: 78, stateId: 5000 + layers, diggable: true, position: destination, getProperties: () => ({ layers }) })
+  bot.putBlock(snow(2))
+  const sent = packets
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'destinationBlocked')
+  bot.putBlock({ name: 'dandelion', type: 37, stateId: 3000, diggable: true, position: destination })
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'destinationBlocked')
+  assert.equal(packets, sent, 'neither a deep snow nor a flower is sent at all')
+  bot.putBlock(snow(1))
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'libraryFailure')
+  assert.equal(packets, sent + 1, 'a single snow layer is sent')
+})
+
 test('equip revalidates one offered stack and reports Mineflayer actual destination slot', async () => {
   const bot = worldBot()
   const offered = itemStack('iron_helmet', 1)

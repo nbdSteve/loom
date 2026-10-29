@@ -30,10 +30,12 @@ fun interface BlockGround {
     fun holdsWater(position: List<Int>): Boolean = false
 
     /**
-     * Whether the cell at [position] holds nothing at all, so a held block placed into it lands
-     * there: air, never a plant a body walks through. `false` where the ground cannot say.
+     * Whether a held block placed into the cell at [position] lands there: it holds air or a block
+     * vanilla replaces with the placed one - short grass, a fern, a single snow layer, water - and
+     * never a flower or a torch a body walks through but no placement replaces. `false` where the
+     * ground cannot say.
      */
-    fun holdsNothing(position: List<Int>): Boolean = false
+    fun takesPlacement(position: List<Int>): Boolean = false
 
     /** Whether a body can break the block at [position] at all: not bedrock or a barrier. */
     fun breakable(position: List<Int>): Boolean = true
@@ -79,8 +81,8 @@ internal fun BlockGround.cached(): BlockGround {
 
         override fun holdsWater(position: List<Int>): Boolean = water.getOrPut(position) { source.holdsWater(position) }
 
-        override fun holdsNothing(position: List<Int>): Boolean =
-            empty.getOrPut(position) { source.holdsNothing(position) }
+        override fun takesPlacement(position: List<Int>): Boolean =
+            empty.getOrPut(position) { source.takesPlacement(position) }
 
         override fun breakable(position: List<Int>): Boolean = source.breakable(position)
 
@@ -107,7 +109,7 @@ internal fun BlockGround.besides(self: UUID): BlockGround {
 
         override fun holdsWater(position: List<Int>): Boolean = source.holdsWater(position)
 
-        override fun holdsNothing(position: List<Int>): Boolean = source.holdsNothing(position)
+        override fun takesPlacement(position: List<Int>): Boolean = source.takesPlacement(position)
 
         override fun breakable(position: List<Int>): Boolean = source.breakable(position)
 
