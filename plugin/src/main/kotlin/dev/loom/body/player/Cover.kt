@@ -247,7 +247,7 @@ internal fun coverOf(
     val reading = coverAt(ground, feet, position, supports)
     return Cover(
         sealed = reading.sealed,
-        walkOut = escapesFrom(ground, feet),
+        walkOut = escapesFrom(ground, restingCellOf(ground, feet)),
         open = reading.open,
         closings = reading.closings,
         descend = descendOf(ground, position, supports, reading),

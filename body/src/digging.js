@@ -189,6 +189,8 @@ function digOfferedBlock (bot, {
   offered,
   block: index,
   timeoutMs,
+  movement,
+  owner,
   now = () => performance.now()
 }) {
   const startedAt = now()
@@ -226,10 +228,17 @@ function digOfferedBlock (bot, {
   let cancelled = false
   let finish
   let settling
+  // A descent by a body whose box reaches past its own column is held up by the column beside it,
+  // so it first steps to its own cell's centre, where the dug block is all that holds it: the
+  // provider-free v36 rehearsal's delta dug the block under its feet 0.3 off its centre, stayed
+  // on the edge above its own hole for the rest of the run, and died there.
+  // Without a movement to take the step (a suite's bare bot), the dig is as it always was.
+  const centre = typeof movement?.finalApproach === 'function' ? descentCentreOf(bot, resolved.block) : undefined
   // A body standing on support holds the simulation for the whole dig, so the client and the
   // server both have its true ground state, and so a dig of the block it stands on ends with
   // the body landed rather than hanging; see [holdSimulation] and [releaseAtRest].
-  const release = standsOnSupport(bot) ? holdSimulation(bot) : undefined
+  let release
+  let approaching
   // Undefined only for a bot with no client, which has no server to predict ahead of.
   const server = serverUpdates(bot, resolved.offered.position)
   let predicted = false
@@ -248,8 +257,10 @@ function digOfferedBlock (bot, {
     const timer = setTimeout(() => {
       timedOut = true
       stopDigging()
-      // A predicted finish the server has not answered by the deadline is unconfirmed.
-      complete(gone(predicted ? 'libraryFailure' : 'timedOut'))
+      // A predicted finish the server has not answered by the deadline is unconfirmed, and one the
+      // step to the centre held past it never began.
+      if (approaching !== undefined) complete('timedOut', false)
+      else complete(gone(predicted ? 'libraryFailure' : 'timedOut'))
     }, timeoutMs)
 
     function stopDigging () {
@@ -272,8 +283,15 @@ function digOfferedBlock (bot, {
         attempted,
         ...(attempted && tool !== undefined ? { tool } : {})
       }
-      if (release === undefined) resolve(report)
-      else releaseAtRest(bot, release).then(() => resolve(report))
+      if (approaching !== undefined) {
+        // A step to the centre still in flight is stopped, and the answer waits for it to rest.
+        movement.halt()
+        approaching.then(() => resolve(report), () => resolve(report))
+      } else if (release === undefined) {
+        resolve(report)
+      } else {
+        releaseAtRest(bot, release).then(() => resolve(report))
+      }
     }
 
     finish = () => {
@@ -281,7 +299,7 @@ function digOfferedBlock (bot, {
       if (settled || server?.finished() === true) return false
       cancelled = true
       stopDigging()
-      complete(gone('cancelled'))
+      complete(approaching !== undefined ? 'cancelled' : gone('cancelled'), approaching === undefined)
       return true
     }
 
@@ -337,29 +355,83 @@ function digOfferedBlock (bot, {
       })
     }
 
-    if (release === undefined) {
-      start()
+    function begin () {
+      release = standsOnSupport(bot) ? holdSimulation(bot) : undefined
+      if (release === undefined) {
+        start()
+        return
+      }
+      // The dig time is read when the dig starts and the ground state is reported after every
+      // `physicsTick` listener returns, so the dig starts on the turn after the settling step.
+      let ticks = 0
+      settling = () => {
+        ticks += 1
+        if (bot.entity?.onGround !== true && ticks < GROUND_SETTLE_TICKS) return
+        bot.off('physicsTick', settling)
+        settling = undefined
+        setImmediate(start)
+      }
+      bot.on('physicsTick', settling)
+    }
+
+    if (centre === undefined) {
+      begin()
       return
     }
-    // The dig time is read when the dig starts and the ground state is reported after every
-    // `physicsTick` listener returns, so the dig starts on the turn after the settling step.
-    let ticks = 0
-    settling = () => {
-      ticks += 1
-      if (bot.entity?.onGround !== true && ticks < GROUND_SETTLE_TICKS) return
-      bot.off('physicsTick', settling)
-      settling = undefined
-      setImmediate(start)
-    }
-    bot.on('physicsTick', settling)
+    approaching = Promise.resolve(movement.finalApproach({
+      point: [centre.x, centre.y, centre.z],
+      timeoutMs: Math.max(0, timeoutMs - elapsedSince(startedAt, now)),
+      owner
+    }))
+    approaching.then(
+      (stepped) => {
+        if (settled) return
+        approaching = undefined
+        // From the centre the block is read again: in reach, in sight, and still the one offered.
+        if (stepped === undefined || descentCentreOf(bot, resolved.block) !== undefined) {
+          return complete('notDiggable', false)
+        }
+        const stillInReach = blockWithinReach(bot, resolved.block)
+        if (stillInReach !== true) return complete(stillInReach === false ? 'outOfReach' : 'libraryFailure', false)
+        const stillVisible = visibleBlock(bot, resolved.block)
+        if (stillVisible !== true) return complete(stillVisible === false ? 'notVisible' : 'libraryFailure', false)
+        begin()
+      },
+      () => {
+        if (settled) return
+        approaching = undefined
+        complete('libraryFailure', false)
+      }
+    )
   })
 
   const cancel = () => finish?.() ?? false
   return { promise, cancel, abort: cancel }
 }
 
+/** How far off its cell's centre a body's 0.6-wide box stays inside its own column. */
+const OWN_COLUMN_OFFSET_BLOCKS = 0.2
+
+/**
+ * The centre of the body's own cell when [block] is the one its feet cell stands on and its box
+ * reaches past its own column, so a dig of it would leave the body on the edge of the column beside
+ * it; undefined otherwise. A body already that near its centre drops into the cell it dug.
+ */
+function descentCentreOf (bot, block) {
+  const position = bot.entity?.position
+  if (position === undefined || position === null || block?.position === undefined) return undefined
+  const cell = { x: Math.floor(position.x), y: Math.floor(position.y + 1e-3), z: Math.floor(position.z) }
+  const under = block.position
+  if (under.x !== cell.x || under.y !== cell.y - 1 || under.z !== cell.z) return undefined
+  const centre = new Vec3(cell.x + 0.5, position.y, cell.z + 0.5)
+  if (Math.abs(position.x - centre.x) <= OWN_COLUMN_OFFSET_BLOCKS &&
+    Math.abs(position.z - centre.z) <= OWN_COLUMN_OFFSET_BLOCKS) return undefined
+  return centre
+}
+
 module.exports = {
   GROUND_SETTLE_TICKS,
+  descentCentreOf,
   digOfferedBlock,
   installDigging
 }

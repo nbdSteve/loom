@@ -140,3 +140,31 @@ class ReplaceableClosingTest {
         assertFalse(CoverFace.FEET_EAST in closable, "the flower")
     }
 }
+
+/**
+ * The provider-free v36 rehearsal's delta (`body:00000383`): it dug the block under its feet 0.3 off
+ * its centre, stayed held up on the edge of the column east of it, and its cover read no walk out of
+ * a feet cell with no floor, so no flight was offered from the zombie that killed it.
+ */
+class HangingCoverTest {
+    private val hole = listOf(3, 67, -30)
+
+    /** Open ground at y 67, but for the dug cell under the agent's feet cell. */
+    private val ground =
+        object : BlockGround {
+            override fun standsIn(position: List<Int>): Boolean = position[1] >= 68 || position == hole
+
+            override fun takesPlacement(position: List<Int>): Boolean = standsIn(position)
+        }
+
+    @Test
+    fun `a body held over its own dug floor walks out from where it comes to rest`() {
+        val hanging = listOf(3.8, 68.0, -29.5)
+        assertEquals(hole, restingCellOf(ground, listOf(3, 68, -30)))
+        val cover = requireNotNull(coverOf(ground, hanging, emptyMap(), listOf("item.minecraft.dirt")))
+        assertTrue(cover.walkOut, "from the hole a step up leads out")
+        // Its feet cell's own floor intact, it rests where it stands.
+        val floored = BlockGround { position -> position[1] >= 68 }
+        assertEquals(listOf(3, 68, -30), restingCellOf(floored, listOf(3, 68, -30)))
+    }
+}

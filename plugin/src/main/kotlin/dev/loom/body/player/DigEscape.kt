@@ -56,6 +56,25 @@ internal fun escapesFrom(
     return out
 }
 
+/** How far a body held on the edge of its feet cell may drop into it and still be read as at rest. */
+private const val MAX_REST_DROP_BLOCKS = 3
+
+/**
+ * The cell a body whose feet are in [feet] comes to rest in once it moves: [feet] itself on a floor,
+ * else the first cell below with one, within [MAX_REST_DROP_BLOCKS]. A body held up on the edge of
+ * the column beside its own, over its own dug floor, is not trapped where its feet are: the
+ * provider-free v36 rehearsal's delta hung over its own hole, read as no walk out, and was offered
+ * no flight from the zombie that killed it.
+ */
+internal fun restingCellOf(
+    ground: BlockGround,
+    feet: List<Int>,
+): List<Int> =
+    generateSequence(feet) { it.offset(listOf(0, -1, 0)) }
+        .take(MAX_REST_DROP_BLOCKS + 1)
+        .firstOrNull { !ground.standsIn(it.offset(listOf(0, -1, 0))) }
+        ?: feet
+
 /** The ground as a body walking out of [landing] meets it, with [landing] itself dug open. */
 private class EscapeWalk(
     private val ground: BlockGround,

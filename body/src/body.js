@@ -1218,6 +1218,8 @@ function createBody (options) {
         offered: remembered?.blockOffers,
         block: request.block,
         timeoutMs: request.timeoutMs,
+        movement,
+        owner,
         now
       })
     } else if (request.op === 'collect') {

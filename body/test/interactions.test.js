@@ -27,7 +27,7 @@ const {
   recipeReading,
   serverHandledEarlierPackets
 } = require('../src/crafting')
-const { digOfferedBlock } = require('../src/digging')
+const { descentCentreOf, digOfferedBlock } = require('../src/digging')
 const { equipOfferedStack } = require('../src/equipping')
 const { stackDetail } = require('../src/interaction')
 const { placeHeldBlock } = require('../src/placing')
@@ -631,6 +631,53 @@ test('a block the world turns into another before this body finishes is changed,
     serverBroke(bot, block.position)
   }
   assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome, 'dug')
+})
+
+test('a descent by a body off its centre steps to the centre first, so it drops into the cell it dug', async () => {
+  // The provider-free v36 rehearsal's delta dug the block under its feet 0.3 off its centre, was
+  // held up by the column beside it, and hung above its own hole for the rest of the run.
+  const bot = worldBot()
+  const under = bot.putBlock({ ...solidBlock(new Vec3(0, 63, 0), 'dirt', { type: 3 }), shapes: [[0, 0, 0, 1, 1, 1]] })
+  const offered = [blockOffer(under)]
+  bot.digTime = () => 25
+  const order = []
+  bot.dig = async (block) => {
+    order.push(['dig', bot.entity.position.x])
+    serverBroke(bot, block.position)
+  }
+  bot.stopDigging = () => {}
+  const movement = {
+    finalApproach ({ point }) {
+      order.push(['step', point])
+      bot.entity.position = new Vec3(point[0], point[1], point[2])
+      return Promise.resolve({ outcome: 'arrived' })
+    },
+    halt () { order.push(['halt']) }
+  }
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  const report = await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000, movement }))
+  assert.equal(report.outcome, 'dug', JSON.stringify(report))
+  assert.deepEqual(order, [['step', [0.5, 64, 0.5]], ['dig', 0.5]], 'the step to its own centre, then the dig')
+  // Near its centre, or digging any block but the one under its feet, it digs where it stands.
+  assert.equal(descentCentreOf({ entity: { position: new Vec3(0.65, 64, 0.4) } }, under), undefined)
+  assert.equal(descentCentreOf({ entity: { position: new Vec3(0.8, 64, 0.5) } }, solidBlock(new Vec3(1, 64, 0))), undefined)
+  // A halt while the step is in flight ends the request with nothing dug.
+  const again = bot.putBlock({ ...solidBlock(new Vec3(0, 63, 0), 'dirt', { type: 3 }), shapes: [[0, 0, 0, 1, 1, 1]] })
+  let resolveStep
+  order.length = 0
+  movement.finalApproach = () => new Promise((resolve) => { resolveStep = resolve })
+  movement.halt = () => { order.push(['halt']); resolveStep({ outcome: 'cancelled' }) }
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  const halted = digOfferedBlock(bot, { offered: [blockOffer(again)], block: 0, timeoutMs: 1000, movement })
+  assert.equal(halted.cancel(), true)
+  const stopped = await reportOf(halted)
+  assert.deepEqual([stopped.outcome, stopped.attempted], ['cancelled', false])
+  assert.deepEqual(order, [['halt']])
+  // A bare bot with no movement digs where it stands, as it always did.
+  order.length = 0
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered: [blockOffer(again)], block: 0, timeoutMs: 1000 }))).outcome, 'dug')
+  assert.deepEqual(order, [['dig', 0.8]])
 })
 
 test('dig timeout, halt, and teardown all stop the same bounded task', async () => {

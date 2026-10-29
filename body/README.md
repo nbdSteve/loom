@@ -618,6 +618,7 @@ it.
 
 **The seven native world interactions are one-shot applications of retained authority.**
 `dig` names one offered block and uses only the item already in the main hand.
+A dig of the block under the body's own feet cell by a body more than 0.2 off its cell's centre, whose box therefore rests on the column beside its own as well, first takes the same one bounded straight step to the centre of its own cell (`movement.finalApproach`), so the body drops into the cell it dug rather than hanging on the neighbour's edge above it: the provider-free v36 rehearsal's delta did, for the rest of the run, and died there. Nothing is chosen, a halt during the step ends the dig unattempted, and from the centre the block, its reach and its sight are read again.
 `collect` names one exact dropped-item entity and either waits within passive pickup reach - inside vanilla's grown pickup box from where the body stands (`withinPickup`), never a straight-line distance - or,
 when `approach` is true, gives the existing bounded movement wrapper one search for any of the
 cells a body could stand in whose pickup box covers that entity's sensed position
