@@ -102,7 +102,7 @@ const { equipOfferedStack } = require('./equipping')
 const { installMovement } = require('./movement')
 const { installPlacing, placeHeldBlock } = require('./placing')
 const { SERVER_ORDER_MS, serverHandledEarlierPackets } = require('./server-order')
-const { senseMemory } = require('./senses')
+const { MAX_REMEMBERED_SENSES, senseMemory } = require('./senses')
 const { createSpeech } = require('./speaking')
 const { senseReading, vitalsOf } = require('./sensing')
 const { installSleeping, sleepInOfferedBed } = require('./sleeping')
@@ -523,6 +523,8 @@ function createBody (options) {
   // process allows may each sense under one id, and a handle that meant different things on
   // two sockets would be a handle that named nothing. `senses.js` carries why.
   const offered = senseMemory()
+  // Senses waiting for their server round trip or a craft's boundary, across every connection.
+  let sensesWaiting = 0
   // The request-scoped wrapper around the pathfinder, built with the client and holding at
   // most one accepted movement. Undefined until then, so a movement request that arrives
   // before the body is `ready` is refused by the state check rather than by its absence.
@@ -792,8 +794,13 @@ function createBody (options) {
    * watching its connection drop and having to guess.
    */
   function closeSocket (socket) {
-    if (socket.destroyed || socket.writableEnded) return
+    if (finishedWith(socket)) return
     socket.end(() => socket.destroy())
+  }
+
+  /** Whether this process has ended [socket], or it is gone. */
+  function finishedWith (socket) {
+    return socket.destroyed || socket.writableEnded
   }
 
   /** Takes one control connection, with every per-connection bound it has. */
@@ -857,12 +864,15 @@ function createBody (options) {
    * before the socket the answers go on is closed.
    */
   function receive (socket, session, chunk) {
+    // A connection this process has finished with reads nothing more, whatever arrives before
+    // the close completes: a deferred answer can end it outside this loop.
+    if (finishedWith(socket)) return
     session.pending += chunk
     let terminator = session.pending.indexOf(FRAME_TERMINATOR)
     while (terminator !== -1) {
       const line = session.pending.slice(0, terminator)
       session.pending = session.pending.slice(terminator + 1)
-      if (!handle(socket, session, line)) break
+      if (!handle(socket, session, line) || finishedWith(socket)) break
       terminator = session.pending.indexOf(FRAME_TERMINATOR)
     }
     if (Buffer.byteLength(session.pending) > MAX_FRAME_BYTES) {
@@ -1020,8 +1030,19 @@ function createBody (options) {
    * primary run. The wait reads the client's state no earlier than the server's at the request.
    */
   function sense (socket, session, request, requestId) {
+    // At most as many senses wait as the memory keeps answers of, across every connection, so a
+    // flood is refused here and spends its own budget at once rather than queueing round trips
+    // to the server (the r39 round 5 offline audit: every deferred sense answered `true`, and a
+    // flood was read to the end of its buffer before any refusal could stop it).
+    if (sensesWaiting >= MAX_REMEMBERED_SENSES) {
+      return refuse(socket, session, { code: 'notReady', requestId })
+    }
+    sensesWaiting += 1
     serverHandledEarlierPackets(bot, SERVER_ORDER_MS).then(() => {
-      whenInventorySettled(bot, () => senseNow(socket, session, request, requestId))
+      whenInventorySettled(bot, () => {
+        sensesWaiting -= 1
+        senseNow(socket, session, request, requestId)
+      })
     })
     // A deferred answer leaves the connection open until it is written.
     return true

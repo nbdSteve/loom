@@ -68,6 +68,9 @@ const val EYE_HEIGHT_BLOCKS = 1.62
 /** Steps carried out by moving the body, credited only on arrival somewhere new to the goal. */
 private val MOVEMENT_STEPS = setOf(IntentAction.MOVE_TO, IntentAction.FLEE)
 
+/** Steps that bring an item in from the world rather than make it from what is held. */
+private val GATHERING_STEPS = setOf(IntentAction.DIG, IntentAction.COLLECT)
+
 /** Steps carried out by acting on the world, credited when the body carried them out. */
 private val WORLD_STEPS =
     setOf(
@@ -343,8 +346,8 @@ internal data class StepRecord(
     val best: CoverRank? = null,
     /** Whether another decision's accepted movement carried the agent since the step was chosen. */
     val overtaken: Boolean = false,
-    /** The most of its item the goal had held before this step, which an advance must pass. */
-    val mostHeld: Long = 0,
+    /** The most of its item, and of each input, the goal had held before this step, which a gain must pass. */
+    val mostHeld: Map<String, Long> = emptyMap(),
 )
 
 /**
@@ -379,14 +382,19 @@ private fun itemProgressOf(
     val held = item?.let { observed.inventory[it] } ?: 0
     val heldBefore = item?.let { before.inventory[it] } ?: 0
     // Holding as much again after spending some is no advance: only more than the goal has held is.
-    val conditionAdvanced = held > maxOf(heldBefore, step.mostHeld)
+    val conditionAdvanced = held > maxOf(heldBefore, step.mostHeld[item] ?: 0)
     val evidence = stepEvidenceOf(goal, before, observed, step)
     val stepAdvanced = evidence != StepEvidence.NONE
     // A drop is the step's evidence, but not progress until it is held.
     val progressed = conditionAdvanced || (stepAdvanced && evidence != StepEvidence.DROPPED)
     // A drop of the goal's item still lying in reach is neither progress nor a stall: the next
     // step must collect it (r18: all three stalls fired on a dig that had just dropped two sticks).
-    val awaitingCollect = evidence == StepEvidence.DROPPED && item != null && observed.ownDrops.containsValue(item)
+    // Nor is a dig or collect that gathers back what something else spent, short of the most held:
+    // the goal is credited once it passes it (the r39 round 5 offline audit: three logs a craft of
+    // something else spent, gathered back one a step, stalled the goal before it could pass).
+    val awaitingCollect =
+        regathered(goal, held, heldBefore) ||
+            (evidence == StepEvidence.DROPPED && item != null && observed.ownDrops.containsValue(item))
     return GoalProgress(
         conditionMet = item != null && held >= (goal.successCount ?: Long.MAX_VALUE),
         conditionHeld = held,
@@ -397,6 +405,13 @@ private fun itemProgressOf(
         stepsWithoutProgress = stallCountOf(progressed, awaitingCollect, priorCount),
     )
 }
+
+/** Whether [goal]'s settled dig or collect brought more of its item in, [held] against [heldBefore]. */
+private fun regathered(
+    goal: GoalSummary,
+    held: Long,
+    heldBefore: Long,
+): Boolean = goal.stepAction in GATHERING_STEPS && goal.lastStep?.outcome == EventTag.ACCEPTED && held > heldBefore
 
 /** The run of steps that advanced nothing after one that [progressed], or awaits its own collect. */
 private fun stallCountOf(

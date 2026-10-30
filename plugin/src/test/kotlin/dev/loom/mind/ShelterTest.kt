@@ -402,17 +402,57 @@ class ShelterTest {
         assertEquals(StepEvidence.NONE, overtaken?.stepEvidence)
         assertEquals(false, overtaken?.conditionAdvanced)
         assertEquals(1L, overtaken?.stepsWithoutProgress)
-        // A flight the body never began, or an idle, of another request carries nothing anywhere.
+    }
+
+    @Test
+    fun `a decision taken that then moved nothing, or the goal's own halted dig, overtakes nothing`() {
+        // The r39 round 5 offline audit: a moving decision was counted as it was taken and never
+        // counted off when the body did not begin it, and the goal's own earlier dig, halted by its
+        // newer step as digCancelled, overtook that newer step.
+        fun Perception.cell(z: Double) = copy(selfState = selfState.copy(position = listOf(3.5, 64.0, z)))
+        val seen = listOf(block("b1", Bearing.HERE), block("b9", Bearing.SOUTH, cover = 7))
+
+        fun GoalLedger.event(
+            requestId: String,
+            intent: Intent,
+        ) = resolve(agent, decisionFor(perception(requestId = requestId, trigger = Trigger.Spoken("p", "hi")), intent))
+        val endings =
+            listOf(
+                Triple(Intent.Flee("c1"), EventTag.FLEE, EventTag.RETREAT_STALE),
+                Triple(Intent.MoveTo("b9"), EventTag.MOVE_TO, EventTag.CONTROL_NOT_READY),
+                Triple(Intent.Dig("b1"), EventTag.DIG, EventTag.DIG_CANCELLED),
+                Triple(Intent.Sleep("b1"), EventTag.SLEEP, EventTag.SLEEP_NOT_NIGHT),
+                Triple(Intent.Idle, EventTag.IDLE, EventTag.ACCEPTED),
+            )
+        // The walk's cover after an event taken and ended as given, or after a dig another player finished.
+        val after = { intent: Intent, action: String, outcome: String ->
+            val ledger = GoalLedger()
+            ledger.answer(scene("r0", 50, open(allOpen), seen = seen), Intent.MoveTo("b9"), shelter)
+            ledger.event("e1", intent)
+            ledger.step("r0", "moveTo")
+            ledger.stepped(agent, "e1", action, outcome)
+            val stood = scene("r1", 100, open(allOpen.take(2))).cell(9.5)
+            ledger.present(agent, "r1", 100, GoalObservation.of(stood))?.progress?.stepEvidence
+        }
+        for ((intent, action, outcome) in endings) {
+            assertEquals(StepEvidence.COVERED, after(intent, action, outcome), outcome)
+        }
+        // A dig whose block another player broke may have dropped the body, so it still overtakes.
+        assertEquals(StepEvidence.NONE, after(Intent.Dig("b1"), EventTag.DIG, EventTag.DIG_BLOCK_GONE))
+        // The goal's own descent, halted when its next review chose a walk, moved nobody.
         val ledger = GoalLedger()
-        ledger.answer(scene("r0", 50, open(allOpen), seen = seen), Intent.MoveTo("b9"), shelter)
-        ledger.step("r0", "moveTo")
-        ledger.stepped(agent, "e1", EventTag.FLEE, EventTag.RETREAT_STALE)
-        ledger.stepped(agent, "e3", EventTag.FLEE, EventTag.CONTROL_NOT_READY)
-        ledger.stepped(agent, "e2", EventTag.IDLE, EventTag.ACCEPTED)
-        val stood = scene("r1", 100, open(allOpen.take(2))).cell(9.5)
+        ledger.answer(scene("r0", 50, open(allOpen, descend = "b1"), seen = seen), Intent.Dig("b1"), shelter)
+        assertEquals(
+            GoalEvidence.CONTINUED,
+            ledger.answer(scene("r1", 80, open(allOpen, descend = "b1"), seen = seen), Intent.MoveTo("b9"), continued)
+                ?.outcome,
+        )
+        ledger.stepped(agent, "r0", EventTag.DIG, EventTag.DIG_CANCELLED)
+        ledger.step("r1", "moveTo")
+        val stood = scene("r2", 100, open(allOpen.take(2))).cell(9.5)
         assertEquals(
             StepEvidence.COVERED,
-            ledger.present(agent, "r1", 100, GoalObservation.of(stood))?.progress?.stepEvidence,
+            ledger.present(agent, "r2", 100, GoalObservation.of(stood))?.progress?.stepEvidence,
         )
     }
 

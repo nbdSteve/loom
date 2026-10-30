@@ -32,6 +32,7 @@ const {
   INTERNAL_REPORTING_PLUGINS,
   createBody
 } = require('../src/body')
+const { MAX_REMEMBERED_SENSES } = require('../src/senses')
 const { followWorldState } = require('../src/gamestate')
 const { MAX_FRAME_BYTES, PROTOCOL_VERSION } = require('../src/protocol')
 const {
@@ -538,6 +539,40 @@ test('a controller that only ever asks early is cut off at its own bound and no 
     // One channel closed is not the process ending, so a fresh controller is served.
     const fresh = await handshaken(port)
     assert.equal((await fresh.answer(request('status', 's1'))).op, 'status')
+    fresh.stop()
+  } finally {
+    peer.stop()
+    await body.stop()
+  }
+})
+
+test('a flood of senses sent at once is cut off at the same bound, and nothing behind it is read', async () => {
+  // The r39 round 5 offline audit: a sense waits for a server round trip before it is answered,
+  // and every waiting sense let the read loop go on, so a flood was read to the end of its buffer
+  // and a status behind it answered before any refusal could close the channel.
+  const { body, port } = await startedBody()
+  const peer = await handshaken(port)
+  const asking = (at) => request('sense', `s${at}`, { radius: 8, limit: 4 })
+  try {
+    const flood = Array.from({ length: MAX_REMEMBERED_SENSES + MAX_NOT_READY_PER_CONNECTION + 1 }, (_, at) => asking(at + 1))
+    peer.pipeline([...flood, request('status', 'behind')])
+    const answers = []
+    for (let at = 1; at <= MAX_NOT_READY_PER_CONNECTION; at += 1) {
+      answers.push(JSON.parse(await promptly(peer.next(), `answer ${at}`)))
+    }
+    await promptly(peer.closed, 'the close the notReady budget earns')
+    // Only as many senses wait as the memory keeps; the rest are refused at once, the last of
+    // them closing the channel, and neither the sense nor the status behind it is read.
+    const beyond = await Promise.race([
+      peer.next().then(() => 'answered'),
+      new Promise((resolve) => setTimeout(() => resolve('nothing'), 100))
+    ])
+    assert.equal(beyond, 'nothing')
+    assert.ok(answers.every((answer) => answer.error === 'notReady'), JSON.stringify(answers.at(-1)))
+    assert.equal(answers.at(-1).requestId, `s${MAX_REMEMBERED_SENSES + MAX_NOT_READY_PER_CONNECTION}`)
+    const fresh = await handshaken(port)
+    const report = await fresh.answer(request('status', 's1'))
+    assert.equal(report.requestsHandled, 1 + MAX_REMEMBERED_SENSES + MAX_NOT_READY_PER_CONNECTION + 2)
     fresh.stop()
   } finally {
     peer.stop()

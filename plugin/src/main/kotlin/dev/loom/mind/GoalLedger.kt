@@ -43,7 +43,6 @@ import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
-import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
 import dev.loom.body.tagOf
 import dev.loom.contract.Decision
@@ -54,6 +53,7 @@ import dev.loom.contract.GoalStep
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.HorizonGoal
 import dev.loom.contract.Intent
+import dev.loom.contract.IntentAction
 import dev.loom.contract.MAX_GOAL_ID_CHARS
 import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
 import dev.loom.contract.action
@@ -64,23 +64,6 @@ private fun heldOf(
     goal: GoalSummary,
     observed: GoalObservation?,
 ): Long = goal.successItem?.let { observed?.inventory?.get(it) } ?: 0
-
-/**
- * The actions that may carry the body elsewhere: a walk, a flight, an approach to collect or strike,
- * a dig of the block under the feet, and a bed entered.
- */
-private val MOVING_ACTIONS =
-    setOf(EventTag.MOVE_TO, EventTag.FLEE, EventTag.COLLECT, EventTag.ATTACK, EventTag.DIG, EventTag.SLEEP)
-
-/** The endings of a decision the body never began: refused before it, stale, or behind other work. */
-private val NEVER_MOVED =
-    GoalEvidence.REFUSING + setOf(EventTag.SURVIVAL_REQUIRED, EventTag.RETREAT_STALE, EventTag.CONTROL_NOT_READY)
-
-/** Whether a decision of [action] that ended [outcome] may have carried the body elsewhere. */
-private fun moves(
-    action: String,
-    outcome: String,
-): Boolean = action in MOVING_ACTIONS && outcome !in NEVER_MOVED
 
 /** A held goal survives one unaddressed review and expires at the one after. */
 const val GOAL_LIFETIME_TICKS: Long = 2L * DEFAULT_GOAL_REVIEW_CADENCE_TICKS
@@ -127,11 +110,32 @@ class GoalLedger(
         val bestByCell: Map<List<Int>, CoverRank> = emptyMap(),
         /** For a resource subgoal, the shelter goal it feeds, held again once the subgoal ends. */
         val parent: Held? = null,
-        /** Whether another decision's movement may have carried the agent since this step was chosen. */
-        val overtaken: Boolean = false,
-        /** The most of its item this goal has been seen holding, which an advance must pass. */
-        val mostHeld: Long = 0,
+        /** Other decisions that may move the agent, taken and not yet settled. */
+        val overtakenBy: Set<String> = emptySet(),
+        /** Whether another decision has settled having moved the agent since this step was chosen. */
+        val movedSince: Boolean = false,
+        /** The most of its item, and of each input of a recipe for it, this goal has held. */
+        val mostHeld: Map<String, Long> = emptyMap(),
     ) {
+        /** Whether another decision's movement may have carried the agent since this step was chosen. */
+        val overtaken: Boolean get() = movedSince || overtakenBy.isNotEmpty()
+
+        /** This step once decision [requestId], which may move the agent, is taken; past the bound, as moved. */
+        fun takenOver(requestId: String): Held =
+            if (overtakenBy.size < MAX_OVERTAKING) {
+                copy(
+                    overtakenBy = overtakenBy + requestId,
+                )
+            } else {
+                copy(movedSince = true)
+            }
+
+        /** This step once decision [requestId] settled, having [moved] the agent or not. */
+        fun settledOver(
+            requestId: String,
+            moved: Boolean,
+        ): Held = copy(overtakenBy = overtakenBy - requestId, movedSince = movedSince || moved)
+
         /**
          * This goal as [now] shows it, and the goal to hold after: its settled step measured, once.
          * A step an earlier review measured is not measured again, and one still in flight is
@@ -168,7 +172,8 @@ class GoalLedger(
             val settled = summary.lastStep != null && progress != null
             val carried = summary.shelter && displaced(summary, observed, now, overtaken)
             val bests = if (summary.shelter) bestByCell.passedAt(now, carried) else bestByCell
-            val most = maxOf(mostHeld, heldOf(summary, now))
+            val madeGoal = summary.stepAction == IntentAction.CRAFT && heldOf(summary, now) > heldOf(summary, observed)
+            val most = mostHeldAfter(mostHeld.keys, mostHeld, observed, now, madeGoal)
             val after = copy(summary = shown, measured = true, bestByCell = bests, mostHeld = most)
             return shown to if (settled) after else this
         }
@@ -199,7 +204,8 @@ class GoalLedger(
                 measured = false,
                 reached = null,
                 settledTick = null,
-                overtaken = false,
+                overtakenBy = emptySet(),
+                movedSince = false,
             )
     }
 
@@ -283,15 +289,15 @@ class GoalLedger(
         private val met = ArrayDeque<Pair<String, String>>()
 
         /**
-         * Marks the held step overtaken when [decision] is another decision that may move the body:
-         * from now, before the body has it, since a review can be sensed while it still runs (the
-         * round 4 offline audit: an event's walk). A goal review's own step was measured when it
-         * was presented, so only an unmeasured step is touched.
+         * Counts [decision] among those that may have moved the agent since the held step was chosen
+         * when it is another decision that may move the body: from now, before the body has it, since
+         * a review can be sensed while it still runs (the round 4 offline audit: an event's walk).
+         * It is counted off again if it settles having moved nothing ([stepped]).
          */
         fun overtakenBy(decision: Decision) {
             val step = held ?: return
             if (step.affirmedBy != decision.requestId && tagOf(decision.intent) in MOVING_ACTIONS) {
-                held = step.copy(overtaken = true)
+                held = step.takenOver(decision.requestId)
             }
         }
 
@@ -404,6 +410,7 @@ class GoalLedger(
             val tag = acceptedTag(choice.disposition, presented)
             val chainedFrom = chainOf(tag, presented, next, fresh, recipes)
             val before = held
+            val inputs = item?.let { recipes.inputsOf(it) + basis.observed?.horizon.orEmpty().pathOf(it) }.orEmpty()
             held =
                 next?.let {
                     Held(
@@ -416,8 +423,7 @@ class GoalLedger(
                         stepVisible,
                         towardSource = towardSource,
                         explored = explored,
-                        inputs =
-                            item?.let { recipes.inputsOf(it) + basis.observed?.horizon.orEmpty().pathOf(it) }.orEmpty(),
+                        inputs = inputs,
                         bestByCell =
                             if (fresh) {
                                 emptyMap<List<Int>, CoverRank>().passedAt(basis.observed.takeIf { _ -> it.shelter })
@@ -426,14 +432,18 @@ class GoalLedger(
                             },
                         // A subgoal keeps the shelter goal it feeds; any other new goal stands alone.
                         parent = if (feeds(choice)) before else before?.parent?.takeIf { !fresh },
-                        // A kept goal remembers the most of its item it has held, so holding as much
-                        // again after spending some is no advance (the round 4 offline audit: an
-                        // ingot goal crafted to a block and back was credited at every step).
+                        // Another decision still running when this step is chosen may yet move the agent.
+                        overtakenBy = before?.overtakenBy.orEmpty() - requestId,
+                        // A kept goal remembers the most of its item and of each input it has held, so
+                        // a craft back to as much as before is no advance (the round 4 offline audit:
+                        // an ingot goal crafted to a block and back was credited at every step).
                         mostHeld =
-                            maxOf(
-                                if (fresh) 0 else before?.mostHeld ?: 0,
-                                heldOf(it, basis.observed),
-                            ),
+                            (setOfNotNull(item) + inputs).associateWith { what ->
+                                maxOf(
+                                    if (fresh) 0 else before?.mostHeld?.get(what) ?: 0,
+                                    basis.observed?.inventory?.get(what) ?: 0,
+                                )
+                            },
                     )
                 }
             return evidence.copy(
@@ -559,9 +569,10 @@ class GoalLedger(
      * Records the body's [outcome] tag for [action] when [requestId] is the held goal's latest
      * step, and answers the held goal when it was, `null` otherwise: only then has a step of the
      * held goal settled. Any other decision's movement that reached the body - accepted, or ended
-     * short, superseded or timed out on the way - marks the held step overtaken, so
-     * where the agent then stands is not that step's doing (the round 3 offline audit: a shelter's
-     * walk, then a flight into an overhang, was credited as the walk's cover).
+     * short, superseded or timed out on the way - keeps the held step overtaken, so where the agent
+     * then stands is not that step's doing (the round 3 offline audit: a shelter's walk, then a
+     * flight into an overhang, was credited as the walk's cover); one that moved nothing is counted
+     * off again (the round 5 offline audit: a flight refused before the body).
      */
     @Synchronized
     fun stepped(
@@ -573,8 +584,8 @@ class GoalLedger(
     ): GoalSummary? {
         val goals = agents[agentId]
         val held = goals?.held
-        if (held != null && held.affirmedBy != requestId && moves(action, outcome)) {
-            goals.held = held.copy(overtaken = true)
+        if (held != null && held.affirmedBy != requestId && action in MOVING_ACTIONS) {
+            goals.held = held.settledOver(requestId, moves(action, outcome))
         }
         if (held?.affirmedBy != requestId) return null
         val summary = held.summary.copy(lastStep = GoalStep(requestId, action, outcome))
