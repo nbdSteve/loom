@@ -469,6 +469,9 @@ async function rehearse () {
         return drained(bodyEvents(bodyFile), config.agents, settlement)
       }
     })
+    // Paper's exit from here on is the one the rehearsal asked for (the round 4 offline audit: it
+    // was journalled as unexpected).
+    supervisor.beginStopping()
     command('stop')
     await waitForCondition({ description: 'Paper to stop', timeoutMilliseconds: 60_000, signal, poll: async () => paper.child.exitCode !== null })
   } catch (fault) {

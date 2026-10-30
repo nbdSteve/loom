@@ -230,6 +230,15 @@ class ProcessSupervisor {
     return handle
   }
 
+  /**
+   * Marks every exit from here on as one the run asked for, before the run asks: a caller that
+   * stops Paper itself (the path rehearsal's console `stop`) says so first, or Paper's ordinary
+   * exit is journalled as unexpected and reported as a failure.
+   */
+  beginStopping () {
+    this.stopping = true
+  }
+
   async stopAll (shutdownMilliseconds) {
     this.stopping = true
     const reversed = [...this.processes].reverse()

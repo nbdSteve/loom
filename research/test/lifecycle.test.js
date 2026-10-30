@@ -208,3 +208,18 @@ test('a group that every stop signal is refused to survives as a cleanup failure
   stuck.child.kill('SIGKILL')
   assert.equal(await waitForExit(stuck.child, 1000), true)
 })
+
+test('an exit the caller asked for before stopping everything is journalled as expected, and fails nothing', async () => {
+  // The round 4 offline audit: the path rehearsal stopped Paper with its own console command, and
+  // Paper's ordinary exit was journalled as unexpected and reported as a failure.
+  const run = harness()
+  const paper = run.start('paper', 'setTimeout(() => process.exit(0), 100)')
+  run.supervisor.beginStopping()
+  assert.equal(await waitForExit(paper.child, 2000), true)
+  await run.supervisor.stopAll(500)
+  assert.deepEqual(
+    run.events.filter((event) => event.event === 'processExited').map(({ component, expected }) => ({ component, expected })),
+    [{ component: 'paper', expected: true }]
+  )
+  assert.deepEqual(run.failures, [])
+})
