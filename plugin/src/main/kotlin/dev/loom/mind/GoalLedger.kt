@@ -167,7 +167,10 @@ class GoalLedger(
             val settled = summary.lastStep != null && progress != null
             val carried = summary.shelter && displaced(summary, observed, now, overtaken)
             val bests = if (summary.shelter) bestByCell.passedAt(now, carried) else bestByCell
-            val most = mostHeldAfter(mostHeld, observed, now, summary.stepAction == IntentAction.CRAFT, recipes)
+            // What the goal's own craft makes, by the recipe its review offered.
+            val recipe = summary.stepRef.takeIf { summary.stepAction == IntentAction.CRAFT }
+            val crafting = recipe?.let { observed?.gives?.get(it) }.orEmpty()
+            val most = mostHeldAfter(mostHeld, observed, now, crafting, recipes)
             val after = copy(summary = shown, measured = true, bestByCell = bests, mostHeld = most)
             return shown to if (settled) after else this
         }
@@ -175,13 +178,15 @@ class GoalLedger(
         /**
          * This shelter goal held again by decision [by], whose perception was taken at [at] and
          * read [observed], once the resource subgoal under it ended; [intent] is its next step,
-         * none when the ending answer took no step of it.
+         * none when the ending answer took no step of it, and [moved] what may have moved the agent
+         * since that perception.
          */
         fun resumed(
             at: Long,
             by: String,
             observed: GoalObservation?,
             intent: Intent?,
+            moved: Movement,
         ): Held =
             copy(
                 summary =
@@ -198,10 +203,16 @@ class GoalLedger(
                 measured = false,
                 reached = null,
                 settledTick = null,
-                overtakenBy = emptySet(),
-                movedSince = false,
+                overtakenBy = moved.running,
+                movedSince = moved.settled,
             )
     }
+
+    /** Other decisions that may move the agent still [running], and whether one has [settled] having moved it. */
+    private data class Movement(
+        val running: Set<String>,
+        val settled: Boolean,
+    )
 
     private data class Basis(
         val session: Long,
@@ -301,6 +312,18 @@ class GoalLedger(
         }
 
         /**
+         * What may have moved the agent since [basis] was perceived, for the step decision [requestId]
+         * chooses: another decision still running may yet move it, and one that settled having moved it
+         * meanwhile already has (the r39 round 6 and 7 offline audits: an event's walk that settled
+         * while the review was with the mind, credited as that review's descent, on a newly chosen
+         * step and on a resumed shelter goal alike).
+         */
+        fun movementSince(
+            basis: Basis,
+            requestId: String,
+        ): Movement = Movement(held?.overtakenBy.orEmpty() - requestId, movements > basis.movements)
+
+        /**
          * Records [presented] as met when [tag] completed it, and answers which met goal the
          * goal [next] starts is chained to: the newest whose item is a direct input of a recipe
          * for [next]'s item, by [recipes] (r19: no goal built on another goal's item).
@@ -339,7 +362,8 @@ class GoalLedger(
             val parent = held?.parent?.takeIf { basis.presented?.feeds != null && choice.disposition in ENDING }
             return parent?.let {
                 val step = decision.intent.takeIf { it.action !in PASSIVE }
-                val resumed = it.resumed(basis.capturedTick, decision.requestId, basis.observed, step)
+                val moved = movementSince(basis, decision.requestId)
+                val resumed = it.resumed(basis.capturedTick, decision.requestId, basis.observed, step, moved)
                 held = resumed
                 evidence.copy(
                     outcome = acceptedTag(choice.disposition, basis.presented),
@@ -375,7 +399,8 @@ class GoalLedger(
             decision: Decision,
             evidence: GoalEvidence,
         ): GoalEvidence {
-            val parent = held?.parent?.resumed(basis.capturedTick, decision.requestId, basis.observed, null)
+            val moved = movementSince(basis, decision.requestId)
+            val parent = held?.parent?.resumed(basis.capturedTick, decision.requestId, basis.observed, null, moved)
             held = parent
             return evidence.copy(
                 outcome = GoalEvidence.STALLED,
@@ -409,6 +434,7 @@ class GoalLedger(
             val tag = acceptedTag(choice.disposition, presented)
             val chainedFrom = chainOf(tag, presented, next, fresh, recipes)
             val before = held
+            val moved = movementSince(basis, requestId)
             val inputs = item?.let { recipes.inputsOf(it) + basis.observed?.horizon.orEmpty().pathOf(it) }.orEmpty()
             held =
                 next?.let {
@@ -431,12 +457,8 @@ class GoalLedger(
                             },
                         // A subgoal keeps the shelter goal it feeds; any other new goal stands alone.
                         parent = if (feeds(choice)) before else before?.parent?.takeIf { !fresh },
-                        // Another decision still running when this step is chosen may yet move the agent,
-                        // and one that settled having moved it since its review was perceived already
-                        // has (the r39 round 6 offline audit: an event's walk that settled between a
-                        // review's perception and its answer, then credited as that review's descent).
-                        overtakenBy = before?.overtakenBy.orEmpty() - requestId,
-                        movedSince = movements > basis.movements,
+                        overtakenBy = moved.running,
+                        movedSince = moved.settled,
                         // A kept goal remembers the most of its item and of each input it has held, so
                         // a craft back to as much as before is no advance (the round 4 offline audit:
                         // an ingot goal crafted to a block and back was credited at every step).
