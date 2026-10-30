@@ -405,6 +405,36 @@ class ShelterTest {
     }
 
     @Test
+    fun `a walk that settled between a review's perception and its answer overtakes that review's step`() {
+        // The r39 round 6 offline audit: only a decision still running when a step was chosen was
+        // carried into it, so an event's walk that settled while the review was with the mind left
+        // the review's own step to be credited with the cover the walk reached.
+        fun Perception.cell(z: Double) = copy(selfState = selfState.copy(position = listOf(3.5, 64.0, z)))
+        val seen = listOf(block("b1", Bearing.HERE), block("b9", Bearing.SOUTH, cover = 7))
+        val credited = { walkedMeanwhile: Boolean ->
+            val ledger = GoalLedger()
+            ledger.answer(scene("r0", 50, open(allOpen), seen = seen), Intent.MoveTo("b9"), shelter)
+            ledger.step("r0", "moveTo")
+            val review = scene("r1", 80, open(allOpen), seen = seen)
+            ledger.present(agent, "r1", 80, GoalObservation.of(review))
+            if (walkedMeanwhile) {
+                val event = perception(requestId = "e1", trigger = Trigger.Spoken("p", "hi"))
+                ledger.resolve(agent, decisionFor(event, Intent.MoveTo("b9")))
+                ledger.stepped(agent, "e1", EventTag.MOVE_TO, EventTag.ACCEPTED)
+            }
+            assertEquals(
+                GoalEvidence.CONTINUED,
+                ledger.resolve(agent, decisionFor(review, Intent.MoveTo("b9")).copy(goal = continued))?.outcome,
+            )
+            ledger.step("r1", "moveTo")
+            val stood = scene("r2", 120, open(allOpen.take(2))).cell(9.5)
+            ledger.present(agent, "r2", 120, GoalObservation.of(stood))?.progress?.stepEvidence
+        }
+        assertEquals(StepEvidence.COVERED, credited(false))
+        assertEquals(StepEvidence.NONE, credited(true))
+    }
+
+    @Test
     fun `a decision taken that then moved nothing, or the goal's own halted dig, overtakes nothing`() {
         // The r39 round 5 offline audit: a moving decision was counted as it was taken and never
         // counted off when the body did not begin it, and the goal's own earlier dig, halted by its

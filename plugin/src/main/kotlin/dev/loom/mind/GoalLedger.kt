@@ -59,12 +59,6 @@ import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
 import dev.loom.contract.action
 import dev.loom.contract.targetRef
 
-/** How many of [goal]'s item [observed] shows held, 0 for a goal of no item or no reading. */
-private fun heldOf(
-    goal: GoalSummary,
-    observed: GoalObservation?,
-): Long = goal.successItem?.let { observed?.inventory?.get(it) } ?: 0
-
 /** A held goal survives one unaddressed review and expires at the one after. */
 const val GOAL_LIFETIME_TICKS: Long = 2L * DEFAULT_GOAL_REVIEW_CADENCE_TICKS
 
@@ -144,6 +138,7 @@ class GoalLedger(
         fun measuredFor(
             now: GoalObservation?,
             at: Long,
+            recipes: RecipeInputs,
         ): Pair<GoalSummary, Held> {
             val earlier = summary.progress
             if (measured && earlier != null) {
@@ -172,8 +167,7 @@ class GoalLedger(
             val settled = summary.lastStep != null && progress != null
             val carried = summary.shelter && displaced(summary, observed, now, overtaken)
             val bests = if (summary.shelter) bestByCell.passedAt(now, carried) else bestByCell
-            val madeGoal = summary.stepAction == IntentAction.CRAFT && heldOf(summary, now) > heldOf(summary, observed)
-            val most = mostHeldAfter(mostHeld.keys, mostHeld, observed, now, madeGoal)
+            val most = mostHeldAfter(mostHeld, observed, now, summary.stepAction == IntentAction.CRAFT, recipes)
             val after = copy(summary = shown, measured = true, bestByCell = bests, mostHeld = most)
             return shown to if (settled) after else this
         }
@@ -216,6 +210,8 @@ class GoalLedger(
         val expiredGoalId: String?,
         val observed: GoalObservation?,
         val fresh: Boolean,
+        /** How many decisions had settled having moved the agent when this review was perceived. */
+        val movements: Long = 0,
     ) {
         /**
          * What a decision with no goal choice made of this review: a survival response defers a
@@ -284,6 +280,9 @@ class GoalLedger(
         var held: Held? = null
         var refusal: GoalRefusal? = null
         val pending = LinkedHashMap<String, Basis>()
+
+        /** How many of the agent's decisions have settled having moved it, its goal's own steps included. */
+        var movements = 0L
 
         /** The agent's latest goals met, by id with their item, newest last. */
         private val met = ArrayDeque<Pair<String, String>>()
@@ -432,18 +431,16 @@ class GoalLedger(
                             },
                         // A subgoal keeps the shelter goal it feeds; any other new goal stands alone.
                         parent = if (feeds(choice)) before else before?.parent?.takeIf { !fresh },
-                        // Another decision still running when this step is chosen may yet move the agent.
+                        // Another decision still running when this step is chosen may yet move the agent,
+                        // and one that settled having moved it since its review was perceived already
+                        // has (the r39 round 6 offline audit: an event's walk that settled between a
+                        // review's perception and its answer, then credited as that review's descent).
                         overtakenBy = before?.overtakenBy.orEmpty() - requestId,
+                        movedSince = movements > basis.movements,
                         // A kept goal remembers the most of its item and of each input it has held, so
                         // a craft back to as much as before is no advance (the round 4 offline audit:
                         // an ingot goal crafted to a block and back was credited at every step).
-                        mostHeld =
-                            (setOfNotNull(item) + inputs).associateWith { what ->
-                                maxOf(
-                                    if (fresh) 0 else before?.mostHeld?.get(what) ?: 0,
-                                    basis.observed?.inventory?.get(what) ?: 0,
-                                )
-                            },
+                        mostHeld = mostHeldFrom(item, inputs, before?.mostHeld?.takeIf { !fresh }, basis.observed),
                     )
                 }
             return evidence.copy(
@@ -490,12 +487,13 @@ class GoalLedger(
         val fresh = goals.held?.measured != true
         val presented =
             goals.held?.let { held ->
-                val (summary, measured) = held.measuredFor(observed, capturedTick)
+                val (summary, measured) = held.measuredFor(observed, capturedTick, recipes)
                 goals.held = measured
                 summary
             }
         goals.pending.remove(requestId)
-        goals.pending[requestId] = Basis(goals.session, presented, capturedTick, expired, observed, fresh)
+        goals.pending[requestId] =
+            Basis(goals.session, presented, capturedTick, expired, observed, fresh, goals.movements)
         if (goals.pending.size > MAX_PENDING_GOAL_REVIEWS) {
             goals.pending.remove(goals.pending.keys.first())
         }
@@ -584,6 +582,7 @@ class GoalLedger(
     ): GoalSummary? {
         val goals = agents[agentId]
         val held = goals?.held
+        if (goals != null && moves(action, outcome)) goals.movements += 1
         if (held != null && held.affirmedBy != requestId && action in MOVING_ACTIONS) {
             goals.held = held.settledOver(requestId, moves(action, outcome))
         }
