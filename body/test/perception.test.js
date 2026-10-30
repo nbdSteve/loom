@@ -696,6 +696,33 @@ test('a whole sense answer for a crowded scene fits one frame', async () => {
   await body.stop()
 })
 
+test('a sense reads the inventory only after the server answers a round trip, so an update it sent first is in the claim', async () => {
+  // The path rehearsal's epsilon claimed one log 4 ticks after the server had picked up its second:
+  // the library had not read the server's inventory update when the sense was answered, and the
+  // witness disputed the claim.
+  const { body, client, port } = await inTheWorld(await embodied())
+  stocked(client, [[BREAD_SLOT, 'bread', 1]])
+  await settled()
+  client.answersStatistics = false
+  const peer = await handshaken(port)
+  let answered
+  peer.answer(request('sense', 's1', { radius: RADIUS, limit: LIMIT })).then((frame) => { answered = frame })
+  await settled()
+  assert.equal(answered, undefined, 'nothing is read before the round trip')
+  const asked = client.writes.filter(({ name }) => name === 'client_command')
+  assert.deepEqual(asked.map(({ parameters }) => parameters), [{ actionId: 1 }])
+  // The server's pickup update, sent before its answer to the round trip.
+  stocked(client, [[BREAD_SLOT, 'bread', 2]])
+  client.emit('statistics', { entries: [] })
+  const frame = await promptly(new Promise((resolve) => {
+    const poll = setInterval(() => { if (answered !== undefined) { clearInterval(poll); resolve(answered) } }, 5)
+  }), 'the sense answer')
+  assert.equal(frame.op, 'sense')
+  assert.deepEqual(frame.inventory.find((entry) => entry.slot === BREAD_SLOT), { slot: BREAD_SLOT, what: 'bread', count: 2 })
+  peer.stop()
+  await body.stop()
+})
+
 test('a sense before the body is in the world is refused as not ready', async () => {
   const { body, port } = await embodied()
   const peer = await handshaken(port)

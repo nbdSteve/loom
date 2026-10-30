@@ -73,8 +73,8 @@ function given (peer, what) {
 /**
  * The server half of a crafting transaction in the player's own 2x2 grid, as
  * `test/native-craft-terminal.test.js` answers it: each grid click is answered on a later turn
- * with the result vanilla's matcher gives the grid so far, the player's slots are restated when
- * the grid closes, and a statistics request is answered after them. The recipe each craft expects is the one the body hands Mineflayer.
+ * with the result vanilla's matcher gives the grid so far, and the player's slots are restated
+ * when the grid closes (the harness's client answers a statistics request after them). The recipe each craft expects is the one the body hands Mineflayer.
  */
 function serveCrafts (bot, client) {
   let stateId = 10
@@ -103,9 +103,6 @@ function serveCrafts (bot, client) {
           client.emit('set_slot', { windowId: 0, stateId: ++stateId, slot, item: Item.toNotch(bot.inventory.slots[slot] ?? null) })
         }
       })
-    } else if (name === 'client_command' && parameters.actionId === 1) {
-      // Vanilla handles a statistics request after every click written before it.
-      setImmediate(() => client.emit('statistics', { entries: [] }))
     }
     return answered
   }

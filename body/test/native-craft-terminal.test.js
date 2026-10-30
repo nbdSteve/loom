@@ -78,9 +78,6 @@ function windowResponder (bot, client, { answerGrid = true, onGridClick = () => 
       }
     } else if (name === 'close_window') {
       setImmediate(() => restateInventory())
-    } else if (name === 'client_command' && parameters.actionId === 1) {
-      // Vanilla handles a statistics request after every click written before it.
-      setImmediate(() => client.emit('statistics', { entries: [] }))
     }
     return answered
   }

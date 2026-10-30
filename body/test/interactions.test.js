@@ -23,10 +23,12 @@ const {
 } = require('../src/combat')
 const {
   CRAFT_SETTLE_MS,
+  applicationStarted,
   craftOfferedRecipe,
   recipeReading,
-  serverHandledEarlierPackets
+  whenInventorySettled
 } = require('../src/crafting')
+const { serverHandledEarlierPackets } = require('../src/server-order')
 const { descentCentreOf, digOfferedBlock } = require('../src/digging')
 const { equipOfferedStack } = require('../src/equipping')
 const { stackDetail } = require('../src/interaction')
@@ -1541,6 +1543,28 @@ test('a late statistics answer to a wait that timed out never releases the next 
   assert.equal(await third, true)
   const actions = bot._client.writes.filter(({ name }) => name === 'client_command')
   assert.deepEqual(actions.map(({ parameters }) => parameters.actionId), [1, 1, 1])
+})
+
+test('a craft ended while it waited for the server serves no later application\'s waiting senses', async () => {
+  // The round 4 offline audit: a halted craft's loop resumed when its late statistics answer
+  // came and released the boundary of whatever application owned the inventory by then.
+  const bot = worldBot()
+  const { reading } = craftingSetup(bot, { logs: 2 })
+  bot._client.answersStatistics = false
+  bot.craft = async () => applyCraft(bot)
+  const first = craftOfferedRecipe(bot, { offered: reading.recipeOffers, recipe: 0, crafts: 1, timeoutMs: 2000 })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(bot._client.writes.at(-1)?.name, 'client_command', 'the first craft waits for the server')
+  assert.equal(first.cancel(), true)
+  assert.equal((await reportOf(first)).outcome, 'cancelled')
+  // A newer application owns the inventory, and a sense waits for its boundary.
+  applicationStarted(bot)
+  let read = false
+  whenInventorySettled(bot, () => { read = true }, 5000)
+  // The first craft's late answer arrives.
+  bot._client.emit('statistics', { entries: [] })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(read, false, 'the ended craft served no boundary it no longer owned')
 })
 
 test('craft refuses a missing, changed, remote, or hidden retained workstation', async () => {

@@ -101,6 +101,7 @@ const { eatFromSlot } = require('./eating')
 const { equipOfferedStack } = require('./equipping')
 const { installMovement } = require('./movement')
 const { installPlacing, placeHeldBlock } = require('./placing')
+const { SERVER_ORDER_MS, serverHandledEarlierPackets } = require('./server-order')
 const { senseMemory } = require('./senses')
 const { createSpeech } = require('./speaking')
 const { senseReading, vitalsOf } = require('./sensing')
@@ -1010,11 +1011,20 @@ function createBody (options) {
    * A sense that arrives while this body's own craft application owns the inventory is read at
    * that application's settled boundary instead, bounded by `SENSE_SETTLE_MAX_MS`
    * (`crafting.js` states why), and answered then; the request is still one round trip.
+   *
+   * Every sense first waits for one ordered round trip to the server (`server-order.js`), bounded
+   * by `SERVER_ORDER_MS`: the client's inventory and vitals trail the server's by every packet the
+   * library has not yet read, and the witness compares the claim with the server's own state from
+   * just before the request. The path rehearsal's epsilon claimed one log 4 ticks after the server
+   * had picked up its second, with a 694 ms round trip, and the dispute would have stopped a
+   * primary run. The wait reads the client's state no earlier than the server's at the request.
    */
   function sense (socket, session, request, requestId) {
-    // Answered at once in the ordinary case, so its verdict still decides whether this
-    // connection reads on; a deferred answer leaves the connection open until it is written.
-    return whenInventorySettled(bot, () => senseNow(socket, session, request, requestId)) ?? true
+    serverHandledEarlierPackets(bot, SERVER_ORDER_MS).then(() => {
+      whenInventorySettled(bot, () => senseNow(socket, session, request, requestId))
+    })
+    // A deferred answer leaves the connection open until it is written.
+    return true
   }
 
   function senseNow (socket, session, request, requestId) {

@@ -19,6 +19,7 @@ const {
   MAX_STACK_COUNT,
   isResourceName
 } = require('./protocol')
+const { SERVER_ORDER_MS, serverHandledEarlierPackets } = require('./server-order')
 const {
   blockWithinReach,
   elapsedSince,
@@ -58,23 +59,15 @@ const CRAFT_PACKET = 'window_click'
 
 /**
  * How long each craft application waits for the server to have handled the clicks it wrote, before
- * a waiting sense reads its boundary or the craft answers.
+ * a waiting sense reads its boundary or the craft answers: see `server-order.js`.
  *
  * Mineflayer predicts a craft in the client's own window (its craft plugin writes the result
  * slot itself before it takes the result), so the inventory shows the recipe's delta before the
  * server has handled a single click. Answered there, the report could reach the plugin before
  * Paper fired the craft's `CraftItemEvent`, and the witness disputed a craft the server then
- * applied (path rehearsal run-rd3c1K alpha body:00000229). Ten vanilla ticks is generous on a
- * loopback server; a server that has not answered by then is a fact the witness states.
+ * applied (path rehearsal run-rd3c1K alpha body:00000229).
  */
-const CRAFT_SERVER_ORDER_MS = 500
-
-/**
- * The `client_command` action that asks the server for the player's statistics.
- *
- * Action 0 of the same packet is the vanilla client's respawn, which this process never writes.
- */
-const REQUEST_STATS = 1
+const CRAFT_SERVER_ORDER_MS = SERVER_ORDER_MS
 
 /** The one installation each player gets; a second would replace craft state. */
 const installations = new WeakSet()
@@ -253,85 +246,6 @@ function scopedCrafting (bot) {
     },
     restore
   }
-}
-
-/**
- * Per client: the statistics requests written and the answers counted, the waits still open by
- * ordinal, and the listeners counting while any request is unanswered.
- */
-const statisticsOrder = new WeakMap()
-
-/**
- * Resolves true once the server has handled every packet [bot] wrote before this call, or
- * false after [timeoutMs], on a lost connection, or when the client cannot ask.
- *
- * A vanilla server handles a container click and a statistics request on its main thread in
- * the order they arrive on the connection, and answers the request with its `statistics`, so
- * that answer follows every click and every event those clicks fired. An answer names no
- * request, so answers are matched to requests by their order: a late answer to an earlier wait
- * that timed out never releases a later one (the round 3 offline audit).
- */
-function serverHandledEarlierPackets (bot, timeoutMs) {
-  const client = bot._client
-  if (!(timeoutMs > 0) || typeof client?.write !== 'function' ||
-      typeof client.on !== 'function' || typeof client.removeListener !== 'function') {
-    return Promise.resolve(false)
-  }
-  let order = statisticsOrder.get(client)
-  if (order === undefined) {
-    order = { asked: 0, answered: 0, waits: new Map(), counted: null, lost: null }
-    statisticsOrder.set(client, order)
-  }
-  return new Promise((resolve) => {
-    const ordinal = order.asked + 1
-    const end = (handled) => {
-      clearTimeout(timer)
-      order.waits.delete(ordinal)
-      quietWhenAnswered(client, order)
-      resolve(handled)
-    }
-    const timer = setTimeout(() => end(false), timeoutMs)
-    timer.unref?.()
-    order.waits.set(ordinal, end)
-    countAnswers(client, order)
-    try {
-      client.write('client_command', { actionId: REQUEST_STATS })
-      order.asked = ordinal
-    } catch {
-      end(false)
-    }
-  })
-}
-
-/** Counts [client]'s statistics answers in order, each releasing only the wait it answers. */
-function countAnswers (client, order) {
-  if (order.counted !== null) return
-  order.counted = () => {
-    // No more answers are counted than were asked for, so an unasked one releases nobody.
-    order.answered = Math.min(order.answered + 1, order.asked)
-    order.waits.get(order.answered)?.(true)
-    quietWhenAnswered(client, order)
-  }
-  order.lost = () => {
-    for (const end of [...order.waits.values()]) end(false)
-    statisticsOrder.delete(client)
-    quiet(client, order)
-  }
-  client.on('statistics', order.counted)
-  client.on('end', order.lost)
-}
-
-/** Stops counting once every request written is answered and no wait is open. */
-function quietWhenAnswered (client, order) {
-  if (order.waits.size === 0 && order.answered >= order.asked) quiet(client, order)
-}
-
-function quiet (client, order) {
-  if (order.counted === null) return
-  client.removeListener('statistics', order.counted)
-  client.removeListener('end', order.lost)
-  order.counted = null
-  order.lost = null
 }
 
 /** Ends an unsafe client whose stopped craft did not drain. */
@@ -807,11 +721,14 @@ function craftOfferedRecipe (bot, {
         })
         // The client's inventory is Mineflayer's prediction until the server has handled this
         // application's clicks, so a sense waiting for this boundary, and the witness reading the
-        // server for it, would otherwise describe two different inventories: the path rehearsal's
-        // epsilon claimed one log between two plank applications while the server still held both.
+        // server for it, would otherwise describe two different inventories.
         if (!settled && terminal === undefined) {
           await serverHandledEarlierPackets(bot, Math.min(serverOrderMs, timeoutMs - elapsedSince(startedAt, now)))
         }
+        // A request ended while it waited has already been answered and given the inventory up: the
+        // waiting senses it served then are no longer this request's to serve, and a newer
+        // application may own the inventory now (the round 4 offline audit).
+        if (settled || terminal !== undefined) break
         // The client now states what the server has confirmed, so a waiting sense reads here, and
         // the next application waits until the server has sampled the state that sense described.
         const served = applicationSettled(bot)
@@ -848,6 +765,7 @@ function craftOfferedRecipe (bot, {
 }
 
 module.exports = {
+  applicationStarted,
   CRAFT_CLEANUP_GRACE_MS,
   CRAFT_SERVER_ORDER_MS,
   CRAFT_SETTLE_MS,
@@ -860,7 +778,6 @@ module.exports = {
   inventoryState,
   recipeFingerprint,
   recipeReading,
-  serverHandledEarlierPackets,
   settledApplication,
   whenInventorySettled
 }
