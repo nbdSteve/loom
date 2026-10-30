@@ -66,16 +66,17 @@ private fun droppedToward(
 
 /**
  * The most of each item a goal tracks it has held once one step settled, from [was] before it: a
- * new most where [now] holds more. A craft of the goal's own step, making [crafting], lowers the most
- * of an input of what it made that fell across it, since that input went toward the goal for good
- * (the r39 round 5 and 6 offline audits: a table goal's second planks, and a pickaxe goal's planks
- * remade after its sticks): to what is held, unless an item sharing a recipe cycle with it is held,
- * which may hold the rest of it, and then only by what fell; and not at all beside a rise of such an
- * item, which may hold what fell. Any other spend keeps the most, so a craft back to a level held
- * before is no gain: a reversible pair, such as a chain's ingot and its nuggets, or an ingot and its
- * block; and an input another decision spent beside a craft that did not use it (the r39 round 7
- * offline audit: an ingot an event crafted into nuggets during a pickaxe goal's sticks craft, then
- * made back, was a gain).
+ * new most where [now] holds more. A craft of the goal's own step, making [crafting] past the most of
+ * it held, lowers the most of an input of what it made that fell across it, since that input went
+ * toward the goal for good (the r39 round 5 and 6 offline audits: a table goal's second planks, and a
+ * pickaxe goal's planks remade after its sticks): to what is held, unless an item sharing a recipe
+ * cycle with it is held, which may hold the rest of it, and then only by what fell; and not at all
+ * beside a rise of such an item, which may hold what fell. Any other spend keeps the most, so a craft
+ * back to a level held before is no gain: a reversible pair, such as a chain's ingot and its nuggets,
+ * or an ingot and its block; an input another decision spent beside a craft that did not use it (the
+ * r39 round 7 offline audit: an ingot an event crafted into nuggets during a pickaxe goal's sticks
+ * craft, then made back, was a gain); and an input of something only made back to as much as held,
+ * which may have been placed and broken into what it was made from (snow layers into snowballs).
  */
 internal fun mostHeldAfter(
     was: Map<String, Long>,
@@ -86,7 +87,7 @@ internal fun mostHeldAfter(
 ): Map<String, Long> {
     val held = { item: String -> now?.inventory?.get(item) ?: 0 }
     val heldBefore = { item: String -> before?.inventory?.get(item) ?: 0 }
-    val made = crafting.filter { held(it) > heldBefore(it) }
+    val made = crafting.filter { held(it) > maxOf(heldBefore(it), was[it] ?: 0) }
     return was.mapValues { (item, most) ->
         val fell = heldBefore(item) - held(item)
         if (fell <= 0 || made.none { item in recipes.inputsOf(it) }) return@mapValues maxOf(most, held(item))

@@ -207,7 +207,7 @@ class HeldMostTest {
         assertEquals(2L, again?.stepsWithoutProgress)
     }
 
-    /** A ledger for [goal] over iron and wood: a pickaxe of ingots and sticks, a chain of ingots and nuggets. */
+    /** A ledger for [goal] over iron, wood and snow: a pickaxe of ingots and sticks, a chain of ingots and nuggets. */
     private class Iron(
         private val goal: String,
         private val count: Long,
@@ -222,6 +222,8 @@ class HeldMostTest {
                 "cp" to PICKAXE,
                 "ct" to TABLE,
                 "cl" to PLANKS,
+                "cb" to SNOW_BLOCK,
+                "cw" to SNOW,
             ).mapValues { setOf(it.value) }
         private val ledger =
             GoalLedger(
@@ -232,6 +234,8 @@ class HeldMostTest {
                         STICK -> setOf(PLANKS)
                         TABLE -> setOf(PLANKS)
                         PLANKS -> setOf(LOG)
+                        SNOW -> setOf(SNOW_BLOCK)
+                        SNOW_BLOCK -> setOf(SNOWBALL)
                         INGOT -> setOf(NUGGET)
                         NUGGET -> setOf(INGOT)
                         else -> emptySet()
@@ -264,7 +268,8 @@ class HeldMostTest {
             val decision =
                 decisionFor(perception(requestId = requestId, agentId = agent.value), Intent.Craft(recipe, 1))
             val outcome = ledger.resolve(agent, decision.copy(goal = choice))?.outcome
-            assertTrue(outcome in setOf(GoalEvidence.ADOPTED, GoalEvidence.CONTINUED), outcome)
+            // A continue at the stall bound ends the goal, which a case may run to.
+            assertTrue(outcome in setOf(GoalEvidence.ADOPTED, GoalEvidence.CONTINUED, GoalEvidence.STALLED), outcome)
             ledger.stepped(agent, requestId, EventTag.CRAFT, EventTag.ACCEPTED)
             return carried?.progress
         }
@@ -278,6 +283,9 @@ class HeldMostTest {
             const val PLANKS = "item.minecraft.oak_planks"
             const val TABLE = "item.minecraft.crafting_table"
             const val LOG = "item.minecraft.oak_log"
+            const val SNOW = "item.minecraft.snow"
+            const val SNOW_BLOCK = "item.minecraft.snow_block"
+            const val SNOWBALL = "item.minecraft.snowball"
         }
     }
 
@@ -382,5 +390,29 @@ class HeldMostTest {
         val remade = wood.at("r4", "ct", Iron.TABLE to 1L, Iron.PLANKS to 4L)
         assertEquals(StepEvidence.GAINED_INPUT, remade?.stepEvidence)
         assertEquals(0L, remade?.stepsWithoutProgress)
+    }
+
+    @Test
+    fun inputsRemadeAfterTheGoalsItemIsPlacedAndBrokenBackAreNoGainTheSecondTimeRound() {
+        // Snow layers placed and broken give back snowballs, which no recipe states: crafting the
+        // layers back to as many as the goal had held lowered the snow blocks' most every lap, so the
+        // blocks remade from those snowballs were a gain every lap and the stall count never reached
+        // its bound.
+        val snow = Iron(Iron.SNOW, 12)
+        snow.at("r1", "cb", Iron.SNOWBALL to 12L)
+        assertEquals(StepEvidence.GAINED_INPUT, snow.at("r2", "cw", Iron.SNOW_BLOCK to 3L)?.stepEvidence)
+        assertEquals(StepEvidence.GAINED, snow.at("r3", "cb", Iron.SNOW to 6L)?.stepEvidence)
+        // Something else placed the six layers and broke them back into snowballs.
+        assertEquals(1L, snow.at("r4", "cb", Iron.SNOWBALL to 12L)?.stepsWithoutProgress)
+        // The first blocks remade are a gain: the layers they went into were the goal's for good.
+        assertEquals(StepEvidence.GAINED_INPUT, snow.at("r5", "cw", Iron.SNOW_BLOCK to 3L)?.stepEvidence)
+        val layers = snow.at("r6", "cb", Iron.SNOW to 6L)
+        assertEquals(StepEvidence.NONE, layers?.stepEvidence)
+        assertEquals(1L, layers?.stepsWithoutProgress)
+        assertEquals(2L, snow.at("r7", "cb", Iron.SNOWBALL to 12L)?.stepsWithoutProgress)
+        // Round again: layers back to as many as held made nothing new, so the blocks are no gain.
+        val blocks = snow.at("r8", "cw", Iron.SNOW_BLOCK to 3L)
+        assertEquals(StepEvidence.NONE, blocks?.stepEvidence)
+        assertEquals(3L, blocks?.stepsWithoutProgress)
     }
 }
