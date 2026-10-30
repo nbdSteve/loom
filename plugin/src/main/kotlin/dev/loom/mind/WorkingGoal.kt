@@ -343,6 +343,8 @@ internal data class StepRecord(
     val best: CoverRank? = null,
     /** Whether another decision's accepted movement carried the agent since the step was chosen. */
     val overtaken: Boolean = false,
+    /** The most of its item the goal had held before this step, which an advance must pass. */
+    val mostHeld: Long = 0,
 )
 
 /**
@@ -376,7 +378,8 @@ private fun itemProgressOf(
     val item = goal.successItem
     val held = item?.let { observed.inventory[it] } ?: 0
     val heldBefore = item?.let { before.inventory[it] } ?: 0
-    val conditionAdvanced = held > heldBefore
+    // Holding as much again after spending some is no advance: only more than the goal has held is.
+    val conditionAdvanced = held > maxOf(heldBefore, step.mostHeld)
     val evidence = stepEvidenceOf(goal, before, observed, step)
     val stepAdvanced = evidence != StepEvidence.NONE
     // A drop is the step's evidence, but not progress until it is held.
@@ -424,35 +427,12 @@ private fun stepEvidenceOf(
     step: StepRecord,
 ): StepEvidence {
     val accepted = goal.lastStep?.outcome == EventTag.ACCEPTED
-    val rose = { item: String -> (observed.inventory[item] ?: 0) > (before.inventory[item] ?: 0) }
-    // Only the goal's own item, or a direct input of a recipe for it, is evidence (r19: a sapling
-    // dug for a stick goal, and a stick and an apple for a sapling goal, reset the stall count).
-    val item = goal.successItem
-    val toward = setOfNotNull(item) + step.inputs
-    val dropped = droppedToward(goal, observed, toward)
     return when {
         !accepted -> StepEvidence.NONE
         goal.stepAction in MOVEMENT_STEPS -> movementEvidenceOf(goal, before, observed, step)
         goal.stepAction !in WORLD_STEPS -> StepEvidence.NONE
-        item != null && rose(item) -> StepEvidence.GAINED
-        step.inputs.any(rose) -> StepEvidence.GAINED_INPUT
-        dropped -> StepEvidence.DROPPED
-        else -> StepEvidence.NONE
+        else -> worldEvidenceOf(goal, before, observed, step)
     }
-}
-
-/**
- * Whether the server attributed a drop to [goal]'s last step's own request, of an item [toward]
- * names, or of an item it did not tell.
- */
-private fun droppedToward(
-    goal: GoalSummary,
-    observed: GoalObservation,
-    toward: Set<String>,
-): Boolean {
-    val request = goal.lastStep?.requestId ?: return false
-    val told = observed.droppedItems[request]
-    return request in observed.dropped && (told == null || told.any { it in toward })
 }
 
 /**

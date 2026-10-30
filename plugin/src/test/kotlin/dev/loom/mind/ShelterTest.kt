@@ -417,6 +417,40 @@ class ShelterTest {
     }
 
     @Test
+    fun `an event's walk still running when the next review is sensed overtakes the shelter's own walk`() {
+        // The round 4 offline audit: a step was marked overtaken only once another decision had
+        // settled, and a dig or a sleep never, so cover such a walk or a descent under the feet had
+        // reached by the next review could be credited to the shelter's walk.
+        fun Perception.cell(z: Double) = copy(selfState = selfState.copy(position = listOf(3.5, 64.0, z)))
+        val seen = listOf(block("b1", Bearing.HERE), block("b9", Bearing.SOUTH, cover = 7))
+
+        // An event's decision: a walk, a dig under the feet, a bed - taken and not yet settled.
+        fun GoalLedger.event(
+            requestId: String,
+            intent: Intent,
+        ) = resolve(agent, decisionFor(perception(requestId = requestId, trigger = Trigger.Spoken("p", "hi")), intent))
+        for (intent in listOf(Intent.MoveTo("b9"), Intent.Dig("b1"), Intent.Sleep("b1"))) {
+            val ledger = GoalLedger()
+            ledger.answer(scene("r0", 50, open(allOpen), seen = seen), Intent.MoveTo("b9"), shelter)
+            ledger.step("r0", "moveTo")
+            ledger.event("e1", intent)
+            val landed = scene("r1", 100, open(allOpen.take(2))).cell(9.5)
+            val progress = ledger.present(agent, "r1", 100, GoalObservation.of(landed))?.progress
+            assertEquals(StepEvidence.NONE, progress?.stepEvidence, intent.toString())
+        }
+        // A decision that moves nothing overtakes nothing.
+        val ledger = GoalLedger()
+        ledger.answer(scene("r0", 50, open(allOpen), seen = seen), Intent.MoveTo("b9"), shelter)
+        ledger.event("e2", Intent.Say("hi"))
+        ledger.step("r0", "moveTo")
+        val stood = scene("r1", 100, open(allOpen.take(2))).cell(9.5)
+        assertEquals(
+            StepEvidence.COVERED,
+            ledger.present(agent, "r1", 100, GoalObservation.of(stood))?.progress?.stepEvidence,
+        )
+    }
+
+    @Test
     fun `a descent that gives a solid block is credited only as cover, never as a gather`() {
         val ledger = GoalLedger()
         val grass = scene("r0", 50, open(allOpen, descend = "b1"))

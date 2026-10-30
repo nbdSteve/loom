@@ -374,6 +374,61 @@ class GoalLedgerTest {
     }
 
     @Test
+    fun aGoalItemSpentAndRemadeIsNoProgressEitherWay() {
+        // The round 4 offline audit: a reversible recipe pair - ingots to a block and back - was
+        // credited gainedInput one way and a condition advance the other, so the stall bound never
+        // came. Here a stick bundle is the reversible input of a stick.
+        val bundle = "item.minecraft.stick_bundle"
+        val reversible =
+            object : RecipeInputs {
+                override fun inputsOf(item: String): Set<String> = if (item == STICK) setOf(bundle) else emptySet()
+            }
+        val ledger = GoalLedger(recipes = reversible)
+        val craft = Intent.Craft("c1", 1)
+
+        fun at(
+            requestId: String,
+            vararg stacks: Pair<String, Long>,
+        ): Pair<GoalProgress?, GoalEvidence?> {
+            val observed =
+                GoalObservation(
+                    mapOf(*stacks),
+                    listOf(0.0, 64.0, 0.0),
+                    capacity = mapOf(STICK to 8L),
+                    craftable = setOf(STICK, bundle),
+                    gives = mapOf("c1" to setOf(STICK, bundle)),
+                    productive = mapOf("c1" to setOf(STICK, bundle)),
+                )
+            val carried = ledger.present(alpha, requestId, requestId.drop(1).toLong() * 100, observed)
+            val choice =
+                if (carried == null) {
+                    goalChoice(GoalDisposition.ADOPT, success = STICK to 12)
+                } else {
+                    goalChoice(GoalDisposition.CONTINUE)
+                }
+            val decision = decisionFor(perception(requestId = requestId, agentId = alpha.value), craft)
+            val resolved = ledger.resolve(alpha, decision.copy(goal = choice))
+            ledger.stepped(alpha, requestId, EventTag.CRAFT, EventTag.ACCEPTED)
+            return carried?.progress to resolved
+        }
+        assertEquals(GoalEvidence.ADOPTED, at("r1", STICK to 9L).second?.outcome)
+        // Spent into a bundle: no input credit, though the bundle is an input of a stick.
+        val spent = at("r2", bundle to 1L).first
+        assertEquals(StepEvidence.NONE, spent?.stepEvidence)
+        assertEquals(1L, spent?.stepsWithoutProgress)
+        // Made back: as many as the goal has held already, so no advance either.
+        val remade = at("r3", STICK to 9L).first
+        assertEquals(false, remade?.conditionAdvanced)
+        assertEquals(StepEvidence.NONE, remade?.stepEvidence)
+        assertEquals(2L, remade?.stepsWithoutProgress)
+        // More than the goal has ever held is progress.
+        val more = at("r4", STICK to 11L).first
+        assertEquals(true, more?.conditionAdvanced)
+        assertEquals(StepEvidence.GAINED, more?.stepEvidence)
+        assertEquals(0L, more?.stepsWithoutProgress)
+    }
+
+    @Test
     fun aWorkingGoalNeedsItsTypedConditionStepAndVerdict() {
         val adoptBare = GoalChoice(GoalDisposition.ADOPT, step = "walk to the tree")
         assertEquals(GoalEvidence.SUCCESS_TARGET_MISSING, affirm("r1", 100, seen(0.0), adoptBare).second?.outcome)
