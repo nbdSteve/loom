@@ -19,7 +19,10 @@ const {
   CONTROLLED_STOP_REASON,
   PROVIDER_UNAVAILABLE_MAPPINGS,
   STOP_KINDS,
-  isProviderDrainFailure
+  isProviderDrainFailure,
+  isProviderRefusedEnding,
+  isProviderRefusedRequest,
+  providerRefusedKeysOf
 } = require('./controlled-stop.js')
 const {
   METRICS_VERSION,
@@ -1254,10 +1257,12 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
       .map((record) => record.requestKey)
   )
   const bodyOnly = records.filter((record) => record.source === 'body')
+  const providerRefusedKeys = providerRefusedKeysOf(records.filter((record) => record.source === 'harness'))
+  errors.push(...providerRefusedErrors(providerRefusedKeys, bodyOnly))
   if (
     (!stopped && (
       metrics.cognition.refusedCalls !== refusedAfterEnd ||
-      !unansweredAccountedFor(bodyOnly, { admissionEnded: ended !== undefined, refusedKeys })
+      !unansweredAccountedFor(bodyOnly, { admissionEnded: ended !== undefined, refusedKeys, providerRefusedKeys })
     )) ||
     (deaths === undefined && metrics.cycles.discarded !== 0)
   ) {
@@ -1414,6 +1419,22 @@ function typedRefusal (record) {
     record.forwarded === false
 }
 
+// Every request the provider refused is one perception the JVM ended as failed, never answered.
+function providerRefusedErrors (providerRefusedKeys, body) {
+  const errors = []
+  for (const key of providerRefusedKeys) {
+    const chain = body.filter((record) => record.requestKey === key)
+    if (
+      !chain.some((record) => record.event === 'perceived') ||
+      !chain.some((record) => isProviderRefusedEnding(record, providerRefusedKeys)) ||
+      chain.some((record) => ['decided', 'intentApplied'].includes(record.event))
+    ) {
+      errors.push(`provider-refused request ${key} has no matching failed perception chain`)
+    }
+  }
+  return errors
+}
+
 // A normal ending closes admission once; only typed admission refusals may follow it.
 function admissionEndErrors (manifest, metrics, records) {
   const errors = []
@@ -1461,9 +1482,11 @@ function admissionEndErrors (manifest, metrics, records) {
       errors.push(`refusal ${record.requestKey} after the run ended has no matching refused chain`)
     }
   }
+  const providerRefusedKeys = providerRefusedKeysOf(harness)
   for (const record of body) {
     if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) &&
-        !isExposureEnding(record) && !refusedKeys.has(record.requestKey)) {
+        !isExposureEnding(record) && !refusedKeys.has(record.requestKey) &&
+        !isProviderRefusedEnding(record, providerRefusedKeys)) {
       errors.push(`unavailable decision ${record.requestKey} has no typed refusal`)
     }
   }
@@ -1566,7 +1589,7 @@ function controlledStopErrors (manifest, metrics, records) {
     }
   }
   if (
-    beforeForwarded.filter((record) => record.outcome !== 'decision').length !==
+    beforeForwarded.filter((record) => record.outcome !== 'decision' && !isProviderRefusedRequest(record)).length !==
     (stop.kind === 'providerUnavailable' ? 1 : 0)
   ) {
     errors.push('controlled stop evidence contains an unclassified cognition failure')
@@ -1604,9 +1627,11 @@ function controlledStopErrors (manifest, metrics, records) {
       errors.push(`forwarded request ${record.requestKey} has no earlier perception chain`)
     }
   }
+  const providerRefusedKeys = providerRefusedKeysOf(harness)
   for (const record of body) {
     if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) &&
-        !isExposureEnding(record) && !typedKeys.has(record.requestKey)) {
+        !isExposureEnding(record) && !typedKeys.has(record.requestKey) &&
+        !isProviderRefusedEnding(record, providerRefusedKeys)) {
       errors.push(`unavailable decision ${record.requestKey} has no typed refusal`)
     }
     if (

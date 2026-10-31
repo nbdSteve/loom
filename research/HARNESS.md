@@ -363,7 +363,9 @@ No ceiling is raised, and a perception no ceiling fits is still a typed `callRes
 In primary behavior mode two outcomes end a run without making it an integrity failure.
 A typed `perAgentCall`, `globalCall`, `globalOutstanding`, or `spend` refusal is a `cognitionBudgetExhausted` stop.
 A provider failure that cognition classified as `providerTimeout`, `providerConnection`, `providerResponseRead`, `providerTransport`, `providerRateLimit`, or `providerServer` is a `providerUnavailable` stop.
-An HTTP 401 or 403 still stops the run immediately as a failure, and every other cognition failure is still fatal.
+An HTTP 401 or 403 still stops the run immediately as a failure.
+One request the provider refused as invalid (`providerRequest`, HTTP 400 or 422) neither stops nor ends the run: the proxy marks its forwarded record `providerRefusedRequest: true`, the JVM ends that one perception `cognitionUnavailable` with outcome `failed`, every agent goes on to the run's duration, and the artifact publishes with that perception counted as a cognition failure, so readiness and the pilot gate fail closed (R40: one refused follow-up review stopped a ten-agent run 403 s into its window, with every other agent still working).
+Every other cognition failure is still fatal.
 A call already in flight when a provider stop closes admission, which the same outage then fails with a classification of that set, is part of the stop rather than a failure of its own; the proxy marks such a forwarded record `providerUnavailable: true`, a closed public fact beside the classification evidence does not keep (r31: five calls timed out within twelve seconds, and the four in flight ended the run untyped).
 `research/lib/controlled-stop.js` owns these closed sets.
 

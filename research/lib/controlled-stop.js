@@ -2,7 +2,8 @@
 
 // A primary-behavior run that reaches a configured cognition bound, or whose provider
 // becomes unavailable with a typed classification, stops admitting cognition and still
-// publishes what it collected. Everything else stays an integrity failure.
+// publishes what it collected. One request the provider refuses as invalid is that call's
+// own typed failure and the run continues. Everything else stays an integrity failure.
 
 const CONTROLLED_STOP_REASON = 'controlledStop'
 const STOP_KINDS = Object.freeze(['cognitionBudgetExhausted', 'providerUnavailable'])
@@ -70,6 +71,36 @@ function providerStopFor (request, classified) {
       CLASSIFICATION_FIELDS.map((field) => [field, classified[field] ?? null])
     )
   }
+}
+
+// Whether a classified cognition failure is one request the provider refused as invalid (HTTP 400
+// or 422): that call's own failure, which the run records and continues past, and which readiness
+// counts as a cognition failure (R40: one refused follow-up review stopped a ten-agent run 403 s
+// into its 600 s window, with every other agent still working).
+function isProviderRequestFailure (classified) {
+  return classified?.mapping === 'providerRequest' && [400, 422].includes(classified.httpStatus)
+}
+
+// Whether a forwarded record is such a refused request, by the closed public fact the proxy keeps
+// beside the private classification that published evidence drops.
+function isProviderRefusedRequest (record) {
+  return record.event === 'cognitionForwarded' && record.outcome === 'cognitionFailure' &&
+    record.providerRefusedRequest === true
+}
+
+// The JVM's ending of a perception whose mind answered with a failure (`AsyncCognitionBridge`).
+const COGNITION_FAILED_OUTCOME = 'failed'
+
+// Whether a body record is the JVM's own ending of a request the provider refused, one of
+// `refusedKeys` (`agentId:requestId`): typed evidence of that one failure, never a stop.
+function isProviderRefusedEnding (record, refusedKeys) {
+  return record.event === 'cognitionUnavailable' && record.outcome === COGNITION_FAILED_OUTCOME &&
+    refusedKeys.has(record.requestKey ?? `${record.agentId}:${record.requestId}`)
+}
+
+// The requests a run's harness evidence records the provider as refusing.
+function providerRefusedKeysOf (harnessRecords) {
+  return new Set(harnessRecords.filter(isProviderRefusedRequest).map((record) => record.requestKey))
 }
 
 // Whether a forwarded record is a call that a provider outage also failed while it was in flight:
@@ -317,6 +348,10 @@ function admissionEndMetrics (bodyRecords, harnessRecords, firstTick) {
 
 module.exports = {
   isProviderDrainFailure,
+  isProviderRefusedEnding,
+  isProviderRefusedRequest,
+  isProviderRequestFailure,
+  providerRefusedKeysOf,
   ADMISSION_CLOSED_BOUND,
   ADMISSION_CLOSED_EVENT,
   ADMISSION_ENDED_EVENT,

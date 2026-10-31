@@ -19,6 +19,7 @@ const {
   PrimaryBehaviorGuard,
   RequestSettlement,
   authenticationFailure,
+  cognitionFailureAction,
   drainControlledStop,
   primaryBehaviorRunFailure
 } = require('../lib/harness.js')
@@ -878,6 +879,87 @@ test('a slow host that ended before a review was due publishes as a no-go', () =
     () => publish({ raw: owed, stopReason: 'durationElapsed' }),
     /tribe-gamma did not record the expected native scheduled reviews/
   )
+})
+
+// R40: one follow-up review the provider refused as invalid (HTTP 400) stopped a ten-agent run 403 s
+// into its 600 s window. `requestId` of `agentId` becomes that refused request in a full-duration run.
+function providerRefusedRaw ({ agentId = 'tribe-alpha', requestId = 'native-1', flagged = true } = {}) {
+  const raw = endedRaw()
+  const applied = raw.body.find((record) =>
+    record.agentId === agentId && record.requestId === requestId && record.event === 'intentApplied')
+  raw.body = raw.body.filter((record) => !(
+    record.agentId === agentId &&
+    ((record.requestId === requestId && ['decided', 'intentApplied'].includes(record.event)) ||
+      (record.event === 'moved' && record.tick === applied.tick + 5))
+  ))
+  const seen = raw.body.find((record) =>
+    record.agentId === agentId && record.requestId === requestId && record.event === 'perceived')
+  raw.body.splice(raw.body.indexOf(seen) + 1, 0, bodyRecord(seen.tick + 1, agentId, 'cognitionUnavailable', 'the mind did not answer', {
+    requestId, trigger: 'goalReview', outcome: 'failed', perception: seen.perception
+  }))
+  const forwarded = raw.harness.find((record) =>
+    record.event === 'cognitionForwarded' && record.agentId === agentId && record.requestId === requestId)
+  forwarded.outcome = 'cognitionFailure'
+  delete forwarded.provenance
+  forwarded.failure = PROVIDER_REFUSED
+  if (flagged) forwarded.providerRefusedRequest = true
+  return raw
+}
+
+const PROVIDER_REFUSED = Object.freeze({
+  schemaVersion: 'loom-cognition-failure/1',
+  backend: 'openai',
+  model: LIVE_MODEL,
+  httpStatus: 400,
+  providerType: 'invalid_request_error',
+  providerCode: null,
+  responseShape: 'apiErrorEnvelope',
+  mapping: 'providerRequest'
+})
+
+test('one request the provider refused is recorded and the run goes on to its duration', () => {
+  const config = openAiGoalContinuityConfig()
+  const request = { agentId: 'tribe-alpha', requestId: 'native-1', trigger: 'goalReview', importance: 'ROUTINE' }
+  // Only the R40 path changes: the refused request continues; a credential, an outage and any other
+  // failure still end or stop the run as before.
+  assert.equal(cognitionFailureAction(config, 'refused', PROVIDER_REFUSED, request), null)
+  assert.equal(cognitionFailureAction(config, 'refused', { ...PROVIDER_REFUSED, httpStatus: 422 }, request), null)
+  const credential = { ...PROVIDER_REFUSED, httpStatus: 401, mapping: 'providerAuthentication' }
+  assert.equal(cognitionFailureAction(config, 'refused', credential, request).abort.code, 'providerAuthenticationRejected')
+  const outage = { ...PROVIDER_REFUSED, httpStatus: 503, mapping: 'providerServer' }
+  assert.equal(cognitionFailureAction(config, 'failed', outage, request).stop.kind, 'providerUnavailable')
+  const parse = { ...PROVIDER_REFUSED, httpStatus: 200, mapping: 'providerDecisionParse' }
+  assert.equal(cognitionFailureAction(config, 'failed', parse, request).abort.code, 'cognitionDecisionFailed')
+  assert.equal(cognitionFailureAction(config, 'failed', null, request).abort.code, 'cognitionDecisionFailed')
+
+  // The guard reads the refused request's own ending as typed evidence, and the agent's later work goes on.
+  const raw = providerRefusedRaw()
+  assert.equal(primaryBehaviorRunFailure(goalContinuityConfig(), raw.body, raw.harness), null)
+  const failedAt = raw.body.find((record) => record.event === 'cognitionUnavailable' && record.outcome === 'failed').tick
+  const later = raw.body.filter((record) => record.agentId === 'tribe-alpha' && record.tick > failedAt)
+  assert.ok(later.some((record) => record.event === 'decided' && record.requestId === 'native-2'))
+  assert.ok(later.some((record) => record.event === 'intentApplied' && record.requestId === 'native-2'))
+
+  // It publishes at its full duration, and the gate fails closed on the failure it records.
+  const published = publish({ raw, stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  assert.equal(published.manifest.timing.stopReason, 'durationElapsed')
+  assert.equal(published.metrics.cycles.unavailable, 2)
+  assert.equal(published.metrics.behaviorGate.pilotCriteria.noFailureEvidence, false)
+  assert.equal(published.metrics.behaviorGate.pilotVerdict, 'no-go')
+
+  // Without the proxy's typed flag the same ending is still an untyped failure that stops the run.
+  const untyped = providerRefusedRaw({ flagged: false })
+  assert.match(
+    primaryBehaviorRunFailure(goalContinuityConfig(), untyped.body, untyped.harness).message,
+    /cognition request became unavailable \(failed at tick/
+  )
+  rejects(untyped, /primary behavior evidence contains a cognition refusal, unavailable decision, or discarded decision/)
+
+  // A flag the body evidence does not answer with a failed perception is refused.
+  const unmatched = providerRefusedRaw()
+  unmatched.body.find((record) => record.event === 'cognitionUnavailable' && record.outcome === 'failed').outcome = 'mindRefused'
+  rejects(unmatched, /provider-refused request tribe-alpha:native-1 has no matching failed perception chain/)
 })
 
 // The server's reading of every agent at begin, as the JVM's `InitialConditionsWitness` journals it.

@@ -41,15 +41,17 @@ function isShutdownEnding (record) {
 
 /**
  * Whether every unanswered perception is accounted for: coalesced into a danger episode,
- * ended by the shutdown after an admission end, or refused by an admission refusal.
+ * ended by the shutdown after an admission end, refused by an admission refusal, or, when
+ * `providerRefusedKeys` names it, the typed ending of a request the provider refused.
  */
-function unansweredAccountedFor (bodyRecords, { admissionEnded, refusedKeys }) {
+function unansweredAccountedFor (bodyRecords, { admissionEnded, refusedKeys, providerRefusedKeys = new Set() }) {
   return bodyRecords
     .filter((record) => record.event === 'cognitionUnavailable')
     .every((record) =>
       isCoalesced(record) ||
       (admissionEnded && (isShutdownEnding(record) || isExposureEnding(record))) ||
-      refusedKeys.has(record.requestKey))
+      refusedKeys.has(record.requestKey) ||
+      (record.outcome === 'failed' && providerRefusedKeys.has(record.requestKey)))
 }
 
 // Derived only when the evidence holds a perception coalesced into a danger episode.

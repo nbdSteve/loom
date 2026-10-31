@@ -212,9 +212,65 @@ test('the proxy preserves one sanitized cognition classification for the diagnos
         outcome: 'cognitionFailure',
         provenance: null,
         outstandingAtAdmission: 1,
-        failure
+        failure,
+        providerRefusedRequest: true
       }
     )
+  } finally {
+    await proxy.close()
+    await new Promise((resolve) => upstream.close(resolve))
+  }
+})
+
+test('a request the provider refused is journalled with its public flag and later requests still go through', async () => {
+  // R40: one follow-up review the provider refused as invalid (HTTP 400) stopped a ten-agent run.
+  const failure = {
+    schemaVersion: 'loom-cognition-failure/1',
+    backend: 'openai',
+    model: 'fast-model',
+    httpStatus: 400,
+    providerType: 'invalid_request_error',
+    providerCode: null,
+    responseShape: 'apiErrorEnvelope',
+    mapping: 'providerRequest'
+  }
+  const error = "cognition failed: the model provider refused Loom's request for 'fast-model' (HTTP 400, invalid_request_error)"
+  let calls = 0
+  const upstream = net.createServer((socket) => {
+    socket.once('data', (chunk) => {
+      const perception = JSON.parse(chunk.toString('utf8').split('\n')[0])
+      calls += 1
+      socket.end(`${JSON.stringify(calls === 1
+        ? { error, failure }
+        : {
+            requestId: perception.requestId,
+            agentId: perception.agentId,
+            intent: { action: 'idle' },
+            reasoning: 'test',
+            provenance: { tier: perception.importance, model: 'fast-model', promptVersion: 'routine-v36' }
+          })}\n`)
+    })
+  })
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+  const events = []
+  const proxy = new CognitionBudgetProxy({
+    listen: { host: '127.0.0.1', port: 0 },
+    upstream: { host: '127.0.0.1', port: upstream.address().port },
+    agents: ['alpha'],
+    models: { ordinary: 'fast-model', pivotal: 'deep-model' },
+    budget: { perAgentCallCeiling: 3, globalCallCeiling: 3, globalOutstandingCeiling: 1 },
+    journal: { append: (event, fields) => events.push({ event, ...fields }) }
+  })
+  await proxy.start()
+  try {
+    assert.equal((await request(proxy.listen.port, 'alpha', 'one')).error, error)
+    assert.equal((await request(proxy.listen.port, 'alpha', 'two')).intent.action, 'idle')
+    const forwarded = events.filter((event) => event.event === 'cognitionForwarded')
+    assert.deepEqual(forwarded.map((event) => [event.requestId, event.outcome, event.providerRefusedRequest]), [
+      ['one', 'cognitionFailure', true],
+      ['two', 'decision', undefined]
+    ])
+    assert.equal(forwarded[0].providerUnavailable, undefined)
   } finally {
     await proxy.close()
     await new Promise((resolve) => upstream.close(resolve))
@@ -250,6 +306,7 @@ test('a provider unavailability is journalled with a closed public flag beside i
     const forwarded = events.find((event) => event.event === 'cognitionForwarded')
     assert.equal(forwarded.outcome, 'cognitionFailure')
     assert.equal(forwarded.providerUnavailable, true)
+    assert.equal(forwarded.providerRefusedRequest, undefined)
     assert.deepEqual(forwarded.failure, failure)
   } finally {
     await proxy.close()

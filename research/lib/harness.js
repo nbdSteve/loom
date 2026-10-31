@@ -25,6 +25,9 @@ const {
   CONTROLLED_STOP_REASON,
   budgetStopFor,
   isProviderDrainFailure,
+  isProviderRefusedEnding,
+  isProviderRefusedRequest,
+  isProviderRequestFailure,
   providerStopFor
 } = require('./controlled-stop.js')
 const { readJsonLines } = require('./evidence.js')
@@ -429,6 +432,7 @@ class PrimaryBehaviorGuard {
     this.dead = new Set()
     this.settlement = new DeathSettlement()
     this.typed = new Set()
+    this.refusedByProvider = new Set()
     this.closed = false
     this.providerStopped = false
     this.firstPerceptionChecked = new Set()
@@ -450,6 +454,7 @@ class PrimaryBehaviorGuard {
       }
       // A call the same outage failed while it drained is part of the provider stop.
       if (this.providerStopped && isProviderDrainFailure(record)) this.typed.add(`${record.agentId}:${record.requestId}`)
+      if (isProviderRefusedRequest(record)) this.refusedByProvider.add(`${record.agentId}:${record.requestId}`)
       if (
         record.event === 'cognitionRefused' &&
         [...BUDGET_STOP_BOUNDS, ADMISSION_CLOSED_BOUND].includes(record.bound) &&
@@ -501,6 +506,8 @@ class PrimaryBehaviorGuard {
       this.closed &&
       this.typed.has(`${record.agentId}:${record.requestId}`)
     ) return null
+    // A request the provider refused ends as that perception's own typed failure; the run goes on.
+    if (isProviderRefusedEnding(record, this.refusedByProvider)) return null
     const detail = PRIMARY_BEHAVIOR_FATAL_EVENTS.get(record.event)
     if (detail !== undefined) {
       // A closed camelCase outcome tag says which kind; free text never reaches the message.
@@ -772,6 +779,28 @@ function authenticationFailure (message, classified) {
     `the model provider rejected Loom's credential (HTTP ${match[1]}); check OPENAI_API_KEY`,
     'providerAuthenticationRejected'
   )
+}
+
+/**
+ * What one cognition failure does to a run: a rejected credential ends it; in primary behavior
+ * mode a classified provider outage stops admission, one request the provider refused as invalid
+ * is recorded and the run continues (`isProviderRequestFailure`), and any other failure ends it.
+ * `null` when the run goes on.
+ */
+function cognitionFailureAction (config, message, classified, request) {
+  const failure = authenticationFailure(message, classified)
+  if (failure !== null) return { abort: failure }
+  if (!isPrimaryBehaviorMode(config)) return null
+  const providerStop = request === undefined ? null : providerStopFor(request, classified)
+  if (providerStop !== null) return { stop: providerStop }
+  if (isProviderRequestFailure(classified)) return null
+  return {
+    abort: new RunFailure(
+      'cognitionFailed',
+      'primary behavior cognition returned a failed decision',
+      'cognitionDecisionFailed'
+    )
+  }
 }
 
 function budgetRefusalFailure (refusal) {
@@ -1102,20 +1131,11 @@ async function runHeldExperiment ({
       },
       journal,
       onCognitionFailure: (message, classified, request) => {
-        const failure = authenticationFailure(message, classified)
-        const providerStop = isPrimaryBehaviorMode(config) && request !== undefined
-          ? providerStopFor(request, classified)
-          : null
-        if (failure !== null) {
-          abort(failure)
-        } else if (providerStop !== null) {
-          stopAdmission(providerStop)
-        } else if (isPrimaryBehaviorMode(config)) {
-          abort(new RunFailure(
-            'cognitionFailed',
-            'primary behavior cognition returned a failed decision',
-            'cognitionDecisionFailed'
-          ))
+        const action = cognitionFailureAction(config, message, classified, request)
+        if (action?.abort !== undefined) {
+          abort(action.abort)
+        } else if (action?.stop !== undefined) {
+          stopAdmission(action.stop)
         }
       },
       onRefusal: (refusal) => {
@@ -1518,6 +1538,7 @@ module.exports = {
   buildComponents,
   conciseJavaVersion,
   PrimaryBehaviorGuard,
+  cognitionFailureAction,
   RequestSettlement,
   drainControlledStop,
   exposureEnder,
