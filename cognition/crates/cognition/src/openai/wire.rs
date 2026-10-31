@@ -1229,26 +1229,32 @@ fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
 
 /// [`goal_offer`] for a goal review, whose choices narrow to what the ledger accepts.
 /// The revise shapes of the held goal's item: the ranges either side of its held total, never
-/// the total itself (r19: 28 of 31 revises set the total they were shown, and read as activity).
+/// the total itself (r19: 28 of 31 revises set the total they were shown, and read as activity),
+/// and the range above it only when more of the item serves a chain the perception evidences
+/// (`held_serves_chain`; R41: met dirt goals revised upward at night instead of completing).
 fn revise_choices(refs: &OfferedRefs, item: &str) -> Vec<Value> {
     let total = refs.held_total.unwrap_or(0);
     let Some((fewest, most)) = refs.count_bounds_of(item) else {
         return Vec::new();
     };
-    [(fewest, most.min(total - 1)), (fewest.max(total + 1), most)]
-        .into_iter()
-        .filter(|(low, high)| low <= high)
-        .map(|(low, high)| {
-            goal_variant(
-                goal_fields(GoalDisposition::Revise),
-                "revise",
-                REVISE,
-                json!({ "type": "string", "enum": [item] }),
-                low,
-                high,
-            )
-        })
-        .collect()
+    let upward = if refs.held_serves_chain { most } else { total };
+    [
+        (fewest, most.min(total - 1)),
+        (fewest.max(total + 1), upward),
+    ]
+    .into_iter()
+    .filter(|(low, high)| low <= high)
+    .map(|(low, high)| {
+        goal_variant(
+            goal_fields(GoalDisposition::Revise),
+            "revise",
+            REVISE,
+            json!({ "type": "string", "enum": [item] }),
+            low,
+            high,
+        )
+    })
+    .collect()
 }
 
 /// Whether any of `by_item`'s choices, or a walk to look further, can be paired with a step: an

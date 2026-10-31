@@ -636,10 +636,10 @@ data class Observation(
      */
     val yields: List<BlockYield>? = null,
     /**
-     * Whether digging this block leaves the body a way out.
+     * Whether digging this block is safe: it leaves the body a way out, its drop where the body can
+     * collect it, the body dry, and, through the shelter window, a sealed space it stands in sealed.
      *
-     * Present exactly for [ObservationKind.BLOCK]; false only for the support block of a body
-     * with no standable exit.
+     * Present exactly for [ObservationKind.BLOCK].
      */
     val digSafe: Boolean? = null,
     /**

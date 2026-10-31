@@ -34,6 +34,12 @@ const val URGENT_CALL_RESERVE: Int = 2
  * hunters more than twelve blocks off spent a fifth of the ceiling, and creepers at 3.8 and 6.7
  * blocks were refused in the last 1100 ticks).
  *
+ * Urgent danger past an agent's own ceiling borrows unused calls from the global one, while it
+ * still leaves every living agent's reviews still due and every other living agent's urgent calls
+ * (R41: alpha spent its 40 calls and took 120 ticks of a spider's hits with every damage call
+ * refused, while 31 of the 378 global calls went unused). The global and pivotal ceilings, and so
+ * the run's cost bound, are unchanged.
+ *
  * The reserve is pooled, and a dead agent owes nothing: r22 split the global ceiling into fixed
  * shares of 15, refused 21 danger calls (four of them damage, the last of theta's at health 1.5)
  * while 22 of the 150 went unused, and alpha's and iota's unspent shares were stranded. So an
@@ -92,7 +98,7 @@ class CallReserve(
         // hold, theta's at health 1).
         val pivotal = perception.importance == DecisionImportance.PIVOTAL
         val pivotalFits = !pivotal || pivotalFits(agentId, perception)
-        val ceilingsFit = ceilingsFit(agentId, review || urgent, calls, total)
+        val ceilingsFit = ceilingsFit(agentId, review || urgent, calls, total) || (urgent && borrowFits(agentId, total))
         // Damage and threat sightings past the pivotal ceiling fall back to the ordinary tier.
         val admission =
             when {
@@ -144,6 +150,20 @@ class CallReserve(
         val keptForAll = owedByTheLiving(agentId) + URGENT_CALL_RESERVE.toLong() * livingCount(agentId)
         val ownFits = calls + 1 + owedBy(agentId) + URGENT_CALL_RESERVE <= perAgentCeiling
         return ownFits && total.toLong() + 1 + keptForAll <= globalCeiling
+    }
+
+    /**
+     * Whether urgent danger past [agentId]'s own ceiling fits a configured global one: after it, the
+     * global ceiling still holds every living agent's reviews still due and every other living
+     * agent's urgent calls. With no global ceiling there is nothing to borrow from.
+     */
+    private fun borrowFits(
+        agentId: AgentId,
+        total: Int,
+    ): Boolean {
+        if (globalCeiling == Int.MAX_VALUE) return false
+        val keptForOthers = owedByTheLiving(agentId) + URGENT_CALL_RESERVE.toLong() * (livingCount(agentId) - 1)
+        return total.toLong() + 1 + keptForOthers <= globalCeiling
     }
 
     /** Urgent damage and a close threat sighting, the danger a cheaper answer still serves. */

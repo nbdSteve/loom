@@ -459,7 +459,7 @@
           "items": { "$ref": "#/$defs/BlockYield" }
         },
         "digSafe": {
-          "description": "Whether digging this block leaves the body a way out. False only for the block under the body's feet when no standable neighbour would let it climb out of the hole the dig makes. Present only when kind is block.",
+          "description": "Whether digging this block is safe: it leaves the body a way out, its drop where the body can collect it, the body dry, and, at night or as nightfall nears, the sealed space the body stands in sealed. Present only when kind is block.",
           "type": "boolean"
         },
         "standable": {

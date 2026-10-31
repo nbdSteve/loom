@@ -24,6 +24,11 @@ function refusal (message, code) {
   return `${JSON.stringify({ error: message, ...(code === undefined ? {} : { code }) })}\n`
 }
 
+// Damage, or a pivotal sighting: the danger an agent may borrow unused global calls for.
+function isUrgentDanger (perception) {
+  return perception?.trigger?.event === 'damaged' || perception?.importance === 'PIVOTAL'
+}
+
 class CognitionBudgetProxy {
   constructor ({
     listen,
@@ -139,7 +144,7 @@ class CognitionBudgetProxy {
     return importance === 'PIVOTAL' ? this.spend.tier.pivotal : this.spend.tier.ordinary
   }
 
-  crossedBound (agentId, agentCalls, importance) {
+  crossedBound (agentId, agentCalls, importance, borrowing = false) {
     const calls = (bound, reason, ceiling, observed) =>
       ({ bound, reason, unit: 'calls', ceiling, observed })
     if (this.admissionClosed !== null) {
@@ -156,7 +161,7 @@ class CognitionBudgetProxy {
     if (this.total >= this.budget.globalCallCeiling) {
       return calls('globalCall', 'globalCallCeiling', this.budget.globalCallCeiling, this.total)
     }
-    if (agentCalls >= this.budget.perAgentCallCeiling) {
+    if (agentCalls >= this.budget.perAgentCallCeiling && !borrowing) {
       return calls('perAgentCall', 'perAgentCallCeiling', this.budget.perAgentCallCeiling, agentCalls)
     }
     const reserve = this.reserveBlocks(agentId, agentCalls)
@@ -309,7 +314,10 @@ class CognitionBudgetProxy {
     const agentCalls = this.perAgent.get(agentId) ?? 0
     const origin = this.requestOrigin(perception.trigger?.event)
     const originField = origin === undefined ? {} : { origin }
-    const crossed = this.crossedBound(agentId, agentCalls, perception.importance)
+    // Urgent danger past the agent's own ceiling borrows unused global calls (R41: alpha's damage
+    // calls past its 40 were refused while 31 of 378 went unused); the JVM keeps what others owe.
+    const borrowing = agentCalls >= this.budget.perAgentCallCeiling && isUrgentDanger(perception)
+    const crossed = this.crossedBound(agentId, agentCalls, perception.importance, borrowing)
     if (crossed !== null) {
       this.refusedByBound[crossed.bound] = (this.refusedByBound[crossed.bound] ?? 0) + 1
       const refused = {
@@ -361,6 +369,7 @@ class CognitionBudgetProxy {
         outstandingAtAdmission,
         latencyMs: latencyMs(),
         ...originField,
+        ...(borrowing ? { borrowedCall: true } : {}),
         ...(failure === null ? {} : { failure }),
         // A closed public fact beside the private classification evidence does not keep, so a
         // publisher can tell a provider outage's drained calls from a failure of their own.

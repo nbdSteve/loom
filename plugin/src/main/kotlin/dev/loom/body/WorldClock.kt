@@ -43,6 +43,17 @@ object WorldClock {
     /** The day time the sun starts to rise at. */
     const val DAWN_START: Long = 22_200
 
+    /**
+     * How long before nightfall a shelter goal is offered, in server ticks, and through the night that
+     * follows: a pit of three digs and a placement takes a few follow-up reviews, and r36's first
+     * hostile struck about 200 ticks after nightfall. `SHELTER_LEAD_TICKS` in the mind's `offered.rs`.
+     */
+    const val SHELTER_LEAD_TICKS: Long = 3_000
+
+    /** Whether [dayTime] is night, or within [SHELTER_LEAD_TICKS] of nightfall: when a shelter is held. */
+    fun shelterWindow(dayTime: Long): Boolean =
+        phaseOf(dayTime) == DayPhase.NIGHT || ticksUntilNightfall(dayTime) <= SHELTER_LEAD_TICKS
+
     /** Where in its day the world is, in `0 until TICKS_PER_DAY`. */
     fun timeOfDay(dayTime: Long): Long = dayTime.mod(TICKS_PER_DAY)
 

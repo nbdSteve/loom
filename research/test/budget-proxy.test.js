@@ -277,6 +277,36 @@ test('a request the provider refused is journalled with its public flag and late
   }
 })
 
+test('urgent danger past its own ceiling borrows a global call, and nothing else does', async () => {
+  // R41: alpha's damage calls past its 40 were refused while 31 of the 378 global calls went unused.
+  const upstream = await startUpstream()
+  const events = []
+  const refusals = []
+  const proxy = new CognitionBudgetProxy({
+    listen: { host: '127.0.0.1', port: 0 },
+    upstream: { host: '127.0.0.1', port: upstream.address().port },
+    agents: ['alpha', 'beta'],
+    budget: { perAgentCallCeiling: 1, globalCallCeiling: 2, globalOutstandingCeiling: 1 },
+    journal: { append: (event, fields) => events.push({ event, ...fields }) },
+    onRefusal: (refusal) => refusals.push(refusal)
+  })
+  await proxy.start()
+  try {
+    assert.equal((await request(proxy.listen.port, 'alpha', 'one')).intent.action, 'idle')
+    assert.equal((await request(proxy.listen.port, 'alpha', 'follow-up', 'stepSettled')).error, 'cognition request refused by experiment budget')
+    assert.equal(refusals.at(-1).bound, 'perAgentCall')
+    assert.equal((await request(proxy.listen.port, 'alpha', 'bite', 'damaged')).intent.action, 'idle')
+    const borrowed = events.find((event) => event.event === 'cognitionForwarded' && event.requestId === 'bite')
+    assert.equal(borrowed.borrowedCall, true)
+    // The global ceiling still holds every call.
+    assert.equal((await request(proxy.listen.port, 'beta', 'bite', 'damaged')).error, 'cognition request refused by experiment budget')
+    assert.equal(refusals.at(-1).bound, 'globalCall')
+  } finally {
+    await proxy.close()
+    await new Promise((resolve) => upstream.close(resolve))
+  }
+})
+
 test('a provider unavailability is journalled with a closed public flag beside its private classification', async () => {
   // r31: the publisher reads normalized evidence, which never keeps `failure`, and has to tell a
   // provider outage's drained calls from failures of their own.
@@ -413,7 +443,8 @@ test('a refusal names its exact bound, agent, origin, ceiling, and observed coun
   await proxy.start()
   try {
     await request(proxy.listen.port, 'alpha', 'a1')
-    await request(proxy.listen.port, 'alpha', 'a2', 'damaged')
+    // A follow-up past the agent's own ceiling: urgent danger would borrow a global call instead.
+    await request(proxy.listen.port, 'alpha', 'a2', 'stepSettled')
     await request(proxy.listen.port, 'beta', 'b1')
     await request(proxy.listen.port, 'beta', 'b2')
     assert.deepEqual(refusals.map(typed), [
@@ -426,7 +457,7 @@ test('a refusal names its exact bound, agent, origin, ceiling, and observed coun
         observed: 1,
         forwarded: false,
         origin: 'nativeEventDriver',
-        trigger: 'damaged'
+        trigger: 'stepSettled'
       },
       {
         agentId: 'beta',

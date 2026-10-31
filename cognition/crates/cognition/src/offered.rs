@@ -479,6 +479,12 @@ pub struct OfferedRefs {
     /// The held goal's success total, which a revise must change (r19: 28 of 31 revises set the
     /// total they were shown, and read as goal activity).
     pub held_total: Option<i64>,
+    /// Whether more of the held goal's item serves a concrete chain this perception evidences: a
+    /// grounded horizon recipe made from it, or a shelter it would close, as a solid item while night
+    /// nears and the agent is not sealed in. Only then is a revise upward offered (R41: 34 of 40
+    /// upward revises raised dirt totals with neither, 30 of them sealed in at night, and met goals
+    /// kept growing instead of completing).
+    pub held_serves_chain: bool,
     /// Where a goal review stands with a discovery goal.
     pub discovery: Discovery,
     /// The dig handles in reach that give the pursued goal's item, or an input on its path, at
@@ -1242,6 +1248,7 @@ impl OfferedRefs {
         };
         self.held_item = Some(item.clone());
         self.held_total = Some(count);
+        self.held_serves_chain = serves_chain(perception, &self.shelter, item, self.sheltering);
         let held = held_of(perception, item);
         let capacity = totals
             .iter()
@@ -1476,6 +1483,30 @@ impl OfferedRefs {
             Intent::Say { .. } | Intent::Rest | Intent::Idle => true,
         }
     }
+}
+
+/// Whether more of `item` serves a concrete chain `perception` evidences: a grounded horizon goal
+/// whose recipe is made from it, a shelter subgoal it feeds, or a shelter it would close, as an item
+/// that places solid while night nears and the agent is not sealed in (`held_serves_chain`).
+fn serves_chain(
+    perception: &Perception,
+    shelter: &ShelterOffer,
+    item: &str,
+    sheltering: Sheltering,
+) -> bool {
+    let crafted = perception
+        .horizon
+        .iter()
+        .any(|goal| goal.what != item && goal.via.as_deref() == Some(item));
+    let solid = shelter.block_items.iter().any(|named| named == item)
+        || perception
+            .self_state
+            .inventory_summary
+            .iter()
+            .any(|stack| stack.what == item && stack.solid == Some(true));
+    let closes =
+        shelter.night_near && shelter.standing != Standing::Unread && !shelter.sealed() && solid;
+    crafted || closes || sheltering == Sheltering::Feeding
 }
 
 #[cfg(test)]

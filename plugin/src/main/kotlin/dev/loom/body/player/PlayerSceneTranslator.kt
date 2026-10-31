@@ -25,6 +25,7 @@ import dev.loom.contract.SelfState
 import dev.loom.contract.WorldState
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import kotlin.math.floor
 
 private const val BLOCK_CENTER_OFFSET = 0.5
 
@@ -195,6 +196,11 @@ internal class PlayerSceneTranslator(
         val far = { block: List<Int> ->
             blocksApart(eyes, block.map { it + BLOCK_CENTER_OFFSET }) > SIGHT_DIG_REACH_BLOCKS
         }
+        // Sealed in through the shelter window, a dig that would open that space is no safe dig, so no
+        // item goal is offered it (R41 alpha sealed itself in at dusk, dug its own walls four times for
+        // dirt goals, and was killed in the open).
+        val feet = raw.report.position.map { floor(it).toInt() }
+        val sheltering = WorldClock.shelterWindow(raw.report.time.timeOfDay.toLong())
         val blocks =
             raw.report.blocks.mapIndexed { index, block ->
                 // A block sight shows beyond dig reach that no stand a walk reaches digs - a canopy log
@@ -215,7 +221,9 @@ internal class PlayerSceneTranslator(
                             ?.takeIf { context.authority.ground !== BlockGround.UNKNOWN }
                             ?.let { closedFacesAt(scene.ground, it).toLong() },
                     yields = context.authority.yields.of(block.position, raw.identity).take(MAX_BLOCK_YIELDS),
-                    digSafe = !unreached && digSafeAt(scene.ground, raw.report.position, block.position),
+                    digSafe =
+                        !unreached && digSafeAt(scene.ground, raw.report.position, block.position) &&
+                            !(sheltering && digOpensShelter(scene.ground, feet, block.position)),
                 )
             }
         val items =

@@ -1837,7 +1837,15 @@ function semanticErrors (artifactDirectory, manifest) {
   for (const record of records) {
     if (record.source !== 'harness') continue
     if (record.event === 'cognitionForwarded') {
-      perAgentCalls.set(record.agentId, (perAgentCalls.get(record.agentId) ?? 0) + 1)
+      // A borrowed call is urgent danger past the agent's own ceiling, counted against the global one.
+      const ownCalls = perAgentCalls.get(record.agentId) ?? 0
+      if (record.borrowedCall === true) {
+        if (ownCalls < manifest.cognition.perAgentCallCeiling || (record.trigger !== 'damaged' && record.importance !== 'PIVOTAL')) {
+          errors.push(`${record.requestKey} borrowed a global call that was not urgent danger past its own ceiling`)
+        }
+      } else {
+        perAgentCalls.set(record.agentId, ownCalls + 1)
+      }
       forwardedRequests.add(record.requestKey)
       if (record.outcome === 'decision') {
         forwardedDecisions.set(record.requestKey, record.provenance?.model)

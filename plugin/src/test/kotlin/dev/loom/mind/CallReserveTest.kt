@@ -268,4 +268,47 @@ class CallReserveTest {
             },
         )
     }
+
+    @Test
+    fun `urgent danger past its own ceiling borrows unused global calls and leaves the others theirs`() {
+        // R41 at alpha's refused damage call (body:00002881, tick 11947): every agent had held its five
+        // scheduled reviews, alpha had sent 40 (two of them flights from danger), its peers 27 to 38, and
+        // 347 of the 378 global calls were spent. Every bite after that was refused until it died.
+        val sent =
+            mapOf(
+                "alpha" to 40, "beta" to 27, "delta" to 38, "epsilon" to 30, "eta" to 33,
+                "gamma" to 38, "iota" to 27, "kappa" to 38, "theta" to 38, "zeta" to 38,
+            )
+        val reserve =
+            CallReserve(
+                perAgentCeiling = 40,
+                scheduledPerAgent = 5,
+                globalCeiling = 378,
+                agents = 10,
+                pivotalCeiling = 130,
+            )
+        for ((agent, calls) in sent) {
+            val id = AgentId(agent)
+            repeat(5) {
+                val scheduled = perception(requestId = "$agent-r$it", agentId = agent, trigger = Trigger.GoalReview)
+                assertTrue(reserve.admits(id, scheduled))
+            }
+            val urgent = if (agent == "alpha") 2 else 0
+            repeat(calls - 5 - urgent) {
+                val settled = perception(requestId = "$agent-s$it", agentId = agent, trigger = Trigger.StepSettled)
+                assertTrue(reserve.admits(id, settled))
+            }
+            repeat(urgent) { assertTrue(reserve.admits(id, damage("$agent-d$it"))) }
+        }
+        // The spider's first bite past alpha's 40 is sent: 347 + 1 leaves the nine others their 18.
+        assertTrue(reserve.admits(alpha, damage("bite-11947")))
+        // It borrows only down to what every other living agent keeps for its own danger.
+        var borrowed = 1
+        while (reserve.admits(alpha, damage("bite-$borrowed"))) borrowed += 1
+        assertEquals(378 - 347 - 2 * 9, borrowed)
+        // A follow-up past the ceiling borrows nothing, and the others' urgent calls are still there.
+        assertFalse(reserve.admits(alpha, event("after")))
+        val bite = perception(requestId = "beta-bite", agentId = "beta", trigger = Trigger.Damaged(3, "zombie"))
+        assertTrue(reserve.admits(AgentId("beta"), bite))
+    }
 }

@@ -913,8 +913,9 @@ pub struct Observation {
     /// drops nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub yields: Option<Vec<BlockYield>>,
-    /// Whether digging this block leaves the body a way out. Present exactly for
-    /// [`ObservationKind::Block`]; false only for the support block of a body with no exit.
+    /// Whether digging this block is safe: it leaves the body a way out, its drop where the body can
+    /// collect it, the body dry, and, through the shelter window, a sealed space it stands in sealed.
+    /// Present exactly for [`ObservationKind::Block`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dig_safe: Option<bool>,
     /// Present, and true, only for a dropped item this agent's body has already found no way

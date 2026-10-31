@@ -20,6 +20,7 @@ package dev.loom.mind
 
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
+import dev.loom.body.WorldClock
 import dev.loom.contract.BlockFace
 import dev.loom.contract.CoverProgress
 import dev.loom.contract.DayPhase
@@ -35,12 +36,8 @@ import dev.loom.contract.StepEvidence
 import dev.loom.contract.action
 import dev.loom.contract.targetRef
 
-/**
- * How long before nightfall a shelter goal is offered, in server ticks, and through the night that
- * follows: a pit of three digs and a placement takes a few follow-up reviews, and r36's first
- * hostile struck about 200 ticks after nightfall. `SHELTER_LEAD_TICKS` in the mind's `offered.rs`.
- */
-const val SHELTER_LEAD_TICKS: Long = 3_000
+/** How long before nightfall a shelter goal is offered: [WorldClock.SHELTER_LEAD_TICKS]. */
+const val SHELTER_LEAD_TICKS: Long = WorldClock.SHELTER_LEAD_TICKS
 
 /**
  * The most sites of natural cover a shelter step may walk onto, the most enclosed first;

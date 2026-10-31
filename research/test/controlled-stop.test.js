@@ -541,13 +541,14 @@ test('a budget refusal closes admission while concurrent in-flight work settles'
 
 test('per-agent, global-call and spend refusals each close admission under their own bound', async () => {
   for (const [bound, budget, spend, calls] of [
-    ['perAgentCall', { perAgentCallCeiling: 1, globalCallCeiling: 3, globalOutstandingCeiling: 1 }, undefined, [['alpha', 'one'], ['alpha', 'two']]],
+    // A follow-up past the agent's own ceiling: urgent danger would borrow a global call instead.
+    ['perAgentCall', { perAgentCallCeiling: 1, globalCallCeiling: 3, globalOutstandingCeiling: 1 }, undefined, [['alpha', 'one'], ['alpha', 'two', 'stepSettled']]],
     ['globalCall', { perAgentCallCeiling: 2, globalCallCeiling: 1, globalOutstandingCeiling: 1 }, undefined, [['alpha', 'one'], ['beta', 'one']]],
     ['spend', { perAgentCallCeiling: 2, globalCallCeiling: 3, globalOutstandingCeiling: 1 }, { ceilingNanoUsd: 150, worstCaseCallNanoUsd: 100 }, [['alpha', 'one'], ['beta', 'one']]]
   ]) {
     const run = await stoppingProxy({ budget, spend })
     try {
-      for (const [agentId, requestId] of calls) await ask(run.proxy.listen.port, agentId, requestId)
+      for (const [agentId, requestId, trigger] of calls) await ask(run.proxy.listen.port, agentId, requestId, trigger)
       assert.match((await ask(run.proxy.listen.port, 'gamma', 'late')).error, /experiment budget/)
       const closure = run.events.find((event) => event.event === 'cognitionAdmissionClosed')
       assert.equal(closure.bound, bound)
