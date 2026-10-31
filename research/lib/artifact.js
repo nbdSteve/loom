@@ -1263,10 +1263,9 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
     (!stopped && (
       metrics.cognition.refusedCalls !== refusedAfterEnd ||
       !unansweredAccountedFor(bodyOnly, { admissionEnded: ended !== undefined, refusedKeys, providerRefusedKeys })
-    )) ||
-    (deaths === undefined && metrics.cycles.discarded !== 0)
+    ))
   ) {
-    errors.push('primary behavior evidence contains a cognition refusal, unavailable decision, or discarded decision')
+    errors.push('primary behavior evidence contains a cognition refusal or unavailable decision')
   }
   if (stopped || metrics.controlledStop !== undefined || manifest.controlledStop !== undefined) {
     errors.push(...controlledStopErrors(manifest, metrics, records))
@@ -1385,7 +1384,7 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
     'perKindPerceptionAuditComplete',
     'plannedNativeCallsFitCeilings',
     'noDroppedEvidenceWarning',
-    'serverEvidenceUncontested',
+    // `serverEvidenceUncontested` is stated, never required: a witness dispute is no-go evidence.
     ...(stopped ? ['controlledStopAccounted'] : []),
     ...(deaths === undefined ? [] : ['witnessedDeathsAccounted'])
   ]) {

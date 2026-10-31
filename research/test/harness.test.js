@@ -161,14 +161,11 @@ test('primary behavior stops on fatal evidence and a lost initial condition', ()
   )
 })
 
-test('a danger answer newer damage preempted is superseded, and any other discard by a living agent still stops the run', () => {
+test('a danger answer newer damage preempted is superseded, and any other discard by a living agent is kept and the run goes on', () => {
   const config = primaryBehaviorConfig()
   const preempted = { event: 'decisionDiscarded', agentId: 'tribe-alpha', requestId: 'r1', outcome: 'dangerPreempted', tick: 6100 }
   assert.equal(primaryBehaviorRunFailure(config, [preempted]), null)
-  assert.match(
-    primaryBehaviorRunFailure(config, [{ ...preempted, outcome: undefined }]).message,
-    /a cognition decision was discarded/
-  )
+  assert.equal(primaryBehaviorRunFailure(config, [{ ...preempted, outcome: undefined }]), null)
 })
 
 test('a witnessed death ends only that agent while its peers continue', () => {
@@ -233,9 +230,11 @@ test('a witnessed death ends only that agent while its peers continue', () => {
     primaryBehaviorRunFailure(config, [died, { event: 'bodyDisconnected', agentId: 'tribe-beta' }]).message,
     /a body disconnected/
   )
-  for (const event of ['witnessRevived', 'witnessDisputed', 'witnessDenied', 'witnessQuit']) {
+  for (const event of ['witnessRevived', 'witnessDenied', 'witnessQuit']) {
     assert.notEqual(primaryBehaviorRunFailure(config, [died, { event, agentId: 'tribe-beta' }]), null, event)
   }
+  // A peer's witness dispute is an ordinary typed fault, kept as evidence.
+  assert.equal(primaryBehaviorRunFailure(config, [died, { event: 'witnessDisputed', agentId: 'tribe-beta' }]), null)
 })
 
 test('Paper download identifies the harness and verifies bytes before caching', async () => {

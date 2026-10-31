@@ -410,14 +410,17 @@ function nativeCognitionStartOf (config) {
   return isPrimaryBehaviorMode(config) ? 'held' : 'immediate'
 }
 
+// What ends a primary-behavior run because continuing is impossible or unsafe. A witness
+// dispute, a disputed world interaction and a living agent's discarded decision are ordinary
+// typed product faults instead: the run keeps them as evidence, readiness fails closed on them
+// (a server dispute, a server truthfulness below 1, a `protocolError` action), and the run goes
+// on to its duration.
 const PRIMARY_BEHAVIOR_FATAL_EVENTS = new Map([
   ['bodyDisconnected', 'a body disconnected'],
   ['cognitionUnavailable', 'a cognition request became unavailable'],
-  ['decisionDiscarded', 'a cognition decision was discarded'],
   ['despawned', 'a body despawned during the run'],
   ['spawnRejected', 'a configured body spawn was rejected'],
   ['witnessDenied', 'the player witness denied a managed login'],
-  ['witnessDisputed', 'the player witness disputed body evidence'],
   ['witnessQuit', 'a managed player left the server during the run'],
   ['witnessRevived', 'the player witness observed a permadeath breach']
 ])
@@ -515,12 +518,6 @@ class PrimaryBehaviorGuard {
         ? ` (${record.outcome} at tick ${record.tick})`
         : ''
       return new RunFailure('startupFailed', `primary behavior run stopped because ${detail}${tag}`)
-    }
-    if (record.event === 'worldInteraction' && record.outcome === 'disputedWorldInteraction') {
-      return new RunFailure(
-        'startupFailed',
-        'primary behavior run stopped because a world interaction was disputed'
-      )
     }
     if (record.event === 'perceived' && !this.firstPerceptionChecked.has(record.agentId)) {
       this.firstPerceptionChecked.add(record.agentId)

@@ -371,7 +371,7 @@ test('a normal completion still requires the full configured review plan', () =>
   refused.harness = refused.harness.filter((record) => record.event !== 'cognitionAdmissionClosed')
   assert.throws(
     () => publish({ raw: refused, stopReason: 'durationElapsed' }),
-    /cognition refusal, unavailable decision, or discarded decision/
+    /cognition refusal or unavailable decision/
   )
 })
 
@@ -395,9 +395,14 @@ test('the live run treats only typed refusals after an admission closure as non-
   )
   const untyped = [...body, bodyRecord(600, 'tribe-gamma', 'cognitionUnavailable', 'x', { requestId: 'other-1' })]
   assert.match(primaryBehaviorRunFailure(config, untyped, raw.harness).message, /became unavailable/)
-  for (const event of ['witnessDisputed', 'witnessRevived', 'bodyDisconnected', 'decisionDiscarded']) {
+  for (const event of ['witnessRevived', 'bodyDisconnected']) {
     const fatal = [...body, bodyRecord(600, 'tribe-gamma', event, 'x')]
     assert.notEqual(primaryBehaviorRunFailure(config, fatal, raw.harness), null, event)
+  }
+  // Ordinary typed product faults are kept as evidence and the run goes on.
+  for (const event of ['witnessDisputed', 'decisionDiscarded']) {
+    const kept = [...body, bodyRecord(600, 'tribe-gamma', event, 'x')]
+    assert.equal(primaryBehaviorRunFailure(config, kept, raw.harness), null, event)
   }
 })
 
@@ -616,10 +621,10 @@ test('the controlled-stop drain waits for settled chains, is bounded, and stops 
     fs.appendFileSync(file, `${JSON.stringify(bodyRecord(2, 'a', 'intentApplied', 'x', { requestId: 'one' }))}\n`)
   }, 150)
   await drainControlledStop({ proxy, ...settling, timeoutMilliseconds: 2000 })
-  fs.appendFileSync(file, `${JSON.stringify(bodyRecord(3, 'a', 'witnessDisputed', 'x'))}\n`)
+  fs.appendFileSync(file, `${JSON.stringify(bodyRecord(3, 'a', 'bodyDisconnected', 'x'))}\n`)
   await assert.rejects(
     drainControlledStop({ proxy, ...drainer(), timeoutMilliseconds: 2000 }),
-    /witness disputed body evidence/
+    /a body disconnected/
   )
 })
 
@@ -645,9 +650,9 @@ test('admitted work that drains after the exposure ended is typed, and the drain
   ]
   assert.equal(guard.observeBody(drained), null)
   assert.ok(guard.exposureEnded.has(agent))
-  // Without the agent's own end, the same discard is still the fatal untyped one.
+  // Without the agent's own end, the same discard is a living agent's typed fault, kept as evidence.
   const unguarded = new PrimaryBehaviorGuard(config)
-  assert.match(unguarded.observeBody([drained[1]]).message, /discarded/)
+  assert.equal(unguarded.observeBody([drained[1]]), null)
 
   const proxy = { snapshot: () => ({ outstandingCalls: 0 }) }
   const settled = { poll: () => null, settlement: new RequestSettlement() }
@@ -954,12 +959,48 @@ test('one request the provider refused is recorded and the run goes on to its du
     primaryBehaviorRunFailure(goalContinuityConfig(), untyped.body, untyped.harness).message,
     /cognition request became unavailable \(failed at tick/
   )
-  rejects(untyped, /primary behavior evidence contains a cognition refusal, unavailable decision, or discarded decision/)
+  rejects(untyped, /primary behavior evidence contains a cognition refusal or unavailable decision/)
 
   // A flag the body evidence does not answer with a failed perception is refused.
   const unmatched = providerRefusedRaw()
   unmatched.body.find((record) => record.event === 'cognitionUnavailable' && record.outcome === 'failed').outcome = 'mindRefused'
   rejects(unmatched, /provider-refused request tribe-alpha:native-1 has no matching failed perception chain/)
+})
+
+test('a witness dispute, a disputed interaction and a living discard are kept and the run goes on to its duration', () => {
+  // The captain's full-duration rule: ordinary typed product faults are no-go evidence, never a stop.
+  const raw = endedRaw()
+  const gamma = raw.body.find((record) =>
+    record.agentId === 'tribe-gamma' && record.requestId === 'native-1' && record.event === 'decided')
+  gamma.intent = 'dig'
+  gamma.decision.intent = { action: 'dig', block: 'b1' }
+  raw.body.splice(raw.body.indexOf(gamma) + 1, 0,
+    bodyRecord(gamma.tick, 'tribe-gamma', 'worldInteraction', 'dig b1', { requestId: 'native-1', outcome: 'disputedWorldInteraction' }))
+  const beta = raw.body.find((record) =>
+    record.agentId === 'tribe-beta' && record.requestId === 'native-1' && record.event === 'intentApplied')
+  raw.body.splice(raw.body.indexOf(beta) + 1, 0,
+    bodyRecord(beta.tick + 2, 'tribe-beta', 'witnessDisputed', 'vitals disputed', { outcome: 'disputedVitals' }))
+  const discarded = raw.body.find((record) =>
+    record.agentId === 'tribe-gamma' && record.requestId === 'native-2' && record.event === 'intentApplied')
+  raw.body[raw.body.indexOf(discarded)] = bodyRecord(discarded.tick, 'tribe-gamma', 'decisionDiscarded', 'the body was gone', {
+    requestId: 'native-2', intent: 'idle', outcome: 'noSuchBody'
+  })
+  assert.equal(primaryBehaviorRunFailure(goalContinuityConfig(), raw.body, raw.harness), null)
+  const published = publish({ raw, stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  assert.equal(published.manifest.timing.stopReason, 'durationElapsed')
+  // Stated truthfully, and failed closed on.
+  assert.equal(published.manifest.integrityChecks.serverEvidenceUncontested.passed, false)
+  assert.equal(published.metrics.behavior.witnessDisputeRecords, 1)
+  assert.equal(published.metrics.cycles.discarded, 1)
+  assert.deepEqual(published.metrics.behaviorGate.interactionsByOperation, { dig: { confirmed: 0, disputed: 1 } })
+  assert.equal(published.metrics.behaviorGate.pilotCriteria.noFailureEvidence, false)
+  assert.equal(published.metrics.behaviorGate.pilotVerdict, 'no-go')
+  // What makes continuing impossible or unsafe still stops the run.
+  for (const event of ['bodyDisconnected', 'witnessRevived', 'witnessQuit', 'witnessDenied', 'despawned']) {
+    const fatal = [...raw.body, bodyRecord(2950, 'tribe-alpha', event, 'x')]
+    assert.notEqual(primaryBehaviorRunFailure(goalContinuityConfig(), fatal, raw.harness), null, event)
+  }
 })
 
 // The server's reading of every agent at begin, as the JVM's `InitialConditionsWitness` journals it.
@@ -1244,5 +1285,5 @@ test('a perception the plugin shutdown ended after the run ended is a typed term
     requestId: 'cut-1', trigger: 'goalReview', perception: seen, perceptionAudit: perceptionAuditFixture('empty', { timeOfDay: 900, day: 0, isDay: true })
   }))
   early.body.push(bodyRecord(900, 'tribe-beta', 'cognitionUnavailable', 'shutdown', { requestId: 'cut-1', outcome: 'cognitionShutdown', perception: seen }))
-  assert.throws(() => publish({ raw: early, stopReason: 'durationElapsed' }), /cognition refusal, unavailable decision/)
+  assert.throws(() => publish({ raw: early, stopReason: 'durationElapsed' }), /cognition refusal or unavailable decision/)
 })
