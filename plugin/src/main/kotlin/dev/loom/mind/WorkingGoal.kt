@@ -143,6 +143,20 @@ data class GoalObservation(
     /** The bearings of each item's sources recalled out of sight or seen beyond dig reach. */
     val sourceBearings: Map<String, Set<Bearing>> = emptyMap(),
 ) {
+    /**
+     * Whether more of [item] serves a chain this observation evidences, as `offered.rs`'s
+     * `serves_chain`: a grounded horizon recipe made from it, or an open shelter it would close as a
+     * solid item while night nears. Only then does the schema offer a revise above the held total.
+     */
+    fun servesChain(item: String): Boolean {
+        val crafted = horizon.values.any { it.what != item && it.via == item }
+        val shelter = cover
+        val closes =
+            shelter != null && shelter.nightNear && !shelter.rank.sealed &&
+                (item in shelter.blockItems || item in shelter.solidItems)
+        return crafted || closes
+    }
+
     /** Whether a discovery goal may be set: cells at the edge of sight, and no horizon goal at all. */
     val discoveryOffered: Boolean get() = explore.isNotEmpty() && horizon.isEmpty()
 

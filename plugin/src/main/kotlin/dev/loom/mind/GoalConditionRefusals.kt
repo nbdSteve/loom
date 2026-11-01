@@ -72,7 +72,8 @@ private fun completionRefusalOf(
     val leadsOn = presented?.shelter == true || presented?.feeds != null
     return when {
         !met -> GoalEvidence.COMPLETION_UNMET
-        !leadsOn && observed != null && (nextGoalOffered(observed) || observed.discoveryOffered) ->
+        !leadsOn && observed != null &&
+            (nextGoalOffered(observed, presented?.successItem) || observed.discoveryOffered) ->
             GoalEvidence.COMPLETED_WITHOUT_NEXT
         else -> null
     }
@@ -83,12 +84,18 @@ private fun completionRefusalOf(
  * plain completion: an item of sight or the horizon reaching as many as
  * [GoalObservation.fewestObjective] asks, with a step offered toward it now, and not crowding out
  * looking further (the r39 offline audit: the schema withheld a plain completion beside a horizon
- * goal with a step, which the ledger accepted).
+ * goal with a step, which the ledger accepted). More of the [held] item is a revise, which the
+ * schema offers only when it serves a chain ([GoalObservation.servesChain]; R42: 18 plain
+ * completions of met dirt goals the schema offered were refused for a revise it did not).
  */
-private fun nextGoalOffered(observed: GoalObservation): Boolean =
+private fun nextGoalOffered(
+    observed: GoalObservation,
+    held: String?,
+): Boolean =
     (observed.capacity.keys + observed.horizon.keys).any { item ->
         val reach = minOf(observed.reachOf(item), MAX_SUCCESS_COUNT)
-        !observed.crowdsExploration(item) && !observed.steplessFor(item) && reach >= observed.fewestObjective(item)
+        (item != held || observed.servesChain(item)) && !observed.crowdsExploration(item) &&
+            !observed.steplessFor(item) && reach >= observed.fewestObjective(item)
     }
 
 /**

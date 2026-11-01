@@ -82,6 +82,8 @@ data class CoverObservation(
     val gathers: Set<String> = emptySet(),
     /** How many solid items the agent holds, which a gathering step must raise. */
     val solidCount: Long = 0,
+    /** The items of the stacks in [solid], by name. */
+    val solidItems: Set<String> = emptySet(),
 ) {
     /** Whether [intent] is a step a shelter goal may take now. */
     fun steps(intent: Intent): Boolean =
@@ -141,6 +143,7 @@ data class CoverObservation(
                         .filter { ref -> perception.surroundings.any { it.ref == ref && stepNow(it) } }
                         .toSet(),
                 solidCount = perception.selfState.inventorySummary.filter { it.solid == true }.sumOf { it.count },
+                solidItems = perception.selfState.inventorySummary.filter { it.solid == true }.map { it.what }.toSet(),
             )
         }
     }

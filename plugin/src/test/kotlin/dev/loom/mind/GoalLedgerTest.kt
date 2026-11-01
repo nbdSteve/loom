@@ -133,13 +133,20 @@ class GoalLedgerTest {
             affirm("b", 200, seen(0.0), goalChoice(GoalDisposition.COMPLETE)).second?.outcome,
         )
         // A met goal beside a source of a next one is replaced, not completed beside a filler (r19).
-        val (met, beside) = affirm("c", 300, seen(0.0, STICK to 2L), goalChoice(GoalDisposition.COMPLETE))
+        val log = "item.minecraft.oak_log"
+        val nextInSight =
+            seen(
+                0.0,
+                STICK to 2L,
+            ).copy(capacity = mapOf(log to 8L), stepSources = mapOf("tree" to setOf(log)))
+        val (met, beside) = affirm("c", 300, nextInSight, goalChoice(GoalDisposition.COMPLETE))
         assertEquals(true, met?.progress?.conditionMet)
         assertEquals(GoalEvidence.COMPLETED_WITHOUT_NEXT, beside?.outcome)
-        val bare = seen(0.0, STICK to 2L).copy(capacity = emptyMap())
-        val (_, completed) = affirm("d", 400, bare, goalChoice(GoalDisposition.COMPLETE))
+        // More of its own item that serves no chain is no next objective, so the goal completes (R42:
+        // 18 met dirt goals the schema offered only a completion were refused for a revise it did not).
+        val (_, completed) = affirm("d", 400, seen(0.0, STICK to 2L), goalChoice(GoalDisposition.COMPLETE))
         assertEquals(GoalEvidence.COMPLETED, completed?.outcome)
-        assertNull(ledger.present(alpha, "e", 500, bare))
+        assertNull(ledger.present(alpha, "e", 500, seen(0.0, STICK to 2L)))
     }
 
     @Test
