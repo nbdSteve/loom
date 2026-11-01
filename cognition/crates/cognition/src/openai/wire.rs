@@ -540,11 +540,12 @@ enum Namespace {
     RouteItem,
     Stack,
     HeldStack,
+    Bed,
     Recipe,
 }
 
 impl Namespace {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
         Self::Block,
         Self::DigBlock,
         Self::WalkTarget,
@@ -555,6 +556,7 @@ impl Namespace {
         Self::RouteItem,
         Self::Stack,
         Self::HeldStack,
+        Self::Bed,
         Self::Recipe,
     ];
 
@@ -570,6 +572,7 @@ impl Namespace {
             Self::RouteItem => "routeItemRef",
             Self::Stack => "stackRef",
             Self::HeldStack => "heldStackRef",
+            Self::Bed => "bedRef",
             Self::Recipe => "recipeRef",
         }
     }
@@ -592,6 +595,7 @@ impl Namespace {
             Self::RouteItem => "A dropped-item ref offered in this message within walking reach.",
             Self::Stack => "An inventory-stack ref offered in this message.",
             Self::HeldStack => "The ref of the inventory stack held in the main hand, offered in this message.",
+            Self::Bed => "The ref of a bed in sight and within reach, offered in this message.",
             Self::Recipe => "A recipe ref offered in this message.",
         }
     }
@@ -608,6 +612,7 @@ impl Namespace {
             Self::RouteItem => &offered.route_items,
             Self::Stack => &offered.stacks,
             Self::HeldStack => &offered.held_stacks,
+            Self::Bed => &offered.beds,
             Self::Recipe => &offered.recipes,
         }
     }
@@ -1677,13 +1682,6 @@ fn handling_variants(offered: Option<&OfferedRefs>) -> [Option<Value>; 2] {
 }
 
 fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Value {
-    let blocks = |description: &str| {
-        any_ref_field(
-            description,
-            &[Namespace::DigBlock, Namespace::Block],
-            offered,
-        )
-    };
     let dig_blocks = |description: &str| ref_field(description, Namespace::DigBlock, offered);
     let walk_targets = |description: &str| ref_field(description, Namespace::WalkTarget, offered);
     let creatures = |description: &str| ref_field(description, Namespace::Creature, offered);
@@ -1707,7 +1705,11 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
             "sleep",
             vec![(
                 "bed",
-                blocks("The ref of the exact offered bed to use once."),
+                ref_field(
+                    "The ref of the exact offered bed to use once.",
+                    Namespace::Bed,
+                    offered,
+                ),
             )],
         ),
         intent_variant("rest", vec![]),

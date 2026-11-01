@@ -164,9 +164,9 @@ fn a_block_whose_dig_would_trap_the_agent_is_never_offered_to_dig() {
         &json!({ "action": "dig", "block": "b1" })
     ));
     assert!(accepts(&schema, &json!({ "action": "dig", "block": "b2" })));
-    // The block stays a block for everything a dig is not.
+    // Neither is a bed, so neither is a sleep (R46: sleeps in dirt, refused as no bed).
     for block in ["b1", "b2"] {
-        assert!(accepts(
+        assert!(!accepts(
             &schema,
             &json!({ "action": "sleep", "bed": block })
         ));

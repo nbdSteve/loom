@@ -434,6 +434,9 @@ pub struct OfferedRefs {
     /// Of [`Self::stacks`], the one in the main hand: what `place` may name, since the body places
     /// only the stack already held (R44 theta body:00001886: a held-elsewhere stack, refused).
     pub held_stacks: Vec<String>,
+    /// Of [`Self::blocks`], the beds: what `sleep` may name, since the body sleeps only in one
+    /// (R46 epsilon and kappa body:00001597, body:00001600: a sleep in dirt, refused as no bed).
+    pub beds: Vec<String>,
     /// Shown craftable recipes: what `craft` may name.
     pub recipes: Vec<String>,
     /// The most applications each shown recipe allows, by ref, within the contract's own bound:
@@ -870,6 +873,9 @@ impl OfferedRefs {
                     let dig_safe = seen.dig_safe == Some(true);
                     if seen.visible && from_eyes(seen) <= INTERACTION_REACH_BLOCKS {
                         offer(&mut offered.blocks, handle);
+                        if seen.what.ends_with("_bed") {
+                            offer(&mut offered.beds, handle);
+                        }
                         if dig_safe {
                             offer(&mut offered.dig_blocks, handle);
                         } else {
@@ -1490,7 +1496,7 @@ impl OfferedRefs {
                 };
                 held(targets, target) && held(&self.stacks, weapon)
             }
-            Intent::Sleep { bed } => held(&self.blocks, bed),
+            Intent::Sleep { bed } => held(&self.beds, bed),
             Intent::Say { .. } | Intent::Rest | Intent::Idle => true,
         }
     }
@@ -1720,10 +1726,13 @@ mod tests {
 
     #[test]
     fn a_handle_of_the_wrong_kind_or_never_offered_is_refused_for_every_action() {
+        let mut bed = seen(ObservationKind::Block, "bed1", 2.0, -0.5);
+        bed.what = "block.minecraft.red_bed".to_owned();
         let offered = OfferedRefs::of(&scene(vec![
             seen(ObservationKind::Block, "b1", 2.0, -0.5),
             seen(ObservationKind::Entity, "e1", 2.0, 0.0),
             seen(ObservationKind::DroppedItem, "d1", 1.0, -0.5),
+            bed,
         ]));
         let s = |handle: &str| handle.to_owned();
         let admitted = [
@@ -1754,7 +1763,7 @@ mod tests {
                 attacks: 1,
                 approach: false,
             },
-            Intent::Sleep { bed: s("b1") },
+            Intent::Sleep { bed: s("bed1") },
             Intent::Say { text: s("hello") },
             Intent::Rest,
             Intent::Idle,
@@ -1802,6 +1811,8 @@ mod tests {
                 approach: false,
             },
             Intent::Sleep { bed: s("e1") },
+            // A block that is no bed (R46: a sleep in dirt).
+            Intent::Sleep { bed: s("b1") },
             Intent::Dig { block: s("b9") },
         ];
         for intent in &refused {
