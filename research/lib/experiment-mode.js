@@ -162,12 +162,18 @@ const ROUTINE_V35_SHELTER_GOAL_MODE = 'routine-v35-shelter-goal'
 // collision rule; a placement settles at the server's answer and never into the body's own cell;
 // and the newest decision takes a busy body (gate generation 20).
 const ROUTINE_V36_HELD_OBJECTIVE_MODE = 'routine-v36-held-objective'
+// v37 keeps v36 and answers r48, where 36.5% of agent time went to new goals before their first
+// advance and the goals that never advanced were low-yield digs, lost collects and walks: the brief asks the mind to keep a goal sight or its horizon can still meet through a step
+// that failed and take another of its offered steps, to prefer a recipe or a high-yield block over
+// a low-yield dig or another agent's drop, and to chain a met goal into one that uses what it gave.
+// The schema, ledger, scene, metrics and call envelope are v36's (gate generation 20).
+const ROUTINE_V37_PERSISTENT_OBJECTIVE_MODE = 'routine-v37-persistent-objective'
 // The two native-scheduler pilots share every condition except what each mode pins here.
 // Category fairness is a fact about the JVM selector a run used, so v12 stays false for
 // its committed evidence and v13, which runs on the 48-per-kind selector, attests true.
 // The prompt versions the mind serves today (`cognition/crates/cognition/src/prompt.rs`).
 // A configuration pinning any other version can only fail after it has run.
-const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v36', notable: 'notable-v36', pivotal: 'pivotal-v36' })
+const SERVED_PROMPTS = Object.freeze({ routine: 'routine-v37', notable: 'notable-v37', pivotal: 'pivotal-v37' })
 // Modes kept only so artifacts committed under them still validate; no run may select one.
 const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
   [ROUTINE_V12_PRIMARY_BEHAVIOR_MODE]: Object.freeze({
@@ -282,11 +288,17 @@ const HISTORICAL_PRIMARY_BEHAVIOR_MODES = Object.freeze({
     categoryFairSelection: true,
     followUpsPerReview: 1,
     eventCallReserveShare: 1 / 3
+  }),
+  [ROUTINE_V36_HELD_OBJECTIVE_MODE]: Object.freeze({
+    prompts: Object.freeze({ routine: 'routine-v36', notable: 'notable-v36', pivotal: 'pivotal-v36' }),
+    categoryFairSelection: true,
+    followUpsPerReview: 1,
+    eventCallReserveShare: 1 / 3
   })
 })
 const PRIMARY_BEHAVIOR_MODES = Object.freeze({
-  [ROUTINE_V36_HELD_OBJECTIVE_MODE]: Object.freeze({
-    prompts: Object.freeze({ routine: 'routine-v36', notable: 'notable-v36', pivotal: 'pivotal-v36' }),
+  [ROUTINE_V37_PERSISTENT_OBJECTIVE_MODE]: Object.freeze({
+    prompts: Object.freeze({ routine: 'routine-v37', notable: 'notable-v37', pivotal: 'pivotal-v37' }),
     categoryFairSelection: true,
     followUpsPerReview: 1,
     // The share of the global call ceiling the planned reviews must leave for events (r20).
@@ -418,6 +430,7 @@ module.exports = {
   ROUTINE_V34_REACHED_SOURCE_MODE,
   ROUTINE_V35_SHELTER_GOAL_MODE,
   ROUTINE_V36_HELD_OBJECTIVE_MODE,
+  ROUTINE_V37_PERSISTENT_OBJECTIVE_MODE,
   SERVED_PROMPTS,
   configuredMode,
   createInterventionSchedule,

@@ -359,7 +359,7 @@ function scriptedGoalStep (review, agentId, tick) {
 }
 
 function primaryBehaviorRawRecords (config = primaryBehaviorConfig()) {
-  const carriesGoals = config.mode === 'routine-v36-held-objective'
+  const carriesGoals = config.mode === 'routine-v37-persistent-objective'
   const body = []
   const harness = [
     {

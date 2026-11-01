@@ -39,13 +39,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v36";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v37";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v36";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v37";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v36";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v37";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -218,8 +218,7 @@ only when a dropped item is listed, and a dropped item your body found no way to
 you stand is not offered. Your body sees only the nearest blocks, except that at a goal review it \
 also looks further for logs and berry bushes: one seen further off is out of dig reach, a place to \
 walk toward by the cell at the edge of sight in its direction, never one to dig from where you \
-stand. When nothing in sight is worth doing, you are \
-offered cells at the edge of sight to walk to, so you can look further. A dig the server saw drop something for you is told to you with where that drop is now, \
+stand. A dig the server saw drop something for you is told to you with where that drop is now, \
 and a drop of yours still lying is offered to collect by its ref, in sight or not. While your own \
 drop of the goal's item lies in reach, the goal's next step is to collect it, with approach true \
 when it is not beside you; digging for more is not offered until you hold it, because a drop left \
@@ -241,6 +240,9 @@ continue and revise; only replace with a different item, abandon, or complete wh
 offered then. When your success condition is met you must complete the goal, replace it with \
 the next, or revise it to a total you do not yet hold, at that review; anything else is refused \
 with your action.
+A failed step does not end a goal sight or its horizon can still meet: take another offered step \
+for it. Prefer a recipe or a high-yield block over a low-yield dig, such as grass, or a drop not \
+your own, which others may take first. Once a goal is met, make the next one use what it gave you.
 
 Night brings creatures that hunt you, and open ground gives them every side to reach you from. \
 You are told your cover: how many of the nine sides around your body - four beside your feet, \
@@ -2597,6 +2599,29 @@ mod tests {
             "not a field of view",
             "which way your body happens to be facing",
             "ahead of you or behind you",
+        ] {
+            assert!(
+                prompt.system.contains(expected),
+                "the brief must say {expected:?}, got {system}",
+                system = prompt.system
+            );
+        }
+    }
+
+    #[test]
+    fn the_brief_holds_a_feasible_goal_through_a_failed_step() {
+        // r48: 36.5% of agent time went to 93 new goals before their first advance, and the
+        // twelve that never advanced were low-yield grass digs, collects a peer won first and
+        // walks. The brief asks for persistence, reliable sources and a chain; the schema still
+        // offers every choice it did, so the model still decides.
+        let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        let prompt = render(&router().route(seen.importance), &seen);
+        for expected in [
+            "A failed step does not end a goal sight or its horizon can still meet",
+            "take another offered step for it",
+            "Prefer a recipe or a high-yield block over a low-yield dig",
+            "which others may take first",
+            "make the next one use what it gave you",
         ] {
             assert!(
                 prompt.system.contains(expected),

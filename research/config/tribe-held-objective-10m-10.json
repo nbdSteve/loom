@@ -1,7 +1,7 @@
 {
-  "experimentId": "2026-10-16-openai-10-agent-10m-r48",
-  "title": "10-agent ten-minute routine-v36 held objective live shakedown",
-  "mode": "routine-v36-held-objective",
+  "experimentId": "2026-10-16-openai-10-agent-10m-r49",
+  "title": "10-agent ten-minute routine-v37 held objective live shakedown",
+  "mode": "routine-v37-persistent-objective",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -60,9 +60,9 @@
       "pivotal": "gpt-5.4"
     },
     "prompts": {
-      "routine": "routine-v36",
-      "notable": "notable-v36",
-      "pivotal": "pivotal-v36"
+      "routine": "routine-v37",
+      "notable": "notable-v37",
+      "pivotal": "pivotal-v37"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,
