@@ -345,4 +345,61 @@ class FlightAndPreemptionTest {
         assertEquals(listOf<String?>("creeper", "zombie"), applied, "the newer answer replaces it when ready")
         assertEquals(0, records.count { it.outcome == EventTag.DANGER_PREEMPTED }, "no ready flight was thrown away")
     }
+
+    @Test
+    @DisplayName("a superseded dig out of the danger that is ready first is applied, not only a flight")
+    fun aReadySupersededDigIsApplied() {
+        // R45 zeta, suffocating in the sand it had placed over its head at 9.3 health: each answer, a
+        // dig out of it, was discarded for the next bite's answer, discarded in turn, and zeta died.
+        val applied = mutableListOf<String?>()
+        val body =
+            object : BodyPort {
+                override fun spawn(agentId: AgentId) = fail("cognition must not spawn bodies")
+
+                override fun despawn(agentId: AgentId) = fail("cognition must not despawn bodies")
+
+                override fun apply(
+                    agentId: AgentId,
+                    intent: Intent,
+                    requestId: String?,
+                ): CompletableFuture<IntentOutcome> {
+                    applied += requestId
+                    return CompletableFuture.completedFuture(IntentOutcome.Accepted("ok"))
+                }
+
+                override fun perceive(
+                    agentId: AgentId,
+                    trigger: Trigger,
+                ): CompletableFuture<Perception?> = CompletableFuture.completedFuture(null)
+
+                override fun senseThreat(agentId: AgentId) = fail("not this test's business")
+
+                override fun tick(tick: Long) = fail("cognition must never drive the tick")
+
+                override fun liveBodies(): Set<AgentId> = fail("cognition does not enumerate bodies")
+            }
+        val records = mutableListOf<BodyEventRecord>()
+        val decisions = mutableMapOf<String, CompletableFuture<Decision>>()
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p -> CompletableFuture<Decision>().also { decisions[p.requestId] = it } },
+                mainThread = main,
+                journal = journalInto(records),
+            )
+        val bite = perception(requestId = "t9192", agentId = agent.value, trigger = Trigger.Damaged(1, "suffocation"))
+        cognition.submit(agent, bite, dangerSubject = "suffocation")
+        main.drain()
+        // Low health: the next bite of the same cause preempts the answer still with the mind.
+        val next = perception(requestId = "t9211", agentId = agent.value, trigger = Trigger.Damaged(2, "suffocation"))
+        cognition.submit(agent, next.copy(selfState = next.selfState.copy(health = 5.3)), dangerSubject = "suffocation")
+        main.drain()
+        decisions.getValue("t9192").complete(decisionFor(bite, Intent.Dig("bdc3")))
+        main.drain()
+        assertEquals(listOf<String?>("t9192"), applied, "the ready dig runs while the newer answer is coming")
+        decisions.getValue("t9211").complete(decisionFor(next, Intent.Dig("bdc5")))
+        main.drain()
+        assertEquals(listOf<String?>("t9192", "t9211"), applied, "the newer answer governs when ready")
+        assertEquals(0, records.count { it.outcome == EventTag.DANGER_PREEMPTED }, "no ready dig was thrown away")
+    }
 }

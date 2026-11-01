@@ -14,8 +14,11 @@ import org.bukkit.World
  */
 class BukkitItemSolidity(
     private val collision: Map<Material, Boolean>,
+    private val gravity: Set<Material> = emptySet(),
 ) : ItemSolidity {
     override fun solid(what: String): Boolean? = Material.matchMaterial(what)?.let(collision::get)
+
+    override fun falls(what: String): Boolean = Material.matchMaterial(what) in gravity
 
     companion object {
         /**
@@ -31,7 +34,10 @@ class BukkitItemSolidity(
                     .mapNotNull { material ->
                         runCatching { material to collides(material.createBlockData(), at) }.getOrNull()
                     }.toMap()
-            return BukkitItemSolidity(collision)
+            return BukkitItemSolidity(
+                collision,
+                Material.entries.filter { it.isBlock && !it.isLegacy && it.hasGravity() }.toSet(),
+            )
         }
     }
 }

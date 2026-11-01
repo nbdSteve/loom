@@ -10,6 +10,9 @@ package dev.loom.body.player
 fun interface ItemSolidity {
     fun solid(what: String): Boolean?
 
+    /** Whether the block [what] places falls when nothing is under it, as sand and gravel do. */
+    fun falls(what: String): Boolean = false
+
     companion object {
         /** No server to ask: nothing is known to be solid. */
         val NONE: ItemSolidity = ItemSolidity { null }

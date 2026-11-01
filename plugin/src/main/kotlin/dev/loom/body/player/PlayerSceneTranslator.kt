@@ -67,7 +67,12 @@ internal class PlayerSceneTranslator(
             )
         val surroundings = selected.map { observationOf(raw, it, requireNotNull(refs[it.key])) }
         val blockRefs = blockOffers.map { it to requireNotNull(refs[it.key]) }
-        val cover = sceneCover(raw, scene, blockRefs, surroundings, context.authority.solidity)
+        val mainHand = context.authority.players.mainHandSlotOf(raw.identity)
+        val held = raw.report.inventory.firstOrNull { it.slot == mainHand }
+        val heldFalls = held?.let { context.authority.solidity.falls(it.what) } == true
+        val cover =
+            sceneCover(raw, scene, blockRefs, surroundings, context.authority.solidity)
+                ?.let { withoutFallingClosings(it, scene.ground, raw.report.position, heldFalls) }
         val itemRefs = itemRefsOf(itemOffers, droppedItemBindings)
         return PlayerScene(
             raw = raw,
