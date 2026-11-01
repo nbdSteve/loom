@@ -1,6 +1,6 @@
 package dev.loom.plugin
 
-import dev.loom.mind.MAX_FOLLOW_UPS_PER_REVIEW
+import dev.loom.mind.DEFAULT_FOLLOW_UPS_PER_REVIEW
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -71,10 +71,10 @@ class NativeCognitionStartTest {
 class FollowUpsPerReviewTest {
     @Test
     fun `the follow-up allowance is the plan's own count, and a bad one stops the plugin`() {
-        assertEquals(MAX_FOLLOW_UPS_PER_REVIEW, followUpsPerReviewOf(null))
+        assertEquals(DEFAULT_FOLLOW_UPS_PER_REVIEW, followUpsPerReviewOf(null))
         assertEquals(1, followUpsPerReviewOf("1"))
         assertEquals(0, followUpsPerReviewOf(" 0 "))
-        for (bad in listOf("3", "-1", "one", "")) {
+        for (bad in listOf("5", "-1", "one", "")) {
             assertThrows(IllegalArgumentException::class.java, { followUpsPerReviewOf(bad) }, bad)
         }
     }

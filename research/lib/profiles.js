@@ -365,6 +365,15 @@ PROFILES['shelter-goal-10m-10'] = Object.freeze({
 // keeps the profile it ran (the r39 audit: every structural bar met, held time missed with goals
 // that never stayed held), measured by gate generation 20.
 PROFILES['held-objective-10m-10'] = Object.freeze({ ...PROFILES['shelter-goal-10m-10'] })
+// The held-objective profile's scene, bounds, exposure and every bar unchanged, with four follow-ups
+// a scheduled review in place of two (R43: every agent waited four times 1500 to 2200 ticks for its
+// next review once its two follow-ups were spent, chained goals advanced once before night replaced
+// them, and 73 of the 378 calls went unused). 50 scheduled reviews and 200 follow-ups leave 128 of
+// the 378 calls to events, the third the mode keeps, and 15 of a living agent's own 40.
+PROFILES['held-objective-follow-up-10m-10'] = Object.freeze({
+  ...PROFILES['held-objective-10m-10'],
+  followUpsPerReview: 4
+})
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

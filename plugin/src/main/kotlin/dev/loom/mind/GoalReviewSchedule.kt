@@ -75,8 +75,14 @@ private const val DEFAULT_SLICES_PER_CADENCE = 24
  */
 const val FOLLOW_UP_DELAY_TICKS: Long = 40
 
-/** Follow-up reviews each scheduled review earns, spent over the run rather than within it. */
-const val MAX_FOLLOW_UPS_PER_REVIEW: Int = 2
+/** Follow-up reviews each scheduled review earns by default, spent over the run rather than within it. */
+const val DEFAULT_FOLLOW_UPS_PER_REVIEW: Int = 2
+
+/**
+ * The most follow-ups a run's plan may let each scheduled review earn (R43: two left every agent
+ * waiting four times 1500 to 2200 ticks for its next review).
+ */
+const val MAX_FOLLOW_UPS_PER_REVIEW: Int = 4
 
 /** Follow-ups a discovery's walks and transition may claim per scheduled review, outside the allowance. */
 const val MAX_DISCOVERY_FOLLOW_UPS: Int = 3
@@ -146,7 +152,7 @@ class GoalReviewSchedule(
      * whose call ceiling must leave room for the night's danger earns fewer (r20: 50 reviews and
      * 100 follow-ups planned against a ceiling of 150 left nothing for 49 danger calls).
      */
-    private val followUpsPerReview: Int = MAX_FOLLOW_UPS_PER_REVIEW,
+    private val followUpsPerReview: Int = DEFAULT_FOLLOW_UPS_PER_REVIEW,
 ) : StepSettlement {
     init {
         require(followUpsPerReview in 0..MAX_FOLLOW_UPS_PER_REVIEW) {

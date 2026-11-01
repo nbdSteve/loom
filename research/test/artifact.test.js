@@ -781,14 +781,14 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   assert.equal(live.mode, 'routine-v36-held-objective')
   for (const config of [live, scripted]) {
     assert.deepEqual(validateRunConfig(config), [], config.experimentId)
-    assert.equal(config.primaryBehavior.profile, 'held-objective-10m-10')
-    // Two follow-ups a scheduled review (the r35 audit): 150 planned calls leave 228 of the 378 to
-    // events, past the third the mode keeps.
-    assert.equal(config.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview, 2)
-    assert.equal(PROFILES['balanced-follow-up-10m-10'].followUpsPerReview, 2)
+    assert.equal(config.primaryBehavior.profile, 'held-objective-follow-up-10m-10')
+    // Four follow-ups a scheduled review (R43: two left every agent waiting four times 1500 to 2200
+    // ticks): 250 planned calls leave 128 of the 378 to events, the third the mode keeps.
+    assert.equal(config.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview, 4)
+    assert.equal(PROFILES['held-objective-follow-up-10m-10'].followUpsPerReview, 4)
     const one = structuredClone(config)
-    one.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview = 1
-    assert.ok(validateRunConfig(one).some((error) => error.includes('followUpsPerReview must be 2')), 'the profile pins two')
+    one.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview = 2
+    assert.ok(validateRunConfig(one).some((error) => error.includes('followUpsPerReview must be 4')), 'the profile pins four')
     assert.deepEqual(config.agents, [...AGENT_ORDER])
     // The balanced scene: e1's seed and positions, from time 6000 (the r33 audit).
     assert.equal(config.primaryBehavior.scene, 'e2-balanced-ring')
@@ -831,7 +831,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   assert.equal(live.cognition.backend, 'openai')
   assert.equal(scripted.cognition.backend, 'scripted')
   const manifest = validateProspectiveManifest(live, SOURCE)
-  assert.equal(manifest.protocol.profile, 'held-objective-10m-10')
+  assert.equal(manifest.protocol.profile, 'held-objective-follow-up-10m-10')
   // 130 pivotal calls at $0.19456 and 248 ordinary at $0.0156672, under the unchanged ceiling.
   assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 29.1782656)
   assert.equal(manifest.cognition.maxExternalSpendUsd, 29.19)

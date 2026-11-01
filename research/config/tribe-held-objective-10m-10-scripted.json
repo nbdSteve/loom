@@ -100,7 +100,7 @@
     "evidenceRecords": 8000
   },
   "primaryBehavior": {
-    "profile": "held-objective-10m-10",
+    "profile": "held-objective-follow-up-10m-10",
     "initialPositions": {
       "tribe-alpha": [
         12.5,
@@ -162,7 +162,7 @@
       "cadenceTicks": 2400,
       "sliceTicks": 100,
       "expectedReviewsPerAgent": 5,
-      "followUpsPerReview": 2
+      "followUpsPerReview": 4
     },
     "externalCognitionStimuli": "none",
     "startingInventories": "empty",

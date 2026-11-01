@@ -574,7 +574,7 @@ test('the JVM is told the ceilings and plan its call reserve keeps the living\'s
   // r20 spent its whole ceiling of 150 on the night's danger before its last reviews, and r22's
   // fixed shares of 15 stranded the dead's calls: the JVM keeps the pooled ceilings instead.
   assert.deepEqual(followUpsEnvironmentOf(config), {
-    LOOM_GOAL_FOLLOW_UPS_PER_REVIEW: '2',
+    LOOM_GOAL_FOLLOW_UPS_PER_REVIEW: '4',
     LOOM_COGNITION_CALLS_PER_AGENT: '40',
     LOOM_COGNITION_CALLS_GLOBAL: '378',
     LOOM_COGNITION_AGENTS: '10',
