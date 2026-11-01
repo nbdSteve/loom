@@ -158,14 +158,16 @@ fn every_survival_bound_is_the_one_the_jvm_ledger_defers_a_goal_by() {
 #[test]
 fn every_shelter_bound_is_the_one_the_jvm_ledger_judges_a_shelter_by() {
     use loom_cognition::offered::{MAX_SHELTER_SITES, SHELTER_LEAD_TICKS};
+    // The lead is the body's world clock's, which the JVM ledger's shelter reads (R41).
     let shelter = "plugin/src/main/kotlin/dev/loom/mind/Shelter.kt";
+    let clock = "plugin/src/main/kotlin/dev/loom/body/WorldClock.kt";
     #[allow(clippy::cast_precision_loss)]
     let pairs = [
-        ("SHELTER_LEAD_TICKS", SHELTER_LEAD_TICKS as f64),
-        ("MAX_SHELTER_SITES", MAX_SHELTER_SITES as f64),
+        (clock, "SHELTER_LEAD_TICKS", SHELTER_LEAD_TICKS as f64),
+        (shelter, "MAX_SHELTER_SITES", MAX_SHELTER_SITES as f64),
     ];
-    for (name, mind) in pairs {
-        let jvm = constant(shelter, name);
+    for (file, name, mind) in pairs {
+        let jvm = constant(file, name);
         assert!(
             (jvm - mind).abs() < f64::EPSILON,
             "{name}: JVM {jvm}, mind {mind}"

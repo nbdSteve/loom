@@ -8,6 +8,7 @@ import dev.loom.body.IntentOutcome
 import dev.loom.body.RefResolution
 import dev.loom.body.SlotResolution
 import dev.loom.body.WorldTargetResolution
+import dev.loom.body.blocksApart
 import dev.loom.bodycontrol.BODY_CONTROL_PROTOCOL_VERSION
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
@@ -295,8 +296,11 @@ internal class PlayerSurvivalPreparer(
         val report =
             response as? BodyResponse.AttackReport
                 ?: throw BodyControlFailure.ProtocolViolation()
+        val target = requireNotNull(sense.raw.report.entities.getOrNull(request.entity))
+        val sensedInReach =
+            !request.approach && blocksApart(sense.raw.report.position, target.position) <= ATTACK_REACH_BLOCKS
         return ActionExecution(
-            outcome = attackOutcome(report),
+            outcome = attackOutcome(report, sensedInReach),
             interaction =
                 ServerInteractionClaim.Attack(
                     request,

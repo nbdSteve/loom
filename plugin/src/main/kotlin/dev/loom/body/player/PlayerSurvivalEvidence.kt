@@ -95,15 +95,27 @@ internal fun craftOutcome(report: BodyResponse.CraftReport): IntentOutcome =
         requireNotNull(CRAFT_REFUSALS[report.outcome])
     }
 
-internal fun attackOutcome(report: BodyResponse.AttackReport): IntentOutcome =
+/** `ATTACK_REACH_BLOCKS` in `body/src/combat.js` and the mind's `offered.rs`: a strike's reach without an approach. */
+internal const val ATTACK_REACH_BLOCKS: Double = 3.1
+
+/**
+ * What the body's [report] means for its attack; [sensedInReach] when it was a strike without an
+ * approach at a target its sense showed within [ATTACK_REACH_BLOCKS].
+ */
+internal fun attackOutcome(
+    report: BodyResponse.AttackReport,
+    sensedInReach: Boolean = false,
+): IntentOutcome =
     when {
         report.outcome == AttackOutcome.ATTACKED ->
             IntentOutcome.Accepted("completed ${report.attacks} bounded attack(s)")
         report.outcome == AttackOutcome.TARGET_DIED ->
             IntentOutcome.Accepted("target died after ${report.attacks} bounded attack(s)")
         // The body re-checks range before every strike, so out of range after one landed is the
-        // target leaving it, not a target that was never in reach (r22 delta, tick 7743).
-        report.outcome == AttackOutcome.OUT_OF_RANGE && report.attacks > 0 ->
+        // target leaving it, not a target that was never in reach (r22 delta, tick 7743); and so is
+        // out of range before the first, at a target the sense showed in reach (R44 theta
+        // body:00002186: a zombie 2.36 off when sensed, out of reach when the strike came 27 ticks on).
+        report.outcome == AttackOutcome.OUT_OF_RANGE && (report.attacks > 0 || sensedInReach) ->
             rejected("attack target escaped after ${report.attacks} strike(s)", EventTag.ATTACK_TARGET_ESCAPED)
         else -> requireNotNull(ATTACK_REFUSALS[report.outcome])
     }

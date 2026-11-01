@@ -35,6 +35,14 @@ class RaceOutcomeTest {
         assertEquals(EventTag.ATTACK_TARGET_ESCAPED, escaped.tag)
         val never = attackOutcome(attack(AttackOutcome.OUT_OF_RANGE, attacks = 0)) as IntentOutcome.Rejected
         assertEquals(EventTag.ATTACK_OUT_OF_RANGE, never.tag)
+        // R44 theta body:00002186: a strike without an approach at a zombie sensed 2.36 off, out of
+        // reach before the strike came: the target left reach after it was offered.
+        val left =
+            attackOutcome(
+                attack(AttackOutcome.OUT_OF_RANGE, attacks = 0),
+                sensedInReach = true,
+            ) as IntentOutcome.Rejected
+        assertEquals(EventTag.ATTACK_TARGET_ESCAPED, left.tag)
     }
 
     @Test

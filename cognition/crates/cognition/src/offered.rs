@@ -27,8 +27,8 @@
 //! offered. `tests/offered_reach_parity.rs` reads every bound below from the body and JVM source.
 
 use loom_contract::{
-    is_item_name, Bearing, BlockFace, DayPhase, DropFate, Intent, Observation, ObservationKind,
-    Perception, Trigger, AIR_ITEM, MAX_SUCCESS_COUNT,
+    is_item_name, Bearing, BlockFace, DayPhase, DropFate, Intent, InventoryStack, Observation,
+    ObservationKind, Perception, Trigger, AIR_ITEM, MAX_SUCCESS_COUNT,
 };
 
 use crate::prompt::{MAX_CRAFTING_LINES, MAX_INVENTORY_LINES, MAX_OBSERVATIONS};
@@ -429,8 +429,11 @@ pub struct OfferedRefs {
     pub pickup_items: Vec<String>,
     /// Dropped items within movement reach: what an approaching `collect` may name.
     pub route_items: Vec<String>,
-    /// Shown inventory stacks: what `eat`, `equip`, `place` and an attack's weapon may name.
+    /// Shown inventory stacks: what `eat`, `equip` and an attack's weapon may name.
     pub stacks: Vec<String>,
+    /// Of [`Self::stacks`], the one in the main hand: what `place` may name, since the body places
+    /// only the stack already held (R44 theta body:00001886: a held-elsewhere stack, refused).
+    pub held_stacks: Vec<String>,
     /// Shown craftable recipes: what `craft` may name.
     pub recipes: Vec<String>,
     /// The most applications each shown recipe allows, by ref, within the contract's own bound:
@@ -919,9 +922,7 @@ impl OfferedRefs {
         }
         sources.extend(recalled_sources(perception));
         let state = &perception.self_state;
-        for stack in state.inventory_summary.iter().take(MAX_INVENTORY_LINES) {
-            offer(&mut offered.stacks, &stack.slot_ref);
-        }
+        offered.offer_stacks(&state.inventory_summary);
         for option in state.crafting_options.iter().take(MAX_CRAFTING_LINES) {
             offer(&mut offered.recipes, &option.recipe_ref);
             offered.recipe_crafts.push((
@@ -1417,6 +1418,16 @@ impl OfferedRefs {
         }
     }
 
+    /// Offers each shown stack, and the one in the main hand to `place` as well.
+    fn offer_stacks(&mut self, stacks: &[InventoryStack]) {
+        for stack in stacks.iter().take(MAX_INVENTORY_LINES) {
+            offer(&mut self.stacks, &stack.slot_ref);
+            if stack.held == Some(true) {
+                offer(&mut self.held_stacks, &stack.slot_ref);
+            }
+        }
+    }
+
     /// Offers one creature to each attack mode whose bound it is within, and to flight when it is
     /// one to `flee` from.
     fn creature(&mut self, handle: &str, distance: f64, flee: bool) {
@@ -1460,7 +1471,7 @@ impl OfferedRefs {
                 item,
             ),
             Intent::Place { block, item, .. } => {
-                held(&self.blocks, block) && held(&self.stacks, item)
+                held(&self.blocks, block) && held(&self.held_stacks, item)
             }
             Intent::Equip { item, .. } => held(&self.stacks, item),
             Intent::Craft { recipe, crafts } => {
@@ -1574,7 +1585,7 @@ mod tests {
                 count: 1,
                 edible: None,
                 solid: None,
-                held: None,
+                held: Some(true),
             });
         perception.self_state.crafting_options.push(CraftingOption {
             recipe_ref: "r1".to_owned(),

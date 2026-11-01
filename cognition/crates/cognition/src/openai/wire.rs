@@ -539,11 +539,12 @@ enum Namespace {
     PickupItem,
     RouteItem,
     Stack,
+    HeldStack,
     Recipe,
 }
 
 impl Namespace {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::Block,
         Self::DigBlock,
         Self::WalkTarget,
@@ -553,6 +554,7 @@ impl Namespace {
         Self::PickupItem,
         Self::RouteItem,
         Self::Stack,
+        Self::HeldStack,
         Self::Recipe,
     ];
 
@@ -567,6 +569,7 @@ impl Namespace {
             Self::PickupItem => "pickupItemRef",
             Self::RouteItem => "routeItemRef",
             Self::Stack => "stackRef",
+            Self::HeldStack => "heldStackRef",
             Self::Recipe => "recipeRef",
         }
     }
@@ -588,6 +591,7 @@ impl Namespace {
             Self::PickupItem => "A dropped-item ref offered in this message within pickup reach.",
             Self::RouteItem => "A dropped-item ref offered in this message within walking reach.",
             Self::Stack => "An inventory-stack ref offered in this message.",
+            Self::HeldStack => "The ref of the inventory stack held in the main hand, offered in this message.",
             Self::Recipe => "A recipe ref offered in this message.",
         }
     }
@@ -603,6 +607,7 @@ impl Namespace {
             Self::PickupItem => &offered.pickup_items,
             Self::RouteItem => &offered.route_items,
             Self::Stack => &offered.stacks,
+            Self::HeldStack => &offered.held_stacks,
             Self::Recipe => &offered.recipes,
         }
     }
@@ -1635,7 +1640,11 @@ fn handling_variants(offered: Option<&OfferedRefs>) -> [Option<Value>; 2] {
                 ),
                 (
                     "item",
-                    stacks("The ref of the offered inventory stack already held in the main hand."),
+                    ref_field(
+                        "The ref of the offered inventory stack already held in the main hand.",
+                        Namespace::HeldStack,
+                        offered,
+                    ),
                 ),
                 (
                     "face",
