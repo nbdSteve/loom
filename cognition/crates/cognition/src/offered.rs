@@ -979,6 +979,28 @@ impl OfferedRefs {
         }
     }
 
+    /// Every dig-safe block in reach, as the body judges a step, before a held goal narrowed
+    /// `dig_blocks` to its own sources, so each item is stepped by its own (r49: zeta's replace of a
+    /// stick goal by oak wood was offered only walks past an oak log in reach, which the ledger
+    /// refused as goalStepUnproductive). The agent's own lying drop still withholds every dig.
+    fn diggable(&self, perception: &Perception) -> Vec<String> {
+        if self.collect_required {
+            return Vec::new();
+        }
+        perception
+            .surroundings
+            .iter()
+            .take(MAX_OBSERVATIONS)
+            .filter(|seen| {
+                seen.kind == ObservationKind::Block
+                    && seen.visible
+                    && seen.dig_safe == Some(true)
+                    && from_eyes(seen) <= INTERACTION_REACH_BLOCKS
+            })
+            .map(|seen| seen.target_ref.clone())
+            .collect()
+    }
+
     /// The steps of each item a goal review may set or pursue: its own dig, collect, craft and
     /// walk refs, each at most [`MAX_STEP_REFS_PER_ITEM`] in all. While the agent's own drop of the
     /// held goal's item lies in reach, that item's steps are its collects alone.
@@ -991,6 +1013,7 @@ impl OfferedRefs {
                 .iter()
                 .any(|(given, what)| given == handle && *what == item)
         };
+        let diggable = self.diggable(perception);
         let mut items: Vec<&String> = self.pursued.iter().collect();
         for (item, ..) in self.count_bounds.iter().chain(&self.switch_bounds) {
             if !items.contains(&item) {
@@ -1033,7 +1056,7 @@ impl OfferedRefs {
                 let recipes = take(&self.recipes, &recipe);
                 let pickup = take(&self.pickup_items, &source);
                 let route = take(&self.route_items, &source);
-                let mut by_yield = self.dig_blocks.clone();
+                let mut by_yield = diggable.clone();
                 by_yield
                     .sort_by_key(|handle| std::cmp::Reverse(mean_yield(perception, handle, item)));
                 let dig = take(&by_yield, if collecting { &none } else { &source });

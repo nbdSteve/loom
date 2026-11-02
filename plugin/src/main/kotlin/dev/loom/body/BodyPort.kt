@@ -201,11 +201,13 @@ fun interface HeldPerceptions {
 
     /**
      * Told that [perception] never reached the mind, so whatever its trigger spent on being asked
-     * is given back. Main thread only; a no-op by default.
+     * is given back, and, when it [waited] behind a nearer threat's answer, that the threat it saw
+     * was never told. Main thread only; a no-op by default.
      */
     fun unsent(
         agentId: AgentId,
         perception: Perception,
+        waited: Boolean = false,
     ) = Unit
 
     /** Told the perception the mind is now shown, classified and with its horizon, to record it so. */

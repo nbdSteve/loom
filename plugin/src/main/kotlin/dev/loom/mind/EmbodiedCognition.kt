@@ -172,7 +172,7 @@ class EmbodiedCognition(
             // The perception still ends its chain, and gives back what its request holds.
             journal.unavailable(agentId, perception, coalesced.first, coalesced.second)
             bodies.held.release(agentId, perception.requestId)
-            bodies.held.unsent(agentId, perception)
+            bodies.held.unsent(agentId, perception, waited = coalesced.second == WAITED_BEHIND_NEARER)
             return
         }
         val carried = goals.carried(agentId, shown)

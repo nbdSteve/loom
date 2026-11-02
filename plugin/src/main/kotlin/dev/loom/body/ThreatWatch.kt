@@ -392,11 +392,19 @@ class ThreatWatch(
      * mind - coalesced into a danger episode, or refused for the run's call reserve - because the
      * cap bounds calls and that sighting cost none. In r22 beta, gamma and theta were capped after
      * one or two real calls, and 25 later sightings at health 1.5 to 3.3 were suppressed.
+     *
+     * A [waited] sighting, held behind a nearer threat's answer, was never told either, so the
+     * watch also forgets [subject] and its next look is a first sight: in r49 a skeleton 15.8
+     * blocks off waited behind iota's zombie flight, every later look was refused as already told,
+     * and its arrow killed iota at health 3.8.
      */
     fun refund(
         agent: AgentId,
         sighted: Trigger.ThreatSighted,
+        subject: UUID? = null,
+        waited: Boolean = false,
     ) {
+        if (waited && subject != null) remembered[agent]?.remove(subject)
         rollBudgetToToday()
         if (!sighted.visible || sighted.distance > pivotalDistanceBlocks) return
         val spent = spentBy(agent)

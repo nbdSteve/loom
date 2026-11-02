@@ -200,6 +200,20 @@ class ThreatWatchTest {
     }
 
     @Test
+    fun `a sighting that waited behind a nearer threat is told afresh at its next look`() {
+        // r49 iota: a skeleton 15.8 blocks off waited behind a zombie's open answer; every later look
+        // was refused as already told (threatDebounced, then threatUnchanged) and its arrow killed iota.
+        val far = zombie("e-far", distance = FAR_OFF_BLOCKS)
+        val waited = assertNotNull(watch.consider(alpha, listOf(far), aRoute()).sighted)
+        watch.refund(alpha, waited, far.subject, waited = true)
+        assertNotNull(watch.consider(alpha, listOf(far), aRoute()).sighted, "never told, so a first sight again")
+        // A repeat coalesced into the threat's own episode was told already, and stays told.
+        val told = assertNotNull(watch.consider(beta, listOf(far), aRoute()).sighted)
+        watch.refund(beta, told, far.subject)
+        assertNull(watch.consider(beta, listOf(far), aRoute()).sighted)
+    }
+
+    @Test
     fun `one agent spending its night leaves every other agent's untouched`() {
         spendTheNight(alpha, handles = "a")
 

@@ -17,6 +17,7 @@ import dev.loom.body.completedBodyOperation
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 
@@ -133,12 +134,12 @@ class PlayerBodyPort(
             override fun unsent(
                 agentId: AgentId,
                 perception: Perception,
+                waited: Boolean,
             ) {
+                val instance = instances[agentId] ?: return
                 (perception.trigger as? Trigger.ThreatSighted)?.let {
-                    instances[agentId]?.threatWatch?.refund(
-                        agentId,
-                        it,
-                    )
+                    val subject = instance.threatSubjects[perception.requestId]?.let(UUID::fromString)
+                    instance.threatWatch.refund(agentId, it, subject, waited)
                 }
             }
         }

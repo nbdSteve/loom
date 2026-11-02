@@ -64,6 +64,12 @@ class DangerEpisodes(
     ) {
         val open = mutableSetOf<String>()
         var settledTick: Long? = null
+
+        /** Whether the episode's answer settled more than the cooldown before [now]. */
+        fun expiredAt(now: Long): Boolean {
+            val settled = settledTick ?: return false
+            return open.isEmpty() && now - settled > DANGER_EPISODE_COOLDOWN_TICKS
+        }
     }
 
     private val episodes = mutableMapOf<AgentId, MutableMap<String, Episode>>()
@@ -98,6 +104,18 @@ class DangerEpisodes(
         }
         return admitted
     }
+
+    /**
+     * Whether [perception]'s own threat has an episode still open or cooling down for [agentId], so
+     * a refusal of it is a repeat the mind was told rather than a threat waiting behind a nearer one.
+     */
+    fun answering(
+        agentId: AgentId,
+        perception: Perception,
+        subject: String? = null,
+    ): Boolean =
+        keyOf(perception.trigger, subject)?.let { key -> episodes[agentId]?.get(key) }
+            ?.expiredAt(currentTick()) == false
 
     /** Opens [key]'s episode for [perception], or adds an urgent damage to the one still open. */
     private fun opened(
@@ -215,11 +233,6 @@ class DangerEpisodes(
     private fun closedAgain(trigger: Trigger): Boolean =
         trigger is Trigger.Damaged ||
             (trigger is Trigger.ThreatSighted && trigger.distance <= PIVOTAL_THREAT_DISTANCE_BLOCKS)
-
-    private fun Episode.expiredAt(now: Long): Boolean {
-        val settled = settledTick ?: return false
-        return open.isEmpty() && now - settled > DANGER_EPISODE_COOLDOWN_TICKS
-    }
 }
 
 /** Damage held behind a danger answer, and the server uuid of the creature that dealt it, if any. */

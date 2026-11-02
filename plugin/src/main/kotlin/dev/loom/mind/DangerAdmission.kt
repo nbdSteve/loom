@@ -13,6 +13,15 @@ import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 import dev.loom.contract.reviewsGoal
 
+/** Why a repeat about a threat the agent is already answering was not sent. */
+private const val INTO_EPISODE = "coalesced into the active danger episode for this threat"
+
+/**
+ * Why a sighting held behind a nearer threat's open answer was not sent: it was never told, so it
+ * is told afresh at its next sighting (`ThreatWatch.refund`).
+ */
+internal const val WAITED_BEHIND_NEARER = "held: a nearer threat's answer is still with the mind"
+
 internal class DangerAdmission(
     private val danger: DangerEpisodes,
     private val preemption: DangerPreemption,
@@ -29,14 +38,16 @@ internal class DangerAdmission(
         perception: Perception,
         subject: String?,
         inFlight: Map<String, Pair<AgentId, Perception>>,
-    ): Pair<String, String>? =
-        when {
+    ): Pair<String, String>? {
+        val answering = danger.answering(agentId, perception, subject)
+        return when {
             exposureEnded() -> EventTag.EXPOSURE_ENDED to "the run's exposure had ended; nothing new is sent"
-            // The agent is already answering this threat.
+            // The agent is already answering this threat, or a nearer one it waits behind.
             !danger.admit(agentId, perception, subject) ->
-                EventTag.DANGER_COALESCED to "coalesced into the active danger episode for this threat"
+                EventTag.DANGER_COALESCED to if (answering) INTO_EPISODE else WAITED_BEHIND_NEARER
             else -> preemptedOf(agentId, perception, subject, inFlight)
         }
+    }
 
     /**
      * Damage from a different attacker, or at low health, preempts the older danger answer still
