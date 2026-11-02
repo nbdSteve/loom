@@ -19,6 +19,7 @@ import dev.loom.body.BodySpawnResult
 import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
 import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
+import dev.loom.body.SprintReason
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
 import dev.loom.bodycontrol.CollectOutcome
@@ -38,10 +39,15 @@ import dev.loom.bodycontrol.SensedRecipe
 import dev.loom.bodycontrol.SensedStack
 import dev.loom.bodycontrol.SensedTime
 import dev.loom.bodycontrol.SensedVitals
+import dev.loom.contract.Bearing
 import dev.loom.contract.BlockFace
+import dev.loom.contract.BlockYield
+import dev.loom.contract.DropFate
 import dev.loom.contract.EquipmentDestination
 import dev.loom.contract.Intent
 import dev.loom.contract.ObservationKind
+import dev.loom.contract.OwnDrop
+import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 import dev.loom.mind.CognitionBridge
 import dev.loom.mind.CognitionCallbacks
@@ -54,6 +60,7 @@ import dev.loom.witness.subjectOf
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -108,6 +115,22 @@ class PlayerSpeechPortTest {
         val says = harness.connector.requests.filterIsInstance<BodyRequest.Say>()
         assertEquals(listOf("h\u00e9llo river"), says.map { it.text })
         assertEquals(agent.value, says.single().agentId)
+    }
+
+    @Test
+    fun `a full sense memory refuses a perception on the record, and a released one frees it`() {
+        // r20: perceptions coalesced or lost held the body's four senses, the damage that killed
+        // three agents went unperceived, and beta's review at capacity left no record at all.
+        val agent = AgentId("agent-crowded")
+        val harness = harness(agent)
+        harness.port.spawn(agent).await()
+        val held = (1..4).map { requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await()) }
+        assertEquals(null, harness.port.perceive(agent, Trigger.GoalReview).await())
+        val refused = harness.records.single { it.event == BodyEvent.PERCEPTION_REFUSED }
+        assertEquals(EventTag.SENSE_AT_CAPACITY, refused.outcome)
+        assertEquals(agent.value, refused.agentId)
+        harness.port.held.release(agent, held.first().requestId)
+        assertTrue(harness.port.perceive(agent, Trigger.GoalReview).await() != null)
     }
 
     @Test
@@ -250,6 +273,23 @@ private class FakeBodySupervisor(
     }
 }
 
+/**
+ * The fake server's ground: open everywhere it was not told otherwise, so a sensed block is stood
+ * on top of unless it is listed as passable, and stood at nowhere if it is listed as buried.
+ */
+private class FakeGround(
+    private val server: FakePlayerServerState,
+) : BlockGround {
+    override fun standsIn(position: List<Int>): Boolean = position in server.passable
+
+    override fun standCell(position: List<Int>): List<Int>? =
+        when {
+            position in server.buried -> null
+            standsIn(position) -> position
+            else -> listOf(position[0], position[1] + 1, position[2])
+        }
+}
+
 private class FakePlayerServerState : PlayerServerState {
     @Volatile
     var connected = true
@@ -261,6 +301,10 @@ private class FakePlayerServerState : PlayerServerState {
     val moveAudits = CopyOnWriteArrayList<Pair<PlayerIdentity, BodyRequest>>()
     val interactionAudits = CopyOnWriteArrayList<Pair<PlayerIdentity, BodyRequest>>()
     var senseAuditVersion: Long = 0
+    val passable = CopyOnWriteArrayList<List<Int>>()
+
+    /** Sensed blocks the fake server says no body can stand at. */
+    val buried = CopyOnWriteArrayList<List<Int>>()
 
     override fun connected(identity: PlayerIdentity): Boolean = connected
 
@@ -344,8 +388,12 @@ private class FakePlayerServerState : PlayerServerState {
                 is ServerInteractionClaim.Sleep ->
                     "bed ${claim.offeredBed.position} entered ${claim.report.entered}"
             }
-        return ServerInteractionAudit(true, detail)
+        return ServerInteractionAudit(true, detail, brokenByOther = claim is ServerInteractionClaim.Dig && digsLost)
     }
+
+    /** Whether the fake server credits every dug block to another managed player. */
+    @Volatile
+    var digsLost = false
 }
 
 private data class FakeSenseAuditSnapshot(
@@ -420,6 +468,9 @@ private data class HarnessOptions(
     val intercept: (BodyRequest) -> BodyResponse? = { null },
     val healthCheckIntervalTicks: Long = 100,
     val healthFailureLimit: Int = 3,
+    val yields: BlockYields = BlockYields.NONE,
+    val ownDrops: OwnDrops = OwnDrops.NONE,
+    val players: ServerPlayerView = ServerPlayerView.NONE,
 )
 
 private class StartupGate {
@@ -491,6 +542,34 @@ class PlayerBodyPortTest {
     }
 
     @Test
+    fun `the shelter witness journals each time the server's ground seals the agent in or opens`() {
+        // r36: no record said whether any agent was ever enclosed; time sheltered is now a sum of these.
+        val agent = AgentId("agent-sheltered")
+        val server = FakePlayerServerState()
+        val feet = listOf(4, 61, 4)
+        val players =
+            object : ServerPlayerView {
+                override fun feetOf(identity: PlayerIdentity): List<Double> = listOf(4.5, 61.0, 4.5)
+
+                override fun mainHandSlotOf(identity: PlayerIdentity): Int? = null
+            }
+        server.passable += listOf(feet, listOf(4, 62, 4))
+        val harness = harness(agent, HarnessOptions(server = server, players = players))
+        harness.port.spawn(agent).await()
+        tick.set(SHELTER_SAMPLE_TICKS * 10)
+        harness.port.tick(tick.get())
+        // A corridor out of the pit, longer than any shelter: the agent is open to the world.
+        server.passable += (63..63 + MAX_ENCLOSURE_CELLS).map { listOf(4, it, 4) }
+        harness.port.tick(tick.get() + 1)
+        tick.set(SHELTER_SAMPLE_TICKS * 11)
+        harness.port.tick(tick.get())
+        val changes = harness.records.filter { it.event == BodyEvent.SHELTER_CHANGED }
+        assertEquals(listOf(EventTag.SHELTER_SEALED, EventTag.SHELTER_OPEN), changes.map { it.outcome })
+        assertEquals(listOf(true, false), changes.map { it.shelter?.sealed })
+        assertEquals(9L, changes.first().shelter?.closed)
+    }
+
+    @Test
     fun `spawn registers identity before launch and completes only after server readiness`() {
         val agent = AgentId("agent-ready")
         val registered = CopyOnWriteArrayList<PlayerIdentity>()
@@ -529,10 +608,14 @@ class PlayerBodyPortTest {
 
         val movementPerception =
             requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        harness.port.held.shown(agent, movementPerception)
         assertEquals(18.0, movementPerception.selfState.health)
         assertEquals(6, movementPerception.selfState.food)
         assertEquals(1.5, movementPerception.selfState.saturation)
-        assertEquals("entity.minecraft.zombie", movementPerception.surroundings.single().what)
+        assertEquals(
+            "entity.minecraft.zombie",
+            movementPerception.surroundings.single { it.kind == ObservationKind.ENTITY }.what,
+        )
         assertEquals("item.minecraft.bread", movementPerception.selfState.inventorySummary.single().what)
         val perceptionAudit =
             requireNotNull(
@@ -547,20 +630,21 @@ class PlayerBodyPortTest {
         assertEquals(1, perceptionAudit.entities.rawBodyListCount)
         assertEquals(1, perceptionAudit.entities.jvmSelectedCount)
         assertEquals(0, perceptionAudit.entities.jvmCutOmittedCount)
-        assertEquals(0, perceptionAudit.blocks.rawBodyListCount)
+        assertEquals(1, perceptionAudit.blocks.rawBodyListCount)
         assertEquals(0, perceptionAudit.droppedItems.rawBodyListCount)
 
         val moveOutcome =
             harness.port
                 .apply(
                     agent,
-                    Intent.MoveTo(listOf(4L, 64L, 2L)),
+                    walkOnto(movementPerception),
                     movementPerception.requestId,
                 ).await()
         assertTrue(moveOutcome is IntentOutcome.Accepted)
 
         val eatingPerception =
             requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        harness.port.held.shown(agent, eatingPerception)
         val stack = eatingPerception.selfState.inventorySummary.single()
         val eatOutcome =
             harness.port
@@ -736,7 +820,10 @@ class PlayerBodyPortTest {
                     CognitionBridge { perception ->
                         val intent =
                             when (perception.agentId) {
-                                "proof-alpha" -> Intent.MoveTo(listOf(4L, 64L, 2L))
+                                // A zombie three blocks off is immediate danger: only a survival
+                                // response is taken beside it, and the flight is the proof's action.
+                                "proof-alpha" ->
+                                    Intent.Flee(perception.surroundings.first { it.kind == ObservationKind.ENTITY }.ref)
                                 "proof-beta" ->
                                     Intent.Eat(
                                         perception.selfState.inventorySummary.single().ref,
@@ -774,7 +861,7 @@ class PlayerBodyPortTest {
         assertAgentChain(
             harness.records,
             agents[0],
-            setOf(BodyEvent.PERCEIVED, BodyEvent.DECIDED, BodyEvent.INTENT_APPLIED, BodyEvent.MOVED),
+            setOf(BodyEvent.PERCEIVED, BodyEvent.DECIDED, BodyEvent.INTENT_APPLIED, BodyEvent.RETREATING),
         )
         assertAgentChain(
             harness.records,
@@ -853,7 +940,7 @@ class PlayerBodyPortTest {
             harness.port
                 .apply(
                     agent,
-                    Intent.MoveTo(listOf(4L, 64L, 2L)),
+                    walkOnto(perception),
                     perception.requestId,
                 ).await()
 
@@ -869,9 +956,10 @@ class PlayerBodyPortTest {
         assertTrue(harness.supervisor.stopped.isEmpty())
 
         refuseMovement = false
+        val again = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
         assertTrue(
             harness.port
-                .apply(agent, Intent.MoveTo(listOf(4L, 64L, 2L)))
+                .apply(agent, walkOnto(again), again.requestId)
                 .await() is IntentOutcome.Accepted,
         )
     }
@@ -1075,6 +1163,8 @@ class PlayerSceneSelectionIntegrationTest {
         val first = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
         val entity = first.surroundings.first { it.kind == ObservationKind.ENTITY }
         val item = first.surroundings.first { it.kind == ObservationKind.DROPPED_ITEM }
+        // The record is written as the mind is shown the perception, as cognition shows it.
+        harness.port.held.shown(agent, first)
         assertCrowdedAudit(harness, first.requestId)
         assertEquals(PERCEPTION_MAX_OBSERVATIONS, first.surroundings.size)
         for (kind in ObservationKind.entries) {
@@ -1120,6 +1210,15 @@ class PlayerSceneSelectionIntegrationTest {
 
         assertEquals("entity.minecraft.zombie", trigger.threat)
         assertEquals(entity.ref, trigger.ref)
+        // The player body makes no route search toward a threat, so it states none (r20: a
+        // constant false read as no route to flee).
+        assertEquals(null, trigger.reachable)
+        // The hunter is marked as one, so a goal review may flee from it (r20 kappa).
+        assertEquals(true, entity.hunts)
+        // Danger is tracked by the server's creature, not its kind (r24: one zombie's damage was
+        // coalesced into another's episode 0.4 blocks off).
+        val subject = harness.port.held.dangerSubjectOf(agent, perception.requestId)
+        assertTrue(subject != null && java.util.UUID.fromString(subject) != null, "a server uuid: $subject")
         assertEquals(
             BODY_SENSE_MAX_OFFERS_PER_KIND,
             perception.surroundings.count { it.kind == ObservationKind.BLOCK },
@@ -1140,6 +1239,22 @@ class PlayerSceneSelectionIntegrationTest {
         val flee = harness.connector.requests.filterIsInstance<BodyRequest.Flee>().single()
         assertEquals(perception.requestId, flee.senseId)
         assertEquals(0, flee.entity)
+        // Every other hunter of the answer is named for the flight to end clear of, at most 16
+        // (r24: gamma's flight from a spider ended 0.6 blocks from a creeper).
+        assertEquals((1..dev.loom.bodycontrol.MAX_FLIGHT_AVOID).toList(), flee.avoid)
+        // The retreat record states the hunters it was told to avoid and how near it ended to any.
+        awaitPortCondition { harness.records.any { it.event == BodyEvent.RETREATING } }
+        val retreat = requireNotNull(harness.records.last { it.event == BodyEvent.RETREATING }.retreat)
+        assertEquals(dev.loom.bodycontrol.MAX_FLIGHT_AVOID, retreat.avoided)
+        assertTrue(retreat.leastSeparation != null)
+        // The sprint the JVM chose, and why, ride the record (r34: delta's walking flight stalled).
+        assertEquals(flee.sprint, retreat.sprint)
+        val sprinting = setOf(SprintReason.NEAR, SprintReason.CLOSING, SprintReason.UNLOCATED)
+        assertEquals(flee.sprint, retreat.sprintReason in sprinting, "${retreat.sprintReason}")
+        // The flight's one correction is typed on its movement record.
+        val moved = harness.records.last { it.event == BodyEvent.MOVED }
+        assertEquals("sidestep", moved.movement?.recovery?.kind)
+        assertEquals("firstMoveStuck", moved.movement?.recovery?.cause)
     }
 
     @Test
@@ -1507,6 +1622,12 @@ private object InteractionPortProof {
             assertTrue(record.detail.contains("sense ${record.requestId}"))
             assertTrue(record.detail.contains("control ${request.requestId}"))
             assertTrue(record.detail.contains("vanilla "))
+            // An approaching interaction states where the body went against its target.
+            val approaches = request is BodyRequest.Collect || request is BodyRequest.Attack
+            assertEquals(
+                approaches,
+                Regex("; from \\S+ to \\S+ travelled \\S+; target at \\S+;").containsMatchIn(record.detail),
+            )
             assertTrue(
                 harness.records.indexOfFirst {
                     it.event == BodyEvent.INTENT_APPLIED &&
@@ -1835,6 +1956,10 @@ private fun buildPortHarness(
                     serverState = options.server,
                     eventLog = BodyEventLog(records::add),
                     currentTick = tick::get,
+                    ground = FakeGround(options.server),
+                    yields = options.yields,
+                    ownDrops = options.ownDrops,
+                    players = options.players,
                 ),
             startupConcurrency = 1,
         )
@@ -1927,7 +2052,8 @@ private fun fakeSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
                 ),
             ),
         entitiesOmitted = 0,
-        blocks = emptyList(),
+        // The one block a walk can name: standing on it is [4, 64, 2].
+        blocks = listOf(SensedBlock(what = "minecraft:stone", position = listOf(4, 63, 2), visible = true)),
         blocksOmitted = 0,
         items = emptyList(),
         itemsOmitted = 0,
@@ -1984,6 +2110,10 @@ private fun crowdedSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
             },
         itemsOmitted = 4,
     )
+
+/** A walk onto the one block [perception] offered. */
+private fun walkOnto(perception: Perception): Intent.MoveTo =
+    Intent.MoveTo(perception.surroundings.first { it.kind == ObservationKind.BLOCK }.ref)
 
 @Suppress("LongMethod")
 private fun interactionSense(request: BodyRequest.Sense): BodyResponse.SenseReport =
@@ -2154,6 +2284,7 @@ private fun fakeMove(request: BodyRequest.MoveTo): BodyResponse.MoveReport =
         position = request.destination,
         travelled = distance(SENSE_POSITION, request.destination),
         elapsedMs = 250,
+        departure = dev.loom.bodycontrol.Departure.CLEAR,
     )
 
 private fun fakeFlee(request: BodyRequest.Flee): BodyResponse.FleeReport =
@@ -2169,6 +2300,14 @@ private fun fakeFlee(request: BodyRequest.Flee): BodyResponse.FleeReport =
         elapsedMs = 500,
         separation = 9.0,
         separationGained = 6.0,
+        departure = dev.loom.bodycontrol.Departure.CLEAR,
+        recovery =
+            dev.loom.bodycontrol.MovementRecovery(
+                dev.loom.bodycontrol.RecoveryKind.SIDESTEP,
+                dev.loom.bodycontrol.RecoveryCause.FIRST_MOVE_STUCK,
+                SENSE_POSITION,
+                listOf(-0.5, 64.0, 2.5),
+            ),
     )
 
 private fun fakeEat(request: BodyRequest.Eat): BodyResponse.EatReport =
@@ -2265,6 +2404,13 @@ private fun assertRoundTripEvidence(
         movementRequestId,
         harness.records.first { it.event == BodyEvent.INTENT_APPLIED }.requestId,
     )
+    // The walk's terminal is joined to its decision by id and typed by how it ended.
+    val moved = harness.records.single { it.event == BodyEvent.MOVED }
+    assertEquals(movementRequestId, moved.requestId)
+    assertEquals(EventTag.MOVEMENT_ARRIVED, moved.outcome)
+    // The arrival's departure check is typed on the record, so a body left where it cannot start
+    // another route is read from a field rather than inferred from the stalls that follow (r34).
+    assertEquals(dev.loom.body.MovementEvidence(departure = "clear"), moved.movement)
 }
 
 private fun assertRequestUsesSenseConnection(
@@ -2292,3 +2438,711 @@ private fun distance(
 
 private fun <T> CompletionStage<T>.await(): T =
     toCompletableFuture().get(PORT_TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
+
+/** How a walk named by a block resolves, and how the blocks it can name are placed. */
+class PlayerWalkResolutionTest {
+    @TempDir
+    lateinit var temporary: Path
+
+    private val harnesses = mutableListOf<PortHarness>()
+    private val tick = AtomicLong(500)
+
+    @AfterEach
+    fun cleanUp() {
+        harnesses.forEach { runCatching(it.port::close) }
+    }
+
+    private fun harness(
+        agent: AgentId,
+        options: HarnessOptions = HarnessOptions(),
+    ): PortHarness = buildPortHarness(temporary, tick, agent, options).also(harnesses::add)
+
+    @Test
+    fun `a walk goes to the cell above the exact block its own request offered`() {
+        val agent = AgentId("agent-walk")
+        val harness = harness(agent)
+        harness.port.spawn(agent).await()
+
+        fun sensed() = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+
+        // A creature's ref names no block, and a ref nothing issued names nothing: refused
+        // before the body is asked for anything.
+        for (named in listOf<
+            (
+                Perception,
+            ) -> String,
+            >({ seen -> seen.surroundings.single { it.kind == ObservationKind.ENTITY }.ref }, { "zz9" })) {
+            val seen = sensed()
+            val refused =
+                harness.port.apply(
+                    agent,
+                    Intent.MoveTo(named(seen)),
+                    seen.requestId,
+                ).await() as IntentOutcome.Rejected
+            assertEquals(EventTag.MOVE_BLOCK_UNNAMED, refused.tag)
+        }
+        // A block offered by an earlier request is not a later request's to spend, and a walk
+        // no request asked for has no sense answer to resolve against.
+        val earlier = sensed()
+        val later = sensed()
+        val stale = harness.port.apply(agent, walkOnto(earlier), later.requestId).await() as IntentOutcome.Rejected
+        assertEquals(EventTag.MOVE_BLOCK_UNNAMED, stale.tag)
+        val unasked = harness.port.apply(agent, walkOnto(sensed())).await() as IntentOutcome.Rejected
+        assertEquals(EventTag.MOVE_SENSE_FORGOTTEN, unasked.tag)
+        assertTrue(harness.connector.requests.none { it is BodyRequest.MoveTo })
+
+        val current = sensed()
+        val accepted = harness.port.apply(agent, walkOnto(current), current.requestId).await()
+        assertTrue(accepted is IntentOutcome.Accepted, accepted.toString())
+        val move = harness.connector.requests.filterIsInstance<BodyRequest.MoveTo>().single()
+        // The sensed stone is at [4, 63, 2], so the walk is to stand on it: nothing else chosen.
+        assertEquals(listOf(4.0, 64.0, 2.0), move.destination)
+        assertEquals(0, move.tolerance)
+    }
+
+    @Test
+    fun `a walk onto a block the server gives no collision ends in that block's own cell`() {
+        val agent = AgentId("agent-walk-into")
+        val server = FakePlayerServerState().apply { passable += listOf(4, 63, 2) }
+        val harness = harness(agent, HarnessOptions(server = server))
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+
+        val accepted = harness.port.apply(agent, walkOnto(perception), perception.requestId).await()
+
+        assertTrue(accepted is IntentOutcome.Accepted, accepted.toString())
+        val move = harness.connector.requests.filterIsInstance<BodyRequest.MoveTo>().single()
+        // The sensed block at [4, 63, 2] is one a body stands in, so the walk ends there.
+        assertEquals(listOf(4.0, 63.0, 2.0), move.destination)
+    }
+
+    @Test
+    fun `the block a body stands on and a plant it stands in are here rather than a compass point`() {
+        val agent = AgentId("agent-standing")
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let {
+                            fakeSense(it).copy(
+                                blocks =
+                                    listOf(
+                                        SensedBlock(
+                                            what = "minecraft:terracotta",
+                                            position = listOf(1, 63, 2),
+                                            visible = true,
+                                        ),
+                                        SensedBlock(
+                                            what = "minecraft:dead_bush",
+                                            position = listOf(1, 64, 2),
+                                            visible = true,
+                                        ),
+                                        SensedBlock(
+                                            what = "minecraft:terracotta",
+                                            position = listOf(1, 63, 1),
+                                            visible = true,
+                                        ),
+                                    ),
+                            )
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val blocks =
+            requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+                .surroundings
+                .filter { it.kind == ObservationKind.BLOCK }
+                .map { Triple(it.what, it.direction, it.verticalOffset) }
+                .toSet()
+        // The body stands at [1.5, 64, 2.5]: on the terracotta at [1, 63, 2], in the bush above
+        // it, beside the terracotta at [1, 63, 1] one block north.
+        assertEquals(
+            setOf(
+                Triple("block.minecraft.terracotta", Bearing.HERE, -0.5),
+                Triple("block.minecraft.dead_bush", Bearing.HERE, 0.5),
+                Triple("block.minecraft.terracotta", Bearing.NORTH, -0.5),
+            ),
+            blocks,
+        )
+        // Neither block in the agent's own spot is a walk, and nothing is asked of the body
+        // for one; the neighbour still is.
+        for (what in listOf("block.minecraft.terracotta", "block.minecraft.dead_bush")) {
+            val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+            val own = seen.surroundings.first { it.what == what && it.direction == Bearing.HERE }
+            val refused = harness.port.apply(agent, Intent.MoveTo(own.ref), seen.requestId).await()
+            assertEquals(EventTag.MOVE_OWN_SPOT, (refused as IntentOutcome.Rejected).tag)
+        }
+        assertTrue(harness.connector.requests.none { it is BodyRequest.MoveTo })
+        val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val beside = seen.surroundings.first { it.direction == Bearing.NORTH }
+        val walked = harness.port.apply(agent, Intent.MoveTo(beside.ref), seen.requestId).await()
+        assertTrue(walked is IntentOutcome.Accepted, walked.toString())
+    }
+
+    @Test
+    fun `the block under feet in a shaft is offered as unsafe to dig and a dig of it is refused`() {
+        // r13 eta at body:00000148 and 519: a 1x1 shaft it dug itself, every wall unstandable.
+        val agent = AgentId("agent-shaft")
+        val support = listOf(1, 63, 2)
+        val walls = listOf(listOf(2, 63, 2), listOf(0, 63, 2), listOf(1, 63, 3), listOf(1, 63, 1))
+        val server =
+            FakePlayerServerState().apply {
+                buried += walls
+                buried += walls.map { listOf(it[0], 62, it[2]) }
+            }
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    server = server,
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let {
+                            fakeSense(
+                                it,
+                            ).copy(blocks = listOf(SensedBlock("minecraft:yellow_terracotta", support, visible = true)))
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val underfoot = seen.surroundings.single { it.kind == ObservationKind.BLOCK }
+        assertEquals(false, underfoot.digSafe)
+
+        val refused = harness.port.apply(agent, Intent.Dig(underfoot.ref), seen.requestId).await()
+
+        assertEquals(EventTag.DIG_WOULD_TRAP, (refused as IntentOutcome.Rejected).tag)
+        assertTrue(harness.connector.requests.none { it is BodyRequest.Dig })
+        // With one wall open to climb onto, the same dig is safe and is asked of the body.
+        server.buried.remove(walls.first())
+        val open = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        assertEquals(true, open.surroundings.single { it.kind == ObservationKind.BLOCK }.digSafe)
+    }
+
+    @Test
+    fun `a ledge over open air and a pillar top are unsafe to dig out from under the body`() {
+        // The r14 audit's ledge scenario: a support dig must never be offered where the hole it
+        // leaves has no standable way out, whether the body would drop through it or be stuck in it.
+        val support = listOf(1, 63, 2)
+        val sides = listOf(listOf(2, 63, 2), listOf(0, 63, 2), listOf(1, 63, 3), listOf(1, 63, 1))
+        // A ledge: one side is ground to climb onto, but the cell under the ledge block is open air,
+        // so the dig drops the body through.
+        val ledge = FakePlayerServerState().apply { passable += listOf(1, 62, 2) }
+        // A pillar top: every side is open air over open air, nothing to climb back onto.
+        val pillar =
+            FakePlayerServerState().apply {
+                buried += sides
+                buried += sides.map { listOf(it[0], 62, it[2]) }
+            }
+        for ((name, server) in listOf("ledge" to ledge, "pillar" to pillar)) {
+            val agent = AgentId("agent-$name")
+            val harness =
+                harness(
+                    agent,
+                    HarnessOptions(
+                        server = server,
+                        intercept = { request ->
+                            (request as? BodyRequest.Sense)?.let {
+                                fakeSense(
+                                    it,
+                                ).copy(blocks = listOf(SensedBlock("minecraft:stone", support, visible = true)))
+                            }
+                        },
+                    ),
+                )
+            harness.port.spawn(agent).await()
+            val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+            val underfoot = seen.surroundings.single { it.kind == ObservationKind.BLOCK }
+            assertEquals(false, underfoot.digSafe, name)
+            val refused = harness.port.apply(agent, Intent.Dig(underfoot.ref), seen.requestId).await()
+            assertEquals(EventTag.DIG_WOULD_TRAP, (refused as IntentOutcome.Rejected).tag, name)
+            assertTrue(harness.connector.requests.none { it is BodyRequest.Dig }, name)
+        }
+    }
+
+    @Test
+    fun `a block observation states what digging it yields, from the server, for that player`() {
+        // The r13 bushes yielded sticks and the terracotta nothing; the mind is now told which.
+        val agent = AgentId("agent-yields")
+        val asked = mutableListOf<Pair<List<Int>, PlayerIdentity>>()
+        val yields =
+            BlockYields { position, player ->
+                asked += position to player
+                listOf(BlockYield("item.minecraft.stick", 0, 2, 100))
+            }
+        val harness = harness(agent, HarnessOptions(yields = yields))
+        harness.port.spawn(agent).await()
+        val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val block = seen.surroundings.single { it.kind == ObservationKind.BLOCK }
+        assertEquals(listOf(BlockYield("item.minecraft.stick", 0, 2, 100)), block.yields)
+        assertEquals(listOf(listOf(4, 63, 2) to playerIdentityOf(agent)), asked)
+        assertEquals(true, block.digSafe)
+    }
+
+    @Test
+    fun `a completed dig's server drop is attributed to its own request and told to the digger`() {
+        // r14: beta's dig b4v5 dropped two sticks delta took before beta's next review, and beta
+        // judged a dig that yielded as having yielded nothing.
+        val agent = AgentId("agent-drops")
+        val attributed = mutableListOf<Triple<String, List<Int>, Long>>()
+        val drops =
+            object : OwnDrops {
+                val told = mutableListOf<OwnDropReading>()
+
+                override fun attribute(
+                    identity: PlayerIdentity,
+                    requestId: String,
+                    block: List<Int>,
+                    sinceTick: Long,
+                ): List<OwnDropReading> {
+                    attributed += Triple(requestId, block, sinceTick)
+                    val taken = OwnDropReading(requestId, "item.minecraft.cobblestone", 1, DropFate.TAKEN, null)
+                    val lying =
+                        OwnDropReading(requestId, "item.minecraft.stick", 2, DropFate.LYING, listOf(6.5, 64.0, 2.5))
+                    told.addAll(0, listOf(taken, lying))
+                    return listOf(taken, lying)
+                }
+
+                override fun of(identity: PlayerIdentity): List<OwnDropReading> = told.toList()
+            }
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request -> (request as? BodyRequest.Sense)?.let(::interactionSense) },
+                    ownDrops = drops,
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        assertEquals(emptyList<OwnDrop>(), perception.selfState.ownDrops)
+        val stone = perception.surroundings.single { it.what == "block.minecraft.stone" }
+        harness.port.apply(agent, Intent.Dig(stone.ref), perception.requestId).await()
+
+        assertEquals(listOf(perception.requestId to listOf(2, 63, 2)), attributed.map { it.first to it.second })
+        val interaction = harness.records.single { it.event == BodyEvent.WORLD_INTERACTION }
+        assertTrue(
+            interaction.detail.endsWith("; dropped 1 item.minecraft.cobblestone, 2 item.minecraft.stick"),
+            interaction.detail,
+        )
+        val next = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val (taken, lying) = next.selfState.ownDrops
+        assertEquals(OwnDrop(perception.requestId, "item.minecraft.cobblestone", 1, DropFate.TAKEN), taken)
+        assertEquals(DropFate.LYING, lying.fate)
+        assertEquals(Bearing.EAST, lying.direction)
+        assertEquals(5.0, requireNotNull(lying.distance), 1e-9)
+        assertEquals(0.0, lying.verticalOffset)
+    }
+
+    @Test
+    fun `only a goal review's sense looks beyond dig reach, and only for logs and berry bushes`() {
+        // r34 zeta: logs 6.6 to 8 blocks off were only ever recalled; a threat scan or a damage
+        // sense has no goal to ground and stays inside the body's reach.
+        val agent = AgentId("agent-seeking")
+        val senses = CopyOnWriteArrayList<BodyRequest.Sense>()
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let {
+                            senses += it
+                            interactionSense(it)
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        harness.port.perceive(agent, Trigger.Damaged(2, "zombie")).await()
+        val (review, damage) = senses
+        assertEquals(SOUGHT_SOURCE_KINDS, review.seek)
+        assertTrue(requireNotNull(review.seek).all { it.endsWith("_log") || it == "sweet_berry_bush" })
+        assertNull(damage.seek)
+    }
+
+    @Test
+    fun `a far block no walk reaches a dig of is still reported, as no safe dig, never hidden`() {
+        // r35's canopy log: dropping it from the perception broke the audit that every block the
+        // body reported is in the scene; it is told as a block no walk can dig instead.
+        val agent = AgentId("agent-unreached")
+        val far = listOf(SENSE_POSITION[0].toInt() + 9, SENSE_POSITION[1].toInt() + 3, SENSE_POSITION[2].toInt())
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let {
+                            fakeSense(it).copy(blocks = listOf(SensedBlock("minecraft:oak_log", far, visible = true)))
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        // The one block the body reported is in the scene: no offer is hidden from the audit.
+        val log = seen.surroundings.single { it.kind == ObservationKind.BLOCK }
+        assertEquals(false, log.digSafe)
+    }
+
+    @Test
+    fun `an own lying drop is asked for by its server uuid and offered back by its ref`() {
+        // r15 kappa body:00000080: its own dig dropped a stick it never saw, and iota's own stick
+        // lay out of sight five blocks off; neither could be named to collect.
+        val agent = AgentId("agent-retained")
+        // The fake server names the sensed apple by this uuid, so it is the own drop's entity.
+        val apple = UUID.nameUUIDFromBytes("item:0:minecraft:apple:1".toByteArray(StandardCharsets.UTF_8))
+        val drops =
+            object : OwnDrops {
+                override fun attribute(
+                    identity: PlayerIdentity,
+                    requestId: String,
+                    block: List<Int>,
+                    sinceTick: Long,
+                ): List<OwnDropReading> = emptyList()
+
+                override fun of(identity: PlayerIdentity): List<OwnDropReading> =
+                    listOf(
+                        OwnDropReading(
+                            "req-dug",
+                            "item.minecraft.apple",
+                            1,
+                            DropFate.LYING,
+                            listOf(3.5, 64.0, 2.5),
+                            apple,
+                        ),
+                        OwnDropReading("req-dug", "item.minecraft.stick", 1, DropFate.TAKEN, null),
+                    )
+            }
+        val senses = CopyOnWriteArrayList<BodyRequest.Sense>()
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        (request as? BodyRequest.Sense)?.let {
+                            senses += it
+                            interactionSense(it)
+                        }
+                    },
+                    ownDrops = drops,
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        assertEquals(listOf(apple.toString()), senses.single().retainItems)
+        val item = perception.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }
+        val (lying, taken) = perception.selfState.ownDrops
+        assertEquals(item.ref, lying.ref)
+        assertNull(taken.ref)
+    }
+
+    @Test
+    fun `an item the body found no route to is said so and offered to nothing after`() {
+        // r15: one stick hanging over a trench drew five noRoute collects from two agents.
+        val agent = AgentId("agent-no-route")
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        when (request) {
+                            is BodyRequest.Sense -> interactionSense(request)
+                            is BodyRequest.Collect ->
+                                fakeCollect(request).copy(outcome = CollectOutcome.NO_ROUTE, what = null, count = null)
+                            else -> null
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val first = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val item = first.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }
+        assertNull(item.routeRefused)
+        val refused =
+            harness.port.apply(agent, Intent.Collect(item.ref, approach = true), first.requestId).await()
+        assertEquals(EventTag.COLLECT_NO_ROUTE, (refused as IntentOutcome.Rejected).tag)
+        val next = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        assertEquals(true, next.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }.routeRefused)
+    }
+
+    @Test
+    fun `an item the body stalled on is not offered from that place again, and is from another`() {
+        // r34 delta: three collects of its own logs stalled from one stuck cell, each offered anew.
+        val agent = AgentId("agent-stalled-collect")
+        var standing = SENSE_POSITION
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        when (request) {
+                            is BodyRequest.Sense -> interactionSense(request).copy(position = standing)
+                            is BodyRequest.Collect ->
+                                fakeCollect(request).copy(outcome = CollectOutcome.STALLED, what = null, count = null)
+                            else -> null
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val first = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val item = first.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }
+        val stalled = harness.port.apply(agent, Intent.Collect(item.ref, approach = true), first.requestId).await()
+        assertEquals(EventTag.COLLECT_STALLED, (stalled as IntentOutcome.Rejected).tag)
+        val again = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        assertEquals(true, again.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }.routeRefused)
+        // From another cell the approach is another walk, and the item is offered again.
+        standing = listOf(SENSE_POSITION[0] + 1.0, SENSE_POSITION[1], SENSE_POSITION[2])
+        val moved = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        assertNull(moved.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }.routeRefused)
+    }
+
+    @Test
+    fun `a dig the server credits to another player is that player's break, not this one's`() {
+        // The second v23 rehearsal, tick 3262: two finishes on one instant-break bush crossed in
+        // the server, and both bodies saw the block go after their own finish.
+        val agent = AgentId("agent-contest")
+        val attributed = mutableListOf<String>()
+        val drops =
+            object : OwnDrops {
+                override fun attribute(
+                    identity: PlayerIdentity,
+                    requestId: String,
+                    block: List<Int>,
+                    sinceTick: Long,
+                ): List<OwnDropReading> {
+                    attributed += requestId
+                    return emptyList()
+                }
+
+                override fun of(identity: PlayerIdentity): List<OwnDropReading> = emptyList()
+            }
+        val server = FakePlayerServerState().apply { digsLost = true }
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    server = server,
+                    intercept = { request -> (request as? BodyRequest.Sense)?.let(::interactionSense) },
+                    ownDrops = drops,
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val stone = perception.surroundings.single { it.what == "block.minecraft.stone" }
+        val outcome = harness.port.apply(agent, Intent.Dig(stone.ref), perception.requestId).await()
+
+        assertEquals(EventTag.DIG_CONTEST_GONE, (outcome as IntentOutcome.Rejected).tag)
+        val applied = harness.records.single { it.event == BodyEvent.INTENT_APPLIED }
+        assertEquals(EventTag.DIG_CONTEST_GONE, applied.outcome)
+        val interaction = harness.records.single { it.event == BodyEvent.WORLD_INTERACTION }
+        assertEquals(EventTag.SERVER_EFFECT_CONFIRMED, interaction.outcome)
+        assertTrue(interaction.detail.contains("body dug"), interaction.detail)
+        assertTrue(interaction.detail.endsWith("; dropped nothing of its own"), interaction.detail)
+        // Its drops are the winner's: nothing is attributed to this dig.
+        assertEquals(emptyList<String>(), attributed)
+    }
+
+    @Test
+    fun `a flight refused by a busy body halts the routine work and is asked again`() {
+        // r13 eta body:00000272: the flee was refused notReady behind a dig decided earlier.
+        val agent = AgentId("agent-preempt")
+        var busy = true
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        when {
+                            request is BodyRequest.Halt -> {
+                                busy = false
+                                null
+                            }
+                            request is BodyRequest.Flee && busy -> throw BodyControlFailure.Refused(ErrorCode.NOT_READY)
+                            else -> null
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val seen = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val threat = seen.surroundings.first { it.kind == ObservationKind.ENTITY }
+
+        val fled = harness.port.apply(agent, Intent.Flee(threat.ref), seen.requestId).await()
+
+        assertTrue(fled is IntentOutcome.Accepted, fled.toString())
+        val asked = harness.connector.requests.filter { it is BodyRequest.Flee || it is BodyRequest.Halt }
+        // The connector lists requests per connection, so the halt's place is proven by the retry
+        // succeeding at all: the body stays busy until it is halted.
+        assertEquals(mapOf("Flee" to 2, "Halt" to 1), asked.groupingBy { it::class.simpleName!! }.eachCount())
+        // The retry is a fresh request, never a reused id.
+        assertEquals(2, asked.filterIsInstance<BodyRequest.Flee>().map { it.requestId }.distinct().size)
+    }
+
+    @Test
+    fun `an older flight refused behind a newer one never halts it and ends stale`() {
+        // r34 beta 10s/111/115: the older sighting's flight 111 was refused notReady while waiting
+        // to take over, its retry halted the newer damage's flight 115, and 111 ran in its place.
+        val agent = AgentId("agent-stale-flight")
+        val olderAsked = java.util.concurrent.CountDownLatch(1)
+        val newerApplied = java.util.concurrent.CountDownLatch(1)
+        var olderSense: String? = null
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        if (request is BodyRequest.Flee && request.senseId == olderSense) {
+                            olderAsked.countDown()
+                            newerApplied.await(5, java.util.concurrent.TimeUnit.SECONDS)
+                            throw BodyControlFailure.Refused(ErrorCode.NOT_READY)
+                        }
+                        null
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val older = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val newer = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        olderSense = older.requestId
+        val threatIn = { seen: Perception -> seen.surroundings.first { it.kind == ObservationKind.ENTITY }.ref }
+
+        val olderFled = harness.port.apply(agent, Intent.Flee(threatIn(older)), older.requestId)
+        assertTrue(olderAsked.await(5, java.util.concurrent.TimeUnit.SECONDS), "the older flight reached the body")
+        val newerFled = harness.port.apply(agent, Intent.Flee(threatIn(newer)), newer.requestId).await()
+        newerApplied.countDown()
+
+        assertTrue(newerFled is IntentOutcome.Accepted, newerFled.toString())
+        assertEquals(EventTag.RETREAT_STALE, (olderFled.await() as IntentOutcome.Rejected).tag)
+        // Nothing was halted for the older flight, so the newer one was never stopped by it.
+        assertTrue(harness.connector.requests.none { it is BodyRequest.Halt }, "${harness.connector.requests}")
+        val applied = harness.records.filter { it.event == BodyEvent.INTENT_APPLIED }
+        assertEquals(EventTag.RETREAT_STALE, applied.single { it.requestId == older.requestId }.outcome)
+    }
+
+    @Test
+    fun `answers asked before a danger and applied during its flight never halt that flight`() {
+        // The r39 offline audit: a review asked, then a sighting asked and its flight applied, then
+        // the review's dig applied and refused not ready behind that flight. Dated by its arrival the
+        // dig was the newest decision and halted the flight; dated by when it was asked it is older.
+        val agent = AgentId("agent-late-routine")
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        when (request) {
+                            is BodyRequest.Sense -> interactionSense(request)
+                            is BodyRequest.Dig -> throw BodyControlFailure.Refused(ErrorCode.NOT_READY)
+                            else -> null
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val shown = { trigger: Trigger ->
+            requireNotNull(harness.port.perceive(agent, trigger).await()).also { harness.port.held.shown(agent, it) }
+        }
+        val idling = shown(Trigger.GoalReview)
+        val digging = shown(Trigger.GoalReview)
+        val sighting = shown(Trigger.GoalReview)
+        val threat = sighting.surroundings.first { it.kind == ObservationKind.ENTITY }.ref
+        val stone = digging.surroundings.first { it.what == "block.minecraft.stone" }.ref
+
+        val fled = harness.port.apply(agent, Intent.Flee(threat), sighting.requestId).await()
+        val dug = harness.port.apply(agent, Intent.Dig(stone), digging.requestId).await()
+        val idled = harness.port.apply(agent, Intent.Idle, idling.requestId).await()
+
+        assertTrue(fled is IntentOutcome.Accepted, fled.toString())
+        assertEquals(EventTag.CONTROL_NOT_READY, (dug as IntentOutcome.Rejected).tag)
+        assertEquals(IntentOutcome.Accepted("left a newer decision's work running"), idled)
+        // Neither older answer halted the flight, and the refused dig was not asked again.
+        assertTrue(harness.connector.requests.none { it is BodyRequest.Halt }, "${harness.connector.requests}")
+        assertEquals(1, harness.connector.requests.count { it is BodyRequest.Dig })
+        assertEquals(false, harness.port.halts.halt(agent, digging.requestId).await(), "nor does its own halt")
+    }
+
+    @Test
+    fun `a flight asked before a newer danger answer's flight never replaces it, even at its first attempt`() {
+        // The r39 offline audit: a goal review beside a hunter answered with a flight after a newer
+        // sighting's flight was applied, and its first attempt, sent to replace, ended the newer one.
+        val agent = AgentId("agent-late-flight")
+        val harness = harness(agent, HarnessOptions())
+        harness.port.spawn(agent).await()
+        val shown = {
+            requireNotNull(
+                harness.port.perceive(agent, Trigger.GoalReview).await(),
+            ).also { harness.port.held.shown(agent, it) }
+        }
+        val review = shown()
+        val sighting = shown()
+        val threatIn = { seen: Perception -> seen.surroundings.first { it.kind == ObservationKind.ENTITY }.ref }
+
+        val newer = harness.port.apply(agent, Intent.Flee(threatIn(sighting)), sighting.requestId).await()
+        val older = harness.port.apply(agent, Intent.Flee(threatIn(review)), review.requestId).await()
+
+        assertTrue(newer is IntentOutcome.Accepted, newer.toString())
+        assertEquals(EventTag.RETREAT_STALE, (older as IntentOutcome.Rejected).tag)
+        assertEquals(1, harness.connector.requests.count { it is BodyRequest.Flee }, "the older flight was never sent")
+    }
+
+    @Test
+    fun `a covered block is offered as not standable and a walk onto it is refused before the body`() {
+        val agent = AgentId("agent-walk-covered")
+        val server = FakePlayerServerState().apply { buried += listOf(4, 63, 2) }
+        val harness = harness(agent, HarnessOptions(server = server))
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val block = perception.surroundings.single { it.kind == ObservationKind.BLOCK }
+        assertEquals(false, block.standable)
+
+        val refused = harness.port.apply(agent, walkOnto(perception), perception.requestId).await()
+
+        assertEquals(EventTag.MOVE_NOT_STANDABLE, (refused as IntentOutcome.Rejected).tag)
+        assertTrue(harness.connector.requests.none { it is BodyRequest.MoveTo })
+    }
+
+    @Test
+    fun `a walk the ground refuses and one that stalls each end under their own tag`() {
+        val agent = AgentId("agent-walk-endings")
+        var ending = MoveOutcome.NO_ROUTE
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        (request as? BodyRequest.MoveTo)?.let {
+                            val moved = ending == MoveOutcome.STALLED
+                            BodyResponse.MoveReport(
+                                protocol = it.protocol,
+                                requestId = it.requestId,
+                                agentId = it.agentId,
+                                state = LifecycleState.READY,
+                                outcome = ending,
+                                from = listOf(1.5, 64.0, 2.5),
+                                position = if (moved) listOf(2.5, 64.0, 2.5) else listOf(1.5, 64.0, 2.5),
+                                travelled = if (moved) 1.0 else 0.0,
+                                elapsedMs = 10,
+                            )
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+
+        val refusedOn = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val refused = harness.port.apply(agent, walkOnto(refusedOn), refusedOn.requestId).await()
+        assertEquals(EventTag.MOVE_NO_ROUTE, (refused as IntentOutcome.Rejected).tag)
+        assertTrue(harness.records.none { it.event == BodyEvent.MOVED })
+
+        ending = MoveOutcome.STALLED
+        val stalledOn = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        harness.port.apply(agent, walkOnto(stalledOn), stalledOn.requestId).await()
+        val moved = harness.records.single { it.event == BodyEvent.MOVED }
+        assertEquals(stalledOn.requestId, moved.requestId)
+        assertEquals(EventTag.MOVEMENT_STALLED, moved.outcome)
+    }
+}

@@ -2,8 +2,8 @@
   "doc": [
     "One shared list of numeric spellings, swept by both runtimes' conformance suites over",
     "identical bytes. It is not a fixture and is deliberately not in `valid` or `invalid`:",
-    "a valid fixture must re-encode to its own bytes, and `{\"protocol\":5.0}` re-encodes to",
-    "`{\"protocol\":5}`, so the one class of case this list exists for cannot be one.",
+    "a valid fixture must re-encode to its own bytes, and `{\"protocol\":8.0}` re-encodes to",
+    "`{\"protocol\":8}`, so the one class of case this list exists for cannot be one.",
     "",
     "To JSON Schema 2020-12 an `integer` is any number whose fractional part is zero, so a",
     "value is what is bounded here and a spelling never is. Each case carries the whole",
@@ -38,132 +38,132 @@
       "why": "the plain spelling every reader has always taken",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":5,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":8,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "a zero fraction is an integer to the schema",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":5.0,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":8.0,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "and stays one however many zeros follow",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":5.00,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":8.00,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "sixteen of them, the most a mantissa-digit count would allow",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":5.0000000000000000,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":8.0000000000000000,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "seventeen, where charging trailing zeros as integer digits refused Node's",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":5.00000000000000000,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":8.00000000000000000,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "eighteen, past any slack such a count could carry",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":5.000000000000000000,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":8.000000000000000000,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "nineteen leading zeros an exponent puts back, which a count before stripping refused",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":0.0000000000000000005e19,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":0.0000000000000000008e19,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "eighteen of the same",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":0.000000000000000005e18,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":0.000000000000000008e18,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "an exponent form kotlinx already happened to read",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":5e0,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":8e0,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "whose marker may be either case",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":5E0,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":8E0,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "and whose sign may be written out",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":5e+0,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":8e+0,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "a fraction the exponent makes whole again",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":0.5e1,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":0.8e1,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "and a whole number the exponent divides back to one",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":50e-1,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":80e-1,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": true,
-      "value": 5
+      "value": 8
     },
     {
       "why": "a fraction is not an integer, however plainly it is written",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":5.5,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":8.8,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": false
     },
     {
       "why": "nor with an exponent that does not clear it",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":5.5e0,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":8.8e0,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": false
     },
     {
       "why": "nor when the exponent puts the fraction there",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":55e-1,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":88e-1,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": false
     },
     {
       "why": "a fraction JSON.parse rounds to this very generation is still a fraction",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":5.0000000000000000001,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":8.0000000000000000001,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": false,
       "validatorAccepts": true
     },
@@ -171,7 +171,7 @@
       "why": "and so is one it rounds up to it",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":4.9999999999999999999,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":7.9999999999999999999,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": false,
       "validatorAccepts": true
     },
@@ -179,21 +179,21 @@
       "why": "a whole number that is not this generation is refused by the const, not by integrality",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":4.0,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":7.0,\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": false
     },
     {
       "why": "a quoted number is a string, and a string is not a number in any spelling",
       "direction": "request",
       "field": "protocol",
-      "line": "{\"op\":\"handshake\",\"protocol\":\"5\",\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
+      "line": "{\"op\":\"handshake\",\"protocol\":\"7\",\"requestId\":\"req-1\",\"agentId\":\"agent-alpha\"}",
       "accepted": false
     },
     {
       "why": "an ordinary count, as an encoder writes it",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":4210,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":4210,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 4210
     },
@@ -201,7 +201,7 @@
       "why": "an exponent spelling of a thousand milliseconds",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":1e3,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":1e3,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 1000
     },
@@ -209,7 +209,7 @@
       "why": "seventeen trailing zeros in a count, the same defect one field along",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":1.00000000000000000,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":1.00000000000000000,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 1
     },
@@ -217,7 +217,7 @@
       "why": "eighteen of them",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":1.000000000000000000,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":1.000000000000000000,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 1
     },
@@ -225,7 +225,7 @@
       "why": "the shared maximum with a zero fraction after it, which needs all sixteen of its own digits",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9007199254740991.00,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9007199254740991.00,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 9007199254740991
     },
@@ -233,7 +233,7 @@
       "why": "the shared maximum itself",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9007199254740991,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9007199254740991,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 9007199254740991
     },
@@ -241,7 +241,7 @@
       "why": "and the maximum reached by an exponent, so the bound is on the value and not on the digits",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9.007199254740991e15,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9.007199254740991e15,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 9007199254740991
     },
@@ -249,7 +249,7 @@
       "why": "leading zeros an exponent puts back, in a count",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0.0000000000000000001e19,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0.0000000000000000001e19,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 1
     },
@@ -257,7 +257,7 @@
       "why": "a count of nothing, which a body process has at its first tick",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 0
     },
@@ -265,7 +265,7 @@
       "why": "negative zero, which the schema's minimum admits because it is a spelling of zero",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":-0,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":-0,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 0
     },
@@ -273,7 +273,7 @@
       "why": "an exponent no int scale can hold, over a mantissa the exponent cannot change",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0e-9999999999999999999999999,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0e-9999999999999999999999999,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 0
     },
@@ -281,7 +281,7 @@
       "why": "one digit more of the same, which is where BigDecimal threw and Node read zero",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0e-99999999999999999999999999,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0e-99999999999999999999999999,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 0
     },
@@ -289,7 +289,7 @@
       "why": "the same in the other direction: a zero an exponent cannot make expensive",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0.0e9,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0.0e9,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 0
     },
@@ -297,7 +297,7 @@
       "why": "a negative exponent that leaves a whole number behind, so the test is the fraction and not the point",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":20e-1,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":20e-1,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": true,
       "value": 2
     },
@@ -305,42 +305,42 @@
       "why": "one past the shared maximum",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9007199254740992,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9007199254740992,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": false
     },
     {
       "why": "and one past it spelled so the digit count hides it",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9.007199254740992e15,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9.007199254740992e15,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": false
     },
     {
       "why": "a count below its own minimum",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":-1,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":-1,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": false
     },
     {
       "why": "and the same below it with an exponent",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":-1e0,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":-1e0,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": false
     },
     {
       "why": "a count with a fraction left in it",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":5.5,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":5.5,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": false
     },
     {
       "why": "a fraction at the maximum, which JSON.parse rounds down to a whole number",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9007199254740991.4,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9007199254740991.4,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": false,
       "validatorAccepts": true
     },
@@ -348,7 +348,7 @@
       "why": "and one just below it, which it rounds to an even whole number",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9007199254740990.5,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":9007199254740990.5,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": false,
       "validatorAccepts": true
     },
@@ -356,7 +356,7 @@
       "why": "a fraction so fine that JSON.parse answers exactly one",
       "direction": "response",
       "field": "uptimeMs",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":1.0000000000000000001,\"stateMs\":0,\"requestsHandled\":1}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":1.0000000000000000001,\"stateMs\":0,\"requestsHandled\":1}",
       "accepted": false,
       "validatorAccepts": true
     },
@@ -378,14 +378,14 @@
       "why": "and the same shape on a count, which is the other field a peer chooses the cost of",
       "direction": "response",
       "field": "requestsHandled",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0,\"stateMs\":0,\"requestsHandled\":1e-100000000}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0,\"stateMs\":0,\"requestsHandled\":1e-100000000}",
       "accepted": false
     },
     {
       "why": "the longest literal this wire reads, spent entirely on that shape",
       "direction": "response",
       "field": "requestsHandled",
-      "line": "{\"op\":\"status\",\"protocol\":5,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0,\"stateMs\":0,\"requestsHandled\":-1.000000000000000000e-999999999}",
+      "line": "{\"op\":\"status\",\"protocol\":8,\"requestId\":\"req-2\",\"agentId\":\"agent-alpha\",\"state\":\"ready\",\"uptimeMs\":0,\"stateMs\":0,\"requestsHandled\":-1.000000000000000000e-999999999}",
       "accepted": false
     }
   ]

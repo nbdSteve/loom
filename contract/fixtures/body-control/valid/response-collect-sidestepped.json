@@ -1,0 +1,1 @@
+{"op":"collect","protocol":8,"requestId":"req-52","agentId":"agent-alpha","state":"ready","outcome":"collected","from":[-8.434705761507354,66.5,-27.5],"position":[-4.5,67.5,-25.5],"travelled":6.25,"elapsedMs":2850,"what":"minecraft:oak_log","count":1,"recovery":{"kind":"sidestep","cause":"firstMoveStuck","from":[-8.434705761507354,66.5,-27.5],"to":[-8.5,66.5,-26.5]}}

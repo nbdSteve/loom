@@ -2,7 +2,8 @@
 
 // A primary-behavior run that reaches a configured cognition bound, or whose provider
 // becomes unavailable with a typed classification, stops admitting cognition and still
-// publishes what it collected. Everything else stays an integrity failure.
+// publishes what it collected. One request the provider refuses as invalid is that call's
+// own typed failure and the run continues. Everything else stays an integrity failure.
 
 const CONTROLLED_STOP_REASON = 'controlledStop'
 const STOP_KINDS = Object.freeze(['cognitionBudgetExhausted', 'providerUnavailable'])
@@ -72,6 +73,46 @@ function providerStopFor (request, classified) {
   }
 }
 
+// Whether a classified cognition failure is one request the provider refused as invalid (HTTP 400
+// or 422): that call's own failure, which the run records and continues past, and which readiness
+// counts as a cognition failure (R40: one refused follow-up review stopped a ten-agent run 403 s
+// into its 600 s window, with every other agent still working).
+function isProviderRequestFailure (classified) {
+  return classified?.mapping === 'providerRequest' && [400, 422].includes(classified.httpStatus)
+}
+
+// Whether a forwarded record is such a refused request, by the closed public fact the proxy keeps
+// beside the private classification that published evidence drops.
+function isProviderRefusedRequest (record) {
+  return record.event === 'cognitionForwarded' && record.outcome === 'cognitionFailure' &&
+    record.providerRefusedRequest === true
+}
+
+// The JVM's ending of a perception whose mind answered with a failure (`AsyncCognitionBridge`).
+const COGNITION_FAILED_OUTCOME = 'failed'
+
+// Whether a body record is the JVM's own ending of a request the provider refused, one of
+// `refusedKeys` (`agentId:requestId`): typed evidence of that one failure, never a stop.
+function isProviderRefusedEnding (record, refusedKeys) {
+  return record.event === 'cognitionUnavailable' && record.outcome === COGNITION_FAILED_OUTCOME &&
+    refusedKeys.has(record.requestKey ?? `${record.agentId}:${record.requestId}`)
+}
+
+// The requests a run's harness evidence records the provider as refusing.
+function providerRefusedKeysOf (harnessRecords) {
+  return new Set(harnessRecords.filter(isProviderRefusedRequest).map((record) => record.requestKey))
+}
+
+// Whether a forwarded record is a call that a provider outage also failed while it was in flight:
+// a classified provider unavailability like the one that closed admission. Once a provider stop
+// has closed admission, such a call is part of that stop rather than a failure of its own (r31:
+// five calls timed out at the provider within twelve seconds, and the four still in flight when
+// the first closed admission ended the run untyped).
+function isProviderDrainFailure (record) {
+  return record.event === 'cognitionForwarded' && record.outcome === 'cognitionFailure' &&
+    record.providerUnavailable === true
+}
+
 // Scheduled reviews an agent must and may have attempted in a window of `windowTicks`
 // after the start. Review k is due no earlier than k cadences, and no later than one
 // stagger across the population plus one sweep after that.
@@ -108,6 +149,38 @@ function sumUsage (records) {
 
 function isNativeReview (record) {
   return record.trigger === 'goalReview' && record.origin === 'nativeGoalReviewSchedule'
+}
+
+// Whether `agentId`'s scheduled review was held when its window closed at `endTick`: a
+// `goalReviewDeferred` record after its last perceived goal review, so the review was due and
+// owed, never lost. Derived only when the evidence records held reviews at all, so evidence from
+// before them derives exactly the metrics it always did.
+function heldReviewOf (bodyRecords, agentId, endTick) {
+  if (!bodyRecords.some((record) => record.event === 'goalReviewDeferred')) return {}
+  const within = (record) => record.agentId === agentId && Number.isInteger(record.tick) &&
+    (endTick === null || record.tick <= endTick)
+  const lastOf = (event) => bodyRecords
+    .filter((record) => within(record) && record.event === event &&
+      (event !== 'perceived' || record.trigger === 'goalReview'))
+    .reduce((latest, record) => Math.max(latest, record.tick), -Infinity)
+  const deferred = lastOf('goalReviewDeferred')
+  return { heldAtEnd: deferred > -Infinity && deferred > lastOf('perceived') ? 1 : 0 }
+}
+
+// How many of `agentId`'s scheduled reviews the JVM refused at its call ceiling by `endTick`: a
+// `callReserved` goal review. Urgent danger may spend an agent's own ceiling ahead of its reviews
+// (r24), and a review the JVM then refuses was due and typed rather than lost, though it never
+// reached the proxy (v35 shelter rehearsal: gamma's danger spent all 40 of its calls before its
+// fifth review). Derived only when the evidence holds such a refusal, so evidence without one
+// derives exactly the metrics it always did.
+function reservedReviewsOf (bodyRecords, agentId, endTick) {
+  const reserved = (record) => record.event === 'cognitionUnavailable' && record.outcome === 'callReserved' &&
+    record.trigger === 'goalReview'
+  if (!bodyRecords.some(reserved)) return {}
+  return {
+    refusedAtCeiling: bodyRecords.filter((record) => reserved(record) && record.agentId === agentId &&
+      Number.isInteger(record.tick) && (endTick === null || record.tick <= endTick)).length
+  }
 }
 
 // Derived only when the evidence holds an admission closure, so evidence without one
@@ -147,7 +220,13 @@ function controlledStopMetrics (bodyRecords, harnessRecords, firstTick) {
     const bounds = schedule === undefined || windowTicks === null
       ? { minimum: null, maximum: null }
       : reviewWindowBounds(schedule, agents.length, windowTicks)
-    reviewsByAgent[agentId] = { attempted, completed, ...bounds }
+    reviewsByAgent[agentId] = {
+      attempted,
+      completed,
+      ...bounds,
+      ...heldReviewOf(bodyRecords, agentId, stopTick),
+      ...reservedReviewsOf(bodyRecords, agentId, stopTick)
+    }
   }
   const chains = new Map()
   for (const record of bodyRecords) {
@@ -246,7 +325,13 @@ function admissionEndMetrics (bodyRecords, harnessRecords, firstTick) {
     const bounds = schedule === undefined || windowTicks === null
       ? { minimum: null, maximum: null }
       : reviewWindowBounds(schedule, agents.length, windowTicks)
-    byAgent[agentId] = { attempted, completed, ...bounds }
+    byAgent[agentId] = {
+      attempted,
+      completed,
+      ...bounds,
+      ...heldReviewOf(bodyRecords, agentId, endTick),
+      ...reservedReviewsOf(bodyRecords, agentId, endTick)
+    }
   }
   return {
     closures: ends.length,
@@ -262,6 +347,11 @@ function admissionEndMetrics (bodyRecords, harnessRecords, firstTick) {
 }
 
 module.exports = {
+  isProviderDrainFailure,
+  isProviderRefusedEnding,
+  isProviderRefusedRequest,
+  isProviderRequestFailure,
+  providerRefusedKeysOf,
   ADMISSION_CLOSED_BOUND,
   ADMISSION_CLOSED_EVENT,
   ADMISSION_ENDED_EVENT,
@@ -274,6 +364,8 @@ module.exports = {
   admissionEndMetrics,
   budgetStopFor,
   controlledStopMetrics,
+  heldReviewOf,
+  reservedReviewsOf,
   providerStopFor,
   reviewWindowBounds
 }

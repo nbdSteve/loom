@@ -14,11 +14,14 @@ import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.BodyPort
 import dev.loom.body.EventTag
+import dev.loom.body.GoalEvidence
+import dev.loom.body.HeldPerceptions
 import dev.loom.body.IntentOutcome
 import dev.loom.body.describe
 import dev.loom.contract.Bearing
 import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
+import dev.loom.contract.GoalDisposition
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
@@ -57,6 +60,14 @@ private class RecordingBody(
 ) : BodyPort {
     val applied = mutableListOf<Intent>()
 
+    /** What the next accepted action's own server drops left lying, by item. */
+    var dropped: Set<String> = emptySet()
+
+    /** The perceptions ended without an action, in the order their senses were given back. */
+    val released = mutableListOf<String>()
+
+    override val held = HeldPerceptions { _, requestId -> released.add(requestId) }
+
     override fun spawn(agentId: AgentId) = fail("cognition must not spawn bodies")
 
     override fun despawn(agentId: AgentId) = fail("cognition must not despawn bodies")
@@ -75,7 +86,7 @@ private class RecordingBody(
         // the loss belongs to the decision that was lost.
         if (!present) return CompletableFuture.completedFuture(IntentOutcome.NoSuchBody)
         applied.add(intent)
-        val outcome = IntentOutcome.Accepted("applied $intent")
+        val outcome = IntentOutcome.Accepted("applied $intent", dropped = dropped)
         record(agentId, BodyEvent.INTENT_APPLIED, "${describe(intent)} -> ${describe(outcome)}", requestId)
         return CompletableFuture.completedFuture(outcome)
     }
@@ -136,7 +147,7 @@ class EmbodiedCognitionTest {
         records: MutableList<BodyEventRecord>,
         present: Boolean = true,
     ) = RecordingBody(
-        { perception(agentId = agent.value) },
+        { perceptionNearBush(agentId = agent.value) },
         main::drainingThread,
         present,
         BodyEventLog { records.add(it) },
@@ -175,22 +186,75 @@ class EmbodiedCognitionTest {
     }
 
     @Test
+    @DisplayName("no review is claimed while the agent's own flight still holds the body")
+    fun noReviewWhileTheAgentsFlightHoldsTheBody() {
+        // r20 theta body:00001087: a follow-up fired during a pivotal flight and was refused
+        // controlNotReady, with a revise recorded for a step that never ran.
+        val flying = CompletableFuture<IntentOutcome>()
+        val body =
+            object : BodyPort {
+                override fun spawn(agentId: AgentId) = fail("cognition must not spawn bodies")
+
+                override fun despawn(agentId: AgentId) = fail("cognition must not despawn bodies")
+
+                override fun apply(
+                    agentId: AgentId,
+                    intent: Intent,
+                    requestId: String?,
+                ): CompletableFuture<IntentOutcome> = flying
+
+                override fun perceive(
+                    agentId: AgentId,
+                    trigger: Trigger,
+                ): CompletableFuture<Perception?> = CompletableFuture.completedFuture(null)
+
+                override fun senseThreat(agentId: AgentId) = fail("not this test's business")
+
+                override fun tick(tick: Long) = fail("cognition must never drive the tick")
+
+                override fun liveBodies(): Set<AgentId> = fail("cognition does not enumerate bodies")
+            }
+        val decisions = mutableMapOf<String, CompletableFuture<Decision>>()
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p -> CompletableFuture<Decision>().also { decisions[p.requestId] = it } },
+                mainThread = main,
+                journal = journalInto(mutableListOf()),
+            )
+        val zombie = Trigger.ThreatSighted("entity.minecraft.zombie", "e1", 6.0, Bearing.NORTH, true)
+        val sighted = perception(requestId = "danger-1", agentId = agent.value, trigger = zombie)
+        cognition.submit(agent, sighted)
+        main.drain()
+        decisions.getValue("danger-1").complete(decisionFor(sighted, Intent.Flee("e1")))
+        main.drain()
+        assertEquals(false, cognition.canReview(agent), "the flight still holds the body")
+        flying.complete(IntentOutcome.Accepted("safe"))
+        main.drain()
+        assertEquals(true, cognition.canReview(agent))
+    }
+
+    @Test
     @DisplayName("a repeat about the threat an agent is already answering is coalesced, not sent")
     fun aDangerRepeatIsCoalescedIntoTheActiveEpisode() {
         val records = mutableListOf<BodyEventRecord>()
         val asked = mutableListOf<String>()
+        val triggers = mutableListOf<Trigger>()
         val decisions = mutableMapOf<String, CompletableFuture<Decision>>()
+        val body = perceivingBody()
         val cognition =
             EmbodiedCognition(
-                perceivingBody(),
+                body,
                 mind = { p ->
                     asked.add(p.requestId)
+                    triggers.add(p.trigger)
                     CompletableFuture<Decision>().also { decisions[p.requestId] = it }
                 },
                 mainThread = main,
                 journal = journalInto(records),
             )
-        val zombie = Trigger.ThreatSighted("entity.minecraft.zombie", "e1", 6.0, Bearing.NORTH, true, true)
+        // Beyond pivotal range, where a repeat after the flight still cools down.
+        val zombie = Trigger.ThreatSighted("entity.minecraft.zombie", "e1", 12.0, Bearing.NORTH, true, true)
         val first = perception(requestId = "danger-1", agentId = agent.value, trigger = zombie)
         val repeat = perception(requestId = "danger-2", agentId = agent.value, trigger = Trigger.Damaged(3, "zombie"))
         cognition.submit(agent, first)
@@ -200,16 +264,35 @@ class EmbodiedCognitionTest {
         val coalesced = records.single { it.event == BodyEvent.COGNITION_UNAVAILABLE }
         assertEquals("danger-2", coalesced.requestId)
         assertEquals(EventTag.DANGER_COALESCED, coalesced.outcome)
+        // A coalesced perception gives its sense back at once (r20: 28 of them held the
+        // body's four senses for 800 ticks each, and 17 hits on dying agents went unperceived).
+        assertEquals(listOf("danger-2"), body.released)
 
         // Once the decision is applied, the cooldown holds, then a new engagement is asked.
         decisions.getValue("danger-1").complete(decisionFor(first, Intent.Flee("e1")))
+        main.drain()
+        // The damage held behind the flight is told the moment it settles (r24: 43 of 68 never were).
+        assertEquals(2, asked.size)
+        val told = asked[1]
+        assertEquals(Trigger.Damaged(3, "zombie"), triggers[1])
+        decisions.getValue(
+            told,
+        ).complete(decisionFor(perception(requestId = told, agentId = agent.value), Intent.Flee("e1")))
         main.drain()
         tick += DANGER_EPISODE_COOLDOWN_TICKS
         cognition.submit(agent, perception(requestId = "danger-3", agentId = agent.value, trigger = zombie))
         tick += 1
         cognition.submit(agent, perception(requestId = "danger-4", agentId = agent.value, trigger = zombie))
         main.drain()
-        assertEquals(listOf("danger-1", "danger-4"), asked)
+        assertEquals(listOf("danger-1", told, "danger-4"), asked)
+        assertEquals(listOf("danger-2", "danger-3"), body.released.filter { it != told && it != "danger-1" })
+        // A lost decision gives its sense back too.
+        decisions.getValue("danger-4").completeExceptionally(IllegalStateException("the mind went away"))
+        main.drain()
+        assertEquals(
+            listOf("danger-2", "danger-3", "danger-4"),
+            body.released.filter { it != told && it != "danger-1" },
+        )
     }
 
     @Test
@@ -256,7 +339,7 @@ class EmbodiedCognitionTest {
         val body = bodyWith(captured)
         val bridge =
             AsyncCognitionBridge(
-                transport = { p -> decisionFor(p, Intent.MoveTo(listOf(1L, 2L, 3L))) },
+                transport = { p -> decisionFor(p, Intent.MoveTo("b1")) },
                 timeout = PATIENCE,
                 workers = 1,
                 queueDepth = 1,
@@ -268,7 +351,7 @@ class EmbodiedCognitionTest {
             // bridge worker instead.
             main.drainUntil(2)
         }
-        assertEquals(listOf<Intent>(Intent.MoveTo(listOf(1L, 2L, 3L))), body.applied)
+        assertEquals(listOf<Intent>(Intent.MoveTo("b1")), body.applied)
     }
 
     @Test
@@ -384,7 +467,10 @@ class EmbodiedCognitionTest {
             )
         bridge.use {
             val cognition = EmbodiedCognition(body, bridge, main, silentJournal())
-            repeat(5) { i -> cognition.submit(agent, perception(requestId = "req-$i", agentId = agent.value)) }
+            // Five agents, because one agent has at most one review in flight at a time.
+            repeat(
+                5,
+            ) { i -> cognition.submit(AgentId("agent-$i"), perception(requestId = "req-$i", agentId = "agent-$i")) }
             main.drainUntil(10)
         }
         assertEquals(5, body.applied.size)
@@ -431,6 +517,76 @@ class EmbodiedCognitionTest {
         // A perception and an action claim no model: only the decision was answered by one.
         assertNull(records[0].provenance)
         assertNull(records[2].provenance)
+    }
+
+    @Test
+    @DisplayName("a decision pursuing its goal by idling is refused before the body sees it")
+    fun aDecisionIncoherentWithItsGoalNeverReachesTheBody() {
+        val records = mutableListOf<BodyEventRecord>()
+        val body = recordingBodyInto(records)
+        val applied = mutableListOf<AppliedDecision>()
+        // r14 eta, body:00000197: a goal adopted with an idle step.
+        val adopting = goalChoice(GoalDisposition.ADOPT)
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p -> CompletableFuture.completedFuture(decisionFor(p, Intent.Idle).copy(goal = adopting)) },
+                mainThread = main,
+                journal = journalInto(records),
+                callbacks = CognitionCallbacks(onApplied = { applied.add(it) }),
+            )
+
+        cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+
+        assertTrue(body.applied.isEmpty(), "a refused decision must not reach the body")
+        assertEquals(listOf(BodyEvent.PERCEIVED, BodyEvent.DECIDED, BodyEvent.INTENT_APPLIED), records.map { it.event })
+        assertEquals(GoalEvidence.STEP_IDLE, records[1].goal?.outcome)
+        assertEquals(GoalEvidence.STEP_IDLE, records[2].outcome)
+        assertEquals("req-1", records[2].requestId)
+        assertEquals(GoalEvidence.STEP_IDLE, (applied.single().outcome as IntentOutcome.Rejected).tag)
+    }
+
+    @Test
+    @DisplayName("only an accepted step of the held goal settles, once, into a follow-up review")
+    fun anAcceptedGoalStepIsTheOneSettlement() {
+        val settled = mutableListOf<Pair<AgentId, Long>>()
+        val answers =
+            ArrayDeque(
+                listOf(
+                    // A goal adopted with a dig: its step settles.
+                    {
+                            p: Perception ->
+                        decisionFor(p, Intent.Dig("bush")).copy(goal = goalChoice(GoalDisposition.ADOPT))
+                    },
+                    // A walk with no goal choice: no step of the goal, nothing settles.
+                    { p: Perception -> decisionFor(p, Intent.MoveTo("bush")) },
+                ),
+            )
+        var request = 0
+        val body =
+            RecordingBody(
+                { perceptionNearBush(requestId = "req-${++request}", agentId = agent.value) },
+                main::drainingThread,
+                true,
+                BodyEventLog { },
+                currentTick = { tick },
+            )
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p -> CompletableFuture.completedFuture(answers.removeFirst()(p)) },
+                mainThread = main,
+                journal = journalInto(mutableListOf()),
+                callbacks = CognitionCallbacks(onStepSettled = { who, at, _ -> settled.add(who to at) }),
+            )
+
+        cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+        cognition.consider(agent, Trigger.StepSettled)
+        main.drain()
+
+        assertEquals(listOf(agent to tick), settled)
     }
 
     @Test
@@ -546,5 +702,142 @@ class EmbodiedCognitionTest {
         assertTrue(!ran, "a MainThread must schedule, never run inline")
         main.drain()
         assertTrue(ran)
+    }
+
+    @Test
+    @DisplayName("an abandon leaves no goal held, so it owes a review soon after, as a plain completion does")
+    fun anAbandonOwesItsFollowUp() {
+        // r39 zeta held nothing for 2291 ticks after its abandon at 3611.
+        var bushes = listOf(STICK_BUSH, SECOND_STICK_BUSH)
+        val body =
+            RecordingBody(
+                { trigger -> perception(agentId = agent.value, trigger = trigger).copy(surroundings = bushes) },
+                main::drainingThread,
+            )
+        val settled = mutableListOf<Boolean>()
+        val answers =
+            ArrayDeque(
+                listOf(
+                    dev.loom.contract.GoalChoice(
+                        dev.loom.contract.GoalDisposition.ADOPT,
+                        successItem = "item.minecraft.stick",
+                        successCount = 2,
+                    ),
+                    dev.loom.contract.GoalChoice(
+                        dev.loom.contract.GoalDisposition.ABANDON,
+                        stepResult = dev.loom.contract.GoalStepResult.NO_PROGRESS,
+                        reason = dev.loom.contract.GoalReason.IMPOSSIBLE,
+                    ),
+                ),
+            )
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p ->
+                    val goal = answers.removeFirst()
+                    val intent =
+                        if (goal.disposition == dev.loom.contract.GoalDisposition.ADOPT) {
+                            Intent.Dig(
+                                "bush",
+                            )
+                        } else {
+                            Intent.Idle
+                        }
+                    CompletableFuture.completedFuture(decisionFor(p, intent).copy(goal = goal))
+                },
+                mainThread = main,
+                journal = silentJournal(),
+                callbacks = CognitionCallbacks(onStepSettled = { _, _, owed -> settled.add(owed) }),
+            )
+        cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+        settled.clear()
+        // The bushes are gone: nothing in sight can meet the goal, so the abandon stands.
+        bushes = emptyList()
+        cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+        assertEquals(listOf(true), settled, "the abandon owes one review")
+    }
+
+    @Test
+    @DisplayName("a dig that leaves its goal's own item lying is reviewed once at once, then control returns")
+    fun aGoalItemLeftLyingIsReviewedAtOnce() {
+        // r24: all three of epsilon's logs were taken by idle peers before its follow-up came.
+        val records = mutableListOf<BodyEventRecord>()
+        val body =
+            RecordingBody(
+                { trigger -> perceptionNearBush(agentId = agent.value).copy(trigger = trigger) },
+                main::drainingThread,
+                events = BodyEventLog { records.add(it) },
+                currentTick = { tick },
+            )
+        val triggers = mutableListOf<Trigger>()
+        val settled = mutableListOf<Boolean>()
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind = { p ->
+                    triggers.add(p.trigger)
+                    val goal =
+                        if (triggers.size == 1) {
+                            dev.loom.contract.GoalChoice(
+                                dev.loom.contract.GoalDisposition.ADOPT,
+                                successItem = "item.minecraft.stick",
+                                successCount = 2,
+                            )
+                        } else {
+                            null
+                        }
+                    CompletableFuture.completedFuture(decisionFor(p, Intent.Dig("bush")).copy(goal = goal))
+                },
+                mainThread = main,
+                journal = journalInto(records),
+                callbacks = CognitionCallbacks(onStepSettled = { _, _, owed -> settled.add(owed) }),
+            )
+        body.dropped = setOf("item.minecraft.stick")
+        cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+        // The dig settled with a stick lying: one review is asked for at once, not owed for later.
+        assertEquals(listOf<Trigger>(Trigger.GoalReview, Trigger.StepSettled), triggers.take(2))
+        assertEquals(emptyList<Boolean>(), settled, "nothing owed: the review was taken now")
+    }
+
+    @Test
+    @DisplayName("urgent damage is sent ahead of the reviews still due, and a follow-up is held for them")
+    fun urgentDamagePreemptsTheReviewsStillDue() {
+        // r24: theta's damage at health 1 was refused to keep calls for reviews it never lived to hold.
+        val records = mutableListOf<BodyEventRecord>()
+        val body =
+            RecordingBody(
+                { trigger -> perceptionNearBush(agentId = agent.value).copy(trigger = trigger) },
+                main::drainingThread,
+                events = BodyEventLog { records.add(it) },
+                currentTick = { tick },
+            )
+        val asked = mutableListOf<Trigger>()
+        val reserve = CallReserve(perAgentCeiling = 4, scheduledPerAgent = 2)
+        val cognition =
+            EmbodiedCognition(
+                body,
+                mind =
+                    ReservingCognitionBridge(
+                        { p ->
+                            asked.add(p.trigger)
+                            CompletableFuture.completedFuture(decisionFor(p, Intent.Idle))
+                        },
+                        reserve,
+                    ),
+                mainThread = main,
+                journal = journalInto(records),
+            )
+        cognition.consider(agent, Trigger.GoalReview)
+        main.drain()
+        cognition.consider(agent, Trigger.StepSettled)
+        main.drain()
+        cognition.consider(agent, Trigger.Damaged(3, "zombie"))
+        main.drain()
+        assertEquals(listOf(Trigger.GoalReview, Trigger.Damaged(3, "zombie")), asked)
+        val held = records.single { it.event == BodyEvent.COGNITION_UNAVAILABLE }
+        assertEquals("callReserved", held.outcome, "the follow-up, not the damage, is held for the review still due")
     }
 }

@@ -1,0 +1,1 @@
+{"requestId":"req-goal-8","agentId":"agent-delta","intent":{"action":"moveTo","onto":"x1"},"reasoning":"three steps advanced nothing; the goal is stale","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"},"goal":{"disposition":"abandon","stepResult":"noProgress","reason":"stale"}}

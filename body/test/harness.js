@@ -261,7 +261,8 @@ async function handshaken (port) {
  * A minecraft-protocol client, as far as Mineflayer is concerned.
  *
  * Every `write` is recorded rather than sent, because what these suites are about is
- * the packets a policy-free body must never produce. `wait_connect` is deliberately
+ * the packets a policy-free body must never produce; a statistics request is answered as a
+ * server answers it. `wait_connect` is deliberately
  * absent: Mineflayer waits for a server ping before it will set up a registry, and
  * there is no server here to answer one.
  */
@@ -269,7 +270,14 @@ function fakeClient () {
   const client = new EventEmitter()
   client.version = VERSION
   client.writes = []
-  client.write = (name, parameters) => client.writes.push({ name, parameters })
+  client.write = (name, parameters) => {
+    client.writes.push({ name, parameters })
+    // A vanilla server answers a statistics request after every packet written before it, which a
+    // sense and a craft application each wait for (`src/server-order.js`).
+    if (name === 'client_command' && parameters?.actionId === 1 && client.answersStatistics !== false) {
+      setImmediate(() => client.emit('statistics', { entries: [] }))
+    }
+  }
   client.end = () => client.emit('end')
   client.registerChannel = () => {}
   client.writeChannel = () => {}
@@ -317,14 +325,14 @@ function disconnected () {
  * The bot is registered for teardown here; see [disconnected] for why that is not
  * optional.
  */
-async function realBot () {
+async function realBot ({ movement } = {}) {
   const client = fakeClient()
   const bot = mineflayer.createBot({
     ...botOptionsFor({ username: USERNAME, minecraft: { host: '127.0.0.1', port: 25565 } }),
     client,
     version: VERSION
   })
-  installMovement(bot)
+  installMovement(bot, movement)
   installDigging(bot)
   installPlacing(bot)
   openBots.add(bot)
@@ -347,8 +355,8 @@ const loadedBot = realBot
  * body is started around it: `createBody` subscribes to `login` and `spawn` on the bot
  * it is handed, so the subscriptions are in place before `spawned` is called.
  */
-async function embodied (overrides = {}) {
-  const { bot, client, events } = await realBot()
+async function embodied ({ movement, ...overrides } = {}) {
+  const { bot, client, events } = await realBot({ movement })
   const started = await startedBody({ bot, ...overrides })
   return { ...started, client, events }
 }
@@ -498,6 +506,7 @@ function spotted (client, { id, what, x, y, z }) {
   client.emit('spawn_entity', {
     entityId: id,
     entityUUID: `00000000-0000-4000-8000-${String(id).padStart(12, '0')}`,
+    objectUUID: `00000000-0000-4000-8000-${String(id).padStart(12, '0')}`,
     type: registry.entitiesByName[what].id,
     x,
     y,

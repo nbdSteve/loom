@@ -38,6 +38,7 @@
 //! inferences. A retry inside this module would reintroduce exactly that, one
 //! layer lower and invisibly. A lost decision is cheaper than a duplicated one.
 
+pub mod instance;
 pub mod settings;
 mod usage;
 pub mod wire;
@@ -52,6 +53,7 @@ use crate::config::{bounded, ConfigError};
 use crate::model::{
     BackendError, BackendFailure, BackendFailureMapping, BackendResponseShape, Draft, ModelBackend,
 };
+use crate::offered::OfferedRefs;
 use crate::prompt::render;
 use crate::router::ModelRoute;
 
@@ -162,7 +164,15 @@ impl OpenAiBackend {
         perception: &Perception,
     ) -> Result<Draft, BackendError> {
         let prompt = render(route, perception);
-        let request = wire::chat_request(route.model(), &prompt, self.config.max_output_tokens());
+        let request = wire::chat_request(
+            route.model(),
+            &prompt,
+            self.config.max_output_tokens(),
+            wire::decision_schema_for(
+                &OfferedRefs::of(perception),
+                wire::GoalPhase::of(perception),
+            ),
+        );
         let request_bytes = serde_json::to_vec(&request).map_err(|_| {
             openai_failure(
                 "the model request could not be encoded",

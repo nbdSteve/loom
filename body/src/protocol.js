@@ -42,9 +42,78 @@
  *
  * It moved from 4 to 5 when the body-chosen entity, block, and dropped-item response
  * lists widened from 24 to 48 entries. Adding operation names alone would not have
- * moved it; widening a body-chosen answer does.
+ * moved it; widening a body-chosen answer does. It moved from 7 to 8 when every movement
+ * answer gained the `recovery` a walk's one correction states and an arrival the
+ * `departure` its check found (r34 delta), which a controller meets without asking.
  */
-const PROTOCOL_VERSION = 5
+const PROTOCOL_VERSION = 8
+
+/** Most block kinds one sense may ask to have looked for beyond interaction reach. */
+const MAX_SOUGHT_KINDS = 12
+
+/** Whether `kinds` is absent, or at most [MAX_SOUGHT_KINDS] distinct block resource names. */
+function isSoughtKinds (kinds) {
+  return kinds === undefined || (Array.isArray(kinds) && kinds.length >= 1 && kinds.length <= MAX_SOUGHT_KINDS &&
+    kinds.every((kind) => isResourceName(kind)) && new Set(kinds).size === kinds.length)
+}
+
+/** The two corrections a walk may make, each the answer to its one cause. */
+const RECOVERY_CAUSES = Object.freeze({ recentre: 'departureBlocked', sidestep: 'firstMoveStuck' })
+
+/** What an arrival's departure check can find. */
+const DEPARTURES = Object.freeze(['clear', 'blocked'])
+
+/** What one correction states, in declaration order. */
+const RECOVERY_FIELDS = ['kind', 'cause', 'from', 'to']
+
+/**
+ * Whether `recovery` is absent, or the one correction a movement made: a re-centre in the cell an
+ * arrival could not leave, or a sidestep out of a cell whose route was stuck at its first move,
+ * each with the cause that is its only reason, from where it began to where the body came to rest.
+ */
+function isRecovery (recovery) {
+  if (recovery === undefined) return true
+  return isPlainObject(recovery) && noUnknownKeys(recovery, RECOVERY_FIELDS) &&
+    Object.hasOwn(RECOVERY_CAUSES, recovery.kind) && recovery.cause === RECOVERY_CAUSES[recovery.kind] &&
+    isWorldPosition(recovery.from) && isWorldPosition(recovery.to)
+}
+
+/**
+ * Whether `raw`'s correction and departure fit its outcome: a departure is the check an arrival
+ * made and so is stated on an arrival alone, and a re-centre is made for an arrival alone.
+ */
+function correctsCoherently (raw) {
+  if (!isRecovery(raw.recovery)) return false
+  if (raw.departure !== undefined && (!DEPARTURES.includes(raw.departure) || raw.outcome !== 'arrived')) return false
+  return raw.recovery?.kind !== 'recentre' || raw.outcome === 'arrived'
+}
+
+/** Most dropped items one sense may ask to have reported out of sight. */
+const MAX_RETAINED_ITEMS = 8
+
+/** Most entities one sense may ask to have reported whatever stands nearer. */
+const MAX_RETAINED_ENTITIES = 4
+
+/** Whether `uuids` is absent, or at most `most` unique entity uuids. */
+function retainedUuids (uuids, most) {
+  return uuids === undefined || (Array.isArray(uuids) && uuids.length <= most &&
+    uuids.every((uuid) => typeof uuid === 'string' && ENTITY_UUID.test(uuid)) &&
+    new Set(uuids).size === uuids.length)
+}
+
+/** Most other creatures a flight may be asked to end clear of. */
+const MAX_FLIGHT_AVOID = 16
+
+/** Whether `avoid` is absent, or a unique set of entity indexes that never names `entity`. */
+function isAvoidSet (avoid, entity) {
+  if (avoid === undefined) return true
+  return Array.isArray(avoid) && avoid.length <= MAX_FLIGHT_AVOID &&
+    avoid.every((index) => Number.isInteger(index) && index >= 0 && index <= MAX_ENTITY_INDEX && index !== entity) &&
+    new Set(avoid).size === avoid.length
+}
+
+/** An entity uuid as the server spawns it and Mineflayer stores it: lower-case, hyphenated. */
+const ENTITY_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /**
  * Longest frame this protocol will carry, in bytes.
@@ -336,14 +405,16 @@ const MAX_MOVE_DEADLINE_MS = 20000
 const MAX_RETREAT_DISTANCE = 32
 
 /**
- * Highest entity index a flee may name.
+ * Highest entity index a flee or an attack may name.
  *
  * One below [MAX_SENSE_ENTITIES], so every index this codec admits could name an entity
  * of some legal sense answer. An index past the end of the answer that was in fact named
  * is a `threatUnnamed` outcome rather than a malformed field, which is the same division
- * of labour a slot index and `slotUnnamed` already have.
+ * of labour a slot index and `slotUnnamed` already have. Derived rather than written down:
+ * it stayed 23 when generation 5 widened the list to 48, so a creature listed at 24 or later
+ * could be sensed and never fled from or struck (v32 plains rehearsal 15's end-to-end case).
  */
-const MAX_ENTITY_INDEX = 23
+const MAX_ENTITY_INDEX = MAX_SENSE_ENTITIES - 1
 
 /** Highest request-local block index an interaction may name. */
 const MAX_BLOCK_INDEX = MAX_SENSE_BLOCKS - 1
@@ -437,8 +508,11 @@ const SENSE_FIELDS = [
 /** What an eat answer carries beyond the envelope, in declaration order. */
 const EAT_FIELDS = ['outcome', 'vitals', 'what', 'remaining']
 
-/** What a walk answer carries beyond the envelope, in declaration order. */
+/** The journey every movement answer states, in declaration order. */
 const MOVE_FIELDS = ['outcome', 'from', 'position', 'travelled', 'elapsedMs']
+
+/** What a walk answer carries beyond the envelope, in declaration order. */
+const WALK_FIELDS = [...MOVE_FIELDS, 'departure', 'recovery']
 
 /**
  * What a flight answer carries beyond the envelope, in declaration order.
@@ -448,13 +522,13 @@ const MOVE_FIELDS = ['outcome', 'from', 'position', 'travelled', 'elapsedMs']
  * run count arrivals and bounds across walks and flights without translating between two
  * shapes.
  */
-const FLEE_FIELDS = [...MOVE_FIELDS, 'separation', 'separationGained']
+const FLEE_FIELDS = [...MOVE_FIELDS, 'separation', 'separationGained', 'departure', 'recovery']
 
 /** What a dig answer carries beyond the envelope, in declaration order. */
 const DIG_FIELDS = ['outcome', 'elapsedMs', 'attempted', 'tool']
 
 /** What a collection answer carries beyond the envelope, in declaration order. */
-const COLLECT_FIELDS = [...MOVE_FIELDS, 'what', 'count']
+const COLLECT_FIELDS = [...MOVE_FIELDS, 'what', 'count', 'recovery']
 
 /** What a placement answer carries beyond the envelope, in declaration order. */
 const PLACE_FIELDS = ['outcome', 'elapsedMs', 'what', 'position', 'remaining']
@@ -466,7 +540,7 @@ const EQUIP_FIELDS = ['outcome', 'elapsedMs', 'what', 'count', 'toSlot']
 const CRAFT_FIELDS = ['outcome', 'elapsedMs', 'attempted', 'what', 'count', 'crafts']
 
 /** What a combat answer carries beyond the envelope, in declaration order. */
-const ATTACK_FIELDS = [...MOVE_FIELDS, 'attacks']
+const ATTACK_FIELDS = [...MOVE_FIELDS, 'attacks', 'recovery']
 
 /** What a sleep answer carries beyond the envelope, in declaration order. */
 const SLEEP_FIELDS = ['outcome', 'elapsedMs', 'entered']
@@ -1304,6 +1378,7 @@ function isMoveReport (raw, literals) {
   if (!MOVE_OUTCOMES.includes(raw.outcome)) return false
   if (THREAT_REFUSALS.has(raw.outcome)) return false
   if (!isJourney(raw, literals)) return false
+  if (!correctsCoherently(raw)) return false
   return raw.outcome !== 'outOfRange' || raw.travelled === 0
 }
 
@@ -1325,6 +1400,7 @@ function isFleeReport (raw, literals) {
   if (!MOVE_OUTCOMES.includes(raw.outcome)) return false
   if (!isJourney(raw, literals)) return false
   if (raw.outcome === 'outOfRange' && raw.travelled !== 0) return false
+  if (!correctsCoherently(raw)) return false
   const measured = !THREAT_REFUSALS.has(raw.outcome)
   if (measured !== (raw.separation !== undefined)) return false
   if (measured !== (raw.separationGained !== undefined)) return false
@@ -1344,7 +1420,12 @@ function isDigReport (raw, literals) {
     'cancelled',
     'libraryFailure'
   ]).has(raw.outcome)
-  if (raw.attempted !== handedToMineflayer) return false
+  // A block can be found gone before Mineflayer is invoked, or be broken by another player while
+  // this body is still digging it, from generation 6; and found changed before, or turned into
+  // another block by the world while this body is still digging it, from generation 7.
+  if (raw.outcome === 'blockGone' || raw.outcome === 'blockChanged') {
+    if (raw.attempted === false && raw.tool !== undefined) return false
+  } else if (raw.attempted !== handedToMineflayer) return false
   if (raw.tool !== undefined && (!raw.attempted || !isResourceName(raw.tool))) return false
   return true
 }
@@ -1353,6 +1434,7 @@ function isDigReport (raw, literals) {
 function isCollectReport (raw, literals) {
   if (!COLLECT_OUTCOMES.includes(raw.outcome)) return false
   if (!isJourney(raw, literals)) return false
+  if (!isRecovery(raw.recovery) || raw.recovery?.kind === 'recentre') return false
   if (raw.outcome === 'outOfRange' && raw.travelled !== 0) return false
   const collected = raw.outcome === 'collected'
   if (collected !== (raw.what !== undefined)) return false
@@ -1414,6 +1496,7 @@ function isCraftReport (raw, literals) {
 function isAttackReport (raw, literals) {
   if (!ATTACK_OUTCOMES.includes(raw.outcome)) return false
   if (!isJourney(raw, literals)) return false
+  if (!isRecovery(raw.recovery) || raw.recovery?.kind === 'recentre') return false
   if (!isBoundedInteger(raw.attacks, 0, MAX_ATTACKS)) return false
   if (!spellsWholeNumber(literals, 'attacks')) return false
   if (raw.outcome === 'attacked' && raw.attacks === 0) return false
@@ -1472,7 +1555,7 @@ function isSayReport (raw) {
 const REPORT_SHAPES = Object.freeze({
   sense: { holds: isSenseReport, fields: SENSE_FIELDS },
   eat: { holds: isEatReport, fields: EAT_FIELDS },
-  moveTo: { holds: isMoveReport, fields: MOVE_FIELDS },
+  moveTo: { holds: isMoveReport, fields: WALK_FIELDS },
   flee: { holds: isFleeReport, fields: FLEE_FIELDS },
   dig: { holds: isDigReport, fields: DIG_FIELDS },
   collect: { holds: isCollectReport, fields: COLLECT_FIELDS },
@@ -1507,7 +1590,20 @@ function requestPayload (raw, literals) {
       spellsWholeNumber(literals, 'radius') &&
       isBoundedInteger(raw.limit, 1, MAX_SENSE_OFFERS_PER_KIND) &&
       spellsWholeNumber(literals, 'limit')
-    return bounded ? { radius: raw.radius, limit: raw.limit } : undefined
+    if (!bounded) return undefined
+    // The controller's own dropped items to report out of sight, and the entities to report
+    // whatever stands nearer: unique entity uuids, at most eight and four.
+    if (!retainedUuids(raw.retainItems, MAX_RETAINED_ITEMS)) return undefined
+    if (!retainedUuids(raw.retainEntities, MAX_RETAINED_ENTITIES)) return undefined
+    // The block kinds to look for beyond interaction reach: distinct names, at most twelve.
+    if (!isSoughtKinds(raw.seek)) return undefined
+    return {
+      radius: raw.radius,
+      limit: raw.limit,
+      ...(raw.retainItems === undefined ? {} : { retainItems: [...raw.retainItems] }),
+      ...(raw.retainEntities === undefined ? {} : { retainEntities: [...raw.retainEntities] }),
+      ...(raw.seek === undefined ? {} : { seek: [...raw.seek] })
+    }
   }
   if (raw.op === 'eat') {
     const bounded = isControlId(raw.senseId) &&
@@ -1536,15 +1632,20 @@ function requestPayload (raw, literals) {
       isBoundedInteger(raw.distance, 1, MAX_RETREAT_DISTANCE) &&
       spellsWholeNumber(literals, 'distance') &&
       isMoveDeadline(raw, literals) &&
-      typeof raw.sprint === 'boolean'
+      typeof raw.sprint === 'boolean' &&
+      isAvoidSet(raw.avoid, raw.entity) &&
+      (raw.replace === undefined || typeof raw.replace === 'boolean')
     if (!bounded) return undefined
-    return {
+    const flight = {
       senseId: raw.senseId,
       entity: raw.entity,
       distance: raw.distance,
       timeoutMs: raw.timeoutMs,
       sprint: raw.sprint
     }
+    if (raw.avoid !== undefined) flight.avoid = [...raw.avoid]
+    if (raw.replace !== undefined) flight.replace = raw.replace
+    return flight
   }
   if (raw.op === 'dig') {
     const bounded = isControlId(raw.senseId) &&
@@ -2103,6 +2204,12 @@ function canonicalResponse (frame) {
     canonical.separation = frame.separation
     canonical.separationGained = frame.separationGained
   }
+  if ((frame.op === 'moveTo' || frame.op === 'flee') && frame.departure !== undefined) {
+    canonical.departure = frame.departure
+  }
+  if ((frame.op === 'moveTo' || frame.op === 'flee') && frame.recovery !== undefined) {
+    canonical.recovery = canonicalRecovery(frame.recovery)
+  }
   if (frame.op === 'dig') {
     canonical.outcome = frame.outcome
     canonical.elapsedMs = frame.elapsedMs
@@ -2117,6 +2224,7 @@ function canonicalResponse (frame) {
     canonical.elapsedMs = frame.elapsedMs
     if (frame.what !== undefined) canonical.what = frame.what
     if (frame.count !== undefined) canonical.count = frame.count
+    if (frame.recovery !== undefined) canonical.recovery = canonicalRecovery(frame.recovery)
   }
   if (frame.op === 'place') {
     canonical.outcome = frame.outcome
@@ -2147,6 +2255,7 @@ function canonicalResponse (frame) {
     canonical.travelled = frame.travelled
     canonical.elapsedMs = frame.elapsedMs
     canonical.attacks = frame.attacks
+    if (frame.recovery !== undefined) canonical.recovery = canonicalRecovery(frame.recovery)
   }
   if (frame.op === 'sleep') {
     canonical.outcome = frame.outcome
@@ -2167,6 +2276,11 @@ function canonicalResponse (frame) {
  */
 function canonicalVitals (vitals) {
   return { health: vitals.health, food: vitals.food, saturation: vitals.saturation }
+}
+
+/** One movement's correction, in declaration order, for the reason [canonicalVitals] gives. */
+function canonicalRecovery (recovery) {
+  return { kind: recovery.kind, cause: recovery.cause, from: [...recovery.from], to: [...recovery.to] }
 }
 
 /** `frame` as JSON text, or a bounded throw if it is not JSON at all. */
@@ -2320,8 +2434,8 @@ function eatReport ({ requestId, agentId, outcome, vitals, what, remaining }) {
  * because a controller can subtract two positions and cannot reconstruct the walked
  * length from them - and `travelled` is the number the distance bound was applied to.
  */
-function moveReport ({ requestId, agentId, outcome, from, position, travelled, elapsedMs }) {
-  return checkedResponse({
+function moveReport ({ requestId, agentId, outcome, from, position, travelled, elapsedMs, departure, recovery }) {
+  const frame = {
     op: 'moveTo',
     protocol: PROTOCOL_VERSION,
     requestId,
@@ -2332,7 +2446,10 @@ function moveReport ({ requestId, agentId, outcome, from, position, travelled, e
     position,
     travelled,
     elapsedMs
-  })
+  }
+  if (departure !== undefined) frame.departure = departure
+  if (recovery !== undefined) frame.recovery = recovery
+  return checkedResponse(frame)
 }
 
 /**
@@ -2353,7 +2470,9 @@ function fleeReport ({
   travelled,
   elapsedMs,
   separation,
-  separationGained
+  separationGained,
+  departure,
+  recovery
 }) {
   const frame = {
     op: 'flee',
@@ -2371,6 +2490,8 @@ function fleeReport ({
     frame.separation = separation
     frame.separationGained = separationGained
   }
+  if (departure !== undefined) frame.departure = departure
+  if (recovery !== undefined) frame.recovery = recovery
   return checkedResponse(frame)
 }
 
@@ -2400,7 +2521,8 @@ function collectReport ({
   travelled,
   elapsedMs,
   what,
-  count
+  count,
+  recovery
 }) {
   const frame = {
     op: 'collect',
@@ -2416,6 +2538,7 @@ function collectReport ({
   }
   if (what !== undefined) frame.what = what
   if (count !== undefined) frame.count = count
+  if (recovery !== undefined) frame.recovery = recovery
   return checkedResponse(frame)
 }
 
@@ -2505,9 +2628,10 @@ function attackReport ({
   position,
   travelled,
   elapsedMs,
-  attacks
+  attacks,
+  recovery
 }) {
-  return checkedResponse({
+  const frame = {
     op: 'attack',
     protocol: PROTOCOL_VERSION,
     requestId,
@@ -2519,7 +2643,9 @@ function attackReport ({
     travelled,
     elapsedMs,
     attacks
-  })
+  }
+  if (recovery !== undefined) frame.recovery = recovery
+  return checkedResponse(frame)
 }
 
 /** The answer to one exact offered bed, held through vanilla wake or a bound. */
@@ -2606,6 +2732,7 @@ function refusal ({ requestId, agentId, code }) {
 
 module.exports = {
   PROTOCOL_VERSION,
+  MAX_SOUGHT_KINDS,
   MAX_FRAME_BYTES,
   MAX_FRAME_DEPTH,
   MAX_ID_CHARS,

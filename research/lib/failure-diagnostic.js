@@ -5,6 +5,9 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const { REFUSAL_BOUNDS } = require('./budget-proxy.js')
+const { admissionEndMetrics, controlledStopMetrics } = require('./controlled-stop.js')
+const { INITIAL_CONDITIONS_EVENT, INITIAL_CONDITIONS_HELD, heldAtBegin, samePosition } = require('./initial-conditions.js')
+const { deathMetrics } = require('./witnessed-death.js')
 const { validatedCognitionFailure } = require('./cognition-failure.js')
 const { scanText } = require('./evidence.js')
 const { canonicalJson, sortedValue } = require('./util.js')
@@ -20,12 +23,37 @@ const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,31}$/
 const COMMIT = /^[0-9a-f]{40}$/
 const TRIGGER = /^[a-z][A-Za-z]{0,39}$/
 const IMPORTANCES = new Set(['ROUTINE', 'NOTABLE', 'PIVOTAL'])
-const ORIGINS = new Set(['nativeEventDriver', 'nativeGoalReviewSchedule'])
+const ORIGINS = new Set(['nativeEventDriver', 'nativeGoalReviewSchedule', 'nativeGoalFollowUp'])
 const REFUSAL_UNITS = new Set(['calls', 'nanoUsd'])
 const MODES = new Set([
   'crash-containment',
   'routine-v12-primary-behavior',
-  'routine-v13-goal-continuity'
+  'routine-v13-goal-continuity',
+  'routine-v14-grounded-walk',
+  'routine-v15-grounded-walk',
+  'routine-v16-grounded-walk',
+  'routine-v17-working-goal',
+  'routine-v18-offered-refs',
+  'routine-v19-actionable-refs',
+  'routine-v20-typed-goal',
+  'routine-v21-grounded-step',
+  'routine-v22-obtainable-goal',
+  'routine-v23-own-evidence',
+  'routine-v24-answered-goal',
+  'routine-v25-collected-goal',
+  'routine-v26-pursued-goal',
+  'routine-v27-wooded-goal',
+  'routine-v28-explored-goal',
+  'routine-v29-night-goal',
+  'routine-v30-horizon-goal',
+  'routine-v31-discovery-goal',
+  'routine-v32-survival-discovery',
+  'routine-v33-sighted-exposure',
+  'routine-v34-reached-source',
+  'routine-v35-shelter-goal',
+  'routine-v36-held-objective',
+  'routine-v37-persistent-objective',
+  'routine-v38-reliable-source'
 ])
 const MAX_INPUT_LINE_BYTES = 256 * 1024
 const BODY_EVENTS = new Set([
@@ -46,7 +74,13 @@ const BODY_EVENTS = new Set([
   'witnessDisputed',
   'witnessQuit',
   'witnessRevived',
-  'worldInteraction'
+  'worldInteraction',
+  'ownDropPickup',
+  'goalReviewDeferred',
+  'cognitionTierFallback',
+  'exposureEnded',
+  'shelterChanged',
+  'initialConditionsWitnessed'
 ])
 const HARNESS_EVENTS = new Set([
   'cleanupVerified',
@@ -61,6 +95,7 @@ const HARNESS_EVENTS = new Set([
   'postCrashCallReserveReleased',
   'preflightValidated',
   'processExited',
+  'processGroupSignalFailed',
   'processGroupSignalled',
   'processStarted',
   'providerUsage',
@@ -70,7 +105,8 @@ const FORWARD_OUTCOMES = new Set([
   'decision',
   'cognitionFailure',
   'upstreamRefusal',
-  'upstreamUnavailable'
+  'upstreamUnavailable',
+  'runStopping'
 ])
 const COGNITION_FAILURE_OUTCOMES = new Set([
   'cognitionFailure',
@@ -81,10 +117,12 @@ const REFUSAL_REASONS = new Set([
   'globalOutstandingCeiling',
   'perAgentCallCeiling',
   'postCrashCallReserve',
+  'runStopping',
   'spendCeiling'
 ])
 const REFUSAL_BOUND_SET = new Set(REFUSAL_BOUNDS)
 const FAILURE_CODES = new Set([
+  'artifactIntegrityFailed',
   'boundedJournalFailure',
   'cognitionBudgetRefused',
   'cognitionDecisionFailed',
@@ -106,6 +144,7 @@ const STOP_REASONS = new Set([
   'diskFailure',
   'logLimit',
   'paperFailed',
+  'publicationRefused',
   'simulationTickCeiling',
   'startupFailed'
 ])
@@ -193,12 +232,310 @@ const OUTCOME_EVENTS = new Set([
   'spawnRejected',
   'witnessDenied',
   'witnessDisputed',
-  'worldInteraction'
+  'worldInteraction',
+  'ownDropPickup',
+  'goalReviewDeferred',
+  'cognitionTierFallback',
+  'initialConditionsWitnessed'
 ])
 const OUTCOME_TAG = /^[a-z][A-Za-z]{0,63}$/
 
+// A disputed world interaction keeps only closed facts read from its detail: which operation,
+// the body's own outcome token, and whether vanilla recorded a matching effect at all.
+const INTERACTION_OPERATIONS = new Set(['dig', 'collect', 'place', 'equip', 'craft', 'attack', 'sleep'])
+const BODY_OUTCOME = /(?:^|; )body ([a-z][a-z_]{0,31})(?:;|$)/
+const MAX_INTERACTION_DISPUTES = 32
+
+function interactionDispute (record) {
+  const detail = typeof record.detail === 'string' ? record.detail : ''
+  const operation = detail.split(' ', 1)[0]
+  const vanilla = detail.match(/(?:^|; )vanilla (no )?/)
+  return {
+    agentId: record.agentId,
+    tick: record.tick,
+    operation: INTERACTION_OPERATIONS.has(operation) ? operation : 'unclassified',
+    bodyOutcome: detail.match(BODY_OUTCOME)?.[1] ?? 'unclassified',
+    vanillaEffect: vanilla === null ? 'unclassified' : vanilla[1] === undefined ? 'found' : 'absent'
+  }
+}
+
+// The most recent cognition traffic, in source order, so a failure can be attributed to
+// provider latency, redundant native events or lost reviews. Closed facts only.
+const MAX_TIMELINE_ENTRIES = 128
+const ORIGIN_TAG = /^native(GoalReviewSchedule|EventDriver)$/
+
+function closedTag (value, pattern) {
+  return typeof value === 'string' && pattern.test(value) ? value : 'unclassified'
+}
+
+function boundedCount (value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+function cognitionTimeline (bodyRecords, harnessRecords, configuredAgentIds) {
+  const configured = new Set(configuredAgentIds)
+  const forwarded = harnessRecords
+    .filter((record) => (record.event === 'cognitionForwarded' || record.event === 'cognitionRefused') &&
+      configured.has(record.agentId))
+    .map((record) => ({
+      agentId: record.agentId,
+      event: record.event,
+      trigger: closedTag(record.trigger, TRIGGER),
+      origin: closedTag(record.origin, ORIGIN_TAG),
+      outcome: closedTag(record.outcome ?? record.bound, OUTCOME_TAG),
+      outstandingAtAdmission: boundedCount(record.outstandingAtAdmission),
+      latencyMs: boundedCount(record.latencyMs)
+    }))
+  const body = bodyRecords
+    .filter((record) => (record.event === 'perceived' || record.event === 'cognitionUnavailable' ||
+      record.event === 'decided') && configured.has(record.agentId) && Number.isInteger(record.tick))
+    .map((record) => ({
+      agentId: record.agentId,
+      tick: record.tick,
+      event: record.event,
+      trigger: closedTag(record.trigger, TRIGGER),
+      ...(record.event === 'cognitionUnavailable' ? { outcome: closedTag(record.outcome, OUTCOME_TAG) } : {})
+    }))
+  return {
+    forwarded: forwarded.slice(-MAX_TIMELINE_ENTRIES),
+    forwardedOmitted: Math.max(0, forwarded.length - MAX_TIMELINE_ENTRIES),
+    body: body.slice(-MAX_TIMELINE_ENTRIES),
+    bodyOmitted: Math.max(0, body.length - MAX_TIMELINE_ENTRIES)
+  }
+}
+
+// How many fatal discards and shutdown completions the stop window keeps, and how much of the
+// discarding agent's own chain before each discard.
+const MAX_STOP_DISCARDS = 4
+const MAX_STOP_CONTEXT = 16
+const MAX_STOP_COMPLETIONS = 8
+// The harness records that mark where the stop began and how it went.
+const STOP_EVENTS = new Set(['runFailed', 'processGroupSignalled', 'processGroupSignalFailed', 'processExited'])
+const COMPONENTS = new Set(['paper', 'cognition'])
+const SIGNALS = new Set(['SIGTERM', 'SIGKILL', 'SIGINT'])
+// The codes a refused group signal is journalled with (`processGroupSignalFailed`).
+const SIGNAL_REFUSALS = new Set(['EPERM', 'ESRCH', 'EINVAL', 'unknown'])
+
+function millisecondsBetween (from, to) {
+  const start = Date.parse(from)
+  const end = Date.parse(to)
+  return Number.isFinite(start) && Number.isFinite(end) ? end - start : null
+}
+
+/**
+ * The compact evidence around the run's stop: each discard by an agent still alive that was not a
+ * typed preemption - the record a primary-behavior run stops on - with that agent's own chain just
+ * before it, and each call still with the mind when the stop began, with the body's ending for it.
+ * A request is named by a label local to this diagnostic (`q1`, `q2`, ...), never by its id, and
+ * every harness time is milliseconds from the first stop record (r28: alpha's in-flight call ended
+ * `upstreamUnavailable` when the stop signalled cognition, and nothing retained showed the order).
+ */
+function stopWindow (bodyRecords, harnessRecords, configuredAgentIds) {
+  const configured = new Set(configuredAgentIds)
+  const labels = new Map()
+  const label = (record) => {
+    const key = `${record.agentId}:${record.requestId}`
+    if (typeof record.requestId !== 'string') return null
+    if (!labels.has(key)) labels.set(key, `q${labels.size + 1}`)
+    return labels.get(key)
+  }
+  const entry = (record) => ({
+    tick: Number.isInteger(record.tick) ? record.tick : null,
+    event: closedTag(record.event, OUTCOME_TAG),
+    request: label(record),
+    ...(typeof record.outcome === 'string' ? { outcome: closedTag(record.outcome, OUTCOME_TAG) } : {}),
+    ...(typeof record.trigger === 'string' ? { trigger: closedTag(record.trigger, TRIGGER) } : {})
+  })
+  // A context step as one line, `tick event request outcome trigger` with `-` for an absent
+  // field, because a pretty-printed object per step cost the diagnostic its 64 KiB beside disputes.
+  const step = (record) => {
+    const { tick, event, request, outcome, trigger } = entry(record)
+    return [tick ?? '-', event, request ?? '-', outcome ?? '-', trigger ?? '-'].join(' ')
+  }
+  const dead = new Set()
+  const fatal = []
+  let fatalOmitted = 0
+  bodyRecords.forEach((record, index) => {
+    if (!configured.has(record.agentId)) return
+    if (record.event === 'died') dead.add(record.agentId)
+    if (record.event !== 'decisionDiscarded' || dead.has(record.agentId) || record.outcome === 'dangerPreempted') return
+    if (fatal.length >= MAX_STOP_DISCARDS) {
+      fatalOmitted += 1
+      return
+    }
+    const own = bodyRecords.slice(0, index).filter((earlier) => earlier.agentId === record.agentId)
+    fatal.push({
+      agentId: record.agentId,
+      ...entry(record),
+      context: own.slice(-MAX_STOP_CONTEXT).map(step),
+      contextOmitted: Math.max(0, own.length - MAX_STOP_CONTEXT)
+    })
+  })
+  const stopIndex = harnessRecords.findIndex((record) => STOP_EVENTS.has(record.event))
+  const stopAt = stopIndex === -1 ? null : harnessRecords[stopIndex].observedAt
+  const stop = stopIndex === -1
+    ? []
+    : harnessRecords.slice(stopIndex).filter((record) => STOP_EVENTS.has(record.event)).slice(0, 8).map((record) => ({
+      event: record.event,
+      millisecondsFromStop: millisecondsBetween(stopAt, record.observedAt),
+      ...(COMPONENTS.has(record.component) ? { component: record.component } : {}),
+      ...(SIGNALS.has(record.signal) ? { signal: record.signal } : {}),
+      ...(SIGNAL_REFUSALS.has(record.code) ? { code: record.code } : {}),
+      ...(Number.isSafeInteger(record.exitCode) ? { exitCode: record.exitCode } : {}),
+      ...(typeof record.expected === 'boolean' ? { expected: record.expected } : {})
+    }))
+  const endingOf = new Map()
+  for (const record of bodyRecords) {
+    if (['intentApplied', 'decisionDiscarded', 'cognitionUnavailable'].includes(record.event)) {
+      endingOf.set(`${record.agentId}:${record.requestId}`, record)
+    }
+  }
+  const completions = harnessRecords
+    .map((record, index) => ({ record, index }))
+    .filter(({ record, index }) => record.event === 'cognitionForwarded' && configured.has(record.agentId) &&
+      (record.outcome === 'runStopping' || (stopIndex !== -1 && index > stopIndex)))
+  const shutdownCompletions = completions.slice(0, MAX_STOP_COMPLETIONS).map(({ record, index }) => {
+    const ending = endingOf.get(`${record.agentId}:${record.requestId}`)
+    return {
+      agentId: record.agentId,
+      request: label(record),
+      trigger: closedTag(record.trigger, TRIGGER),
+      outcome: closedTag(record.outcome, OUTCOME_TAG),
+      latencyMs: boundedCount(record.latencyMs),
+      afterStopBegan: stopIndex !== -1 && index > stopIndex,
+      millisecondsFromStop: stopAt === null ? null : millisecondsBetween(stopAt, record.observedAt),
+      bodyEnding: ending === undefined ? null : entry(ending)
+    }
+  })
+  return {
+    fatalDiscards: fatal,
+    fatalDiscardsOmitted: fatalOmitted,
+    stop,
+    shutdownCompletions,
+    shutdownCompletionsOmitted: Math.max(0, completions.length - MAX_STOP_COMPLETIONS)
+  }
+}
+
+const REVIEW_WINDOW_COUNTS = ['attempted', 'minimum', 'maximum']
+// What else the publication check counts toward a window, stated only where the window derived it
+// (the v35 shelter rehearsal's diagnostic could not say gamma's fifth review was refused at its ceiling).
+const REVIEW_WINDOW_ALLOWANCES = ['heldAtEnd', 'refusedAtCeiling']
+
+// Each configured agent's scheduled reviews against the window the publication check holds it
+// to - its death, a controlled stop, the end of admission, or the whole plan - as bare counts,
+// so a failed `expectedNativeReviewsObserved` states which agent fell short and by how much.
+// A fault in reading them answers null rather than costing the rest of the diagnostic.
+function nativeReviewWindows (bodyRecords, harnessRecords, config) {
+  try {
+    const started = harnessRecords.find((record) => record.event === 'experimentStarted')?.startTick
+    const ticks = bodyRecords.map((record) => record.tick).filter(Number.isInteger)
+    const firstTick = Number.isInteger(started) ? started : Math.min(...ticks)
+    const deaths = deathMetrics(bodyRecords, harnessRecords, firstTick)?.byAgent ?? {}
+    const stop = controlledStopMetrics(bodyRecords, harnessRecords, firstTick)
+    const admission = admissionEndMetrics(bodyRecords, harnessRecords, firstTick)
+    const expected = config.primaryBehavior?.nativeGoalReviewSchedule?.expectedReviewsPerAgent ?? null
+    const counted = (window, entry) => ({
+      window,
+      ...Object.fromEntries(REVIEW_WINDOW_COUNTS.map((count) => [count, boundedCount(entry?.[count])])),
+      ...Object.fromEntries(REVIEW_WINDOW_ALLOWANCES
+        .filter((count) => entry?.[count] !== undefined)
+        .map((count) => [count, boundedCount(entry[count])]))
+    })
+    return Object.fromEntries([...config.agents].sort().map((agentId) => {
+      const death = deaths[agentId]
+      if (death !== undefined && (stop === undefined || stop.stopTick === null || death.tick <= stop.stopTick)) {
+        return [agentId, counted('death', death)]
+      }
+      if (stop !== undefined) return [agentId, counted('controlledStop', stop.nativeReviews?.byAgent?.[agentId])]
+      if (admission !== undefined) return [agentId, counted('admissionEnd', admission.nativeReviews?.byAgent?.[agentId])]
+      const attempted = harnessRecords.filter((record) =>
+        ['cognitionForwarded', 'cognitionRefused'].includes(record.event) && record.agentId === agentId &&
+        record.trigger === 'goalReview' && record.origin === 'nativeGoalReviewSchedule').length
+      return [agentId, counted('plan', { attempted, minimum: expected, maximum: expected })]
+    }))
+  } catch {
+    return null
+  }
+}
+
+// Each configured agent's pinned conditions against the server's reading at begin and against its
+// first perception, as closed facts, so a run refused for a lost condition states which one and
+// where (r38's diagnostic said only that gamma lost one). Null outside a primary-behavior run, or
+// when the records cannot be read.
+function initialConditionFacts (bodyRecords, config) {
+  const positions = config.primaryBehavior?.initialPositions
+  if (positions === undefined) return null
+  try {
+    return Object.fromEntries([...config.agents].sort().map((agentId) => {
+      const pinned = positions[agentId]
+      const own = (event) => bodyRecords.find((record) => record?.agentId === agentId && record.event === event)
+      const begin = own(INITIAL_CONDITIONS_EVENT)
+      const first = own('perceived')
+      const reading = begin === undefined
+        ? undefined
+        : { outcome: begin.outcome, position: begin.initial?.position, inventoryStacks: begin.initial?.inventoryStacks }
+      const atBegin = reading === undefined
+        ? null
+        : heldAtBegin(reading, pinned) ? 'held' : begin.outcome === INITIAL_CONDITIONS_HELD ? 'notHeld' : 'absent'
+      const self = first?.perception?.selfState
+      const clock = first?.perceptionAudit?.worldClock
+      return [agentId, {
+        atBegin,
+        beginInventoryStacks: boundedCount(reading?.inventoryStacks),
+        beginMoved: reading?.position === undefined ? null : !samePosition(reading.position, pinned),
+        firstPerceptionTick: boundedCount(first?.tick),
+        firstPerceptionMoved: first === undefined ? null : !samePosition(self?.position, pinned),
+        firstPerceptionInventoryStacks: boundedCount(self?.inventorySummary?.length),
+        firstPerceptionClock: first === undefined ? null : clock !== null && typeof clock === 'object'
+      }]
+    }))
+  } catch {
+    return null
+  }
+}
+
+// The inventory disputes a failed run retains in full, the most stacks one list of one may name
+// (the protocol's 46-slot window), and the earlier readings of its lag window (WITNESS_LAG_TICKS).
+const MAX_WITNESS_DISPUTES = 2
+const MAX_DISPUTE_STACKS = 46
+const MAX_DISPUTE_EARLIER = 4
+// One stack of a dispute: "slot item count", or "slot -" for an emptied slot; nothing else is kept.
+const DISPUTE_STACK = /^\d{1,2} (?:[a-z0-9_.:-]{1,64} \d{1,4}|-)$/
+
+function disputeStacks (list) {
+  return Array.isArray(list)
+    ? list.filter((entry) => typeof entry === 'string' && DISPUTE_STACK.test(entry)).slice(0, MAX_DISPUTE_STACKS)
+    : []
+}
+
+// What one inventory dispute compared, as its record states it (`DisputeEvidence` in the plugin):
+// the claim, the server's readings at the request and the answer, the earlier ticks of the lag
+// window, and when each was read - slots, item names and counts only, each checked against
+// [DISPUTE_STACK], so no path, credential or world position can travel in one (r26).
+function witnessDispute (record) {
+  const evidence = record.dispute !== null && typeof record.dispute === 'object' ? record.dispute : {}
+  return {
+    agentId: record.agentId,
+    tick: record.tick,
+    outcome: closedTag(record.outcome, OUTCOME_TAG),
+    requestTick: boundedCount(evidence.requestTick),
+    answerTick: boundedCount(evidence.answerTick),
+    roundTripMillis: boundedCount(evidence.roundTripMillis),
+    claimed: disputeStacks(evidence.claimed),
+    atRequest: disputeStacks(evidence.atRequest),
+    atAnswer: disputeStacks(evidence.atAnswer),
+    earlier: (Array.isArray(evidence.earlier) ? evidence.earlier : []).slice(0, MAX_DISPUTE_EARLIER).map((reading) => ({
+      tick: boundedCount(reading?.tick),
+      changed: disputeStacks(reading?.changed)
+    }))
+  }
+}
+
 function bodySummary (records, configuredAgentIds, crashAfterTick) {
   const outcomes = {}
+  const interactionDisputes = []
+  const witnessDisputes = []
+  let witnessDisputesOmitted = 0
   const agents = new Map(
     configuredAgentIds.map((agentId) => [agentId, emptyAgentSummary(agentId)])
   )
@@ -229,6 +566,14 @@ function bodySummary (records, configuredAgentIds, crashAfterTick) {
         : 'unclassified'
       outcomes[record.event] ??= {}
       increment(outcomes[record.event], tag)
+      if (
+        record.event === 'worldInteraction' && tag.startsWith('disputed') &&
+        agents.has(record.agentId) && interactionDisputes.length < MAX_INTERACTION_DISPUTES
+      ) interactionDisputes.push(interactionDispute(record))
+      if (record.event === 'witnessDisputed' && agents.has(record.agentId) && record.dispute !== undefined) {
+        if (witnessDisputes.length < MAX_WITNESS_DISPUTES) witnessDisputes.push(witnessDispute(record))
+        else witnessDisputesOmitted += 1
+      }
     }
     if (record.agentId === 'loom:world') {
       worldRecords += 1
@@ -252,6 +597,9 @@ function bodySummary (records, configuredAgentIds, crashAfterTick) {
     lastTick: lastTick ?? null,
     events,
     outcomesByEvent: outcomes,
+    interactionDisputes,
+    witnessDisputes,
+    witnessDisputesOmitted,
     agents: [...agents.values()],
     worldRecords,
     unknownAgentRecords,
@@ -534,6 +882,7 @@ function failureCode (failure) {
     diskFailure: 'boundedJournalFailure',
     logLimit: 'logByteLimitReached',
     paperFailed: 'paperProcessFailure',
+    publicationRefused: 'artifactIntegrityFailed',
     simulationTickCeiling: 'simulationTickCeilingReached',
     startupFailed: 'startupOrAcceptanceFailure'
   }
@@ -609,8 +958,12 @@ function failureDiagnostic ({
     cognition: {
       harness: harness.summary,
       proxy: safeProxySnapshot(proxySnapshot, config),
-      providerUsage: providerUsageSummary(providerUsageInput.records, config)
+      providerUsage: providerUsageSummary(providerUsageInput.records, config),
+      timeline: cognitionTimeline(bodyInput.records, harnessInput.records, config.agents),
+      stopWindow: stopWindow(bodyInput.records, harnessInput.records, config.agents),
+      nativeReviewWindows: nativeReviewWindows(bodyInput.records, harnessInput.records, config)
     },
+    initialConditions: initialConditionFacts(bodyInput.records, config),
     crashContainment: config.proof === undefined
       ? null
       : {
@@ -638,8 +991,14 @@ function failureDiagnostic ({
   })
 }
 
+// Most numbered names a diagnostic tries beside an earlier one for the same experiment.
+const MAX_DIAGNOSTIC_NAMES = 100
+
 // Publishes text under `file` only whole and never over an existing file: a partial
-// write stays at a temporary name, and link(2) refuses an existing target.
+// write stays at a temporary name, and link(2) refuses an existing target. A rehearsal id is
+// reused by every rehearsal, so a target an earlier failure already holds is kept and the new
+// diagnostic takes the next numbered name (`<id>.2.json`); answers the name it was published
+// under. A second rehearsal failure once lost its whole diagnostic to the first's file.
 function writeExclusiveAtomic (file, text) {
   const directory = path.dirname(file)
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
@@ -655,11 +1014,26 @@ function writeExclusiveAtomic (file, text) {
     fs.closeSync(descriptor)
     descriptor = undefined
     fs.chmodSync(temporary, 0o600)
-    fs.linkSync(temporary, file)
+    return linkUnderFreeName(temporary, file)
   } finally {
     if (descriptor !== undefined) fs.closeSync(descriptor)
     fs.rmSync(temporary, { force: true })
   }
+}
+
+function linkUnderFreeName (temporary, file) {
+  const extension = path.extname(file)
+  const stem = file.slice(0, file.length - extension.length)
+  for (let attempt = 1; attempt <= MAX_DIAGNOSTIC_NAMES; attempt += 1) {
+    const target = attempt === 1 ? file : `${stem}.${attempt}${extension}`
+    try {
+      fs.linkSync(temporary, target)
+      return target
+    } catch (cause) {
+      if (cause?.code !== 'EEXIST') throw cause
+    }
+  }
+  throw new Error(`no free diagnostic name beside ${path.basename(file)}`)
 }
 
 function retainedLabel (repositoryRoot, file) {
@@ -772,8 +1146,7 @@ function writeFallbackDiagnostic (options, failedStage, maxBytes) {
   if (bytes > maxBytes) throw new Error(`fallback diagnostic exceeded its ${maxBytes} byte bound`)
   // Never named after an unvalidated id: an id that fails the slug test is not a path.
   const name = diagnostic.experimentId ?? `unidentified-${crypto.randomBytes(6).toString('hex')}`
-  const file = path.join(options.diagnosticRoot, `${name}.fallback.json`)
-  writeExclusiveAtomic(file, text)
+  const file = writeExclusiveAtomic(path.join(options.diagnosticRoot, `${name}.fallback.json`), text)
   return {
     diagnostic,
     file,
@@ -782,6 +1155,25 @@ function writeFallbackDiagnostic (options, failedStage, maxBytes) {
     fallback: true,
     failedStage: diagnostic.failedStage
   }
+}
+
+// The diagnostic's text with its cognition timeline halved, newest entries kept, until it fits
+// [maxBytes]: the timeline is the one part that grows with a run, and the rest of the diagnostic is
+// worth more than its oldest entries (v32 plains rehearsal 14: a ten-agent night's two full
+// timelines took a failed run's diagnostic to 68 KB, and only the minimal fallback was kept).
+function boundedSerialization (diagnostic, serialize, maxBytes) {
+  let text = serialize(diagnostic)
+  const timeline = diagnostic?.cognition?.timeline
+  if (typeof text !== 'string' || timeline === undefined || timeline === null) return text
+  for (let keep = MAX_TIMELINE_ENTRIES / 2; keep >= 1 && Buffer.byteLength(text) > maxBytes; keep /= 2) {
+    for (const [entries, omitted] of [['forwarded', 'forwardedOmitted'], ['body', 'bodyOmitted']]) {
+      const cut = Math.max(0, timeline[entries].length - keep)
+      timeline[entries] = timeline[entries].slice(cut)
+      timeline[omitted] += cut
+    }
+    text = serialize(diagnostic)
+  }
+  return text
 }
 
 function writeNormalDiagnostic (options, stages, maxBytes, progress) {
@@ -809,7 +1201,7 @@ function writeNormalDiagnostic (options, stages, maxBytes, progress) {
     proxySnapshot: options.proxySnapshot
   })
   progress.stage = 'serialize'
-  const text = stages.serialize(diagnostic)
+  const text = boundedSerialization(diagnostic, stages.serialize, maxBytes)
   if (typeof text !== 'string') throw new Error('failed-run diagnostic did not serialize')
   progress.stage = 'sanitize'
   if (stages.scan(text).length > 0) {
@@ -821,8 +1213,8 @@ function writeNormalDiagnostic (options, stages, maxBytes, progress) {
     throw new Error(`failed-run diagnostic exceeded its ${maxBytes} byte bound`)
   }
   progress.stage = 'write'
-  const file = path.join(options.diagnosticRoot, `${config.experimentId}.json`)
-  stages.write(file, text)
+  const named = path.join(options.diagnosticRoot, `${config.experimentId}.json`)
+  const file = stages.write(named, text) ?? named
   return {
     diagnostic,
     file,

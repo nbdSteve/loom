@@ -1,5 +1,9 @@
 'use strict'
 
+// The follow-up reviews a scheduled review may owe, by the mode that pins them: one from v23, and
+// from v26 a second while an own goal-item drop lies (`MAX_FOLLOW_UPS_PER_REVIEW` in the JVM's
+// schedule). A mode that pins none owes none.
+
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -14,7 +18,11 @@ const {
   CONTROLLED_STOP_DRAIN_MILLIS,
   CONTROLLED_STOP_REASON,
   PROVIDER_UNAVAILABLE_MAPPINGS,
-  STOP_KINDS
+  STOP_KINDS,
+  isProviderDrainFailure,
+  isProviderRefusedEnding,
+  isProviderRefusedRequest,
+  providerRefusedKeysOf
 } = require('./controlled-stop.js')
 const {
   METRICS_VERSION,
@@ -25,8 +33,10 @@ const {
   readJsonLines,
   scanText
 } = require('./evidence.js')
-const { isCoalesced, isShutdownEnding, unansweredAccountedFor } = require('./danger.js')
-const { CADENCE, PROFILES, SCENES, placementOf, profileOf, ticksPerSecondOf } = require('./profiles.js')
+const { isCoalesced, isExposureEnding, isShutdownEnding, unansweredAccountedFor } = require('./danger.js')
+const { everyHeldAtBegin, heldAtBegin } = require('./initial-conditions.js')
+const { CADENCE, PROFILES, SCENES, exposureOf, placementOf, profileOf, ticksPerSecondOf } = require('./profiles.js')
+const { RunFailure } = require('./lifecycle.js')
 const {
   CRASH_CONTAINMENT_MODE,
   PRIMARY_BEHAVIOR_MODES,
@@ -34,7 +44,8 @@ const {
   isHistoricalMode,
   primaryBehaviorModeOf,
   configuredMode,
-  isPrimaryBehaviorMode
+  isPrimaryBehaviorMode,
+  nativeOriginOf
 } = require('./experiment-mode.js')
 const {
   canonicalJson,
@@ -115,8 +126,32 @@ function pricingErrors (config) {
   return errors
 }
 
-function maximumConfiguredSpendNanoUsd (config) {
-  return worstCaseCallNanoUsd(config) * config.cognition.globalCallCeiling
+/**
+ * The configured worst case: every call at the dearest model's request and response bounds, or,
+ * with a pivotal call ceiling, at most that many calls at the pivotal model's bounds and the rest
+ * of the global ceiling at the ordinary model's (r24: 149 of 150 calls were spent while the run's
+ * cheap routine and notable calls were priced as pivotal ones).
+ */
+function maximumConfiguredSpendNanoUsd (cognition) {
+  const settings = cognition.cognition ?? cognition
+  const pivotal = settings.pivotalCallCeiling
+  if (!Number.isInteger(pivotal)) return worstCaseCallNanoUsd(cognition) * settings.globalCallCeiling
+  const tier = worstCaseTierNanoUsd(cognition)
+  // A JVM tier fallback sends danger past the pivotal ceiling at the ordinary tier inside the
+  // global ceiling, so it is already one of the ordinary calls counted here: the bound is unchanged.
+  return pivotal * tier.pivotal + (settings.globalCallCeiling - pivotal) * tier.ordinary
+}
+
+/** The worst one call can cost at each tier's model, under the request and response bounds. */
+function worstCaseTierNanoUsd (cognition) {
+  const settings = cognition.cognition ?? cognition
+  const models = settings.models ?? cognition.provenance?.models
+  const priced = (model) => {
+    const rates = settings.pricing.models[model]
+    const inputRate = Math.max(rates.inputNanoUsdPerToken, rates.cachedInputNanoUsdPerToken)
+    return (settings.maxRequestBytes * inputRate) + (settings.maxOutputTokens * rates.outputNanoUsdPerToken)
+  }
+  return { ordinary: priced(models.ordinary), pivotal: priced(models.pivotal) }
 }
 
 function worstCaseCallNanoUsd (config) {
@@ -173,12 +208,20 @@ function primaryBehaviorErrors (config) {
     errors.push(`primaryBehavior.scene must be ${profile.scene} for ${behavior.profile}`)
   }
   const clock = behavior.initialWorldClock
+  // A scene may start later in the day so that night, and the danger it brings, falls inside a
+  // bounded run; every scene before `e1-explore-ring` starts at dawn.
+  const startTime = scene?.initialTimeOfDay ?? 0
   if (
-    clock?.timeOfDay !== 0 ||
+    clock?.timeOfDay !== startTime ||
     clock?.day !== 0 ||
     clock?.isDay !== true
   ) {
-    errors.push('primaryBehavior.initialWorldClock must pin day 0 at time 0')
+    errors.push(`primaryBehavior.initialWorldClock must pin day 0 at time ${startTime}`)
+  }
+  // A profile that pre-registers its exposure holds exactly that daylight and night (the r33 audit).
+  if (profile.exposure !== undefined &&
+      !sameJson(exposureOf(startTime, profile.simulationTickCeiling), { ...profile.exposure })) {
+    errors.push(`profile ${behavior.profile} must hold ${JSON.stringify(profile.exposure)} ticks of daylight and night`)
   }
   const schedule = behavior.nativeGoalReviewSchedule
   if (
@@ -191,19 +234,39 @@ function primaryBehaviorErrors (config) {
         `${profile.expectedReviewsPerAgent} reviews per agent for ${behavior.profile}`
     )
   }
-  if (
-    Number.isInteger(schedule?.expectedReviewsPerAgent) &&
-    schedule.expectedReviewsPerAgent > config.cognition?.perAgentCallCeiling
-  ) {
+  // From routine-v23 each scheduled review may be followed by one review once its goal step
+  // settles (`MAX_FOLLOW_UPS_PER_REVIEW` in `GoalReviewSchedule.kt`), so the planned reviews are
+  // the scheduled ones and as many follow-ups, and both ceilings must hold them.
+  const followUps = schedule?.followUpsPerReview ?? 0
+  // A profile may pin its own plan of follow-ups in place of its mode's (r35: one a review left
+  // 26 of 60 day steps waiting a whole cadence).
+  const pinnedFollowUps = profile.followUpsPerReview ?? primaryBehaviorModeOf(config.mode)?.followUpsPerReview ?? 0
+  if (followUps !== 0 && followUps !== pinnedFollowUps) {
+    errors.push(`primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview must be ${pinnedFollowUps} when stated`)
+  }
+  const plannedReviews = Number.isInteger(schedule?.expectedReviewsPerAgent)
+    ? schedule.expectedReviewsPerAgent * (1 + followUps)
+    : undefined
+  if (plannedReviews !== undefined && plannedReviews > config.cognition?.perAgentCallCeiling) {
     errors.push('planned native reviews exceed the per-agent cognition call ceiling')
   }
   if (
-    Number.isInteger(schedule?.expectedReviewsPerAgent) &&
+    plannedReviews !== undefined &&
     Array.isArray(config.agents) &&
-    schedule.expectedReviewsPerAgent * config.agents.length >
-      config.cognition?.globalCallCeiling
+    plannedReviews * config.agents.length > config.cognition?.globalCallCeiling
   ) {
     errors.push('planned native reviews exceed the global cognition call ceiling')
+  }
+  // From routine-v29 the plan must leave the mode's share of the global ceiling to events: r20
+  // planned exactly 150 reviews against a ceiling of 150, and the night's danger stopped the run.
+  const reserveShare = primaryBehaviorModeOf(config.mode)?.eventCallReserveShare ?? 0
+  if (
+    plannedReviews !== undefined &&
+    reserveShare > 0 &&
+    Array.isArray(config.agents) &&
+    plannedReviews * config.agents.length > Math.floor(config.cognition?.globalCallCeiling * (1 - reserveShare))
+  ) {
+    errors.push('planned native reviews leave less than the mode\'s event share of the global cognition call ceiling')
   }
   if (behavior.externalCognitionStimuli !== 'none') {
     errors.push('primaryBehavior.externalCognitionStimuli must be none')
@@ -219,6 +282,12 @@ function primaryBehaviorErrors (config) {
   const pinned = primaryBehaviorModeOf(configuredMode(config))
   if (behavior.categoryFairSelection !== pinned.categoryFairSelection) {
     errors.push(`primaryBehavior.categoryFairSelection must be ${pinned.categoryFairSelection} for ${configuredMode(config)}`)
+  }
+  if ((schedule?.followUpsPerReview ?? 0) !== pinnedFollowUps) {
+    errors.push(
+      `primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview must be ${pinnedFollowUps} ` +
+        `for ${configuredMode(config)} and ${behavior.profile}`
+    )
   }
   if (config.proof !== undefined) {
     errors.push('the primary behavior mode cannot configure crash or operator-think proof traffic')
@@ -253,7 +322,8 @@ function primaryBehaviorErrors (config) {
   if (
     config.cognition?.perAgentCallCeiling !== ceilings.perAgent ||
     config.cognition?.globalCallCeiling !== ceilings.global ||
-    config.cognition?.globalOutstandingCeiling !== ceilings.outstanding
+    config.cognition?.globalOutstandingCeiling !== ceilings.outstanding ||
+    config.cognition?.pivotalCallCeiling !== ceilings.pivotal
   ) {
     errors.push(
       `profile ${behavior.profile} must use the ${ceilings.perAgent}/${ceilings.global}/${ceilings.outstanding} cognition ceilings`
@@ -423,6 +493,11 @@ function validateRunConfig (config) {
     config.cognition.globalCallCeiling > config.cognition.perAgentCallCeiling * config.agents.length
   ) {
     errors.push('global call ceiling exceeds the sum of per-agent ceilings')
+  }
+  const pivotalCeiling = config.cognition?.pivotalCallCeiling
+  if (pivotalCeiling !== undefined && (!Number.isInteger(pivotalCeiling) || pivotalCeiling < 0 ||
+    pivotalCeiling > config.cognition?.globalCallCeiling)) {
+    errors.push('cognition.pivotalCallCeiling must be an integer within the global call ceiling')
   }
   if (
     typeof config.cognition?.maxExternalSpendUsd !== 'number' ||
@@ -686,6 +761,7 @@ function validateProspectiveManifest (config, source) {
 
 function initialConditionsMatch (config, metrics) {
   const observed = metrics.perceptionAudit?.initialByAgent ?? []
+  const witnessed = metrics.initialConditionsWitnessed
   if (
     metrics.primaryBehavior?.initialConditionAttestations !== 1 ||
     !sameJson(
@@ -701,6 +777,12 @@ function initialConditionsMatch (config, metrics) {
   ) {
     return false
   }
+  // Where the server read every agent at begin, that reading witnesses the pinned conditions and
+  // each first perception states only the clock (`initial-conditions.js`).
+  if (witnessed !== undefined) {
+    return everyHeldAtBegin(witnessed, config.agents, config.primaryBehavior.initialPositions) &&
+      observed.every((entry) => entry.worldClock !== undefined)
+  }
   return observed.every((entry) =>
     sameJson(entry.position, config.primaryBehavior.initialPositions[entry.agentId]) &&
     entry.inventoryStacks === 0 &&
@@ -713,12 +795,15 @@ function expectedNativeReviewsObserved (config, metrics) {
   return config.agents.every((agentId) => agentReviewsObserved(agentId, metrics, expected))
 }
 
+// A review held when the window closed was due and owed, so it counts toward the minimum; one the
+// JVM refused at its agent's spent ceiling was due and typed, so it counts as attempted.
 function windowEntryHolds (entry) {
-  return entry !== undefined &&
-    Number.isInteger(entry.minimum) &&
+  if (entry === undefined) return false
+  const attempted = entry.attempted + (entry.refusedAtCeiling ?? 0)
+  return Number.isInteger(entry.minimum) &&
     Number.isInteger(entry.maximum) &&
-    entry.attempted >= entry.minimum &&
-    entry.attempted <= entry.maximum &&
+    attempted + (entry.heldAtEnd === 1 ? 1 : 0) >= entry.minimum &&
+    attempted <= entry.maximum &&
     entry.completed <= entry.attempted
 }
 
@@ -776,9 +861,18 @@ function protocolFor (config, metrics) {
       startingInventories: config.primaryBehavior.startingInventories,
       observedFirstPerceptions:
         structuredClone(metrics.perceptionAudit?.initialByAgent ?? []),
-      attested: {
-        source: 'Paper setup commands plus exact first body perception for each agent'
-      }
+      ...(metrics.initialConditionsWitnessed === undefined
+        ? {
+            attested: {
+              source: 'Paper setup commands plus exact first body perception for each agent'
+            }
+          }
+        : {
+            witnessedAtBegin: structuredClone(metrics.initialConditionsWitnessed),
+            attested: {
+              source: 'Paper setup commands, the server reading of each agent when the run began, and each first body perception for its world clock'
+            }
+          })
     },
     injectedDirectives: structuredClone(config.primaryBehavior.injectedDirectives),
     ...(config.primaryBehavior.profile === undefined
@@ -982,6 +1076,9 @@ function buildManifest ({
       socialRolesInjected: false,
       perAgentCallCeiling: config.cognition.perAgentCallCeiling,
       globalCallCeiling: config.cognition.globalCallCeiling,
+      ...(Number.isInteger(config.cognition.pivotalCallCeiling)
+        ? { pivotalCallCeiling: config.cognition.pivotalCallCeiling }
+        : {}),
       globalOutstandingCeiling: config.cognition.globalOutstandingCeiling,
       maxOutputTokens: config.cognition.maxOutputTokens,
       maxRequestBytes: config.cognition.maxRequestBytes,
@@ -1160,14 +1257,15 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
       .map((record) => record.requestKey)
   )
   const bodyOnly = records.filter((record) => record.source === 'body')
+  const providerRefusedKeys = providerRefusedKeysOf(records.filter((record) => record.source === 'harness'))
+  errors.push(...providerRefusedErrors(providerRefusedKeys, bodyOnly))
   if (
     (!stopped && (
       metrics.cognition.refusedCalls !== refusedAfterEnd ||
-      !unansweredAccountedFor(bodyOnly, { admissionEnded: ended !== undefined, refusedKeys })
-    )) ||
-    (deaths === undefined && metrics.cycles.discarded !== 0)
+      !unansweredAccountedFor(bodyOnly, { admissionEnded: ended !== undefined, refusedKeys, providerRefusedKeys })
+    ))
   ) {
-    errors.push('primary behavior evidence contains a cognition refusal, unavailable decision, or discarded decision')
+    errors.push('primary behavior evidence contains a cognition refusal or unavailable decision')
   }
   if (stopped || metrics.controlledStop !== undefined || manifest.controlledStop !== undefined) {
     errors.push(...controlledStopErrors(manifest, metrics, records))
@@ -1233,10 +1331,8 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
       record.source !== 'harness' ||
       !['cognitionForwarded', 'cognitionRefused'].includes(record.event)
     ) continue
-    const expected = record.trigger === 'goalReview'
-      ? 'nativeGoalReviewSchedule'
-      : 'nativeEventDriver'
-    if (record.origin !== expected) {
+    // The same rule the proxy stamps origins by, so a follow-up review is its own native source.
+    if (record.origin !== nativeOriginOf(record.trigger)) {
       errors.push(`cognition request ${record.requestKey ?? record.recordId} has no valid native origin`)
     }
   }
@@ -1250,9 +1346,24 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
     (metrics.perceptionAudit?.initialByAgent ?? [])
       .map((entry) => [entry.agentId, entry])
   )
+  const witnessedAtBegin = metrics.initialConditionsWitnessed === undefined
+    ? undefined
+    : new Map(metrics.initialConditionsWitnessed.map((entry) => [entry.agentId, entry]))
+  if (witnessedAtBegin !== undefined && metrics.initialConditionsWitnessed.length !== witnessedAtBegin.size) {
+    errors.push('an agent was read more than once when the run began')
+  }
   for (const agent of manifest.agents) {
     const first = observed.get(agent.agentId)
     const configured = protocol.initialConditions?.configuredPositions?.[agent.agentId]
+    if (witnessedAtBegin !== undefined) {
+      if (!heldAtBegin(witnessedAtBegin.get(agent.agentId), configured)) {
+        errors.push(`${agent.agentId} did not hold its pinned initial conditions when the run began`)
+      }
+      if (first === undefined || first.worldClock === undefined) {
+        errors.push(`${agent.agentId} has no initial perception stating its world clock`)
+      }
+      continue
+    }
     if (
       first === undefined ||
       !sameJson(first.position, configured) ||
@@ -1273,7 +1384,7 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
     'perKindPerceptionAuditComplete',
     'plannedNativeCallsFitCeilings',
     'noDroppedEvidenceWarning',
-    'serverEvidenceUncontested',
+    // `serverEvidenceUncontested` is stated, never required: a witness dispute is no-go evidence.
     ...(stopped ? ['controlledStopAccounted'] : []),
     ...(deaths === undefined ? [] : ['witnessedDeathsAccounted'])
   ]) {
@@ -1305,6 +1416,22 @@ function typedRefusal (record) {
     Number.isSafeInteger(record.ceiling) &&
     Number.isSafeInteger(record.observed) &&
     record.forwarded === false
+}
+
+// Every request the provider refused is one perception the JVM ended as failed, never answered.
+function providerRefusedErrors (providerRefusedKeys, body) {
+  const errors = []
+  for (const key of providerRefusedKeys) {
+    const chain = body.filter((record) => record.requestKey === key)
+    if (
+      !chain.some((record) => record.event === 'perceived') ||
+      !chain.some((record) => isProviderRefusedEnding(record, providerRefusedKeys)) ||
+      chain.some((record) => ['decided', 'intentApplied'].includes(record.event))
+    ) {
+      errors.push(`provider-refused request ${key} has no matching failed perception chain`)
+    }
+  }
+  return errors
 }
 
 // A normal ending closes admission once; only typed admission refusals may follow it.
@@ -1354,8 +1481,11 @@ function admissionEndErrors (manifest, metrics, records) {
       errors.push(`refusal ${record.requestKey} after the run ended has no matching refused chain`)
     }
   }
+  const providerRefusedKeys = providerRefusedKeysOf(harness)
   for (const record of body) {
-    if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) && !refusedKeys.has(record.requestKey)) {
+    if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) &&
+        !isExposureEnding(record) && !refusedKeys.has(record.requestKey) &&
+        !isProviderRefusedEnding(record, providerRefusedKeys)) {
       errors.push(`unavailable decision ${record.requestKey} has no typed refusal`)
     }
   }
@@ -1458,7 +1588,7 @@ function controlledStopErrors (manifest, metrics, records) {
     }
   }
   if (
-    beforeForwarded.filter((record) => record.outcome !== 'decision').length !==
+    beforeForwarded.filter((record) => record.outcome !== 'decision' && !isProviderRefusedRequest(record)).length !==
     (stop.kind === 'providerUnavailable' ? 1 : 0)
   ) {
     errors.push('controlled stop evidence contains an unclassified cognition failure')
@@ -1479,7 +1609,9 @@ function controlledStopErrors (manifest, metrics, records) {
   }
   const typedKeys = new Set([
     ...harness.filter((record) => record.event === 'cognitionRefused').map((record) => record.requestKey),
-    ...(stop.kind === 'providerUnavailable' ? [triggerKey] : [])
+    ...(stop.kind === 'providerUnavailable'
+      ? [triggerKey, ...after.filter(isProviderDrainFailure).map((record) => record.requestKey)]
+      : [])
   ])
   for (const record of harness) {
     if (record.event === 'cognitionRefused') {
@@ -1494,8 +1626,11 @@ function controlledStopErrors (manifest, metrics, records) {
       errors.push(`forwarded request ${record.requestKey} has no earlier perception chain`)
     }
   }
+  const providerRefusedKeys = providerRefusedKeysOf(harness)
   for (const record of body) {
-    if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) && !typedKeys.has(record.requestKey)) {
+    if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) &&
+        !isExposureEnding(record) && !typedKeys.has(record.requestKey) &&
+        !isProviderRefusedEnding(record, providerRefusedKeys)) {
       errors.push(`unavailable decision ${record.requestKey} has no typed refusal`)
     }
     if (
@@ -1681,6 +1816,9 @@ function semanticErrors (artifactDirectory, manifest) {
     )
   }
   maximumSpendNanoUsd *= manifest.cognition.globalCallCeiling
+  if (Number.isInteger(manifest.cognition.pivotalCallCeiling)) {
+    maximumSpendNanoUsd = maximumConfiguredSpendNanoUsd({ ...manifest.cognition, models: manifest.provenance.models })
+  }
   if (
     manifest.cognition.worstCaseConfiguredSpendUsd !==
     Number((maximumSpendNanoUsd / NANO_USD_PER_USD).toFixed(9))
@@ -1699,7 +1837,15 @@ function semanticErrors (artifactDirectory, manifest) {
   for (const record of records) {
     if (record.source !== 'harness') continue
     if (record.event === 'cognitionForwarded') {
-      perAgentCalls.set(record.agentId, (perAgentCalls.get(record.agentId) ?? 0) + 1)
+      // A borrowed call is urgent danger past the agent's own ceiling, counted against the global one.
+      const ownCalls = perAgentCalls.get(record.agentId) ?? 0
+      if (record.borrowedCall === true) {
+        if (ownCalls < manifest.cognition.perAgentCallCeiling || (record.trigger !== 'damaged' && record.importance !== 'PIVOTAL')) {
+          errors.push(`${record.requestKey} borrowed a global call that was not urgent danger past its own ceiling`)
+        }
+      } else {
+        perAgentCalls.set(record.agentId, ownCalls + 1)
+      }
       forwardedRequests.add(record.requestKey)
       if (record.outcome === 'decision') {
         forwardedDecisions.set(record.requestKey, record.provenance?.model)
@@ -1816,6 +1962,33 @@ function semanticErrors (artifactDirectory, manifest) {
   return errors
 }
 
+/** The README's statement of the readiness gate: its verdict, rates and every non-success. */
+function readinessLines (readiness) {
+  const nonZero = (counts) => Object.fromEntries(Object.entries(counts).filter(([, count]) => count > 0))
+  const blockers = nonZero(readiness.blockers)
+  const lines = [
+    `- Readiness: **${readiness.verdict}** (${readiness.version}); decision validity ${readiness.rates.decisionValidity ?? 'n/a'}, ` +
+      `typed terminal accounting ${readiness.rates.typedTerminalAccounting ?? 'n/a'}, server truthfulness ${readiness.rates.serverTruthfulness ?? 'n/a'}.`,
+    `- Actions by class: ${JSON.stringify(nonZero(readiness.actions.byClass))}; blockers: ${Object.keys(blockers).length === 0 ? 'none' : JSON.stringify(blockers)}; ` +
+      `legitimate races: ${readiness.races}; cognition failures: ${JSON.stringify(readiness.cognitionFailures)}; server disputes: ${readiness.serverDisputes}.`,
+    readiness.mechanicalVerdict === undefined
+      ? `- Goal coherence: ${JSON.stringify(readiness.goalCoherence)}.`
+      : `- Goal coherence: **${readiness.goalCoherence.verdict}**, part of the verdict (mechanically ${readiness.mechanicalVerdict}); ` +
+        `${JSON.stringify(Object.fromEntries(Object.entries(readiness.goalCoherence).filter(([name]) => name !== 'verdict')))}.`
+  ]
+  if (readiness.reporting !== undefined) {
+    const { callReserved, tierFallbacks, preemptedAnswers } = readiness.reporting
+    lines.push(`- Calls the JVM decided before the mind: ${callReserved} refused to keep calls in reserve (\`callReserved\`), ` +
+      `${tierFallbacks} sent at the ordinary tier past the pivotal ceiling (\`tierFallback\`), ` +
+      `${preemptedAnswers} answered but preempted by newer damage (\`dangerPreempted\`).`)
+  }
+  for (const entry of readiness.actions.nonSuccess) {
+    lines.push(`  - \`${entry.requestKey}\` ${entry.intent}: ${entry.class}${entry.race ? ' (race)' : ''}, ` +
+      `${entry.evidence === null ? 'no terminal record' : `${entry.evidence.event} ${entry.evidence.outcome ?? ''} at tick ${entry.evidence.tick}`.replace(/  +/g, ' ')}.`)
+  }
+  return `${lines.join('\n')}\n`
+}
+
 function validateArtifact (artifactDirectory) {
   const file = path.join(artifactDirectory, MANIFEST_FILE)
   if (!fs.existsSync(file)) {
@@ -1829,6 +2002,11 @@ function validateArtifact (artifactDirectory) {
   }
   const schema = validateManifest(manifest)
   if (!schema.ok) return schema
+  // Generations 1 and 2 predate harness publication: they name no metrics file for this side
+  // to re-derive their evidence against, so the schema is the whole of what can be checked.
+  if (schema.version < 3 && manifest.metrics === undefined) {
+    return { ok: true, version: schema.version, errors: [] }
+  }
   const errors = semanticErrors(artifactDirectory, manifest)
   return { ok: errors.length === 0, version: schema.version, errors }
 }
@@ -1913,7 +2091,13 @@ function publishArtifact ({
 
     const validation = validateArtifact(artifactDirectory)
     if (!validation.ok) {
-      throw new Error(`published artifact is invalid:\n- ${validation.errors.join('\n- ')}`)
+      // A refused integrity check is its own stop, never a disk failure (v32 plains rehearsal 14
+      // read as one, which pointed at the disk rather than at the evidence).
+      throw new RunFailure(
+        'publicationRefused',
+        `published artifact is invalid:\n- ${validation.errors.join('\n- ')}`,
+        'artifactIntegrityFailed'
+      )
     }
     if (fs.existsSync(finalDirectory)) {
       throw new Error(`artifact directory already exists: ${finalDirectory}`)
@@ -1923,6 +2107,20 @@ function publishArtifact ({
   } finally {
     fs.rmSync(staging, { recursive: true, force: true })
   }
+}
+
+const POPULATION_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+
+/** The README's question names the configured population, not the three-agent pilot's. */
+function populationWord (count) {
+  return POPULATION_WORDS[count] ?? String(count)
+}
+
+/** The README question for a configuration, naming its own population and profile. */
+function readmeQuestion (config) {
+  return isPrimaryBehaviorMode(config)
+    ? `Can ${populationWord(config.agents.length)} independently embodied Loom agents complete the bounded ${config.cognition.prompts.routine} ${config.primaryBehavior.profile === 'pilot-180s' ? 'pilot' : `${config.primaryBehavior.profile} profile`} using only native event-driven cognition, while preserving complete per-kind perception and lifecycle evidence?`
+    : 'Can three independently embodied Loom agents continue repeated perceive/decide/act cycles in one bounded world, while one body process fails, without corrupting peer evidence or leaving processes behind?'
 }
 
 function renderReadme (config, manifest, metrics) {
@@ -1939,9 +2137,7 @@ function renderReadme (config, manifest, metrics) {
   const interpretationQualification = scripted
     ? '- Scripted decisions are acceptance traffic. They are not evidence of cooperation, specialization, avoidance,\n  conflict, settlement, or any other emergent social outcome.'
     : '- Model-driven actions are observations, not proof of motive or emergence. Any social or spatial interpretation is limited to the recorded evidence and counterevidence.'
-  const question = primaryBehavior
-    ? `Can three independently embodied Loom agents complete the bounded ${config.cognition.prompts.routine} pilot using only native event-driven cognition, while preserving complete per-kind perception and lifecycle evidence?`
-    : 'Can three independently embodied Loom agents continue repeated perceive/decide/act cycles in one bounded world, while one body process fails, without corrupting peer evidence or leaving processes behind?'
+  const question = readmeQuestion(config)
   const protocolObservations = primaryBehavior
     ? `- No body process was deliberately crashed and no harness \`/loombody think\` command was issued.
 - Native scheduled reviews by agent: ${JSON.stringify(metrics.primaryBehavior?.nativeGoalReviewsByAgent ?? {})}.
@@ -1970,7 +2166,7 @@ ${metrics.witnessedDeaths === undefined
 - Non-idle goal-review actions: ${gate.goalReviewActions.nonIdle}, accepted ${gate.goalReviewActions.accepted}, confirmed ${gate.goalReviewActions.confirmed}.
 - Calls by agent: ${JSON.stringify(gate.calls.forwardedByAgent)}; peak outstanding ${gate.calls.peakOutstanding ?? 'unrecorded'}.
 - A pass still needs a reader to confirm: ${gate.manualCriteria.join('; ')}.
-`
+${gate.readiness === undefined ? '' : readinessLines(gate.readiness)}`
   const stop = metrics.controlledStop
   const stopSection = stop === undefined
     ? ''
@@ -2092,9 +2288,11 @@ module.exports = {
   configuredAgents,
   prospectiveManifest,
   publishArtifact,
+  readmeQuestion,
   semanticErrors,
   validateArtifact,
   validateProspectiveManifest,
   validateRunConfig,
-  worstCaseCallNanoUsd
+  worstCaseCallNanoUsd,
+  worstCaseTierNanoUsd
 }

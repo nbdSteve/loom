@@ -133,8 +133,10 @@ function senseMemory () {
      */
     sawEntityDead (entity) {
       for (const entry of remembered) {
+        // A spent offer is a hole in the list; this runs inside Mineflayer's packet handler,
+        // where a throw is the client's `error` and fails the whole body.
         for (const offered of entry.entityOffers) {
-          if (offered.entity === entity) offered.dead = true
+          if (offered?.entity === entity) offered.dead = true
         }
       }
     },
@@ -142,7 +144,7 @@ function senseMemory () {
     sawEntityGone (entity) {
       for (const entry of remembered) {
         for (const offered of entry.itemOffers) {
-          if (offered.entity === entity) offered.gone = true
+          if (offered?.entity === entity) offered.gone = true
         }
       }
     },

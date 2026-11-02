@@ -1,6 +1,8 @@
 'use strict'
 
 const { unansweredAccountedFor } = require('./danger.js')
+const { PROFILES } = require('./profiles.js')
+const { readinessMetrics } = require('./readiness.js')
 
 // Mechanical measurements behind the pre-registered primary-behavior gates. Criteria
 // that need a reader (an evidence-grounded aim, no action justified only by being
@@ -8,7 +10,55 @@ const { unansweredAccountedFor } = require('./danger.js')
 
 // Committed evidence derives the gate generation it was published under: the stimulus
 // attestation names it, and evidence that names none is generation 1.
-const GATE_GENERATION = 2
+// Generation 3 adds the readiness gate: every decision valid, every action's terminal typed,
+// and every server-checked claim true, with each non-success listed by its exact record.
+// Generation 4 makes goal coherence part of that verdict, measured from the typed goal.
+// Generation 5 credits a step only on its evidence and refuses unobtainable success items.
+// Generation 6 counts a review action as meaningful only when it is a step of a goal, counts the
+// follow-up reviews a settled step owes, and refuses goals already met or pursued by idling.
+// Generation 7 refuses an answer that ignores its held goal, a step that cannot give the goal's
+// item and an answer past the stall bound, and reads a body's noRoute as the ground's answer.
+// Generation 8 refuses a step that leaves the agent's own drop of its goal's item lying, counts a
+// replaced goal's action as a step of its new goal, and credits a walk only onto a goal source.
+// Generation 9 judges flights, refuses abandoning an achievable goal, and holds coherence to the
+// profile's pre-registered positive bars.
+// Generation 10 judges a flight by its threat rather than its gain, refuses a revise that changes
+// the goal's item, and measures pursuit per agent, over time, by item kind and by craft.
+// Generation 11 refuses a revise that restates its total and a plain completion beside a next
+// goal's source, classes a noRoute to an agent's own fresh drop as a blocker rather than terrain,
+// and measures substantive pursuit: progressing held time, goals sight did not guarantee or a
+// later goal built on, chained goals, exploration walks and danger met, with the counters the
+// schema guarantees reported apart from behavioral evidence.
+// Generation 12 holds goals to substance a one-step goal cannot fake, counts chains only past
+// their adopting craft, ends held time at death, counts danger in answered episodes, and classes a
+// no-route flight from the agent's own dug hole as the selfTrapped blocker.
+// Generation 13 holds goals to substance through resources sight did not guarantee, lets horizon
+// goals ask past sight when grounded, and refuses a goal that crowds out offered exploration.
+// Generation 14 measures progressing time from a goal's first advance, sight's guarantee at the
+// calibrated mean and through recipes, counts a chained goal one craft met in full, counts
+// discovery goals apart, and reports danger, exploration and item kinds as description only.
+// Generation 15 counts progressing time only after accepted actions, a chained goal met by one
+// confirmed craft whether or not a review followed, dropped items as local capacity, an attack
+// refused at the health floor reached while deciding as a race, and names its readiness version
+// after its own generation.
+// Generation 16 counts no flight as progressing time, a reach refusal the agent's own movement
+// caused after its perception as a movement race, a no-route from a body in water as the
+// waterTrapped blocker, and a dig refused for flooding the body as inapplicable.
+// Generation 17 never counts a survival deferral as ignoring a met goal, sees each preempted danger
+// answer as a superseded action, classes a flight refused behind the agent's own flight as the
+// dangerOverlap blocker, and reports the JVM's callReserved refusals, tier fallbacks and preempted answers.
+// Generation 18 types the work that drained after the run's exposure ended and counts an older
+// flight a newer danger answer was applied after as the superseded retreatStale.
+// Generation 19 counts a shelter goal apart from item goals, credits its covered steps, refuses a
+// shelter or subgoal set where none was offered or a subgoal replaced, and measures the run's
+// shelter from the server's sealed record against the profile's pre-registered shelter bar.
+// Generation 20 refuses an objective one step meets, a replace by the held goal's own item and an
+// end stated without a supported reason as goal incoherence, classes any action refused behind the
+// agent's own earlier running request as the dangerOverlap blocker and one behind its own newer
+// request as superseded, and a placement blocked at a closing its cover offered as a target race.
+const GATE_GENERATION = 20
+// The goal outcomes of a decision whose action was a step of a goal it held or took up.
+const GOAL_GROUNDED_OUTCOMES = Object.freeze(['goalAdopted', 'goalContinued', 'goalRevised', 'goalReplaced', 'goalCompletedAdopted'])
 const GATE_VERSION = `loom-primary-behavior-gate/${GATE_GENERATION}`
 const PASSIVE_INTENTS = Object.freeze(['idle', 'rest'])
 const MOVEMENT_INTENTS = Object.freeze(['moveTo', 'flee'])
@@ -22,6 +72,11 @@ const MANUAL_CRITERIA = Object.freeze([
 
 function isNativeReviewRecord (record) {
   return record.trigger === 'goalReview' && record.origin === 'nativeGoalReviewSchedule'
+}
+
+// The follow-up review a settled goal step owes, from generation 6.
+function isFollowUpReviewRecord (record) {
+  return record.trigger === 'stepSettled' && record.origin === 'nativeGoalFollowUp'
 }
 
 // A goal-review action counts as confirmed only by server or body evidence, between its
@@ -54,9 +109,11 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
   if (schedule === undefined) return undefined
   const generation = Number.isInteger(stimulus.behaviorGateGeneration) ? stimulus.behaviorGateGeneration : 1
   const pilotProfile = stimulus.profile === undefined || stimulus.profile === 'pilot-180s'
+  const grounded = generation >= 6
   const nativeReviewKeys = new Set(
     harnessRecords
-      .filter((record) => record.event === 'cognitionForwarded' && isNativeReviewRecord(record))
+      .filter((record) => record.event === 'cognitionForwarded' &&
+        (isNativeReviewRecord(record) || (grounded && isFollowUpReviewRecord(record))))
       .map((record) => record.requestKey)
   )
   const nextDecision = new Map()
@@ -88,6 +145,9 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
     if (confirmation === null) continue
     actions.confirmed += 1
     actions.byConfirmation[confirmation] = (actions.byConfirmation[confirmation] ?? 0) + 1
+    // An action justified only by being active is not meaningful: from generation 6 it must be a
+    // step of a goal (r14: walks with no goal and a dig of a block that drops nothing counted).
+    if (grounded && !GOAL_GROUNDED_OUTCOMES.includes(record.goal?.outcome)) continue
     meaningful[record.agentId] = (meaningful[record.agentId] ?? 0) + 1
   }
   actions.acceptedAndConfirmedRate = actions.nonIdle === 0
@@ -170,6 +230,17 @@ function behaviorGateMetrics ({ bodyRecords, harnessRecords, metrics }) {
     goalReviewActions: actions,
     ...(generation >= 2
       ? { interactionsByOperation: Object.fromEntries(Object.entries(interactionsByOperation).sort()) }
+      : {}),
+    ...(generation >= 3
+      ? {
+          readiness: readinessMetrics({
+            bodyRecords,
+            harnessRecords,
+            metrics,
+            generation,
+            bars: PROFILES[stimulus.profile]?.coherenceBars
+          })
+        }
       : {}),
     omissionsByKind: omissions,
     nightPerceptionsByAgent: Object.fromEntries(Object.entries(nightPerceptionsByAgent).sort()),

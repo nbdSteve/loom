@@ -42,8 +42,8 @@ use loom_cognition::openai::settings::{
 use loom_cognition::openai::{OpenAiBackend, OpenAiConfig, MAX_RESPONSE_BYTES};
 use loom_cognition::router::Router;
 use loom_contract::{
-    DayPhase, Decision, DecisionImportance, GoalChoice, GoalDisposition, Intent, InventoryStack,
-    Perception, SelfState, Trigger, WorldState,
+    DayPhase, Decision, DecisionImportance, GoalChoice, GoalDisposition, GoalStepResult, Intent,
+    InventoryStack, Perception, SelfState, Trigger, WorldState,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -354,18 +354,27 @@ fn perception(importance: DecisionImportance) -> Perception {
                 slot_ref: "i1".to_owned(),
                 what: "bread".to_owned(),
                 count: 1,
+                edible: None,
+                solid: None,
+                held: None,
             }],
             crafting_options: vec![],
             crafting_options_omitted: 0,
+            own_drops: vec![],
             world: WorldState {
                 day_phase: DayPhase::Day,
                 is_day: true,
                 ticks_until_nightfall: 6_000,
             },
+            cover: None,
         },
         surroundings: vec![],
         surroundings_omitted: 0,
         goal: None,
+        last_refusal: None,
+        explore: vec![],
+        recalled: vec![],
+        horizon: vec![],
     }
 }
 
@@ -428,6 +437,18 @@ async fn a_decision_comes_back_from_the_provider_and_is_stamped_by_loom() {
         sent["response_format"]["json_schema"]["schema"]["required"],
         json!(["intent", "reasoning", "goal"])
     );
+    // The schema sent is this perception's: its one stack is the only stack ref, and
+    // an action naming a namespace it offers nothing in is not offered at all.
+    let schema = &sent["response_format"]["json_schema"]["schema"];
+    assert_eq!(schema["$defs"]["stackRef"]["enum"], json!(["i1"]));
+    assert!(schema["$defs"].get("blockRef").is_none(), "{schema}");
+    let actions: Vec<&str> = schema["properties"]["intent"]["anyOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|variant| variant["properties"]["action"]["enum"][0].as_str())
+        .collect();
+    assert_eq!(actions, ["say", "eat", "equip", "rest", "idle"]);
     assert_eq!(
         decision.goal, None,
         "an answer without a goal choice makes none"
@@ -445,7 +466,13 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
     let answer = json!({
         "intent": { "action": "idle" },
         "reasoning": "the held goal is still worth it and nothing to step toward",
-        "goal": { "disposition": "revise", "statement": "gather wood nearer the hill" }
+        "goal": {
+            "disposition": "revise",
+            "successItem": "item.minecraft.birch_log",
+            "successCount": 8,
+            "step": "walk to the birch on the hill",
+            "stepResult": "noProgress"
+        }
     });
     let (_provider, decided) =
         decide_with(Reply::completion(&answer), DecisionImportance::Routine).await;
@@ -453,13 +480,20 @@ async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
     assert_eq!(
         decision.goal,
         Some(GoalChoice {
+            discover: None,
             disposition: GoalDisposition::Revise,
-            statement: Some("gather wood nearer the hill".to_owned()),
+            success_item: Some("item.minecraft.birch_log".to_owned()),
+            success_count: Some(8),
+            step: Some("walk to the birch on the hill".to_owned()),
+            step_result: Some(GoalStepResult::NoProgress),
+            shelter: None,
+            feeds: None,
+            reason: None,
         })
     );
     assert_eq!(decision.intent, Intent::Idle);
     assert_eq!(decision.provenance.model, FAST_MODEL);
-    assert_eq!(decision.provenance.prompt_version, "routine-v13");
+    assert_eq!(decision.provenance.prompt_version, "routine-v38");
 }
 
 #[tokio::test]

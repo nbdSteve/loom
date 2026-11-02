@@ -13,7 +13,7 @@ import dev.loom.contract.Intent
 /** Names the intent, without its full payload. */
 fun describe(intent: Intent): String =
     when (intent) {
-        is Intent.MoveTo -> "moveTo ${intent.target.joinToString(",")}"
+        is Intent.MoveTo -> "moveTo onto ${intent.onto}"
         is Intent.Say -> "say"
         is Intent.Flee -> "flee from ${intent.from}"
         is Intent.Eat -> "eat ${intent.ref}"

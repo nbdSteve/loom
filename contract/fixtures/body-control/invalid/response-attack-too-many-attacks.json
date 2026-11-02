@@ -1,1 +1,1 @@
-{"op":"attack","protocol":5,"requestId":"bad-attack-response","agentId":"agent-alpha","state":"ready","outcome":"attacked","from":[0.5,64.5,0.5],"position":[0.5,64.5,0.5],"travelled":0,"elapsedMs":1,"attacks":5}
+{"op":"attack","protocol":8,"requestId":"bad-attack-response","agentId":"agent-alpha","state":"ready","outcome":"attacked","from":[0.5,64.5,0.5],"position":[0.5,64.5,0.5],"travelled":0,"elapsedMs":1,"attacks":5}

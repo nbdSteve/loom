@@ -5,10 +5,11 @@ package dev.loom.body.player
 
 import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
-import dev.loom.body.BodyEvent
 import dev.loom.body.EventTag
 import dev.loom.body.IntentOutcome
+import dev.loom.body.RetreatEvidence
 import dev.loom.body.WitnessedPlayer
+import dev.loom.body.WorldInteractionRecord
 import dev.loom.body.describe
 import dev.loom.body.tagOf
 import dev.loom.bodycontrol.BodyRequest
@@ -17,8 +18,8 @@ import dev.loom.bodycontrol.CollectOutcome
 import dev.loom.bodycontrol.DigOutcome
 import dev.loom.bodycontrol.EatOutcome
 import dev.loom.bodycontrol.EquipOutcome
-import dev.loom.bodycontrol.MoveOutcome
 import dev.loom.bodycontrol.PlaceOutcome
+import dev.loom.contract.DropFate
 import dev.loom.contract.Intent
 
 private const val PLAYER_FOOD_CAPACITY = 20.0
@@ -30,6 +31,12 @@ internal data class ActionExecution(
     val moveReport: BodyResponse.MoveReport? = null,
     val fleeRequest: BodyRequest.Flee? = null,
     val fleeReport: BodyResponse.FleeReport? = null,
+    /** Where the threat and every avoided hunter stood when sensed, for the flight's least separation. */
+    val fleeHunters: List<List<Double>> = emptyList(),
+    /** Whether the flight sprinted and why, as the JVM chose it. */
+    val fleeSprint: dev.loom.body.SprintChoice? = null,
+    /** Whether a newer danger answer was applied before this flight could take the body. */
+    val fleeStale: Boolean = false,
     val eatReport: BodyResponse.EatReport? = null,
     val interaction: ServerInteractionClaim? = null,
 )
@@ -38,22 +45,49 @@ internal data class ActionExecution(
 internal class PlayerEvidenceRecorder(
     private val context: PlayerBodyContext,
 ) {
+    /**
+     * Audits [execution] against the server, records it, and answers its outcome as the server
+     * attributes it: a claimed dig the server credits to another managed player is that player's
+     * break, so this one's is the lost race, never a dug.
+     */
     fun auditAndRecord(
         runtime: PlayerRuntime,
         intent: Intent,
         requestId: String?,
         execution: ActionExecution,
-    ) {
+    ): IntentOutcome {
         val agentId = runtime.identity.agentId
-        recordAction(agentId, intent, requestId, execution.outcome)
-        recordWalk(runtime, execution)
-        recordFlight(runtime, execution)
+        val audited =
+            execution.interaction?.let { it to context.authority.serverState.auditInteraction(runtime.identity, it) }
+        val brokenByOther = audited?.second?.brokenByOther == true
+        // Only this body's own break dropped anything for it.
+        val drops = if (brokenByOther) emptyList() else attributedDrops(runtime, requestId, execution.interaction)
+        val ended = execution.outcome
+        val outcome =
+            when {
+                brokenByOther ->
+                    IntentOutcome.Rejected(
+                        "the server credits the dug block to another player",
+                        EventTag.DIG_CONTEST_GONE,
+                    )
+                ended is IntentOutcome.Accepted ->
+                    ended.copy(dropped = drops.filter { it.fate == DropFate.LYING }.map { it.what }.toSet())
+                ended is IntentOutcome.Rejected && audited?.second?.effected == true -> ended.copy(effected = true)
+                else -> ended
+            }
+        val collect = execution.interaction as? ServerInteractionClaim.Collect
+        collect?.let(context.routeRefusals::remember)
+        recordAction(agentId, intent, requestId, outcome, terrainOf(context.authority.ground, collect))
+        recordWalk(runtime, requestId, execution)
+        recordFlight(runtime, requestId, execution)
         recordMeal(agentId, execution)
-        execution.interaction?.let { recordInteraction(runtime, intent, requestId, it) }
+        audited?.let { recordInteraction(runtime, intent, requestId, it, drops) }
+        return outcome
     }
 
     private fun recordWalk(
         runtime: PlayerRuntime,
+        requestId: String?,
         execution: ActionExecution,
     ) {
         val request = execution.moveRequest ?: return
@@ -61,27 +95,52 @@ internal class PlayerEvidenceRecorder(
         context.authority.serverState.auditMovement(runtime.identity, request, report)
         recordMovement(
             runtime.identity.agentId,
-            report.outcome,
-            report.from,
-            report.position,
-            report.travelled,
+            requestId,
+            MovementEnding(
+                report.outcome,
+                report.from,
+                report.position,
+                report.travelled,
+                movementEvidenceOf(report.departure, report.recovery),
+            ),
         )
     }
 
     private fun recordFlight(
         runtime: PlayerRuntime,
+        requestId: String?,
         execution: ActionExecution,
     ) {
         val request = execution.fleeRequest ?: return
         val report = execution.fleeReport ?: return
         val agentId = runtime.identity.agentId
         context.authority.serverState.auditMovement(runtime.identity, request, report)
-        recordMovement(agentId, report.outcome, report.from, report.position, report.travelled)
+        recordMovement(
+            agentId,
+            requestId,
+            MovementEnding(
+                report.outcome,
+                report.from,
+                report.position,
+                report.travelled,
+                movementEvidenceOf(report.departure, report.recovery),
+            ),
+        )
         context.journal.recordRetreat(
             agentId,
             "flight ended ${report.outcome.name.lowercase()}, " +
                 "separation ${report.separation ?: "unread"}",
-            retreatTag(report.outcome),
+            retreatTag(report.outcome, report.separation, request.distance).takeUnless { execution.fleeStale }
+                ?: EventTag.RETREAT_STALE,
+            requestId,
+            RetreatEvidence(
+                report.separation,
+                report.separationGained,
+                request.avoid?.size,
+                execution.fleeHunters.minOfOrNull { dev.loom.body.blocksApart(report.position, it) },
+                sprint = request.sprint,
+                sprintReason = execution.fleeSprint?.reason,
+            ),
         )
     }
 
@@ -104,64 +163,98 @@ internal class PlayerEvidenceRecorder(
         runtime: PlayerRuntime,
         intent: Intent,
         requestId: String?,
-        claim: ServerInteractionClaim,
+        audited: Pair<ServerInteractionClaim, ServerInteractionAudit>,
+        drops: List<OwnDropReading>,
     ) {
+        val (claim, audit) = audited
         val controlRequest = claim.controlRequest
-        val audit = context.authority.serverState.auditInteraction(runtime.identity, claim)
-        val senseId =
-            when (controlRequest) {
-                is BodyRequest.Dig -> controlRequest.senseId
-                is BodyRequest.Collect -> controlRequest.senseId
-                is BodyRequest.Place -> controlRequest.senseId
-                is BodyRequest.Equip -> controlRequest.senseId
-                is BodyRequest.Craft -> controlRequest.senseId
-                is BodyRequest.Attack -> controlRequest.senseId
-                is BodyRequest.Sleep -> controlRequest.senseId
-                else -> error("only world-interaction requests are recorded here")
+        val dropped =
+            when {
+                audit.brokenByOther -> "; dropped nothing of its own"
+                !dug(claim) || requestId == null -> ""
+                drops.isEmpty() -> "; dropped nothing"
+                else -> "; dropped " + drops.joinToString(", ") { "${it.count} ${it.what}" }
             }
         context.journal.recordWorldInteraction(
-            agentId = runtime.identity.agentId,
-            witness =
-                WitnessedPlayer(
-                    uuid = runtime.identity.uuid.toString(),
-                    username = runtime.identity.username,
-                ),
-            detail =
-                "${describe(intent)}; sense $senseId; control ${controlRequest.requestId}; " +
-                    "body ${claim.bodyOutcome.lowercase()}; vanilla ${audit.detail}",
-            requestId = requestId,
-            confirmed = audit.confirmed,
+            runtime.identity.agentId,
+            WorldInteractionRecord(
+                witness =
+                    WitnessedPlayer(
+                        uuid = runtime.identity.uuid.toString(),
+                        username = runtime.identity.username,
+                    ),
+                detail =
+                    "${describe(intent)}; sense ${senseIdOf(controlRequest)}; control ${controlRequest.requestId}; " +
+                        "body ${claim.bodyOutcome.lowercase()}${journeyOf(claim)}; vanilla ${audit.detail}$dropped",
+                requestId = requestId,
+                confirmed = audit.confirmed,
+                movement = approachEvidenceOf(claim),
+            ),
         )
     }
+
+    /**
+     * Attributes what the server dropped for a completed dig to the dig's own request: what the dig
+     * yielded is that request's evidence, wherever the drop goes after.
+     */
+    private fun attributedDrops(
+        runtime: PlayerRuntime,
+        requestId: String?,
+        claim: ServerInteractionClaim?,
+    ): List<OwnDropReading> {
+        if (requestId == null || claim !is ServerInteractionClaim.Dig || !dug(claim)) return emptyList()
+        return context.authority.ownDrops.attribute(
+            runtime.identity,
+            requestId,
+            claim.offered.position,
+            claim.startedTick,
+        )
+    }
+
+    private fun dug(claim: ServerInteractionClaim): Boolean =
+        claim is ServerInteractionClaim.Dig && claim.report.outcome == DigOutcome.DUG
 
     fun recordAction(
         agentId: AgentId,
         intent: Intent,
         requestId: String?,
         outcome: IntentOutcome,
+        terrain: dev.loom.body.TerrainEvidence? = null,
     ) {
-        context.journal.recordAction(
-            agentId = agentId,
-            detail = "${describe(intent)} -> ${describe(outcome)}",
-            requestId = requestId,
-            intent = tagOf(intent),
-            outcome = tagOf(outcome),
+        val detail = "${describe(intent)} -> ${describe(outcome)}"
+        if (terrain == null) {
+            context.journal.recordAction(agentId, detail, requestId, tagOf(intent), tagOf(outcome))
+            return
+        }
+        // A collect the body found no route for carries the server's reading of its ground.
+        context.authority.eventLog.append(
+            dev.loom.body.BodyEventRecord(
+                tick = context.authority.currentTick(),
+                agentId = agentId.value,
+                event = dev.loom.body.BodyEvent.INTENT_APPLIED,
+                detail = detail,
+                requestId = requestId,
+                intent = tagOf(intent),
+                outcome = tagOf(outcome),
+                terrain = terrain,
+            ),
         )
     }
 
     private fun recordMovement(
         agentId: AgentId,
-        outcome: MoveOutcome,
-        from: List<Double>,
-        position: List<Double>,
-        travelled: Double,
+        requestId: String?,
+        ending: MovementEnding,
     ) {
-        if (travelled <= 0.0 && from == position) return
-        context.journal.record(
+        if (ending.travelled <= 0.0 && ending.from == ending.position && ending.movement == null) return
+        context.journal.recordMovement(
             agentId,
-            BodyEvent.MOVED,
-            "from ${from.joinToString(",")} to ${position.joinToString(",")}; " +
-                "travelled $travelled; ${outcome.name.lowercase()}",
+            "from ${ending.from.joinToString(",")} to ${ending.position.joinToString(",")}; " +
+                "travelled ${ending.travelled}; ${ending.outcome.name.lowercase()}" +
+                (ending.movement?.recovery?.let { "; ${it.kind} for ${it.cause}" } ?: ""),
+            requestId,
+            movementTag(ending.outcome),
+            ending.movement,
         )
     }
 }
@@ -194,39 +287,6 @@ internal fun eatOutcome(report: BodyResponse.EatReport): IntentOutcome =
             )
     }
 
-internal fun movementOutcome(
-    outcome: MoveOutcome,
-    movement: String,
-): IntentOutcome =
-    when (outcome) {
-        MoveOutcome.ARRIVED -> IntentOutcome.Accepted("$movement arrived")
-        MoveOutcome.CANCELLED -> IntentOutcome.Accepted("$movement was cancelled after moving")
-        MoveOutcome.STALLED -> IntentOutcome.Accepted("$movement stalled after starting")
-        MoveOutcome.OVER_TRAVELLED -> IntentOutcome.Accepted("$movement reached its travel bound")
-        MoveOutcome.TIMED_OUT -> IntentOutcome.Accepted("$movement reached its time bound")
-        MoveOutcome.OUT_OF_RANGE ->
-            IntentOutcome.Rejected("$movement target is outside the body reach")
-        MoveOutcome.NO_ROUTE ->
-            IntentOutcome.Rejected("the ground offered no route for this $movement")
-        MoveOutcome.SEARCH_OVER_BUDGET ->
-            IntentOutcome.Rejected("the body search budget ended before a route was known")
-        MoveOutcome.SENSE_FORGOTTEN ->
-            IntentOutcome.Rejected(
-                "the body no longer remembers the sense that named that threat",
-                EventTag.RETREAT_THREAT_FORGOTTEN,
-            )
-        MoveOutcome.THREAT_UNNAMED ->
-            IntentOutcome.Rejected(
-                "that sense named no such threat",
-                EventTag.RETREAT_THREAT_UNNAMED,
-            )
-        MoveOutcome.THREAT_GONE ->
-            IntentOutcome.Rejected(
-                "the named threat is gone",
-                EventTag.RETREAT_THREAT_GONE,
-            )
-    }
-
 internal fun digOutcome(report: BodyResponse.DigReport): IntentOutcome =
     when (report.outcome) {
         DigOutcome.DUG -> IntentOutcome.Accepted("dug the offered block")
@@ -254,7 +314,11 @@ internal fun collectOutcome(report: BodyResponse.CollectReport): IntentOutcome =
         CollectOutcome.ITEM_CHANGED -> rejected("collect item changed", EventTag.COLLECT_ITEM_CHANGED)
         CollectOutcome.OUT_OF_RANGE ->
             rejected("collect item out of range", EventTag.COLLECT_OUT_OF_RANGE)
-        CollectOutcome.NO_ROUTE -> rejected("collect route unavailable", EventTag.COLLECT_NO_ROUTE)
+        CollectOutcome.NO_ROUTE ->
+            rejected(
+                "no standable cell within pickup reach of the item has a route",
+                EventTag.COLLECT_NO_ROUTE,
+            )
         CollectOutcome.SEARCH_OVER_BUDGET ->
             rejected("collect search over budget", EventTag.COLLECT_SEARCH_OVER_BUDGET)
         CollectOutcome.STALLED -> rejected("collect approach stalled", EventTag.COLLECT_STALLED)
@@ -337,12 +401,45 @@ private val PLACE_REFUSALS: Map<PlaceOutcome, IntentOutcome.Rejected> =
             IntentOutcome.Rejected("place library failure", EventTag.PLACE_LIBRARY_FAILURE),
     )
 
-private fun retreatTag(outcome: MoveOutcome): String =
-    when (outcome) {
-        MoveOutcome.ARRIVED -> EventTag.RETREAT_SAFE
-        MoveOutcome.CANCELLED -> EventTag.RETREAT_SUPERSEDED
-        MoveOutcome.SENSE_FORGOTTEN -> EventTag.RETREAT_THREAT_FORGOTTEN
-        MoveOutcome.THREAT_UNNAMED -> EventTag.RETREAT_THREAT_UNNAMED
-        MoveOutcome.THREAT_GONE -> EventTag.RETREAT_THREAT_GONE
-        else -> EventTag.RETREAT_FAILED
+/** The sense answer a world-interaction request names its authority from. */
+private fun senseIdOf(controlRequest: BodyRequest): String =
+    when (controlRequest) {
+        is BodyRequest.Dig -> controlRequest.senseId
+        is BodyRequest.Collect -> controlRequest.senseId
+        is BodyRequest.Place -> controlRequest.senseId
+        is BodyRequest.Equip -> controlRequest.senseId
+        is BodyRequest.Craft -> controlRequest.senseId
+        is BodyRequest.Attack -> controlRequest.senseId
+        is BodyRequest.Sleep -> controlRequest.senseId
+        else -> error("only world-interaction requests are recorded here")
     }
+
+/** What an approaching interaction's route stated beyond its journey: its one correction, if any. */
+private fun approachEvidenceOf(claim: ServerInteractionClaim): dev.loom.body.MovementEvidence? =
+    when (claim) {
+        is ServerInteractionClaim.Collect -> movementEvidenceOf(null, claim.report.recovery)
+        is ServerInteractionClaim.Attack -> movementEvidenceOf(null, claim.report.recovery)
+        else -> null
+    }
+
+/**
+ * Where an approaching interaction's body went, against where its offered target was, so an
+ * ending such as a collect that arrived and timed out can be attributed from the record alone.
+ */
+private fun journeyOf(claim: ServerInteractionClaim): String =
+    when (claim) {
+        is ServerInteractionClaim.Collect ->
+            journey(claim.report.from, claim.report.position, claim.report.travelled, claim.offered.position)
+        is ServerInteractionClaim.Attack ->
+            journey(claim.report.from, claim.report.position, claim.report.travelled, claim.offeredTarget.position)
+        else -> ""
+    }
+
+private fun journey(
+    from: List<Double>,
+    position: List<Double>,
+    travelled: Double,
+    target: List<Double>,
+): String =
+    "; from ${from.joinToString(",")} to ${position.joinToString(",")} travelled $travelled; " +
+        "target at ${target.joinToString(",")}"

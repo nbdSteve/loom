@@ -12,7 +12,9 @@ import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
+import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
+import dev.loom.body.ShownGoal
 import dev.loom.body.describe
 import dev.loom.body.tagOf
 import dev.loom.contract.Decision
@@ -39,8 +41,12 @@ class DecisionJournal(
         agentId: AgentId,
         decision: Decision,
         goal: GoalEvidence? = null,
+        shown: ShownGoal? = null,
     ) {
-        append(agentId, decision, BodyEvent.DECIDED, "${describe(decision.intent)}: ${decision.reasoning}", goal)
+        eventLog.append(
+            recordOf(agentId, decision, BodyEvent.DECIDED, "${describe(decision.intent)}: ${decision.reasoning}")
+                .copy(goal = goal, shown = shown),
+        )
     }
 
     /**
@@ -59,6 +65,47 @@ class DecisionJournal(
             decision,
             BodyEvent.DECISION_DISCARDED,
             "${describe(decision.intent)} was not applied: no body for this agent, which has died or travelled",
+        )
+    }
+
+    /**
+     * Records a decision decided and billed that is deliberately never applied, under the countable
+     * [outcome] that says why, which tells it apart from a discard for a body that has gone:
+     * [EventTag.DANGER_PREEMPTED] when newer damage preempted it while it was with the mind and the
+     * newer answer governs the body, and [EventTag.EXPOSURE_ENDED] when it arrived after the run's
+     * exposure had ended and nothing new may count.
+     */
+    fun withheld(
+        agentId: AgentId,
+        decision: Decision,
+        outcome: String,
+        why: String,
+    ) {
+        eventLog.append(
+            recordOf(
+                agentId,
+                decision,
+                BodyEvent.DECISION_DISCARDED,
+                "${describe(decision.intent)} was not applied: $why",
+            ).copy(outcome = outcome),
+        )
+    }
+
+    /** Records that [perception] was sent at the ordinary tier because the pivotal ceiling no longer fits it. */
+    fun tierFallback(
+        agentId: AgentId,
+        perception: Perception,
+    ) {
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.COGNITION_TIER_FALLBACK,
+                detail = "sent at the ordinary tier: the pivotal ceiling no longer fits it",
+                requestId = perception.requestId,
+                trigger = tagOf(perception.trigger),
+                outcome = EventTag.TIER_FALLBACK,
+            ),
         )
     }
 
@@ -95,27 +142,72 @@ class DecisionJournal(
         )
     }
 
+    /** Records that [agentId]'s due scheduled review waits, for the countable [reason]. */
+    fun reviewDeferred(
+        agentId: AgentId,
+        reason: String,
+    ) {
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.GOAL_REVIEW_DEFERRED,
+                detail = "a scheduled goal review is due and waits: $reason",
+                trigger = tagOf(dev.loom.contract.Trigger.GoalReview),
+                outcome = reason,
+            ),
+        )
+    }
+
+    /**
+     * Records a decision refused before the body was asked, because it contradicts its own goal.
+     *
+     * The intentApplied record a body would have written, under the refusal's own tag, so the
+     * invariant of one intentApplied or one decisionDiscarded per decided still holds.
+     */
+    fun refused(
+        agentId: AgentId,
+        decision: Decision,
+        tag: String,
+    ) {
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.INTENT_APPLIED,
+                detail = "${describe(decision.intent)} -> refused before the body: $tag",
+                requestId = decision.requestId,
+                intent = tagOf(decision.intent),
+                outcome = tag,
+            ),
+        )
+    }
+
     private fun append(
         agentId: AgentId,
         decision: Decision,
         event: BodyEvent,
         detail: String,
-        goal: GoalEvidence? = null,
     ) {
-        eventLog.append(
-            BodyEventRecord(
-                tick = currentTick(),
-                // Loom's own id for the agent it asked about, never the mind's echo of
-                // it, so no answer can file a record against another agent.
-                agentId = agentId.value,
-                event = event,
-                detail = detail,
-                requestId = decision.requestId,
-                provenance = decision.provenance,
-                intent = tagOf(decision.intent),
-                decision = decision,
-                goal = goal,
-            ),
-        )
+        eventLog.append(recordOf(agentId, decision, event, detail))
     }
+
+    private fun recordOf(
+        agentId: AgentId,
+        decision: Decision,
+        event: BodyEvent,
+        detail: String,
+    ): BodyEventRecord =
+        BodyEventRecord(
+            tick = currentTick(),
+            // Loom's own id for the agent it asked about, never the mind's echo of
+            // it, so no answer can file a record against another agent.
+            agentId = agentId.value,
+            event = event,
+            detail = detail,
+            requestId = decision.requestId,
+            provenance = decision.provenance,
+            intent = tagOf(decision.intent),
+            decision = decision,
+        )
 }

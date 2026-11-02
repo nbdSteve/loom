@@ -31,8 +31,17 @@ child is still alive can mean another exclusive action owns the player. The coor
 records a refused intent and leaves the process ready; it must not turn expected action
 contention into a disconnect or terminate a healthy child.
 
-The wire is **sixteen operations at protocol generation 5**, and the split between them is
+The wire is **sixteen operations at protocol generation 8**, and the split between them is
 the split this whole package is built on.
+Generation 8 moved because every movement answer may state the one correction its walk made
+(`recovery`) and an arrival the `departure` its check found, which a controller meets without
+asking; see "A walk checks it can be left" below.
+Generation 7 moved because a dig report may answer `blockChanged` after the dig was handed to
+Mineflayer: the world turned the offered block into another, as grass spreads onto dirt, before
+this body's own finish, and the dig is stopped rather than finished on a block it was not offered.
+Generation 6 moved because a dig report may answer `blockGone` after the dig was handed to
+Mineflayer: another player broke the block while this body was still digging it, and `dug` is
+this body's own break only, the server's update answering its own finish.
 Generation 5 moved because the body-chosen entity, block, and dropped-item response lists
 widened from 24 to 48 entries. Generation 4 moved because `sense` gained body-chosen
 recipe offers and the craft, attack, and sleep reports introduced new closed outcome sets.
@@ -60,8 +69,11 @@ dropped-item and inventory offers from one retained `sense` answer.
 An `equip` is `equipped` only after a bounded settle window in which the server did not
 restate the window to undo it, because Mineflayer moves the stack locally before the server
 answers and a vanilla server answers a refused click only with that restatement.
+A `flee` with `replace` may take over from a running walk or flight: its threat is checked first and a refused one leaves the running movement alone, and a valid one ends it as `cancelled` and holds the body until it has drained (`REPLACE_SETTLE_MS`), so nothing else takes the body between them.
+A takeover still waiting when a newer replacing flight or a halt arrives is displaced and answers `cancelled` without having moved, its separation measured against its threat where it stands, so an older flight can never start after a newer one (r34 beta).
 `craft`, `attack` and `sleep` likewise name one offered recipe, one offered living target
 and weapon, or one offered bed, with bounded quantity, swings, pursuit and wait.
+Every `sense` first waits, at most `SERVER_ORDER_MS` (500), for one ordered statistics round trip (`src/server-order.js`), so the client has read every inventory, health and block update the server sent before it: the path rehearsal's epsilon claimed one log four ticks after the server had picked up its second, with a 694 ms round trip, and the witness disputed it. At most `MAX_REMEMBERED_SENSES` senses wait at once across every connection, and one more is refused `notReady` at once, so a flood spends its connection's budget as it is read rather than after its round trips; a connection this process has ended reads no further frame. A `sense` that arrives while this body's own craft application owns the inventory is then read at that application's settled boundary, at most `SENSE_SETTLE_MAX_MS` later, because a client between two craft clicks holds its ingredients in the crafting grid, a state the server passes through inside one tick (r29 beta); the craft then holds its next application `SENSE_BOUNDARY_HOLD_MS`, because the server applies clicks between its once-a-tick witness samples (r32 eta).
 `say` sends one line the controller chose through this player's own chat; `src/speaking.js`
 owns it.
 Its text is refused unless it is 1 to 128 code points and at most 256 UTF-8 bytes, carries no
@@ -162,21 +174,21 @@ Drive it over the control channel, on one connection, since a handshake is per
 connection and each `requestId` may be used once:
 
 ```sh
-{ printf '{"op":"handshake","protocol":5,"requestId":"h1","agentId":"loom.demo.body"}\n'
+{ printf '{"op":"handshake","protocol":8,"requestId":"h1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"status","protocol":5,"requestId":"s1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"status","protocol":8,"requestId":"s1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"sense","protocol":5,"requestId":"n1","agentId":"loom.demo.body","radius":24,"limit":48}\n'
+  printf '{"op":"sense","protocol":8,"requestId":"n1","agentId":"loom.demo.body","radius":24,"limit":48}\n'
   sleep 1
-  printf '{"op":"eat","protocol":5,"requestId":"e1","agentId":"loom.demo.body","senseId":"n1","slot":36}\n'
+  printf '{"op":"eat","protocol":8,"requestId":"e1","agentId":"loom.demo.body","senseId":"n1","slot":36}\n'
   sleep 1
-  printf '{"op":"flee","protocol":5,"requestId":"f1","agentId":"loom.demo.body","senseId":"n1","entity":0,"distance":16,"timeoutMs":10000,"sprint":true}\n'
+  printf '{"op":"flee","protocol":8,"requestId":"f1","agentId":"loom.demo.body","senseId":"n1","entity":0,"distance":16,"timeoutMs":10000,"sprint":true}\n'
   sleep 12
-  printf '{"op":"moveTo","protocol":5,"requestId":"m1","agentId":"loom.demo.body","destination":[12,64,12],"tolerance":0,"timeoutMs":10000,"sprint":false}\n'
+  printf '{"op":"moveTo","protocol":8,"requestId":"m1","agentId":"loom.demo.body","destination":[12,64,12],"tolerance":0,"timeoutMs":10000,"sprint":false}\n'
   sleep 1
-  printf '{"op":"halt","protocol":5,"requestId":"z1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"halt","protocol":8,"requestId":"z1","agentId":"loom.demo.body"}\n'
   sleep 1
-  printf '{"op":"shutdown","protocol":5,"requestId":"x1","agentId":"loom.demo.body"}\n'
+  printf '{"op":"shutdown","protocol":8,"requestId":"x1","agentId":"loom.demo.body"}\n'
   sleep 1
 } | nc 127.0.0.1 25585
 ```
@@ -190,7 +202,16 @@ world-observation lists up to 48 entries each. Recipes retain their independent 
 ceiling and use the smaller of that ceiling and the requested limit.
 Only dropped items and blocks the body can see are listed, because each one is a handle a
 `collect`, `dig` or `place` may name and those refuse what the body cannot see; anything behind
-a wall or under the ground is skipped, not counted as omitted. Sight to an item is aimed at its
+a wall or under the ground is skipped, not counted as omitted. The one exception is a dropped item
+the controller names by its server uuid in the request's optional `retainItems`, at most eight:
+it is listed with `visible` false, because Loom names an agent's own dig drops so the agent can
+collect what its own dig dropped, and naming it chooses nothing the controller did not ask for.
+The entity list's one exception is the same kind of ask: an entity the controller names by its
+server uuid in `retainEntities`, at most four, is listed inside the radius even when nearer ones
+fill the limit, in place of the farthest one the limit would have kept, and the omission count
+still counts what was cut. Loom names the creature that has just hurt the agent, so a skeleton
+shooting from past a crowd can still be fled from or struck (v32 plains rehearsal 15).
+Sight to an item is aimed at its
 centre, as it is to a creature, because a ray to the point it rests on meets the floor. Sight to
 a block is aimed at its centre and then at each face turned toward the eyes, because a centre
 ray meets a nearer floor block first and would call open ground more than two blocks away
@@ -217,6 +238,10 @@ That is one rule for both fields, and `src/eating.js`'s header owns it.
 
 A `moveTo` names a destination in world coordinates, how far short of it still counts as
 arriving, how long the request may take, and whether it may sprint.
+The coordinates are the controller's, never the mind's: Loom's JVM derives them from one block
+an earlier `sense` answer of this connection reported - the cell above a solid block, or the
+block's own cell where the server reports it passable - because the mind names a walk by that
+block's ref. The body does not move a destination it was given.
 A `flee` names a creature rather than a place: the `senseId` of the answer that showed it,
 and that creature's own index in the answer's `entities` list.
 Both are answered with one of eleven closed outcomes rather than with an error, for the reason
@@ -377,6 +402,20 @@ reported, and a second `halt` after it answers `stopped` false.
   real routes over real ground with no server, no network and no account; only `stalled` and
   `overTravelled` use a recorder, because each needs minutes of wall clock. Cancellation is
   proven by counting live timers and live listeners rather than by reading the source.
+- `test/native-move-terminal.test.js` and `test/native-dig-terminal.test.js` - a walk's
+  arrival and a dig, through the real body process, bot, pathfinder and physics.
+  **`arrived` means landed, not near.** The pathfinder emits `goal_reached` once the last node
+  is within 0.35 blocks horizontally and less than one block vertically, so a walk ending in a
+  step down reached its goal mid-fall, and answering then shut the simulation with the body in
+  the air - which the first ten-agent live run did, after which that agent's every walk was
+  `noRoute`. A reached goal now holds the drained gate until the body has stood still on the
+  ground for `ARRIVAL_SETTLE_TICKS` steps with that same grounded position already written to
+  the server, then re-checks the goal where it came to rest and re-plans under the stall bound
+  if it no longer holds. **No held simulation is released mid-fall either.** A walk that ends
+  any other way with the body in the air - a stall, a deadline, a halt - and a dig that removed
+  the block its body stood on both keep the gate until the body is at rest by the same rule,
+  bounded by `REST_SETTLE_MAX_TICKS`; the fourth ten-agent run left two agents hanging that
+  way, one after digging its own support and one after a stalled flight.
 - `test/libraries.test.js` - the two claims neither the lockfile nor the policy can make
   alone: that every pinned version is the version actually **installed**, and that the
   policy covers every field the library has. Each permissive default is shown to *be*
@@ -432,6 +471,36 @@ The settle checks that teardown once more before the answer is delivered, so an 
 Each half is needed and neither is enough: a dropped deactivation leaves the server sprinting, a dropped final position leaves it one tick behind the report, and an open activation path lets the library move after its terminal event.
 The consequence is deliberate: a body the server left in mid-air stays there until a request
 owns it. Falling is simulation, and simulation is a request's.
+
+**The client's collision must be the server's.**
+Prismarine's physics compares a body's face with a block's face exactly, and vanilla compares them with a 1e-7 tolerance.
+A body clamped flush against a face at a negative coordinate (x = -2.3) has its box face at -1.9999999999999998, 2e-16 inside the block, so the exact comparison misses the collision and the client steps into it.
+The server refuses that move and puts the player back every tick until the stall bound ends the walk or flight.
+`src/collision.js` gives the library's AABB vanilla's tolerance once, from `installMovement`; `test/libraries.test.js` pins the pinned library's own exact comparison, and `test/native-flee-terrain.test.js` replays the two stalled flights on the real s2-ring ground against a server that refuses colliding moves.
+**The search may offer only moves the library's own executor can make.**
+`getMoveDiagonal` admits a diagonal step up one block when either side corridor of the corner is clear, because it costs the cheaper of the two, but a body's box crossing the corner overlaps both side cells as it rises, so a solid block above either one stops the jump; the executor simulates every step before pressing a control and, finding none reaches the node, presses nothing until its futility check resets the route to the identical one.
+r34 delta stood at (-8.43, 66, -27.5) on seed 20011 under an oak leaf at (-8, 68, -28), and three collects and a walking flight stalled there without moving; `ClearanceMovements` refuses such a diagonal unless both side cells are clear at the jump's two heights, and `test/native-r34-delta-terrain.test.js` replays all four on the run's own ground.
+**A walk checks it can be left, and may correct itself once, with typed evidence.**
+A `moveTo` or `flee` that arrives states its `departure`: whether one move the search offers out of the cell it came to rest in is one the executor can make from that exact position.
+Where none is and from the cell's centre one would be, it makes one straight `recentre` step first; a route the library abandons as stuck while the body has not left its start makes one straight `sidestep` into a level cell beside it that the search offers and the executor can make, then resumes the same goal.
+Either is stated as the report's `recovery`, at most one per request, never a teleport and never a loop: a second stall counts against `MAX_STALL_RETRIES` as before.
+**A dig by a body standing on support also holds the simulation, for its ground state alone.**
+Mineflayer answers every server teleport with `onGround: false`, and with the simulation shut
+nothing corrects it, so both Mineflayer's dig time and the server's destroy progress ran at
+vanilla's five-times-slower airborne rate: bare-hand terracotta took 31.25 s against the 20 s
+interaction deadline, and every such dig in the first ten-agent live run timed out.
+`holdSimulation` in `src/movement.js` takes the gate only when nothing owns it, and `digging.js`
+asks for it only when the client is not already grounded and a collision box under the feet
+tops out exactly at the feet, so the step it permits establishes the ground state and moves
+nothing. A body in mid-air is not simulated by a dig and digs at the airborne rate it has.
+`test/native-dig-terminal.test.js` proves both against a server model that judges a finish by
+the last ground state the client wrote.
+**`dug` is the server's answer, not Mineflayer's prediction.** Mineflayer sets the block to air
+locally as it writes the finish and resolves `bot.dig` on that local update, before the server
+has judged the dig. `digging.js` therefore answers `dug` only once a server `block_change` or
+`multi_block_change` at the offered position has left it empty; a server that put the block back,
+or no server answer inside the deadline, is `libraryFailure`, which the contract reserves for a
+result Mineflayer could not confirm.
 
 **None of the six plugins loaded beside the reporting table decides anything, and the line is drawn per
 plugin rather than per method.**
@@ -549,11 +618,23 @@ it.
 
 **The seven native world interactions are one-shot applications of retained authority.**
 `dig` names one offered block and uses only the item already in the main hand.
-`collect` names one exact dropped-item entity and either waits within passive pickup reach or,
-when `approach` is true, gives the existing bounded movement wrapper that entity's sensed
-position as its single fixed destination.
+A dig of the block under the body's own feet cell by a body more than 0.2 off its cell's centre, whose box therefore rests on the column beside its own as well, first takes the same one bounded straight step to the centre of its own cell (`movement.finalApproach`), so the body drops into the cell it dug rather than hanging on the neighbour's edge above it: the provider-free v36 rehearsal's delta did, for the rest of the run, and died there. Nothing is chosen, a halt during the step ends the dig unattempted, and from the centre the block, its reach and its sight are read again.
+`collect` names one exact dropped-item entity and either waits within passive pickup reach - inside vanilla's grown pickup box from where the body stands (`withinPickup`), never a straight-line distance - or,
+when `approach` is true, gives the existing bounded movement wrapper one search for any of the
+cells a body could stand in whose pickup box covers that entity's sensed position
+(`pickupCells`, `movement.approach`).
+Those cells are fixed by the item's position and vanilla's geometry, not chosen: vanilla picks an item up only inside the player's box grown by one block sideways and half a block vertically, a stop one cell short of an item lying far into its block arrives outside that reach, and the item's own cell may have nothing to stand on - r15's stick hung over a one-block trench from the edge of the block beside it, and five walks to its own cell were refused `noRoute`.
+A cell counts when its box reaches the item, with 0.1 to spare, from at least one collision-safe point - a centre where the body's box fits the cell whole (`pickupPoint`) - and because a walk ends where the pathfinder first stands in the cell rather than at that point, a route that ends out of reach is followed by one bounded straight step inside the cell to it (`movement.finalApproach`: under one block, at most 20 simulated ticks, the simulation held and released exactly as a route's).
+Counting only cells that reached the item from every point of their floor (`covers`) refused the r28 plains rehearsal's alpha `noRoute` for its own dirt in a one-high nook beside its pit, 0.08 past the box from where it stood and inside it from its cell's east side (`test/native-collect-terminal.test.js`).
+`noRoute` therefore means no point a body can stand at within pickup reach of the item has a route.
 `place` names one support block, one offered slot and one face; the exact offered stack must
 already be in the selected main hand, so placement never equips or searches.
+A destination a living creature the body can see stands in, the body's own feet or head cell, or one that holds what a placed block does not replace is refused as `destinationBlocked` before any packet, because vanilla will not place a block there. A destination is air or a block vanilla's 1.21.1 `minecraft:replaceable` tag lets the placed block replace (short grass, a fern, water, one snow layer, never a flower or a torch): the provider-free v36 rehearsal's delta could close no shelter face that held short grass.
+A destination only the body's own box reaches into, because the body stands off its cell's centre (a route ends up to 0.35 of a block off it, and a pickup or a blow carries a body further), is cleared first by one bounded straight step to the centre of the body's own cell (`movement.finalApproach`, which lets go a glide short of its point so the body comes to rest on it), after which the destination, reach and sight are read again; where no such step can be taken on the same support, it is refused before any packet. Nothing is chosen: the centre is the cell's own, and a halt during the step ends it with nothing sent.
+The server answers one placement packet by resending the destination, placed or not, and then acknowledging the packet's sequence (`acknowledge_player_digging`), so the placement settles at that acknowledgement: `placed` when the destination now holds a block other than the one it held, `destinationBlocked` when a body stands in it, and `libraryFailure` otherwise. Only a server that never answers waits out the deadline.
+Mineflayer writes every block sequence as 0, and the server acknowledges the highest sequence it handled in a tick, so the packet carries a fresh sequence of its own and only an acknowledgement of it settles the placement: the acknowledgement of a dig cancelled for the placement, handled a tick earlier, is not its answer.
+r39 iota closed a face its own box reached 0.227 of a block into; on real Paper the server refused it, resent air and acknowledged it in 54 ms, and a body that read only a placed block as an answer held its one exclusive owner for 330 ticks under fire, until the agent died.
+The shift key is held for that one packet and released when the placement settles, however it settles, as a player places against a block: unheld, vanilla uses an interactable support instead - a crafting table opens its window and nothing is placed (the provider-free v36 rehearsal's delta, twelve times) - and held, the server places against any support. Both shift packets pass the shut movement gate as its one-packet permit (`writeShift`), so no other control packet escapes with them.
 `equip` names one offered slot and one of the closed destinations `hand`, `offHand`, `head`,
 `torso`, `legs` or `feet`; Mineflayer may choose the concrete hotbar slot for `hand`, and the
 report states the slot it actually used.
@@ -568,6 +649,7 @@ through a 500 ms loopback drain. If the library still has not settled, or attemp
 click packet after the terminal boundary, the terminal answer is sent with the gate closed
 and the Minecraft client disconnects in the next microtask; later work is never allowed to
 share an inventory transaction whose server result is still unknown.
+Mineflayer predicts a craft in the client's own window, so the inventory shows the recipe's delta before the server has handled one click, and an answer there reached the plugin before Paper's `CraftItemEvent` (path rehearsal run-rd3c1K alpha, a disputed craft the server applied). Each applied application therefore waits for one `client_command` statistics request (action 1, never the respawn's 0) to come back as `statistics`, which vanilla handles on its main thread after every click written before it, before a waiting sense reads its boundary or the craft answers, so a sense never describes a boundary the server has not reached; a request ended during that wait serves no boundary afterwards; the wait is bounded by `CRAFT_SERVER_ORDER_MS` (500) and the request deadline, and a halt or lost connection ends it at once. An answer names no request, so answers are matched to requests by their order on the connection, and a late answer to a wait that timed out never releases a later craft.
 `attack` names one exact retained living entity and one exact offered weapon stack. It emits
 at most four swings, stops at the supplied health floor, and may make at most one bounded
 approach to the target's sensed position. It never follows a moving target, begins a second
@@ -646,8 +728,8 @@ It cannot be left out, because a player's movement in Minecraft is *client*-simu
 is no "server, please walk me there" packet - so a body that can be asked to walk has to
 simulate and report its own position, and that plugin is where all of it is.
 So it is loaded by the module that scopes it: both halves of it are held shut unless one
-accepted `moveTo`, `flee`, or explicitly approaching `collect` or `attack` owns the path,
-and the timer paragraph above is the whole of what that does and does not cover.
+accepted `moveTo`, `flee`, or explicitly approaching `collect` or `attack` owns the path, or
+a dig by a supported body holds it for its ground state, and the timer paragraph above is the whole of what that does and does not cover.
 Mineflayer's `digging` plugin is loaded by `digging.js`, and `generic_place` by
 `placing.js`. Loading them defines `bot.dig`, `bot.stopDigging` and `_genericPlace`; it
 does not call one. The surrounding module supplies the retained offer, revalidation,
@@ -741,6 +823,25 @@ The ability is not a flag at all: `Movements` has no swim setting, so the mechan
 in `blocksToAvoid`, which makes a route through it cost more than the search will pay.
 A body that falls in still floats, because that is Prismarine physics doing what vanilla
 does rather than a policy of Loom's.
+**A walk that starts in water may swim out of it, and only such a walk.**
+r27 epsilon drowned at the bottom of its own flooded pit: every walk onto the dry floor two blocks above its feet was refused `noRoute`, because the search had no move at all from a water cell.
+For a walk whose body stands in water, `EscapeMovements` lets water be passed and adds the moves the library lacks: straight up through water while the head is under it, then out along an axis onto a block whose top is at most one above the feet, with the library's own jump measured from the water rather than from the block under it, and a node floating over the water treated as the top water cell it is.
+A body that starts dry still treats water as a wall.
+`test/native-water-escape.test.js` replays the pit offline, and the same walks out of epsilon's real pit on seed 20011 arrive on Paper.
+
+**The server's world border is a wall, and the one step exclusion a route is searched under.**
+Mineflayer keeps no border state and Prismarine's physics collides with blocks alone, so a search that did not know the border routed over it, and the server put the player back on every step until the stall bound ended the request.
+`src/border.js` reads the four border packets, takes the smaller end of a changing border, and prices every cell of a column a body's box would cross the border from as more than the search will pay.
+The v29 plains rehearsal's theta stalled three times against the 128-block border and iota died against it; `test/native-flee-border.test.js` replays theta's crater flight on its converged ground, and the JVM's `BukkitBlockGround` closes the same cells so no walk past the border is offered.
+The border also bounds what a body may touch: vanilla refuses every dig of, and placement against, a block outside it (`WorldBorder.isWithinBounds`) and puts the block back, so a sense reports no block past it (`blockInside`), and a dig or placement the border has since moved past answers `notDiggable` or `destinationBlocked` with no packet written.
+r36 zeta was offered short grass one column past the 128-block border, and Mineflayer's predicted break waited out the 20 s deadline as `libraryFailure`; `test/native-dig-border.test.js` replays it on zeta's ground.
+
+**A flight may end only on safe ground.**
+`SafeFlightGoal` holds the library's inverted goal to an end at least `FLIGHT_BORDER_MARGIN_BLOCKS` (3) inside the world border and no more than `MAX_FLIGHT_DESCENT_BLOCKS` (4) below the lower of where the flight began and the ground around it (`flightFloorOf`: the median standing height of sixteen columns six blocks off, with trees read through); the route may pass anywhere.
+In r23 eight flights ended against the border and one agent spent 1100 ticks pinned in a ravine along it.
+**Every end the goal refuses is search work the inverted goal no longer ends on its first pop for**, so a restriction measured from the wrong place turns an ordinary flight into one the budget stops.
+Measured from the start alone, the floor held a body on an oak's canopy six blocks above the grass to the canopy, and its flight searched 9108 nodes to the budget on real Paper (v32 plains rehearsal, beta); measured from the ground the same flight finds its way down in 67 (`test/native-flee-canopy.test.js`).
+A flee may also name `avoid`, other entities of the same sense answer: the end must then be no nearer to any than the flight began, at least `FLIGHT_OTHER_CLEARANCE_BLOCKS` (8) from any it began further from, and its least separation from all of them must grow. The controller names them, so the body still chooses nothing, and an entity gone since the answer is passed over (r24: gamma's flight from a spider ended 0.6 blocks from a creeper).
 
 **Sprinting is the one ability a request decides, which is why the policy is built per
 request.**

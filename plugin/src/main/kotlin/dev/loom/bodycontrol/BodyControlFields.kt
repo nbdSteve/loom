@@ -33,9 +33,11 @@ import kotlin.math.sqrt
  *
  * It moved from 4 to 5 when the body-chosen entity, block, and dropped-item response
  * lists widened from 24 to 48 entries. Adding request operation names alone would not
- * have moved it; widening a body-chosen answer does.
+ * have moved it; widening a body-chosen answer does. It moved from 7 to 8 when every
+ * movement answer gained the one correction its walk may make and an arrival the
+ * departure its check found (r34 delta); see `BodyControlRecovery.kt`.
  */
-const val BODY_CONTROL_PROTOCOL_VERSION: Int = 5
+const val BODY_CONTROL_PROTOCOL_VERSION: Int = 8
 
 /** The shortest a requestId or agentId may be, mirroring the schema's `minLength`. */
 private const val CONTROL_ID_MIN_CHARS = 1

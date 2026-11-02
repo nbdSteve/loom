@@ -21,6 +21,7 @@ package dev.loom.mind
 
 import dev.loom.body.AgentId
 import dev.loom.body.BodyPort
+import dev.loom.body.EventTag
 import dev.loom.contract.Trigger
 
 /**
@@ -49,17 +50,21 @@ class AutonomousDriver(
      * [EmbodiedCognition.consider] itself.
      */
     fun sweep() {
-        for (agent in due()) {
+        val living = bodies.liveBodies()
+        val now = currentTick()
+        val followed = schedule.claimFollowUps(living, now, mind::canReview)
+        for (agent in followed) {
+            mind.consider(agent, Trigger.StepSettled)
+        }
+        // One review per agent per sweep: one being followed up waits for a later slice.
+        val ready = { agent: AgentId -> agent !in followed && mind.canReview(agent) }
+        // A due review the agent cannot take waits, recorded once with why.
+        val held = { agent: AgentId ->
+            val reason = if (agent in followed) EventTag.FOLLOW_UP_CLAIMED else mind.reviewHoldOf(agent)
+            mind.journal.reviewDeferred(agent, reason ?: EventTag.REVIEW_IN_FLIGHT)
+        }
+        for (agent in schedule.claim(living, now, ready, held)) {
             mind.consider(agent, Trigger.GoalReview)
         }
     }
-
-    /**
-     * The agents to review this sweep.
-     *
-     * Living agents only, because a body is what a perception is taken with and
-     * what a decision is applied to. A dead agent never appears: Loom is
-     * permadeath, so it has no body and will never have another one.
-     */
-    private fun due(): List<AgentId> = schedule.claim(bodies.liveBodies(), currentTick())
 }

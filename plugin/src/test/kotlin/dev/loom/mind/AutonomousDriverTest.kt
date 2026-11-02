@@ -83,6 +83,8 @@ class AutonomousDriverTest {
 
     private fun agents(count: Int): Set<AgentId> = (1..count).map { AgentId("agent-$it") }.toSet()
 
+    private val schedule = GoalReviewSchedule(CADENCE, SLICES)
+
     /** A driver over [bodies] whose mind answers every perception with a move. */
     private fun driverFor(
         bodies: BodyPort,
@@ -98,13 +100,13 @@ class AutonomousDriverTest {
                     onUnavailable = { _, failure -> fail("unexpected: $failure") },
                 ),
             )
-        return AutonomousDriver(bodies, cognition, GoalReviewSchedule(CADENCE, SLICES)) { now }
+        return AutonomousDriver(bodies, cognition, schedule) { now }
     }
 
     /** A cooperative mind: records what it was asked and answers at once. */
     private fun answer(perception: Perception): CompletableFuture<Decision> {
         asked.add(perception)
-        return CompletableFuture.completedFuture(decisionFor(perception, Intent.MoveTo(listOf(1L, 64L, 2L))))
+        return CompletableFuture.completedFuture(decisionFor(perception, Intent.MoveTo("b1")))
     }
 
     @Test
@@ -125,6 +127,36 @@ class AutonomousDriverTest {
         assertEquals(DecisionImportance.ROUTINE, asked.single().importance)
         // And the decision reaches the body, on the main thread, as an action.
         assertEquals(listOf(agent), bodies.applied)
+    }
+
+    @Test
+    @DisplayName("a review due while the last is still with the mind waits, recorded once with why")
+    fun aHeldReviewIsRecordedOnce() {
+        val agent = AgentId("agent-1")
+        val bodies = FakeBodies(setOf(agent))
+        val records = mutableListOf<dev.loom.body.BodyEventRecord>()
+        val cognition =
+            EmbodiedCognition(
+                bodies,
+                CognitionBridge { CompletableFuture<Decision>() },
+                main,
+                DecisionJournal(dev.loom.body.BodyEventLog { records.add(it) }, currentTick = { now }),
+                CognitionCallbacks(onUnavailable = { _, failure -> fail("unexpected: $failure") }),
+            )
+        val driver = AutonomousDriver(bodies, cognition, schedule) { now }
+        driver.sweep()
+        main.drain()
+        now = CADENCE
+        repeat(3) {
+            driver.sweep()
+            main.drain()
+            now += schedule.sliceTicks
+        }
+        val deferred = records.filter { it.event == dev.loom.body.BodyEvent.GOAL_REVIEW_DEFERRED }
+        assertEquals(listOf(dev.loom.body.EventTag.REVIEW_IN_FLIGHT), deferred.map { it.outcome })
+        assertEquals(CADENCE, deferred.single().tick)
+        assertEquals("goalReview", deferred.single().trigger)
+        assertEquals(listOf(agent), bodies.perceived, "the held review took no perception")
     }
 
     @Test
@@ -187,5 +219,27 @@ class AutonomousDriverTest {
         assertEquals(1, main.pending, "the completed body read still returns through the main thread")
         main.drain()
         assertEquals(0, main.pending, "an unanswered mind schedules no action")
+    }
+
+    @Test
+    @DisplayName("a settled goal step is followed up as its own trigger, and never doubled with a review")
+    fun aSettledStepIsReviewedAsStepSettled() {
+        val agent = AgentId("agent-1")
+        val bodies = FakeBodies(setOf(agent))
+        val driver = driverFor(bodies)
+        driver.sweep()
+        main.drain()
+        schedule.settled(agent, now, owed = false)
+        now += FOLLOW_UP_DELAY_TICKS
+        driver.sweep()
+        main.drain()
+        assertEquals(listOf(Trigger.GoalReview, Trigger.StepSettled), asked.map { it.trigger })
+        assertEquals(DecisionImportance.ROUTINE, asked.last().importance)
+        // The follow-up's own step owes nothing more: the next review is the scheduled one.
+        schedule.settled(agent, now, owed = false)
+        now = CADENCE
+        driver.sweep()
+        main.drain()
+        assertEquals(listOf(Trigger.GoalReview, Trigger.StepSettled, Trigger.GoalReview), asked.map { it.trigger })
     }
 }

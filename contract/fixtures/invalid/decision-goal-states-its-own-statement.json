@@ -1,0 +1,1 @@
+{"requestId":"req-goal-1","agentId":"agent-delta","intent":{"action":"moveTo","onto":"b3"},"reasoning":"trees to the east","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"},"goal":{"disposition":"adopt","statement":"gather wood","successItem":"item.minecraft.oak_log","successCount":8,"step":"walk to the oak tree to the east"}}

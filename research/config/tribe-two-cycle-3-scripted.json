@@ -1,7 +1,7 @@
 {
   "experimentId": "2026-10-15-scripted-two-cycle-3-agent-rehearsal",
   "title": "Credential-free 3-agent two-cycle rehearsal",
-  "mode": "routine-v13-goal-continuity",
+  "mode": "routine-v38-reliable-source",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -53,17 +53,17 @@
       "pivotal": "scripted-stand-in"
     },
     "prompts": {
-      "routine": "routine-v13",
-      "notable": "notable-v13",
-      "pivotal": "pivotal-v13"
+      "routine": "routine-v38",
+      "notable": "notable-v38",
+      "pivotal": "pivotal-v38"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,
     "providerEndpoint": null,
     "providerTimeoutMillis": 12000,
     "maxRequestBytes": 65536,
-    "perAgentCallCeiling": 56,
-    "globalCallCeiling": 150,
+    "perAgentCallCeiling": 64,
+    "globalCallCeiling": 192,
     "globalOutstandingCeiling": 3,
     "maxOutputTokens": 2048,
     "maxExternalSpendUsd": 0,
@@ -118,7 +118,8 @@
     "nativeGoalReviewSchedule": {
       "cadenceTicks": 2400,
       "sliceTicks": 100,
-      "expectedReviewsPerAgent": 21
+      "expectedReviewsPerAgent": 21,
+      "followUpsPerReview": 1
     },
     "externalCognitionStimuli": "none",
     "startingInventories": "empty",

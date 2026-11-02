@@ -166,7 +166,8 @@ function attackOfferedTarget (bot, movement, {
         position: currentPosition(),
         travelled: journey.travelled ?? routeTravelled,
         elapsedMs: elapsedSince(startedAt, now),
-        attacks: attacksSent
+        attacks: attacksSent,
+        ...(journey.recovery === undefined ? {} : { recovery: journey.recovery })
       })
     }
 
@@ -246,7 +247,8 @@ function attackOfferedTarget (bot, movement, {
           tolerance: 2,
           timeoutMs,
           sprint,
-          owner
+          owner,
+          departs: false
         })
         if (route === undefined) return finish('libraryFailure')
         const report = await route

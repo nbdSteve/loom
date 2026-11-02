@@ -13,8 +13,10 @@ import dev.loom.body.ThreatCandidate
 import dev.loom.body.WorldTargetRefBinding
 import dev.loom.bodycontrol.BodyResponse
 import dev.loom.contract.DecisionImportance
+import dev.loom.contract.ExploreTarget
 import dev.loom.contract.Observation
 import dev.loom.contract.Perception
+import dev.loom.contract.RecalledSource
 import dev.loom.contract.SelfState
 import dev.loom.contract.Trigger
 import java.util.UUID
@@ -40,10 +42,16 @@ internal data class PlayerScene(
     val entitySubjects: Map<Int, UUID>,
     val droppedItemSubjects: Map<Int, UUID>,
     val surroundings: List<Observation>,
+    /** The ref of the creature that just hurt the agent, when this scene was asked to keep it. */
+    val attackerRef: String? = null,
     val surroundingsOmitted: Long,
     val perceptionAudit: PerceptionAudit,
     val candidates: List<ThreatCandidate>,
     val selfState: SelfState,
+    /** The cells at the edge of sight this perception offers, each with the cell a walk ends in. */
+    val explore: List<Pair<ExploreTarget, List<Int>>> = emptyList(),
+    /** The sources of items out of sight the body saw recently. */
+    val recalled: List<RecalledSource> = emptyList(),
 ) {
     fun perception(trigger: Trigger): Perception =
         Perception(
@@ -55,8 +63,18 @@ internal data class PlayerScene(
             selfState = selfState,
             surroundings = surroundings,
             surroundingsOmitted = surroundingsOmitted,
+            explore = explore.map { it.first },
+            recalled = recalled,
         )
 }
+
+/** What one sense offered beyond its observations, each resolved when an action names it. */
+internal data class SenseTargets(
+    /** The cell each exploration ref of this sense names, where a walk to it ends. */
+    val exploreCells: Map<String, List<Int>> = emptyMap(),
+    /** The ref of the block under the feet this sense offered as a shelter's descent, if any. */
+    val descend: String? = null,
+)
 
 internal class HeldSense(
     val raw: RawSense,
@@ -64,6 +82,8 @@ internal class HeldSense(
     val entitySubjects: Map<Int, UUID>,
     val droppedItemSubjects: Map<Int, UUID>,
     val rememberedAt: Long,
+    /** What this sense offered beyond its observations: exploration cells and a descent. */
+    val targets: SenseTargets = SenseTargets(),
 ) {
     private val closed = AtomicBoolean()
     var keepalive: ScheduledFuture<*>? = null
@@ -117,6 +137,13 @@ internal class PlayerSenseSessions(
             scene.entitySubjects,
             scene.droppedItemSubjects,
             scene.raw.capturedTick,
+            SenseTargets(
+                scene.explore.associate {
+                        (target, cell) ->
+                    target.ref to cell
+                },
+                scene.selfState.cover?.descend,
+            ),
         ).also { sense ->
             held.getOrPut(agentId) { LinkedHashMap() }[requestId] = sense
         }

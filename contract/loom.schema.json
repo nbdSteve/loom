@@ -12,9 +12,9 @@
     },
 
     "Bearing": {
-      "description": "A horizontal compass bearing from the agent to something it can see. Four cardinal points and no finer, because it is the engine's own nearest-axis answer for the delta and a bearing precise enough to look like a heading would be a precision the body did not measure.",
+      "description": "A horizontal compass bearing from the agent to something it can see. Four cardinal points and no finer, because it is the engine's own nearest-axis answer for the delta and a bearing precise enough to look like a heading would be a precision the body did not measure. here is the one value that is not a direction: the thing lies in the agent's own block column, within half a block horizontally - the block it stands on, a plant it stands in, something directly overhead - for which any compass point would be invented.",
       "type": "string",
-      "enum": ["north", "east", "south", "west"]
+      "enum": ["north", "east", "south", "west", "here"]
     },
 
     "ObservationKind": {
@@ -27,6 +27,85 @@
       "description": "One face of a sensed support block. A place intent combines the support block's request-scoped ref with this face, so the location is chosen without accepting an arbitrary coordinate.",
       "type": "string",
       "enum": ["down", "up", "north", "south", "west", "east"]
+    },
+
+    "CoverFace": {
+      "description": "One of the nine faces around the two cells a standing body fills: the four cells beside its feet, the four beside its head, and the cell over its head. A creature can reach the body only through a face the server gives no collision.",
+      "type": "string",
+      "enum": ["feetNorth", "feetEast", "feetSouth", "feetWest", "headNorth", "headEast", "headSouth", "headWest", "roof"]
+    },
+
+    "Closing": {
+      "description": "One placement that would close an open face of the agent's cover: a held block placed against the named side of the named sensed support block lands in that face's cell.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["face", "block", "side"],
+      "properties": {
+        "face": { "$ref": "#/$defs/CoverFace" },
+        "block": {
+          "description": "The request-scoped ref of the sensed support block, in sight and in reach, to place against.",
+          "$ref": "#/$defs/EntityRef"
+        },
+        "side": { "$ref": "#/$defs/BlockFace" }
+      }
+    },
+
+    "Cover": {
+      "description": "How enclosed the agent stands, read from the server's own ground at the cells around its body: what a shelter is made of. Server-observed geometry, never the mind's claim.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sealed", "walkOut", "open", "closings", "blockItems"],
+      "properties": {
+        "sealed": {
+          "description": "Whether the open space the body stands in is closed on every side: no cell of it, searched from the body's own two cells through every cell the server gives no collision, leads further than a small enclosure, so no creature can walk, climb or swim in. A sealed agent is sheltered.",
+          "type": "boolean"
+        },
+        "walkOut": {
+          "description": "Whether a short walk leads out of where the body stands, by the steps a body makes. False in a pit deeper than a jump or a sealed shelter: no flight can run from there.",
+          "type": "boolean"
+        },
+        "open": {
+          "description": "The faces around the body the server gives no collision, each at most once.",
+          "type": "array",
+          "maxItems": 9,
+          "items": { "$ref": "#/$defs/CoverFace" }
+        },
+        "closings": {
+          "description": "For open faces a held block could close from where the body stands, one placement each, at most one per face.",
+          "type": "array",
+          "maxItems": 9,
+          "items": { "$ref": "#/$defs/Closing" }
+        },
+        "descend": {
+          "description": "The ref of the block under the body's feet when digging it drops the body onto solid ground into a cell more enclosed than this one, with no water let in: the one dig that deepens a shelter. Absent otherwise.",
+          "$ref": "#/$defs/EntityRef"
+        },
+        "blockItems": {
+          "description": "Items something in sight can give the agent now - a dig in reach or a drop in sight - that place as a solid block: what a shelter can be closed with when nothing held can.",
+          "type": "array",
+          "maxItems": 8,
+          "items": { "allOf": [{ "$ref": "#/$defs/ItemName" }, { "not": { "const": "item.minecraft.air" } }] }
+        },
+        "gathers": {
+          "description": "For a shelter whose faces can close but nothing held can close them: the refs of blocks in reach a safe dig of which yields a solid block - none of the shelter's own faces, its roof or its floor - and of solid dropped items in sight, whose gathering is a step of the shelter goal itself rather than a goal of its own. Absent when there is nothing to gather or nothing to close.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/EntityRef" }
+        }
+      }
+    },
+
+    "CoverProgress": {
+      "description": "A shelter goal's body-measured cover: how many of the nine faces around the body are closed, how many more a held block could close from where it stands, and whether the space it stands in is sealed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["closed", "closable", "sealed"],
+      "properties": {
+        "closed": { "type": "integer", "minimum": 0, "maximum": 9 },
+        "closable": { "type": "integer", "minimum": 0, "maximum": 9 },
+        "sealed": { "type": "boolean" }
+      }
     },
 
     "EquipmentDestination": {
@@ -74,6 +153,18 @@
           "description": "How many items the stack holds. At least one, because an empty slot is not reported at all.",
           "type": "integer",
           "minimum": 1
+        },
+        "edible": {
+          "description": "Whether the server says the stack can be eaten. Absent when the body did not say, which reads as no: a meal is offered only from a stack the server named food.",
+          "type": "boolean"
+        },
+        "solid": {
+          "description": "Whether the server says the stack places as a solid block, one no creature passes. Absent when the body did not say, which reads as no: a shelter is closed only with a stack the server named solid.",
+          "type": "boolean"
+        },
+        "held": {
+          "description": "Whether the server says the stack is in the main hand, which a placement must already be holding. Absent when the body did not say, which reads as no.",
+          "type": "boolean"
         }
       }
     },
@@ -148,6 +239,7 @@
         "inventorySummary",
         "craftingOptions",
         "craftingOptionsOmitted",
+        "ownDrops",
         "world"
       ],
       "properties": {
@@ -191,7 +283,86 @@
           "type": "integer",
           "minimum": 0
         },
-        "world": { "$ref": "#/$defs/WorldState" }
+        "ownDrops": {
+          "description": "What the server saw this agent's own recent digs drop, newest first, attributed to the request whose dig dropped it. Told to the digger whether or not the drop is in sight, and whatever became of it since, so a dig that dropped something another agent then took is still known to have yielded.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/OwnDrop" },
+          "maxItems": 8
+        },
+        "world": { "$ref": "#/$defs/WorldState" },
+        "cover": {
+          "description": "How enclosed the agent stands, from the server's ground. Absent where the body has no server ground to read.",
+          "$ref": "#/$defs/Cover"
+        }
+      }
+    },
+
+    "GoalRefusal": {
+      "description": "One goal decision the body refused before acting: which request, the countable outcome tag it was refused with, and - for a success condition it judged - the item, the total asked for, how many were held and how many more what was in sight could give.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "outcome"],
+      "properties": {
+        "requestId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "outcome": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "successItem": { "$ref": "#/$defs/ItemName" },
+        "asked": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "held": { "type": "integer", "minimum": 0 },
+        "capacity": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "OwnDrop": {
+      "description": "One stack the server dropped for one of this agent's digs. fate is what became of it: lying where the server can still see it, collected by this agent, taken by another player, or gone (merged, despawned or destroyed). distance, direction and verticalOffset place a lying drop from the agent now, measured the way an observation's are, and are present exactly when fate is lying.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "what", "count", "fate"],
+      "properties": {
+        "requestId": {
+          "description": "The perception request id of the decision whose dig dropped this stack.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "what": { "$ref": "#/$defs/ItemName" },
+        "count": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "fate": { "$ref": "#/$defs/DropFate" },
+        "distance": { "type": "number", "minimum": 0 },
+        "direction": { "$ref": "#/$defs/Bearing" },
+        "verticalOffset": { "type": "number" },
+        "ref": {
+          "description": "The dropped-item observation in this perception that is this drop, so a collect may name it; present only for a lying drop the body offered, in sight or not.",
+          "$ref": "#/$defs/EntityRef"
+        }
+      },
+      "if": { "properties": { "fate": { "const": "lying" } } },
+      "then": { "required": ["distance", "direction", "verticalOffset"] },
+      "else": {
+        "allOf": [
+          { "not": { "required": ["distance"] } },
+          { "not": { "required": ["direction"] } },
+          { "not": { "required": ["verticalOffset"] } },
+          { "not": { "required": ["ref"] } }
+        ]
+      }
+    },
+
+    "DropFate": {
+      "description": "What became of a stack an agent's own dig dropped.",
+      "type": "string",
+      "enum": ["lying", "collected", "taken", "gone"]
+    },
+
+    "BlockYield": {
+      "description": "One item digging a block with what the body holds can drop, and how many: the server's loot rules are random, so least is the fewest it dropped in the server's sampled rolls and most the most, a least of 0 means a dig may drop none of it at all, and perHundred is how many of it a hundred digs drop on average in those rolls - the expected yield, which for a rare drop is far below the middle of its range. perHundred lies between 100 times least and 100 times most.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "least", "most", "perHundred"],
+      "properties": {
+        "what": { "allOf": [{ "$ref": "#/$defs/ItemName" }, { "not": { "const": "item.minecraft.air" } }] },
+        "least": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "most": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "perHundred": { "type": "integer", "minimum": 0, "maximum": 6400 }
       }
     },
 
@@ -208,7 +379,41 @@
             }
           },
           "then": { "required": ["count"] },
-          "else": { "not": { "required": ["count"] } }
+          "else": {
+            "allOf": [
+              { "not": { "required": ["count"] } },
+              { "not": { "required": ["routeRefused"] } }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "entity" }
+            }
+          },
+          "then": true,
+          "else": { "not": { "required": ["hunts"] } }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "block" }
+            }
+          },
+          "then": { "required": ["standable", "yields", "digSafe"] },
+          "else": {
+            "allOf": [
+              { "not": { "required": ["standable"] } },
+              { "not": { "required": ["yields"] } },
+              { "not": { "required": ["digSafe"] } },
+              { "not": { "required": ["cover"] } }
+            ]
+          }
+        },
+        {
+          "if": { "required": ["cover"] },
+          "then": { "properties": { "standable": { "const": true } } }
         }
       ],
       "properties": {
@@ -238,6 +443,34 @@
           "description": "How many items the dropped-item entity currently represents. Present only when kind is droppedItem; absent for entities and blocks. The bindings enforce that relation.",
           "type": "integer",
           "minimum": 1
+        },
+        "routeRefused": {
+          "description": "Present, and true, only for a dropped item this agent's body has already found no way to from where it stands: no route at all, for as long as the item lives (r15), or a route its approach stalled on from this same cell to the item's, over the same ground (r34 delta). It is not offered to collect and gives nothing a goal may count on.",
+          "const": true
+        },
+        "hunts": {
+          "description": "Present, and true, only for a creature that hunts the agent's kind, by the body's own list of player hunters: what a goal review may flee from (r20: kappa reviewed at health 7.7 beside a zombie and a skeleton, was offered only dirt digs, and died).",
+          "const": true
+        },
+        "yields": {
+          "description": "The items digging this block with what the body holds can drop, each with the range the server's own random loot rules give: empty when it drops nothing, such as bare-hand terracotta. Never air. Present only when kind is block.",
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/BlockYield" }
+        },
+        "digSafe": {
+          "description": "Whether digging this block is safe: it leaves the body a way out, its drop where the body can collect it, the body dry, and, at night or as nightfall nears, the sealed space the body stands in sealed. Present only when kind is block.",
+          "type": "boolean"
+        },
+        "standable": {
+          "description": "Whether a body can stand at this block: on top of a solid block with two open cells above it, or in the own cell of a block the server gives no collision, with solid ground below and an open cell above. Read from the server's ground rather than from sight, because a block whose face is visible can still be covered. Present only when kind is block; absent for entities and dropped items. The bindings enforce that relation.",
+          "type": "boolean"
+        },
+        "cover": {
+          "description": "For a block a body can stand at, how many of the nine faces around the cell it would stand in the server gives collision: natural cover in sight, nine for a cell closed on every side. Present only for a standable block.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
         }
       }
     },
@@ -266,7 +499,21 @@
           "properties": {
             "event": { "const": "damaged" },
             "amount": { "type": "integer" },
-            "source": { "type": "string" }
+            "source": { "type": "string" },
+            "attackerRef": {
+              "description": "The creature that dealt the damage - a projectile's shooter, not the projectile - as the ref this perception's own surroundings name it by, so a flight or a strike can name the one creature that hurt the agent rather than the nearest of its kind. Present only when the server identified the attacker and this perception shows it; such an attacker is always among the surroundings and always offered to flee and to attack within reach, however many nearer creatures there are. Absent for damage no creature dealt, and for an attacker the body could not see or report.",
+              "$ref": "#/$defs/EntityRef"
+            },
+            "healthBefore": {
+              "description": "The server's own health of the agent's body when the hit landed, before it was applied. Present together with healthAfter whenever the server witnessed the hit.",
+              "type": "number",
+              "minimum": 0
+            },
+            "healthAfter": {
+              "description": "The server's own health of the agent's body once the hit was applied: its health before the hit less the hit's final damage, never below zero. A damaged perception's selfState.health is this value, because the body's own reading can still be the one before the hit (r34: alpha took 14 from a creeper and was shown health 20 when it had 6 left). Present together with healthBefore.",
+              "type": "number",
+              "minimum": 0
+            }
           }
         },
         {
@@ -274,7 +521,7 @@
           "description": "A living thing that hunts this agent's kind came into the body's view. Everything the body already verified about it travels with the trigger, so the mind never has to ask a second question to decide whether to run: which thing it is (as a ref it can name back), how far and in which direction it lies, whether the body can actually see it, and whether the engine's own bounded ground search found a route to it.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["event", "threat", "ref", "distance", "direction", "visible", "reachable"],
+          "required": ["event", "threat", "ref", "distance", "direction", "visible"],
           "properties": {
             "event": { "const": "threatSighted" },
             "threat": {
@@ -292,7 +539,7 @@
               "type": "boolean"
             },
             "reachable": {
-              "description": "Whether the engine's own bounded ground search found a route that reaches the threat. It is the search the body made from itself toward the threat, not the threat's toward the body, so false means no walkable route was found within the body's own budgeted search - a fenced-off or cliff-separated threat, and not a promise that nothing is coming. It is the result of a search the body already paid for, not an invitation for the mind to ask for another.",
+              "description": "Whether the engine's own bounded ground search found a route that reaches the threat. It is the search the body made from itself toward the threat, not the threat's toward the body, so false means no walkable route was found within the body's own budgeted search - a fenced-off or cliff-separated threat, and not a promise that nothing is coming. It is the result of a search the body already paid for, not an invitation for the mind to ask for another. Absent when the body made no such search, which is the player body's case: it was a constant false there, and the mind read it as no route to flee (r20).",
               "type": "boolean"
             }
           }
@@ -316,6 +563,16 @@
           "required": ["event"],
           "properties": {
             "event": { "const": "goalReview" }
+          }
+        },
+        {
+          "title": "StepSettled",
+          "description": "The step the agent's held goal last took has ended, so the agent reviews that goal again at once rather than at its next scheduled review. At most one follows each scheduled goal review. Empty variant.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event"],
+          "properties": {
+            "event": { "const": "stepSettled" }
           }
         }
       ]
@@ -363,9 +620,81 @@
           "minimum": 0
         },
         "goal": {
-          "description": "The agent's held short-term goal, present only on a goalReview perception and only while one is held.",
+          "description": "The agent's held short-term goal, present only on a goalReview or stepSettled perception and only while one is held.",
           "$ref": "#/$defs/GoalSummary"
+        },
+        "lastRefusal": {
+          "description": "Why the body refused the agent's previous goal decision before acting on it, told once, at the next goalReview or stepSettled perception.",
+          "$ref": "#/$defs/GoalRefusal"
+        },
+        "explore": {
+          "description": "Cells beyond what the body can see where it can stand, one per compass bearing at most, each a moveTo target named by its ref, so an agent that sees nothing worth doing can walk to look further. They state no more than where a body can stand; what lies there is unknown until the body senses it.",
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/ExploreTarget" }
+        },
+        "recalled": {
+          "description": "Sources of items the body saw recently and does not see now, nearest first: where the nearest one of each item was, and the expected yield of a dig of it in hundredths. A goal for a recalled item is walked toward by the cells at the edge of sight in its direction (r20: no agent without a log in sight could set a log goal, and the only walk to the edge of sight came with an abandon).",
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/RecalledSource" }
+        },
+        "horizon": {
+          "description": "Goal items the agent may set a total for beyond what sight alone guarantees, each grounded in a source seen now or remembered, or in a known recipe whose input is so grounded, with the most a goal of it may ask: past what the grounding gives only onto ground beyond the edge of sight. Nothing the agent's own footing guarantees grounds one (r22: every goal was dirt from underfoot, and no agent looked for wood).",
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/HorizonGoal" }
         }
+      }
+    },
+
+    "RecalledSource": {
+      "description": "Where the body last saw a source of an item it does not see now, placed from the agent the way an observation is.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "distance", "direction", "verticalOffset", "perHundred"],
+      "properties": {
+        "what": { "allOf": [{ "$ref": "#/$defs/ItemName" }, { "not": { "const": "item.minecraft.air" } }] },
+        "distance": { "type": "number", "minimum": 0 },
+        "direction": { "$ref": "#/$defs/Bearing" },
+        "verticalOffset": { "type": "number" },
+        "perHundred": { "type": "integer", "minimum": 1, "maximum": 6400 }
+      }
+    },
+
+    "HorizonGoal": {
+      "description": "One goal item the agent may set a total for beyond what sight guarantees, what grounds it, and the most a goal of it may ask.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "grounding", "most", "frontier"],
+      "properties": {
+        "what": { "allOf": [{ "$ref": "#/$defs/ItemName" }, { "not": { "const": "item.minecraft.air" } }] },
+        "grounding": {
+          "description": "What grounds the goal: a source in sight now, a source remembered out of sight, or a known recipe whose input `via` is grounded by either.",
+          "enum": ["sight", "recalled", "recipe"]
+        },
+        "via": {
+          "description": "For a recipe-grounded goal, the grounded input its recipe is made from; absent otherwise.",
+          "allOf": [{ "$ref": "#/$defs/ItemName" }, { "not": { "const": "item.minecraft.air" } }]
+        },
+        "most": { "description": "The largest total a goal of this item may ask, counting what is held.", "type": "integer", "minimum": 1, "maximum": 64 },
+        "frontier": { "description": "Whether that total reaches past what the grounding gives, onto ground beyond the edge of sight.", "type": "boolean" }
+      },
+      "if": { "properties": { "grounding": { "const": "recipe" } } },
+      "then": { "required": ["via"] },
+      "else": { "not": { "required": ["via"] } }
+    },
+
+    "ExploreTarget": {
+      "description": "One standable cell at the edge of sight, placed from the agent the way an observation is.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "distance", "direction", "verticalOffset"],
+      "properties": {
+        "ref": { "$ref": "#/$defs/EntityRef" },
+        "distance": { "type": "number", "minimum": 0 },
+        "direction": { "$ref": "#/$defs/Bearing" },
+        "verticalOffset": { "type": "number" }
       }
     },
 
@@ -385,18 +714,13 @@
         },
         {
           "title": "MoveTo",
-          "description": "Move toward a target block position [x, y, z].",
+          "description": "Walk to stand on top of one nearby block named by the request-scoped ref it carried in the perception being answered. A ref rather than coordinates on purpose: a perception states where things are as a bearing, a distance and a vertical offset, never as coordinates, so a coordinate the mind wrote was a guess - and in a live run every such guess that failed named open air. The body resolves the ref against that one request only and walks to where a body stands on the exact sensed block: the cell directly above a solid block, or the block's own cell where the server gives it no collision (a dead bush, grass, a flower). The ground decides whether that cell can be reached and stood in, and nothing below the mind picks another one.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["action", "target"],
+          "required": ["action", "onto"],
           "properties": {
             "action": { "const": "moveTo" },
-            "target": {
-              "type": "array",
-              "items": { "type": "integer" },
-              "minItems": 3,
-              "maxItems": 3
-            }
+            "onto": { "$ref": "#/$defs/EntityRef" }
           }
         },
         {
@@ -544,20 +868,103 @@
       "maxLength": 160
     },
 
-    "GoalDisposition": {
-      "description": "What a goal review's decision does with the agent's short-term goal. adopt starts one where none is held; continue keeps the held goal; revise rewords the held goal under the same goalId; complete and abandon end it. Choosing any of them is independent of the intent, so continuing a goal while idling is legal.",
+    "IntentAction": {
+      "description": "The action an Intent takes, as its action tag. A held goal's typed step is the action its affirming decision's intent took.",
       "type": "string",
-      "enum": ["adopt", "continue", "revise", "complete", "abandon"]
+      "enum": ["say", "moveTo", "flee", "eat", "dig", "collect", "place", "equip", "craft", "attack", "sleep", "rest", "idle"]
+    },
+
+    "ItemName": {
+      "description": "An item exactly as the body names it in an inventory stack's what, such as item.minecraft.stick: always item.namespace.path. A success condition names the item its goal must hold.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^item\\.[a-z0-9_]+\\.[a-z0-9_.]+$"
+    },
+
+    "GoalDisposition": {
+      "description": "What a goal review's decision does with the agent's short-term goal. adopt starts one where none is held; continue keeps the held goal; revise changes the held goal's target under the same goalId; replace abandons the held goal and adopts a new one in the same answer, under this decision's own id; complete and abandon end it. adopt, continue, revise and replace take the decision's intent as the goal's step, so the body refuses them beside an idle or rest intent, which is no step.",
+      "type": "string",
+      "enum": ["adopt", "continue", "revise", "replace", "complete", "abandon"]
+    },
+
+    "GoalStepResult": {
+      "description": "The mind's verdict on the step its previous goal review took, judged against the progress evidence the carried goal states: done finished that step, progressing moved it forward, noProgress did not.",
+      "type": "string",
+      "enum": ["done", "progressing", "noProgress"]
+    },
+
+    "GoalReason": {
+      "description": "Why a replace or an abandon ends the held goal, by evidence the body checks: completed, its success condition is met (a replace only); impossible, what is held and could be given no longer reaches it, or no shelter step exists; stale, it advanced nothing for the stall bound's steps in a row; unsafe, a shelter goal replaces another as night nears and the agent stands exposed; superseded, a replace by a different objective, chosen deliberately for the reason the decision's reasoning states.",
+      "type": "string",
+      "enum": ["completed", "impossible", "unsafe", "stale", "superseded"]
     },
 
     "GoalChoice": {
-      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. statement is the goal's wording for adopt and revise; the body refuses an adopt or revise without one, and ignores it on the other dispositions.",
+      "description": "A decision's explicit, machine-auditable choice about the agent's short-term goal. successItem and successCount are the goal and its success condition: holding that many of that item in total, counting what is held now, which the body measures and words itself. Both are for adopt, revise and replace, and the body refuses a count fewer than two beyond what the inventory holds plus the agent's own drops of the item lying in reach - a goal one step could meet is no objective - or one more than it holds plus what is in sight could give, and applies the upper bound to a continue; more of the held goal's own item is a revise, which keeps the goal, never a replace. step words the one concrete next step this decision's intent takes toward the goal, for adopt, continue, revise and replace; the body types that step from the intent itself, and refuses one that cannot produce the goal's item. stepResult judges the carried goal's previous step, for every disposition except adopt. The body refuses a choice missing a field its disposition requires, and ignores the rest. reason states why a replace or an abandon ends the held goal, and the body refuses either without one, or with one its evidence does not support.",
       "type": "object",
       "additionalProperties": false,
       "required": ["disposition"],
       "properties": {
         "disposition": { "$ref": "#/$defs/GoalDisposition" },
-        "statement": { "$ref": "#/$defs/GoalStatement" }
+        "successItem": { "$ref": "#/$defs/ItemName" },
+        "successCount": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "step": { "$ref": "#/$defs/GoalStatement" },
+        "stepResult": { "$ref": "#/$defs/GoalStepResult" },
+        "discover": {
+          "description": "For an adopt or replace with no success item: a discovery goal, whose success condition is that a walk to the edge of sight reveals a useful resource no footing gives, set only while no item goal is grounded, stepped only by such a walk, and replaced by an item goal once it reveals one (r23: 17 of 70 reviews could set no goal at all).",
+          "const": true
+        },
+        "shelter": {
+          "description": "For an adopt or replace with no success item: a shelter goal, whose success condition is that the server's ground seals the space the agent stands in, stepped by a dig that deepens the cover, a placement that closes an open face, or a walk onto natural cover, and offered as night nears or while it lasts.",
+          "const": true
+        },
+        "feeds": {
+          "description": "For an adopt while a shelter goal is held and nothing held can close it: the item goal adopted is a resource subgoal that feeds the shelter goal, which waits under it and is held again once the subgoal is completed or abandoned. Historical: from routine-v36 gathering a closer is a step of the shelter goal itself, and no subgoal is offered.",
+          "const": true
+        },
+        "reason": { "$ref": "#/$defs/GoalReason" }
+      }
+    },
+
+    "GoalProgress": {
+      "description": "Body-measured evidence about the goal since its last affirming review, never claimed by the mind. conditionHeld is how many of the success item the inventory holds now and conditionMet whether that reaches successCount. inventoryDelta is every item whose held count changed. conditionAdvanced says the held count rose; stepAdvanced says the typed step was carried out, which for a walk means arriving somewhere the goal had not been. stepsWithoutProgress counts affirmed steps in a row that advanced neither; moving about, falling or returning advances nothing.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conditionMet", "conditionHeld", "inventoryDelta", "conditionAdvanced", "stepAdvanced", "stepEvidence", "stepsWithoutProgress"],
+      "properties": {
+        "conditionMet": { "type": "boolean" },
+        "conditionHeld": { "type": "integer", "minimum": 0 },
+        "inventoryDelta": {
+          "type": "array",
+          "maxItems": 46,
+          "items": { "$ref": "#/$defs/InventoryChange" }
+        },
+        "conditionAdvanced": { "type": "boolean" },
+        "stepAdvanced": { "type": "boolean" },
+        "stepEvidence": { "$ref": "#/$defs/StepEvidence" },
+        "stepsWithoutProgress": { "type": "integer", "minimum": 0 },
+        "cover": {
+          "description": "For a shelter goal, its cover as this review measured it; conditionMet then says the cover is sealed.",
+          "$ref": "#/$defs/CoverProgress"
+        }
+      }
+    },
+
+    "StepEvidence": {
+      "description": "What showed the goal's last step was carried out: arrived for a walk that reached its visible target somewhere new to the goal, gained for an action after which the inventory held more of the goal's item, gainedInput for one after which it held more of a direct input of a recipe for the goal's item, dropped for a dig the server saw drop something for this agent's own request, wherever it went after, revealed for a walk to the edge of sight that arrived where a source of the goal's item was then in sight, covered for a shelter goal's step after which the server's ground showed the agent more enclosed than the goal had yet been - more faces closed, or more closable from where it stands, or sealed - none when nothing did. Only a step with evidence advances.",
+      "type": "string",
+      "enum": ["arrived", "gained", "gainedInput", "dropped", "revealed", "covered", "none"]
+    },
+
+    "InventoryChange": {
+      "description": "How the held count of one item changed since the goal's last affirming review: positive gained, negative lost, never zero.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "change"],
+      "properties": {
+        "what": { "$ref": "#/$defs/ItemName" },
+        "change": { "type": "integer", "not": { "const": 0 } }
       }
     },
 
@@ -589,7 +996,7 @@
     },
 
     "GoalSummary": {
-      "description": "The one short-term goal the agent's previous goal review left held, carried into this goal review and no other trigger. Body-owned state, isolated per agent and bounded in size and lifetime.",
+      "description": "The one short-term goal the agent's previous goal review left held, carried into a goalReview or stepSettled perception and no other trigger. Body-owned state, isolated per agent and bounded in size and lifetime.",
       "type": "object",
       "additionalProperties": false,
       "required": ["goalId", "statement", "revision", "adoptedTick"],
@@ -611,7 +1018,36 @@
           "type": "integer",
           "minimum": 0
         },
-        "lastStep": { "$ref": "#/$defs/GoalStep" }
+        "lastStep": { "$ref": "#/$defs/GoalStep" },
+        "successItem": { "$ref": "#/$defs/ItemName" },
+        "successCount": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "step": {
+          "description": "The step the goal's last affirming review chose to take.",
+          "$ref": "#/$defs/GoalStatement"
+        },
+        "stepAction": {
+          "description": "The action the step's decision's intent took.",
+          "$ref": "#/$defs/IntentAction"
+        },
+        "stepRef": {
+          "description": "The ref that intent acted on, absent for an action that names none.",
+          "$ref": "#/$defs/EntityRef"
+        },
+        "discovery": {
+          "description": "Whether the goal is a discovery goal: no success item, met when a walk to the edge of sight reveals a useful resource no footing gives.",
+          "type": "boolean"
+        },
+        "shelter": {
+          "description": "Whether the goal is a shelter goal: no success item, met when the server's ground seals the space the agent stands in.",
+          "type": "boolean"
+        },
+        "feeds": {
+          "description": "For a resource subgoal, the goalId of the shelter goal it feeds, which is held again once this goal is completed or abandoned.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "progress": { "$ref": "#/$defs/GoalProgress" }
       }
     },
 

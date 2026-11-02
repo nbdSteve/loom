@@ -3,7 +3,12 @@
 const net = require('node:net')
 
 const { validatedCognitionFailure } = require('./cognition-failure.js')
-const { ADMISSION_CLOSED_EVENT, PROXY_REQUEST_TIMEOUT_MILLIS } = require('./controlled-stop.js')
+const {
+  ADMISSION_CLOSED_EVENT,
+  PROXY_REQUEST_TIMEOUT_MILLIS,
+  isProviderRequestFailure,
+  providerStopFor
+} = require('./controlled-stop.js')
 
 const MAX_FRAME_BYTES = 256 * 1024
 const REFUSAL_BOUNDS = Object.freeze([
@@ -15,8 +20,13 @@ const REFUSAL_BOUNDS = Object.freeze([
   'spend'
 ])
 
-function refusal (message) {
-  return `${JSON.stringify({ error: message })}\n`
+function refusal (message, code) {
+  return `${JSON.stringify({ error: message, ...(code === undefined ? {} : { code }) })}\n`
+}
+
+// Damage, or a pivotal sighting: the danger an agent may borrow unused global calls for.
+function isUrgentDanger (perception) {
+  return perception?.trigger?.event === 'damaged' || perception?.importance === 'PIVOTAL'
 }
 
 class CognitionBudgetProxy {
@@ -56,7 +66,10 @@ class CognitionBudgetProxy {
     this.requestTimeoutMilliseconds = requestTimeoutMilliseconds
     this.spend = this.checkedSpend(spend)
     this.total = 0
+    this.pivotal = 0
+    this.reservedNanoUsd = 0
     this.admissionClosed = null
+    this.stopping = false
     this.refusedByBound = {}
     this.outstanding = 0
     this.perAgent = new Map()
@@ -89,14 +102,19 @@ class CognitionBudgetProxy {
   // any provider usage is known.
   checkedSpend (configured) {
     if (configured === undefined) return null
-    const { ceilingNanoUsd, worstCaseCallNanoUsd } = configured
+    const { ceilingNanoUsd, worstCaseCallNanoUsd, tier } = configured
     if (
       !Number.isSafeInteger(ceilingNanoUsd) || ceilingNanoUsd < 0 ||
       !Number.isSafeInteger(worstCaseCallNanoUsd) || worstCaseCallNanoUsd < 0
     ) {
       throw new Error('spend bound must be non-negative integer nano-USD')
     }
-    return { ceilingNanoUsd, worstCaseCallNanoUsd }
+    // With a tier, each call is reserved at its own tier's worst price, so cheap routine calls
+    // no longer spend the ceiling as if every one were pivotal (r24).
+    if (tier !== undefined && !(Number.isSafeInteger(tier.ordinary) && Number.isSafeInteger(tier.pivotal))) {
+      throw new Error('tier spend bounds must be integer nano-USD')
+    }
+    return { ceilingNanoUsd, worstCaseCallNanoUsd, tier }
   }
 
   // Returns the post-crash threshold this call would cross, or null.
@@ -120,7 +138,13 @@ class CognitionBudgetProxy {
   }
 
   // The first bound this call would cross, in a fixed order, with its exact numbers.
-  crossedBound (agentId, agentCalls) {
+  // What one call of `importance` reserves of the spend ceiling.
+  callNanoUsd (importance) {
+    if (this.spend?.tier === undefined) return this.spend?.worstCaseCallNanoUsd ?? 0
+    return importance === 'PIVOTAL' ? this.spend.tier.pivotal : this.spend.tier.ordinary
+  }
+
+  crossedBound (agentId, agentCalls, importance, borrowing = false) {
     const calls = (bound, reason, ceiling, observed) =>
       ({ bound, reason, unit: 'calls', ceiling, observed })
     if (this.admissionClosed !== null) {
@@ -137,16 +161,21 @@ class CognitionBudgetProxy {
     if (this.total >= this.budget.globalCallCeiling) {
       return calls('globalCall', 'globalCallCeiling', this.budget.globalCallCeiling, this.total)
     }
-    if (agentCalls >= this.budget.perAgentCallCeiling) {
+    if (agentCalls >= this.budget.perAgentCallCeiling && !borrowing) {
       return calls('perAgentCall', 'perAgentCallCeiling', this.budget.perAgentCallCeiling, agentCalls)
     }
     const reserve = this.reserveBlocks(agentId, agentCalls)
     if (reserve !== null) {
       return calls('postCrashReserve', 'postCrashCallReserve', reserve.ceiling, reserve.observed)
     }
+    if (Number.isInteger(this.budget.pivotalCallCeiling) && importance === 'PIVOTAL' &&
+      this.pivotal >= this.budget.pivotalCallCeiling) {
+      return calls('pivotalCall', 'pivotalCallCeiling', this.budget.pivotalCallCeiling, this.pivotal)
+    }
     if (this.spend !== null) {
-      const reserved = this.total * this.spend.worstCaseCallNanoUsd
-      if (reserved + this.spend.worstCaseCallNanoUsd > this.spend.ceilingNanoUsd) {
+      const reserved = this.spend.tier === undefined ? this.total * this.spend.worstCaseCallNanoUsd : this.reservedNanoUsd
+      const next = this.callNanoUsd(importance)
+      if (reserved + next > this.spend.ceilingNanoUsd) {
         return {
           bound: 'spend',
           reason: 'spendCeiling',
@@ -191,6 +220,15 @@ class CognitionBudgetProxy {
       forwardedCalls: this.total
     })
     return true
+  }
+
+  // The harness is about to stop its processes. A call still with the mind is cut off by that
+  // stop rather than by a fault upstream, so from here it ends as `runStopping` and never reaches
+  // [onUnavailable]; and nothing new is admitted (r28: the SIGTERM that stopped cognition ended
+  // alpha's in-flight damage call as `upstreamUnavailable`, which read as a provider failure).
+  beginStopping () {
+    this.stopping = true
+    this.admissionClosed ??= { reason: 'runStopping' }
   }
 
   snapshot () {
@@ -276,7 +314,10 @@ class CognitionBudgetProxy {
     const agentCalls = this.perAgent.get(agentId) ?? 0
     const origin = this.requestOrigin(perception.trigger?.event)
     const originField = origin === undefined ? {} : { origin }
-    const crossed = this.crossedBound(agentId, agentCalls)
+    // Urgent danger past the agent's own ceiling borrows unused global calls (R41: alpha's damage
+    // calls past its 40 were refused while 31 of 378 went unused); the JVM keeps what others owe.
+    const borrowing = agentCalls >= this.budget.perAgentCallCeiling && isUrgentDanger(perception)
+    const crossed = this.crossedBound(agentId, agentCalls, perception.importance, borrowing)
     if (crossed !== null) {
       this.refusedByBound[crossed.bound] = (this.refusedByBound[crossed.bound] ?? 0) + 1
       const refused = {
@@ -290,13 +331,17 @@ class CognitionBudgetProxy {
       }
       this.journal.append('cognitionRefused', refused)
       this.onRefusal(refused)
-      downstream.write(refusal('cognition request refused by experiment budget'))
+      downstream.write(refusal('cognition request refused by experiment budget', 'budgetRefused'))
       return
     }
 
     this.total += 1
+    if (perception.importance === 'PIVOTAL') this.pivotal += 1
+    this.reservedNanoUsd += this.callNanoUsd(perception.importance)
     this.outstanding += 1
     const outstandingAtAdmission = this.outstanding
+    const admittedAt = performance.now()
+    const latencyMs = () => Math.max(0, Math.round(performance.now() - admittedAt))
     this.perAgent.set(agentId, agentCalls + 1)
     this.consumePostCrashReserve(agentId)
     try {
@@ -322,8 +367,15 @@ class CognitionBudgetProxy {
         outcome: cognitionFailed ? 'cognitionFailure' : 'decision',
         provenance: parsed?.provenance ?? null,
         outstandingAtAdmission,
+        latencyMs: latencyMs(),
         ...originField,
-        ...(failure === null ? {} : { failure })
+        ...(borrowing ? { borrowedCall: true } : {}),
+        ...(failure === null ? {} : { failure }),
+        // A closed public fact beside the private classification evidence does not keep, so a
+        // publisher can tell a provider outage's drained calls from a failure of their own.
+        ...(failure !== null && providerStopFor({}, failure) !== null ? { providerUnavailable: true } : {}),
+        // The same for one request the provider refused, which the run records and continues past.
+        ...(isProviderRequestFailure(failure) ? { providerRefusedRequest: true } : {})
       })
       if (cognitionFailed) {
         this.onCognitionFailure(parsed.error, failure, {
@@ -337,17 +389,19 @@ class CognitionBudgetProxy {
       downstream.write(response)
       downstream.write('\n')
     } catch {
+      const stopping = this.stopping
       this.journal.append('cognitionForwarded', {
         agentId,
         requestId,
         trigger: perception.trigger?.event ?? null,
         importance: perception.importance ?? null,
-        outcome: 'upstreamUnavailable',
+        outcome: stopping ? 'runStopping' : 'upstreamUnavailable',
         outstandingAtAdmission,
+        latencyMs: latencyMs(),
         ...originField
       })
-      this.onUnavailable({ agentId, requestId })
-      downstream.write(refusal('cognition upstream was unavailable'))
+      if (!stopping) this.onUnavailable({ agentId, requestId })
+      downstream.write(refusal(stopping ? 'cognition was stopped with the run' : 'cognition upstream was unavailable'))
     } finally {
       this.outstanding -= 1
     }

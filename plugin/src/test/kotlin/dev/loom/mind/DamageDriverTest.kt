@@ -23,12 +23,24 @@ import java.util.concurrent.CompletableFuture
 private val ALPHA = AgentId("agent-alpha")
 private val BETA = AgentId("agent-beta")
 
+/** The server uuid of a skeleton that shot the agent. */
+private const val SKELETON = "00000000-0000-4000-8000-000000000900"
+
 /** A body whose perceptions the test completes by hand. */
 private class DamagedBodies(
     val living: MutableSet<AgentId> = mutableSetOf(ALPHA, BETA),
 ) : BodyPort {
     val perceived = mutableListOf<Pair<AgentId, Trigger>>()
     val pending = mutableListOf<CompletableFuture<Perception?>>()
+
+    /** The attacker each damage perception was asked to name, in order. */
+    val attackers = mutableListOf<String?>()
+
+    override val damage: dev.loom.body.DamagePerception =
+        dev.loom.body.DamagePerception { agent, trigger, attacker ->
+            attackers += attacker
+            perceive(agent, trigger)
+        }
     private var sequence = 0
 
     override fun spawn(agentId: AgentId) = fail("damage never spawns")
@@ -86,10 +98,15 @@ private class DamageRig(
         amount: Double = 6.0,
         tick: Long = 100,
         source: String = "zombie",
-        playerDead: Boolean = false,
-    ) = driver.witnessed(
-        DamageReport(agent, amount, source, tick, WitnessedPlayer("uuid-${agent.value}", agent.value), playerDead),
-    )
+        attacker: String? = null,
+    ) = driver.witnessed(reportOf(agent, amount, tick, source).copy(attacker = attacker))
+
+    fun reportOf(
+        agent: AgentId,
+        amount: Double = 6.0,
+        tick: Long = 100,
+        source: String = "zombie",
+    ) = DamageReport(agent, amount, source, tick, WitnessedPlayer("uuid-${agent.value}", agent.value))
 
     fun outcomes(): List<String?> = records.filter { it.event == BodyEvent.DAMAGE_WITNESSED }.map { it.outcome }
 }
@@ -113,6 +130,51 @@ class DamageDriverTest {
         assertEquals(requestId, record.requestId)
         assertEquals(EventTag.DAMAGED, record.trigger)
         assertEquals(WitnessedPlayer("uuid-agent-alpha", "agent-alpha"), record.witness)
+    }
+
+    @Test
+    fun `a damaged perception shows the server's own health after the hit, not the body's reading before it`() {
+        // r34 alpha body:00002061: 14 from a creeper at 20 health, and the perception said 20.
+        val rig = DamageRig()
+        rig.driver.witnessed(rig.reportOf(ALPHA, 14.0, source = "creeper").copy(healthBefore = 20.0, healthAfter = 6.0))
+        val asked = rig.bodies.perceived.single().second as Trigger.Damaged
+        assertEquals(20.0, asked.healthBefore)
+        assertEquals(6.0, asked.healthAfter)
+        rig.bodies.capture(0)
+        rig.main.drain()
+
+        val sent = rig.submitted.single()
+        assertEquals(6.0, sent.selfState.health, "the body's own sense said 20")
+        assertEquals(6.0, (sent.trigger as Trigger.Damaged).healthAfter)
+    }
+
+    @Test
+    fun `the creature the server names as the attacker is handed to the body's damage perception`() {
+        // v32 plains rehearsal 15: without it, a skeleton shooting from past the nearer creatures
+        // could not be named back to flee from.
+        val rig = DamageRig()
+        rig.damage(source = "skeleton", attacker = SKELETON)
+        rig.damage(agent = BETA, source = "fall")
+        assertEquals(listOf(SKELETON, null), rig.bodies.attackers)
+    }
+
+    @Test
+    fun `damage held behind an answer is told naming its latest attacker`() {
+        val answer = CompletableFuture<Decision>()
+        val rig = DamageRig { answer }
+        // Ordinary hits, below LARGE_DAMAGE, so the second is held behind the first's answer.
+        rig.damage(amount = 3.0, source = "skeleton", attacker = SKELETON)
+        rig.bodies.capture(0)
+        rig.main.drain()
+        // A second hit while the first answer is open is held, then told once it settles.
+        rig.damage(amount = 3.0, tick = 140, source = "skeleton", attacker = SKELETON)
+        rig.bodies.capture(1)
+        rig.main.drain()
+        val first = rig.submitted.single()
+        answer.complete(decisionFor(first, Intent.Flee("e1")))
+        rig.main.drain()
+        assertEquals(listOf(SKELETON, SKELETON, SKELETON), rig.bodies.attackers)
+        assertEquals(Trigger.Damaged(3, "skeleton"), rig.bodies.perceived.last().second)
     }
 
     @Test
@@ -152,7 +214,10 @@ class DamageDriverTest {
         rig.damage(tick = 100 + DAMAGE_EPISODE_TICKS, source = "skeleton")
         assertEquals(2, rig.bodies.perceived.size)
         assertEquals(Trigger.Damaged(6, "skeleton"), rig.bodies.perceived[1].second)
+        // The first damage is answered before the second is captured; while it was still with
+        // the mind, the second would have been coalesced into that answer instead.
         rig.bodies.capture(0)
+        rig.main.drain()
         rig.bodies.capture(1)
         rig.main.drain()
         assertEquals(
@@ -205,7 +270,7 @@ class DamageDriverTest {
     @Test
     fun `an already dead agent or dead player is refused, breach or not`() {
         val rig = DamageRig()
-        rig.damage(ALPHA, playerDead = true)
+        rig.driver.witnessed(rig.reportOf(ALPHA).copy(playerDead = true))
         rig.dead += BETA
         rig.damage(BETA)
         assertTrue(rig.bodies.perceived.isEmpty())
@@ -251,18 +316,19 @@ class DamageDriverTest {
     }
 
     @Test
-    fun `a bridge refusal is recorded as the existing cognition unavailable`() {
+    fun `damage while the agent's event is still with the mind is coalesced before its budget`() {
         val stalled = CompletableFuture<Decision>()
         val rig = DamageRig()
         val fair = PerAgentCognitionBridge(delegate = { stalled }, maxOutstandingPerAgent = 1)
         val cognition = EmbodiedCognition(rig.bodies, fair, rig.main, DecisionJournal(rig.log, currentTick = { 0L }))
         val driver = DamageDriver(rig.bodies, cognition, rig.main, { false }, rig.log, currentTick = { 0L })
         val witness = WitnessedPlayer("uuid", "alpha")
-        driver.witnessed(DamageReport(ALPHA, 6.0, "zombie", 100, witness))
-        // A different attacker, so the danger episode for the zombie does not coalesce it and
-        // the per-agent budget is what refuses it.
-        driver.witnessed(DamageReport(ALPHA, 6.0, "skeleton", 100 + DAMAGE_EPISODE_TICKS, witness))
-        driver.witnessed(DamageReport(BETA, 6.0, "zombie", 100 + DAMAGE_EPISODE_TICKS, witness))
+        // Ordinary hits, below LARGE_DAMAGE.
+        driver.witnessed(DamageReport(ALPHA, 3.0, "zombie", 100, witness))
+        // A different attacker, so the danger episode for the zombie does not coalesce it: the
+        // agent's one event already with the mind does, before the per-agent budget is spent.
+        driver.witnessed(DamageReport(ALPHA, 3.0, "skeleton", 100 + DAMAGE_EPISODE_TICKS, witness))
+        driver.witnessed(DamageReport(BETA, 3.0, "zombie", 100 + DAMAGE_EPISODE_TICKS, witness))
         rig.bodies.capture(0)
         val refused = rig.bodies.capture(1)
         rig.bodies.capture(2)
@@ -271,7 +337,8 @@ class DamageDriverTest {
 
         val unavailable = rig.records.single { it.event == BodyEvent.COGNITION_UNAVAILABLE }
         assertEquals(refused, unavailable.requestId)
-        assertEquals("agentBudgetExhausted", unavailable.outcome)
+        assertEquals(EventTag.COGNITION_COALESCED, unavailable.outcome)
+        assertEquals(1, fair.outstandingFor(ALPHA.value))
         assertEquals(1, fair.outstandingFor(BETA.value), "one agent's budget does not refuse another")
     }
 }

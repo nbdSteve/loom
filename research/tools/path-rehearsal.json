@@ -1,0 +1,159 @@
+{
+  "name": "path-rehearsal",
+  "description": "A deterministic live rehearsal of the goal paths no research run has reached: a flat world laid out by console commands, six real bodies, and the scripted path exerciser. Not a research run and never published.",
+  "agents": [
+    "tribe-alpha",
+    "tribe-beta",
+    "tribe-gamma",
+    "tribe-delta",
+    "tribe-epsilon",
+    "tribe-zeta",
+    "tribe-eta",
+    "tribe-theta",
+    "tribe-iota",
+    "tribe-kappa"
+  ],
+  "paper": {
+    "minecraftVersion": "1.21.1",
+    "build": 133,
+    "downloadUrl": "https://fill-data.papermc.io/v1/objects/39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9/paper-1.21.1-133.jar",
+    "sha256": "39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9"
+  },
+  "world": {
+    "seed": "1",
+    "difficulty": "easy",
+    "mobSpawning": true,
+    "maxWorldSizeBlocks": 256,
+    "worldBorderDiameterBlocks": 128,
+    "viewDistanceChunks": 4,
+    "simulationDistanceChunks": 4,
+    "levelType": "minecraft:flat",
+    "monsterSpawnLimit": 0
+  },
+  "network": {
+    "host": "127.0.0.1",
+    "minecraftPort": 25575,
+    "bodyControlBasePort": 25685,
+    "cognitionPort": 8652
+  },
+  "runtime": {
+    "paperMemoryMiB": 2048,
+    "body": {
+      "startupRetryMillis": 250,
+      "healthCheckIntervalTicks": 100,
+      "healthFailureLimit": 3,
+      "ioWorkersPerAgent": 4
+    },
+    "cognitionBridge": {
+      "timeoutMillis": 30000,
+      "connectTimeoutMillis": 500,
+      "workers": 6,
+      "queueDepth": 16,
+      "perAgentPending": 2
+    }
+  },
+  "bounds": {
+    "startupSeconds": 240,
+    "startupConcurrency": 2,
+    "startupAttempts": 3,
+    "logBytes": 16777216,
+    "runTicks": 6200,
+    "runSeconds": 420
+  },
+  "setup": [
+    "gamerule doDaylightCycle false",
+    "gamerule doWeatherCycle false",
+    "gamerule doMobSpawning false",
+    "gamerule randomTickSpeed 0",
+    "weather clear",
+    "time set 1000",
+    "difficulty easy",
+    "fill -28 -60 0 -28 -58 0 minecraft:oak_log",
+    "fill 3 -60 0 3 -58 0 minecraft:stone",
+    "fill 2 -58 -1 4 -58 1 minecraft:stone_slab[type=bottom]",
+    "setblock 3 -57 0 minecraft:oak_log",
+    "setblock 2 -60 -40 minecraft:oak_log",
+    "setblock 26 -60 -40 minecraft:oak_log",
+    "setblock -30 -59 30 minecraft:stone",
+    "fill -33 -60 32 -33 -58 32 minecraft:oak_log",
+    "fill 24 -63 34 36 -61 46 minecraft:stone",
+    "fill 39 -60 -34 47 -58 -26 minecraft:stone",
+    "fill 43 -60 -30 43 -58 -30 minecraft:air",
+    "setblock 44 -60 -30 minecraft:air",
+    "fill -60 -60 -40 -20 -60 -40 minecraft:oak_log"
+  ],
+  "positions": {
+    "tribe-alpha": [
+      -29.5,
+      -60,
+      0.5
+    ],
+    "tribe-beta": [
+      0.5,
+      -60,
+      0.5
+    ],
+    "tribe-zeta": [
+      0.5,
+      -60,
+      4.5
+    ],
+    "tribe-gamma": [
+      30.5,
+      -60,
+      0.5
+    ],
+    "tribe-delta": [
+      34.5,
+      -60,
+      0.5
+    ],
+    "tribe-epsilon": [
+      0.5,
+      -60,
+      -40.5
+    ],
+    "tribe-eta": [
+      -30.5,
+      -60,
+      30.5
+    ],
+    "tribe-theta": [
+      30.5,
+      -60,
+      40.5
+    ],
+    "tribe-iota": [
+      43.357,
+      -60,
+      -29.5
+    ],
+    "tribe-kappa": [
+      -10.5,
+      -60,
+      -63.7
+    ]
+  },
+  "afterPlacement": [
+    "summon minecraft:item 34.5 -60 0.5 {Item:{id:\"minecraft:stick\",count:1},PickupDelay:450}",
+    "summon minecraft:item 34.5 -60 0.5 {Item:{id:\"minecraft:stick\",count:1,components:{\"minecraft:custom_name\":'\"delta\"'}},PickupDelay:450}",
+    "summon minecraft:item -1.5 -60 -40.5 {Item:{id:\"minecraft:oak_log\",count:1},PickupDelay:32767,Age:5500}",
+    "summon minecraft:item 30.5 -60 40.5 {Item:{id:\"minecraft:stick\",count:1},PickupDelay:1100}",
+    "summon minecraft:item 30.5 -60 40.5 {Item:{id:\"minecraft:stick\",count:1,components:{\"minecraft:custom_name\":'\"theta\"'}},PickupDelay:1100}",
+    "summon minecraft:item 44.863 -60 -29.5 {Item:{id:\"minecraft:oak_log\",count:1},PickupDelay:0}",
+    "summon minecraft:item 44.83 -60 -29.7 {Item:{id:\"minecraft:oak_log\",count:1,components:{\"minecraft:custom_name\":'\"iota\"'}},PickupDelay:0}",
+    "summon minecraft:creeper -1.5 -60 -62.5 {NoAI:1b,PersistenceRequired:1b,Silent:1b}"
+  ],
+  "gives": {
+    "tribe-gamma": [
+      "minecraft:oak_pressure_plate 1"
+    ]
+  },
+  "timed": [
+    {
+      "afterTicks": 1500,
+      "command": "time set 11000"
+    }
+  ],
+  "layout": "Six groups far enough apart that only beta hears zeta's speech (24 blocks): alpha beside a three-log trunk; beta three blocks from one log on a pillar whose top is a three-by-three ring of bottom slabs, half a block below the log and in sight under its line to it, so its drop rests on that ring wherever its random throw takes it, outside the pickup box and with no route up, and is left lying, with zeta four blocks off; gamma four blocks from delta, who stands on two single sticks vanilla may not pick up for 450 ticks, one of them named so the two never merge into a stack one collect would take whole; epsilon beside one log and a log item no one may pick up that despawns about 500 ticks after it is summoned, with another log 25.5 blocks east, past what even a goal review's sense looks for, which a walk to the edge of sight east reveals out of dig reach and the walk beside it reaches; theta stands on two such single sticks vanilla may not pick up for 1100 ticks, on a stone pad that gives a bare hand nothing, so its met goal moves on to the ladder its sticks make, never a plain completion beside the edge of sight; eta stands on grass beside a pocket under an overhang, the block east of its support with stone two above it, with a three-log trunk 3.2 blocks off, so its log goal is restated, completed beside a log, and once met revised for more logs, which keeps the goal; gamma holds an oak pressure plate, which has no collision and so is never a closer, and once clear of delta is refused a dirt goal beside the frontier, and once a console command sets the time to 11000, 2800 ticks before nightfall with the daylight cycle stopped, sets a shelter goal on the superflat grass, digs down through it and two dirt layers to the bedrock, and closes the roof with the dirt those digs gave; iota stands at 43.357 in a one-cell pit, its only standable cell, beside a one-high nook east whose two single logs, one named so they never merge, lie at 44.863 and 44.83, past vanilla's pickup box from where iota stands and clear of the stone that would push an item back out toward it, so they still lie there a cadence after iota first sets a goal one collect would meet, which must be refused, as r28 rehearsal alpha's did at tick 9765, and once both are collected, with nowhere to look, completes its goal plainly, which owes a review; kappa stands with its box against the north face of the 128-block world border at z -64, 9.1 blocks west of a creeper that cannot move - in sight and within the 16 blocks a goal review offers a flight from, past the 8 that would make it immediate danger and so send kappa off at its first sighting before its review - so its flight must run west along the border rather than over it, toward its own tree line and away from epsilon's logs, as v29 rehearsal theta's flights from a skeleton did not; kappa's tree line runs along z -40 from x -60 to -20, more than the 16 blocks a goal review senses from the border and from epsilon, so neither sees it before it walks; on an easy world that keeps hostile mobs but spawns none (the doMobSpawning gamerule is off); Bukkit's monster spawn limit is zero from the first tick, because superflat ground lies below y 40, where slimes spawn in any light."
+}

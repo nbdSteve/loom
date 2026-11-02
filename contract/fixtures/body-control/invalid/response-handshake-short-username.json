@@ -1,1 +1,1 @@
-{"op":"handshake","protocol":5,"requestId":"req-1","agentId":"agent-alpha","state":"ready","username":"ab"}
+{"op":"handshake","protocol":8,"requestId":"req-1","agentId":"agent-alpha","state":"ready","username":"ab"}

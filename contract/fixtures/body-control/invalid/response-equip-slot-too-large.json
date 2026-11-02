@@ -1,1 +1,1 @@
-{"op":"equip","protocol":5,"requestId":"req-53","agentId":"agent-alpha","state":"ready","outcome":"equipped","elapsedMs":55,"what":"minecraft:iron_pickaxe","count":1,"toSlot":46}
+{"op":"equip","protocol":8,"requestId":"req-53","agentId":"agent-alpha","state":"ready","outcome":"equipped","elapsedMs":55,"what":"minecraft:iron_pickaxe","count":1,"toSlot":46}

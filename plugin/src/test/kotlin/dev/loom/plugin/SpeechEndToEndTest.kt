@@ -6,17 +6,10 @@ import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.EventTag
 import dev.loom.body.FileBodyEventLog
-import dev.loom.body.player.BodyControlEndpoint
-import dev.loom.body.player.BodyControlRequestIds
-import dev.loom.body.player.BodyProcessSupervisor
 import dev.loom.body.player.PlayerBodyAuthority
-import dev.loom.body.player.PlayerBodyInfrastructure
 import dev.loom.body.player.PlayerBodyPort
-import dev.loom.body.player.PlayerBodySettings
 import dev.loom.body.player.PlayerIdentity
 import dev.loom.body.player.PlayerServerState
-import dev.loom.body.player.SocketBodyControlConnector
-import dev.loom.body.player.SupervisedBodyProcess
 import dev.loom.body.player.playerIdentityOf
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
@@ -51,21 +44,15 @@ import org.junit.jupiter.api.io.TempDir
 import java.lang.reflect.Proxy
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
-import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.CompletionStage
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
-private val REPO: Path = Paths.get("").toAbsolutePath().parent
 private val PEERS: Path = REPO.resolve("body/test/fixtures/speech-peers.js")
-private val E2E_TIMEOUT: Duration = Duration.ofSeconds(20)
 
 /**
  * The offline speech acceptance: a strict decision, the real JVM actuation over a real
@@ -352,62 +339,6 @@ private class ScriptedSpeechMind(
 
 private fun fixture(name: String): String = Files.readString(REPO.resolve("contract/fixtures/valid/$name"))
 
-private fun infrastructure(
-    identity: PlayerIdentity,
-    temporary: Path,
-    port: Int,
-    closers: MutableList<() -> Unit>,
-): PlayerBodyInfrastructure {
-    val endpoint = BodyControlEndpoint("127.0.0.1", port)
-    val io = Executors.newFixedThreadPool(2)
-    val scheduler = Executors.newSingleThreadScheduledExecutor()
-    closers += { io.shutdownNow() }
-    closers += { scheduler.shutdownNow() }
-    return PlayerBodyInfrastructure(
-        identity = identity,
-        settings =
-            PlayerBodySettings(
-                bodyDirectory = temporary.toAbsolutePath(),
-                processDirectory = temporary.resolve(identity.username).toAbsolutePath(),
-                controlEndpoint = endpoint,
-                connectTimeout = Duration.ofSeconds(2),
-                requestTimeout = Duration.ofSeconds(5),
-                movementTimeout = Duration.ofSeconds(5),
-                startupTimeout = Duration.ofSeconds(10),
-                shutdownTimeout = Duration.ofSeconds(2),
-                healthCheckIntervalTicks = 100_000,
-                healthFailureLimit = 3,
-            ),
-        supervisor = AlreadyRunning(endpoint),
-        connector = SocketBodyControlConnector(Duration.ofSeconds(2), Duration.ofSeconds(5)),
-        requestIds = BodyControlRequestIds(scope = identity.username),
-        io = io,
-        scheduler = scheduler,
-    )
-}
-
-/** The Node peers are already running; the supervisor only names them. */
-private class AlreadyRunning(
-    private val endpoint: BodyControlEndpoint,
-) : BodyProcessSupervisor {
-    override fun start(identity: PlayerIdentity): CompletionStage<SupervisedBodyProcess> {
-        val alive = AtomicBoolean(true)
-        return CompletableFuture.completedFuture(
-            object : SupervisedBodyProcess {
-                override val identity = identity
-                override val endpoint = this@AlreadyRunning.endpoint
-                override val exitCode: CompletionStage<Int> = CompletableFuture()
-
-                override fun isAlive(): Boolean = alive.get()
-            },
-        )
-    }
-
-    override fun stop(process: SupervisedBodyProcess): CompletionStage<Unit> = CompletableFuture.completedFuture(Unit)
-
-    override fun close() = Unit
-}
-
 private object AlwaysConnected : PlayerServerState {
     override fun connected(identity: PlayerIdentity): Boolean = true
 
@@ -454,14 +385,3 @@ private fun livePlayer(): Player {
         }
     } as Player
 }
-
-private fun <T> CompletionStage<T>.await(): T = toCompletableFuture().get(E2E_TIMEOUT.seconds, TimeUnit.SECONDS)
-
-private fun <T> CompletableFuture<T>.await(): T = get(E2E_TIMEOUT.seconds, TimeUnit.SECONDS)
-
-private fun nodeOrNull(): String? =
-    runCatching {
-        val probe = ProcessBuilder("node", "--version").redirectErrorStream(true).start()
-        probe.inputStream.readAllBytes()
-        "node".takeIf { probe.waitFor(E2E_TIMEOUT.seconds, TimeUnit.SECONDS) && probe.exitValue() == 0 }
-    }.getOrNull()

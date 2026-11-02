@@ -16,6 +16,8 @@ import dev.loom.contract.LoomJson
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 import dev.loom.mind.AsyncCognitionBridge
+import dev.loom.mind.CognitionFailure
+import dev.loom.mind.CognitionUnavailableException
 import dev.loom.mind.decisionFor
 import dev.loom.mind.perception
 import kotlinx.serialization.decodeFromString
@@ -445,6 +447,24 @@ class TcpCognitionTransportTest {
     }
 
     @Test
+    @DisplayName("a harness budget refusal is its own typed failure, not a failed mind")
+    fun aBudgetRefusalIsTyped() {
+        // r20 body:00002239: the 151st call was refused at the global ceiling and recorded as
+        // failed; only the harness's own record named the ceiling.
+        val mind =
+            managed(
+                FakeMind {
+                    """{"error":"cognition request refused by experiment budget","code":"budgetRefused"}"""
+                },
+            )
+
+        val thrown = assertThrows<CognitionUnavailableException> { transportTo(mind).ask(perception()) }
+
+        assertEquals(CognitionFailure.BudgetRefused, thrown.failure)
+        assertEquals("budgetRefused", thrown.failure.tag)
+    }
+
+    @Test
     @DisplayName("a mind that never answers frees the worker at the read timeout")
     fun aSilentMindIsBoundedByTheReadTimeout() {
         val held = CountDownLatch(1)
@@ -724,7 +744,7 @@ class TcpCognitionTransportTest {
             bridge.submit(asking(canonical).copy(trigger = Trigger.BlockSighted("diamond_ore")))
                 .get(PATIENCE.inWholeMilliseconds, TimeUnit.MILLISECONDS)
 
-        assertEquals(Intent.MoveTo(listOf(128L, 11L, -64L)), decision.intent)
+        assertEquals(Intent.MoveTo("b5"), decision.intent)
         assertEquals(DecisionImportance.ROUTINE, decision.provenance.tier)
     }
 }

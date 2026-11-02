@@ -1,0 +1,1 @@
+{"op":"attack","protocol":8,"requestId":"res-attack-sidestep","agentId":"agent-alpha","state":"ready","outcome":"attacked","from":[0.5,64.5,0.5],"position":[3.5,64.5,0.5],"travelled":3.25,"elapsedMs":1250,"attacks":2,"recovery":{"kind":"sidestep","cause":"firstMoveStuck","from":[0.5,64.5,0.5],"to":[0.5,64.5,1.5]}}

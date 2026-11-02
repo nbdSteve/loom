@@ -1,1 +1,1 @@
-{"op":"say","protocol":5,"requestId":"req-70","agentId":"agent-alpha","text":"hi\ud800there"}
+{"op":"say","protocol":8,"requestId":"req-70","agentId":"agent-alpha","text":"hi\ud800there"}

@@ -1,11 +1,18 @@
 package dev.loom.mind
 
 import dev.loom.body.BodyEventLog
+import dev.loom.contract.Bearing
+import dev.loom.contract.BlockYield
 import dev.loom.contract.DayPhase
 import dev.loom.contract.Decision
 import dev.loom.contract.DecisionImportance
+import dev.loom.contract.GoalChoice
+import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalReason
+import dev.loom.contract.GoalStepResult
 import dev.loom.contract.Intent
 import dev.loom.contract.Observation
+import dev.loom.contract.ObservationKind
 import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
 import dev.loom.contract.SelfState
@@ -98,11 +105,46 @@ fun perception(
                 inventorySummary = emptyList(),
                 craftingOptions = emptyList(),
                 craftingOptionsOmitted = 0,
+                ownDrops = emptyList(),
                 world = WorldState(dayPhase = DayPhase.DAY, isDay = true, ticksUntilNightfall = 6_000),
             ),
         surroundings = emptyList(),
         surroundingsOmitted = 0,
     )
+
+/** [perception] with two dead bushes in sight that yield sticks, which makes a two-stick goal obtainable. */
+fun perceptionNearBush(
+    requestId: String = "req-1",
+    agentId: String = "agent-alpha",
+    trigger: Trigger = Trigger.GoalReview,
+): Perception =
+    perception(
+        requestId = requestId,
+        agentId = agentId,
+        trigger = trigger,
+    ).copy(surroundings = listOf(STICK_BUSH, SECOND_STICK_BUSH))
+
+/**
+ * A dead bush in sight that digging with a bare hand yields sticks from: what makes the sticks
+ * the goal helpers name obtainable, as the r11 and r13 scenes' bushes did. It gives one stick a
+ * dig, so no one dig meets the two an objective asks.
+ */
+val STICK_BUSH: Observation =
+    Observation(
+        kind = ObservationKind.BLOCK,
+        what = "block.minecraft.dead_bush",
+        distance = 2.0,
+        direction = Bearing.NORTH,
+        verticalOffset = 0.0,
+        visible = true,
+        ref = "bush",
+        standable = true,
+        yields = listOf(BlockYield("item.minecraft.stick", 1, 1, 100)),
+        digSafe = true,
+    )
+
+/** A second [STICK_BUSH] beside the first, so sight gives the two sticks an objective asks. */
+val SECOND_STICK_BUSH: Observation = STICK_BUSH.copy(ref = "bush2", direction = Bearing.SOUTH)
 
 /**
  * The sighting trigger a body would put on a perception that found [seen].
@@ -144,3 +186,33 @@ fun decisionFor(
                 promptVersion = "test-v1",
             ),
     )
+
+/**
+ * A goal choice carrying every field [disposition] requires: its typed success target to set a
+ * goal, the step an affirming decision takes, and a verdict on the previous step for every
+ * disposition that answers a carried goal. The step's type is the decision's own intent, and the
+ * goal's wording its success target, which the ledger reads for itself.
+ */
+fun goalChoice(
+    disposition: GoalDisposition,
+    stepResult: GoalStepResult = GoalStepResult.PROGRESSING,
+    success: Pair<String, Long> = "item.minecraft.stick" to 2L,
+    reason: GoalReason? = null,
+): GoalChoice {
+    val worded = disposition in setOf(GoalDisposition.ADOPT, GoalDisposition.REVISE, GoalDisposition.REPLACE)
+    val stepped = worded || disposition == GoalDisposition.CONTINUE
+    return GoalChoice(
+        disposition = disposition,
+        successItem = if (worded) success.first else null,
+        successCount = if (worded) success.second else null,
+        step = if (stepped) "the next concrete step" else null,
+        stepResult = if (disposition == GoalDisposition.ADOPT) null else stepResult,
+        reason = reason,
+    )
+}
+
+/** Whether [reserve] sends [perception] at its own tier: what `admit` answered before tier fallback. */
+fun CallReserve.admits(
+    agentId: dev.loom.body.AgentId,
+    perception: Perception,
+): Boolean = admit(agentId, perception) == CallReserve.Admission.SENT

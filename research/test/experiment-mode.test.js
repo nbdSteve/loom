@@ -8,7 +8,9 @@ const path = require('node:path')
 
 const {
   createInterventionSchedule,
-  primaryBehaviorStimulusRecord
+  nativeOriginOf,
+  primaryBehaviorStimulusRecord,
+  requestOriginFor
 } = require('../lib/experiment-mode.js')
 const {
   ProcessSupervisor,
@@ -79,16 +81,30 @@ test('the primary behavior harness issues no loombody think command', () => {
     []
   )
   assert.deepEqual(primaryBehaviorStimulusRecord(config, 0), {
-    mode: 'routine-v13-goal-continuity',
+    mode: 'routine-v38-reliable-source',
     externalCognitionStimuli: 'none',
     harnessThinkCommandsIssued: 0,
     nativeSchedulersOnly: true,
-    behaviorGateGeneration: 2,
+    behaviorGateGeneration: 20,
     profile: 'pilot-180s',
     nativeGoalReviewSchedule: {
       cadenceTicks: 2400,
       expectedReviewsPerAgent: 2,
+      followUpsPerReview: 1,
       sliceTicks: 100
     }
   })
+})
+
+test('a primary behavior request names the native source that raised it, a follow-up review its own', () => {
+  const config = primaryBehaviorConfig()
+  assert.equal(requestOriginFor(config, 'goalReview'), 'nativeGoalReviewSchedule')
+  // The one review a settled goal step owes is native, but not the schedule's.
+  assert.equal(requestOriginFor(config, 'stepSettled'), 'nativeGoalFollowUp')
+  assert.equal(requestOriginFor(config, 'threatSighted'), 'nativeEventDriver')
+  // The publication validator holds every forwarded request to the same rule: the third v23
+  // rehearsal's follow-up reviews were refused as having no valid native origin.
+  for (const trigger of ['goalReview', 'stepSettled', 'damaged', 'spoken']) {
+    assert.equal(nativeOriginOf(trigger), requestOriginFor(config, trigger), trigger)
+  }
 })

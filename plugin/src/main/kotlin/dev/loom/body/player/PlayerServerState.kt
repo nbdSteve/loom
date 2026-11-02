@@ -17,6 +17,10 @@ import java.util.UUID
 data class ServerInteractionAudit(
     val confirmed: Boolean,
     val detail: String,
+    /** A claimed dig whose block the server's break event credits to another managed player. */
+    val brokenByOther: Boolean = false,
+    /** Whether the server saw the whole effect the request asked for, whatever the body reported. */
+    val effected: Boolean = false,
 )
 
 /**
@@ -147,6 +151,9 @@ interface PlayerServerState {
 
     /** Captures the server half of a sense audit immediately before the request is sent. */
     fun captureSenseAudit(identity: PlayerIdentity): SenseAuditSnapshot? = null
+
+    /** Run once per server tick on the main thread, for readings that need a short history. */
+    val onTick: () -> Unit get() = {}
 
     fun auditSense(
         identity: PlayerIdentity,

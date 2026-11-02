@@ -6,15 +6,22 @@ package dev.loom.body.player
 import dev.loom.body.AgentId
 import dev.loom.body.AgentVitals
 import dev.loom.body.BODY_SENSE_MAX_OFFERS_PER_KIND
+import dev.loom.body.BodyEvent
 import dev.loom.body.EventTag
 import dev.loom.body.PERCEPTION_RADIUS_BLOCKS
+import dev.loom.body.PendingPerceptions
 import dev.loom.body.blocksApart
 import dev.loom.body.completedBodyOperation
+import dev.loom.body.tagOf
 import dev.loom.bodycontrol.BODY_CONTROL_PROTOCOL_VERSION
 import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
+import dev.loom.bodycontrol.MAX_RETAINED_ENTITIES
+import dev.loom.bodycontrol.MAX_RETAINED_ITEMS
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
+import dev.loom.contract.reviewsGoal
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.TimeUnit
@@ -24,6 +31,26 @@ private const val PLAYER_HEALTH_CAPACITY = 20.0
 private const val BODY_SENSE_MEMORY = 4
 private const val KEEPALIVE_SECONDS = 10L
 
+/**
+ * The block kinds a goal review's sense also looks for beyond dig reach (`seek`): every overworld
+ * log and the berry bush, the sources a horizon goal is grounded in and the one natural food a
+ * body can dig, collect and eat with the server witnessing each step. A block seen there is a
+ * place to walk toward, never one a dig may name (r34: logs 6.6 to 8 blocks off were only ever
+ * recalled, and walks to the edge of sight went past them).
+ */
+internal val SOUGHT_SOURCE_KINDS: List<String> =
+    listOf(
+        "oak_log",
+        "birch_log",
+        "spruce_log",
+        "jungle_log",
+        "acacia_log",
+        "dark_oak_log",
+        "mangrove_log",
+        "cherry_log",
+        "sweet_berry_bush",
+    )
+
 /** Captures and commits Mineflayer sense reports without blocking Paper's tick. */
 internal class PlayerPerception(
     private val context: PlayerBodyContext,
@@ -32,20 +59,48 @@ internal class PlayerPerception(
     private val transitions: PlayerLifecycleTransitions,
     private val translator: PlayerSceneTranslator,
 ) {
+    /**
+     * Perceives [trigger]; for damage an [attacker] names, that creature is reported however many
+     * stand nearer, and the trigger carries the ref this perception gives it.
+     */
     fun perceive(
         agentId: AgentId,
         trigger: Trigger,
+        attacker: UUID? = null,
     ): CompletionStage<Perception?> =
-        capture(agentId).thenApplyOn(context.authority.main) { raw ->
-            raw?.let { sceneFor(agentId, it) }?.let { scene -> commit(scene, trigger) }
+        capture(
+            agentId,
+            tagOf(trigger),
+            listOfNotNull(attacker),
+            seek = trigger.reviewsGoal,
+        ).thenApplyOn(context.authority.main) { raw ->
+            raw?.let { sceneFor(agentId, it, attacker) }?.let { scene ->
+                commit(
+                    scene,
+                    // A damage trigger names only the attacker this very sense resolved, never one an
+                    // older sense minted (r27: eta's re-told damage named a ref its message lacked).
+                    (trigger as? Trigger.Damaged)?.copy(attackerRef = scene.attackerRef) ?: trigger,
+                )
+            }
         }
 
     fun senseThreat(agentId: AgentId): CompletionStage<Perception?> =
-        capture(agentId).thenApplyOn(context.authority.main) { raw ->
+        capture(agentId, "threat scan").thenApplyOn(context.authority.main) { raw ->
             raw?.let { sceneFor(agentId, it) }?.let { scene ->
-                val outcome = context.threatWatch.consider(agentId, scene.candidates) { false }
+                // The player body makes no route search toward a threat, so it states none.
+                val outcome =
+                    if (scene.selfState.cover?.sealed == true) {
+                        context.threatWatch.sheltered(agentId, scene.candidates)
+                    } else {
+                        context.threatWatch.consider(agentId, scene.candidates) { null }
+                    }
                 outcome.suppressed.forEach { context.journal.recordSuppressedThreat(agentId, it) }
-                outcome.sighted?.let { trigger -> commit(scene, trigger) }
+                outcome.sighted?.let { trigger ->
+                    commit(scene, trigger).also { sent ->
+                        val creature = scene.candidates.firstOrNull { it.ref == trigger.ref }
+                        creature?.let { subjects.remember(sent.requestId, it.subject) }
+                    }
+                }
                     ?: run {
                         scene.raw.connection.close()
                         null
@@ -53,34 +108,61 @@ internal class PlayerPerception(
             }
         }
 
+    /** The server identity of each recent sighting's creature, by request. */
+    val subjects = ThreatSubjects()
+
+    /** A fresh sense held for one pickup attempt, its own drops retained even out of sight; no perception. */
+    fun senseForPickup(agentId: AgentId): CompletionStage<HeldSense?> =
+        capture(agentId, "own drop pickup").thenApplyOn(context.authority.main) { raw ->
+            raw?.let { sceneFor(agentId, it) }?.let(sessions::remember)
+        }
+
     private fun sceneFor(
         agentId: AgentId,
         raw: RawSense,
+        attacker: UUID? = null,
     ): PlayerScene? {
         val runtime = registry.ready(agentId)
         if (runtime == null || runtime.identity != raw.identity) {
             raw.connection.close()
             return null
         }
-        return runCatching { translator.sceneOf(raw) }
+        return runCatching { translator.sceneOf(raw, attacker).also(context.approach::recordScene) }
             .getOrElse { failure ->
                 raw.connection.close()
                 throw failure
             }
     }
 
-    private fun capture(agentId: AgentId): CompletionStage<RawSense?> {
+    private fun capture(
+        agentId: AgentId,
+        asked: String,
+        retainEntities: List<UUID> = emptyList(),
+        seek: Boolean = false,
+    ): CompletionStage<RawSense?> {
         val runtime = registry.ready(agentId)
         val atCapacity =
             runtime != null &&
                 sessions.openCount(agentId) + runtime.sensesInFlight >= BODY_SENSE_MEMORY
+        if (atCapacity) {
+            context.journal.classified(
+                agentId,
+                BodyEvent.PERCEPTION_REFUSED,
+                "a $asked perception was not taken: the body already held every sense it keeps",
+                EventTag.SENSE_AT_CAPACITY,
+            )
+        }
         return when {
             runtime == null || atCapacity -> completedBodyOperation(null)
-            else -> startCapture(runtime)
+            else -> startCapture(runtime, retainEntities, seek)
         }
     }
 
-    private fun startCapture(runtime: PlayerRuntime): CompletionStage<RawSense?> {
+    private fun startCapture(
+        runtime: PlayerRuntime,
+        retainEntities: List<UUID>,
+        seek: Boolean,
+    ): CompletionStage<RawSense?> {
         runtime.sensesInFlight += 1
         val request =
             BodyRequest.Sense(
@@ -89,6 +171,18 @@ internal class PlayerPerception(
                 agentId = runtime.identity.agentId.value,
                 radius = PERCEPTION_RADIUS_BLOCKS.toInt(),
                 limit = BODY_SENSE_MAX_OFFERS_PER_KIND,
+                // The agent's own drops are reported even out of sight, so it can collect them.
+                retainItems =
+                    context.authority.ownDrops
+                        .of(runtime.identity)
+                        .mapNotNull { it.entity?.toString() }
+                        .distinct()
+                        .take(MAX_RETAINED_ITEMS)
+                        .ifEmpty { null },
+                // The creature that just hurt the agent is reported however many stand nearer.
+                retainEntities = retainEntities.map(UUID::toString).take(MAX_RETAINED_ENTITIES).ifEmpty { null },
+                // Only a goal review looks further: what it sees there grounds a goal and a walk.
+                seek = SOUGHT_SOURCE_KINDS.takeIf { seek },
             )
         val capturedTick = context.authority.currentTick()
         val auditSnapshot = context.authority.serverState.captureSenseAudit(runtime.identity)
@@ -179,20 +273,16 @@ internal class PlayerPerception(
                 PLAYER_HEALTH_CAPACITY,
             )
         context.vitalsWatch.noted(agentId, food)
-        context.journal.recordPerception(
-            agentId = agentId,
-            detail =
-                "${perception.surroundings.size} observation(s)" +
-                    if (perception.surroundingsOmitted > 0) {
-                        ", ${perception.surroundingsOmitted} more nearby not reported"
-                    } else {
-                        ""
-                    },
-            perception = perception,
-            perceptionAudit = scene.perceptionAudit,
-            vitals = food,
+        val omitted = perception.surroundingsOmitted
+        val detail =
+            "${perception.surroundings.size} observation(s)" +
+                if (omitted > 0) ", $omitted more nearby not reported" else ""
+        context.perceptions.hold(
+            agentId,
+            perception,
+            PendingPerceptions.Captured(detail, scene.perceptionAudit, food),
+            after = { context.vitalsWatch.recordChanges(agentId, food, health) },
         )
-        context.vitalsWatch.recordChanges(agentId, food, health)
         return perception
     }
 
@@ -260,3 +350,23 @@ internal fun matchesSenseRequest(
         report.items.none { blocksApart(report.position, it.position) > radius }
     return listsFit && listOf(entitiesFit, blocksFit, itemsFit).all { it }
 }
+
+/** The server identity of each recent threat sighting's creature, by request; the oldest is dropped. */
+internal class ThreatSubjects {
+    private val byRequest = LinkedHashMap<String, String>()
+
+    @Synchronized
+    operator fun get(requestId: String): String? = byRequest[requestId]
+
+    @Synchronized
+    fun remember(
+        requestId: String,
+        subject: java.util.UUID,
+    ) {
+        byRequest[requestId] = subject.toString()
+        while (byRequest.size > MAX_THREAT_SUBJECTS) byRequest.remove(byRequest.keys.first())
+    }
+}
+
+/** Recent sightings whose creature identity is kept for danger tracking. */
+private const val MAX_THREAT_SUBJECTS = 64

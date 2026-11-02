@@ -171,6 +171,7 @@ class ProcessSupervisor {
     this.onFailure = onFailure
     this.processes = []
     this.stopping = false
+    this.signalFailures = []
   }
 
   start ({
@@ -229,6 +230,15 @@ class ProcessSupervisor {
     return handle
   }
 
+  /**
+   * Marks every exit from here on as one the run asked for, before the run asks: a caller that
+   * stops Paper itself (the path rehearsal's console `stop`) says so first, or Paper's ordinary
+   * exit is journalled as unexpected and reported as a failure.
+   */
+  beginStopping () {
+    this.stopping = true
+  }
+
   async stopAll (shutdownMilliseconds) {
     this.stopping = true
     const reversed = [...this.processes].reverse()
@@ -261,19 +271,39 @@ class ProcessSupervisor {
     await Promise.all(reversed.map((handle) => handle.log.close()))
     const survivors = reversed
       .filter((_handle, index) => !groupsClosed[index])
-      .map((handle) => handle.name)
+      .map((handle) => {
+        const refused = this.signalFailures.filter((failure) => failure.component === handle.name)
+        return refused.length === 0
+          ? handle.name
+          : `${handle.name} (${refused.map((failure) => `${failure.signal} ${failure.code}`).join(', ')})`
+      })
     if (survivors.length > 0) {
       throw new RunFailure('startupFailed', `managed process groups survived cleanup: ${survivors.join(', ')}`)
     }
   }
 
+  /**
+   * Signals one managed process group and journals it. A signal the system refuses - EPERM for a
+   * group whose last members are exiting, which the path rehearsal met after Paper stopped - is
+   * journalled as `processGroupSignalFailed` with its code and never thrown: stopping goes on for
+   * every other group, and only a group that then survives fails the cleanup, naming the refusals.
+   */
   signal (handle, signal) {
-    if (!signalProcessGroup(handle.child, signal)) return
+    let signalled
     try {
-      this.journal.append('processGroupSignalled', {
-        component: handle.name,
-        signal
-      })
+      signalled = signalProcessGroup(handle.child, signal)
+    } catch (cause) {
+      const failure = { component: handle.name, signal, code: cause?.code ?? 'unknown' }
+      this.signalFailures.push(failure)
+      this.journalAppend('processGroupSignalFailed', failure)
+      return
+    }
+    if (signalled) this.journalAppend('processGroupSignalled', { component: handle.name, signal })
+  }
+
+  journalAppend (event, fields) {
+    try {
+      this.journal.append(event, fields)
     } catch (cause) {
       this.onFailure(cause)
     }
@@ -321,5 +351,6 @@ module.exports = {
   signalProcessGroup,
   waitForCondition,
   waitForExit,
-  waitForPort
+  waitForPort,
+  waitForProcessGroupExit
 }

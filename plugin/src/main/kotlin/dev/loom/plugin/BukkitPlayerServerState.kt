@@ -14,10 +14,15 @@ import dev.loom.bodycontrol.BodyRequest
 import dev.loom.bodycontrol.BodyResponse
 import dev.loom.bodycontrol.SensedEntity
 import dev.loom.bodycontrol.SensedItem
+import dev.loom.witness.Around
 import dev.loom.witness.BodyClaim
 import dev.loom.witness.ClaimAudit
 import dev.loom.witness.DurablePermadeath
+import dev.loom.witness.InventoryAt
+import dev.loom.witness.InventoryHistory
+import dev.loom.witness.ReadingTimes
 import dev.loom.witness.ServerReading
+import dev.loom.witness.WITNESS_LAG_TICKS
 import dev.loom.witness.bukkit.playerStandingOf
 import dev.loom.witness.bukkit.serverReadingOf
 import dev.loom.witness.movementClaimOf
@@ -33,6 +38,11 @@ private data class BukkitSenseAuditSnapshot(
     val player: UUID,
     val username: String,
     val reading: ServerReading,
+    /** The player's inventory at each of the last [WITNESS_LAG_TICKS] ticks before the request, oldest first. */
+    val recent: List<InventoryAt> = emptyList(),
+    /** The server tick and wall nanoseconds the request's reading was taken at. */
+    val tick: Long = 0,
+    val nanos: Long = 0,
 ) : SenseAuditSnapshot
 
 /** One server entity reduced to the facts needed to correlate a client reading. */
@@ -55,6 +65,13 @@ class BukkitPlayerServerState(
     private val interactionEvents: BukkitInteractionEvents? = null,
 ) : PlayerServerState {
     private val interactionAuditor = BukkitInteractionAuditor(server, interactionEvents)
+
+    private val history = InventoryHistory()
+
+    override val onTick: () -> Unit = {
+        val tick = server.currentTick.toLong()
+        history.sample(tick) { uuid -> server.getPlayer(uuid)?.let { serverReadingOf(it).inventory } }
+    }
 
     override fun connected(identity: PlayerIdentity): Boolean =
         server.getPlayer(identity.uuid)?.let { player ->
@@ -112,10 +129,14 @@ class BukkitPlayerServerState(
 
     override fun captureSenseAudit(identity: PlayerIdentity): SenseAuditSnapshot? {
         val player = server.getPlayer(identity.uuid) ?: return null
+        history.watch(player.uniqueId)
         return BukkitSenseAuditSnapshot(
             player = player.uniqueId,
             username = player.name,
             reading = serverReadingOf(player),
+            recent = history.lagWindow(player.uniqueId),
+            tick = server.currentTick.toLong(),
+            nanos = System.nanoTime(),
         )
     }
 
@@ -131,9 +152,18 @@ class BukkitPlayerServerState(
             username = captured.username,
             claim = BodyClaim(report.vitals, report.inventory),
             reading = captured.reading,
-            // Inventory stays compared with the reading from before the request; vitals are
-            // compared with the span up to this one, taken when the answer is audited.
-            later = server.getPlayer(identity.uuid)?.let(::serverReadingOf),
+            // Inventory agrees with the reading from before the request or this one, taken when
+            // the answer is audited; vitals are compared with the span between the two.
+            around =
+                Around(
+                    server.getPlayer(identity.uuid)?.let(::serverReadingOf),
+                    captured.recent + history.duringRoundTrip(identity.uuid, captured.tick),
+                    ReadingTimes(
+                        captured.tick,
+                        server.currentTick.toLong(),
+                        (System.nanoTime() - captured.nanos) / NANOS_PER_MILLI,
+                    ),
+                ),
         )
     }
 
@@ -254,3 +284,5 @@ private fun squaredDistance(
         val delta = a - b
         delta * delta
     }
+
+private const val NANOS_PER_MILLI = 1_000_000L

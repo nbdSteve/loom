@@ -23,8 +23,12 @@
 
 use std::future::Future;
 
-use loom_contract::{GoalChoice, GoalDisposition, Intent, ObservationKind, Perception, Trigger};
+use loom_contract::{
+    Bearing, EquipmentDestination, GoalChoice, GoalDisposition, GoalReason, GoalStepResult, Intent,
+    Observation, ObservationKind, Perception, Trigger, MAX_GOAL_STEPS_WITHOUT_PROGRESS,
+};
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::config::{bounded, bounded_to, ConfigError, Env};
 use crate::router::ModelRoute;
@@ -272,6 +276,8 @@ pub enum BackendChoice {
     Scripted,
     /// The `OpenAI` API. See [`crate::openai`].
     OpenAi,
+    /// The path rehearsal's deterministic exerciser. See [`crate::exerciser`].
+    PathExerciser,
 }
 
 impl BackendChoice {
@@ -280,7 +286,7 @@ impl BackendChoice {
 
     /// The values [`BackendChoice::from_env`] accepts, for error messages and
     /// for the operator documentation to quote.
-    pub const ACCEPTED: &'static str = "'scripted' or 'openai'";
+    pub const ACCEPTED: &'static str = "'scripted', 'scripted-paths' or 'openai'";
 
     /// Reads the choice from `env`.
     ///
@@ -296,6 +302,7 @@ impl BackendChoice {
         match raw.to_ascii_lowercase().as_str() {
             "scripted" => Ok(Self::Scripted),
             "openai" => Ok(Self::OpenAi),
+            "scripted-paths" => Ok(Self::PathExerciser),
             _ => Err(ConfigError::NotAChoice {
                 var: BACKEND_VAR,
                 value: bounded(&raw),
@@ -310,18 +317,10 @@ impl BackendChoice {
         match self {
             Self::Scripted => "scripted",
             Self::OpenAi => "openai",
+            Self::PathExerciser => "scripted-paths",
         }
     }
 }
-
-/// The furthest a world coordinate can be from the origin, in blocks.
-///
-/// Minecraft's world border sits here, so clamping to it makes the float ->
-/// integer conversion below total without discarding any reachable position.
-const WORLD_LIMIT_BLOCKS: f64 = 29_999_984.0;
-
-/// How far the stand-in steps toward something it has sighted, in blocks.
-const SIGHTED_STEP_BLOCKS: i64 = 2;
 
 /// The vanilla food level at or below which the stand-in seeks a meal.
 ///
@@ -330,27 +329,143 @@ const SIGHTED_STEP_BLOCKS: i64 = 2;
 /// plus the stagger, or an agent would notice its reserve for the first time after
 /// it had already run out. It is a rule of thumb and nothing more - a real backend
 /// weighs resting against whatever else the agent is doing.
-const LOW_FOOD_LEVEL: i64 = 7;
+const LOW_FOOD_LEVEL: i64 = crate::offered::HUNGRY_FOOD_LEVEL;
 
-/// The one goal the stand-in ever adopts, worded as the stand-in's own so no
-/// record reads it as a model's choice.
-pub const SCRIPTED_GOAL_STATEMENT: &str = "scripted stand-in goal: stay fed and unhurt";
+/// The item the scripted stand-in prefers its placeholder goal to be achieved by holding.
+pub const SCRIPTED_SUCCESS_ITEM: &str = "item.minecraft.stick";
+/// The stand-in's step, worded as its own for the same reason.
+pub const SCRIPTED_STEP: &str = "scripted stand-in step: act on the trigger in front of me";
 
-/// Converts a continuous world coordinate to the block coordinate an
-/// [`Intent::MoveTo`] target carries.
-///
-/// Clamped and NaN-guarded first: an unbounded float-to-integer cast is exactly
-/// the kind of silent nonsense the workspace's clippy gate denies, and the
-/// clamp is what makes the narrowing well-defined rather than merely quiet.
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "the clamp above bounds the value well inside i64, and floor() removes the fraction"
-)]
-pub(crate) fn block_coord(value: f64) -> i64 {
-    if value.is_nan() {
-        return 0;
+/// `draft` as the strict schema `perception` is asked under offers it. An answer no model could give
+/// is replaced by one the schema does: the draft's own intent beside the first goal choice offered
+/// with it - of the draft's own disposition where one is - else the schema's first answer, with the
+/// draft's reasoning kept. So a provider-free rehearsal exercises only answers a model could give
+/// (the r39 offline audit: the stand-in's idle beside an abandon was one no schema offered).
+#[must_use]
+pub fn offered_answer(perception: &Perception, draft: Draft) -> Draft {
+    const REPAIRED_ANSWER: &str =
+        "repaired: the stand-in's own answer was not one its schema offers";
+    use crate::openai::{instance, wire};
+    let schema = wire::decision_schema_for(
+        &crate::offered::OfferedRefs::of(perception),
+        wire::GoalPhase::of(perception),
+    );
+    if instance::admits(&schema, &instance::answer_of(&schema, &draft)) {
+        return draft;
     }
-    value.clamp(-WORLD_LIMIT_BLOCKS, WORLD_LIMIT_BLOCKS).floor() as i64
+    // The repair is said in the reasoning, so a rehearsal's record counts how often the stand-in's
+    // own rule drafted outside its schema, and no reasoning stands unmarked beside another intent.
+    let reasoning = Value::String(format!("{} [{REPAIRED_ANSWER}]", draft.reasoning));
+    beside_its_intent(&schema, &draft)
+        .or_else(|| instance::first_instance(&schema))
+        .and_then(|mut answer| {
+            answer["reasoning"] = reasoning;
+            wire::draft_from_answer(&answer.to_string()).ok()
+        })
+        .unwrap_or(draft)
+}
+
+/// The answer `schema` offers with `draft`'s own intent, its goal choice the first offered beside
+/// that intent, of the draft's own disposition where one is.
+fn beside_its_intent(schema: &Value, draft: &Draft) -> Option<Value> {
+    use crate::openai::instance;
+    let intent = serde_json::to_value(&draft.intent).ok()?;
+    let disposition = draft
+        .goal
+        .as_ref()
+        .and_then(|choice| serde_json::to_value(choice.disposition).ok());
+    let goal_of = |goals: &Value| {
+        let options = goals["anyOf"]
+            .as_array()
+            .cloned()
+            .unwrap_or_else(|| vec![goals.clone()]);
+        let own = options.iter().find(|option| {
+            let offered =
+                &instance::resolved_part(schema, option)["properties"]["disposition"]["enum"];
+            match &disposition {
+                Some(disposition) => offered
+                    .as_array()
+                    .is_some_and(|names| names.contains(disposition)),
+                None => instance::admits_part(schema, option, &Value::Null),
+            }
+        });
+        own.into_iter()
+            .chain(options.iter())
+            .find_map(|option| instance::first_part_instance(schema, option))
+    };
+    if let Some(pairings) = schema["properties"]["decision"]["anyOf"].as_array() {
+        return pairings.iter().find_map(|pairing| {
+            let pairing = instance::resolved_part(schema, pairing);
+            if !instance::admits_part(schema, &pairing["properties"]["intent"], &intent) {
+                return None;
+            }
+            let goal = goal_of(&pairing["properties"]["goal"])?;
+            Some(serde_json::json!({ "decision": { "intent": intent, "goal": goal }, "reasoning": "" }))
+        });
+    }
+    if !instance::admits_part(schema, &schema["properties"]["intent"], &intent) {
+        return None;
+    }
+    let goal = goal_of(&schema["properties"]["goal"])?;
+    Some(serde_json::json!({ "intent": intent, "goal": goal, "reasoning": "" }))
+}
+
+/// `draft` as a goal review beside the edge of sight may answer it: the strict schema offers no idle
+/// or rest there and the body refuses one (`goalPassiveBesideExploration`), so a scripted answer
+/// that would wait walks to look further instead - keeping a completion or an abandon, holding no
+/// goal with no choice, and continuing a held goal it had left unanswered, or abandoning it as stale
+/// at its stall bound (the r39 offline audit: the stand-in idled beside an abandon). Any other draft
+/// is returned as it is.
+#[must_use]
+pub fn looking_further(perception: &Perception, mut draft: Draft) -> Draft {
+    let passive = matches!(draft.intent, Intent::Idle | Intent::Rest);
+    let Some(onto) = perception
+        .explore
+        .first()
+        .map(|cell| cell.target_ref.clone())
+        .filter(|_| passive && perception.trigger.reviews_goal())
+    else {
+        return draft;
+    };
+    let goal = match (&perception.goal, draft.goal.take()) {
+        (_, Some(choice))
+            if matches!(
+                choice.disposition,
+                GoalDisposition::Complete | GoalDisposition::Abandon
+            ) =>
+        {
+            Some(choice)
+        }
+        (None, None) => None,
+        (Some(held), None) => {
+            let stalled = held
+                .progress
+                .as_ref()
+                .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS);
+            Some(GoalChoice {
+                discover: None,
+                disposition: if stalled {
+                    GoalDisposition::Abandon
+                } else {
+                    GoalDisposition::Continue
+                },
+                success_item: None,
+                success_count: None,
+                step: None,
+                step_result: Some(GoalStepResult::NoProgress),
+                shelter: None,
+                feeds: None,
+                reason: stalled.then_some(GoalReason::Stale),
+            })
+        }
+        (_, other) => {
+            draft.goal = other;
+            return draft;
+        }
+    };
+    draft.intent = Intent::MoveTo { onto };
+    draft.goal = goal;
+    draft
 }
 
 /// The deterministic stand-in backend: a rule per trigger, no inference.
@@ -369,36 +484,358 @@ impl ScriptedBackend {
     /// they are - a table from trigger to intent - with no runtime involved.
     #[must_use]
     pub fn draft_now(route: &ModelRoute, perception: &Perception) -> Draft {
+        if let Some(sheltering) = Self::shelter_now(perception) {
+            return offered_answer(perception, looking_further(perception, sheltering));
+        }
         let mut draft = Self::step_now(route, perception);
-        draft.goal = Self::goal_now(perception);
-        draft
+        draft.goal = Self::goal_now(perception, &draft.intent);
+        offered_answer(perception, looking_further(perception, draft))
     }
 
-    /// The scripted goal rule: adopt one fixed placeholder goal at the first goal
-    /// review that carries none, and continue it at every later one.
-    ///
-    /// It exists so the goal round trip - choice, ledger, carried summary, next
-    /// choice - is exercised deterministically without credentials. A fixed rule
-    /// that never weighs evidence is not agency, which is why its wording says it
-    /// is the stand-in's and why it never revises, completes or abandons.
-    fn goal_now(perception: &Perception) -> Option<GoalChoice> {
-        if !matches!(perception.trigger, Trigger::GoalReview) {
+    /// The stand-in's shelter as night nears: at a goal review with no hunter upon it, the one
+    /// shelter goal - set in place of what it holds, for the reason that goal's evidence supports -
+    /// stepped by what its cover names (the descent, the closing with a solid block in hand, the
+    /// equip that readies one, the gathering of a closer, or a walk onto natural cover), completed
+    /// once sealed and stayed in. `None` where no shelter is held or offered.
+    fn shelter_now(perception: &Perception) -> Option<Draft> {
+        let offered = crate::offered::OfferedRefs::of(perception);
+        if !perception.trigger.reviews_goal() || !offered.immediate.is_empty() {
             return None;
         }
-        Some(match perception.goal {
-            None => GoalChoice {
-                disposition: GoalDisposition::Adopt,
-                statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
-            },
-            Some(_) => GoalChoice {
-                disposition: GoalDisposition::Continue,
-                statement: None,
-            },
+        let shelter = &offered.shelter;
+        let held = perception.goal.as_ref();
+        let holding = held.is_some_and(|goal| goal.shelter);
+        let progress = held.and_then(|goal| goal.progress.as_ref());
+        let met = progress.is_some_and(|seen| seen.condition_met);
+        let step_result = match progress {
+            Some(seen) if !seen.condition_advanced && !seen.step_advanced => {
+                GoalStepResult::NoProgress
+            }
+            _ if met => GoalStepResult::Done,
+            _ => GoalStepResult::Progressing,
+        };
+        let choice = |disposition, shelter: Option<bool>, reason| GoalChoice {
+            discover: None,
+            disposition,
+            success_item: None,
+            success_count: None,
+            step: None,
+            step_result: (disposition != GoalDisposition::Adopt).then_some(step_result),
+            shelter,
+            feeds: None,
+            reason,
+        };
+        let answer = |intent, goal, why: &str| Draft {
+            intent,
+            reasoning: format!("scripted stand-in: {why}"),
+            goal,
+        };
+        // Sealed in with nothing held, it stays: rest is a fine answer, and digging out is no step.
+        if !holding && held.is_none() && shelter.sealed() && shelter.night_near {
+            return Some(answer(
+                Intent::Rest,
+                None,
+                "sealed in as night nears, so stay",
+            ));
+        }
+        if holding && met {
+            return Some(answer(
+                Intent::Rest,
+                Some(choice(GoalDisposition::Complete, None, None)),
+                "sealed in: complete the shelter and stay in it",
+            ));
+        }
+        if !holding && !shelter.offered() {
+            return None;
+        }
+        let stalled = progress
+            .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS);
+        // A shelter its last three steps advanced nothing is ended as stale, never continued into
+        // the body's refusal at the stall bound.
+        if holding && stalled {
+            return Some(answer(
+                Intent::Idle,
+                Some(choice(
+                    GoalDisposition::Abandon,
+                    None,
+                    Some(GoalReason::Stale),
+                )),
+                "my shelter advanced nothing for three steps",
+            ));
+        }
+        let Some(intent) = Self::shelter_step(&offered).filter(|intent| offered.admits(intent))
+        else {
+            // A shelter no step of its cover can advance cannot be met now.
+            return holding.then(|| {
+                answer(
+                    Intent::Idle,
+                    Some(choice(
+                        GoalDisposition::Abandon,
+                        None,
+                        Some(GoalReason::Impossible),
+                    )),
+                    "nothing my cover offers can close this shelter now",
+                )
+            });
+        };
+        let goal = match held {
+            Some(_) if holding => choice(GoalDisposition::Continue, None, None),
+            None => choice(GoalDisposition::Adopt, Some(true), None),
+            // Night nears: the held goal ends for what its evidence states, and a shelter takes its place.
+            Some(_) => choice(
+                GoalDisposition::Replace,
+                Some(true),
+                Some(if met {
+                    GoalReason::Completed
+                } else if stalled {
+                    GoalReason::Stale
+                } else {
+                    GoalReason::Unsafe
+                }),
+            ),
+        };
+        Some(answer(
+            intent,
+            Some(goal),
+            "night nears: take the step my cover names toward a shelter",
+        ))
+    }
+
+    /// The step the cover in `offered` names first: the descent underfoot, the closing with the
+    /// solid block in hand, the equip that puts one there, the gathering of a closer, or a walk
+    /// onto a more enclosed site.
+    fn shelter_step(offered: &crate::offered::OfferedRefs) -> Option<Intent> {
+        let shelter = &offered.shelter;
+        let descend = shelter.descend.clone().map(|block| Intent::Dig { block });
+        let placed = || {
+            shelter
+                .closings
+                .first()
+                .zip(shelter.solid_held.first())
+                .map(|((block, face), item)| Intent::Place {
+                    block: block.clone(),
+                    item: item.clone(),
+                    face: *face,
+                })
+        };
+        let readied = || {
+            shelter.to_equip().first().map(|item| Intent::Equip {
+                item: item.clone(),
+                destination: EquipmentDestination::Hand,
+            })
+        };
+        let gathered = || {
+            shelter.gathers.first().map(|handle| {
+                if offered.dig_blocks.contains(handle) {
+                    Intent::Dig {
+                        block: handle.clone(),
+                    }
+                } else {
+                    Intent::Collect {
+                        item: handle.clone(),
+                        approach: !offered.pickup_items.contains(handle),
+                    }
+                }
+            })
+        };
+        let walked = || {
+            shelter
+                .sites
+                .first()
+                .map(|onto| Intent::MoveTo { onto: onto.clone() })
+        };
+        descend
+            .or_else(placed)
+            .or_else(readied)
+            .or_else(gathered)
+            .or_else(walked)
+    }
+
+    /// The scripted goal rule: adopt one placeholder goal of holding the fewest an objective asks
+    /// of what the block it digs can drop, continue it while it digs, revise it for more of its own
+    /// item once met or replace it as completed by another, and complete it when sight offers none.
+    ///
+    /// It exists so the goal round trip - choice, ledger, carried summary, next choice, and the
+    /// follow-up review a settled step owes - is exercised deterministically without credentials.
+    /// A fixed rule is not agency, which is why its wording says it is the stand-in's. It reads the
+    /// body's progress evidence only as far as the ledger requires: a step that changed nothing is
+    /// judged `noProgress`, a goal at the no-progress bound or with nothing left to dig is
+    /// abandoned rather than continued into the body's refusal, and no goal is ever adopted beside
+    /// an idle step or for a count nothing in sight could give.
+    fn goal_now(perception: &Perception, intent: &Intent) -> Option<GoalChoice> {
+        if !perception.trigger.reviews_goal()
+            || crate::offered::OfferedRefs::of(perception).survives(intent)
+        {
+            return None;
+        }
+        // No free-text step: the strict schema offers none, since the body words the step from the
+        // intent (routine-v26), and the stand-in answers only what a model could.
+        let step = |disposition, step_result| GoalChoice {
+            discover: None,
+            disposition,
+            success_item: None,
+            success_count: None,
+            step: None,
+            step_result,
+            shelter: None,
+            feeds: None,
+            reason: None,
+        };
+        let digging = matches!(
+            intent,
+            Intent::Dig { .. } | Intent::Collect { .. } | Intent::Craft { .. }
+        );
+        let acting = digging || matches!(intent, Intent::MoveTo { .. });
+        let offered = crate::offered::OfferedRefs::of(perception);
+        let exploring =
+            matches!(intent, Intent::MoveTo { onto } if offered.explore_targets.contains(onto));
+        let Some(held) = &perception.goal else {
+            // With nothing grounding an item goal, a walk to look further sets a discovery goal.
+            if exploring && offered.discovery_offered() {
+                return Some(GoalChoice {
+                    discover: Some(true),
+                    ..step(GoalDisposition::Adopt, None)
+                });
+            }
+            // A craft's worth of what the recipe makes, and never fewer than the objective floor
+            // the perception offers: a goal one dig could meet is no objective (r39: alpha and
+            // kappa held "one more dirt" goals that every step completed).
+            let (item, more) = match intent {
+                Intent::Dig { block } => (yield_of(perception, block, None)?, 1),
+                Intent::Craft { recipe, .. } => {
+                    let option = perception
+                        .self_state
+                        .crafting_options
+                        .iter()
+                        .find(|option| &option.recipe_ref == recipe)?;
+                    (option.what.clone(), option.result_count)
+                }
+                _ => return None,
+            };
+            let have = held_count(perception, &item);
+            return offered
+                .count_bounds_of(&item)
+                .map(|(fewest, most)| GoalChoice {
+                    success_item: Some(item),
+                    success_count: Some(fewest.max((have + more).min(most))),
+                    ..step(GoalDisposition::Adopt, None)
+                });
+        };
+        let progress = held.progress.as_ref();
+        let step_result = match progress {
+            Some(seen) if !seen.condition_advanced && !seen.step_advanced => {
+                GoalStepResult::NoProgress
+            }
+            _ => GoalStepResult::Progressing,
+        };
+        let ended = |disposition, reason| GoalChoice {
+            step: None,
+            reason,
+            ..step(disposition, Some(step_result))
+        };
+        let stalled = progress
+            .is_some_and(|seen| seen.steps_without_progress >= MAX_GOAL_STEPS_WITHOUT_PROGRESS);
+        // An unmet goal ends only for what its evidence states: stale at the stall bound, else
+        // impossible, which the ledger refuses while sight could still meet it.
+        let abandoned = || {
+            ended(
+                GoalDisposition::Abandon,
+                Some(if stalled {
+                    GoalReason::Stale
+                } else {
+                    GoalReason::Impossible
+                }),
+            )
+        };
+        // A met condition is completed; a goal at the no-progress bound, with no step to take for
+        // it, or that what is in sight could no longer meet, is abandoned rather than continued
+        // into the body's refusal. One sight can still meet is walked toward instead, because the
+        // body refuses its abandon (the v26 rehearsal's three `goalAbandonedAchievable`).
+        let unobtainable = held.success_item.is_some() && !offered.goal_reachable();
+        // A goal sight cannot meet is continued by a walk to the edge of sight, as the body
+        // accepts, and abandoned only once nowhere is offered to look or it stalls.
+        Some(if progress.is_some_and(|seen| seen.condition_met) {
+            Self::moved_on(perception, intent, held, &offered, step_result)
+        } else if !acting || (unobtainable && !exploring) || stalled {
+            abandoned()
+        } else {
+            step(GoalDisposition::Continue, Some(step_result))
         })
+    }
+
+    /// The stand-in's answer to the met goal `held`: completed by adopting the next goal in sight
+    /// in the same answer - what `intent` gives when sight offers a count of it, else the first
+    /// item it does - by a revise when that is more of the goal's own item, which keeps the
+    /// objective's identity, and by a replace as completed when it is another.
+    fn moved_on(
+        perception: &Perception,
+        intent: &Intent,
+        held: &loom_contract::GoalSummary,
+        offered: &crate::offered::OfferedRefs,
+        step_result: GoalStepResult,
+    ) -> GoalChoice {
+        let judged = |disposition, reason| GoalChoice {
+            discover: None,
+            disposition,
+            success_item: None,
+            success_count: None,
+            step: None,
+            step_result: Some(step_result),
+            shelter: None,
+            feeds: None,
+            reason,
+        };
+        let made = Self::item_of(perception, intent)
+            .filter(|item| offered.count_bounds_of(item).is_some());
+        match made.or_else(|| offered.count_bounds.first().map(|(item, ..)| item.clone())) {
+            Some(item) => {
+                let (fewest, _) = offered.count_bounds_of(&item).unwrap_or((1, 1));
+                let more = held.success_item.as_ref() == Some(&item);
+                GoalChoice {
+                    success_item: Some(item),
+                    success_count: Some(fewest),
+                    ..judged(
+                        if more {
+                            GoalDisposition::Revise
+                        } else {
+                            GoalDisposition::Replace
+                        },
+                        (!more).then_some(GoalReason::Completed),
+                    )
+                }
+            }
+            // A met discovery goal is never completed bare: it is replaced or, with nothing to
+            // replace it by, abandoned as completed.
+            None if held.discovery => judged(GoalDisposition::Abandon, Some(GoalReason::Completed)),
+            None => judged(GoalDisposition::Complete, None),
+        }
+    }
+
+    /// What `intent` makes or digs for: a dig's yield, or a craft's result.
+    fn item_of(perception: &Perception, intent: &Intent) -> Option<String> {
+        match intent {
+            Intent::Dig { block } => yield_of(perception, block, None),
+            Intent::Craft { recipe, .. } => perception
+                .self_state
+                .crafting_options
+                .iter()
+                .find(|option| &option.recipe_ref == recipe)
+                .map(|option| option.what.clone()),
+            _ => None,
+        }
     }
 
     /// The per-trigger action rule, before any goal choice is attached.
     fn step_now(route: &ModelRoute, perception: &Perception) -> Draft {
+        // Danger where no walk leads out is answered by closing the cover, never by a flight.
+        if matches!(
+            perception.trigger,
+            Trigger::Damaged { .. } | Trigger::ThreatSighted { .. }
+        ) {
+            if let Some(closing) = cornered(perception) {
+                return closing;
+            }
+        }
         match &perception.trigger {
             // Never a reply: two stand-ins answering speech with speech would be a chat loop.
             Trigger::Spoken { from, text } => Draft {
@@ -422,7 +859,17 @@ impl ScriptedBackend {
             // `source` would put a creature's name where the body expects a handle
             // it issued, which the body refuses; naming nothing when nothing in
             // sight is alive is the honest answer.
-            Trigger::Damaged { amount, source } => match nearest_ref(perception) {
+            // The attacker the body named is fled first; it is always offered.
+            Trigger::Damaged {
+                amount,
+                source,
+                attacker_ref,
+                ..
+            } => match attacker_ref
+                .clone()
+                .filter(|handle| fleeable(perception, handle))
+                .or_else(|| nearest_ref(perception, source))
+            {
                 Some(handle) => Draft {
                     goal: None,
                     intent: Intent::Flee { from: handle },
@@ -446,33 +893,36 @@ impl ScriptedBackend {
             // a `Flee` naming this threat may use.
             Trigger::ThreatSighted {
                 threat, entity_ref, ..
-            } => Draft {
+            } if fleeable(perception, entity_ref) => Draft {
                 goal: None,
                 intent: Intent::Flee {
                     from: entity_ref.clone(),
                 },
                 reasoning: format!("{threat} hunts my kind and is in view; retreat from it"),
             },
-            Trigger::BlockSighted { block } => {
-                let [x, y, z] = perception.self_state.position;
-                Draft {
+            // Sealed in, nothing can reach the agent and no flight is offered.
+            Trigger::ThreatSighted { threat, .. } => Draft {
+                goal: None,
+                intent: Intent::Idle,
+                reasoning: format!("{threat} is in view, but no flight from it is offered; hold still"),
+            },
+            // A walk names a block the body observed, so the stand-in walks onto the
+            // nearest observation of the sighted kind. It has no spatial reasoning:
+            // a sighting with no matching observation, or one the trigger names in
+            // words the body did not report, is answered by doing nothing rather than
+            // by a coordinate nothing in the perception grounds.
+            Trigger::BlockSighted { block } => match nearest_block_ref(perception, block) {
+                Some(handle) => Draft {
                     goal: None,
-                    intent: Intent::MoveTo {
-                        // The stand-in has no spatial reasoning. The perception
-                        // now carries a bearing for every observation, but the
-                        // trigger names a block rather than an observation, so
-                        // there is nothing here to read one off; this steps a
-                        // fixed offset rather than inventing a direction.
-                        // A real backend is given, and uses, the whole payload.
-                        target: [
-                            block_coord(x) + SIGHTED_STEP_BLOCKS,
-                            block_coord(y),
-                            block_coord(z),
-                        ],
-                    },
-                    reasoning: format!("{block} sighted nearby; close the distance to reach it"),
-                }
-            }
+                    intent: Intent::MoveTo { onto: handle },
+                    reasoning: format!("{block} sighted nearby; walk onto it to reach it"),
+                },
+                None => Draft {
+                    goal: None,
+                    intent: Intent::Idle,
+                    reasoning: format!("{block} sighted, but no observed block of it can be named"),
+                },
+            },
             // The one survival rule the stand-in has. Vanilla hunger is reported
             // directly, so a low food level outranks every other routine goal.
             //
@@ -488,7 +938,7 @@ impl ScriptedBackend {
             // names what it was told about first and lets the body refuse what is
             // not food, which is a refusal the body records. A demo therefore
             // provisions the food in the body's first occupied slot.
-            Trigger::GoalReview if perception.self_state.food <= LOW_FOOD_LEVEL => {
+            trigger if trigger.reviews_goal() && perception.self_state.food <= LOW_FOOD_LEVEL => {
                 let food = perception.self_state.food;
                 let saturation = perception.self_state.saturation;
                 match perception.self_state.inventory_summary.first() {
@@ -511,17 +961,229 @@ impl ScriptedBackend {
                     },
                 }
             }
-            Trigger::GoalReview => Draft {
-                goal: None,
-                intent: Intent::Idle,
-                reasoning: format!(
-                    "reviewed goals at the {tier:?} tier; nothing outranks what is already underway",
-                    tier = route.tier()
-                ),
-            },
+            // The stand-in's one routine step: dig the nearest offered block that can drop
+            // something, the held goal's item first, or do nothing when no such block is in reach.
+            Trigger::GoalReview | Trigger::StepSettled => Self::review_step(route, perception),
         }
     }
 }
+
+impl ScriptedBackend {
+    /// The stand-in's one routine step: collect its own drop of the held goal's item while one
+    /// lies in reach, as the body requires; else dig the nearest offered block that can drop
+    /// something, the held goal's item first; else do nothing.
+    fn review_step(route: &ModelRoute, perception: &Perception) -> Draft {
+        // A hunter upon the agent is answered first, by a flight from the nearest one, or where
+        // no walk leads out, by closing its cover.
+        if let Some(from) = crate::offered::OfferedRefs::of(perception)
+            .immediate
+            .first()
+            .cloned()
+        {
+            if let Some(closing) = cornered(perception) {
+                return closing;
+            }
+            return Draft {
+                goal: None,
+                intent: Intent::Flee { from },
+                reasoning: format!(
+                    "reviewed goals at the {tier:?} tier; something that hunts my kind is upon me, so flee first",
+                    tier = route.tier()
+                ),
+            };
+        }
+        if let Some((item, approach)) = own_goal_drop(perception) {
+            return Draft {
+                goal: None,
+                intent: Intent::Collect { item, approach },
+                reasoning: format!(
+                    "reviewed goals at the {tier:?} tier; my own drop of the goal's item lies in reach, so collect it",
+                    tier = route.tier()
+                ),
+            };
+        }
+        let offered = crate::offered::OfferedRefs::of(perception);
+        let met = perception
+            .goal
+            .as_ref()
+            .and_then(|goal| goal.progress.as_ref())
+            .is_some_and(|progress| progress.condition_met);
+        // A met goal is stepped toward the first item sight offers, which replaces it, rather than
+        // toward the met item (the v32 rehearsal's three met goals walked off from logs in reach).
+        let next = met
+            .then(|| offered.count_bounds.first().map(|(item, ..)| item.as_str()))
+            .flatten();
+        let wanted = next.or_else(|| {
+            perception
+                .goal
+                .as_ref()
+                .and_then(|goal| goal.success_item.as_deref())
+        });
+        // A held goal sight cannot meet looks further for a source, rather than dig for another;
+        // so does a discovery goal not yet met, and a review that can set one.
+        let discovering = offered.discovering() && !offered.stalled && !met;
+        if (next.is_none()
+            && wanted.is_some()
+            && !offered.goal_obtainable()
+            && offered.held_item.is_some())
+            || discovering
+            || (perception.goal.is_none() && offered.discovery_offered())
+        {
+            return Self::look_further(route, perception);
+        }
+        if let Some((recipe, item)) = offered_craft(perception, wanted) {
+            return Draft {
+                goal: None,
+                intent: Intent::Craft { recipe, crafts: 1 },
+                reasoning: format!(
+                    "reviewed goals at the {tier:?} tier; I can craft {item} from what I hold, so craft it",
+                    tier = route.tier()
+                ),
+            };
+        }
+        match nearest_yielding_dig(perception, wanted) {
+            Some((block, item)) => Draft {
+                goal: None,
+                intent: Intent::Dig { block },
+                reasoning: format!(
+                    "reviewed goals at the {tier:?} tier; a block in reach can drop {item}, so dig it",
+                    tier = route.tier()
+                ),
+            },
+            // With a goal's source in sight but out of reach it walks onto that source; with
+            // nothing in reach to dig, it walks to the edge of sight to look further, rather than
+            // idling where it stands.
+            None => match nearest_source_walk(perception, wanted) {
+                Some((onto, item)) => Draft {
+                    goal: None,
+                    intent: Intent::MoveTo { onto },
+                    reasoning: format!(
+                        "reviewed goals at the {tier:?} tier; a block in sight can drop {item}, so walk to it",
+                        tier = route.tier()
+                    ),
+                },
+                None => Self::look_further(route, perception),
+            },
+        }
+    }
+
+    /// Walk to the first cell at the edge of sight, or do nothing when none is offered.
+    fn look_further(route: &ModelRoute, perception: &Perception) -> Draft {
+        match perception.explore.first() {
+                Some(target) => Draft {
+                    goal: None,
+                    intent: Intent::MoveTo {
+                        onto: target.target_ref.clone(),
+                    },
+                    reasoning: format!(
+                        "reviewed goals at the {tier:?} tier; nothing in sight drops anything, so look further",
+                        tier = route.tier()
+                    ),
+                },
+                None => Draft {
+                    goal: None,
+                    intent: Intent::Idle,
+                    reasoning: format!(
+                        "reviewed goals at the {tier:?} tier; no block in reach drops anything",
+                        tier = route.tier()
+                    ),
+                },
+        }
+    }
+}
+
+/// The nearest block offered as a walk target that can drop the held goal's [`wanted`] item.
+fn nearest_source_walk(perception: &Perception, wanted: Option<&str>) -> Option<(String, String)> {
+    let wanted = wanted?;
+    let offered = crate::offered::OfferedRefs::of(perception);
+    perception
+        .surroundings
+        .iter()
+        .filter(|seen| offered.walk_targets.contains(&seen.target_ref))
+        .filter(|seen| {
+            seen.yields.as_ref().is_some_and(|yields| {
+                yields
+                    .iter()
+                    .any(|item| item.what == wanted && item.most > 0)
+            })
+        })
+        .min_by(|a, b| a.distance.total_cmp(&b.distance))
+        .map(|seen| (seen.target_ref.clone(), wanted.to_owned()))
+}
+
+/// The first offered recipe and what it makes: one for [`wanted`] while a goal names it, else
+/// any, while no goal is held.
+fn offered_craft(perception: &Perception, wanted: Option<&str>) -> Option<(String, String)> {
+    let offered = crate::offered::OfferedRefs::of(perception);
+    perception
+        .self_state
+        .crafting_options
+        .iter()
+        .filter(|option| offered.recipes.contains(&option.recipe_ref))
+        .find(|option| wanted.is_none_or(|item| option.what == item))
+        .map(|option| (option.recipe_ref.clone(), option.what.clone()))
+}
+
+/// The nearest block offered to dig that can drop something, and the item it is dug for:
+/// [`wanted`] only while a goal names it, else the stick, else the first it can drop.
+fn nearest_yielding_dig(perception: &Perception, wanted: Option<&str>) -> Option<(String, String)> {
+    let offered = crate::offered::OfferedRefs::of(perception);
+    let diggable = |seen: &&Observation| offered.dig_blocks.contains(&seen.target_ref);
+    let candidates: Vec<&Observation> = perception.surroundings.iter().filter(diggable).collect();
+    let pick = |want: Option<&str>| {
+        candidates.iter().find_map(|seen| {
+            yield_of(perception, &seen.target_ref, want)
+                .filter(|item| want.is_none_or(|want| item == want))
+                .map(|item| (seen.target_ref.clone(), item))
+        })
+    };
+    match wanted {
+        Some(want) => pick(Some(want)),
+        None => pick(Some(SCRIPTED_SUCCESS_ITEM)).or_else(|| pick(None)),
+    }
+}
+
+/// The ref of the agent's own drop of its held goal's item that the body requires it to collect,
+/// and whether reaching it needs an approach, or `None` when no collect is required.
+fn own_goal_drop(perception: &Perception) -> Option<(String, bool)> {
+    let offered = crate::offered::OfferedRefs::of(perception);
+    let wanted = offered.pursued.as_ref()?;
+    if !offered.collect_required {
+        return None;
+    }
+    let (handle, _) = offered.own_drops.iter().find(|(_, what)| what == wanted)?;
+    Some((handle.clone(), !offered.pickup_items.contains(handle)))
+}
+
+/// What digging the observed block `block` is for: `want` when it can drop that, else the
+/// stick, else the first item it can drop.
+fn yield_of(perception: &Perception, block: &str, want: Option<&str>) -> Option<String> {
+    let yields = perception
+        .surroundings
+        .iter()
+        .find(|seen| seen.target_ref == block)?
+        .yields
+        .as_ref()?;
+    let named = |name: &str| yields.iter().find(|item| item.what == name);
+    want.and_then(named)
+        .or_else(|| named(SCRIPTED_SUCCESS_ITEM))
+        .or_else(|| yields.first())
+        .map(|item| item.what.clone())
+}
+
+/// How many of `item` the agent holds now.
+fn held_count(perception: &Perception, item: &str) -> i64 {
+    perception
+        .self_state
+        .inventory_summary
+        .iter()
+        .filter(|stack| stack.what == item)
+        .map(|stack| stack.count)
+        .sum()
+}
+
+/// Why a stand-in refuses a perception whose request schema would offer the model no answer.
+pub const NO_ANSWER_OFFERED: &str = "the request schema for this perception offers no answer";
 
 impl ModelBackend for ScriptedBackend {
     fn draft(
@@ -530,8 +1192,15 @@ impl ModelBackend for ScriptedBackend {
         perception: &Perception,
     ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
         // Ready rather than `async fn`: there is nothing to await, and a future
-        // that is already complete says so to its caller.
-        std::future::ready(Ok(Self::draft_now(route, perception)))
+        // that is already complete says so to its caller. A perception whose request schema the
+        // provider would refuse is refused here too, so a rehearsal meets it before a paid run.
+        std::future::ready(
+            if crate::openai::wire::request_offers_an_answer(perception) {
+                Ok(Self::draft_now(route, perception))
+            } else {
+                Err(BackendError::new(NO_ANSWER_OFFERED))
+            },
+        )
     }
 }
 
@@ -541,11 +1210,90 @@ impl ModelBackend for ScriptedBackend {
 /// carries `kind = entity`, so the first entity in the list is the nearest thing
 /// that can be fled from. `None` says the scene holds no living target rather
 /// than no actionable blocks or dropped items.
-fn nearest_ref(perception: &Perception) -> Option<String> {
+/// The ref of the nearest observed block of kind `block`, if the scene holds one.
+///
+/// Matched on the last path segment of the body's own description, so `diamond_ore`
+/// names `block.minecraft.diamond_ore` and nothing else. A block in the agent's own
+/// column is skipped, because a walk to it goes nowhere and is not offered.
+fn nearest_block_ref(perception: &Perception, block: &str) -> Option<String> {
     perception
         .surroundings
         .iter()
-        .find(|seen| seen.kind == ObservationKind::Entity)
+        .find(|seen| {
+            seen.kind == ObservationKind::Block
+                && seen.direction != Bearing::Here
+                && seen.what.rsplit('.').next() == Some(block)
+        })
+        .map(|seen| seen.target_ref.clone())
+}
+
+/// Whether `perception` offers a flight from `handle`: never while the agent is sealed in.
+fn fleeable(perception: &Perception, handle: &str) -> bool {
+    crate::offered::OfferedRefs::of(perception)
+        .flee_targets
+        .iter()
+        .any(|offered| offered == handle)
+}
+
+/// Where no short walk leads out of where the agent stands no flight can run, so danger is answered
+/// by closing its cover - the placement its cover names with the solid stack in hand, or the equip
+/// that puts one there - else by holding still. `None` while a flight can run (the v35 shelter
+/// rehearsal: zeta, damaged in a pit, fled, and the mind refused the flight).
+pub(crate) fn cornered(perception: &Perception) -> Option<Draft> {
+    let offered = crate::offered::OfferedRefs::of(perception);
+    let shelter = &offered.shelter;
+    if !shelter.trapped() {
+        return None;
+    }
+    let placed = shelter
+        .closings
+        .first()
+        .zip(shelter.solid_held.first())
+        .map(|((block, face), item)| Intent::Place {
+            block: block.clone(),
+            item: item.clone(),
+            face: *face,
+        });
+    let readied = || {
+        shelter.to_equip().first().map(|item| Intent::Equip {
+            item: item.clone(),
+            destination: EquipmentDestination::Hand,
+        })
+    };
+    Some(
+        match placed.or_else(readied).filter(|intent| offered.admits(intent)) {
+            Some(intent) => Draft {
+                goal: None,
+                intent,
+                reasoning: "no walk leads out of where I stand, so I close my cover against what hunts me".to_owned(),
+            },
+            None => Draft {
+                goal: None,
+                intent: Intent::Idle,
+                reasoning: "no walk leads out of where I stand and nothing I hold closes my cover, so I hold still".to_owned(),
+            },
+        },
+    )
+}
+
+/// The nearest creature to flee from after damage: one of the kind that dealt it, else any that
+/// hunts the agent's kind, and never a peer or a creature that hunts nothing (the v29 rehearsal:
+/// the stand-in fled the nearest thing with a ref, a peer, twice).
+fn nearest_ref(perception: &Perception, source: &str) -> Option<String> {
+    let kind = source.rsplit(['.', ':']).next().unwrap_or(source);
+    // Only a creature the perception offers a flight may be named: a hunter past the offered
+    // ones would be refused (v32 plains rehearsal 15: a skeleton shooting from beyond them).
+    let offered = crate::offered::OfferedRefs::of(perception).flee_targets;
+    let hunters = || {
+        perception.surroundings.iter().filter(|seen| {
+            seen.kind == ObservationKind::Entity
+                && seen.hunts == Some(true)
+                && offered.contains(&seen.target_ref)
+        })
+    };
+    hunters()
+        .find(|seen| seen.what.rsplit(['.', ':']).next() == Some(kind))
+        .or_else(|| hunters().next())
         .map(|seen| seen.target_ref.clone())
 }
 
@@ -554,8 +1302,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        block_coord, BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, LOW_FOOD_LEVEL,
-        SCRIPTED_GOAL_STATEMENT, WORLD_LIMIT_BLOCKS,
+        BackendChoice, ModelBackend, ScriptedBackend, BACKEND_VAR, LOW_FOOD_LEVEL, SCRIPTED_STEP,
     };
     use crate::config::{ConfigError, Env};
     use crate::router::{ModelCatalog, Router};
@@ -584,15 +1331,21 @@ mod tests {
                 inventory_summary: vec![],
                 crafting_options: vec![],
                 crafting_options_omitted: 0,
+                own_drops: vec![],
                 world: WorldState {
                     day_phase: DayPhase::Day,
                     is_day: true,
                     ticks_until_nightfall: 6_000,
                 },
+                cover: None,
             },
             surroundings: vec![],
             surroundings_omitted: 0,
             goal: None,
+            last_refusal: None,
+            explore: vec![],
+            recalled: vec![],
+            horizon: vec![],
         }
     }
 
@@ -623,6 +1376,12 @@ mod tests {
             visible: true,
             target_ref: handle.to_owned(),
             count: None,
+            standable: None,
+            yields: None,
+            dig_safe: None,
+            route_refused: None,
+            hunts: (what.ends_with("zombie") || what.ends_with("skeleton")).then_some(true),
+            cover: None,
         });
         seen
     }
@@ -649,6 +1408,9 @@ mod tests {
                 Trigger::Damaged {
                     amount: 6,
                     source: "zombie".to_owned(),
+                    attacker_ref: None,
+                    health_before: None,
+                    health_after: None,
                 },
                 DecisionImportance::Pivotal,
             ),
@@ -667,6 +1429,186 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn damage_beside_only_a_peer_never_flees_the_peer() {
+        // The v29 rehearsal: the stand-in fled the nearest thing with a ref, another player, twice.
+        let seen = in_view(
+            in_view(
+                perception(
+                    Trigger::Damaged {
+                        amount: 3,
+                        source: "minecraft:zombie".to_owned(),
+                        attacker_ref: None,
+                        health_before: None,
+                        health_after: None,
+                    },
+                    DecisionImportance::Pivotal,
+                ),
+                "entity.minecraft.player",
+                "e1",
+            ),
+            "entity.minecraft.zombie",
+            "e2",
+        );
+        let draft = ScriptedBackend
+            .draft(&router().route(seen.importance), &seen)
+            .await
+            .expect("the stand-in backend always drafts");
+        assert_eq!(
+            draft.intent,
+            Intent::Flee {
+                from: "e2".to_owned()
+            }
+        );
+        let peer_only = in_view(
+            perception(
+                Trigger::Damaged {
+                    amount: 3,
+                    source: "fall".to_owned(),
+                    attacker_ref: None,
+                    health_before: None,
+                    health_after: None,
+                },
+                DecisionImportance::Pivotal,
+            ),
+            "entity.minecraft.player",
+            "e1",
+        );
+        let idle = ScriptedBackend
+            .draft(&router().route(peer_only.importance), &peer_only)
+            .await
+            .expect("the stand-in backend always drafts");
+        assert_eq!(idle.intent, Intent::Idle);
+    }
+
+    #[test]
+    fn as_night_nears_the_stand_in_holds_one_shelter_goal_stepped_by_its_cover() {
+        use loom_contract::{GoalDisposition, GoalReason};
+        let route = router().route(DecisionImportance::Routine);
+        // Open grass at dusk: the shelter is adopted by the descent underfoot.
+        let dusk = shelter_scene("dusk-open-grass");
+        let adopted = ScriptedBackend::draft_now(&route, &dusk);
+        assert_eq!(
+            adopted.intent,
+            Intent::Dig {
+                block: "b1".to_owned()
+            }
+        );
+        let choice = adopted.goal.unwrap();
+        assert_eq!(choice.disposition, GoalDisposition::Adopt);
+        assert_eq!(choice.shelter, Some(true));
+        // Holding an unmet item goal, the shelter takes its place as unsafe to keep.
+        let mut holding = dusk.clone();
+        holding.goal = shelter_scene("cover-gathers")
+            .goal
+            .map(|goal| loom_contract::GoalSummary {
+                shelter: false,
+                success_item: Some("item.minecraft.oak_log".to_owned()),
+                success_count: Some(4),
+                ..goal
+            });
+        let replaced = ScriptedBackend::draft_now(&route, &holding).goal.unwrap();
+        assert_eq!(replaced.disposition, GoalDisposition::Replace);
+        assert_eq!(replaced.shelter, Some(true));
+        assert_eq!(replaced.reason, Some(GoalReason::Unsafe));
+        // With nothing solid held, gathering the closer its cover offers is the shelter's own step.
+        let gathering = ScriptedBackend::draft_now(&route, &shelter_scene("cover-gathers"));
+        assert_eq!(
+            gathering.intent,
+            Intent::Dig {
+                block: "b8".to_owned()
+            }
+        );
+        assert_eq!(
+            gathering.goal.unwrap().disposition,
+            GoalDisposition::Continue
+        );
+        // Sealed in, it is completed and stayed in.
+        let sealed = ScriptedBackend::draft_now(&route, &shelter_scene("sealed-met"));
+        assert_eq!(sealed.intent, Intent::Rest);
+        assert_eq!(sealed.goal.unwrap().disposition, GoalDisposition::Complete);
+        // A shelter at the stall bound is ended as stale.
+        let mut stuck = shelter_scene("cover-gathers");
+        if let Some(progress) = stuck.goal.as_mut().and_then(|goal| goal.progress.as_mut()) {
+            progress.steps_without_progress = loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS;
+            progress.condition_advanced = false;
+            progress.step_advanced = false;
+        }
+        let stale = ScriptedBackend::draft_now(&route, &stuck).goal.unwrap();
+        assert_eq!(stale.disposition, GoalDisposition::Abandon);
+        assert_eq!(stale.reason, Some(GoalReason::Stale));
+        // By day no shelter is offered, so the ordinary rule answers.
+        let midday = ScriptedBackend::draft_now(&route, &shelter_scene("midday-open-grass"));
+        assert_ne!(midday.goal.and_then(|goal| goal.shelter), Some(true));
+    }
+
+    fn shelter_scene(name: &str) -> Perception {
+        let path = format!(
+            "{}/tests/fixtures/shelter-{name}.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn damage_where_no_walk_leads_out_closes_the_cover_rather_than_fleeing() {
+        // The v35 shelter rehearsal: zeta, damaged in a pit with no walk out, fled, and the mind
+        // refused the flight, which ended the run as a failed decision.
+        let mut pit = shelter_scene("pit-damaged");
+        let answer = |seen: &Perception| {
+            let draft = ScriptedBackend::draft_now(&router().route(seen.importance), seen);
+            assert!(
+                crate::offered::OfferedRefs::of(seen).admits(&draft.intent),
+                "the mind would refuse {:?}",
+                draft.intent
+            );
+            draft.intent
+        };
+        assert_eq!(
+            answer(&pit),
+            Intent::Place {
+                block: "b2".to_owned(),
+                item: "s1".to_owned(),
+                face: loom_contract::BlockFace::West
+            }
+        );
+        // The dirt carried but not in hand is readied first.
+        pit.self_state.inventory_summary[0].held = None;
+        assert_eq!(
+            answer(&pit),
+            Intent::Equip {
+                item: "s1".to_owned(),
+                destination: loom_contract::EquipmentDestination::Hand
+            }
+        );
+        // Nothing solid to close it with: it holds still.
+        pit.self_state.inventory_summary.clear();
+        assert_eq!(answer(&pit), Intent::Idle);
+        // A sighting there, and a goal review beside the hunter, close the cover the same way.
+        let mut sighted = shelter_scene("pit-damaged");
+        sighted.trigger = Trigger::ThreatSighted {
+            threat: "entity.minecraft.zombie".to_owned(),
+            entity_ref: "e1".to_owned(),
+            distance: 2.6,
+            direction: Bearing::North,
+            visible: true,
+            reachable: None,
+        };
+        assert!(matches!(answer(&sighted), Intent::Place { .. }));
+        let mut reviewed = shelter_scene("pit-damaged");
+        reviewed.trigger = Trigger::GoalReview;
+        assert!(matches!(answer(&reviewed), Intent::Place { .. }));
+        // Sealed in, neither the attacker nor the creature sighted is fled.
+        let mut sealed = shelter_scene("pit-damaged");
+        let cover = sealed.self_state.cover.as_mut().unwrap();
+        cover.sealed = true;
+        cover.open.clear();
+        cover.closings.clear();
+        assert_eq!(answer(&sealed), Intent::Idle);
+        sealed.trigger = sighted.trigger.clone();
+        assert_eq!(answer(&sealed), Intent::Idle);
+    }
+
     #[test]
     fn damage_with_nothing_nameable_in_sight_idles_rather_than_inventing_a_ref() {
         // The failure this rules out is the tempting one: falling back to the damage
@@ -677,6 +1619,9 @@ mod tests {
             Trigger::Damaged {
                 amount: 6,
                 source: "zombie".to_owned(),
+                attacker_ref: None,
+                health_before: None,
+                health_after: None,
             },
             DecisionImportance::Pivotal,
         );
@@ -690,6 +1635,73 @@ mod tests {
     }
 
     #[test]
+    fn damage_from_a_hunter_past_the_offered_creatures_flees_one_that_was_offered() {
+        // v32 plains rehearsal 15: epsilon was shot, the nearest skeleton stood past the creatures
+        // the perception offers a flight, and the stand-in named it, which the mind refused and
+        // the run stopped on.
+        let creature = |index: usize, what: &str, hunts: bool| Observation {
+            kind: ObservationKind::Entity,
+            what: format!("entity.minecraft.{what}"),
+            distance: 2.0 + f64::from(u32::try_from(index).unwrap()),
+            direction: Bearing::East,
+            vertical_offset: 0.0,
+            visible: true,
+            target_ref: format!("e{index}"),
+            count: None,
+            standable: None,
+            yields: None,
+            dig_safe: None,
+            route_refused: None,
+            hunts: Some(hunts),
+            cover: None,
+        };
+        let mut seen = perception(
+            Trigger::Damaged {
+                amount: 3,
+                source: "skeleton".to_owned(),
+                attacker_ref: None,
+                health_before: None,
+                health_after: None,
+            },
+            DecisionImportance::Pivotal,
+        );
+        seen.surroundings = (0..20)
+            .map(|index| creature(index, "sheep", false))
+            .collect();
+        seen.surroundings.insert(3, creature(90, "zombie", true));
+        seen.surroundings.push(creature(91, "skeleton", true));
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        let offered = crate::offered::OfferedRefs::of(&seen);
+        assert!(
+            offered.admits(&draft.intent),
+            "{:?} not offered",
+            draft.intent
+        );
+        assert_eq!(
+            draft.intent,
+            Intent::Flee {
+                from: "e90".to_owned()
+            }
+        );
+        // And the skeleton the body names as the one that hurt it is fled, past the cut.
+        seen.trigger = Trigger::Damaged {
+            amount: 3,
+            source: "skeleton".to_owned(),
+            attacker_ref: Some("e91".to_owned()),
+            health_before: None,
+            health_after: None,
+        };
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        assert!(crate::offered::OfferedRefs::of(&seen).admits(&draft.intent));
+        assert_eq!(
+            draft.intent,
+            Intent::Flee {
+                from: "e91".to_owned()
+            }
+        );
+    }
+
+    #[test]
     fn every_trigger_drafts_an_intent_and_a_reason() {
         let triggers = [
             Trigger::Spoken {
@@ -699,6 +1711,9 @@ mod tests {
             Trigger::Damaged {
                 amount: 1,
                 source: "cactus".to_owned(),
+                attacker_ref: None,
+                health_before: None,
+                health_after: None,
             },
             Trigger::BlockSighted {
                 block: "diamond_ore".to_owned(),
@@ -717,25 +1732,244 @@ mod tests {
     }
 
     #[test]
-    fn the_stand_in_adopts_at_its_first_review_and_continues_at_the_next() {
-        let route = router().route(DecisionImportance::Routine);
-        let first = perception(Trigger::GoalReview, DecisionImportance::Routine);
-        let adopted = ScriptedBackend::draft_now(&route, &first).goal.unwrap();
-        assert_eq!(adopted.disposition, GoalDisposition::Adopt);
-        assert_eq!(adopted.statement.as_deref(), Some(SCRIPTED_GOAL_STATEMENT));
-
-        let mut later = perception(Trigger::GoalReview, DecisionImportance::Routine);
-        later.goal = Some(GoalSummary {
-            goal_id: "req-1".to_owned(),
-            statement: SCRIPTED_GOAL_STATEMENT.to_owned(),
+    fn a_scripted_wait_beside_the_edge_of_sight_walks_to_look_further() {
+        // The r39 offline audit: beta's abandon was paired with an idle beside eight cells at the
+        // edge of sight (body:00000292), which no strict schema offers and the body refuses.
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.explore = vec![loom_contract::ExploreTarget {
+            target_ref: "x1".to_owned(),
+            distance: 12.0,
+            direction: Bearing::East,
+            vertical_offset: 0.0,
+        }];
+        let wait = |goal: Option<loom_contract::GoalChoice>| super::Draft {
+            intent: Intent::Idle,
+            reasoning: "wait".to_owned(),
+            goal,
+        };
+        let walk = Intent::MoveTo {
+            onto: "x1".to_owned(),
+        };
+        assert_eq!(super::looking_further(&seen, wait(None)).intent, walk);
+        let abandon = loom_contract::GoalChoice {
+            discover: None,
+            disposition: GoalDisposition::Abandon,
+            success_item: None,
+            success_count: None,
+            step: None,
+            step_result: Some(loom_contract::GoalStepResult::NoProgress),
+            shelter: None,
+            feeds: None,
+            reason: Some(loom_contract::GoalReason::Impossible),
+        };
+        let kept = super::looking_further(&seen, wait(Some(abandon.clone())));
+        assert_eq!((kept.intent, kept.goal), (walk.clone(), Some(abandon)));
+        // A held goal left unanswered is continued by the walk, and abandoned as stale at its bound.
+        seen.goal = Some(GoalSummary {
+            discovery: false,
+            goal_id: "g".to_owned(),
+            statement: "hold 3 item.minecraft.stick".to_owned(),
             revision: 0,
             adopted_tick: 0,
             last_step: None,
+            success_item: Some("item.minecraft.stick".to_owned()),
+            success_count: Some(3),
+            step: None,
+            step_action: None,
+            step_ref: None,
+            progress: None,
+            shelter: false,
+            feeds: None,
         });
+        let continued = super::looking_further(&seen, wait(None)).goal.unwrap();
+        assert_eq!(continued.disposition, GoalDisposition::Continue);
+        if let Some(goal) = seen.goal.as_mut() {
+            goal.progress = Some(loom_contract::GoalProgress {
+                condition_met: false,
+                condition_held: 0,
+                inventory_delta: vec![],
+                condition_advanced: false,
+                step_advanced: false,
+                step_evidence: loom_contract::StepEvidence::None,
+                steps_without_progress: loom_contract::MAX_GOAL_STEPS_WITHOUT_PROGRESS,
+                cover: None,
+            });
+        }
+        let stale = super::looking_further(&seen, wait(None)).goal.unwrap();
+        assert_eq!(
+            (stale.disposition, stale.reason),
+            (
+                GoalDisposition::Abandon,
+                Some(loom_contract::GoalReason::Stale)
+            )
+        );
+        // With nowhere to look, a wait stands.
+        seen.explore.clear();
+        assert_eq!(
+            super::looking_further(&seen, wait(None)).intent,
+            Intent::Idle
+        );
+    }
+
+    #[test]
+    fn the_stand_in_adopts_at_its_first_review_and_continues_at_the_next() {
+        let route = router().route(DecisionImportance::Routine);
+        let mut first = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        // Nothing in reach drops anything: it idles, and adopts no goal beside an idle step (r14 eta).
+        let idle = ScriptedBackend::draft_now(&route, &first);
+        assert_eq!(idle.intent, Intent::Idle);
+        assert_eq!(idle.goal, None);
+        // Two bushes in reach that drop one or two sticks each: it digs one, for more than one dig
+        // could give.
+        let bush = loom_contract::Observation {
+            kind: ObservationKind::Block,
+            what: "block.minecraft.dead_bush".to_owned(),
+            distance: 1.0,
+            direction: Bearing::North,
+            vertical_offset: 0.0,
+            visible: true,
+            target_ref: "b1".to_owned(),
+            count: None,
+            standable: Some(true),
+            yields: Some(vec![loom_contract::BlockYield {
+                what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
+                least: 1,
+                most: 2,
+                per_hundred: 150,
+            }]),
+            dig_safe: Some(true),
+            route_refused: None,
+            hunts: None,
+            cover: None,
+        };
+        first.surroundings = vec![
+            bush.clone(),
+            loom_contract::Observation {
+                target_ref: "b2".to_owned(),
+                ..bush
+            },
+        ];
+        let digging = ScriptedBackend::draft_now(&route, &first);
+        assert_eq!(
+            digging.intent,
+            Intent::Dig {
+                block: "b1".to_owned()
+            }
+        );
+        let adopted = digging.goal.unwrap();
+        assert_eq!(adopted.disposition, GoalDisposition::Adopt);
+        assert_eq!(
+            adopted.success_item.as_deref(),
+            Some(super::SCRIPTED_SUCCESS_ITEM)
+        );
+        // Never fewer than the objective floor past what is held (r39: alpha's one-more goals), nor
+        // what one dig at its most could meet (the r39 offline audit).
+        assert_eq!(adopted.success_count, Some(3));
+        first.self_state.inventory_summary = vec![loom_contract::InventoryStack {
+            slot_ref: "i1".to_owned(),
+            what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
+            count: 1,
+            edible: None,
+            solid: None,
+            held: None,
+        }];
+        let more = ScriptedBackend::draft_now(&route, &first).goal.unwrap();
+        assert_eq!(more.success_count, Some(4));
+
+        let mut later = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        later.goal = Some(GoalSummary {
+            discovery: false,
+            goal_id: "req-1".to_owned(),
+            statement: "hold 3 item.minecraft.stick".to_owned(),
+            revision: 0,
+            adopted_tick: 0,
+            last_step: None,
+            success_item: Some(super::SCRIPTED_SUCCESS_ITEM.to_owned()),
+            success_count: Some(3),
+            step: Some(SCRIPTED_STEP.to_owned()),
+            step_action: None,
+            step_ref: None,
+            progress: None,
+            shelter: false,
+            feeds: None,
+        });
+        // With nothing left in reach to dig for it, the goal is abandoned, not idled on.
+        let abandoned = ScriptedBackend::draft_now(&route, &later).goal.unwrap();
+        assert_eq!(abandoned.disposition, GoalDisposition::Abandon);
+        later.surroundings.clone_from(&first.surroundings);
         let continued = ScriptedBackend::draft_now(&route, &later).goal.unwrap();
         assert_eq!(continued.disposition, GoalDisposition::Continue);
-        assert_eq!(continued.statement, None);
-        assert!(SCRIPTED_GOAL_STATEMENT.starts_with("scripted stand-in"));
+        assert_eq!(continued.success_item, None);
+        assert!(SCRIPTED_STEP.starts_with("scripted stand-in"));
+    }
+
+    #[test]
+    fn a_held_goal_whose_source_is_in_sight_but_out_of_reach_walks_to_it_rather_than_abandoning() {
+        // The v26 rehearsal: a bush in sight past dig reach, and the stand-in abandoned a goal
+        // the body refused to let go as goalAbandonedAchievable.
+        let route = router().route(DecisionImportance::Routine);
+        let mut seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
+        seen.goal = Some(GoalSummary {
+            discovery: false,
+            goal_id: "req-1".to_owned(),
+            statement: "hold 1 item.minecraft.stick".to_owned(),
+            revision: 0,
+            adopted_tick: 0,
+            last_step: None,
+            success_item: Some(super::SCRIPTED_SUCCESS_ITEM.to_owned()),
+            success_count: Some(1),
+            step: None,
+            step_action: None,
+            step_ref: None,
+            progress: None,
+            shelter: false,
+            feeds: None,
+        });
+        let bush = |handle: &str, distance: f64| loom_contract::Observation {
+            kind: ObservationKind::Block,
+            what: "block.minecraft.dead_bush".to_owned(),
+            distance,
+            direction: Bearing::North,
+            vertical_offset: 0.0,
+            visible: true,
+            target_ref: handle.to_owned(),
+            count: None,
+            standable: Some(true),
+            yields: Some(vec![loom_contract::BlockYield {
+                what: super::SCRIPTED_SUCCESS_ITEM.to_owned(),
+                least: 0,
+                most: 2,
+                per_hundred: 100,
+            }]),
+            dig_safe: Some(true),
+            route_refused: None,
+            hunts: None,
+            cover: None,
+        };
+        seen.surroundings = vec![bush("b9", 9.0), bush("b7", 7.0)];
+        let walking = ScriptedBackend::draft_now(&route, &seen);
+        assert_eq!(
+            walking.intent,
+            Intent::MoveTo {
+                onto: "b7".to_owned()
+            }
+        );
+        assert_eq!(walking.goal.unwrap().disposition, GoalDisposition::Continue);
+        // With no source in sight it looks further, still pursuing the goal.
+        seen.surroundings.clear();
+        seen.explore = vec![loom_contract::ExploreTarget {
+            target_ref: "x1".to_owned(),
+            distance: 12.0,
+            direction: Bearing::East,
+            vertical_offset: 0.0,
+        }];
+        let looking = ScriptedBackend::draft_now(&route, &seen);
+        assert_eq!(
+            looking.intent,
+            Intent::MoveTo {
+                onto: "x1".to_owned()
+            }
+        );
     }
 
     #[test]
@@ -815,11 +2049,17 @@ mod tests {
                 slot_ref: "i1".to_owned(),
                 what: "bread".to_owned(),
                 count: 3,
+                edible: None,
+                solid: None,
+                held: None,
             },
             InventoryStack {
                 slot_ref: "i2".to_owned(),
                 what: "iron pickaxe".to_owned(),
                 count: 1,
+                edible: None,
+                solid: None,
+                held: None,
             },
         ];
 
@@ -838,6 +2078,158 @@ mod tests {
     }
 
     #[test]
+    fn a_met_discovery_goal_digs_the_log_it_revealed_and_replaces_itself_with_a_log_goal() {
+        // The v31 plains rehearsal: seven met discoveries walked past the log they revealed.
+        let path = format!(
+            "{}/../../../contract/fixtures/valid/perception-goal-discovery-held.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut seen: Perception =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        seen.surroundings = vec![Observation {
+            kind: ObservationKind::Block,
+            what: "block.minecraft.oak_log".to_owned(),
+            distance: 2.0,
+            direction: Bearing::East,
+            vertical_offset: 0.5,
+            visible: true,
+            target_ref: "b1".to_owned(),
+            count: None,
+            standable: Some(false),
+            yields: Some(vec![loom_contract::BlockYield {
+                what: "item.minecraft.oak_log".to_owned(),
+                least: 1,
+                most: 1,
+                per_hundred: 100,
+            }]),
+            dig_safe: Some(true),
+            route_refused: None,
+            hunts: None,
+            cover: None,
+        }];
+        seen.horizon = vec![loom_contract::HorizonGoal {
+            what: "item.minecraft.oak_log".to_owned(),
+            grounding: loom_contract::HorizonGrounding::Sight,
+            via: None,
+            most: 9,
+            frontier: true,
+        }];
+        if let Some(progress) = seen.goal.as_mut().and_then(|goal| goal.progress.as_mut()) {
+            progress.condition_met = true;
+        }
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        assert_eq!(
+            draft.intent,
+            Intent::Dig {
+                block: "b1".to_owned()
+            }
+        );
+        let choice = draft.goal.unwrap();
+        assert_eq!(choice.disposition, GoalDisposition::Replace);
+        assert_eq!(
+            choice.success_item.as_deref(),
+            Some("item.minecraft.oak_log")
+        );
+    }
+
+    #[test]
+    fn a_met_item_goal_digs_the_log_in_reach_it_replaces_itself_with_not_a_walk_away() {
+        // The v32 plains rehearsal: gamma's met dye goal, nothing more of it in sight, walked to
+        // the edge of sight beside a birch log in reach and was refused as unproductive.
+        let path = format!(
+            "{}/../../../contract/fixtures/valid/perception-goal-discovery-held.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut seen: Perception =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        seen.surroundings = vec![Observation {
+            kind: ObservationKind::Block,
+            what: "block.minecraft.birch_log".to_owned(),
+            distance: 2.3,
+            direction: Bearing::East,
+            vertical_offset: 0.5,
+            visible: true,
+            target_ref: "b1".to_owned(),
+            count: None,
+            standable: Some(false),
+            yields: Some(vec![loom_contract::BlockYield {
+                what: "item.minecraft.birch_log".to_owned(),
+                least: 1,
+                most: 1,
+                per_hundred: 100,
+            }]),
+            dig_safe: Some(true),
+            route_refused: None,
+            hunts: None,
+            cover: None,
+        }];
+        seen.horizon = vec![loom_contract::HorizonGoal {
+            what: "item.minecraft.birch_log".to_owned(),
+            grounding: loom_contract::HorizonGrounding::Sight,
+            via: None,
+            most: 11,
+            frontier: true,
+        }];
+        seen.self_state.inventory_summary = vec![InventoryStack {
+            slot_ref: "i1".to_owned(),
+            what: "item.minecraft.light_gray_dye".to_owned(),
+            count: 1,
+            edible: None,
+            solid: None,
+            held: None,
+        }];
+        let goal = seen.goal.as_mut().unwrap();
+        goal.discovery = false;
+        goal.success_item = Some("item.minecraft.light_gray_dye".to_owned());
+        goal.success_count = Some(1);
+        if let Some(progress) = goal.progress.as_mut() {
+            progress.condition_met = true;
+        }
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        assert_eq!(
+            draft.intent,
+            Intent::Dig {
+                block: "b1".to_owned()
+            }
+        );
+        let choice = draft.goal.unwrap();
+        assert_eq!(choice.disposition, GoalDisposition::Replace);
+        assert_eq!(
+            choice.success_item.as_deref(),
+            Some("item.minecraft.birch_log")
+        );
+    }
+
+    #[test]
+    fn a_hungry_meal_defers_a_held_goal_rather_than_abandoning_it() {
+        let mut seen = hungry(
+            perception(Trigger::GoalReview, DecisionImportance::Routine),
+            LOW_FOOD_LEVEL,
+        );
+        seen.self_state.inventory_summary = vec![InventoryStack {
+            slot_ref: "i1".to_owned(),
+            what: "item.minecraft.bread".to_owned(),
+            count: 3,
+            edible: None,
+            solid: None,
+            held: None,
+        }];
+        let path = format!(
+            "{}/../../../contract/fixtures/valid/perception-goal-discovery-held.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let held: Perception =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        seen.goal = held.goal;
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        assert!(matches!(draft.intent, Intent::Eat { .. }));
+        assert_eq!(
+            draft.goal, None,
+            "the meal defers the goal, which stays held"
+        );
+    }
+
+    #[test]
     fn the_damage_reasoning_states_the_health_as_a_reader_reads_it() {
         // The other number that reaches an operator's screen verbatim. A body's
         // health is an `f32` in world, so a reading that is not exactly
@@ -847,6 +2239,9 @@ mod tests {
             Trigger::Damaged {
                 amount: 4,
                 source: "zombie".to_owned(),
+                attacker_ref: None,
+                health_before: None,
+                health_after: None,
             },
             DecisionImportance::Pivotal,
         );
@@ -875,7 +2270,7 @@ mod tests {
                     distance: 4.0,
                     direction: Bearing::South,
                     visible: true,
-                    reachable: true,
+                    reachable: Some(true),
                 },
                 DecisionImportance::Pivotal,
             ),
@@ -903,6 +2298,9 @@ mod tests {
                     Trigger::Damaged {
                         amount: 6,
                         source: "zombie".to_owned(),
+                        attacker_ref: None,
+                        health_before: None,
+                        health_after: None,
                     },
                     DecisionImportance::Pivotal,
                 ),
@@ -921,35 +2319,46 @@ mod tests {
     }
 
     #[test]
-    fn a_sighting_steps_from_the_body_own_block_position() {
-        let seen = perception(
+    fn a_sighting_walks_onto_the_nearest_observed_block_of_its_kind() {
+        let mut seen = perception(
             Trigger::BlockSighted {
                 block: "diamond_ore".to_owned(),
             },
             DecisionImportance::Routine,
         );
         let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
+        assert_eq!(draft.intent, Intent::Idle);
+        for (what, handle, direction) in [
+            ("block.minecraft.stone", "b1", Bearing::North),
+            // Under the feet: a walk there goes nowhere, so the stand-in looks past it.
+            ("block.minecraft.diamond_ore", "b0", Bearing::Here),
+            ("block.minecraft.diamond_ore", "b2", Bearing::North),
+            ("block.minecraft.diamond_ore", "b3", Bearing::North),
+        ] {
+            seen.surroundings.push(Observation {
+                kind: ObservationKind::Block,
+                what: what.to_owned(),
+                distance: 2.0,
+                direction,
+                vertical_offset: -0.5,
+                visible: true,
+                target_ref: handle.to_owned(),
+                count: None,
+                standable: Some(true),
+                yields: Some(vec![]),
+                dig_safe: Some(true),
+                route_refused: None,
+                hunts: None,
+                cover: None,
+            });
+        }
+        let draft = ScriptedBackend::draft_now(&router().route(seen.importance), &seen);
         assert_eq!(
             draft.intent,
             Intent::MoveTo {
-                target: [12, 64, -9]
+                onto: "b2".to_owned()
             }
         );
-    }
-
-    #[test]
-    fn block_coordinates_stay_finite_for_any_float() {
-        assert_eq!(block_coord(f64::NAN), 0);
-        // Stated as "clamps to the limit" rather than as a number, so the
-        // assertion cannot drift from the constant it is about.
-        assert_eq!(block_coord(f64::INFINITY), block_coord(WORLD_LIMIT_BLOCKS));
-        assert_eq!(
-            block_coord(f64::NEG_INFINITY),
-            block_coord(-WORLD_LIMIT_BLOCKS)
-        );
-        assert!(block_coord(f64::INFINITY) > 0);
-        assert!(block_coord(f64::NEG_INFINITY) < 0);
-        assert_eq!(block_coord(-8.25), -9);
     }
 
     #[test]

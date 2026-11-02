@@ -451,3 +451,108 @@ fn scoped_schema(schema: &serde_json::Value, def: &str) -> serde_json::Value {
     rooted.insert("$defs".to_string(), schema["$defs"].clone());
     serde_json::Value::Object(rooted)
 }
+
+#[test]
+fn only_an_inventory_item_name_is_an_item_name() {
+    // r13: eta's goal named block.minecraft.terracotta, which no inventory ever holds.
+    for item in [
+        "item.minecraft.stick",
+        "item.minecraft.oak_log",
+        "item.mod_pack.tools.copper_pick",
+    ] {
+        assert!(loom_contract::is_item_name(item), "{item}");
+    }
+    for not_an_item in [
+        "block.minecraft.terracotta",
+        "stick",
+        "item.minecraft",
+        "item..stick",
+        "item.Minecraft.stick",
+        "item.minecraft.dead bush",
+        "item.mine.craft.stick-",
+        &format!("item.minecraft.{}", "a".repeat(64)),
+    ] {
+        assert!(!loom_contract::is_item_name(not_an_item), "{not_an_item}");
+    }
+}
+
+#[test]
+fn an_own_drop_and_a_block_yield_hold_their_relations_at_decode() {
+    let drop = |fields: &str| serde_json::from_str::<loom_contract::OwnDrop>(fields);
+    assert!(drop(r#"{"requestId":"r","what":"item.minecraft.stick","count":2,"fate":"lying","distance":1.0,"direction":"east","verticalOffset":0.0}"#).is_ok());
+    assert!(
+        drop(r#"{"requestId":"r","what":"item.minecraft.stick","count":2,"fate":"taken"}"#).is_ok()
+    );
+    for bad in [
+        // A lying drop is placed, and no other fate is.
+        r#"{"requestId":"r","what":"item.minecraft.stick","count":2,"fate":"lying"}"#,
+        r#"{"requestId":"r","what":"item.minecraft.stick","count":2,"fate":"gone","distance":1.0,"direction":"east","verticalOffset":0.0}"#,
+        r#"{"requestId":"r","what":"item.minecraft.stick","count":2,"fate":"lying","distance":-1.0,"direction":"east","verticalOffset":0.0}"#,
+        r#"{"requestId":"r","what":"item.minecraft.stick","count":0,"fate":"collected"}"#,
+        r#"{"requestId":"r","what":"block.minecraft.dirt","count":1,"fate":"collected"}"#,
+    ] {
+        assert!(drop(bad).is_err(), "{bad}");
+    }
+    let yielded = |fields: &str| serde_json::from_str::<loom_contract::BlockYield>(fields);
+    assert!(
+        yielded(r#"{"what":"item.minecraft.stick","least":0,"most":2,"perHundred":3}"#).is_ok()
+    );
+    for bad in [
+        r#"{"what":"item.minecraft.air","least":0,"most":1,"perHundred":50}"#,
+        r#"{"what":"item.minecraft.stick","least":3,"most":2,"perHundred":250}"#,
+        r#"{"what":"item.minecraft.stick","least":0,"most":65,"perHundred":100}"#,
+        // A mean below 100 times the least or above 100 times the most is no sampled mean.
+        r#"{"what":"item.minecraft.stick","least":1,"most":2,"perHundred":99}"#,
+        r#"{"what":"item.minecraft.stick","least":0,"most":2,"perHundred":201}"#,
+        r#"{"what":"item.minecraft.stick","least":0,"most":2}"#,
+    ] {
+        assert!(yielded(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn a_perception_tells_at_most_eight_own_drops_and_both_reviews_carry_the_goal() {
+    let mut seen: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(contract_dir().join("fixtures/valid/perception-step-settled.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let decoded: Perception = serde_json::from_value(seen.clone()).unwrap();
+    assert!(decoded.trigger.reviews_goal());
+    assert!(loom_contract::Trigger::GoalReview.reviews_goal());
+    let drop = seen["selfState"]["ownDrops"][1].clone();
+    seen["selfState"]["ownDrops"] = serde_json::Value::Array(vec![drop; 9]);
+    assert!(serde_json::from_value::<Perception>(seen).is_err());
+}
+
+#[test]
+fn a_cover_names_each_face_once_and_closes_only_open_ones() {
+    let cover = |fields: &str| serde_json::from_str::<loom_contract::Cover>(fields);
+    assert!(cover(
+        r#"{"sealed":false,"walkOut":false,"open":["roof","feetNorth"],"closings":[{"face":"roof","block":"b2","side":"west"}],"descend":"b1","blockItems":["item.minecraft.dirt"]}"#
+    )
+    .is_ok());
+    for bad in [
+        // A face named twice.
+        r#"{"sealed":false,"walkOut":true,"open":["roof","roof"],"closings":[],"blockItems":[]}"#,
+        // A closing of a face that is not open.
+        r#"{"sealed":false,"walkOut":true,"open":["feetNorth"],"closings":[{"face":"roof","block":"b2","side":"west"}],"blockItems":[]}"#,
+        // Two closings of one face.
+        r#"{"sealed":false,"walkOut":true,"open":["roof"],"closings":[{"face":"roof","block":"b2","side":"west"},{"face":"roof","block":"b3","side":"east"}],"blockItems":[]}"#,
+        // A block item that is no item.
+        r#"{"sealed":false,"walkOut":true,"open":[],"closings":[],"blockItems":["block.minecraft.dirt"]}"#,
+        // A descend ref longer than any ref the body issues.
+        r#"{"sealed":false,"walkOut":true,"open":[],"closings":[],"descend":"b123456789","blockItems":[]}"#,
+    ] {
+        assert!(cover(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn natural_cover_is_told_only_for_a_block_a_body_can_stand_at() {
+    let seen = |fields: &str| serde_json::from_str::<loom_contract::Observation>(fields);
+    let block = r#""kind":"block","what":"block.minecraft.stone","distance":2.0,"direction":"east","verticalOffset":0.0,"visible":true,"ref":"b1","yields":[],"digSafe":true"#;
+    assert!(seen(&format!(r#"{{{block},"standable":true,"cover":9}}"#)).is_ok());
+    assert!(seen(&format!(r#"{{{block},"standable":false,"cover":3}}"#)).is_err());
+    assert!(seen(&format!(r#"{{{block},"standable":true,"cover":10}}"#)).is_err());
+}

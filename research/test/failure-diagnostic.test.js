@@ -415,7 +415,7 @@ test('a primary-behavior budget refusal retains the exact typed refusal and usag
     const diagnostic = retained.diagnostic
     assert.equal(diagnostic.schemaVersion, FAILURE_DIAGNOSTIC_VERSION)
     assert.deepEqual(diagnostic.failure, { code: 'cognitionBudgetRefused', stopReason: 'cognitionFailed' })
-    assert.equal(diagnostic.configuredConditions.mode, 'routine-v13-goal-continuity')
+    assert.equal(diagnostic.configuredConditions.mode, 'routine-v38-reliable-source')
     assert.equal(diagnostic.configuredConditions.controlledCrash, null)
     assert.equal(diagnostic.crashContainment, null)
     assert.deepEqual(diagnostic.cognition.harness.refusals, [{
@@ -464,7 +464,7 @@ test('every ordinary diagnostic stage failure falls back to the minimal diagnost
       assert.equal(fallback.schemaVersion, FALLBACK_DIAGNOSTIC_VERSION)
       assert.equal(fallback.failedStage, stage)
       assert.deepEqual(fallback.failure, { code: 'cognitionBudgetRefused', stopReason: 'cognitionFailed' })
-      assert.equal(fallback.mode, 'routine-v13-goal-continuity')
+      assert.equal(fallback.mode, 'routine-v38-reliable-source')
       assert.equal(fallback.proxy.forwardedCalls, 11)
       assert.deepEqual(fallback.proxy.refusedByBound, { perAgentCall: 1 })
       assert.equal(fallback.providerUsage.status, 'aggregated')
@@ -506,19 +506,22 @@ test('the fallback drops unsafe identifiers and fails closed past its byte bound
   }
 })
 
-test('an existing diagnostic is never overwritten', () => {
+test('an existing diagnostic is never overwritten, and a later failure of the same id is kept beside it', () => {
+  // A rehearsal id is reused by every rehearsal: the second v23 rehearsal failure lost its whole
+  // diagnostic to the first one's file and kept only a fallback.
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-no-overwrite-'))
   try {
     const first = retain(directory)
     const original = fs.readFileSync(first.file, 'utf8')
     const second = retain(directory)
-    assert.equal(second.fallback, true)
-    assert.equal(second.failedStage, 'write')
+    assert.equal(second.fallback, false)
+    assert.notEqual(second.file, first.file)
+    assert.match(path.basename(second.file), /\.2\.json$/)
     assert.equal(fs.readFileSync(first.file, 'utf8'), original)
-    const fallback = fs.readFileSync(second.file, 'utf8')
-    assert.throws(() => retain(directory), /EEXIST/)
+    const third = retain(directory)
+    assert.match(path.basename(third.file), /\.3\.json$/)
     assert.equal(fs.readFileSync(first.file, 'utf8'), original)
-    assert.equal(fs.readFileSync(second.file, 'utf8'), fallback)
+    assert.equal(fs.readFileSync(second.file, 'utf8'), fs.readFileSync(third.file, 'utf8'))
   } finally {
     fs.rmSync(directory, { recursive: true, force: true })
   }
@@ -549,12 +552,13 @@ test('every configuration mode and terminal fault enters the diagnostic path wit
     .filter((name) => name.endsWith('.json'))
     .map(configNamed)
   assert.ok(configs.some((config) => config.mode === 'routine-v12-primary-behavior'))
-  assert.ok(configs.some((config) => config.mode === 'routine-v13-goal-continuity'))
+  assert.ok(configs.some((config) => config.mode === 'routine-v38-reliable-source'))
   const faults = [
     [new Failure('cognitionFailed', 'drain', 'cognitionDrainTimedOut'), 'cognitionDrainTimedOut'],
     [new Failure('cognitionFailed', 'auth', 'providerAuthenticationRejected'), 'providerAuthenticationRejected'],
     [new Failure('cognitionFailed', 'upstream', 'cognitionUpstreamUnavailable'), 'cognitionUpstreamUnavailable'],
-    [new Failure('diskFailure', 'published artifact is invalid'), 'boundedJournalFailure'],
+    [new Failure('diskFailure', 'harness journal write failed'), 'boundedJournalFailure'],
+    [new Failure('publicationRefused', 'published artifact is invalid', 'artifactIntegrityFailed'), 'artifactIntegrityFailed'],
     [new Failure('cancelled', 'run cancelled'), 'runCancelled'],
     [new Failure('startupFailed', 'the host was suspended for 422 s', 'hostSuspended'), 'hostSuspended'],
     [new Failure('startupFailed', 'listeners remained after cleanup'), 'startupOrAcceptanceFailure']
@@ -579,6 +583,176 @@ test('every configuration mode and terminal fault enters the diagnostic path wit
   }
 })
 
+test('a failed run keeps a bounded cognition timeline of closed facts', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-timeline-diagnostic-'))
+  try {
+    fs.mkdirSync(path.join(directory, 'own'))
+    const files = rawFiles(path.join(directory, 'own'))
+    const body = []
+    const harness = []
+    for (let index = 0; index < 200; index += 1) {
+      body.push({ tick: index, agentId: 'tribe-alpha', event: 'perceived', trigger: 'damaged', detail: '/Users/x' })
+      harness.push({
+        observedAt: '2026-10-16T00:00:00.000Z',
+        event: 'cognitionForwarded',
+        agentId: 'tribe-alpha',
+        requestId: `r-${index}`,
+        trigger: 'damaged',
+        origin: 'nativeEventDriver',
+        outcome: 'decision',
+        outstandingAtAdmission: 2,
+        latencyMs: 31_000 + index,
+        provenance: { model: 'sk-secret' }
+      })
+    }
+    body.push({ tick: 201, agentId: 'tribe-alpha', event: 'cognitionUnavailable', trigger: 'damaged', outcome: 'agentBudgetExhausted', detail: 'x' })
+    writeJsonLines(files.bodyFile, body)
+    writeJsonLines(files.harnessFile, harness)
+    writeJsonLines(files.providerUsageFile, [])
+    const retained = retain(directory, { ...files })
+    const timeline = retained.diagnostic.cognition.timeline
+    assert.equal(timeline.forwarded.length, 128)
+    assert.equal(timeline.forwardedOmitted, 72)
+    assert.deepEqual(timeline.forwarded.at(-1), {
+      agentId: 'tribe-alpha',
+      event: 'cognitionForwarded',
+      trigger: 'damaged',
+      origin: 'nativeEventDriver',
+      outcome: 'decision',
+      outstandingAtAdmission: 2,
+      latencyMs: 31_199
+    })
+    assert.deepEqual(timeline.body.at(-1), {
+      agentId: 'tribe-alpha', tick: 201, event: 'cognitionUnavailable', trigger: 'damaged', outcome: 'agentBudgetExhausted'
+    })
+    assert.doesNotMatch(fs.readFileSync(retained.file, 'utf8'), /Users|sk-secret|r-199/)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a diagnostic over its bound halves its timeline, newest kept, rather than fall back', () => {
+  // v32 plains rehearsal 14: a ten-agent night's full timelines took the diagnostic to 68 KB, and
+  // only the minimal fallback was kept.
+  const run = (maxBytes) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-bounded-diagnostic-'))
+    try {
+      fs.mkdirSync(path.join(directory, 'own'))
+      const files = rawFiles(path.join(directory, 'own'))
+      const body = []
+      const harness = []
+      for (let index = 0; index < 200; index += 1) {
+        body.push({ tick: index, agentId: 'tribe-alpha', event: 'perceived', trigger: 'goalReview' })
+        harness.push({
+          observedAt: '2026-10-16T00:00:00.000Z',
+          event: 'cognitionForwarded',
+          agentId: 'tribe-alpha',
+          requestId: `r-${index}`,
+          trigger: 'goalReview',
+          origin: 'nativeGoalReviewSchedule',
+          outcome: 'decision',
+          outstandingAtAdmission: 1,
+          latencyMs: index
+        })
+      }
+      writeJsonLines(files.bodyFile, body)
+      writeJsonLines(files.harnessFile, harness)
+      writeJsonLines(files.providerUsageFile, [])
+      return retain(directory, { ...files, ...(maxBytes === undefined ? {} : { maxBytes }) })
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true })
+    }
+  }
+  const full = run()
+  assert.equal(full.fallback, false)
+  assert.equal(full.diagnostic.cognition.timeline.forwarded.length, 128)
+  const bound = full.bytes - 1024
+  const halved = run(bound)
+  assert.equal(halved.fallback, false)
+  assert.ok(halved.bytes <= bound, `${halved.bytes} > ${bound}`)
+  const timeline = halved.diagnostic.cognition.timeline
+  assert.ok(timeline.forwarded.length < 128 && timeline.forwarded.length > 0)
+  assert.equal(timeline.forwarded.length + timeline.forwardedOmitted, 200)
+  assert.equal(timeline.forwarded.at(-1).latencyMs, 199)
+  // And every agent's scheduled reviews stand beside it, against the window it is held to.
+  const windows = halved.diagnostic.cognition.nativeReviewWindows
+  assert.equal(windows['tribe-alpha'].window, 'plan')
+  assert.equal(windows['tribe-alpha'].attempted, 200)
+})
+
+test('a failed run keeps what an inventory dispute compared, bounded and private, under 64 KiB', () => {
+  // r26 stopped on a dispute whose record kept only its tag. The worst case: full timelines, and
+  // three disputes naming every slot of the window in every list, under the longest item name.
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-dispute-diagnostic-'))
+  try {
+    fs.mkdirSync(path.join(directory, 'own'))
+    const files = rawFiles(path.join(directory, 'own'))
+    const item = 'minecraft:wayfinder_armor_trim_smithing_template'
+    const full = Array.from({ length: 46 }, (_, slot) => `${slot} ${item} 64`)
+    const body = []
+    const harness = []
+    for (let index = 0; index < 200; index += 1) {
+      body.push({ tick: index, agentId: 'tribe-alpha', event: 'perceived', trigger: 'goalReview' })
+      harness.push({
+        observedAt: '2026-10-16T00:00:00.000Z',
+        event: 'cognitionForwarded',
+        agentId: 'tribe-alpha',
+        requestId: `r-${index}`,
+        trigger: 'goalReview',
+        origin: 'nativeGoalReviewSchedule',
+        outcome: 'decision',
+        outstandingAtAdmission: 1,
+        latencyMs: index
+      })
+    }
+    const dispute = (tick) => ({
+      tick,
+      agentId: 'tribe-alpha',
+      event: 'witnessDisputed',
+      outcome: 'disputedInventory',
+      detail: `1 disagreed ${SECRET} ${LOCAL_PATH}`,
+      witness: { uuid: '00000000-0000-4000-8000-000000000001', username: 'loom_secret_user' },
+      dispute: {
+        requestTick: tick - 2,
+        answerTick: tick,
+        roundTripMillis: 74,
+        claimed: [...full, `${LOCAL_PATH} 1`, `0 ${SECRET} 1`],
+        atRequest: full,
+        atAnswer: full,
+        earlier: Array.from({ length: 6 }, (_, step) => ({ tick: tick - 6 + step, changed: full })),
+        position: [1.5, 64, -3.25]
+      }
+    })
+    body.push(dispute(3131), dispute(3200), dispute(3300))
+    writeJsonLines(files.bodyFile, body)
+    writeJsonLines(files.harnessFile, harness)
+    writeJsonLines(files.providerUsageFile, [])
+    const retained = retain(directory, { ...files })
+    assert.equal(retained.fallback, false)
+    assert.ok(retained.bytes <= 64 * 1024, `${retained.bytes} bytes`)
+    const kept = retained.diagnostic.body.witnessDisputes
+    assert.equal(kept.length, 2)
+    assert.equal(retained.diagnostic.body.witnessDisputesOmitted, 1)
+    assert.deepEqual(kept[0], {
+      agentId: 'tribe-alpha',
+      tick: 3131,
+      outcome: 'disputedInventory',
+      requestTick: 3129,
+      answerTick: 3131,
+      roundTripMillis: 74,
+      claimed: full,
+      atRequest: full,
+      atAnswer: full,
+      earlier: Array.from({ length: 4 }, (_, step) => ({ tick: 3125 + step, changed: full }))
+    })
+    const text = fs.readFileSync(retained.file, 'utf8')
+    assert.doesNotMatch(text, /loom_secret_user|1\.5|-3\.25/)
+    assertPrivate(retained.file)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('a failed run keeps the closed outcome tags of its failure records', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-outcome-diagnostic-'))
   try {
@@ -596,6 +770,240 @@ test('a failed run keeps the closed outcome tags of its failure records', () => 
     assert.deepEqual(retained.diagnostic.body.outcomesByEvent, {
       witnessDisputed: { disputedPosition: 1, unclassified: 1 }
     })
+    assert.deepEqual(retained.diagnostic.body.interactionDisputes, [])
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a failed run states which pinned initial condition each agent lost, and where', () => {
+  // r38's diagnostic said only that gamma lost one, 666 ticks after begin.
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-initial-diagnostic-'))
+  try {
+    fs.mkdirSync(path.join(directory, 'own'))
+    const files = rawFiles(path.join(directory, 'own'))
+    const config = openAiGoalContinuityConfig()
+    const pinned = config.primaryBehavior.initialPositions
+    const begin = (agentId, initial) => ({
+      tick: 12, agentId, event: 'initialConditionsWitnessed', detail: 'read', outcome: 'initialConditionsWitnessed', initial
+    })
+    const first = (agentId, position, inventorySummary) => ({
+      tick: 666,
+      agentId,
+      event: 'perceived',
+      detail: 'audited perception',
+      perception: { selfState: { position, inventorySummary } },
+      perceptionAudit: { worldClock: { timeOfDay: 6666, day: 0, isDay: true } }
+    })
+    writeJsonLines(files.bodyFile, [
+      begin('tribe-alpha', { position: pinned['tribe-alpha'], inventoryStacks: 0 }),
+      begin('tribe-beta', { position: pinned['tribe-beta'], inventoryStacks: 1 }),
+      { tick: 12, agentId: 'tribe-gamma', event: 'initialConditionsWitnessed', detail: 'none', outcome: 'initialConditionsAbsent' },
+      first('tribe-alpha', pinned['tribe-alpha'], [{ ref: 'i1', what: 'egg', count: 1 }]),
+      first('tribe-beta', [0.5, 64, 0.5], [])
+    ])
+    writeJsonLines(files.harnessFile, [])
+    writeJsonLines(files.providerUsageFile, [])
+    const retained = retain(directory, { ...files })
+    assertPrivate(retained.file)
+    assert.deepEqual(retained.diagnostic.initialConditions, {
+      'tribe-alpha': {
+        atBegin: 'held',
+        beginInventoryStacks: 0,
+        beginMoved: false,
+        firstPerceptionClock: true,
+        firstPerceptionInventoryStacks: 1,
+        firstPerceptionMoved: false,
+        firstPerceptionTick: 666
+      },
+      'tribe-beta': {
+        atBegin: 'notHeld',
+        beginInventoryStacks: 1,
+        beginMoved: false,
+        firstPerceptionClock: true,
+        firstPerceptionInventoryStacks: 0,
+        firstPerceptionMoved: true,
+        firstPerceptionTick: 666
+      },
+      'tribe-gamma': {
+        atBegin: 'absent',
+        beginInventoryStacks: null,
+        beginMoved: null,
+        firstPerceptionClock: null,
+        firstPerceptionInventoryStacks: null,
+        firstPerceptionMoved: null,
+        firstPerceptionTick: null
+      }
+    })
+    assert.deepEqual(retained.diagnostic.body.outcomesByEvent.initialConditionsWitnessed, {
+      initialConditionsAbsent: 1, initialConditionsWitnessed: 2
+    })
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a disputed world interaction keeps its operation, body outcome and vanilla effect only', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-dispute-diagnostic-'))
+  try {
+    fs.mkdirSync(path.join(directory, 'own'))
+    const files = rawFiles(path.join(directory, 'own'))
+    writeJsonLines(files.bodyFile, [
+      {
+        tick: 640,
+        agentId: 'tribe-alpha',
+        event: 'worldInteraction',
+        outcome: 'disputedWorldInteraction',
+        detail: 'dig bc0; sense s-1p; control c-1x; body dug; vanilla no matching blockBreak event'
+      },
+      {
+        tick: 700,
+        agentId: 'tribe-beta',
+        event: 'worldInteraction',
+        outcome: 'disputedWorldInteraction',
+        detail: 'collect d3; sense /Users/secret; body collected; vanilla entityPickupItem 3daa 1/1 stick'
+      },
+      { tick: 701, agentId: 'tribe-beta', event: 'worldInteraction', outcome: 'disputedWorldInteraction', detail: 'sk-x' }
+    ])
+    writeJsonLines(files.harnessFile, [])
+    writeJsonLines(files.providerUsageFile, [])
+    const retained = retain(directory, { ...files })
+    assert.deepEqual(retained.diagnostic.body.interactionDisputes, [
+      { agentId: 'tribe-alpha', tick: 640, operation: 'dig', bodyOutcome: 'dug', vanillaEffect: 'absent' },
+      { agentId: 'tribe-beta', tick: 700, operation: 'collect', bodyOutcome: 'collected', vanillaEffect: 'found' },
+      { agentId: 'tribe-beta', tick: 701, operation: 'unclassified', bodyOutcome: 'unclassified', vanillaEffect: 'unclassified' }
+    ])
+    assert.doesNotMatch(fs.readFileSync(retained.file, 'utf8'), /Users|sk-x|bc0|3daa/)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+// r28's ending: alpha's older danger answer was discarded untyped, the guard stopped the run on
+// it, and the stop then signalled cognition while alpha's newer damage call was still with it.
+function stoppedOnDiscard ({ contextRecords = 6, discards = 1, inFlight = 1, disputes = 0 } = {}) {
+  const body = []
+  const harness = []
+  for (let index = 0; index < 200; index += 1) {
+    body.push({ tick: index, agentId: 'tribe-beta', event: 'perceived', trigger: 'goalReview' })
+    harness.push({
+      observedAt: '2026-10-19T23:24:00.000Z',
+      event: 'cognitionForwarded',
+      agentId: 'tribe-beta',
+      requestId: `r-${index}`,
+      trigger: 'goalReview',
+      origin: 'nativeGoalReviewSchedule',
+      outcome: 'decision',
+      outstandingAtAdmission: 1,
+      latencyMs: index
+    })
+  }
+  for (let index = 0; index < contextRecords; index += 1) {
+    body.push({ tick: 6098 + index, agentId: 'tribe-alpha', event: 'perceived', requestId: `loom-private-${index}`, trigger: 'threatSighted', detail: LOCAL_PATH })
+    body.push({ tick: 6098 + index, agentId: 'tribe-alpha', event: 'cognitionUnavailable', requestId: `loom-private-${index}`, trigger: 'threatSighted', outcome: 'dangerCoalesced' })
+  }
+  body.push({ tick: 6140, agentId: 'tribe-alpha', event: 'decisionDiscarded', requestId: 'loom-private-typed', outcome: 'dangerPreempted' })
+  for (let index = 0; index < discards; index += 1) {
+    body.push({ tick: 6146 + index, agentId: 'tribe-alpha', event: 'decisionDiscarded', requestId: `loom-private-creeper-${index}`, intent: 'flee', detail: SECRET })
+  }
+  harness.push({ observedAt: '2026-10-19T23:25:00.000Z', event: 'runFailed', stopReason: 'startupFailed' })
+  harness.push({ observedAt: '2026-10-19T23:25:00.004Z', event: 'processGroupSignalled', component: 'cognition', signal: 'SIGTERM' })
+  for (let index = 0; index < inFlight; index += 1) {
+    const requestId = `loom-private-zombie-${index}`
+    harness.push({
+      observedAt: '2026-10-19T23:25:00.021Z',
+      event: 'cognitionForwarded',
+      agentId: 'tribe-alpha',
+      requestId,
+      trigger: 'damaged',
+      importance: 'PIVOTAL',
+      origin: 'nativeEventDriver',
+      outcome: 'runStopping',
+      outstandingAtAdmission: 1,
+      latencyMs: 1535
+    })
+    body.push({ tick: 6177, agentId: 'tribe-alpha', event: 'cognitionUnavailable', requestId, trigger: 'damaged', outcome: 'failed', detail: 'cognition was stopped with the run' })
+  }
+  harness.push({ observedAt: '2026-10-19T23:25:00.090Z', event: 'processExited', component: 'cognition', exitCode: null, signal: 'SIGTERM', expected: true })
+  harness.push({ observedAt: '2026-10-19T23:25:03.500Z', event: 'processExited', component: 'paper', exitCode: 0, signal: null, expected: true })
+  const item = 'minecraft:wayfinder_armor_trim_smithing_template'
+  const full = Array.from({ length: 46 }, (_, slot) => `${slot} ${item} 64`)
+  for (let index = 0; index < disputes; index += 1) {
+    body.push({
+      tick: 3000 + index,
+      agentId: 'tribe-gamma',
+      event: 'witnessDisputed',
+      outcome: 'disputedInventory',
+      dispute: { requestTick: 2998, answerTick: 3000, roundTripMillis: 74, claimed: full, atRequest: full, atAnswer: full, earlier: Array.from({ length: 4 }, (_, step) => ({ tick: 2994 + step, changed: full })) }
+    })
+  }
+  return { body, harness }
+}
+
+function retainStopped (shape, overrides = {}) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-stop-diagnostic-'))
+  fs.mkdirSync(path.join(directory, 'own'))
+  const files = rawFiles(path.join(directory, 'own'))
+  const { body, harness } = stoppedOnDiscard(shape)
+  writeJsonLines(files.bodyFile, body)
+  writeJsonLines(files.harnessFile, harness)
+  writeJsonLines(files.providerUsageFile, [])
+  return { directory, retained: retain(directory, { ...files, ...overrides }) }
+}
+
+test('a run stopped on a live agent\'s discard keeps that agent\'s chain and every call the stop cut off', () => {
+  const { directory, retained } = retainStopped()
+  try {
+    const window = retained.diagnostic.cognition.stopWindow
+    assert.equal(window.fatalDiscards.length, 1, 'the typed preemption is no fatal discard')
+    const [fatal] = window.fatalDiscards
+    assert.equal(fatal.agentId, 'tribe-alpha')
+    assert.equal(fatal.tick, 6146)
+    assert.equal(fatal.event, 'decisionDiscarded')
+    assert.equal(fatal.outcome, undefined, 'an untyped discard says so by having no outcome')
+    assert.equal(fatal.context.length, 13)
+    assert.equal(fatal.context.at(-1), '6140 decisionDiscarded q8 dangerPreempted -')
+    assert.equal(fatal.context[0], '6098 perceived q2 - threatSighted')
+    assert.deepEqual(window.stop.map((entry) => [entry.event, entry.millisecondsFromStop, entry.component ?? null]), [
+      ['runFailed', 0, null],
+      ['processGroupSignalled', 4, 'cognition'],
+      ['processExited', 90, 'cognition'],
+      ['processExited', 3500, 'paper']
+    ])
+    // alpha's damage call ended after the stop signalled cognition, typed as the stop's, and the
+    // body's failed ending for it is the same request.
+    assert.deepEqual(window.shutdownCompletions, [{
+      agentId: 'tribe-alpha',
+      request: 'q9',
+      trigger: 'damaged',
+      outcome: 'runStopping',
+      latencyMs: 1535,
+      afterStopBegan: true,
+      millisecondsFromStop: 21,
+      bodyEnding: { tick: 6177, event: 'cognitionUnavailable', request: 'q9', outcome: 'failed', trigger: 'damaged' }
+    }])
+    assert.equal(retained.diagnostic.cognition.harness.agents.find((agent) => agent.agentId === 'tribe-alpha')
+      .beforeCrash.forwardedByOutcome.runStopping, 1)
+    assertPrivate(retained.file)
+    assert.doesNotMatch(fs.readFileSync(retained.file, 'utf8'), /loom-private/)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('the stop window is bounded, and with full timelines and disputes the diagnostic stays under 64 KiB', () => {
+  const { directory, retained } = retainStopped({ contextRecords: 40, discards: 9, inFlight: 30, disputes: 3 })
+  try {
+    assert.equal(retained.fallback, false, JSON.stringify(retained.diagnostic?.failedStage ?? retained.diagnostic?.fallback ?? retained.diagnostic).slice(0, 600))
+    assert.ok(retained.bytes <= 64 * 1024, `${retained.bytes} bytes`)
+    const window = retained.diagnostic.cognition.stopWindow
+    assert.equal(window.fatalDiscards.length, 4)
+    assert.equal(window.fatalDiscardsOmitted, 5)
+    assert.ok(window.fatalDiscards.every((fatal) => fatal.context.length === 16 && fatal.contextOmitted > 0))
+    assert.equal(window.shutdownCompletions.length, 8)
+    assert.equal(window.shutdownCompletionsOmitted, 22)
+    assert.equal(retained.diagnostic.body.witnessDisputes.length, 2, 'the disputes survive beside it')
+    assertPrivate(retained.file)
   } finally {
     fs.rmSync(directory, { recursive: true, force: true })
   }

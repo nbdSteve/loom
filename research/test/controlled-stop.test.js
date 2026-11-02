@@ -19,6 +19,7 @@ const {
   PrimaryBehaviorGuard,
   RequestSettlement,
   authenticationFailure,
+  cognitionFailureAction,
   drainControlledStop,
   primaryBehaviorRunFailure
 } = require('../lib/harness.js')
@@ -152,15 +153,16 @@ test('a global call stop counts calls admitted before the closure, including in-
   const published = publish({
     raw: controlledStopRawRecords({
       bound: 'globalCall',
-      eventChains: 6,
+      eventChains: 12,
       eventAgents: ['tribe-alpha', 'tribe-beta', 'tribe-gamma'],
       inFlight: 3,
       stopAgent: 'tribe-alpha'
     })
   })
+  // The pilot's global ceiling holds its reviews and both follow-ups each may owe, from v26.
   const stop = assertNoGo(published, 'cognitionBudgetExhausted')
-  assert.equal(stop.forwardedAtClose, 12)
-  assert.equal(stop.refusal.observed, 12)
+  assert.equal(stop.forwardedAtClose, 18)
+  assert.equal(stop.refusal.observed, 18)
 })
 
 test('a spend stop is typed, but a spend refusal the reservation could not produce is refused', () => {
@@ -206,6 +208,23 @@ test('a classified provider unavailability stops under its own kind and keeps it
   assert.equal(stop.refusal, undefined)
   assert.equal(stop.usage.providerCalls, 4)
   assert.match(readme(published), /Provider classification: .*providerServer/)
+})
+
+test('calls the same provider outage fails while they drain are part of the provider stop', () => {
+  // r31: five calls timed out at the provider within twelve seconds; the four still in flight when
+  // the first closed admission ended the run untyped instead of as this stop.
+  const config = openAiGoalContinuityConfig()
+  // The fixture's outstanding ceiling is three: the trigger and two in flight, both cut off too.
+  const raw = controlledStopRawRecords({ config, kind: 'providerUnavailable', inFlight: 2, inFlightFailed: 2 })
+  assert.equal(primaryBehaviorRunFailure(config, raw.body, raw.harness), null, 'the guard reads them as the stop')
+  const stop = assertNoGo(publish({ config, raw }), 'providerUnavailable')
+  assert.equal(stop.forwardedAfterClose, 2)
+  // A different failure while draining is still a failure of its own.
+  const other = controlledStopRawRecords({ config, kind: 'providerUnavailable', inFlight: 2, inFlightFailed: 1 })
+  const malformed = other.harness.find((record) => record.requestId === 'flight-1')
+  malformed.failure.mapping = 'malformedAnswer'
+  delete malformed.providerUnavailable
+  assert.match(primaryBehaviorRunFailure(config, other.body, other.harness).message, /cognition request became unavailable \(failed/)
 })
 
 test('a stop before any decision publishes with zero owed reviews', () => {
@@ -352,7 +371,7 @@ test('a normal completion still requires the full configured review plan', () =>
   refused.harness = refused.harness.filter((record) => record.event !== 'cognitionAdmissionClosed')
   assert.throws(
     () => publish({ raw: refused, stopReason: 'durationElapsed' }),
-    /cognition refusal, unavailable decision, or discarded decision/
+    /cognition refusal or unavailable decision/
   )
 })
 
@@ -376,9 +395,14 @@ test('the live run treats only typed refusals after an admission closure as non-
   )
   const untyped = [...body, bodyRecord(600, 'tribe-gamma', 'cognitionUnavailable', 'x', { requestId: 'other-1' })]
   assert.match(primaryBehaviorRunFailure(config, untyped, raw.harness).message, /became unavailable/)
-  for (const event of ['witnessDisputed', 'witnessRevived', 'bodyDisconnected', 'decisionDiscarded']) {
+  for (const event of ['witnessRevived', 'bodyDisconnected']) {
     const fatal = [...body, bodyRecord(600, 'tribe-gamma', event, 'x')]
     assert.notEqual(primaryBehaviorRunFailure(config, fatal, raw.harness), null, event)
+  }
+  // Ordinary typed product faults are kept as evidence and the run goes on.
+  for (const event of ['witnessDisputed', 'decisionDiscarded']) {
+    const kept = [...body, bodyRecord(600, 'tribe-gamma', event, 'x')]
+    assert.equal(primaryBehaviorRunFailure(config, kept, raw.harness), null, event)
   }
 })
 
@@ -517,13 +541,14 @@ test('a budget refusal closes admission while concurrent in-flight work settles'
 
 test('per-agent, global-call and spend refusals each close admission under their own bound', async () => {
   for (const [bound, budget, spend, calls] of [
-    ['perAgentCall', { perAgentCallCeiling: 1, globalCallCeiling: 3, globalOutstandingCeiling: 1 }, undefined, [['alpha', 'one'], ['alpha', 'two']]],
+    // A follow-up past the agent's own ceiling: urgent danger would borrow a global call instead.
+    ['perAgentCall', { perAgentCallCeiling: 1, globalCallCeiling: 3, globalOutstandingCeiling: 1 }, undefined, [['alpha', 'one'], ['alpha', 'two', 'stepSettled']]],
     ['globalCall', { perAgentCallCeiling: 2, globalCallCeiling: 1, globalOutstandingCeiling: 1 }, undefined, [['alpha', 'one'], ['beta', 'one']]],
     ['spend', { perAgentCallCeiling: 2, globalCallCeiling: 3, globalOutstandingCeiling: 1 }, { ceilingNanoUsd: 150, worstCaseCallNanoUsd: 100 }, [['alpha', 'one'], ['beta', 'one']]]
   ]) {
     const run = await stoppingProxy({ budget, spend })
     try {
-      for (const [agentId, requestId] of calls) await ask(run.proxy.listen.port, agentId, requestId)
+      for (const [agentId, requestId, trigger] of calls) await ask(run.proxy.listen.port, agentId, requestId, trigger)
       assert.match((await ask(run.proxy.listen.port, 'gamma', 'late')).error, /experiment budget/)
       const closure = run.events.find((event) => event.event === 'cognitionAdmissionClosed')
       assert.equal(closure.bound, bound)
@@ -597,10 +622,48 @@ test('the controlled-stop drain waits for settled chains, is bounded, and stops 
     fs.appendFileSync(file, `${JSON.stringify(bodyRecord(2, 'a', 'intentApplied', 'x', { requestId: 'one' }))}\n`)
   }, 150)
   await drainControlledStop({ proxy, ...settling, timeoutMilliseconds: 2000 })
-  fs.appendFileSync(file, `${JSON.stringify(bodyRecord(3, 'a', 'witnessDisputed', 'x'))}\n`)
+  fs.appendFileSync(file, `${JSON.stringify(bodyRecord(3, 'a', 'bodyDisconnected', 'x'))}\n`)
   await assert.rejects(
     drainControlledStop({ proxy, ...drainer(), timeoutMilliseconds: 2000 }),
-    /witness disputed body evidence/
+    /a body disconnected/
+  )
+})
+
+test('admitted work that drains after the exposure ended is typed, and the drain waits for every end', async () => {
+  // r34: delta and gamma were shot dead in the drain after admission closed at tick 12063, and
+  // both deaths counted; the plugin now ends the exposure in the turn admission closes.
+  const { exposureEnder } = require('../lib/harness.js')
+  const config = goalContinuityConfig()
+  const written = []
+  const paper = { child: { stdin: { writable: true, write: (line) => written.push(line.trim()) } } }
+  const end = exposureEnder(paper, config)
+  end()
+  end()
+  assert.deepEqual(written, ['loombody end-exposure'])
+
+  const guard = new PrimaryBehaviorGuard(config)
+  guard.observeHarness([{ event: 'cognitionAdmissionEnded', kind: 'runEnded' }])
+  const agent = config.agents[0]
+  const drained = [
+    bodyRecord(12_063, agent, 'exposureEnded', 'the exposure ended', { outcome: 'exposureEnded' }),
+    bodyRecord(12_070, agent, 'decisionDiscarded', 'not applied', { requestId: 'late', outcome: 'exposureEnded' }),
+    bodyRecord(12_071, agent, 'cognitionUnavailable', 'not sent', { requestId: 'later', outcome: 'exposureEnded' })
+  ]
+  assert.equal(guard.observeBody(drained), null)
+  assert.ok(guard.exposureEnded.has(agent))
+  // Without the agent's own end, the same discard is a living agent's typed fault, kept as evidence.
+  const unguarded = new PrimaryBehaviorGuard(config)
+  assert.equal(unguarded.observeBody([drained[1]]), null)
+
+  const proxy = { snapshot: () => ({ outstandingCalls: 0 }) }
+  const settled = { poll: () => null, settlement: new RequestSettlement() }
+  let recorded = false
+  setTimeout(() => { recorded = true }, 150)
+  await drainControlledStop({ proxy, ...settled, exposureRecorded: () => recorded, timeoutMilliseconds: 2000 })
+  assert.equal(recorded, true)
+  await assert.rejects(
+    drainControlledStop({ proxy, ...settled, exposureRecorded: () => false, timeoutMilliseconds: 250 }),
+    (cause) => cause.code === 'cognitionDrainTimedOut'
   )
 })
 
@@ -668,6 +731,26 @@ test('a death does not excuse a survivor\'s missing review or a revived chain', 
   rejects(stranger, /bodyDisconnected without a witnessed death/)
 })
 
+test('a review held when its agent died was owed, not lost, and counts toward the window', () => {
+  // v32 plains rehearsal 14: three agents died while their due review waited behind a flight.
+  const held = (raw, tick) => {
+    const index = raw.body.findIndex((record) => record.tick > tick)
+    raw.body.splice(index === -1 ? raw.body.length : index, 0,
+      bodyRecord(tick, 'tribe-alpha', 'goalReviewDeferred', 'waits', { trigger: 'goalReview', outcome: 'fleeing' }))
+    return raw
+  }
+  const owed = publish({ raw: held(deathRaw({ tick: 2900 }), 2500), stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(owed.artifactDirectory).errors, [])
+  assert.deepEqual(owed.metrics.witnessedDeaths.byAgent['tribe-alpha'], {
+    tick: 2900, lifeTicks: 2885, settledAfterDeath: [], attempted: 1, completed: 1, minimum: 2, maximum: 2, heldAtEnd: 1
+  })
+  // A hold before the review that was then handed out excuses nothing, and the refusal is typed
+  // as one, never as a disk failure.
+  assert.throws(() => publish({ raw: held(deathRaw({ tick: 2900 }), 10), stopReason: 'durationElapsed' }), (failure) =>
+    failure.stopReason === 'publicationRefused' && failure.code === 'artifactIntegrityFailed' &&
+    /tribe-alpha did not record the expected native scheduled reviews/.test(failure.message))
+})
+
 function actingRaw (agents = ['tribe-alpha', 'tribe-beta']) {
   const raw = primaryBehaviorRawRecords(goalContinuityConfig())
   for (const agentId of agents) {
@@ -707,6 +790,22 @@ test('the mechanical pilot gate passes only with confirmed behavior and typed co
   assert.equal(idleOnly.pilotVerdict, 'no-go')
   const dead = publish({ raw: deathRaw(), stopReason: 'durationElapsed' }).metrics.behaviorGate
   assert.equal(dead.pilotCriteria.noFailureEvidence, false)
+})
+
+test('from gate generation 6 only an action that steps a goal is meaningful behavior', () => {
+  // r14: walks with no goal and a dig of a block that drops nothing counted as meaningful.
+  const ungrounded = actingRaw()
+  const decided = ungrounded.body.find((record) =>
+    record.agentId === 'tribe-alpha' && record.requestId === 'native-1' && record.event === 'decided'
+  )
+  assert.ok(decided.goal !== undefined, 'the fixture review adopts a goal')
+  delete decided.goal
+  const gate = publish({ raw: ungrounded, stopReason: 'durationElapsed' }).metrics.behaviorGate
+  assert.equal(gate.version, 'loom-primary-behavior-gate/20')
+  // The action is still a confirmed review action, but no step of any goal.
+  assert.equal(gate.goalReviewActions.confirmed, 2)
+  assert.deepEqual(gate.meaningfulBehaviorByAgent, { 'tribe-beta': 1 })
+  assert.equal(gate.pilotCriteria.meaningfulBehaviorAgents, false)
 })
 
 test('a controlled stop is always a no-go gate', () => {
@@ -788,6 +887,235 @@ test('a slow host that ended before a review was due publishes as a no-go', () =
   )
 })
 
+// R40: one follow-up review the provider refused as invalid (HTTP 400) stopped a ten-agent run 403 s
+// into its 600 s window. `requestId` of `agentId` becomes that refused request in a full-duration run.
+function providerRefusedRaw ({ agentId = 'tribe-alpha', requestId = 'native-1', flagged = true } = {}) {
+  const raw = endedRaw()
+  const applied = raw.body.find((record) =>
+    record.agentId === agentId && record.requestId === requestId && record.event === 'intentApplied')
+  raw.body = raw.body.filter((record) => !(
+    record.agentId === agentId &&
+    ((record.requestId === requestId && ['decided', 'intentApplied'].includes(record.event)) ||
+      (record.event === 'moved' && record.tick === applied.tick + 5))
+  ))
+  const seen = raw.body.find((record) =>
+    record.agentId === agentId && record.requestId === requestId && record.event === 'perceived')
+  raw.body.splice(raw.body.indexOf(seen) + 1, 0, bodyRecord(seen.tick + 1, agentId, 'cognitionUnavailable', 'the mind did not answer', {
+    requestId, trigger: 'goalReview', outcome: 'failed', perception: seen.perception
+  }))
+  const forwarded = raw.harness.find((record) =>
+    record.event === 'cognitionForwarded' && record.agentId === agentId && record.requestId === requestId)
+  forwarded.outcome = 'cognitionFailure'
+  delete forwarded.provenance
+  forwarded.failure = PROVIDER_REFUSED
+  if (flagged) forwarded.providerRefusedRequest = true
+  return raw
+}
+
+const PROVIDER_REFUSED = Object.freeze({
+  schemaVersion: 'loom-cognition-failure/1',
+  backend: 'openai',
+  model: LIVE_MODEL,
+  httpStatus: 400,
+  providerType: 'invalid_request_error',
+  providerCode: null,
+  responseShape: 'apiErrorEnvelope',
+  mapping: 'providerRequest'
+})
+
+test('one request the provider refused is recorded and the run goes on to its duration', () => {
+  const config = openAiGoalContinuityConfig()
+  const request = { agentId: 'tribe-alpha', requestId: 'native-1', trigger: 'goalReview', importance: 'ROUTINE' }
+  // Only the R40 path changes: the refused request continues; a credential, an outage and any other
+  // failure still end or stop the run as before.
+  assert.equal(cognitionFailureAction(config, 'refused', PROVIDER_REFUSED, request), null)
+  assert.equal(cognitionFailureAction(config, 'refused', { ...PROVIDER_REFUSED, httpStatus: 422 }, request), null)
+  const credential = { ...PROVIDER_REFUSED, httpStatus: 401, mapping: 'providerAuthentication' }
+  assert.equal(cognitionFailureAction(config, 'refused', credential, request).abort.code, 'providerAuthenticationRejected')
+  const outage = { ...PROVIDER_REFUSED, httpStatus: 503, mapping: 'providerServer' }
+  assert.equal(cognitionFailureAction(config, 'failed', outage, request).stop.kind, 'providerUnavailable')
+  const parse = { ...PROVIDER_REFUSED, httpStatus: 200, mapping: 'providerDecisionParse' }
+  assert.equal(cognitionFailureAction(config, 'failed', parse, request).abort.code, 'cognitionDecisionFailed')
+  assert.equal(cognitionFailureAction(config, 'failed', null, request).abort.code, 'cognitionDecisionFailed')
+
+  // The guard reads the refused request's own ending as typed evidence, and the agent's later work goes on.
+  const raw = providerRefusedRaw()
+  assert.equal(primaryBehaviorRunFailure(goalContinuityConfig(), raw.body, raw.harness), null)
+  const failedAt = raw.body.find((record) => record.event === 'cognitionUnavailable' && record.outcome === 'failed').tick
+  const later = raw.body.filter((record) => record.agentId === 'tribe-alpha' && record.tick > failedAt)
+  assert.ok(later.some((record) => record.event === 'decided' && record.requestId === 'native-2'))
+  assert.ok(later.some((record) => record.event === 'intentApplied' && record.requestId === 'native-2'))
+
+  // It publishes at its full duration, and the gate fails closed on the failure it records.
+  const published = publish({ raw, stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  assert.equal(published.manifest.timing.stopReason, 'durationElapsed')
+  assert.equal(published.metrics.cycles.unavailable, 2)
+  assert.equal(published.metrics.behaviorGate.pilotCriteria.noFailureEvidence, false)
+  assert.equal(published.metrics.behaviorGate.pilotVerdict, 'no-go')
+
+  // Without the proxy's typed flag the same ending is still an untyped failure that stops the run.
+  const untyped = providerRefusedRaw({ flagged: false })
+  assert.match(
+    primaryBehaviorRunFailure(goalContinuityConfig(), untyped.body, untyped.harness).message,
+    /cognition request became unavailable \(failed at tick/
+  )
+  rejects(untyped, /primary behavior evidence contains a cognition refusal or unavailable decision/)
+
+  // A flag the body evidence does not answer with a failed perception is refused.
+  const unmatched = providerRefusedRaw()
+  unmatched.body.find((record) => record.event === 'cognitionUnavailable' && record.outcome === 'failed').outcome = 'mindRefused'
+  rejects(unmatched, /provider-refused request tribe-alpha:native-1 has no matching failed perception chain/)
+})
+
+test('a witness dispute, a disputed interaction and a living discard are kept and the run goes on to its duration', () => {
+  // The captain's full-duration rule: ordinary typed product faults are no-go evidence, never a stop.
+  const raw = endedRaw()
+  const gamma = raw.body.find((record) =>
+    record.agentId === 'tribe-gamma' && record.requestId === 'native-1' && record.event === 'decided')
+  gamma.intent = 'dig'
+  gamma.decision.intent = { action: 'dig', block: 'b1' }
+  raw.body.splice(raw.body.indexOf(gamma) + 1, 0,
+    bodyRecord(gamma.tick, 'tribe-gamma', 'worldInteraction', 'dig b1', { requestId: 'native-1', outcome: 'disputedWorldInteraction' }))
+  const beta = raw.body.find((record) =>
+    record.agentId === 'tribe-beta' && record.requestId === 'native-1' && record.event === 'intentApplied')
+  raw.body.splice(raw.body.indexOf(beta) + 1, 0,
+    bodyRecord(beta.tick + 2, 'tribe-beta', 'witnessDisputed', 'vitals disputed', { outcome: 'disputedVitals' }))
+  const discarded = raw.body.find((record) =>
+    record.agentId === 'tribe-gamma' && record.requestId === 'native-2' && record.event === 'intentApplied')
+  raw.body[raw.body.indexOf(discarded)] = bodyRecord(discarded.tick, 'tribe-gamma', 'decisionDiscarded', 'the body was gone', {
+    requestId: 'native-2', intent: 'idle', outcome: 'noSuchBody'
+  })
+  assert.equal(primaryBehaviorRunFailure(goalContinuityConfig(), raw.body, raw.harness), null)
+  const published = publish({ raw, stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  assert.equal(published.manifest.timing.stopReason, 'durationElapsed')
+  // Stated truthfully, and failed closed on.
+  assert.equal(published.manifest.integrityChecks.serverEvidenceUncontested.passed, false)
+  assert.equal(published.metrics.behavior.witnessDisputeRecords, 1)
+  assert.equal(published.metrics.cycles.discarded, 1)
+  assert.deepEqual(published.metrics.behaviorGate.interactionsByOperation, { dig: { confirmed: 0, disputed: 1 } })
+  assert.equal(published.metrics.behaviorGate.pilotCriteria.noFailureEvidence, false)
+  assert.equal(published.metrics.behaviorGate.pilotVerdict, 'no-go')
+  // What makes continuing impossible or unsafe still stops the run.
+  for (const event of ['bodyDisconnected', 'witnessRevived', 'witnessQuit', 'witnessDenied', 'despawned']) {
+    const fatal = [...raw.body, bodyRecord(2950, 'tribe-alpha', event, 'x')]
+    assert.notEqual(primaryBehaviorRunFailure(goalContinuityConfig(), fatal, raw.harness), null, event)
+  }
+})
+
+// The server's reading of every agent at begin, as the JVM's `InitialConditionsWitness` journals it.
+function begun (raw, config = goalContinuityConfig(), changed = {}) {
+  const records = [...config.agents].sort().map((agentId) =>
+    bodyRecord(12, agentId, 'initialConditionsWitnessed', 'the server read the agent\'s player when the run began', {
+      outcome: 'initialConditionsWitnessed',
+      initial: { position: config.primaryBehavior.initialPositions[agentId], inventoryStacks: 0, ...changed[agentId] }
+    }))
+  raw.body.splice(raw.body.findIndex((record) => record.event === 'perceived'), 0, ...records)
+  return raw
+}
+
+// r38: gamma, idle beside chickens, no longer matched its pinned conditions 666 ticks after begin.
+function changedBeforeFirstPerception (raw, agentId) {
+  const first = raw.body.find((record) => record.agentId === agentId && record.event === 'perceived')
+  first.perception.selfState.inventorySummary = [{ ref: 'i1', what: 'egg', count: 1 }]
+  first.perception.selfState.position = first.perception.selfState.position.map((coordinate, index) =>
+    index === 0 ? coordinate + 0.25 : coordinate)
+  return raw
+}
+
+test('the server reading at begin witnesses the pinned conditions, so a first perception vanilla changed is no lost one', () => {
+  const config = goalContinuityConfig()
+  const published = publish({ raw: changedBeforeFirstPerception(begun(endedRaw()), 'tribe-gamma'), stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  assert.equal(published.manifest.integrityChecks.initialConditionsRecorded.passed, true)
+  const witnessed = published.metrics.initialConditionsWitnessed
+  assert.deepEqual(witnessed.map((entry) => entry.agentId), [...config.agents].sort())
+  assert.deepEqual(witnessed.find((entry) => entry.agentId === 'tribe-gamma'), {
+    agentId: 'tribe-gamma',
+    tick: 12,
+    outcome: 'initialConditionsWitnessed',
+    position: config.primaryBehavior.initialPositions['tribe-gamma'],
+    inventoryStacks: 0
+  })
+  const conditions = published.manifest.protocol.initialConditions
+  assert.deepEqual(conditions.witnessedAtBegin, witnessed)
+  assert.match(conditions.attested.source, /server reading of each agent when the run began/)
+  // Without the server's reading the first perception is still held to every condition.
+  rejects(changedBeforeFirstPerception(endedRaw(), 'tribe-gamma'), /tribe-gamma has no matching empty-inventory initial perception/)
+})
+
+test('a server reading at begin that does not hold the pinned conditions refuses the run and its publication', () => {
+  const config = goalContinuityConfig()
+  const holding = begun(endedRaw(), config, { 'tribe-gamma': { inventoryStacks: 1 } })
+  rejects(holding, /tribe-gamma did not hold its pinned initial conditions when the run began/)
+  const moved = begun(endedRaw(), config, { 'tribe-gamma': { position: [0.5, 64, 0.5] } })
+  rejects(moved, /tribe-gamma did not hold its pinned initial conditions when the run began/)
+  const guarded = (raw) => {
+    const guard = new PrimaryBehaviorGuard(config)
+    guard.observeHarness(raw.harness)
+    return guard.observeBody(raw.body)
+  }
+  assert.match(guarded(holding).message, /tribe-gamma did not hold its pinned initial conditions when the run began/)
+  const absent = begun(endedRaw(), config)
+  const reading = absent.body.find((record) => record.agentId === 'tribe-gamma' && record.event === 'initialConditionsWitnessed')
+  reading.outcome = 'initialConditionsAbsent'
+  delete reading.initial
+  assert.match(guarded(absent).message, /tribe-gamma did not hold its pinned initial conditions when the run began/)
+  const twice = begun(endedRaw(), config)
+  twice.body.splice(twice.body.indexOf(twice.body.find((record) => record.event === 'perceived')), 0,
+    structuredClone(twice.body.find((record) => record.agentId === 'tribe-gamma' && record.event === 'initialConditionsWitnessed')))
+  assert.match(guarded(twice).message, /tribe-gamma was read twice when the run began/)
+  rejects(twice, /an agent was read more than once when the run began/)
+  // The guard holds a run with the server's reading only to its clock at the first perception, and
+  // one without it to every pinned condition there.
+  assert.equal(guarded(changedBeforeFirstPerception(begun(endedRaw()), 'tribe-gamma')), null)
+  assert.match(guarded(changedBeforeFirstPerception(endedRaw(), 'tribe-gamma')).message,
+    /tribe-gamma lost a pinned initial condition before its first perception/)
+  const clockless = begun(endedRaw())
+  delete clockless.body.find((record) => record.agentId === 'tribe-gamma' && record.event === 'perceived').perceptionAudit.worldClock
+  assert.match(guarded(clockless).message, /tribe-gamma's first perception stated no world clock/)
+})
+
+test('a review the JVM refused at its agent\'s spent ceiling was due and typed, and counts toward the window', () => {
+  // v35 shelter rehearsal: urgent danger may spend an agent's own ceiling ahead of its reviews
+  // (r24), and gamma's spent all 40 of its calls before its fifth review, which the JVM then
+  // refused as `callReserved`, so it never reached the proxy.
+  const refused = (raw, tick) => {
+    const seen = perception('tribe-gamma', 'reserved-2', tick, goalContinuityConfig().primaryBehavior.initialPositions['tribe-gamma'])
+    const index = raw.body.findIndex((record) => record.tick > tick)
+    raw.body.splice(index === -1 ? raw.body.length : index, 0,
+      bodyRecord(tick, 'tribe-gamma', 'perceived', 'audited perception', {
+        requestId: 'reserved-2',
+        trigger: 'goalReview',
+        perception: seen,
+        perceptionAudit: perceptionAuditFixture('empty', { timeOfDay: tick, day: 0, isDay: true })
+      }),
+      bodyRecord(tick, 'tribe-gamma', 'cognitionUnavailable', 'cognition unavailable: callReserved', {
+        requestId: 'reserved-2', trigger: 'goalReview', outcome: 'callReserved', perception: seen
+      }))
+    return raw
+  }
+  const raw = refused(endedRaw({ endTick: 2900, drop: [['tribe-gamma', 'native-2']], lateAgent: null }), 2410)
+  const published = publish({ raw, stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  assert.deepEqual(published.metrics.admissionEnd.nativeReviews.byAgent['tribe-gamma'], {
+    attempted: 1, completed: 1, minimum: 2, maximum: 2, refusedAtCeiling: 1
+  })
+  assert.equal(published.metrics.admissionEnd.nativeReviews.byAgent['tribe-alpha'].refusedAtCeiling, 0)
+  assert.equal(published.manifest.integrityChecks.expectedNativeReviewsObserved.passed, true)
+  assert.equal(published.metrics.behaviorGate.pilotCriteria.completeNativeReviews, false)
+  // A follow-up or an event refused at the reserve excuses no scheduled review.
+  const followUp = refused(endedRaw({ endTick: 2900, drop: [['tribe-gamma', 'native-2']], lateAgent: null }), 2410)
+  for (const record of followUp.body.filter((entry) => entry.requestId === 'reserved-2')) record.trigger = 'stepSettled'
+  assert.throws(() => publish({ raw: followUp, stopReason: 'durationElapsed' }),
+    /tribe-gamma did not record the expected native scheduled reviews/)
+  // Nor does a refused review count past what the window allowed.
+  const extra = refused(endedRaw({ endTick: 2900, lateAgent: null }), 2410)
+  assert.throws(() => publish({ raw: extra, stopReason: 'durationElapsed' }),
+    /tribe-gamma did not record the expected native scheduled reviews/)
+})
+
 test('a normal ending refuses refusals before the end, untyped late refusals and wrong reasons', () => {
   const early = endedRaw()
   const refusal = early.harness.find((record) => record.event === 'cognitionRefused')
@@ -829,10 +1157,14 @@ test('an action settled after its agent died is typed and never counted as behav
   assert.deepEqual(published.metrics.witnessedDeaths.byAgent['tribe-alpha'].settledAfterDeath, ['tribe-alpha:native-1'])
   assert.equal(published.metrics.behaviorGate.meaningfulBehaviorByAgent['tribe-alpha'], undefined)
   assert.deepEqual(Object.keys(published.metrics.behaviorGate.meaningfulBehaviorByAgent), ['tribe-beta', 'tribe-gamma'])
-  // A server effect first recorded after the death is not a settlement.
+  // The server's witness of the settled request's own interaction is its settlement's evidence;
+  // one of any request not settled after the death is a server effect the dead agent began.
+  const witnessed = structuredClone(raw)
+  const moved = witnessed.body.findIndex((record) => record.agentId === 'tribe-alpha' && record.event === 'moved')
+  witnessed.body.splice(moved + 1, 0, bodyRecord(1, 'tribe-alpha', 'worldInteraction', 'dig', { requestId: 'native-1', outcome: 'serverEffectConfirmed' }))
+  assert.deepEqual(validateArtifact(publish({ raw: witnessed, stopReason: 'durationElapsed' }).artifactDirectory).errors, [])
   const effect = structuredClone(raw)
-  const moved = effect.body.findIndex((record) => record.agentId === 'tribe-alpha' && record.event === 'moved')
-  effect.body.splice(moved + 1, 0, bodyRecord(1, 'tribe-alpha', 'worldInteraction', 'dig', { requestId: 'native-1', outcome: 'serverEffectConfirmed' }))
+  effect.body.splice(moved + 1, 0, bodyRecord(1, 'tribe-alpha', 'worldInteraction', 'dig', { requestId: 'native-9', outcome: 'serverEffectConfirmed' }))
   rejects(effect, /recorded worldInteraction after its witnessed death/)
 })
 
@@ -886,6 +1218,45 @@ test('a danger repeat the JVM coalesced is a typed terminal, not a cognition fai
   assert.match(primaryBehaviorRunFailure(goalContinuityConfig(), raw.body, raw.harness).message, /became unavailable/)
 })
 
+test('an event coalesced into cognition already in flight is a typed terminal, counted on its own', () => {
+  const raw = actingRaw()
+  const seen = perception('tribe-beta', 'dmg-2', 900, goalContinuityConfig().primaryBehavior.initialPositions['tribe-beta'])
+  seen.trigger = { event: 'damaged', amount: 3, source: 'minecraft:zombie' }
+  raw.body.push(bodyRecord(900, 'tribe-beta', 'perceived', 'audited perception', {
+    requestId: 'dmg-2',
+    trigger: 'damaged',
+    perception: seen,
+    perceptionAudit: perceptionAuditFixture('empty', { timeOfDay: 900, day: 0, isDay: true })
+  }))
+  raw.body.push(bodyRecord(900, 'tribe-beta', 'cognitionUnavailable', 'coalesced', {
+    requestId: 'dmg-2', trigger: 'damaged', outcome: 'cognitionCoalesced', perception: seen
+  }))
+  const published = publish({ raw, stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  assert.deepEqual(published.metrics.cognitionCoalescing, { coalesced: 1, byAgent: { 'tribe-beta': 1 }, byTrigger: { damaged: 1 } })
+  assert.equal(published.metrics.dangerEpisodes, undefined)
+  assert.equal(published.metrics.behaviorGate.pilotCriteria.noFailureEvidence, true)
+  assert.equal(primaryBehaviorRunFailure(goalContinuityConfig(), raw.body, raw.harness), null)
+})
+
+test('working-goal evidence derives step verdicts, the no-progress run and the goals the bound ended', () => {
+  const raw = actingRaw()
+  const decided = raw.body.filter((record) => record.event === 'decided' && record.goal !== undefined)
+  const continued = decided.find((record) => record.goal.outcome === 'goalContinued')
+  continued.goal.stepResult = 'noProgress'
+  continued.goal.stepsWithoutProgress = 2
+  const published = publish({ raw, stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  const working = published.metrics.goalContinuity.workingGoal
+  assert.deepEqual(working.stepResults, { noProgress: 1 })
+  assert.equal(working.byAgent[continued.agentId].maxStepsWithoutProgress, 2)
+  assert.equal(working.stalled, 0)
+  // Evidence without working-goal fields derives exactly what it always did.
+  assert.equal(publish({ raw: actingRaw(), stopReason: 'durationElapsed' }).metrics.goalContinuity.workingGoal, undefined)
+  continued.goal.stepResult = 'probably'
+  assert.throws(() => publish({ raw, stopReason: 'durationElapsed' }), /unknown goal step result/)
+})
+
 test('a ceiling ending is measured to its admission end, and the drain is bounded', () => {
   const ceiling = goalContinuityConfig().bounds.simulationTickCeiling
   const within = endedRaw({ endTick: ceiling + 15 + 10 })
@@ -915,5 +1286,5 @@ test('a perception the plugin shutdown ended after the run ended is a typed term
     requestId: 'cut-1', trigger: 'goalReview', perception: seen, perceptionAudit: perceptionAuditFixture('empty', { timeOfDay: 900, day: 0, isDay: true })
   }))
   early.body.push(bodyRecord(900, 'tribe-beta', 'cognitionUnavailable', 'shutdown', { requestId: 'cut-1', outcome: 'cognitionShutdown', perception: seen }))
-  assert.throws(() => publish({ raw: early, stopReason: 'durationElapsed' }), /cognition refusal, unavailable decision/)
+  assert.throws(() => publish({ raw: early, stopReason: 'durationElapsed' }), /cognition refusal or unavailable decision/)
 })

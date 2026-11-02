@@ -5,7 +5,8 @@ const path = require('node:path')
 
 const { behaviorGateMetrics } = require('./behavior-gate.js')
 const { admissionEndMetrics, controlledStopMetrics } = require('./controlled-stop.js')
-const { dangerEpisodeMetrics } = require('./danger.js')
+const { cognitionCoalescingMetrics, dangerEpisodeMetrics, isExposureEnding, isPreempted } = require('./danger.js')
+const { initialConditionsWitnessedOf } = require('./initial-conditions.js')
 const { maximumOf, minimumOf } = require('./log-tail.js')
 const { deathMetrics } = require('./witnessed-death.js')
 const { canonicalLine, sortedValue } = require('./util.js')
@@ -17,7 +18,7 @@ const MAX_BODY_OFFERS_PER_KIND = 48
 const MAX_MODEL_VISIBLE_OBSERVATIONS = MAX_BODY_OFFERS_PER_KIND * 3
 const PERCEPTION_AUDIT_KINDS = ['entities', 'blocks', 'droppedItems']
 const MAX_GOAL_ID_CHARS = 64
-const GOAL_DISPOSITIONS = ['adopt', 'continue', 'revise', 'complete', 'abandon']
+const GOAL_DISPOSITIONS = ['adopt', 'continue', 'revise', 'replace', 'complete', 'abandon']
 const GOAL_OUTCOMES = [
   'goalAdopted',
   'goalContinued',
@@ -29,10 +30,57 @@ const GOAL_OUTCOMES = [
   'goalNotHeld',
   'goalAlreadyHeld',
   'goalStatementMissing',
-  'goalNotReviewed'
+  'goalNotReviewed',
+  'goalSuccessConditionMissing',
+  'goalStepMissing',
+  'goalStepResultMissing',
+  'goalStalled',
+  'goalSuccessTargetMissing',
+  'goalStepActionMissing',
+  'goalStepMismatch',
+  'goalConditionMetIgnored',
+  'goalCompletionUnmet',
+  'goalSuccessUnobtainable',
+  'goalAlreadyMet',
+  'goalStepIdle',
+  'goalChoiceMissing',
+  'goalStepUnproductive',
+  'goalOwnDropIgnored',
+  'goalReplaced',
+  'goalCompletedAdopted',
+  'goalAbandonedAchievable',
+  'goalReviseItemChanged',
+  'goalCompletedWithoutNext',
+  'goalCrowdsExploration',
+  'goalReviseUnchanged',
+  'goalDiscoveryNotOffered',
+  'goalDeferred',
+  'goalSurvivalRequired',
+  'goalShelterNotOffered',
+  'goalFeedsNotOffered',
+  'goalSubgoalReplaced',
+  // From routine-v36: an objective one step meets, a replace by the held goal's own item, an end
+  // stated without a reason or with one its evidence does not support, and an idle or rest at a
+  // goal review while the edge of sight is offered.
+  'goalTrivial',
+  'goalReplaceSameItem',
+  'goalReasonMissing',
+  'goalReasonUnsupported',
+  'goalPassiveBesideExploration'
 ]
+const GOAL_STEP_RESULTS = ['done', 'progressing', 'noProgress']
+// Why a replace or an abandon ended its goal, from routine-v36.
+const GOAL_REASONS = ['completed', 'impossible', 'unsafe', 'stale', 'superseded']
+// What a measured step showed, from routine-v22: the exact target reached, an item gained, a
+// new drop in sight, or nothing.
+// From routine-v27 a walk to the edge of sight that brought a source of the item into sight.
+// From routine-v28 a gain of a direct input of a recipe for the goal's item.
+// From routine-v35 a shelter step that left the agent more enclosed than its goal had yet been.
+const GOAL_STEP_EVIDENCE = ['arrived', 'gained', 'gainedInput', 'dropped', 'revealed', 'covered', 'none']
 // Outcomes that act on the very goal the answered review was handed.
 const GOAL_CONTINUING_OUTCOMES = ['goalContinued', 'goalRevised', 'goalCompleted']
+// Outcomes that ended the goal the answered review was handed for a stated reason.
+const GOAL_ENDING_OUTCOMES = ['goalReplaced', 'goalCompletedAdopted', 'goalAbandoned']
 
 const PUBLIC_SCAN_PATTERNS = [
   {
@@ -240,6 +288,13 @@ function validGoalId (value) {
     (typeof value === 'string' && value.length > 0 && value.length <= MAX_GOAL_ID_CHARS)
 }
 
+/** Whether [cover] is a shelter goal's measured cover: closed and closable sides of nine, and sealed. */
+function validCover (cover) {
+  const count = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 9
+  return cover !== null && typeof cover === 'object' && !Array.isArray(cover) &&
+    count(cover.closed) && count(cover.closable) && typeof cover.sealed === 'boolean'
+}
+
 function validateGoalEvidence (goal, event, label) {
   if (goal === null || typeof goal !== 'object' || Array.isArray(goal)) {
     throw new Error(`${label} goal evidence is not an object`)
@@ -249,13 +304,35 @@ function validateGoalEvidence (goal, event, label) {
   if (goal.disposition !== undefined && !GOAL_DISPOSITIONS.includes(goal.disposition)) {
     throw new Error(`${label} has an unknown goal disposition`)
   }
-  for (const field of ['presentedGoalId', 'goalId', 'expiredGoalId']) {
+  for (const field of ['presentedGoalId', 'goalId', 'expiredGoalId', 'chainedFrom', 'discoveredFrom', 'feeds', 'resumed', 'steppedBy']) {
     if (!validGoalId(goal[field])) throw new Error(`${label} goal ${field} is not a bounded id`)
   }
   for (const field of ['presentedRevision', 'revision']) {
     if (goal[field] !== undefined && (!Number.isSafeInteger(goal[field]) || goal[field] < 0)) {
       throw new Error(`${label} goal ${field} must be a non-negative integer`)
     }
+  }
+  if (goal.stepResult !== undefined && !GOAL_STEP_RESULTS.includes(goal.stepResult)) {
+    throw new Error(`${label} has an unknown goal step result`)
+  }
+  for (const field of ['stepsWithoutProgress', 'targetHeld', 'targetCapacity']) {
+    if (goal[field] !== undefined && (!Number.isSafeInteger(goal[field]) || goal[field] < 0)) {
+      throw new Error(`${label} goal ${field} must be a non-negative integer`)
+    }
+  }
+  if (goal.stepEvidence !== undefined && !GOAL_STEP_EVIDENCE.includes(goal.stepEvidence)) {
+    throw new Error(`${label} has an unknown goal step evidence`)
+  }
+  if (goal.reason !== undefined && !GOAL_REASONS.includes(goal.reason)) {
+    throw new Error(`${label} has an unknown goal end reason`)
+  }
+  for (const field of ['conditionMet', 'conditionAdvanced', 'stepAdvanced', 'discovery', 'presentedDiscovery', 'shelter', 'presentedShelter']) {
+    if (goal[field] !== undefined && typeof goal[field] !== 'boolean') {
+      throw new Error(`${label} goal ${field} must be a boolean`)
+    }
+  }
+  if (goal.cover !== undefined && !validCover(goal.cover)) {
+    throw new Error(`${label} goal cover must state closed and closable sides from 0 to 9 and whether it is sealed`)
   }
   if ((goal.presentedGoalId === undefined) !== (goal.presentedRevision === undefined) ||
     (goal.goalId === undefined) !== (goal.revision === undefined)) {
@@ -355,7 +432,14 @@ function normalizeBodyRecord (
     'perception',
     'perceptionAudit',
     'decision',
-    'goal'
+    'goal',
+    'shown',
+    'retreat',
+    'dispute',
+    'movement',
+    'terrain',
+    'shelter',
+    'initial'
   ]) {
     if (record[field] !== undefined && record[field] !== null) {
       normalized[field] = sanitizeValue(record[field], state)
@@ -467,6 +551,8 @@ function deriveMetrics (records, configuredAgents = []) {
     }
   ]))
   const byEvent = {}
+  const preempted = bodyRecords.filter(isPreempted).length
+  const exposureDiscards = bodyRecords.filter((record) => record.event === 'decisionDiscarded' && isExposureEnding(record)).length
   const decisionsByIntent = {}
   const appliedByIntent = {}
   const byOutcome = {}
@@ -474,6 +560,9 @@ function deriveMetrics (records, configuredAgents = []) {
   const stamps = new Map()
   const positions = new Map()
   const coLocations = []
+  // From gate generation 6: perceptions that showed another player within eight blocks, which a
+  // pairing of self-positions taken 20 ticks apart can miss (r14 beta saw delta at 1.9 blocks).
+  const playerSightings = []
   const perceptionAudits = []
 
   for (const record of bodyRecords) {
@@ -548,6 +637,12 @@ function deriveMetrics (records, configuredAgents = []) {
           }
         }
       }
+    }
+    const nearestPlayer = (record.perception?.surroundings ?? [])
+      .filter((seen) => seen.kind === 'entity' && seen.what === 'entity.minecraft.player' && Number.isFinite(seen.distance))
+      .reduce((nearest, seen) => Math.min(nearest, seen.distance), Infinity)
+    if (record.event === 'perceived' && nearestPlayer <= 8) {
+      playerSightings.push({ agentId: record.agentId, tick: record.tick, distanceBlocks: nearestPlayer })
     }
     if (record.event === 'perceived' && record.perceptionAudit !== undefined) {
       validatePerceptionAudit(record.perceptionAudit, `${record.recordId} perception audit`)
@@ -634,16 +729,33 @@ function deriveMetrics (records, configuredAgents = []) {
   const scriptedEvidence =
     configuredBackend === 'scripted' ||
     (stamps.size > 0 && [...stamps.values()].every((stamp) => stamp.model === 'scripted-stand-in'))
+  const spatialGeneration = Number.isInteger(stimulusRecords[0]?.behaviorGateGeneration)
+    ? stimulusRecords[0].behaviorGateGeneration
+    : 1
+  // Generation 6 states exactly what each spatial measure counts; earlier generations keep the
+  // sentence their committed evidence was published under.
+  const spatialStated = spatialGeneration >= 6
   const observations = []
   if (coLocations.length > 0) {
-    observations.push(`${coLocations.length} bounded co-location sample(s) placed two agents within eight blocks`)
+    observations.push(spatialStated
+      ? `${coLocations.length} paired self-position sample(s), the two agents' perceptions taken within 20 ticks of each other, placed two agents within eight blocks`
+      : `${coLocations.length} bounded co-location sample(s) placed two agents within eight blocks`)
+  }
+  if (spatialStated && playerSightings.length > 0) {
+    observations.push(`${playerSightings.length} perception(s) showed another player within eight blocks`)
   }
   if (socialSpeech > 0) observations.push(`${socialSpeech} speech intent(s) were accepted by the body`)
   if (attacks > 0) observations.push(`${attacks} attack intent(s) were applied`)
 
   const counterevidence = []
   if (socialSpeech === 0) counterevidence.push('No agent produced a speech intent.')
-  if (coLocations.length === 0) counterevidence.push('No bounded perception sample placed two agents within eight blocks.')
+  if (spatialStated) {
+    if (coLocations.length === 0 && playerSightings.length === 0) {
+      counterevidence.push('Neither a paired self-position sample nor any perception placed two agents within eight blocks.')
+    }
+  } else if (coLocations.length === 0) {
+    counterevidence.push('No bounded perception sample placed two agents within eight blocks.')
+  }
   if (attacks === 0) counterevidence.push('No attack intent was applied.')
   if ((byEvent.worldInteraction ?? 0) === 0) {
     counterevidence.push('No server-confirmed native world interaction occurred.')
@@ -695,7 +807,12 @@ function deriveMetrics (records, configuredAgents = []) {
       decided: byEvent.decided ?? 0,
       applied: byEvent.intentApplied ?? 0,
       unavailable: byEvent.cognitionUnavailable ?? 0,
-      discarded: byEvent.decisionDiscarded ?? 0,
+      // A danger answer newer damage preempted is superseded, never lost, so it is counted apart
+      // and only when there is one: earlier evidence derives exactly the cycles it always did.
+      discarded: (byEvent.decisionDiscarded ?? 0) - preempted - exposureDiscards,
+      ...(preempted === 0 ? {} : { preempted }),
+      // Answers already with the mind when the run's exposure ended, drained typed and never applied.
+      ...(exposureDiscards === 0 ? {} : { drainedAfterExposure: exposureDiscards }),
       incomplete
     },
     behavior: {
@@ -715,7 +832,8 @@ function deriveMetrics (records, configuredAgents = []) {
     spatial: {
       coLocationThresholdBlocks: 8,
       maximumTickSeparation: 20,
-      coLocationSamples: coLocations
+      coLocationSamples: coLocations,
+      ...(spatialStated ? { playerSightings: playerSightings.length } : {})
     },
     crashContainment: {
       controlledCrashes: crashes.map((record) => ({
@@ -753,6 +871,8 @@ function deriveMetrics (records, configuredAgents = []) {
   }
   const danger = dangerEpisodeMetrics(bodyRecords)
   if (danger !== undefined) result.dangerEpisodes = danger
+  const inFlight = cognitionCoalescingMetrics(bodyRecords)
+  if (inFlight !== undefined) result.cognitionCoalescing = inFlight
   const admissionEnd = admissionEndMetrics(bodyRecords, harnessRecords, firstTick)
   if (admissionEnd !== undefined) result.admissionEnd = admissionEnd
   const deaths = deathMetrics(bodyRecords, harnessRecords, firstTick)
@@ -769,6 +889,9 @@ function deriveMetrics (records, configuredAgents = []) {
   if (perceptionAudits.length > 0) {
     result.perceptionAudit = perceptionAuditMetrics(perceptionAudits, byEvent.perceived ?? 0)
   }
+  // Absent unless the evidence holds the server's readings at begin, so earlier metrics re-derive.
+  const witnessedAtBegin = initialConditionsWitnessedOf(bodyRecords)
+  if (witnessedAtBegin !== undefined) result.initialConditionsWitnessed = witnessedAtBegin
   if (
     stimulusRecords.length > 0 ||
     harnessRecords.some((record) => record.origin !== undefined)
@@ -832,12 +955,60 @@ function goalContinuityMetrics (records) {
   const sortedAgents = [...agents.values()]
     .sort((first, second) => first.agentId.localeCompare(second.agentId))
     .map((agent) => ({ ...agent, byOutcome: sortedValue(agent.byOutcome) }))
-  return {
+  const continuity = {
     byOutcome: sortedValue(byOutcome),
     agents: sortedAgents,
     agentsWithContinuity: sortedAgents
       .filter((agent) => agent.continuingReviews > 0)
       .map((agent) => agent.agentId)
+  }
+  // From routine-v36 every accepted replace and abandon states why its goal ended; derived only when
+  // a record carries a reason, so evidence from before it re-derives unchanged.
+  const ended = records.filter((record) => record.goal.reason !== undefined && GOAL_ENDING_OUTCOMES.includes(record.goal.outcome))
+  if (ended.length > 0) {
+    const endReasons = {}
+    for (const record of ended) increment(endReasons, record.goal.reason)
+    continuity.endReasons = sortedValue(endReasons)
+  }
+  const working = workingGoalMetrics(records)
+  return working === undefined ? continuity : { ...continuity, workingGoal: working }
+}
+
+/**
+ * The working-goal evidence a v17 run carries: the mind's verdict on each previous step, the
+ * body's own count of steps in a row that changed nothing, and the goals the bound ended.
+ * Derived only when a record carries it, so evidence from before it re-derives unchanged.
+ */
+function workingGoalMetrics (records) {
+  const judged = records.filter((record) =>
+    record.goal.stepResult !== undefined || record.goal.stepsWithoutProgress !== undefined)
+  if (judged.length === 0) return undefined
+  const byAgent = {}
+  for (const record of records) {
+    const goal = record.goal
+    const agent = byAgent[record.agentId] ??= {
+      stepResults: {},
+      maxStepsWithoutProgress: 0,
+      stalled: 0,
+      completed: 0
+    }
+    if (goal.stepResult !== undefined) increment(agent.stepResults, goal.stepResult)
+    if (goal.stepsWithoutProgress !== undefined) {
+      agent.maxStepsWithoutProgress = Math.max(agent.maxStepsWithoutProgress, goal.stepsWithoutProgress)
+    }
+    if (goal.outcome === 'goalStalled') agent.stalled += 1
+    if (goal.outcome === 'goalCompleted') agent.completed += 1
+  }
+  const stepResults = {}
+  for (const agent of Object.values(byAgent)) {
+    for (const [result, count] of Object.entries(agent.stepResults)) stepResults[result] = (stepResults[result] ?? 0) + count
+  }
+  return {
+    stepResults: sortedValue(stepResults),
+    stalled: Object.values(byAgent).reduce((sum, agent) => sum + agent.stalled, 0),
+    completed: Object.values(byAgent).reduce((sum, agent) => sum + agent.completed, 0),
+    byAgent: sortedValue(Object.fromEntries(Object.entries(byAgent).map(([agentId, agent]) =>
+      [agentId, { ...agent, stepResults: sortedValue(agent.stepResults) }])))
   }
 }
 

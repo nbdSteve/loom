@@ -11,17 +11,25 @@
  * body could only refuse a second flight as not ready.
  *
  * So an episode opens when a threat or damage perception about one threat is sent to the
- * mind. Until that decision has settled - answered and applied, or lost - and for
- * [DANGER_EPISODE_COOLDOWN_TICKS] after, another threat or damage perception about the same
- * threat for the same agent is coalesced into it rather than sent. A different threat is new
- * information and is always sent. Nothing here decides how to act; it decides only whether
- * a second identical question is worth a model call.
+ * mind. Until that decision has settled, and for [DANGER_EPISODE_COOLDOWN_TICKS] after a flight
+ * settles, another threat or damage perception about the same threat for the same agent is
+ * coalesced into it rather than sent; a decision lost or answered by anything but a flight ends
+ * the episode at once. A different threat is new
+ * information and is sent, unless it is further off, and outside pivotal range, than a threat
+ * whose decision is still open, judged where each now stands: in r20, eta's flight from a zombie
+ * 6.8 blocks off was preempted by one from a skeleton 23.1 off.
+ * Damage is nearest of all. Damage, or a sighting back within pivotal range, after the episode's
+ * answer has settled is always sent: the answer did not keep the threat off, which is news. In
+ * the v29 rehearsal eta fled a spider safely, was bitten 58 ticks later inside the cooldown, and
+ * died with that bite never asked about. Nothing here decides how to act; it decides only whether
+ * a second question is worth a model call.
  *
  * Engine-free and main-thread only, like the rest of the cognition seam.
  */
 package dev.loom.mind
 
 import dev.loom.body.AgentId
+import dev.loom.body.PIVOTAL_THREAT_DISTANCE_BLOCKS
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
 
@@ -47,9 +55,21 @@ fun dangerKeyOf(trigger: Trigger): String? =
 class DangerEpisodes(
     private val currentTick: () -> Long,
 ) {
-    private class Episode {
+    private class Episode(
+        /**
+         * How far off the threat is, by its latest sighting, coalesced or not; `null` for damage,
+         * which says nothing about where the attacker stands.
+         */
+        var distance: Double?,
+    ) {
         val open = mutableSetOf<String>()
         var settledTick: Long? = null
+
+        /** Whether the episode's answer settled more than the cooldown before [now]. */
+        fun expiredAt(now: Long): Boolean {
+            val settled = settledTick ?: return false
+            return open.isEmpty() && now - settled > DANGER_EPISODE_COOLDOWN_TICKS
+        }
     }
 
     private val episodes = mutableMapOf<AgentId, MutableMap<String, Episode>>()
@@ -62,35 +82,180 @@ class DangerEpisodes(
     fun admit(
         agentId: AgentId,
         perception: Perception,
+        subject: String? = null,
     ): Boolean {
-        val key = dangerKeyOf(perception.trigger) ?: return true
+        val key = keyOf(perception.trigger, subject) ?: return true
         val now = currentTick()
         val byThreat = episodes.getOrPut(agentId) { mutableMapOf() }
         byThreat.entries.removeIf { (_, episode) -> episode.expiredAt(now) }
         // Whatever survived the sweep is open or still cooling down.
-        val admitted = key !in byThreat
-        if (admitted) byThreat[key] = Episode().also { it.open += perception.requestId }
+        val distance = (perception.trigger as? Trigger.ThreatSighted)?.distance
+        // The episode follows its threat: a repeat about it moves it to where it now stands.
+        byThreat[key]?.let { episode -> if (distance != null) episode.distance = distance }
+        val answered = byThreat[key]?.open?.isEmpty() == true && closedAgain(perception.trigger)
+        val waits = (key in byThreat && !answered) || nearerOpen(byThreat, key, distance)
+        val admitted = urgentDamage(perception) || !waits
+        if (admitted) {
+            opened(byThreat, key, perception, distance)
+        } else {
+            // Damage taken while an answer runs is told once that answer settles (r24: 43 of 68
+            // damage perceptions were coalesced, gamma's at health 2.7 and 0.7, and none was told).
+            (perception.trigger as? Trigger.Damaged)?.let { withdraw(agentId, perception.requestId, it, subject) }
+        }
         return admitted
     }
 
-    /** Marks the decision for [requestId] settled, which starts its episode's cooldown. */
+    /**
+     * Whether [perception]'s own threat has an episode still open or cooling down for [agentId], so
+     * a refusal of it is a repeat the mind was told rather than a threat waiting behind a nearer one.
+     */
+    fun answering(
+        agentId: AgentId,
+        perception: Perception,
+        subject: String? = null,
+    ): Boolean =
+        keyOf(perception.trigger, subject)?.let { key -> episodes[agentId]?.get(key) }
+            ?.expiredAt(currentTick()) == false
+
+    /** Opens [key]'s episode for [perception], or adds an urgent damage to the one still open. */
+    private fun opened(
+        byThreat: MutableMap<String, Episode>,
+        key: String,
+        perception: Perception,
+        distance: Double?,
+    ) {
+        val open = byThreat[key]?.takeIf { urgentDamage(perception) && it.open.isNotEmpty() }
+        if (open != null) {
+            open.open += perception.requestId
+        } else {
+            byThreat[key] = Episode(distance).also { it.open += perception.requestId }
+        }
+    }
+
+    /**
+     * The episode key of a danger [trigger]: the current creature when the server names it, so a
+     * second zombie is news of its own (r24: damage from one zombie coalesced into another's
+     * episode 0.4 blocks off), else its kind; `null` for a trigger that is no danger.
+     */
+    private fun keyOf(
+        trigger: Trigger,
+        subject: String?,
+    ): String? = dangerKeyOf(trigger)?.let { kind -> subject?.let { "entity:$it" } ?: kind }
+
+    /**
+     * Whether a further threat at [distance] waits behind a nearer one being answered, judged
+     * where each stands now; a threat inside pivotal range never waits, and damage holds back no
+     * sighting (r23: 40 threats waited behind episodes opened up to 244 ticks earlier).
+     */
+    private fun nearerOpen(
+        byThreat: Map<String, Episode>,
+        key: String,
+        distance: Double?,
+    ): Boolean =
+        distance != null && distance > PIVOTAL_THREAT_DISTANCE_BLOCKS &&
+            byThreat.any { (other, episode) ->
+                other != key && episode.open.isNotEmpty() && (episode.distance ?: Double.MAX_VALUE) < distance
+            }
+
+    /** The damage each agent took while one of its danger answers ran, owed once one settles. */
+    private val pending = mutableMapOf<AgentId, Trigger.Damaged>()
+
+    /** The server uuid of the creature that dealt each agent's latest held damage, when one did. */
+    private val pendingAttacker = mutableMapOf<AgentId, String>()
+
+    /**
+     * Marks the decision for [requestId] settled. A flight starts its episode's cooldown; any
+     * other answer ends the episode at once, so the next sighting of that threat is asked about
+     * again (r20 kappa answered a skeleton 2.4 blocks off with a one-block walk, its next sighting
+     * was coalesced into the cooldown, and it died beside that skeleton).
+     */
     fun settled(
         agentId: AgentId,
         requestId: String,
-    ) {
+        fled: Boolean = true,
+    ): Trigger.Damaged? = settledDamage(agentId, requestId, fled)?.trigger
+
+    /** As [settled], with the server uuid of the creature that dealt the damage it owes, if any. */
+    fun settledDamage(
+        agentId: AgentId,
+        requestId: String,
+        fled: Boolean = true,
+    ): HeldDamage? {
         val now = currentTick()
-        episodes[agentId]?.values?.forEach { episode ->
-            if (episode.open.remove(requestId) && episode.open.isEmpty()) episode.settledTick = now
+        episodes[agentId]?.entries?.removeIf { (_, episode) ->
+            val ended = episode.open.remove(requestId) && episode.open.isEmpty()
+            if (ended) episode.settledTick = now
+            ended && !fled
         }
+        // Damage held behind an answer is owed once no answer of the agent's is still open.
+        val open = episodes[agentId]?.values?.any { it.open.isNotEmpty() } == true
+        if (open) return null
+        val attacker = pendingAttacker.remove(agentId)
+        return pending.remove(agentId)?.let { HeldDamage(it, attacker) }
+    }
+
+    /**
+     * Withdraws [requestId] from the episodes it was admitted into, for a perception admitted here
+     * but then not sent at all: a threat the mind was never asked about must not cool down as if it
+     * had been answered. A [damage] is held, to be told once no answer of the agent's is open, like
+     * any damage that waits; the latest attacker, [subject], is the one told of.
+     */
+    fun withdraw(
+        agentId: AgentId,
+        requestId: String,
+        damage: Trigger.Damaged? = null,
+        subject: String? = null,
+    ) {
+        episodes[agentId]?.entries?.removeIf { (_, episode) ->
+            episode.open.remove(requestId) && episode.open.isEmpty() && episode.settledTick == null
+        }
+        if (damage == null) return
+        // Held without its ref, which named a creature in the sense that minted it alone.
+        pending.merge(agentId, damage.copy(attackerRef = null)) { earlier, later ->
+            Trigger.Damaged(earlier.amount + later.amount, later.source)
+        }
+        if (subject != null) pendingAttacker[agentId] = subject else pendingAttacker.remove(agentId)
     }
 
     /** Drops every episode for an agent whose body has gone, so nothing outlives it. */
     fun forget(agentId: AgentId) {
+        pending.remove(agentId)
+        pendingAttacker.remove(agentId)
         episodes.remove(agentId)
     }
 
-    private fun Episode.expiredAt(now: Long): Boolean {
-        val settled = settledTick ?: return false
-        return open.isEmpty() && now - settled > DANGER_EPISODE_COOLDOWN_TICKS
-    }
+    /**
+     * Whether a repeat after the episode's answer settled is news: damage always is, and so is a
+     * sighting back inside [PIVOTAL_THREAT_DISTANCE_BLOCKS], because the flight did not keep the
+     * threat off (r22: the last warnings of alpha at health 1.2, beta, epsilon and zeta were
+     * coalesced into the cooldown of a flight the threat had already closed).
+     */
+    private fun closedAgain(trigger: Trigger): Boolean =
+        trigger is Trigger.Damaged ||
+            (trigger is Trigger.ThreatSighted && trigger.distance <= PIVOTAL_THREAT_DISTANCE_BLOCKS)
+}
+
+/** Damage held behind a danger answer, and the server uuid of the creature that dealt it, if any. */
+data class HeldDamage(
+    val trigger: Trigger.Damaged,
+    val attacker: String?,
+)
+
+/**
+ * The damage, in vanilla half-hearts, that is news even from the creature already being answered.
+ *
+ * From r33's 82 damage perceptions: every ordinary hit was 2 to 5 (spiders 2, zombies 3, skeletons
+ * 3 to 5), and the four at 6 or more were a spider's 6, a skeleton's 8 and creeper blasts of 19 and
+ * 22 - beta's 19 among them, coalesced behind its own creeper sighting (body:00003640) before it died.
+ */
+const val LARGE_DAMAGE: Long = 6
+
+/**
+ * Whether [perception] is urgent damage, always asked about whatever it would coalesce into: at or
+ * below [LOW_HEALTH] (r27: iota's spider hits at 4.5 and 2.5 health were coalesced, and it died), or
+ * [LARGE_DAMAGE] or more.
+ */
+internal fun urgentDamage(perception: Perception): Boolean {
+    val damage = perception.trigger as? Trigger.Damaged ?: return false
+    return perception.selfState.health <= LOW_HEALTH || damage.amount >= LARGE_DAMAGE
 }

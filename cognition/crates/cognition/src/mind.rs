@@ -19,6 +19,7 @@
 use loom_contract::{Decision, Perception, Provenance};
 
 use crate::model::{BackendError, ModelBackend};
+use crate::offered::OfferedRefs;
 use crate::router::Router;
 
 /// Turns perceptions into decisions, routing each to a model by importance.
@@ -56,6 +57,13 @@ impl<B: ModelBackend> Mind<B> {
     pub async fn decide(&self, perception: &Perception) -> Result<Decision, BackendError> {
         let routed = self.router.route(perception.importance);
         let draft = self.backend.draft(&routed, perception).await?;
+        // Held here rather than trusted to a backend: a handle of the wrong kind, or one
+        // this perception never offered, is an answer the body could only refuse.
+        if !OfferedRefs::of(perception).admits(&draft.intent) {
+            return Err(BackendError::new(
+                "the answer named a ref this perception did not offer for that action",
+            ));
+        }
         Ok(Decision {
             request_id: perception.request_id.clone(),
             agent_id: perception.agent_id.clone(),
@@ -83,8 +91,8 @@ mod tests {
     use crate::model::{BackendError, Draft, ModelBackend, ScriptedBackend};
     use crate::router::{ModelCatalog, ModelRoute, Router};
     use loom_contract::{
-        DayPhase, DecisionImportance, GoalChoice, GoalDisposition, Intent, Perception, SelfState,
-        Trigger, WorldState,
+        DayPhase, DecisionImportance, GoalChoice, GoalDisposition, GoalReason, GoalStepResult,
+        Intent, Perception, SelfState, Trigger, WorldState,
     };
 
     const FAST: &str = "a-small-model";
@@ -144,15 +152,21 @@ mod tests {
                 inventory_summary: vec![],
                 crafting_options: vec![],
                 crafting_options_omitted: 0,
+                own_drops: vec![],
                 world: WorldState {
                     day_phase: DayPhase::Day,
                     is_day: true,
                     ticks_until_nightfall: 6_000,
                 },
+                cover: None,
             },
             surroundings: vec![],
             surroundings_omitted: 0,
             goal: None,
+            last_refusal: None,
+            explore: vec![],
+            recalled: vec![],
+            horizon: vec![],
         }
     }
 
@@ -209,7 +223,74 @@ mod tests {
         assert!(decided.reasoning.contains(DEEP));
         assert_eq!(decided.provenance.model, FAST);
         assert_eq!(decided.provenance.tier, DecisionImportance::Routine);
-        assert_eq!(decided.provenance.prompt_version, "routine-v13");
+        assert_eq!(decided.provenance.prompt_version, "routine-v38");
+    }
+
+    /// A backend that answers with one fixed intent, whatever it was offered.
+    struct FixedBackend(Intent);
+
+    impl ModelBackend for FixedBackend {
+        fn draft(
+            &self,
+            _route: &ModelRoute,
+            _perception: &Perception,
+        ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
+            std::future::ready(Ok(Draft {
+                goal: None,
+                intent: self.0.clone(),
+                reasoning: "named whatever it liked".to_owned(),
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_ref_the_perception_did_not_offer_for_that_action_is_no_decision() {
+        let mut seen = perception(DecisionImportance::Routine);
+        seen.surroundings.push(loom_contract::Observation {
+            kind: loom_contract::ObservationKind::Entity,
+            what: "entity.minecraft.zombie".to_owned(),
+            distance: 4.0,
+            direction: loom_contract::Bearing::North,
+            vertical_offset: 0.0,
+            visible: true,
+            target_ref: "e1".to_owned(),
+            count: None,
+            standable: None,
+            yields: None,
+            dig_safe: None,
+            route_refused: None,
+            hunts: Some(true),
+            cover: None,
+        });
+        for wrong in [
+            Intent::Dig {
+                block: "e1".to_owned(),
+            },
+            Intent::Flee {
+                from: "e9".to_owned(),
+            },
+        ] {
+            let refused = Mind::new(router(), FixedBackend(wrong.clone()))
+                .decide(&seen)
+                .await
+                .expect_err("a wrong-kind or unoffered ref is refused");
+            assert!(refused.message.contains("did not offer"), "{wrong:?}");
+        }
+        let fled = Mind::new(
+            router(),
+            FixedBackend(Intent::Flee {
+                from: "e1".to_owned(),
+            }),
+        )
+        .decide(&seen)
+        .await
+        .expect("an offered creature may be fled from");
+        assert_eq!(
+            fled.intent,
+            Intent::Flee {
+                from: "e1".to_owned()
+            }
+        );
     }
 
     /// A backend that answers with one fixed goal choice.
@@ -239,12 +320,18 @@ mod tests {
             GoalDisposition::Abandon,
         ] {
             let choice = GoalChoice {
+                discover: None,
                 disposition,
-                statement: matches!(
-                    disposition,
-                    GoalDisposition::Adopt | GoalDisposition::Revise
-                )
-                .then(|| "keep watch by the trees".to_owned()),
+                success_item: None,
+                success_count: None,
+                step: (disposition != GoalDisposition::Complete
+                    && disposition != GoalDisposition::Abandon)
+                    .then(|| "stand by the nearest tree".to_owned()),
+                step_result: (disposition != GoalDisposition::Adopt)
+                    .then_some(GoalStepResult::Progressing),
+                shelter: None,
+                feeds: None,
+                reason: (disposition == GoalDisposition::Abandon).then_some(GoalReason::Stale),
             };
             let mind = Mind::new(router(), ChoosingBackend(choice.clone()));
             let decided = mind
@@ -254,7 +341,7 @@ mod tests {
             assert_eq!(decided.goal, Some(choice));
             assert_eq!(decided.intent, Intent::Idle);
             assert_eq!(decided.provenance.model, FAST);
-            assert_eq!(decided.provenance.prompt_version, "routine-v13");
+            assert_eq!(decided.provenance.prompt_version, "routine-v38");
         }
     }
 

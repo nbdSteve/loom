@@ -1,0 +1,202 @@
+package dev.loom.plugin
+
+import org.bukkit.GameMode
+import org.bukkit.Location
+import org.bukkit.Server
+import org.bukkit.World
+import org.bukkit.WorldBorder
+import org.bukkit.block.Block
+import org.bukkit.block.data.BlockData
+import org.bukkit.block.data.type.Snow
+import org.bukkit.entity.Entity
+import org.bukkit.entity.Item
+import org.bukkit.entity.LivingEntity
+import org.bukkit.entity.Player
+import org.bukkit.util.BoundingBox
+import org.bukkit.util.VoxelShape
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import java.lang.reflect.Proxy
+import java.util.UUID
+
+/**
+ * The server is the witness of where a body may stand, and that includes its own world border:
+ * the v29 plains rehearsal's 128-block border, which theta's flights and walks ran into.
+ */
+class BukkitBlockGroundTest {
+    private inline fun <reified T> proxy(crossinline answer: (String, Array<Any?>) -> Any?): T =
+        Proxy.newProxyInstance(T::class.java.classLoader, arrayOf(T::class.java)) { _, method, args ->
+            answer(method.name, args ?: emptyArray())
+        } as T
+
+    private fun server(): Server {
+        val border =
+            proxy<WorldBorder> { name, _ ->
+                when (name) {
+                    "getCenter" -> Location(null, 0.0, 0.0, 0.0)
+                    "getSize" -> 128.0
+                    else -> null
+                }
+            }
+        // Air: vanilla's collision shape for it is empty, which is all the shared rule reads.
+        val shape = proxy<VoxelShape> { name, _ -> if (name == "getBoundingBoxes") emptyList<BoundingBox>() else null }
+        val data = proxy<BlockData> { name, _ -> if (name == "getCollisionShape") shape else null }
+        val air =
+            proxy<Block> { name, _ ->
+                when (name) {
+                    "getBlockData" -> data
+                    "getLocation" -> Location(null, 0.0, 0.0, 0.0)
+                    else -> null
+                }
+            }
+        val world =
+            proxy<World> { name, _ ->
+                when (name) {
+                    "getWorldBorder" -> border
+                    "getBlockAt" -> air
+                    else -> null
+                }
+            }
+        return proxy { name, _ -> if (name == "getWorlds") listOf(world) else null }
+    }
+
+    @Test
+    fun aPassableCellPastTheBorderIsNoCellABodyStandsIn() {
+        val ground = BukkitBlockGround(server())
+        assertTrue(ground.standsIn(listOf(27, 66, -64)))
+        assertFalse(ground.standsIn(listOf(27, 66, -65)))
+        assertFalse(ground.standsIn(listOf(64, 66, 0)))
+        // Open air everywhere, so nothing inside has a floor and nothing past it is open.
+        assertNull(ground.standCell(listOf(27, 65, -65)))
+    }
+
+    @Test
+    fun aPlacedBlockLandsInAirOrWhatVanillaReplacesAndInSnowOnlyAsOneLayer() {
+        // The provider-free v36 rehearsal's delta: short grass in its shelter's south faces, which a
+        // placed block replaces, was offered no closing, so the shelter could not be finished.
+        fun cell(
+            replaceable: Boolean,
+            layers: Int? = null,
+        ): Block {
+            val data: BlockData =
+                if (layers == null) {
+                    proxy<BlockData> { _, _ -> null }
+                } else {
+                    proxy<Snow> { name, _ -> if (name == "getLayers") layers else null }
+                }
+            return proxy { name, _ ->
+                when (name) {
+                    "isReplaceable" -> replaceable
+                    "getBlockData" -> data
+                    else -> null
+                }
+            }
+        }
+        val cells =
+            mapOf(
+                // Air, short grass, one snow layer, two snow layers, a dandelion.
+                listOf(0, 64, 0) to cell(true),
+                listOf(1, 64, 0) to cell(true),
+                listOf(2, 64, 0) to cell(true, layers = 1),
+                listOf(3, 64, 0) to cell(true, layers = 2),
+                listOf(4, 64, 0) to cell(false),
+            )
+        val border =
+            proxy<WorldBorder> { name, _ ->
+                when (name) {
+                    "getCenter" -> Location(null, 0.0, 0.0, 0.0)
+                    "getSize" -> 128.0
+                    else -> null
+                }
+            }
+        val world =
+            proxy<World> { name, args ->
+                when (name) {
+                    "getWorldBorder" -> border
+                    "getBlockAt" -> cells[listOf(args[0] as Int, args[1] as Int, args[2] as Int)]
+                    else -> null
+                }
+            }
+        val ground = BukkitBlockGround(proxy { name, _ -> if (name == "getWorlds") listOf(world) else null })
+        assertEquals(
+            listOf(true, true, true, false, false),
+            (0..4).map { ground.takesPlacement(listOf(it, 64, 0)) },
+            "air, short grass and one snow layer take a block; two layers and a flower do not",
+        )
+    }
+
+    @Test
+    fun aCellHoldsABodyOnlyForAnotherLivingBodyTheServerHoldsThere() {
+        // The r39 offline audit: a closing into a cell another body stood in was offered, and its
+        // refusal then read as a race. Vanilla's own obstruction test is what the cover now asks.
+        val spectator =
+            proxy<Player> { name, _ ->
+                when (name) {
+                    "isInWorld" -> true
+                    "getUniqueId" -> other
+                    "getGameMode" -> GameMode.SPECTATOR
+                    else -> null
+                }
+            }
+        val drop = proxy<Item> { name, _ -> if (name == "getUniqueId") other else null }
+        assertTrue(groundWith(living(other)).bodyIn(cell, self))
+        assertFalse(groundWith(living(self)).bodyIn(cell, self), "the player's own box is read from its own sense")
+        assertFalse(groundWith(living(other, removed = true), spectator, drop).bodyIn(cell, self))
+        // The round 3 offline audit: a mob in its death animation, which Bukkit already calls dead,
+        // still blocks a placement until the server removes it.
+        assertTrue(groundWith(living(other, dying = true)).bodyIn(cell, self))
+    }
+
+    @Test
+    fun aVehicleInTheCellBlocksAPlacementAsABodyDoes() {
+        // Round 2 of the offline audit: vanilla places nothing into a cell a minecart fills either.
+        val minecart =
+            proxy<org.bukkit.entity.Minecart> { name, _ ->
+                when (name) {
+                    "isInWorld" -> true
+                    "getUniqueId" -> other
+                    else -> null
+                }
+            }
+        assertTrue(groundWith(minecart).bodyIn(cell, self))
+    }
+
+    private val self = UUID.randomUUID()
+    private val other = UUID.randomUUID()
+    private val cell = listOf(2, 64, -3)
+
+    private fun living(
+        uuid: UUID,
+        removed: Boolean = false,
+        dying: Boolean = false,
+    ) = proxy<LivingEntity> { name, _ ->
+        when (name) {
+            "isInWorld" -> !removed
+            "isDead" -> removed || dying
+            "getUniqueId" -> uuid
+            else -> null
+        }
+    }
+
+    /** A server whose only world holds [standing], answering the one cell's entity query. */
+    private fun groundWith(vararg standing: Entity): BukkitBlockGround {
+        val world =
+            proxy<World> { name, args ->
+                if (name != "getNearbyEntities") return@proxy null
+                assertEquals(BoundingBox(2.0, 64.0, -3.0, 3.0, 65.0, -2.0), args[0])
+                @Suppress("UNCHECKED_CAST")
+                val filter = args[1] as java.util.function.Predicate<Entity>
+                standing.filter(filter::test)
+            }
+        return BukkitBlockGround(proxy { name, _ -> if (name == "getWorlds") listOf(world) else null })
+    }
+
+    @Test
+    fun noWorldIsNoGround() {
+        val none = proxy<Server> { name, _ -> if (name == "getWorlds") emptyList<World>() else null }
+        assertEquals(false, BukkitBlockGround(none).standsIn(listOf(0, 64, 0)))
+    }
+}

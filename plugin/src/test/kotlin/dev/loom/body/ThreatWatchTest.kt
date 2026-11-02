@@ -1,6 +1,7 @@
 package dev.loom.body
 
 import dev.loom.contract.Bearing
+import dev.loom.contract.Trigger
 import org.junit.jupiter.api.Test
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -51,8 +52,27 @@ class ThreatWatchTest {
         assertEquals("entity.minecraft.zombie", sighted.threat)
         assertEquals(3.0, sighted.distance)
         assertTrue(sighted.visible)
-        assertTrue(sighted.reachable, "the engine's own answer is carried across, not re-derived")
+        assertEquals(true, sighted.reachable, "the engine's own answer is carried across, not re-derived")
         assertEquals(emptyList(), outcome.suppressed)
+    }
+
+    @Test
+    fun `a hostile out of sight and far off raises no sighting, and one in view or near does`() {
+        // r17: nine flights ran from mobs behind walls 21.9 to 23.5 blocks away and gained under six.
+        val far = watch.consider(alpha, listOf(zombie("e3", distance = 22.4, visible = false)), aRoute())
+        assertNull(far.sighted)
+        assertEquals(listOf(ThreatSuppressionReason.DISTANT_UNSEEN), far.suppressed.map { it.reason })
+        assertEquals(EventTag.THREAT_DISTANT_UNSEEN, ThreatSuppressionReason.DISTANT_UNSEEN.tag)
+        // r20: 22 flights ran from mobs in view more than 16 blocks off and gained a median of
+        // about two; a hunter in view is news only within the perception radius.
+        val seenFar = watch.consider(beta, listOf(zombie("e4", distance = 22.4, visible = true)), aRoute())
+        assertNull(seenFar.sighted)
+        assertEquals(listOf(ThreatSuppressionReason.DISTANT_SEEN), seenFar.suppressed.map { it.reason })
+        assertEquals(EventTag.THREAT_DISTANT_SEEN, ThreatSuppressionReason.DISTANT_SEEN.tag)
+        val seenAtRadius = zombie("e6", distance = THREAT_SIGHT_NEWS_BLOCKS, visible = true)
+        assertNotNull(watch.consider(beta, listOf(seenAtRadius), aRoute()).sighted)
+        val near = watch.consider(alpha, listOf(zombie("e5", distance = THREAT_NEAR_BLOCKS, visible = false)), aRoute())
+        assertNotNull(near.sighted)
     }
 
     @Test
@@ -159,6 +179,38 @@ class ThreatWatchTest {
             ninth.suppressed,
             "and the record says Loom stopped paying, not that the agent decided to stand there",
         )
+    }
+
+    @Test
+    fun `a pivotal sighting that never reached the mind gives its allowance back`() {
+        // r22: beta, gamma and theta were capped after one or two real calls, because the cap
+        // was charged for sightings coalesced into a danger episode or refused for the reserve.
+        spendTheNight(alpha, handles = "a")
+        assertEquals(0, watch.pivotalCallsRemaining(alpha))
+        val near = Trigger.ThreatSighted(ZOMBIE, "e-near", 4.0, Bearing.NORTH, true)
+        watch.refund(alpha, near)
+        assertEquals(1, watch.pivotalCallsRemaining(alpha))
+        // A sighting that was never pivotal spent nothing, so gives nothing back.
+        watch.refund(alpha, near.copy(distance = 12.0))
+        watch.refund(alpha, near.copy(visible = false))
+        assertEquals(1, watch.pivotalCallsRemaining(alpha))
+        // Nor is more given back than was spent.
+        repeat(MAX_PIVOTAL_THREAT_CALLS_PER_NIGHT + 2) { watch.refund(beta, near) }
+        assertEquals(MAX_PIVOTAL_THREAT_CALLS_PER_NIGHT, watch.pivotalCallsRemaining(beta))
+    }
+
+    @Test
+    fun `a sighting that waited behind a nearer threat is told afresh at its next look`() {
+        // r49 iota: a skeleton 15.8 blocks off waited behind a zombie's open answer; every later look
+        // was refused as already told (threatDebounced, then threatUnchanged) and its arrow killed iota.
+        val far = zombie("e-far", distance = FAR_OFF_BLOCKS)
+        val waited = assertNotNull(watch.consider(alpha, listOf(far), aRoute()).sighted)
+        watch.refund(alpha, waited, far.subject, waited = true)
+        assertNotNull(watch.consider(alpha, listOf(far), aRoute()).sighted, "never told, so a first sight again")
+        // A repeat coalesced into the threat's own episode was told already, and stays told.
+        val told = assertNotNull(watch.consider(beta, listOf(far), aRoute()).sighted)
+        watch.refund(beta, told, far.subject)
+        assertNull(watch.consider(beta, listOf(far), aRoute()).sighted)
     }
 
     @Test
@@ -323,8 +375,11 @@ private class FakeThreatClock(
 /** The engine's own description of the hunter every case here uses. */
 private const val ZOMBIE = "entity.minecraft.zombie"
 
-/** Comfortably outside [PIVOTAL_THREAT_DISTANCE_BLOCKS], and well inside what a body sees. */
-private const val FAR_OFF_BLOCKS: Double = 20.0
+/**
+ * Comfortably outside [PIVOTAL_THREAT_DISTANCE_BLOCKS], and inside [THREAT_SIGHT_NEWS_BLOCKS],
+ * past which a hunter in view is not news at all.
+ */
+private const val FAR_OFF_BLOCKS: Double = 14.0
 
 /** A Minecraft day, used only to show that ticks alone restore no allowance. */
 private const val TICKS_IN_A_WORLD_DAY: Long = 24_000L

@@ -54,7 +54,9 @@
  *
  * The consequence is deliberate rather than a gap: a body the server left in mid-air stays
  * there until a request owns it, which is the state this process was in before it could walk
- * at all. Falling is simulation, and simulation is a request's.
+ * at all. Falling is simulation, and simulation is a request's. The one holder that is not a
+ * route is a dig by a body standing on support, which [holdSimulation] scopes to establishing
+ * the ground state a dig is timed by.
  *
  * **Every movement-policy field is set explicitly, because the library's defaults are
  * permissive.** `new Movements(bot)` arrives willing to dig, pillar, scaffold, parkour,
@@ -71,6 +73,9 @@
  * and `getMoveForward` then abandons any move whose cost passed a hundred - so a water
  * block in `blocksToAvoid` is a wall to the search. The body still floats if it falls in,
  * because that is Prismarine physics doing what vanilla does and not a policy of Loom's.
+ * The one exception is a walk that starts in water, which may swim out of it ([EscapeMovements]):
+ * r27 epsilon drowned at the bottom of its own flooded pit while every walk onto the dry floor two
+ * blocks above was refused `noRoute`, because the search had no move at all from a water cell.
  *
  * **Sprinting is the one ability a request decides, and it is off unless the request says
  * so.** Sprinting spends food, so a body allowed to sprint whenever it could would be
@@ -106,6 +111,12 @@
 const { performance } = require('node:perf_hooks')
 const physics = require('mineflayer/lib/plugins/physics')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
+const Move = require('mineflayer-pathfinder/lib/move')
+const Physics = require('mineflayer-pathfinder/lib/physics')
+const { PlayerState } = require('prismarine-physics')
+const { Vec3 } = require('vec3')
+const { installVanillaCollision } = require('./collision')
+const { borderExclusion, columnInside, trackWorldBorder, worldBorderOf } = require('./border')
 const { positionOf } = require('./sensing')
 
 /**
@@ -157,6 +168,20 @@ const MAX_TRAVEL_BLOCKS = MOVE_REACH_BLOCKS * TRAVEL_ALLOWANCE
  * the two bounds a wedged body meets.
  */
 const MAX_STALL_RETRIES = 2
+
+/**
+ * How many consecutive simulation steps a body must stand still on the ground, with that
+ * same grounded position already reported to the server, before a reached goal is an arrival.
+ *
+ * The pathfinder emits `goal_reached` once the last node is within 0.35 blocks horizontally
+ * and less than one block vertically, so a walk that ends in a step down reaches its goal
+ * while the body is still falling onto it. Answering then shut the simulation with the body
+ * in mid-air: the first live ten-agent run left one agent hanging 0.85 blocks above its
+ * destination, and every later walk it was asked for was refused as `noRoute`. Two steps are
+ * the fewest that show both a landed position and the report of it: Mineflayer writes a
+ * step's report only after every `physicsTick` listener has run.
+ */
+const ARRIVAL_SETTLE_TICKS = 2
 
 /**
  * How long one search may run, in milliseconds, and so how long the process may stall.
@@ -331,22 +356,45 @@ function scopedSimulation (bot) {
   let owner
   let draining = false
   let permitted
+  // What the server was last told about where the body stands, from the reports that passed.
+  const standing = { position: undefined, onGround: undefined }
+  const passed = (name, parameters) => {
+    if (MOVEMENT_REPORT_PACKETS.includes(name)) {
+      if (typeof parameters?.onGround === 'boolean') standing.onGround = parameters.onGround
+      if (Number.isFinite(parameters?.x) && Number.isFinite(parameters?.y) && Number.isFinite(parameters?.z)) {
+        standing.position = [parameters.x, parameters.y, parameters.z]
+      }
+    }
+    return reported(name, parameters)
+  }
   client.write = (name, parameters) => {
     if (!SCOPED_MOVEMENT_PACKETS.includes(name)) return reported(name, parameters)
     if (owner === undefined && permitted?.(name, parameters) === true) {
       permitted = undefined
-      return reported(name, parameters)
+      return passed(name, parameters)
     }
     if (owner === undefined) return undefined
     if (draining && MOVEMENT_CONTROL_PACKETS.includes(name) &&
       !isControlDeactivation(name, parameters)) return undefined
-    return reported(name, parameters)
+    return passed(name, parameters)
   }
   return {
+    /** The last position and ground state a report that reached the server stated. */
+    reportedStanding () {
+      return { position: standing.position, onGround: standing.onGround }
+    },
     take (token) {
       owner = token
       draining = false
       bot.physicsEnabled = true
+    },
+    /** Takes the gate for `token` only when nothing owns it; answers whether it did. */
+    takeIfFree (token) {
+      if (owner !== undefined) return false
+      owner = token
+      draining = false
+      bot.physicsEnabled = true
+      return true
     },
     /**
      * Holds the current frame open only for its final report and control deactivation.
@@ -386,7 +434,15 @@ function scopedSimulation (bot) {
 
 /** A gate for a bot with nothing to gate: every call is a no-op. */
 function inertSimulation () {
-  return { take () {}, drain () {}, release () {}, permitOnce () { return () => {} } }
+  return {
+    take () {},
+    takeIfFree () { return false },
+    drain () {},
+    release () {},
+    permitOnce () { return () => {} },
+    // No wire, so nothing was reported that an arrival could be checked against.
+    reportedStanding () { return undefined }
+  }
 }
 
 /** Each installed bot's gate, for operations that need one scoped packet permit. */
@@ -403,6 +459,130 @@ function isLeaveBed (name, parameters) {
  */
 function permitLeaveBed (bot) {
   return simulations.get(bot)?.permitOnce(isLeaveBed) ?? (() => {})
+}
+
+/** Vanilla's shift-key report, held or released, in whichever packet this version uses. */
+function isShift (pressed) {
+  return (name, parameters) =>
+    (name === 'entity_action' && parameters?.actionId === (pressed ? 0 : 1)) ||
+    (name === 'player_input' && parameters?.inputs?.shift === pressed && Object.keys(parameters.inputs).length === 1)
+}
+
+/**
+ * Writes the shift key held or released through the movement gate for a placement, while no
+ * movement owns the path: the one packet, and nothing else, passes. A bot without the gate,
+ * which writes nothing scoped, writes it directly.
+ */
+function writeShift (bot, pressed) {
+  const client = bot._client
+  if (client === null || client === undefined || typeof client.write !== 'function') return
+  const revoke = simulations.get(bot)?.permitOnce(isShift(pressed)) ?? (() => {})
+  try {
+    if (bot.supportFeature?.('newPlayerInputPacket')) {
+      client.write('player_input', { inputs: { shift: pressed } })
+    } else {
+      client.write('entity_action', { entityId: bot.entity?.id, actionId: pressed ? 0 : 1, jumpBoost: 0 })
+    }
+  } finally {
+    revoke()
+  }
+}
+
+/**
+ * Runs the client simulation for one explicit operation that moves nothing, and answers the
+ * release, or undefined when another owner holds the gate or the bot has none.
+ *
+ * Only for a body standing on support, so the simulation can establish its true ground state
+ * and nothing else: with no route and no control state, a supported body does not move. The
+ * reason is a dig. Mineflayer answers every server teleport with `onGround: false`, and with
+ * the simulation shut nothing ever corrects it - so both Mineflayer's dig time and the
+ * server's destroy progress ran at vanilla's five-times-slower airborne rate for a body
+ * standing on the ground, which put every bare-hand terracotta dig past its deadline.
+ */
+function holdSimulation (bot) {
+  const simulation = simulations.get(bot)
+  if (simulation === undefined) return undefined
+  const token = Symbol('held')
+  if (!simulation.takeIfFree(token)) return undefined
+  return () => simulation.release(token)
+}
+
+/**
+ * The most simulation steps a held operation's ending waits for the body to come to rest.
+ *
+ * Two seconds, which a fall of any height a body can be standing over inside the loaded
+ * distance has finished well inside. A bound rather than a wait, so a lost connection that
+ * stops the physics interval cannot hold an answer: the timer behind it covers that.
+ */
+const REST_SETTLE_MAX_TICKS = 40
+
+/**
+ * Keeps a held simulation running until the body is at rest, then releases it.
+ *
+ * At rest is what an arrival requires ([ARRIVAL_SETTLE_TICKS]): still on the ground for two
+ * steps with that same grounded position already reported to the server. A dig can remove the
+ * block a body stands on, and releasing the moment the server confirmed the break shut the
+ * simulation one step into the fall - which left a live agent hanging 0.08 blocks into the air
+ * for the rest of the run, so every later dig of its ran at the airborne rate and timed out.
+ */
+function releaseAtRest (bot, release, { maxTicks = REST_SETTLE_MAX_TICKS } = {}) {
+  return new Promise((resolve) => {
+    untilAtRest(bot, () => simulations.get(bot)?.reportedStanding?.(), () => {
+      release()
+      resolve()
+    }, maxTicks)
+  })
+}
+
+/**
+ * Calls `done` once, when the body is at rest in the sense [releaseAtRest] states or after
+ * `maxTicks` steps - or, should the physics interval stop, after the timer behind them.
+ * `reportedStanding` answers what the server was last told, or undefined where there is no wire.
+ */
+function untilAtRest (bot, reportedStanding, done, maxTicks = REST_SETTLE_MAX_TICKS) {
+  let ticks = 0
+  let stable = 0
+  let last
+  const finish = () => {
+    bot.off('physicsTick', step)
+    clearTimeout(timer)
+    done()
+  }
+  function step () {
+    ticks += 1
+    const here = bot.entity?.position === undefined || bot.entity?.position === null
+      ? undefined
+      : positionOf(bot.entity.position)
+    const still = here !== undefined && last !== undefined && blocksApart(here, last) === 0
+    last = here
+    const wire = reportedStanding()
+    const reported = wire === undefined || (
+      here !== undefined && wire.onGround === true && wire.position !== undefined &&
+      blocksApart(wire.position, here) === 0
+    )
+    stable = still && bot.entity?.onGround === true && reported ? stable + 1 : 0
+    if (stable >= ARRIVAL_SETTLE_TICKS || ticks >= maxTicks) finish()
+  }
+  bot.on('physicsTick', step)
+  const timer = setTimeout(finish, maxTicks * 50 + 500)
+}
+
+/** Whether a collision box of the block under the feet, or under `at`, has its top exactly there. */
+function standsOnSupport (bot, at = bot.entity?.position) {
+  const feet = at
+  if (feet === undefined || feet === null) return false
+  let below
+  try {
+    below = bot.blockAt(feet.offset(0, -1e-3, 0))
+  } catch {
+    return false
+  }
+  if (!Array.isArray(below?.shapes)) return false
+  return below.shapes.some((shape) =>
+    Math.abs(below.position.y + shape[4] - feet.y) < 1e-6 &&
+    feet.x >= below.position.x + shape[0] - 0.3 && feet.x <= below.position.x + shape[3] + 0.3 &&
+    feet.z >= below.position.z + shape[2] - 0.3 && feet.z <= below.position.z + shape[5] + 0.3
+  )
 }
 
 /** Straight-line distance between two positions, in blocks. */
@@ -446,7 +626,7 @@ function blocksApart (one, other) {
  * why that is the mechanism and not a flag. The id is read straight from the registry
  * because the library's own `inject` already requires it to be there.
  */
-function movementPolicyFor (movements, { sprint }) {
+function movementPolicyFor (movements, { sprint, border, swim = false }) {
   const water = movements.bot.registry.blocksByName.water.id
   return {
     // Abilities. Every one of these is a thing a later explicit skill would own.
@@ -457,7 +637,8 @@ function movementPolicyFor (movements, { sprint }) {
     allowEntityDetection: false,
     canOpenDoors: false,
     scafoldingBlocks: [],
-    exclusionAreasStep: [],
+    // The server's world border and nothing of Loom's: see `border.js`.
+    exclusionAreasStep: border === undefined ? [] : [borderExclusion(border)],
     exclusionAreasBreak: [],
     exclusionAreasPlace: [],
     entityIntersections: {},
@@ -473,8 +654,9 @@ function movementPolicyFor (movements, { sprint }) {
     // Bounds that are read whatever else is disabled.
     maxDropDown: MAX_DROP_BLOCKS,
     infiniteLiquidDropdownDistance: false,
-    // The library's own water, plus water, which is what makes water a wall.
-    blocksToAvoid: new Set(movements.blocksToAvoid).add(water),
+    // The library's own, plus water, which is what makes water a wall - except for a walk that
+    // starts in water, which may swim out of it (see [EscapeMovements]).
+    blocksToAvoid: swim ? new Set(movements.blocksToAvoid) : new Set(movements.blocksToAvoid).add(water),
     // Registry vocabularies, kept exactly as the library derived them for this version.
     blocksCantBreak: movements.blocksCantBreak,
     liquids: movements.liquids,
@@ -492,8 +674,261 @@ function movementPolicyFor (movements, { sprint }) {
 }
 
 /** Applies [movementPolicyFor] to `movements`, and answers it. */
-function applyMovementPolicy (movements, { sprint }) {
-  return Object.assign(movements, movementPolicyFor(movements, { sprint }))
+function applyMovementPolicy (movements, { sprint, border, swim = false }) {
+  return Object.assign(movements, movementPolicyFor(movements, { sprint, border, swim }))
+}
+
+/** Whether the body's feet or head cell holds water, so a walk from where it stands must swim. */
+function standsInWater (bot) {
+  const at = bot.entity?.position
+  if (at === undefined || at === null || typeof bot.blockAt !== 'function') return false
+  const water = bot.registry.blocksByName.water.id
+  return [0, 1].some((dy) => bot.blockAt(at.floored().offset(0, dy, 0))?.type === water)
+}
+
+/**
+ * The library's moves, less the one its own controller cannot carry out: a diagonal step up one
+ * block whose two side cells are not both clear at the heights the jump sweeps.
+ *
+ * `getMoveDiagonal` admits a diagonal jump-up when either side corridor is clear, because it costs
+ * the cheaper of the two, but a body's box crossing the corner overlaps both side cells as it
+ * rises, so a solid block over either one stops the jump. The library's executor knows that - it
+ * simulates each step before pressing a control and, finding neither a straight walk nor a walk
+ * jump reaches the node, presses none - so the route stands still until its futility check resets
+ * it to the identical route. r34 delta stood at (-8.43, 66, -27.5) on seed 20011 under an oak's
+ * leaves at (-8, 68, -28): every route east began with that diagonal, and three collects and a
+ * flight stalled there without moving.
+ */
+class ClearanceMovements extends Movements {
+  getMoveDiagonal (node, dir, neighbors) {
+    const before = neighbors.length
+    super.getMoveDiagonal(node, dir, neighbors)
+    if (neighbors.length === before || neighbors[neighbors.length - 1].y <= node.y) return
+    const swept = [[0, dir.z], [dir.x, 0]].every(([dx, dz]) =>
+      this.getBlock(node, dx, 1, dz).safe && this.getBlock(node, dx, 2, dz).safe)
+    if (!swept) neighbors.pop()
+  }
+}
+
+/**
+ * The steps the library's own executor is given to show it can make a move, as `canStraightLine`
+ * and `canWalkJump` in `mineflayer-pathfinder/lib/physics.js` give them: a straight walk of up to
+ * [STRAIGHT_WALK_TICKS], then a walk jump of [WALK_JUMP_TICKS] jumping after 0 to
+ * [WALK_JUMP_DELAYS] - 1 steps. A move none of them reaches is one `monitorMovement` presses no
+ * control for.
+ */
+const STRAIGHT_WALK_TICKS = 200
+const WALK_JUMP_TICKS = 20
+const WALK_JUMP_DELAYS = 7
+
+/**
+ * The bounds on the one correction a request may make: a re-centre or a sidestep is a straight
+ * step of at most one cell, done within [CORRECTION_TOLERANCE_BLOCKS] of its point or after
+ * [CORRECTION_MAX_TICKS] steps, and then at rest within [CORRECTION_REST_TICKS] more.
+ */
+const CORRECTION_TOLERANCE_BLOCKS = 0.08
+const CORRECTION_MAX_TICKS = 20
+const CORRECTION_REST_TICKS = 10
+
+/**
+ * How far a walking body glides once forward is released, per block per tick of speed: ground
+ * friction keeps 0.546 of the speed each step, so the glide is that over what it loses. A
+ * correction lets go this far short of its point so the body comes to rest on it.
+ */
+const GLIDE_PER_SPEED = 0.546 / (1 - 0.546)
+
+/** How far off its cell's centre a body must stand before a re-centre is a step at all. */
+const RECENTRE_MIN_OFFSET_BLOCKS = 0.05
+
+/** How far a body may have moved from its start and still be stuck at its first move. */
+const SIDESTEP_UNMOVED_BLOCKS = 0.5
+
+/** Whether the client can simulate a step at all: a physics engine, a world and a body in it. */
+function canSimulate (bot) {
+  return typeof bot.physics?.simulatePlayer === 'function' && typeof bot.blockAt === 'function' &&
+    bot.entity?.position !== undefined && bot.entity?.position !== null
+}
+
+/** A simulated body with no control held: the live one, or one at rest at `at`. */
+function restingState (bot, at) {
+  const state = new PlayerState(bot, {
+    forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: false
+  })
+  if (at !== undefined) {
+    state.pos = at.clone()
+    state.vel = new Vec3(0, 0, 0)
+    state.onGround = true
+  }
+  return state
+}
+
+/**
+ * Whether the library's executor, simulated from the live body or from one at rest at `at`, reaches
+ * `point` by a straight walk or a walk jump: the same two ways and the same arrival test
+ * `monitorMovement` uses before it presses a control.
+ */
+function executableStep (bot, point, at) {
+  const physics = new Physics(bot)
+  const reached = physics.getReached([point])
+  const walked = physics.simulateUntil(reached, physics.getController(point, false, false), STRAIGHT_WALK_TICKS, restingState(bot, at))
+  if (reached(walked)) return true
+  for (let after = 0; after < WALK_JUMP_DELAYS; after += 1) {
+    const jumped = physics.simulateUntil(reached, physics.getController(point, true, false, after), WALK_JUMP_TICKS, restingState(bot, at))
+    if (reached(jumped)) return true
+  }
+  return false
+}
+
+/** Whether a player's box with its feet at `at` would overlap any block's collision shape. */
+function boxCollides (bot, at) {
+  const box = [at.x - 0.3, at.y, at.z - 0.3, at.x + 0.3, at.y + 1.8, at.z + 0.3]
+  const into = (low, high, min, max) => high > min + 1e-7 && low < max - 1e-7
+  for (let x = Math.floor(box[0]); x <= Math.floor(box[3]); x += 1) {
+    for (let y = Math.floor(box[1]); y <= Math.floor(box[4]); y += 1) {
+      for (let z = Math.floor(box[2]); z <= Math.floor(box[5]); z += 1) {
+        const block = bot.blockAt(new Vec3(x, y, z), false)
+        for (const [x0, y0, z0, x1, y1, z1] of block?.shapes ?? []) {
+          if (into(box[0], box[3], x + x0, x + x1) && into(box[1], box[4], y + y0, y + y1) &&
+            into(box[2], box[5], z + z0, z + z1)) return true
+        }
+      }
+    }
+  }
+  return false
+}
+
+/** The node a search from where the body stands starts at, computed as the library computes it. */
+function startNodeOf (bot, movements, at) {
+  const position = at ?? bot.entity.position
+  const floored = position.floored()
+  const standing = bot.blockAt(floored)
+  const raised = standing !== null && standing !== undefined && position.y - floored.y > 0.001 &&
+    bot.entity.onGround && !movements.emptyBlocks.has(standing.type)
+  return new Move(floored.x, floored.y + (raised ? 1 : 0), floored.z, 0, 0)
+}
+
+/** The moves the search offers out of `start` that break and place nothing, cheapest first. */
+function departuresOf (movements, start) {
+  return movements.getNeighbors(start)
+    .filter((move) => move.toBreak.length === 0 && move.toPlace.length === 0)
+    .sort((one, other) => one.cost - other.cost)
+}
+
+/** The point a route node is walked to: its cell's centre at its own height. */
+function centreOf (move) {
+  return new Vec3(move.x + 0.5, move.y, move.z + 0.5)
+}
+
+/**
+ * Whether another route can start from where the body stands, or from a body at rest at `at`:
+ * `clear` when one move the search offers out of that cell is one the library's executor can make
+ * from there, `blocked` when none is, and undefined when the client cannot simulate a step. An
+ * arrival is checked so a walk never ends where the next request would stand still (r34 delta).
+ */
+function departureOf (bot, movements, at) {
+  if (!canSimulate(bot)) return undefined
+  try {
+    const moves = departuresOf(movements, startNodeOf(bot, movements, at))
+    return moves.some((move) => executableStep(bot, centreOf(move), at)) ? 'clear' : 'blocked'
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The one cell beside the body a route stuck at its first move may sidestep into, or undefined: a
+ * level move the search itself offers out of the start, other than the stuck node, whose centre
+ * fits the body's box, which the executor can make from where the body stands, and from whose
+ * centre the library's own fresh route to the same goal begins with a move the executor can make.
+ * Candidates are tried nearest the goal first, every search inside one [SEARCH_BUDGET_MS] in all,
+ * so the choice costs a control stall no longer than one ordinary search may. It decides nothing
+ * the request did not: the goal is unchanged and resumed (r34 delta: the step east of its cell
+ * stood under the same leaf, and only the step south led on).
+ */
+function sidestepFor (bot, movements, goal, stuckAt, now) {
+  if (!canSimulate(bot) || typeof bot.pathfinder?.getPathFromTo !== 'function') return undefined
+  try {
+    // The node the executor could not reach is no route's step for the rest of this request.
+    if (stuckAt !== undefined) movements.exclusionAreasStep = [...movements.exclusionAreasStep, cellExclusion(stuckAt)]
+    const start = startNodeOf(bot, movements)
+    const level = departuresOf(movements, start)
+      .filter((move) => move.y === start.y)
+      .filter((move) => !boxCollides(bot, centreOf(move)))
+      .sort((one, other) => goal.heuristic(one) - goal.heuristic(other) || one.cost - other.cost)
+    const until = now() + SEARCH_BUDGET_MS
+    for (const move of level) {
+      const point = centreOf(move)
+      const remaining = until - now()
+      if (remaining <= 0) return undefined
+      if (!executableStep(bot, point)) continue
+      const searched = bot.pathfinder.getPathFromTo(movements, point, goal, { timeout: remaining }).next().value
+      const first = searched?.result?.status === 'success' ? searched.result.path[0] : undefined
+      if (first === undefined) continue
+      if (executableStep(bot, new Vec3(first.x, first.y, first.z), point)) return point
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** A step exclusion of the one cell `at` lies in, priced past what the search will pay. */
+function cellExclusion (at) {
+  const [x, y, z] = at.map(Math.floor)
+  return (block) => {
+    const position = block?.position
+    return position !== undefined && position !== null && position.x === x && position.y === y && position.z === z
+      ? STUCK_NODE_EXCLUDED
+      : 0
+  }
+}
+
+/** What a stuck node costs a search, past the hundred the library abandons any move at. */
+const STUCK_NODE_EXCLUDED = 100
+
+/**
+ * The library's moves, and one it has no notion of: swimming straight up out of water, into a
+ * cell whose own and head cells a body may pass. Used only for a walk that starts in water, whose
+ * policy also lets water be passed: r27 epsilon drowned at the bottom of its own flooded pit,
+ * every walk onto the dry floor two blocks above its feet refused `noRoute` because the search
+ * had no move at all from a water cell. The executor already swims, holding jump in water.
+ */
+class EscapeMovements extends ClearanceMovements {
+  getNeighbors (node) {
+    // A body bobbing at the surface floors into the air over the water, and a replan from there
+    // walked it onto the water as onto ground, into the side of the bank with no jump; it is in the
+    // top water cell, and moves from there.
+    if (!this.getBlock(node, 0, 0, 0).liquid && this.getBlock(node, 0, -1, 0).liquid) {
+      return this.getNeighbors(new Move(node.x, node.y - 1, node.z, node.remainingBlocks, node.cost))
+    }
+    // Up only into water: a body bobbing at the surface is in the top water cell, not standing on
+    // the air above it, and a route that rose into that air jumped from where no body stands.
+    const up = this.getBlock(node, 0, 0, 0).liquid && this.getBlock(node, 0, 1, 0).liquid &&
+      this.getBlock(node, 0, 1, 0).safe && this.getBlock(node, 0, 2, 0).safe
+    const surfacing = up ? [new Move(node.x, node.y + 1, node.z, node.remainingBlocks, 1 + this.liquidCost)] : []
+    // A body under water to its head swims up before anything else: on real Paper a jump-up from
+    // the bottom of epsilon's pit against its sand wall never rose, while one from the surface did.
+    if (this.getBlock(node, 0, 1, 0).liquid) return surfacing
+    if (!this.getBlock(node, 0, 0, 0).liquid) return [...super.getNeighbors(node), ...surfacing]
+    // At the surface it leaves water along an axis, by climbing onto a block whose top is at most
+    // one above its feet: the library measures a jump from the block under the feet, which in
+    // water is the water, so every climb out read as two high; and a diagonal jump out stuck
+    // against the corner of epsilon's pit on real Paper, while one straight out arrived.
+    const straight = super.getNeighbors(node).filter((move) => move.x === node.x || move.z === node.z)
+    return [...straight, ...this.climbsOut(node), ...surfacing]
+  }
+
+  climbsOut (node) {
+    const out = []
+    if (!this.getBlock(node, 0, 2, 0).safe) return out
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const step = this.getBlock(node, dx, 0, dz)
+      if (!step.physical || step.height > node.y + 1 + 1e-6) continue
+      if (!this.getBlock(node, dx, 1, dz).safe || !this.getBlock(node, dx, 2, dz).safe) continue
+      out.push(new Move(node.x + dx, node.y + 1, node.z + dz, node.remainingBlocks, 2 + this.liquidCost))
+    }
+    return out
+  }
 }
 
 /**
@@ -530,7 +965,9 @@ function applyPathfinderPolicy (finder) {
  * `now` is injected for the reason `body.js`'s is - `elapsedMs` is a measurement, and a
  * measurement is only proven by being driven. `simulation` is injected because the gate needs
  * a client to write through and this wrapper does not: [installMovement] is where the real one
- * is built, and a wrapper handed none scopes nothing.
+ * is built, and a wrapper handed none scopes nothing. `departure` is the arrival check, injected
+ * only so a suite can reach the re-centre a real arrival meets rarely; every body runs
+ * [departureOf], and the step it then makes is the real one either way.
  *
  * **The search clocks are deliberately *not* injectable.** They were, for one revision, so that
  * the suite could buy determinism with a value production never ran - which meant the only case
@@ -541,7 +978,8 @@ function applyPathfinderPolicy (finder) {
  */
 function createMovement (bot, {
   now = () => performance.now(),
-  simulation = inertSimulation()
+  simulation = inertSimulation(),
+  departure = departureOf
 } = {}) {
   /**
    * The request that owns the path, or undefined when the body is not moving.
@@ -627,7 +1065,7 @@ function createMovement (bot, {
    * `undefined`, which `body.js` refuses as `notReady`, with the gate closed again, the
    * deadline disarmed, no listener attached and nothing of the failure on the wire or in a log.
    */
-  function walk ({ goal, sprint, timeoutMs, threat, owner = {} }) {
+  function walk ({ goal, sprint, timeoutMs, threat, owner = {}, departs = false }) {
     const finder = bot.pathfinder
     if (finder === null || finder === undefined) return undefined
     const from = standing()
@@ -645,12 +1083,25 @@ function createMovement (bot, {
       pending: undefined,
       draining: false,
       terminalFacing: undefined,
-      settled: false
+      landing: undefined,
+      settled: false,
+      // The route's first node at its latest search, the one correction the request made, the one
+      // being stepped now or waiting for the next tick, and what an arrival's departure check found.
+      firstNode: undefined,
+      recovery: undefined,
+      correcting: undefined,
+      pendingSidestep: undefined,
+      departure: undefined
     }
     let movements
     try {
       applyPathfinderPolicy(finder)
-      movements = applyMovementPolicy(new Movements(bot), { sprint })
+      const swim = standsInWater(bot)
+      movements = applyMovementPolicy(swim ? new EscapeMovements(bot) : new ClearanceMovements(bot), {
+        sprint,
+        border: worldBorderOf(bot),
+        swim
+      })
     } catch {
       return undefined
     }
@@ -677,6 +1128,8 @@ function createMovement (bot, {
           answer.separation = blocksApart(position, state.seen)
           answer.separationGained = answer.separation - separationAt
         }
+        if (outcome === 'arrived' && state.departure !== undefined) answer.departure = state.departure
+        if (state.recovery !== undefined) answer.recovery = state.recovery
         return answer
       }
 
@@ -837,8 +1290,26 @@ function createMovement (bot, {
         // A terminal library event happened inside the physics plugin's call stack. Its final
         // position report is written only after every `physicsTick` listener returns, so the gate
         // and owner stay in their drain state until the first microtask after that frame.
-        if (state.draining) queueMicrotask(complete)
-        else complete()
+        const answer = () => {
+          if (state.draining) queueMicrotask(complete)
+          else complete()
+        }
+        // An ending that leaves the body in the air - a stall, a deadline or a refused route
+        // mid-step - keeps the drained gate until it has landed, so a release never leaves it
+        // hanging: one live agent's stalled flight did, and every later flight of its stalled
+        // from the air. A body whose ground state the client does not state is not waited on.
+        if (bot.entity?.onGround !== false) {
+          answer()
+          return
+        }
+        state.draining = true
+        simulation.drain(owner)
+        untilAtRest(bot, () => simulation.reportedStanding?.(), () => {
+          // The fall is part of the journey: without it the landed position would be further
+          // from the start than the distance the report says was travelled.
+          sample()
+          answer()
+        })
       }
 
       /**
@@ -857,11 +1328,178 @@ function createMovement (bot, {
         const requested = state.pending
         state.pending = undefined
         const outcome = selectedOutcome(requested, sample())
-        if (outcome !== undefined) settle(outcome)
+        if (outcome !== undefined) {
+          settle(outcome)
+          return
+        }
+        if (state.pendingSidestep !== undefined) {
+          const { stuckAt } = state.pendingSidestep
+          state.pendingSidestep = undefined
+          const point = sidestepFor(bot, movements, goal, stuckAt, now)
+          if (point === undefined) {
+            stalledOnce()
+            return
+          }
+          beginCorrection('sidestep', 'firstMoveStuck', point, 'resume')
+          return
+        }
+        if (state.correcting !== undefined) {
+          correct()
+          return
+        }
+        if (state.landing !== undefined) landing()
       }
 
+      /**
+       * Starts the request's one correction: a straight step to `point`, with the library holding
+       * no goal, so its executor presses nothing of its own meanwhile. `then` is what follows it:
+       * the arrival it was checked for, or the route resumed toward the same goal.
+       */
+      function beginCorrection (kind, cause, point, then) {
+        state.correcting = { kind, cause, point, from: standing(), then, ticks: 0, resting: undefined }
+        state.terminalFacing = undefined
+        try {
+          finder.setGoal(null)
+          simulation.take(owner)
+        } catch {
+          state.correcting = undefined
+          settle('stalled')
+        }
+      }
+
+      /** One step of the correction, then rest, then what follows it; never a second correction. */
+      function correct () {
+        const step = state.correcting
+        const here = bot.entity?.position
+        if (here === undefined || here === null) {
+          settle('stalled')
+          return
+        }
+        step.ticks += 1
+        const dx = step.point.x - here.x
+        const dz = step.point.z - here.z
+        const speed = Math.hypot(bot.entity.velocity?.x ?? 0, bot.entity.velocity?.z ?? 0)
+        const short = Math.hypot(dx, dz) > CORRECTION_TOLERANCE_BLOCKS + speed * GLIDE_PER_SPEED
+        if (step.resting === undefined && short && step.ticks <= CORRECTION_MAX_TICKS) {
+          try {
+            bot.entity.yaw = Math.atan2(-dx, -dz)
+            bot.entity.pitch = 0
+            bot.setControlState('sprint', false)
+            bot.setControlState('forward', true)
+          } catch {
+            settle('stalled')
+          }
+          return
+        }
+        if (step.resting === undefined) {
+          step.resting = 0
+          try {
+            bot.setControlState('forward', false)
+            bot.setControlState('sprint', false)
+          } catch {
+            // Nothing to report and nothing to log: see [walk]'s header.
+          }
+        }
+        step.resting += 1
+        const still = bot.entity.onGround === true && Math.abs(bot.entity.velocity?.x ?? 0) < 1e-3 &&
+          Math.abs(bot.entity.velocity?.z ?? 0) < 1e-3
+        if (!still && step.resting <= CORRECTION_REST_TICKS) return
+        state.correcting = undefined
+        state.recovery = { kind: step.kind, cause: step.cause, from: step.from, to: standing() ?? step.from }
+        if (step.then === 'arrive') {
+          state.departure = departure(bot, movements)
+          settle('arrived')
+          return
+        }
+        try {
+          finder.setGoal(goal)
+        } catch {
+          settle('stalled')
+        }
+      }
+
+      /**
+       * Whether an arrival may be answered now: another route can start from where the body came to
+       * rest. A body whose every way out the executor cannot make is re-centred in its cell once,
+       * when from the centre it can, and is otherwise answered with the departure it has.
+       */
+      function departureChecked () {
+        if (!departs) return true
+        state.departure = departure(bot, movements)
+        if (state.departure !== 'blocked' || state.recovery !== undefined) return true
+        const here = bot.entity.position
+        const centre = new Vec3(Math.floor(here.x) + 0.5, here.y, Math.floor(here.z) + 0.5)
+        if (centre.distanceTo(here) < RECENTRE_MIN_OFFSET_BLOCKS || boxCollides(bot, centre) ||
+          departure(bot, movements, centre) !== 'clear') return true
+        beginCorrection('recentre', 'departureBlocked', centre, 'arrive')
+        return false
+      }
+
+      /**
+       * A reached goal, held open until the body has landed; see [ARRIVAL_SETTLE_TICKS].
+       *
+       * The library clears its goal and stops the controls as it emits this, so the simulation
+       * carries on only to let the body come to rest. The gate drains exactly as for a terminal
+       * event - reports and deactivations pass, a new activation does not, and no later request
+       * may take the path - and the facing held here is the one the answer restores. Nothing
+       * else is asked of the library unless the landed position no longer satisfies the goal.
+       */
       function reached () {
-        terminal('arrived')
+        if (state.settled || state.pending !== undefined || state.landing !== undefined) return
+        state.landing = { stable: 0, last: undefined }
+        if (Number.isFinite(bot.entity?.yaw) && Number.isFinite(bot.entity?.pitch)) {
+          state.terminalFacing = { yaw: bot.entity.yaw, pitch: bot.entity.pitch }
+        }
+        simulation.drain(owner)
+      }
+
+      /** Whether the server was last told this exact grounded position, where there is a wire. */
+      function reportedGrounded (here) {
+        const wire = simulation.reportedStanding?.()
+        if (wire === undefined) return true
+        return wire.onGround === true && wire.position !== undefined && blocksApart(wire.position, here) === 0
+      }
+
+      function landing () {
+        const here = standing()
+        const still = here !== undefined && state.landing.last !== undefined &&
+          blocksApart(here, state.landing.last) === 0
+        state.landing.last = here
+        state.landing.stable = still && bot.entity?.onGround === true && reportedGrounded(here)
+          ? state.landing.stable + 1
+          : 0
+        if (state.landing.stable < ARRIVAL_SETTLE_TICKS) return
+        state.landing = undefined
+        if (goalHolds()) {
+          if (departureChecked()) settle('arrived')
+          return
+        }
+        // Landed somewhere the goal does not hold: the route is asked for again from the
+        // ground, under the stall bound, rather than reported as an arrival it is not.
+        state.stalls += 1
+        if (state.stalls > MAX_STALL_RETRIES) {
+          settle('stalled')
+          return
+        }
+        state.terminalFacing = undefined
+        try {
+          simulation.take(owner)
+          finder.setGoal(goal)
+        } catch {
+          settle('stalled')
+        }
+      }
+
+      /** The library's own arrival test, applied to where the body came to rest. */
+      function goalHolds () {
+        const position = bot.entity?.position
+        if (position === undefined || position === null) return false
+        try {
+          const floored = position.floored()
+          return goal.isEnd(floored) || goal.isEnd(floored.offset(0, 1, 0))
+        } catch {
+          return false
+        }
       }
 
       /**
@@ -882,6 +1520,8 @@ function createMovement (bot, {
        * search still in progress, and this file has none.
        */
       function searched (results) {
+        const first = results.path?.[0]
+        state.firstNode = first === undefined ? undefined : [first.x, first.y, first.z]
         if (results.status === 'timeout') {
           terminal(searchTimeouts.get(results) ?? 'searchOverBudget')
           return
@@ -893,10 +1533,32 @@ function createMovement (bot, {
         if (results.status === 'noPath') terminal('noRoute')
       }
 
+      /**
+       * The library's futility reset. One that finds the body still where it started, stuck at its
+       * route's first move, is answered once with a sidestep into a cell the executor can reach
+       * rather than counted, because the library would only search the identical route again; any
+       * other is counted against the stall bound.
+       */
       function abandoned (reason) {
         if (reason !== 'stuck') return
+        if (sidestepEligible()) {
+          // Chosen on Loom's own tick rather than inside the library's reset, which it would re-enter.
+          state.pendingSidestep = { stuckAt: state.firstNode }
+          return
+        }
+        stalledOnce()
+      }
+
+      function stalledOnce () {
         state.stalls += 1
         if (state.stalls > MAX_STALL_RETRIES) terminal('stalled')
+      }
+
+      function sidestepEligible () {
+        if (state.recovery !== undefined || state.correcting !== undefined || state.pendingSidestep !== undefined) return false
+        if (!canSimulate(bot)) return false
+        const here = standing()
+        return here !== undefined && blocksApart(from, here) <= SIDESTEP_UNMOVED_BLOCKS
       }
 
       // The moment this request takes the path, and so the moment the body starts being
@@ -945,13 +1607,129 @@ function createMovement (bot, {
      * to give. Given none, the run mints its own, so the slot and the simulation gate are
      * keyed either way.
      */
-    moveTo ({ destination, tolerance, timeoutMs, sprint, owner }) {
+    moveTo ({ destination, tolerance, timeoutMs, sprint, owner, departs = true }) {
       if (running !== undefined) return undefined
       const from = standing()
       if (from === undefined) return undefined
       if (blocksApart(from, destination) > MOVE_REACH_BLOCKS) return unmoved('outOfRange')
       const [x, y, z] = destination
-      return walk({ goal: new goals.GoalNear(x, y, z, tolerance), sprint, timeoutMs, owner })
+      return walk({ goal: new goals.GoalNear(x, y, z, tolerance), sprint, timeoutMs, owner, departs })
+    },
+
+    /**
+     * Walks until the body's feet are in any one of `cells`, and answers once the route has
+     * ended. The cells are the caller's, already chosen: a collect names every standable cell
+     * from which vanilla would pick its one item up, so the walk ends wherever the route first
+     * reaches one, and no cell at all is `noRoute` before anything is searched for.
+     */
+    approach ({ cells, timeoutMs, sprint, owner }) {
+      if (running !== undefined) return undefined
+      const from = standing()
+      if (from === undefined) return undefined
+      if (cells.length === 0) return unmoved('noRoute')
+      if (cells.every((cell) => blocksApart(from, cell) > MOVE_REACH_BLOCKS)) return unmoved('outOfRange')
+      const goal = new goals.GoalCompositeAny(cells.map(([x, y, z]) => new goals.GoalBlock(x, y, z)))
+      return walk({ goal, sprint, timeoutMs, owner })
+    },
+
+    /**
+     * Steps the body straight toward one point beside it, without the pathfinder, and answers
+     * once it has come to rest.
+     *
+     * A route ends wherever the pathfinder first stands in a goal cell, but vanilla picks an
+     * item up only inside the player's box grown by one block, so an item lying in a one-high
+     * nook beside the body can be in reach from one part of the cell it stands in and out of it
+     * from the rest: the r28 plains rehearsal's alpha stood 0.08 short of its own dirt, and no
+     * cell covered the item from every point. The caller names the point, inside a cell the
+     * body can stand in, where the body's box fits that cell whole; this only walks there. It
+     * holds the simulation and the path exactly as a route does, looks along the step and
+     * presses forward each tick until the body is within [FINAL_APPROACH_TOLERANCE_BLOCKS] of
+     * the point, has passed it, or [FINAL_APPROACH_MAX_TICKS] have run (`stalled`), then lets go
+     * and answers once the body is at rest. A point further than [FINAL_APPROACH_MAX_BLOCKS]
+     * is `outOfRange` before anything moves.
+     */
+    finalApproach ({ point, timeoutMs, owner = {} }) {
+      if (running !== undefined) return undefined
+      const from = standing()
+      if (from === undefined) return undefined
+      const apart = (here) => Math.hypot(point[0] - here[0], point[2] - here[2])
+      if (apart(from) > FINAL_APPROACH_MAX_BLOCKS) return unmoved('outOfRange')
+      const startedAt = now()
+      return new Promise((resolve) => {
+        let ticks = 0
+        let settled = false
+        let travelled = 0
+        let last = from
+        const towards = [point[0] - from[0], point[2] - from[2]]
+        const timer = setTimeout(() => finish('timedOut'), Math.max(0, timeoutMs))
+        function sample () {
+          const here = standing()
+          if (here === undefined) return last
+          travelled += blocksApart(last, here)
+          last = here
+          return here
+        }
+        function release () {
+          try {
+            bot.setControlState('forward', false)
+            bot.setControlState('sprint', false)
+          } catch {
+            // Nothing to report and nothing to log: see [walk]'s header.
+          }
+        }
+        function finish (outcome) {
+          if (settled) return
+          settled = true
+          bot.off('physicsTick', step)
+          clearTimeout(timer)
+          release()
+          simulation.drain(owner)
+          untilAtRest(bot, () => simulation.reportedStanding?.(), () => {
+            sample()
+            simulation.release(owner)
+            if (running?.owner === owner) running = undefined
+            resolve({ outcome, from, position: last, travelled, elapsedMs: elapsedSince(startedAt) })
+          })
+        }
+        function step () {
+          const here = sample()
+          ticks += 1
+          const dx = point[0] - here[0]
+          const dz = point[2] - here[2]
+          // Within the tolerance of where the glide it is carrying ends, or past the point along the
+          // step: the step is done, and the body comes to rest on the point rather than past it (the
+          // real-Paper placement probe: a centring step released at the point glided 0.27 beyond it).
+          // The velocity the library holds is already this step's after friction, so the glide still
+          // to come is all of it and every later step's share: over what friction takes each step.
+          const speed = Math.hypot(bot.entity?.velocity?.x ?? 0, bot.entity?.velocity?.z ?? 0)
+          const glide = FINAL_APPROACH_TOLERANCE_BLOCKS + speed * FINAL_APPROACH_GLIDE_PER_SPEED
+          if (Math.hypot(dx, dz) <= glide || dx * towards[0] + dz * towards[1] < 0) {
+            finish('arrived')
+            return
+          }
+          if (ticks > FINAL_APPROACH_MAX_TICKS) {
+            finish('stalled')
+            return
+          }
+          try {
+            bot.entity.yaw = Math.atan2(-dx, -dz)
+            bot.entity.pitch = 0
+            bot.setControlState('sprint', false)
+            bot.setControlState('forward', true)
+          } catch {
+            finish('stalled')
+          }
+        }
+        try {
+          simulation.take(owner)
+        } catch {
+          clearTimeout(timer)
+          resolve(undefined)
+          return
+        }
+        bot.on('physicsTick', step)
+        running = { owner, halt: () => finish('cancelled') }
+      })
     },
 
     /**
@@ -971,27 +1749,70 @@ function createMovement (bot, {
      * against is the live reading instead - see [walk]'s per-tick measurement - so the
      * snapshot bounds the search and never the report.
      */
-    flee ({ offered, entity, distance, timeoutMs, sprint, owner }) {
+    flee ({ offered, entity, avoid = [], distance, timeoutMs, sprint, owner }) {
       if (running !== undefined) return undefined
+      const refused = this.fleeRefusal({ offered, entity })
+      if (refused !== undefined) return refused
+      const named = offered[entity]
+      const seen = positionOf(bot.entities[named.id].position)
+      const near = new goals.GoalNear(seen[0], seen[1], seen[2], distance)
+      const start = bot.entity?.position
+      // The other hunters the controller named, where each stands now; one gone is passed over.
+      const others = avoid.map((index) => offered[index]).filter((other) => other !== undefined && other.dead !== true)
+        .map((other) => bot.entities?.[other.id] === other.entity ? positionOf(other.entity.position) : undefined)
+        .filter((at) => at !== undefined)
+      return walk({
+        goal: new SafeFlightGoal(new goals.GoalInvert(near), {
+          border: worldBorderOf(bot),
+          floor: flightFloorOf(bot, start),
+          threat: seen,
+          others,
+          start: Number.isFinite(start?.x) ? [start.x, start.y, start.z] : undefined
+        }),
+        sprint,
+        timeoutMs,
+        threat: named,
+        owner,
+        departs: true
+      })
+    },
+
+    /**
+     * The unmoved answer a flight from [entity] of [offered] would be refused with, or undefined
+     * when its threat checks out: the same three checks a flight makes before it searches, made
+     * without touching a flight that is running, so a replacing flight can be refused first.
+     */
+    /** Whether a movement still owns the path: one cancelled holds it until its frame has drained. */
+    busy () {
+      return running !== undefined
+    },
+
+    /**
+     * The answer to a flight from [entity] of [offered] cancelled before it began: one of the three
+     * threat refusals when its threat no longer checks out, and otherwise `cancelled` where the
+     * body stands, its separation measured against the live threat and nothing gained.
+     */
+    unstarted ({ offered, entity }) {
+      const refused = this.fleeRefusal({ offered, entity })
+      if (refused !== undefined) return refused
+      const from = standing()
+      const seen = positionOf(bot.entities[offered[entity].id].position)
+      if (from === undefined || seen === undefined) return undefined
+      const separation = blocksApart(from, seen)
+      return { outcome: 'cancelled', from, position: from, travelled: 0, elapsedMs: 0, separation, separationGained: 0 }
+    },
+
+    fleeRefusal ({ offered, entity }) {
       if (offered === undefined) return unmoved('senseForgotten')
       const named = offered[entity]
       if (named === undefined) return unmoved('threatUnnamed')
       const tracked = bot.entities === null || bot.entities === undefined
         ? undefined
         : bot.entities[named.id]
-      const seen = tracked === undefined || named.dead === true ||
-        tracked !== named.entity || tracked.isValid === false
-        ? undefined
-        : positionOf(tracked.position)
-      if (seen === undefined) return unmoved('threatGone')
-      const near = new goals.GoalNear(seen[0], seen[1], seen[2], distance)
-      return walk({
-        goal: new goals.GoalInvert(near),
-        sprint,
-        timeoutMs,
-        threat: named,
-        owner
-      })
+      const gone = tracked === undefined || named.dead === true ||
+        tracked !== named.entity || tracked.isValid === false ||
+        positionOf(tracked.position) === undefined
+      return gone ? unmoved('threatGone') : undefined
     },
 
     /**
@@ -1009,6 +1830,145 @@ function createMovement (bot, {
     }
   }
 }
+
+/** How far inside the world border a flight's end must lie, in blocks. */
+const FLIGHT_BORDER_MARGIN_BLOCKS = 3
+
+/** How far from every other named hunter a flight must end, of those it began further from. */
+const FLIGHT_OTHER_CLEARANCE_BLOCKS = 8
+
+/** The horizontal distance between two positions. */
+function horizontalApart (one, other) {
+  return Math.hypot(one[0] - other[0], one[2] - other[2])
+}
+
+/** How far below the ground it began over a flight may end: a ravine is no refuge. */
+const MAX_FLIGHT_DESCENT_BLOCKS = 4
+
+/** How far around a flight's start the ground is read, in blocks, and at how many bearings. */
+const FLIGHT_GROUND_RADIUS_BLOCKS = 6
+const FLIGHT_GROUND_BEARINGS = 16
+
+/** How far above and below a flight's start a column is read for its ground, in blocks. */
+const FLIGHT_GROUND_RISE_BLOCKS = 8
+const FLIGHT_GROUND_DEPTH_BLOCKS = 24
+
+/** Whether `block` is ground a body stands on: a solid block that is no part of a tree. */
+function groundBlock (block) {
+  return block !== null && block.boundingBox === 'block' && !/_(leaves|log|wood|stem|hyphae)$/.test(block.name)
+}
+
+/** The height a body stands at on the highest ground of column `x`, `z` near `top`, or undefined. */
+function standingHeightOf (bot, x, z, top) {
+  for (let y = top + FLIGHT_GROUND_RISE_BLOCKS; y >= top - FLIGHT_GROUND_DEPTH_BLOCKS; y -= 1) {
+    if (groundBlock(bot.blockAt(new Vec3(x, y, z)) ?? null)) return y + 1
+  }
+  return undefined
+}
+
+/**
+ * The lowest a flight from `start` may end: [MAX_FLIGHT_DESCENT_BLOCKS] below the lower of where
+ * it began and the ground around it, the median standing height of the columns
+ * [FLIGHT_GROUND_RADIUS_BLOCKS] off, with trees read through. A ravine below the ground is still
+ * no refuge; the ground below a tree a body stands on is (v32 plains rehearsal: beta, on an oak's
+ * canopy six blocks above the grass, was held to the canopy and its flight searched 9108 nodes to
+ * the budget, because every way down and away lay lower than four below the leaves).
+ */
+function flightFloorOf (bot, start) {
+  if (!Number.isFinite(start?.y)) return -Infinity
+  const top = Math.floor(start.y)
+  const heights = []
+  for (let bearing = 0; bearing < FLIGHT_GROUND_BEARINGS; bearing += 1) {
+    const angle = bearing * 2 * Math.PI / FLIGHT_GROUND_BEARINGS
+    const x = Math.floor(start.x + FLIGHT_GROUND_RADIUS_BLOCKS * Math.cos(angle))
+    const z = Math.floor(start.z + FLIGHT_GROUND_RADIUS_BLOCKS * Math.sin(angle))
+    const height = standingHeightOf(bot, x, z, top)
+    if (height !== undefined) heights.push(height)
+  }
+  heights.sort((one, other) => one - other)
+  const ground = heights.length === 0 ? top : heights[Math.floor((heights.length - 1) / 2)]
+  return Math.min(top, ground) - MAX_FLIGHT_DESCENT_BLOCKS
+}
+
+/**
+ * A flight's goal with its end held to safe ground: at least [FLIGHT_BORDER_MARGIN_BLOCKS] inside
+ * the server's world border, and no lower than [flightFloorOf] allows.
+ * The route may pass anywhere the search allows; only where it may stop is held. In r23 eight
+ * flights ended against the border, kappa's six pinning it along z -63.4 in a ravine for 1100
+ * ticks, and delta's v30 rehearsal flight ended sixteen blocks down a ravine. With no safe end in
+ * reach the search answers noRoute, which is the ground's honest answer.
+ */
+class SafeFlightGoal extends goals.Goal {
+  constructor (inner, { border, floor, threat, others = [], start }) {
+    super()
+    this.inner = inner
+    this.border = border
+    this.floor = floor
+    this.others = others
+    // Where the flight began against each other hunter, and its least separation from them all.
+    this.startedFrom = start === undefined ? [] : others.map((other) => horizontalApart(start, other))
+    this.leastAtStart = start === undefined ? 0 : Math.min(...[threat, ...others].filter((at) => at !== undefined).map((at) => horizontalApart(start, at)))
+    this.threat = threat
+  }
+
+  heuristic (node) {
+    return this.inner.heuristic(node)
+  }
+
+  isEnd (node) {
+    return this.inner.isEnd(node) && node.y >= this.floor && this.clearOfBorder(node) && this.clearOfOthers(node)
+  }
+
+  /**
+   * Whether an end at `node` keeps clear of every other hunter the controller named: no nearer to
+   * any than the flight began, at least [FLIGHT_OTHER_CLEARANCE_BLOCKS] from any it began further
+   * from, and its least separation from all of them grown (r24: gamma's flight from a spider ended
+   * 0.6 blocks from a creeper, and alpha's beside one).
+   */
+  clearOfOthers (node) {
+    if (this.others.length === 0) return true
+    const at = [node.x + 0.5, node.y, node.z + 0.5]
+    const clear = this.others.every((other, index) => {
+      const apart = horizontalApart(at, other)
+      const began = this.startedFrom[index] ?? 0
+      return apart >= Math.min(began, FLIGHT_OTHER_CLEARANCE_BLOCKS) && (began < FLIGHT_OTHER_CLEARANCE_BLOCKS || apart >= FLIGHT_OTHER_CLEARANCE_BLOCKS)
+    })
+    const least = Math.min(...[this.threat, ...this.others].filter((pos) => pos !== undefined).map((pos) => horizontalApart(at, pos)))
+    return clear && least > this.leastAtStart
+  }
+
+  clearOfBorder (node) {
+    if (this.border === undefined) return true
+    const margin = { ...this.border, diameter: this.border.diameter - 2 * FLIGHT_BORDER_MARGIN_BLOCKS }
+    return margin.diameter > 0 && columnInside(margin, Math.floor(node.x), Math.floor(node.z))
+  }
+
+  hasChanged () {
+    return this.inner.hasChanged()
+  }
+
+  isValid () {
+    return this.inner.isValid()
+  }
+}
+
+/**
+ * The bounds on one final approach: at most this far, in this many simulated ticks, to within
+ * this horizontal distance of the point. A point a collect asks for lies inside the cell the body
+ * already stands in, so a straight step of under one block is all it can need, and at walking
+ * speed that takes about ten ticks; twenty is the most a step this short may stall for.
+ */
+const FINAL_APPROACH_MAX_BLOCKS = 1
+const FINAL_APPROACH_MAX_TICKS = 20
+const FINAL_APPROACH_TOLERANCE_BLOCKS = 0.08
+
+/**
+ * How far a final approach glides once forward is released, per block per tick of the velocity the
+ * library holds: that velocity has already lost this step's friction, so the glide is it and the
+ * 0.546 each later step keeps, over what each step loses (the real-Paper placement probe: released
+ * at 0.6 of this, a 0.3 step from rest glided 0.19 past its point).
+ */
+const FINAL_APPROACH_GLIDE_PER_SPEED = 1 / (1 - 0.546)
 
 /** The one wrapper each bot has, so a second install cannot mint a second owner of one path. */
 const installations = new WeakMap()
@@ -1037,6 +1997,8 @@ const installations = new WeakMap()
 function installMovement (bot, options) {
   const installed = installations.get(bot)
   if (installed !== undefined) return installed
+  installVanillaCollision()
+  trackWorldBorder(bot)
   bot.loadPlugin(physics)
   bot.loadPlugin(pathfinder)
   const simulation = scopedSimulation(bot)
@@ -1047,7 +2009,23 @@ function installMovement (bot, options) {
 }
 
 module.exports = {
+  ClearanceMovements,
+  departureOf,
+  FLIGHT_BORDER_MARGIN_BLOCKS,
+  FLIGHT_OTHER_CLEARANCE_BLOCKS,
+  MAX_FLIGHT_DESCENT_BLOCKS,
+  flightFloorOf,
+  SafeFlightGoal,
+  ARRIVAL_SETTLE_TICKS,
+  FINAL_APPROACH_MAX_BLOCKS,
+  FINAL_APPROACH_MAX_TICKS,
+  FINAL_APPROACH_TOLERANCE_BLOCKS,
+  REST_SETTLE_MAX_TICKS,
+  releaseAtRest,
+  holdSimulation,
   permitLeaveBed,
+  writeShift,
+  standsOnSupport,
   MAX_DROP_BLOCKS,
   MAX_STALL_RETRIES,
   MAX_TRAVEL_BLOCKS,

@@ -10,15 +10,33 @@
  *
  * Two properties are load-bearing rather than incidental:
  *
- * - **The cadence is a floor, not a heartbeat.** An agent is due once the cadence
- *   has elapsed since its last review, and it may be handed out later than that if
- *   others were waiting longer. Cost per agent is therefore bounded above by the
- *   cadence; nothing here can make an agent think faster than it.
+ * - **The cadence is a schedule, and its rate is a ceiling.** An agent's review is due
+ *   one cadence after its last was due, and it may be handed out later than that if
+ *   others were waiting longer or the agent could not take one. A late review delays
+ *   only itself: the next is due a cadence after this one was due, not after it was
+ *   handed out, so waits never add up across a run (v32 plains rehearsal 14: three
+ *   agents' held reviews pushed every later one back, and the run owed reviews its
+ *   schedule never asked). A review held a whole cadence restarts the schedule from
+ *   when it is handed out, so no two ever fall due at once, and an agent still reviews
+ *   at most once per cadence over a run.
+ * - **A held review is recorded, once.** A due review the agent cannot take waits, and
+ *   the caller hears of it the first time it is held, so the record shows the review is
+ *   owed rather than lost.
  * - **Reviews are spread across the cadence, never batched.** Each claim hands out
  *   only the population's share of one slice, so a hundred agents cost a hundred
  *   calls spread over a cadence rather than a hundred calls in one tick. Cognition
  *   is event-driven precisely so that bursts do not happen; a driver that reviewed
  *   everyone at once would reintroduce them on a timer.
+ *
+ * One more review is owed outside the cadence: when the step a held goal took settles, the
+ * agent reviews that goal again shortly after rather than waiting out the cadence, because a
+ * goal advanced at most once per two-minute review can barely be pursued over several steps
+ * (r14: 18 of 19 goals needed one item at most). Each scheduled review earns the agent
+ * [MAX_FOLLOW_UPS_PER_REVIEW] follow-ups to spend: any settled step may spend one of them per
+ * scheduled review, and a step that leaves the agent's own drop of its goal's item lying may spend
+ * every one it has earned, so an agent costs at most that many follow-ups per scheduled review
+ * over a run whatever its steps do (r18 delta's third drop in one review lay unreviewed, and
+ * epsilon took it).
  */
 package dev.loom.mind
 
@@ -52,6 +70,69 @@ const val DEFAULT_GOAL_REVIEW_CADENCE_TICKS: Long = 2L * 60L * 20L
 private const val DEFAULT_SLICES_PER_CADENCE = 24
 
 /**
+ * How long after a held goal's step settles its follow-up review is due: long enough for a dug
+ * block's drop to land and be picked up, which vanilla delays ten ticks.
+ */
+const val FOLLOW_UP_DELAY_TICKS: Long = 40
+
+/** Follow-up reviews each scheduled review earns by default, spent over the run rather than within it. */
+const val DEFAULT_FOLLOW_UPS_PER_REVIEW: Int = 2
+
+/**
+ * The most follow-ups a run's plan may let each scheduled review earn (R43: two left every agent
+ * waiting four times 1500 to 2200 ticks for its next review).
+ */
+const val MAX_FOLLOW_UPS_PER_REVIEW: Int = 4
+
+/** Follow-ups a discovery's walks and transition may claim per scheduled review, outside the allowance. */
+const val MAX_DISCOVERY_FOLLOW_UPS: Int = 3
+
+/**
+ * Follow-ups a shelter's steps may claim per scheduled review, outside the allowance: a pit is three
+ * digs and a placement, and a resource subgoal a dig more, before night falls.
+ */
+const val MAX_SHELTER_FOLLOW_UPS: Int = 6
+
+/** Earned follow-ups an ordinary step leaves unspent, for a review owed to a lying drop or a completion. */
+const val OWED_RESERVE: Int = 1
+
+/** What hears that a held goal's step settled. Main thread only. */
+fun interface StepSettlement {
+    /**
+     * [agent]'s held goal's step settled at [tick]; [owed] when it left the agent's own drop of the
+     * goal's item lying, which is owed a review to collect it before another agent does.
+     */
+    fun settled(
+        agent: AgentId,
+        tick: Long,
+        owed: Boolean,
+    )
+
+    /**
+     * [agent]'s discovery goal's step - a walk to the edge of sight, or the first step of the
+     * resource goal it became - settled at [tick], owed a review outside the ordinary allowance.
+     */
+    fun discovered(
+        agent: AgentId,
+        tick: Long,
+    ) = settled(agent, tick, owed = true)
+
+    /**
+     * [agent]'s shelter goal's step, or its resource subgoal's, settled at [tick], accepted or
+     * refused, owed a review outside the ordinary allowance.
+     */
+    fun sheltered(
+        agent: AgentId,
+        tick: Long,
+    ) = settled(agent, tick, owed = true)
+
+    companion object {
+        /** Nothing follows a step up. */
+        val NONE: StepSettlement = StepSettlement { _, _, _ -> }
+    }
+}
+
+/**
  * Decides which living agents are due for a scheduled goal review.
  *
  * Not thread-safe: it holds each agent's last review time in a plain map and is
@@ -66,8 +147,17 @@ private const val DEFAULT_SLICES_PER_CADENCE = 24
 class GoalReviewSchedule(
     val cadenceTicks: Long = DEFAULT_GOAL_REVIEW_CADENCE_TICKS,
     private val slicesPerCadence: Int = DEFAULT_SLICES_PER_CADENCE,
-) {
+    /**
+     * How many follow-ups each scheduled review earns, at most [MAX_FOLLOW_UPS_PER_REVIEW]: a run
+     * whose call ceiling must leave room for the night's danger earns fewer (r20: 50 reviews and
+     * 100 follow-ups planned against a ceiling of 150 left nothing for 49 danger calls).
+     */
+    private val followUpsPerReview: Int = DEFAULT_FOLLOW_UPS_PER_REVIEW,
+) : StepSettlement {
     init {
+        require(followUpsPerReview in 0..MAX_FOLLOW_UPS_PER_REVIEW) {
+            "followUpsPerReview must be in 0..$MAX_FOLLOW_UPS_PER_REVIEW, was $followUpsPerReview"
+        }
         require(cadenceTicks > 0) { "cadenceTicks must be positive, was $cadenceTicks" }
         require(slicesPerCadence >= 1) { "slicesPerCadence must be at least 1, was $slicesPerCadence" }
         require(cadenceTicks >= slicesPerCadence) {
@@ -76,6 +166,16 @@ class GoalReviewSchedule(
     }
 
     private val lastReview = mutableMapOf<AgentId, Long>()
+
+    /** The agents whose due review has been held and reported once, until it is handed out. */
+    private val heldReviews = mutableSetOf<AgentId>()
+
+    // When each owed follow-up review is due, how many each agent's latest scheduled review has
+    // been followed by, and how many follow-ups its scheduled reviews have earned and it has not
+    // yet spent.
+    private val followUpDue = mutableMapOf<AgentId, Long>()
+    private val followUps = mutableMapOf<AgentId, Int>()
+    private val allowance = mutableMapOf<AgentId, Int>()
 
     /**
      * Longest-waiting first, so a population that outgrows one slice's share
@@ -122,19 +222,139 @@ class GoalReviewSchedule(
      * Agents absent from [living] are forgotten. Loom is permadeath, so for a dead
      * agent that is final; for one whose body was merely despawned it means a fresh
      * body is due at once, which is the same treatment a newly spawned agent gets.
+     *
+     * A due agent [ready] rejects - one whose previous review is still waiting for the
+     * mind - is neither claimed nor recorded, so the review it is owed stays due and is
+     * claimed at the first slice it fits rather than refused and lost.
      */
     fun claim(
         living: Set<AgentId>,
         now: Long,
+        ready: (AgentId) -> Boolean = { true },
+        held: (AgentId) -> Unit = {},
     ): List<AgentId> {
         lastReview.keys.retainAll(living)
+        heldReviews.retainAll(living)
+        followUpDue.keys.retainAll(living)
+        followUps.keys.retainAll(living)
+        allowance.keys.retainAll(living)
+        val due = living.filter { isDue(it, now) }
+        val (willing, waiting) = due.partition(ready)
+        waiting.filter(heldReviews::add).forEach(held)
         val claimed =
-            living
-                .filter { isDue(it, now) }
+            willing
                 .sortedWith(longestWaitingFirst)
                 .take(perSlice(living.size))
-        claimed.forEach { lastReview[it] = now }
+        claimed.forEach {
+            lastReview[it] = anchorOf(it, now)
+            heldReviews.remove(it)
+            // A scheduled review answers whatever a follow-up was owed for, and owes one anew.
+            followUpDue.remove(it)
+            followUps.remove(it)
+            discoveryFollowUps.remove(it)
+            shelterFollowUps.remove(it)
+            allowance[it] = (allowance[it] ?: 0) + followUpsPerReview
+        }
         return claimed
+    }
+
+    /**
+     * Owes [agent] one follow-up review [FOLLOW_UP_DELAY_TICKS] after [tick], when its held goal's
+     * step settled - unless it has spent every follow-up its scheduled reviews earned, or its
+     * latest scheduled review has already been followed up as often as each earns
+     * ([followUpsPerReview]) and the step did not leave the agent's own drop of the goal's item
+     * lying ([owed]), or it has never had a scheduled review at all. r17 beta's dig at its one
+     * follow-up dropped two sticks with no review owed until 2255 ticks later, and gamma took them.
+     * A plan of two follow-ups a review may spend both on ordinary steps, past the reserve: r35's
+     * plan of one left its agents' first cycles none, and 26 of its 60 day steps waited a whole
+     * cadence for their next review.
+     */
+    override fun settled(
+        agent: AgentId,
+        tick: Long,
+        owed: Boolean,
+    ) {
+        val spentHere = followUps[agent] ?: 0
+        val earned = allowance[agent] ?: 0
+        // An ordinary follow-up leaves the last earned one to a review that is owed (r19: the
+        // allowance ran out while own goal-item drops lay unreviewed for 2000 to 2300 ticks).
+        val ordinarySpent = !owed && (spentHere >= followUpsPerReview || earned <= OWED_RESERVE)
+        if (agent !in lastReview || earned <= 0 || ordinarySpent) return
+        followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS)
+    }
+
+    /**
+     * Owes [agent] a follow-up [FOLLOW_UP_DELAY_TICKS] after [tick] for a discovery step, from its
+     * own bounded chain of [MAX_DISCOVERY_FOLLOW_UPS] rather than the earned allowance (r24: all
+     * seven first-cycle discovery walks waited about 2300 ticks for their next review).
+     */
+    override fun discovered(
+        agent: AgentId,
+        tick: Long,
+    ) {
+        val spent = discoveryFollowUps[agent] ?: 0
+        if (agent !in lastReview || spent >= MAX_DISCOVERY_FOLLOW_UPS) return
+        if (followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS) == null) {
+            discoveryFollowUps[agent] = spent + 1
+            // Spent from its own chain, not the allowance the claim charges.
+            allowance[agent] = (allowance[agent] ?: 0) + 1
+        }
+    }
+
+    private val discoveryFollowUps = mutableMapOf<AgentId, Int>()
+
+    /**
+     * Owes [agent] a follow-up [FOLLOW_UP_DELAY_TICKS] after [tick] for a shelter step, from its own
+     * bounded chain of [MAX_SHELTER_FOLLOW_UPS] rather than the earned allowance, as a discovery is.
+     */
+    override fun sheltered(
+        agent: AgentId,
+        tick: Long,
+    ) {
+        val spent = shelterFollowUps[agent] ?: 0
+        if (agent !in lastReview || spent >= MAX_SHELTER_FOLLOW_UPS) return
+        if (followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS) == null) {
+            shelterFollowUps[agent] = spent + 1
+            allowance[agent] = (allowance[agent] ?: 0) + 1
+        }
+    }
+
+    private val shelterFollowUps = mutableMapOf<AgentId, Int>()
+
+    /**
+     * The owed follow-up reviews due by [now], out of [living], in agent order. A due one [ready]
+     * rejects stays owed. Claiming one counts it against the agent's latest scheduled review; it
+     * does not move that review, so the cadence is unchanged.
+     */
+    fun claimFollowUps(
+        living: Set<AgentId>,
+        now: Long,
+        ready: (AgentId) -> Boolean = { true },
+    ): List<AgentId> {
+        followUpDue.keys.retainAll(living)
+        val claimed =
+            followUpDue
+                .filter { (agent, due) -> due <= now && ready(agent) }
+                .keys
+                .sortedBy { it.value }
+        claimed.forEach {
+            followUpDue.remove(it)
+            followUps[it] = (followUps[it] ?: 0) + 1
+            allowance[it] = (allowance[it] ?: 0) - 1
+        }
+        return claimed
+    }
+
+    /**
+     * The tick [agent]'s review claimed at [now] counts from: when it was due, unless it was held a
+     * whole cadence or more, or is its first.
+     */
+    private fun anchorOf(
+        agent: AgentId,
+        now: Long,
+    ): Long {
+        val dueAt = (lastReview[agent] ?: return now) + cadenceTicks
+        return if (now - dueAt < cadenceTicks) dueAt else now
     }
 
     /** Whether [agent] has waited a whole cadence, or has never reviewed at all. */

@@ -154,11 +154,23 @@ async function sensed (peer, requestId) {
   return answer
 }
 
-/** The faces of `position` whose neighbour is air in the live world, turned toward `eyes`. */
-function openFaces (bot, position, eyes) {
+/**
+ * The faces of `position` whose neighbour is air in the live world, turned toward `eyes`, and not
+ * a cell the body's own box stands in, which vanilla will not place a block into: the block under
+ * the feet offers no placement face of its own.
+ */
+function openFaces (bot, position, eyes, ownCellOnly = new Set()) {
+  const feet = [eyes[0], eyes[1] - EYE_HEIGHT, eyes[2]]
+  const standsIn = ([x, y, z]) => feet[0] - 0.3 < x + 1 && feet[0] + 0.3 > x && feet[1] < y + 1 &&
+    feet[1] + 1.8 > y && feet[2] - 0.3 < z + 1 && feet[2] + 0.3 > z
   return Object.entries(FACES).filter(([, [dx, dy, dz]]) => {
-    const neighbour = bot.blockAt(new Vec3(position[0] + dx, position[1] + dy, position[2] + dz))
+    const cell = [position[0] + dx, position[1] + dy, position[2] + dz]
+    const neighbour = bot.blockAt(new Vec3(...cell))
     if (neighbour === null || neighbour.name !== 'air') return false
+    if (standsIn(cell)) {
+      ownCellOnly.add(position.join(','))
+      return false
+    }
     const centre = [position[0] + 0.5 + dx * 0.5, position[1] + 0.5 + dy * 0.5, position[2] + 0.5 + dz * 0.5]
     return (centre[0] - eyes[0]) * dx + (centre[1] - eyes[1]) * dy + (centre[2] - eyes[2]) * dz < 0
   }).map(([face]) => face)
@@ -201,7 +213,11 @@ async function probeEveryOffer (context, answer, feet) {
     if (!BEGAN.has(dug)) failures.push(`dig ${block.what} ${block.position}: ${dug}`)
     const endings = []
     let placedOnce = false
-    for (const face of openFaces(bot, block.position, eyes)) {
+    const ownCellOnly = new Set()
+    const faces = openFaces(bot, block.position, eyes, ownCellOnly)
+    // A block whose only open face is the cell the body stands in takes no placement in vanilla.
+    if (faces.length === 0 && ownCellOnly.has(block.position.join(','))) continue
+    for (const face of faces) {
       const placed = await actOnce(context, answer, 'place', {
         block: index, slot: held.slot, face, timeoutMs: PROBE_MS
       }, `place ${index} ${face}`)

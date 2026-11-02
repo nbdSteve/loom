@@ -35,6 +35,7 @@ const { goals: libraryGoals } = require('mineflayer-pathfinder')
 const { Vec3 } = require('vec3')
 
 const {
+  ARRIVAL_SETTLE_TICKS,
   MAX_STALL_RETRIES,
   MAX_TRAVEL_BLOCKS,
   MOVEMENT_CONTROL_PACKETS,
@@ -46,7 +47,8 @@ const {
   NO_SEARCH_SLICE,
   blocksApart,
   createMovement,
-  installMovement
+  installMovement,
+  writeShift
 } = require('../src/movement')
 const { CONTROL_IDLE_MS } = require('../src/body')
 const { MAX_MOVE_DEADLINE_MS, MAX_RETREAT_DISTANCE } = require('../src/protocol')
@@ -341,6 +343,8 @@ function drivable ({ x = 0, y = 64, z = 0 } = {}) {
   bot.registry = H.registry
   bot.entity = { position: new Vec3(x, y, z) }
   bot.entities = {}
+  // A world with nothing loaded in it, as a client knows before any chunk arrives.
+  bot.blockAt = () => null
   bot.pathfinder = {
     goals: [],
     movements: undefined,
@@ -1267,6 +1271,10 @@ test('a terminal drain keeps a later request from taking ownership early', async
     destination: [4, 64, 0], tolerance: 0, timeoutMs: AMPLE_MS, sprint: false
   }), undefined)
 
+  // The arrival is answered once the body has come to rest on the goal.
+  bot.entity.position = new Vec3(8.5, 64, 0.5)
+  bot.entity.onGround = true
+  for (let tick = 0; tick <= ARRIVAL_SETTLE_TICKS; tick += 1) bot.emit('physicsTick')
   assert.equal((await H.promptly(first, 'the drained request')).outcome, 'arrived')
   assert.equal(bot.entity.yaw, 0)
   assert.equal(bot.entity.pitch, 0)
@@ -1279,7 +1287,7 @@ test('a terminal drain keeps a later request from taking ownership early', async
   await H.promptly(second, 'the later request')
 })
 
-test('the goal the library is handed is the library own, inverted for a flight', async () => {
+test('the goal the library is handed is the library own, inverted and held to a safe end for a flight', async () => {
   const bot = drivable()
   bot.entities = { 44: { position: new Vec3(2, 64, 0) } }
   const movement = createMovement(bot)
@@ -1299,9 +1307,12 @@ test('the goal the library is handed is the library own, inverted for a flight',
   const fleeing = movement.flee({
     offered: offeredEntity(bot, 44), entity: 0, distance: 7, timeoutMs: 50, sprint: true
   })
-  const flight = bot.pathfinder.goals[bot.pathfinder.goals.length - 1]
+  const held = bot.pathfinder.goals[bot.pathfinder.goals.length - 1]
   // A flight is that same goal inverted - the library's own way of running away from a place
-  // rather than a second search of Loom's - built around where the threat was seen.
+  // rather than a second search of Loom's - built around where the threat was seen, with only
+  // where it may end held to safe ground (`SafeFlightGoal`).
+  assert.ok(held instanceof libraryGoals.Goal)
+  const flight = held.inner
   assert.ok(flight instanceof libraryGoals.GoalInvert)
   assert.ok(flight.goal instanceof libraryGoals.GoalNear)
   assert.deepEqual([flight.goal.x, flight.goal.y, flight.goal.z], [2, 64, 0])
@@ -1378,7 +1389,9 @@ test('the three movement operations answer over a real control connection', asyn
   peer.send(H.request('moveTo', 'm2', {
     destination: [2, 64, 2], tolerance: 0, timeoutMs: AMPLE_MS, sprint: false
   }))
-  await H.settled(200)
+  // Halted once the walk is under way rather than after a fixed wait: on a slow host a fixed
+  // wait raced the walk's own start, and the halt's answer was read against the walk's.
+  await H.eventually(() => assert.ok(bot.pathfinder.isMoving(), 'the walk is under way'), AMPLE_MS)
   const halted = await peer.answer(H.request('halt', 'hA'))
   assert.equal(halted.op, 'halt')
   assert.equal(halted.stopped, true)
@@ -1559,4 +1572,113 @@ test('a halt pipelined before its replacement leaves the replacement owned by it
   // replacement's ownership and this close stopped nothing at all.
   peer.stop()
   await droppedShortOfFar(bot, measured, 'a lost connection after a pipelined replacement')
+})
+
+test('a reached goal is an arrival only once the server was told the same grounded rest', async () => {
+  const bot = drivable()
+  const gate = countedGate()
+  let wire = { position: [0, 64.6, 0], onGround: false }
+  gate.reportedStanding = () => wire
+  const movement = createMovement(bot, { simulation: gate })
+  let answered
+  const walking = movement.moveTo({
+    destination: [0, 64, 0], tolerance: 0, timeoutMs: AMPLE_MS, sprint: false
+  }).then((report) => { answered = report })
+
+  // Reached while still falling onto the goal: nothing is answered.
+  bot.entity.position = new Vec3(0.5, 64.6, 0.5)
+  bot.entity.onGround = false
+  bot.emit('goal_reached')
+  for (let tick = 0; tick < 4; tick += 1) bot.emit('physicsTick')
+  await H.settled(10)
+  assert.equal(answered, undefined)
+
+  // Landed and still, but the server has not been told so: still nothing.
+  bot.entity.position = new Vec3(0.5, 64, 0.5)
+  bot.entity.onGround = true
+  for (let tick = 0; tick < 4; tick += 1) bot.emit('physicsTick')
+  await H.settled(10)
+  assert.equal(answered, undefined)
+  assert.equal(gate.open, true)
+
+  // Once the grounded report has been written, the rest is the arrival.
+  wire = { position: [0.5, 64, 0.5], onGround: true }
+  for (let tick = 0; tick <= ARRIVAL_SETTLE_TICKS; tick += 1) bot.emit('physicsTick')
+  await H.promptly(walking, 'the landed walk')
+  assert.equal(answered.outcome, 'arrived')
+  assert.deepEqual(answered.position, [0.5, 64, 0.5])
+  assert.equal(gate.open, false)
+})
+
+test('a reached goal on a bot with no wire is an arrival once it rests on the ground', async () => {
+  // The inert gate has no wire, so there is no report to wait for: rest alone settles it.
+  const bot = drivable()
+  const movement = createMovement(bot)
+  const walking = movement.moveTo({
+    destination: [0, 64, 0], tolerance: 0, timeoutMs: AMPLE_MS, sprint: false
+  })
+  bot.entity.position = new Vec3(0.5, 64, 0.5)
+  bot.entity.onGround = true
+  bot.emit('goal_reached')
+  for (let tick = 0; tick <= ARRIVAL_SETTLE_TICKS; tick += 1) bot.emit('physicsTick')
+  assert.equal((await H.promptly(walking, 'the resting walk')).outcome, 'arrived')
+})
+
+test('a held simulation is granted only to a bot with a wire and a free gate', async () => {
+  const { holdSimulation } = require('../src/movement')
+  const unwired = drivable()
+  unwired.loadPlugin = () => {}
+  installMovement(unwired)
+  assert.equal(holdSimulation(unwired), undefined)
+  assert.equal(holdSimulation(drivable()), undefined)
+
+  const { bot } = await H.realBot()
+  const release = holdSimulation(bot)
+  assert.equal(typeof release, 'function')
+  assert.equal(bot.physicsEnabled, true)
+  // One owner at a time: a second hold, or a walk, cannot take the gate while it is held.
+  assert.equal(holdSimulation(bot), undefined)
+  release()
+  assert.equal(bot.physicsEnabled, false)
+  const again = holdSimulation(bot)
+  assert.equal(typeof again, 'function')
+  again()
+})
+
+test('a final approach walks only a short straight step, and none at all past one block', async () => {
+  const { EventEmitter } = require('node:events')
+  const { Vec3 } = require('vec3')
+  const { FINAL_APPROACH_MAX_BLOCKS, createMovement: create } = require('../src/movement')
+  const bot = new EventEmitter()
+  bot.entity = { position: new Vec3(8.357, 64, 8.5), yaw: 0, pitch: 0, onGround: true }
+  const far = create(bot).finalApproach({ point: [8.357 + FINAL_APPROACH_MAX_BLOCKS + 0.01, 64, 8.5], timeoutMs: 1000 })
+  assert.equal(far.outcome, 'outOfRange')
+  assert.equal(far.travelled, 0)
+  // A body that never moves is stalled after the bounded ticks, with every control let go.
+  const controls = {}
+  bot.setControlState = (name, on) => { controls[name] = on }
+  const stuck = create(bot).finalApproach({ point: [8.7, 64, 8.5], timeoutMs: 5000 })
+  for (let tick = 0; tick < 30; tick += 1) bot.emit('physicsTick')
+  const report = await stuck
+  assert.equal(report.outcome, 'stalled')
+  assert.equal(controls.forward, false)
+})
+
+test('a placement\'s shift reaches the server through the shut gate, and no unasked control does', async () => {
+  // The v36 rehearsal: an unshifted placement against a crafting table opens it and places
+  // nothing, so a placement holds the shift for its one packet; the gate still drops the rest.
+  const { bot, client } = await placedIn((built) => platform(built, 2))
+  await H.settled(100)
+  const start = client.writes.length
+  writeShift(bot, true)
+  bot._client.write('entity_action', { entityId: bot.entity.id, actionId: 3, jumpBoost: 0 })
+  writeShift(bot, false)
+  bot._client.write('entity_action', { entityId: bot.entity.id, actionId: 0, jumpBoost: 0 })
+  const passed = client.writes.slice(start).filter((write) => MOVEMENT_CONTROL_PACKETS.includes(write.name))
+  assert.equal(passed.length, 2, JSON.stringify(passed))
+  if (passed[0].name === 'entity_action') {
+    assert.deepEqual(passed.map((write) => write.parameters.actionId), [0, 1])
+  } else {
+    assert.deepEqual(passed.map((write) => write.parameters.inputs.shift), [true, false])
+  }
 })

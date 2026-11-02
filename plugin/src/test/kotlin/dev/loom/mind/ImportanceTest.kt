@@ -119,4 +119,46 @@ class ImportanceTest {
             assertEquals(once, once.classified(), "trigger $trigger")
         }
     }
+
+    @Test
+    @DisplayName("a goal review beside a hunter in sight and in pivotal range is pivotal")
+    fun aReviewBesideAHunterIsPivotal() {
+        // r22: four of four routine reviews beside a hunter chose a dig, one at health 1.0.
+        fun creature(
+            distance: Double,
+            visible: Boolean = true,
+            hunts: Boolean? = true,
+        ) = dev.loom.contract.Observation(
+            kind = dev.loom.contract.ObservationKind.ENTITY,
+            what = "entity.minecraft.spider",
+            distance = distance,
+            direction = Bearing.NORTH,
+            verticalOffset = 0.0,
+            visible = visible,
+            ref = "e1",
+            hunts = hunts,
+        )
+        val review = perception(requestId = "r1", trigger = Trigger.GoalReview)
+        assertEquals(DecisionImportance.ROUTINE, review.classified().importance)
+        assertEquals(
+            DecisionImportance.PIVOTAL,
+            review.copy(surroundings = listOf(creature(1.4))).classified().importance,
+        )
+        assertEquals(
+            DecisionImportance.PIVOTAL,
+            review.copy(trigger = Trigger.StepSettled, surroundings = listOf(creature(6.0))).classified().importance,
+        )
+        assertEquals(
+            DecisionImportance.ROUTINE,
+            review.copy(surroundings = listOf(creature(12.0))).classified().importance,
+        )
+        assertEquals(
+            DecisionImportance.ROUTINE,
+            review.copy(surroundings = listOf(creature(3.0, visible = false))).classified().importance,
+        )
+        assertEquals(
+            DecisionImportance.ROUTINE,
+            review.copy(surroundings = listOf(creature(3.0, hunts = null))).classified().importance,
+        )
+    }
 }

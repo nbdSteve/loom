@@ -158,10 +158,9 @@ class AsyncCognitionBridgeTest {
             // out. Saturation must degrade decisions, not grow memory.
             val refused = bridge.submit(perception(requestId = "req-refused"))
             assertTrue(refused.isCompletedExceptionally, "a full bridge must refuse without waiting")
-            assertEquals(
-                CognitionFailure.Saturated,
-                failureOf(assertThrows<ExecutionException> { await(refused) }),
-            )
+            val saturated = failureOf(assertThrows<ExecutionException> { await(refused) })
+            assertEquals(CognitionFailure.Saturated, saturated)
+            assertEquals("saturated", saturated?.tag)
         } finally {
             released.countDown()
             bridge.close()

@@ -1,1 +1,1 @@
-{"op":"craft","protocol":5,"requestId":"res-craft-recipe-unavailable","agentId":"agent-alpha","state":"ready","outcome":"recipeUnavailable","elapsedMs":125,"attempted":false}
+{"op":"craft","protocol":8,"requestId":"res-craft-recipe-unavailable","agentId":"agent-alpha","state":"ready","outcome":"recipeUnavailable","elapsedMs":125,"attempted":false}

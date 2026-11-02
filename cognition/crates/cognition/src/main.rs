@@ -25,6 +25,7 @@ use std::net::SocketAddr;
 use std::process::ExitCode;
 
 use loom_cognition::config::process_env;
+use loom_cognition::exerciser::{PathExerciser, EXERCISER_MODEL_ID};
 use loom_cognition::mind::Mind;
 use loom_cognition::model::{BackendChoice, ModelBackend, ScriptedBackend, SCRIPTED_MODEL_ID};
 use loom_cognition::openai::{OpenAiBackend, OpenAiConfig};
@@ -60,6 +61,15 @@ async fn main() -> ExitCode {
             let router = Router::new(ModelCatalog::uniform(SCRIPTED_MODEL_ID));
             announce(chosen, &router, "no provider: decisions are scripted");
             run(addr, Mind::new(router, ScriptedBackend)).await
+        }
+        BackendChoice::PathExerciser => {
+            let router = Router::new(ModelCatalog::uniform(EXERCISER_MODEL_ID));
+            announce(
+                chosen,
+                &router,
+                "no provider: the path rehearsal's exerciser answers",
+            );
+            run(addr, Mind::new(router, PathExerciser)).await
         }
         BackendChoice::OpenAi => {
             let config = match OpenAiConfig::from_process_env() {

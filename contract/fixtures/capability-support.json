@@ -83,6 +83,9 @@
     },
     "goalReview": {
       "status": "supported"
+    },
+    "stepSettled": {
+      "status": "supported"
     }
   },
   "bodyOperations": {
@@ -155,9 +158,17 @@
       "reason": "Pins routine-v12 prompts the current mind no longer serves."
     },
     "first-tribe-routine-v13-agency-pilot.json": {
-      "status": "runnable"
+      "status": "historical",
+      "reason": "Pins routine-v13 prompts the current mind no longer serves."
     },
     "first-tribe-routine-v13-agency-pilot-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v13 prompts the current mind no longer serves."
+    },
+    "first-tribe-routine-v36-agency-pilot.json": {
+      "status": "runnable"
+    },
+    "first-tribe-routine-v36-agency-pilot-scripted.json": {
       "status": "runnable"
     },
     "tribe-two-cycle-3.json": {
@@ -188,6 +199,164 @@
       "status": "runnable"
     },
     "tribe-two-cycle-10-structure.json": {
+      "status": "runnable"
+    },
+    "tribe-shakedown-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v13 prompts the current mind no longer serves."
+    },
+    "tribe-shakedown-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v13 prompts the current mind no longer serves."
+    },
+    "tribe-grounded-walk-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v14 prompts the current mind no longer serves."
+    },
+    "tribe-grounded-walk-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v14 prompts the current mind no longer serves."
+    },
+    "tribe-grounded-walk-v15-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v15 prompts the current mind no longer serves."
+    },
+    "tribe-grounded-walk-v15-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v15 prompts the current mind no longer serves."
+    },
+    "tribe-working-goal-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v17 prompts the current mind no longer serves."
+    },
+    "tribe-working-goal-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v17 prompts the current mind no longer serves."
+    },
+    "tribe-offered-refs-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v18 prompts the current mind no longer serves."
+    },
+    "tribe-offered-refs-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v18 prompts the current mind no longer serves."
+    },
+    "tribe-actionable-refs-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v19 prompts the current mind no longer serves."
+    },
+    "tribe-actionable-refs-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v19 prompts the current mind no longer serves."
+    },
+    "tribe-typed-goal-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v20 prompts the current mind no longer serves."
+    },
+    "tribe-typed-goal-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v20 prompts the current mind no longer serves."
+    },
+    "tribe-grounded-step-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v21 prompts the current mind no longer serves."
+    },
+    "tribe-grounded-step-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v21 prompts the current mind no longer serves."
+    },
+    "tribe-obtainable-goal-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v22 prompts the current mind no longer serves."
+    },
+    "tribe-obtainable-goal-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v22 prompts the current mind no longer serves."
+    },
+    "tribe-own-evidence-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v23 prompts the current mind no longer serves."
+    },
+    "tribe-own-evidence-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v23 prompts the current mind no longer serves."
+    },
+    "tribe-answered-goal-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v24 prompts the current mind no longer serves."
+    },
+    "tribe-answered-goal-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v24 prompts the current mind no longer serves."
+    },
+    "tribe-collected-goal-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v25 prompts the current mind no longer serves."
+    },
+    "tribe-collected-goal-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v25 prompts the current mind no longer serves."
+    },
+    "tribe-pursued-goal-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v26 prompts the current mind no longer serves."
+    },
+    "tribe-pursued-goal-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v26 prompts the current mind no longer serves."
+    },
+    "tribe-wooded-goal-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v27 prompts the current mind no longer serves."
+    },
+    "tribe-wooded-goal-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v27 prompts the current mind no longer serves."
+    },
+    "tribe-explored-goal-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v28 prompts the current mind no longer serves."
+    },
+    "tribe-explored-goal-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v28 prompts the current mind no longer serves."
+    },
+    "tribe-night-goal-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v32 prompts the current mind no longer serves; the balanced-envelope configuration r34 ran, kept under the name its artifact states."
+    },
+    "tribe-night-goal-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v32 prompts the current mind no longer serves."
+    },
+    "tribe-balanced-envelope-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v33 prompts the current mind no longer serves; the configuration r35 ran, kept under the name its artifact states."
+    },
+    "tribe-balanced-envelope-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v33 prompts the current mind no longer serves."
+    },
+    "tribe-balanced-follow-up-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v34 prompts the current mind no longer serves; kept to re-derive r36."
+    },
+    "tribe-balanced-follow-up-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v34 prompts the current mind no longer serves."
+    },
+    "tribe-shelter-goal-10m-10.json": {
+      "status": "historical",
+      "reason": "Pins routine-v35 prompts the current mind no longer serves; kept to re-derive r37 to r39."
+    },
+    "tribe-shelter-goal-10m-10-scripted.json": {
+      "status": "historical",
+      "reason": "Pins routine-v35 prompts the current mind no longer serves."
+    },
+    "tribe-held-objective-10m-10.json": {
+      "status": "runnable"
+    },
+    "tribe-held-objective-10m-10-scripted.json": {
       "status": "runnable"
     }
   }

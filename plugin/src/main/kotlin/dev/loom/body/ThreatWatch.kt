@@ -146,7 +146,41 @@ enum class ThreatSuppressionReason(
 
     /** This agent's pivotal threat budget for the night is spent. */
     OVER_NIGHTLY_CAP(EventTag.THREAT_OVER_NIGHTLY_CAP),
+
+    /**
+     * The hunter is out of sight and further than [THREAT_NEAR_BLOCKS]: nothing a flight could
+     * measurably escape. In r17 nine flights ran from mobs behind walls 22 to 24 blocks off,
+     * moved under six blocks and ended about as far away as they began; in r18 all four flights
+     * ran from mobs out of sight 15 to 16 blocks off.
+     */
+    DISTANT_UNSEEN(EventTag.THREAT_DISTANT_UNSEEN),
+
+    /**
+     * The hunter is in sight but further than [THREAT_SIGHT_NEWS_BLOCKS]: in r20, 22 flights ran
+     * from mobs in view more than 16 blocks off, gained a median of about two blocks and ended
+     * more than 20 off either way, spending 22 of the run's 150 calls.
+     */
+    DISTANT_SEEN(EventTag.THREAT_DISTANT_SEEN),
+
+    /**
+     * The agent stands sealed in, by the server's ground: no hunter can reach it, and no flight can
+     * leave, so a sighting is no news it could act on (`Cover.kt`).
+     */
+    SHELTERED(EventTag.THREAT_SHELTERED),
 }
+
+/**
+ * How near a hunter in sight must be before its sighting is worth an agent's decision: the
+ * body's perception radius, past which a flight cannot measurably gain (r20).
+ */
+const val THREAT_SIGHT_NEWS_BLOCKS: Double = 16.0
+
+/**
+ * How near an out-of-sight hunter must be before its sighting is worth an agent's decision. r18's
+ * sixteen let every flight run from a mob out of sight at 15 to 16 blocks; half that leaves a
+ * hunter behind a wall news only once it is close enough to round it.
+ */
+const val THREAT_NEAR_BLOCKS: Double = 8.0
 
 /** One hostile in view, as the threat rule needs it. */
 data class ThreatCandidate(
@@ -213,7 +247,7 @@ interface ThreatClock {
 private data class ThreatMemory(
     val firedTick: Long,
     val visible: Boolean,
-    val reachable: Boolean,
+    val reachable: Boolean?,
     val insidePivotal: Boolean,
 )
 
@@ -291,7 +325,7 @@ class ThreatWatch(
     fun consider(
         agent: AgentId,
         candidates: List<ThreatCandidate>,
-        reachable: (ThreatCandidate) -> Boolean,
+        reachable: (ThreatCandidate) -> Boolean?,
     ): ThreatOutcome {
         val hunters = candidates.filter { hunts(it.what) }
         val memories = remembered.getOrPut(agent) { mutableMapOf() }
@@ -299,6 +333,17 @@ class ThreatWatch(
 
         val refused = mutableListOf<ThreatSuppression>()
         for (candidate in hunters) {
+            val distant =
+                when {
+                    !candidate.visible && candidate.distance > THREAT_NEAR_BLOCKS ->
+                        ThreatSuppressionReason.DISTANT_UNSEEN
+                    candidate.distance > THREAT_SIGHT_NEWS_BLOCKS -> ThreatSuppressionReason.DISTANT_SEEN
+                    else -> null
+                }
+            if (distant != null) {
+                refused += ThreatSuppression(candidate.what, candidate.ref, distant)
+                continue
+            }
             when (val verdict = examine(agent, candidate, memories[candidate.subject], reachable)) {
                 is Examination.Refused -> refused += ThreatSuppression(candidate.what, candidate.ref, verdict.reason)
                 is Examination.Report -> {
@@ -314,6 +359,22 @@ class ThreatWatch(
     }
 
     /**
+     * What [agent], standing sealed in, is told of the hunters in [candidates]: nothing, each
+     * suppressed as [ThreatSuppressionReason.SHELTERED], since none can reach it and no flight can
+     * leave. Threats no longer in view are forgotten as [consider] forgets them.
+     */
+    fun sheltered(
+        agent: AgentId,
+        candidates: List<ThreatCandidate>,
+    ): ThreatOutcome {
+        val hunters = candidates.filter { hunts(it.what) }
+        remembered[agent]?.keys?.retainAll(hunters.map { it.subject }.toSet())
+        return ThreatOutcome(
+            suppressed = hunters.map { ThreatSuppression(it.what, it.ref, ThreatSuppressionReason.SHELTERED) },
+        )
+    }
+
+    /**
      * Drops what is held about the scene [agent] was standing in.
      *
      * For an agent whose body has gone - it has died, which in Loom is for good, or it
@@ -324,6 +385,30 @@ class ThreatWatch(
      */
     fun forget(agent: AgentId) {
         remembered.remove(agent)
+    }
+
+    /**
+     * Gives back the pivotal allowance a sighting spent when its perception never reached the
+     * mind - coalesced into a danger episode, or refused for the run's call reserve - because the
+     * cap bounds calls and that sighting cost none. In r22 beta, gamma and theta were capped after
+     * one or two real calls, and 25 later sightings at health 1.5 to 3.3 were suppressed.
+     *
+     * A [waited] sighting, held behind a nearer threat's answer, was never told either, so the
+     * watch also forgets [subject] and its next look is a first sight: in r49 a skeleton 15.8
+     * blocks off waited behind iota's zombie flight, every later look was refused as already told,
+     * and its arrow killed iota at health 3.8.
+     */
+    fun refund(
+        agent: AgentId,
+        sighted: Trigger.ThreatSighted,
+        subject: UUID? = null,
+        waited: Boolean = false,
+    ) {
+        if (waited && subject != null) remembered[agent]?.remove(subject)
+        rollBudgetToToday()
+        if (!sighted.visible || sighted.distance > pivotalDistanceBlocks) return
+        val spent = spentBy(agent)
+        if (spent > 0) pivotalCalls[agent] = spent - 1
     }
 
     /** What one candidate amounted to: a sighting to report, or a bound that refused it. */
@@ -341,7 +426,7 @@ class ThreatWatch(
         agent: AgentId,
         candidate: ThreatCandidate,
         last: ThreatMemory?,
-        reachable: (ThreatCandidate) -> Boolean,
+        reachable: (ThreatCandidate) -> Boolean?,
     ): Examination {
         val now = clock.tick()
         val insidePivotal = candidate.distance <= pivotalDistanceBlocks

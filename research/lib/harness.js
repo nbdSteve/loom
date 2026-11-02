@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
-const { execFileSync, spawnSync } = require('node:child_process')
+const { spawn, spawnSync } = require('node:child_process')
 
 const {
   assertRunConfig,
@@ -12,7 +12,8 @@ const {
   configuredAgents,
   publishArtifact,
   validateProspectiveManifest,
-  worstCaseCallNanoUsd
+  worstCaseCallNanoUsd,
+  worstCaseTierNanoUsd
 } = require('./artifact.js')
 const { CognitionBudgetProxy } = require('./budget-proxy.js')
 const {
@@ -23,6 +24,10 @@ const {
   CONTROLLED_STOP_DRAIN_MILLIS,
   CONTROLLED_STOP_REASON,
   budgetStopFor,
+  isProviderDrainFailure,
+  isProviderRefusedEnding,
+  isProviderRefusedRequest,
+  isProviderRequestFailure,
   providerStopFor
 } = require('./controlled-stop.js')
 const { readJsonLines } = require('./evidence.js')
@@ -36,16 +41,19 @@ const {
 const { writeFailureDiagnostic } = require('./failure-diagnostic.js')
 const { JsonLinesTail, maximumOf } = require('./log-tail.js')
 const { PaperClock } = require('./paper-clock.js')
-const { SuspensionWatch, awaitQuietHost, seedPaperRuntime } = require('./paper-runtime.js')
+const { SuspensionWatch, seedPaperRuntime } = require('./paper-runtime.js')
 const { profileOf, ticksPerSecondOf } = require('./profiles.js')
 const { DeathSettlement } = require('./witnessed-death.js')
+const { INITIAL_CONDITIONS_EVENT, heldAtBegin } = require('./initial-conditions.js')
 const {
   BoundedJournal,
   ProcessSupervisor,
   RunFailure,
   delay,
+  signalProcessGroup,
   waitForCondition,
-  waitForPort
+  waitForPort,
+  waitForProcessGroupExit
 } = require('./lifecycle.js')
 const {
   commandOutput,
@@ -56,7 +64,7 @@ const {
 
 const STARTUP_EVENT = 'spawned'
 const ALL_AGENTS_DIED = 'allAgentsDied'
-const { DANGER_COALESCED } = require('./danger.js')
+const { isCoalesced, isPreempted } = require('./danger.js')
 const PROVIDER_USAGE_SCHEMA_VERSION = 'loom-provider-usage/1'
 const PAPER_DOWNLOAD_BYTES = 64 * 1024 * 1024
 const PAPER_USER_AGENT = 'loom-experiment-harness/0.1.0 (https://github.com/nbdSteve/loom)'
@@ -125,39 +133,76 @@ function findJava21 () {
   throw new Error('Java 21 was not found; set LOOM_JAVA_21 to its java executable')
 }
 
-function runBuild (command, args, options) {
-  execFileSync(command, args, {
-    cwd: options.cwd,
-    env: options.env,
-    stdio: 'inherit',
-    timeout: options.timeout
+// How long a build step's process group has to exit after SIGTERM before it is killed.
+const BUILD_STOP_GRACE_MILLIS = 5_000
+
+/**
+ * Runs one build step as its own process group and, past its bound, a failure or an abort, stops
+ * the whole group rather than only the process it started: a synchronous timeout signals that one
+ * process, so the v35 shelter rehearsal's body check, cut at its bound on a loaded host, left its
+ * test runner loading the host after the run had already failed.
+ */
+async function runBuild (command, args, { cwd, env, timeout, signal }) {
+  signal?.throwIfAborted()
+  const step = [command, ...args].join(' ')
+  const child = spawn(command, args, { cwd, env, stdio: 'inherit', detached: process.platform !== 'win32' })
+  const exited = new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('exit', (code, exitSignal) => resolve({ code, exitSignal }))
   })
+  let reason
+  let stopping
+  const stop = (cause) => {
+    reason ??= cause
+    stopping ??= (async () => {
+      signalProcessGroup(child, 'SIGTERM')
+      if (!(await waitForProcessGroupExit(child, BUILD_STOP_GRACE_MILLIS))) signalProcessGroup(child, 'SIGKILL')
+      await waitForProcessGroupExit(child, BUILD_STOP_GRACE_MILLIS)
+    })()
+    return stopping
+  }
+  const timer = setTimeout(() => stop(new Error(`${step} exceeded its ${timeout} ms build bound`)), timeout)
+  const aborted = () => stop(signal.reason)
+  signal?.addEventListener('abort', aborted, { once: true })
+  try {
+    const { code, exitSignal } = await exited
+    if (reason === undefined && code === 0) return
+    await stop(new Error(`${step} exited ${code ?? exitSignal}`))
+    throw reason
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', aborted)
+  }
 }
 
-function buildComponents (repositoryRoot, java, skipBuild) {
+async function buildComponents (repositoryRoot, java, skipBuild, signal) {
   const pluginJar = path.join(repositoryRoot, 'plugin', 'build', 'libs', 'loom-plugin-0.1.0.jar')
   const cognitionBinary = path.join(repositoryRoot, 'cognition', 'target', 'release', 'loom-cognition')
   if (!skipBuild) {
-    runBuild('npm', ['ci'], {
+    await runBuild('npm', ['ci'], {
       cwd: path.join(repositoryRoot, 'body'),
       env: process.env,
-      timeout: 180_000
+      timeout: 180_000,
+      signal
     })
-    runBuild('npm', ['run', 'check'], {
+    await runBuild('npm', ['run', 'check'], {
       cwd: path.join(repositoryRoot, 'body'),
       env: process.env,
-      timeout: 300_000
+      timeout: 300_000,
+      signal
     })
-    runBuild('cargo', ['build', '--release', '--bin', 'loom-cognition'], {
+    await runBuild('cargo', ['build', '--release', '--bin', 'loom-cognition'], {
       cwd: path.join(repositoryRoot, 'cognition'),
       env: process.env,
-      timeout: 300_000
+      timeout: 300_000,
+      signal
     })
     const javaHome = path.dirname(path.dirname(path.resolve(java)))
-    runBuild('./gradlew', ['check', 'shadowJar'], {
+    await runBuild('./gradlew', ['check', 'shadowJar'], {
       cwd: path.join(repositoryRoot, 'plugin'),
       env: { ...process.env, JAVA_HOME: javaHome },
-      timeout: 600_000
+      timeout: 600_000,
+      signal
     })
   }
   for (const file of [pluginJar, cognitionBinary]) {
@@ -286,6 +331,21 @@ function paperCommand (paper, command) {
   paper.child.stdin.write(`${command}\n`)
 }
 
+/**
+ * The one step a primary behavior run's admission close ends its exposure with: the plugin's
+ * `loombody end-exposure`, sent once, in the same turn the proxy closed admission, so nothing new is
+ * damaged, killed, targeted or applied after it while admitted work drains (r34: delta and gamma
+ * were shot dead in the drain after admission closed, and both deaths counted).
+ */
+function exposureEnder (paper, config) {
+  let sent = false
+  return () => {
+    if (sent || !isPrimaryBehaviorMode(config)) return
+    sent = true
+    paperCommand(paper, 'loombody end-exposure')
+  }
+}
+
 function applyPrimaryBehaviorInitialConditions (paper, config, journal) {
   if (!isPrimaryBehaviorMode(config)) return
   paperCommand(paper, 'gamerule doDaylightCycle true')
@@ -307,16 +367,60 @@ function applyPrimaryBehaviorInitialConditions (paper, config, journal) {
     worldClock: config.primaryBehavior.initialWorldClock,
     startingInventories: config.primaryBehavior.startingInventories
   })
+  // Paper runs console commands in order, so every condition above is in place first.
+  paperCommand(paper, 'loombody begin')
 }
 
+/**
+ * When the plugin's native cognition sources begin. A primary behavior run holds them until
+ * its initial conditions are applied: the fleet starts two bodies at a time, so the first
+ * agent's first scheduled review could otherwise arrive before the last agent had spawned.
+ */
+/**
+ * The follow-ups each scheduled review earns, as the plan states them, for the JVM. A plan that
+ * states none leaves the JVM's own allowance in place.
+ */
+function followUpsEnvironmentOf (config) {
+  const schedule = config.primaryBehavior?.nativeGoalReviewSchedule
+  const followUps = schedule?.followUpsPerReview
+  const agents = Array.isArray(config.agents) ? config.agents.length : 0
+  const global = config.cognition?.globalCallCeiling
+  const perAgent = config.cognition?.perAgentCallCeiling
+  // The run's ceilings, kept by the JVM for the scheduled reviews the living still owe: the
+  // night's danger spent r20's whole ceiling before its last reviews, and r22's fixed shares
+  // stranded the calls of the dead (`CallReserve`).
+  const bounded = agents > 0 && Number.isInteger(global) && Number.isInteger(perAgent)
+  return {
+    ...(Number.isInteger(followUps) ? { LOOM_GOAL_FOLLOW_UPS_PER_REVIEW: String(followUps) } : {}),
+    ...(bounded && Number.isInteger(schedule?.expectedReviewsPerAgent)
+      ? {
+          LOOM_COGNITION_CALLS_PER_AGENT: String(perAgent),
+          LOOM_COGNITION_CALLS_GLOBAL: String(global),
+          LOOM_COGNITION_AGENTS: String(agents),
+          LOOM_EXPECTED_REVIEWS_PER_AGENT: String(schedule.expectedReviewsPerAgent),
+          ...(Number.isInteger(config.cognition?.pivotalCallCeiling)
+            ? { LOOM_COGNITION_CALLS_PIVOTAL: String(config.cognition.pivotalCallCeiling) }
+            : {})
+        }
+      : {})
+  }
+}
+
+function nativeCognitionStartOf (config) {
+  return isPrimaryBehaviorMode(config) ? 'held' : 'immediate'
+}
+
+// What ends a primary-behavior run because continuing is impossible or unsafe. A witness
+// dispute, a disputed world interaction and a living agent's discarded decision are ordinary
+// typed product faults instead: the run keeps them as evidence, readiness fails closed on them
+// (a server dispute, a server truthfulness below 1, a `protocolError` action), and the run goes
+// on to its duration.
 const PRIMARY_BEHAVIOR_FATAL_EVENTS = new Map([
   ['bodyDisconnected', 'a body disconnected'],
   ['cognitionUnavailable', 'a cognition request became unavailable'],
-  ['decisionDiscarded', 'a cognition decision was discarded'],
   ['despawned', 'a body despawned during the run'],
   ['spawnRejected', 'a configured body spawn was rejected'],
   ['witnessDenied', 'the player witness denied a managed login'],
-  ['witnessDisputed', 'the player witness disputed body evidence'],
   ['witnessQuit', 'a managed player left the server during the run'],
   ['witnessRevived', 'the player witness observed a permadeath breach']
 ])
@@ -331,8 +435,12 @@ class PrimaryBehaviorGuard {
     this.dead = new Set()
     this.settlement = new DeathSettlement()
     this.typed = new Set()
+    this.refusedByProvider = new Set()
     this.closed = false
+    this.providerStopped = false
     this.firstPerceptionChecked = new Set()
+    this.witnessedAtBegin = new Set()
+    this.exposureEnded = new Set()
     this.failure = null
   }
 
@@ -342,8 +450,14 @@ class PrimaryBehaviorGuard {
       if (record.event === ADMISSION_ENDED_EVENT) this.closed = true
       if (record.event === ADMISSION_CLOSED_EVENT && !this.closed) {
         this.closed = true
-        if (record.kind === 'providerUnavailable') this.typed.add(`${record.agentId}:${record.requestId}`)
+        if (record.kind === 'providerUnavailable') {
+          this.providerStopped = true
+          this.typed.add(`${record.agentId}:${record.requestId}`)
+        }
       }
+      // A call the same outage failed while it drained is part of the provider stop.
+      if (this.providerStopped && isProviderDrainFailure(record)) this.typed.add(`${record.agentId}:${record.requestId}`)
+      if (isProviderRefusedRequest(record)) this.refusedByProvider.add(`${record.agentId}:${record.requestId}`)
       if (
         record.event === 'cognitionRefused' &&
         [...BUDGET_STOP_BOUNDS, ADMISSION_CLOSED_BOUND].includes(record.bound) &&
@@ -364,6 +478,17 @@ class PrimaryBehaviorGuard {
   }
 
   check (record) {
+    if (record.event === 'exposureEnded') {
+      this.exposureEnded.add(record.agentId)
+      return null
+    }
+    if (record.event === INITIAL_CONDITIONS_EVENT) return this.beginFailure(record)
+    // Admitted work that drained after the exposure ended ends typed, never applied.
+    if (
+      ['cognitionUnavailable', 'decisionDiscarded'].includes(record.event) &&
+      record.outcome === 'exposureEnded' &&
+      this.exposureEnded.has(record.agentId)
+    ) return null
     const dead = this.dead.has(record.agentId)
     const refusedAfterDeath = this.settlement.observe(record, dead)
     if (dead) {
@@ -374,13 +499,18 @@ class PrimaryBehaviorGuard {
       this.dead.add(record.agentId)
       return null
     }
-    // A danger repeat the JVM coalesced into the agent's active episode was never sent.
-    if (record.event === 'cognitionUnavailable' && record.outcome === DANGER_COALESCED) return null
+    // A perception the JVM coalesced - into a danger episode, or into cognition already in
+    // flight for that agent - was never sent.
+    if (isCoalesced(record)) return null
+    // A danger answer newer damage preempted is superseded, not lost: the newer one governs.
+    if (isPreempted(record)) return null
     if (
       record.event === 'cognitionUnavailable' &&
       this.closed &&
       this.typed.has(`${record.agentId}:${record.requestId}`)
     ) return null
+    // A request the provider refused ends as that perception's own typed failure; the run goes on.
+    if (isProviderRefusedEnding(record, this.refusedByProvider)) return null
     const detail = PRIMARY_BEHAVIOR_FATAL_EVENTS.get(record.event)
     if (detail !== undefined) {
       // A closed camelCase outcome tag says which kind; free text never reaches the message.
@@ -389,15 +519,32 @@ class PrimaryBehaviorGuard {
         : ''
       return new RunFailure('startupFailed', `primary behavior run stopped because ${detail}${tag}`)
     }
-    if (record.event === 'worldInteraction' && record.outcome === 'disputedWorldInteraction') {
-      return new RunFailure(
-        'startupFailed',
-        'primary behavior run stopped because a world interaction was disputed'
-      )
-    }
     if (record.event === 'perceived' && !this.firstPerceptionChecked.has(record.agentId)) {
       this.firstPerceptionChecked.add(record.agentId)
       return this.firstPerceptionFailure(record)
+    }
+    return null
+  }
+
+  // The server's reading at begin is where the pinned conditions must hold, so one that does not
+  // hold them stops the run there, and the agent's first perception is then held to its clock only.
+  beginFailure (witnessed) {
+    const expected = this.config.primaryBehavior.initialPositions[witnessed.agentId]
+    if (expected === undefined) return null
+    if (this.witnessedAtBegin.has(witnessed.agentId)) {
+      return new RunFailure('startupFailed', `${witnessed.agentId} was read twice when the run began`)
+    }
+    this.witnessedAtBegin.add(witnessed.agentId)
+    const entry = {
+      outcome: witnessed.outcome,
+      position: witnessed.initial?.position,
+      inventoryStacks: witnessed.initial?.inventoryStacks
+    }
+    if (!heldAtBegin(entry, expected)) {
+      return new RunFailure(
+        'startupFailed',
+        `${witnessed.agentId} did not hold its pinned initial conditions when the run began`
+      )
     }
     return null
   }
@@ -408,6 +555,12 @@ class PrimaryBehaviorGuard {
     const position = first.perception?.selfState?.position
     const inventory = first.perception?.selfState?.inventorySummary
     const worldClock = first.perceptionAudit?.worldClock
+    if (this.witnessedAtBegin.has(first.agentId)) {
+      if (worldClock === null || typeof worldClock !== 'object') {
+        return new RunFailure('startupFailed', `${first.agentId}'s first perception stated no world clock`)
+      }
+      return null
+    }
     if (
       !Array.isArray(position) ||
       position.length !== expected.length ||
@@ -625,6 +778,28 @@ function authenticationFailure (message, classified) {
   )
 }
 
+/**
+ * What one cognition failure does to a run: a rejected credential ends it; in primary behavior
+ * mode a classified provider outage stops admission, one request the provider refused as invalid
+ * is recorded and the run continues (`isProviderRequestFailure`), and any other failure ends it.
+ * `null` when the run goes on.
+ */
+function cognitionFailureAction (config, message, classified, request) {
+  const failure = authenticationFailure(message, classified)
+  if (failure !== null) return { abort: failure }
+  if (!isPrimaryBehaviorMode(config)) return null
+  const providerStop = request === undefined ? null : providerStopFor(request, classified)
+  if (providerStop !== null) return { stop: providerStop }
+  if (isProviderRequestFailure(classified)) return null
+  return {
+    abort: new RunFailure(
+      'cognitionFailed',
+      'primary behavior cognition returned a failed decision',
+      'cognitionDecisionFailed'
+    )
+  }
+}
+
 function budgetRefusalFailure (refusal) {
   const origin = refusal.origin ?? 'unattested'
   return new RunFailure(
@@ -748,7 +923,42 @@ function sourceIdentity (repositoryRoot) {
   }
 }
 
-async function runExperiment ({
+// macOS's own helper for a power assertion scoped to one process.
+const CAFFEINATE = '/usr/bin/caffeinate'
+
+/**
+ * Holds macOS's idle-sleep assertion until the returned release is called or this process exits,
+ * so an idle host cannot suspend a run: r37 was cut 11 s before its window's end by a 265 s idle
+ * sleep. A closed lid still sleeps the host, which no assertion prevents, and the suspension watch
+ * ends such a run as `hostSuspended`. Elsewhere it holds nothing.
+ */
+async function holdIdleSleepAssertion ({ platform = process.platform, spawnProcess = spawn, pid = process.pid } = {}) {
+  if (platform !== 'darwin') return () => {}
+  const child = spawnProcess(CAFFEINATE, ['-i', '-w', String(pid)], { stdio: 'ignore' })
+  try {
+    await new Promise((resolve, reject) => {
+      child.once('spawn', resolve)
+      child.once('error', reject)
+    })
+  } catch (cause) {
+    throw new Error(`the idle-sleep assertion could not be held: ${cause.message}`)
+  }
+  return () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+  }
+}
+
+/** Runs one experiment with the host held awake for the whole of it, builds included. */
+async function runExperiment (options) {
+  const release = await holdIdleSleepAssertion()
+  try {
+    return await runHeldExperiment(options)
+  } finally {
+    release()
+  }
+}
+
+async function runHeldExperiment ({
   repositoryRoot,
   configFile,
   artifactRoot,
@@ -757,8 +967,7 @@ async function runExperiment ({
   credentialProvider,
   failureDiagnosticRoot,
   signal,
-  statfs = fs.statfsSync,
-  hostLoad
+  statfs = fs.statfsSync
 }) {
   const absoluteRoot = path.resolve(repositoryRoot)
   const config = readJson(path.resolve(configFile))
@@ -771,7 +980,7 @@ async function runExperiment ({
   // Before any build, Paper, listener or credential: nothing has been spent yet.
   verifyFreeDisk(scratchRoot, config, statfs)
   const java = findJava21()
-  const components = buildComponents(absoluteRoot, java, skipBuild)
+  const components = await buildComponents(absoluteRoot, java, skipBuild, signal)
   const paperFile = await ensurePaper(absoluteRoot, config, paperJar)
   await verifyNoListeners(config, 'startup')
 
@@ -800,9 +1009,14 @@ async function runExperiment ({
   let clean = false
   let failure
   let controlledStop
+  // Ends the run's exposure in the same turn cognition admission closes; assigned once Paper runs.
+  let endExposure = () => {}
   const stopAdmission = (stop) => {
     try {
-      if (proxy.closeAdmission(stop)) controlledStop = stop
+      if (proxy.closeAdmission(stop)) {
+        controlledStop = stop
+        endExposure()
+      }
     } catch (cause) {
       abort(cause instanceof RunFailure
         ? cause
@@ -855,9 +1069,8 @@ async function runExperiment ({
     )
   }
   try {
-    // Before anything is started or read: a busy host is refused, and Paper starts from the
-    // verified runtime cache rather than downloading and remapping.
-    await awaitQuietHost({ ...(hostLoad ?? {}) })
+    // Paper starts from the verified runtime cache rather than downloading and remapping. No host
+    // state - load, swap, memory pressure, battery, lid, display or power - delays or refuses a run.
     writeServerFiles({
       runDirectory,
       paperFile,
@@ -910,24 +1123,16 @@ async function runExperiment ({
       requestOrigin: (trigger) => requestOriginFor(config, trigger),
       spend: {
         ceilingNanoUsd: Math.round(config.cognition.maxExternalSpendUsd * 1_000_000_000),
-        worstCaseCallNanoUsd: worstCaseCallNanoUsd(config)
+        worstCaseCallNanoUsd: worstCaseCallNanoUsd(config),
+        ...(Number.isInteger(config.cognition.pivotalCallCeiling) ? { tier: worstCaseTierNanoUsd(config) } : {})
       },
       journal,
       onCognitionFailure: (message, classified, request) => {
-        const failure = authenticationFailure(message, classified)
-        const providerStop = isPrimaryBehaviorMode(config) && request !== undefined
-          ? providerStopFor(request, classified)
-          : null
-        if (failure !== null) {
-          abort(failure)
-        } else if (providerStop !== null) {
-          stopAdmission(providerStop)
-        } else if (isPrimaryBehaviorMode(config)) {
-          abort(new RunFailure(
-            'cognitionFailed',
-            'primary behavior cognition returned a failed decision',
-            'cognitionDecisionFailed'
-          ))
+        const action = cognitionFailureAction(config, message, classified, request)
+        if (action?.abort !== undefined) {
+          abort(action.abort)
+        } else if (action?.stop !== undefined) {
+          stopAdmission(action.stop)
         }
       },
       onRefusal: (refusal) => {
@@ -993,7 +1198,9 @@ async function runExperiment ({
         LOOM_COGNITION_CONNECT_TIMEOUT_MS: String(config.runtime.cognitionBridge.connectTimeoutMillis),
         LOOM_COGNITION_WORKERS: String(config.runtime.cognitionBridge.workers),
         LOOM_COGNITION_QUEUE_DEPTH: String(config.runtime.cognitionBridge.queueDepth),
-        LOOM_COGNITION_PENDING_PER_AGENT: String(config.runtime.cognitionBridge.perAgentPending)
+        LOOM_COGNITION_PENDING_PER_AGENT: String(config.runtime.cognitionBridge.perAgentPending),
+        LOOM_NATIVE_COGNITION: nativeCognitionStartOf(config),
+        ...followUpsEnvironmentOf(config)
       },
       logFile: path.join(runDirectory, 'paper.log'),
       stdin: true
@@ -1055,6 +1262,7 @@ async function runExperiment ({
     const harnessTail = new JsonLinesTail(rawHarnessEvidence)
     const guard = new PrimaryBehaviorGuard(config)
     const settlement = new RequestSettlement()
+    endExposure = exposureEnder(paper, config)
     const pollEvidence = () => {
       const body = bodyTail.poll()
       guard.observeHarness(harnessTail.poll())
@@ -1062,10 +1270,13 @@ async function runExperiment ({
       return guard.observeBody(body)
     }
     const suspension = new SuspensionWatch()
+    // Primary-behavior polls never wait inside the loop but for its own short delay, so a long gap
+    // is the host itself: the run ends integrity-invalid as `hostSuspended` and is never published,
+    // and whatever ended the interval it spans is the suspension's.
+    const explained = (cause) => isPrimaryBehaviorMode(config) ? suspension.explain(cause) : cause
     while (Date.now() < deadline) {
-      if (controller.signal.aborted) throw controller.signal.reason
-      // Primary-behavior polls never wait inside the loop, so a long gap is the host itself.
-      const suspended = isPrimaryBehaviorMode(config) ? suspension.check() : null
+      if (controller.signal.aborted) throw explained(controller.signal.reason)
+      const suspended = explained(null)
       if (suspended !== null) throw suspended
       if (bodyTail.offset > config.bounds.logBytes) {
         throw new RunFailure('logLimit', 'body evidence exceeded the configured log byte bound')
@@ -1123,8 +1334,17 @@ async function runExperiment ({
         })
         proxy.markControlledBodyCrash(crashAgent.agentId)
       }
-      await delay(Math.min(250, Math.max(1, deadline - Date.now())), controller.signal)
+      try {
+        await delay(Math.min(250, Math.max(1, deadline - Date.now())), controller.signal)
+      } catch (cause) {
+        throw explained(cause)
+      }
     }
+    // A suspension that spans the deadline ends the loop by its own clock before the loop could see
+    // it, and the drain after it is the first to wake (r37: a 265 s idle sleep 11 s before the
+    // window's end failed the drain as `cognitionUpstreamUnavailable`), so both ask the watch too.
+    const suspendedAtEnd = explained(null)
+    if (suspendedAtEnd !== null) throw suspendedAtEnd
     if (controlledStop === undefined && isPrimaryBehaviorMode(config)) {
       pollEvidence()
       proxy.closeAdmission({
@@ -1132,15 +1352,21 @@ async function runExperiment ({
         reason: stopReason,
         endTick: Math.max(bodyTail.maxTick, serverTick)
       }, ADMISSION_ENDED_EVENT)
+      endExposure()
     }
     if (controlledStop !== undefined || isPrimaryBehaviorMode(config)) {
       if (controlledStop !== undefined) stopReason = CONTROLLED_STOP_REASON
-      await drainControlledStop({
-        proxy,
-        poll: pollEvidence,
-        settlement,
-        signal: controller.signal
-      })
+      try {
+        await drainControlledStop({
+          proxy,
+          poll: () => explained(null) ?? pollEvidence(),
+          settlement,
+          exposureRecorded: () => !isPrimaryBehaviorMode(config) || config.agents.every((agentId) => guard.exposureEnded.has(agentId)),
+          signal: controller.signal
+        })
+      } catch (cause) {
+        throw explained(cause)
+      }
     }
     endedAt = new Date().toISOString()
     const invalidPrimaryBehavior = primaryBehaviorRunFailure(
@@ -1197,6 +1423,8 @@ async function runExperiment ({
           : new RunFailure('startupFailed', 'cleanup could not be verified')
       }
     }
+    // Before any process is signalled, so a call the stop cuts off is typed as the stop's.
+    proxy?.beginStopping()
     await cleanupStep(async () => {
       if (supervisor !== undefined) await supervisor.stopAll(config.bounds.shutdownSeconds * 1000)
     })
@@ -1262,6 +1490,7 @@ async function drainControlledStop ({
   proxy,
   poll,
   settlement,
+  exposureRecorded = () => true,
   signal,
   timeoutMilliseconds = CONTROLLED_STOP_DRAIN_MILLIS
 }) {
@@ -1274,7 +1503,7 @@ async function drainControlledStop ({
       poll: async () => {
         invalid = poll()
         return invalid !== null ||
-          (proxy.snapshot().outstandingCalls === 0 && settlement.unsettled.size === 0)
+          (proxy.snapshot().outstandingCalls === 0 && settlement.unsettled.size === 0 && exposureRecorded())
       }
     })
   } catch (cause) {
@@ -1298,19 +1527,26 @@ function paperWarnings (logFile) {
 }
 
 module.exports = {
+  followUpsEnvironmentOf,
+  applyPrimaryBehaviorInitialConditions,
   authenticationFailure,
   bodyEvents,
   budgetRefusalFailure,
   buildComponents,
   conciseJavaVersion,
   PrimaryBehaviorGuard,
+  cognitionFailureAction,
   RequestSettlement,
   drainControlledStop,
+  exposureEnder,
   ensurePaper,
   findJava21,
+  holdIdleSleepAssertion,
   importProviderUsage,
   keychainCredentialProvider,
+  nativeCognitionStartOf,
   primaryBehaviorRunFailure,
+  runBuild,
   runExperiment,
   sourceIdentity,
   toolVersions,

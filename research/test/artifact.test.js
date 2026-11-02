@@ -9,6 +9,7 @@ const path = require('node:path')
 const {
   componentSourceHashes,
   publishArtifact,
+  readmeQuestion,
   validateArtifact,
   validateProspectiveManifest,
   validateRunConfig
@@ -121,7 +122,7 @@ test('a prospective generation-3 manifest is validated before launch', () => {
   assert.equal(manifest.publication.manifestValidatedBeforeLaunch, true)
 })
 
-test('historical configurations are refused before startup and only v13 pilots are runnable', () => {
+test('historical configurations are refused before startup and only served-prompt configurations are runnable', () => {
   const support = readJson(path.join(__dirname, '..', '..', 'contract', 'fixtures', 'capability-support.json'))
   for (const [name, entry] of Object.entries(support.researchConfigs)) {
     const errors = validateRunConfig(readJson(path.join(__dirname, '..', 'config', name)))
@@ -147,28 +148,43 @@ test('every feature flag must be true because no runtime route reads one', () =>
   }
 })
 
-test('the routine-v13 goal-continuity pilot preflights under the v12 treatment plus v13 prompts and category fairness', () => {
+test('the routine-v38 pilot preflights under the v12 treatment plus v38 prompts and category fairness', () => {
   const config = openAiGoalContinuityConfig()
   assert.deepEqual(validateRunConfig(config), [])
   assert.deepEqual(validateRunConfig(goalContinuityConfig()), [])
   const manifest = validateProspectiveManifest(config, SOURCE)
-  assert.equal(manifest.protocol.mode, 'routine-v13-goal-continuity')
+  assert.equal(manifest.protocol.mode, 'routine-v38-reliable-source')
   assert.equal(manifest.protocol.categoryFairSelection, true)
   assert.equal(manifest.protocol.controlledBodyCrashPlanned, false)
   assert.deepEqual(manifest.provenance.prompts, {
-    routine: 'routine-v13',
-    notable: 'notable-v13',
-    pivotal: 'pivotal-v13'
+    routine: 'routine-v38',
+    notable: 'notable-v38',
+    pivotal: 'pivotal-v38'
   })
+  // The v38 pilot (its file still named for v36) is the v13 pilot with only its mode, prompts, identity, the follow-up reviews a
+  // settled goal step owes, and the global and spend ceilings that hold them moved.
+  for (const suffix of ['', '-scripted']) {
+    const read = (version) => {
+      const pinned = readJson(path.join(__dirname, '..', 'config', `first-tribe-routine-${version}-agency-pilot${suffix}.json`))
+      for (const key of ['experimentId', 'title', 'mode']) delete pinned[key]
+      delete pinned.cognition.prompts
+      delete pinned.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview
+      delete pinned.cognition.globalCallCeiling
+      delete pinned.cognition.maxExternalSpendUsd
+      return pinned
+    }
+    assert.deepEqual(read('v36'), read('v13'))
+  }
   assert.deepEqual(manifest.provenance.models, { ordinary: 'gpt-5.4-nano', pivotal: 'gpt-5.4' })
-  assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 2.33472)
-  assert.equal(manifest.cognition.maxExternalSpendUsd, 2.34)
+  // 18 calls at the worst-case price, from v26's two owed follow-ups per review.
+  assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 3.50208)
+  assert.equal(manifest.cognition.maxExternalSpendUsd, 3.51)
 
   assert.equal(manifest.cognition.perAgentCallCeiling, 6)
-  assert.equal(manifest.cognition.globalCallCeiling, 12)
+  assert.equal(manifest.cognition.globalCallCeiling, 18)
 
-  // Everything but the mode, title, prompts, fairness attestation, per-agent call share and
-  // speech is the v12 pilot.
+  // Everything but the mode, title, prompts, fairness attestation, call ceilings, speech and the
+  // follow-up reviews a settled goal step owes is the v12 pilot.
   const v12 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v12-agency-pilot.json'))
   for (const drop of [v12, config]) {
     for (const key of ['experimentId', 'title', 'mode', 'configFile']) delete drop[key]
@@ -178,18 +194,23 @@ test('the routine-v13 goal-continuity pilot preflights under the v12 treatment p
     // Speech became a body capability after the v12 pilot; v13 attests it and names its profile.
     delete drop.featureFlags.speech
     delete drop.primaryBehavior.profile
+    delete drop.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview
+    delete drop.cognition.globalCallCeiling
+    delete drop.cognition.maxExternalSpendUsd
   }
   assert.deepEqual(config, v12)
 })
 
 test('each native-scheduler pilot refuses the other pilot prompts or fairness attestation', () => {
-  const v13 = goalContinuityConfig()
-  v13.primaryBehavior.categoryFairSelection = false
-  assert.ok(validateRunConfig(v13).some((error) => error.includes('categoryFairSelection must be true')))
+  const unfair = goalContinuityConfig()
+  unfair.primaryBehavior.categoryFairSelection = false
+  assert.ok(validateRunConfig(unfair).some((error) => error.includes('categoryFairSelection must be true')))
 
   const v13OldPrompts = goalContinuityConfig()
-  v13OldPrompts.cognition.prompts = { routine: 'routine-v12', notable: 'notable-v12', pivotal: 'pivotal-v12' }
-  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v13')))
+  v13OldPrompts.cognition.prompts = { routine: 'routine-v13', notable: 'notable-v13', pivotal: 'pivotal-v13' }
+  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v38')))
+  const v13 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v13-agency-pilot-scripted.json'))
+  assert.ok(validateRunConfig(v13).some((error) => error.includes('mode routine-v13-goal-continuity is historical')))
 
   const v12 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v12-agency-pilot-scripted.json'))
   assert.ok(validateRunConfig(v12).some((error) => error.includes('mode routine-v12-primary-behavior is historical')))
@@ -215,12 +236,20 @@ test('each native-scheduler pilot refuses the other pilot prompts or fairness at
   assert.notDeepEqual(validateRunConfig(model), [])
 })
 
-test('the scripted v13 publication carries adoption then continuity without claiming agency', () => {
+test('the scripted v32 publication carries adoption then continuity without claiming agency', () => {
   const config = goalContinuityConfig()
-  const published = publishFixture({ config, raw: primaryBehaviorRawRecords(config) })
+  const raw = primaryBehaviorRawRecords(config)
+  // r14 beta body:00000150 saw delta 1.9 blocks off while no self-position pairing found them.
+  const seenWith = raw.body.find((record) => record.event === 'perceived' && record.agentId === 'tribe-beta')
+  const other = seenWith.perception.surroundings.find((seen) => seen.kind === 'entity')
+  other.what = 'entity.minecraft.player'
+  other.distance = 1.9
+  const published = publishFixture({ config, raw })
   const validation = validateArtifact(published.artifactDirectory)
   assert.deepEqual(validation.errors, [])
-  assert.equal(published.manifest.protocol.mode, 'routine-v13-goal-continuity')
+  assert.equal(published.metrics.spatial.playerSightings, 1)
+  assert.ok(published.metrics.findings.observations.includes('1 perception(s) showed another player within eight blocks'))
+  assert.equal(published.manifest.protocol.mode, 'routine-v38-reliable-source')
   assert.equal(published.manifest.protocol.categoryFairSelection, true)
   assert.equal(published.manifest.perceptionAudit.byKind.entities.jvmCutOmittedCount, 0)
   assert.equal(published.metrics.goalContinuity.byOutcome.goalAdopted, 3)
@@ -230,8 +259,16 @@ test('the scripted v13 publication carries adoption then continuity without clai
     ['tribe-alpha', 'tribe-beta', 'tribe-gamma']
   )
   const readme = fs.readFileSync(path.join(published.artifactDirectory, 'README.md'), 'utf8')
-  assert.match(readme, /routine-v13 pilot/)
+  assert.match(readme, /routine-v38 pilot/)
   assert.match(readme, /It is not a model-behavior result/)
+  // The current gate generation states readiness and lists every action that did not succeed.
+  const readiness = published.metrics.behaviorGate.readiness
+  assert.equal(readiness.version, 'loom-readiness-gate/20')
+  assert.match(readme, new RegExp(`Readiness: \\*\\*${readiness.verdict}\\*\\*`))
+  // Coherence is part of that verdict and stated beside the mechanical one.
+  assert.match(readme, new RegExp(`Goal coherence: \\*\\*${readiness.goalCoherence.verdict}\\*\\*, part of the verdict`))
+  assert.ok(['ready', 'notReady'].includes(readiness.mechanicalVerdict))
+  for (const entry of readiness.actions.nonSuccess) assert.ok(readme.includes(`\`${entry.requestKey}\``), entry.requestKey)
 })
 
 test('a v13 manifest that attests no category fairness is refused at validation', () => {
@@ -263,6 +300,30 @@ test('primary behavior preflight refuses native review plans outside per-agent o
     validateRunConfig(global)
       .includes('planned native reviews exceed the global cognition call ceiling')
   )
+
+  // From routine-v26 each scheduled review may owe two follow-ups, and both ceilings must hold the
+  // scheduled reviews and their follow-ups together: from v29 the pilot's 2 reviews and one
+  // follow-up each are 4 calls an agent.
+  const followed = goalContinuityConfig()
+  followed.cognition.perAgentCallCeiling = 3
+  assert.ok(
+    validateRunConfig(followed)
+      .includes('planned native reviews exceed the per-agent cognition call ceiling')
+  )
+  const unstated = goalContinuityConfig()
+  delete unstated.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview
+  assert.ok(
+    validateRunConfig(unstated).some((error) => error.includes('followUpsPerReview must be 1')),
+    validateRunConfig(unstated).join('\n')
+  )
+  const doubled = goalContinuityConfig()
+  doubled.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview = 2
+  assert.ok(validateRunConfig(doubled).some((error) => error.includes('followUpsPerReview must be 1 when stated')))
+  // From v29 the plan leaves a third of the global ceiling to events: r20 planned exactly 150
+  // reviews against 150, and the night's danger stopped the run.
+  const crowded = goalContinuityConfig()
+  crowded.cognition.globalCallCeiling = crowded.agents.length * 4
+  assert.ok(validateRunConfig(crowded).some((error) => error.includes('event share of the global cognition call ceiling')))
 
   const workers = goalContinuityConfig()
   assert.deepEqual(validateRunConfig(workers), [])
@@ -576,4 +637,297 @@ test('two-cycle profiles pin the surveyed ring, the population and the envelope'
   assert.deepEqual(reviewWindowBounds(schedule, 10, 47_999), { minimum: 20, maximum: 20 })
   // A death at tick 13,000 owes the reviews of that life span alone.
   assert.deepEqual(reviewWindowBounds(schedule, 10, 13_000), { minimum: 5, maximum: 6 })
+})
+
+test('the ten-minute shakedown is the ten-agent two-cycle profile with only its pinned differences', () => {
+  const { AGENT_ORDER, PROFILES, SCENES, placementOf } = require('../lib/profiles.js')
+  const { reviewWindowBounds } = require('../lib/controlled-stop.js')
+  const shakedown = PROFILES['shakedown-10m-10']
+  const differences = {
+    runDurationSeconds: 600,
+    simulationTickCeiling: 12_000,
+    expectedReviewsPerAgent: 6,
+    callCeilings: { perAgent: 24, global: 150, outstanding: 6 },
+    maxExternalSpendUsd: 29.19,
+    bounds: { logBytes: 16 * 1024 * 1024, evidenceRecords: 8000, artifactBytes: 16 * 1024 * 1024 }
+  }
+  assert.ok(Object.isFrozen(shakedown))
+  assert.deepEqual({ ...shakedown }, { ...PROFILES['two-cycle-10'], ...differences })
+  assert.equal(shakedown.ticksPerSecond, undefined)
+  assert.equal(shakedown.world, undefined)
+  assert.equal(shakedown.scriptedOnly, undefined)
+
+  const read = (file) => readJson(path.join(__dirname, '..', 'config', file))
+  // The v13 shakedown ran r1 to r4, the v14 grounded walk r5 and the v15 one r6; all are
+  // historical now, as are the v17 working goal that ran r8 and r9, the v18 offered refs that ran
+  // r10, the v19 actionable refs that ran r11, the v20 typed goal that ran r12 and the v21 grounded
+  // step that ran r13; the v22 obtainable goal is the same profile under the served mode.
+  for (const name of ['grounded-walk-10m-10', 'grounded-walk-v15-10m-10', 'working-goal-10m-10', 'offered-refs-10m-10', 'actionable-refs-10m-10', 'typed-goal-10m-10', 'grounded-step-10m-10', 'obtainable-goal-10m-10', 'own-evidence-10m-10']) {
+    assert.deepEqual({ ...PROFILES[name] }, { ...shakedown }, name)
+  }
+  // The v24 and v25 profiles plan the five scheduled reviews a run can finish (the r15 audit).
+  for (const name of ['answered-goal-10m-10', 'collected-goal-10m-10']) {
+    assert.deepEqual({ ...PROFILES[name] }, { ...shakedown, expectedReviewsPerAgent: 5 }, name)
+  }
+  // The v26 profile pre-registers its coherence bars beside the same plan (the r17 audit).
+  // The v27 profile moves the scene to the forest and pre-registers the generation-10 bars (the
+  // r18 audit).
+  const { coherenceBars: woodedBars, ...wooded } = PROFILES['wooded-goal-10m-10']
+  assert.deepEqual(wooded, { ...shakedown, scene: 'f1-forest-ring', expectedReviewsPerAgent: 5 })
+  assert.ok(Object.isFrozen(woodedBars))
+  assert.deepEqual({ ...woodedBars }, {
+    goalActiveReviewShare: 0.6,
+    minAgentGoalActiveReviewShare: 0.4,
+    goalHeldTimeShare: 0.5,
+    minAgentGoalHeldTimeShare: 0.25,
+    maxIdleBesideExploration: 0,
+    multiStepAgentsAtOriginalTarget: 3,
+    originalTargetCompletions: 3,
+    distinctGoalItems: 2,
+    craftSteps: 1
+  })
+  assert.equal(SCENES['f1-forest-ring'].seed, '10001')
+  assert.equal(SCENES['f1-forest-ring'].positions.length, 10)
+  // The v28 profile moves the scene to the plains a walk from the woods, starting in the
+  // afternoon, and pre-registers the generation-11 bars (the r19 audit).
+  const { coherenceBars: exploredBars, ...explored } = PROFILES['explored-goal-10m-10']
+  assert.deepEqual(explored, { ...shakedown, scene: 'e1-explore-ring', expectedReviewsPerAgent: 5 })
+  assert.ok(Object.isFrozen(exploredBars))
+  assert.deepEqual({ ...exploredBars }, {
+    goalActiveReviewShare: 0.6,
+    minAgentGoalActiveReviewShare: 0.4,
+    progressingHeldTimeShare: 0.5,
+    minAgentProgressingHeldTimeShare: 0.25,
+    maxIdleBesideExploration: 0,
+    substantiveMultiStepAgents: 3,
+    substantiveCompletions: 3,
+    chainedGoals: 2,
+    distinctGoalItems: 3,
+    craftChainSteps: 1,
+    exploringAgents: 3,
+    dangerEncounters: 1
+  })
+  assert.equal(SCENES['e1-explore-ring'].seed, '20011')
+  assert.equal(SCENES['e1-explore-ring'].positions.length, 10)
+  assert.equal(SCENES['e1-explore-ring'].initialTimeOfDay, 9000)
+  assert.equal(SCENES['f1-forest-ring'].initialTimeOfDay, undefined)
+  // The v29 profile keeps the plains and pre-registers the generation-12 bars (the r20 audit).
+  const { coherenceBars: nightBars, ...night } = PROFILES['night-goal-10m-10']
+  assert.deepEqual(night, { ...explored })
+  assert.ok(Object.isFrozen(nightBars))
+  assert.deepEqual({ ...nightBars }, {
+    goalActiveReviewShare: 0.6,
+    minAgentGoalActiveReviewShare: 0.4,
+    progressingHeldTimeShare: 0.5,
+    minAgentProgressingHeldTimeShare: 0.25,
+    maxIdleBesideExploration: 0,
+    substantiveMultiStepAgents: 3,
+    substantiveCompletions: 3,
+    chainedGoals: 2,
+    distinctGoalItems: 3,
+    craftChainSteps: 1,
+    exploringAgents: 3,
+    dangerEpisodes: 1
+  })
+  // The v31 profile keeps the strict substance bars and drops the ones no run could fail (r23).
+  const { coherenceBars: discoveryBars, ...discovery } = PROFILES['discovery-goal-10m-10']
+  assert.deepEqual(discovery, { ...explored })
+  assert.ok(Object.isFrozen(discoveryBars))
+  const { distinctGoalItems, exploringAgents, dangerEpisodes, ...strict } = nightBars
+  assert.deepEqual({ ...discoveryBars }, strict)
+  const { coherenceBars, ...pursued } = PROFILES['pursued-goal-10m-10']
+  assert.deepEqual(pursued, { ...shakedown, expectedReviewsPerAgent: 5 })
+  assert.ok(Object.isFrozen(coherenceBars))
+  assert.deepEqual({ ...coherenceBars }, {
+    goalActiveReviewShare: 0.6,
+    maxIdleWithExploration: 0,
+    multiStepAgentsAtOriginalTarget: 2,
+    originalTargetCompletions: 3
+  })
+  for (const file of ['tribe-shakedown-10m-10.json', 'tribe-shakedown-10m-10-scripted.json']) {
+    for (const earlier of ['grounded-walk', 'grounded-walk-v15', 'working-goal', 'offered-refs', 'actionable-refs', 'typed-goal', 'grounded-step', 'obtainable-goal', 'own-evidence', 'answered-goal', 'collected-goal', 'pursued-goal', 'wooded-goal', 'explored-goal'].map((name) => file.replace('shakedown', name)).concat(file)) {
+      assert.ok(validateRunConfig(read(earlier)).some((error) => error.includes('historical')), earlier)
+    }
+    const v13 = read(file)
+    const v29 = read(file.replace('shakedown', 'night-goal'))
+    // The plains scene moves the seed, every slot and the start time; nothing else about the
+    // world does. From r34 the balanced scene starts it at 6000 rather than 9000 (the r33 audit).
+    assert.equal(v29.world.seed, SCENES['e1-explore-ring'].seed)
+    assert.equal(v29.primaryBehavior.scene, 'e2-balanced-ring')
+    assert.equal(v29.primaryBehavior.initialWorldClock.timeOfDay, 6000)
+    v29.primaryBehavior.initialWorldClock.timeOfDay = 0
+    for (const config of [v13, v29]) {
+      for (const key of ['experimentId', 'title', 'mode']) delete config[key]
+      delete config.cognition.prompts
+      delete config.primaryBehavior.profile
+      delete config.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview
+      delete config.world.seed
+      delete config.primaryBehavior.scene
+      delete config.primaryBehavior.initialPositions
+    }
+    // From v32 the call envelope is tier-aware inside the same $29.19 ceiling (r24).
+    assert.deepEqual([v29.cognition.perAgentCallCeiling, v29.cognition.globalCallCeiling, v29.cognition.pivotalCallCeiling], [40, 378, 130])
+    Object.assign(v29.cognition, { perAgentCallCeiling: 24, globalCallCeiling: 150 })
+    delete v29.cognition.pivotalCallCeiling
+    // From v24 the plan names the five scheduled reviews a run can finish.
+    assert.equal(v29.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent, 5)
+    v29.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 6
+    assert.deepEqual(v29, v13, file)
+  }
+  const live = read('tribe-held-objective-10m-10.json')
+  const scripted = read('tribe-held-objective-10m-10-scripted.json')
+  const base = read('tribe-two-cycle-10.json')
+  assert.match(live.experimentId, /^2026-10-16-openai-10-agent-10m-r[0-9]+$/)
+  assert.equal(live.mode, 'routine-v38-reliable-source')
+  for (const config of [live, scripted]) {
+    assert.deepEqual(validateRunConfig(config), [], config.experimentId)
+    assert.equal(config.primaryBehavior.profile, 'held-objective-follow-up-10m-10')
+    // Four follow-ups a scheduled review (R43: two left every agent waiting four times 1500 to 2200
+    // ticks): 250 planned calls leave 128 of the 378 to events, the third the mode keeps.
+    assert.equal(config.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview, 4)
+    assert.equal(PROFILES['held-objective-follow-up-10m-10'].followUpsPerReview, 4)
+    const one = structuredClone(config)
+    one.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview = 2
+    assert.ok(validateRunConfig(one).some((error) => error.includes('followUpsPerReview must be 4')), 'the profile pins four')
+    assert.deepEqual(config.agents, [...AGENT_ORDER])
+    // The balanced scene: e1's seed and positions, from time 6000 (the r33 audit).
+    assert.equal(config.primaryBehavior.scene, 'e2-balanced-ring')
+    assert.equal(config.world.seed, SCENES['e1-explore-ring'].seed)
+    assert.deepEqual(config.primaryBehavior.initialPositions, placementOf(explored).positions)
+    assert.deepEqual(config.primaryBehavior.initialWorldClock, { timeOfDay: 6000, day: 0, isDay: true })
+    assert.equal(config.primaryBehavior.startingInventories, 'empty')
+    assert.equal(config.primaryBehavior.externalCognitionStimuli, 'none')
+    assert.equal(config.proof, undefined)
+    assert.deepEqual({ ...config.world, seed: base.world.seed }, base.world)
+    assert.deepEqual(config.featureFlags, base.featureFlags)
+    assert.deepEqual(config.cognition.prompts, { ...SERVED_PROMPTS })
+    assert.equal(config.cognition.eventDrivenOnly, true)
+    assert.equal(config.cognition.socialRolesInjected, false)
+    assert.equal(config.runtime.paperMemoryMiB, 2048)
+    assert.equal(config.bounds.startupConcurrency, 2)
+    assert.equal(config.cognition.maxRequestBytes, 65_536)
+    assert.equal(config.cognition.maxOutputTokens, 2048)
+  }
+  // Against the merged ten-agent configuration only the pinned differences move.
+  const pinned = (config) => {
+    const copy = structuredClone(config)
+    delete copy.experimentId
+    delete copy.title
+    Object.assign(copy.bounds, { runDurationSeconds: 0, simulationTickCeiling: 0, logBytes: 0, artifactBytes: 0, evidenceRecords: 0 })
+    Object.assign(copy.cognition, { perAgentCallCeiling: 0, globalCallCeiling: 0, globalOutstandingCeiling: 0, maxExternalSpendUsd: 0 })
+    delete copy.cognition.pivotalCallCeiling
+    copy.primaryBehavior.profile = null
+    copy.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 0
+    copy.primaryBehavior.nativeGoalReviewSchedule.followUpsPerReview = 0
+    copy.world.seed = null
+    copy.primaryBehavior.scene = null
+    copy.primaryBehavior.initialPositions = null
+    copy.primaryBehavior.initialWorldClock.timeOfDay = 0
+    return copy
+  }
+  assert.deepEqual(pinned(live), pinned(base))
+  assert.deepEqual(pinned(scripted), pinned(read('tribe-two-cycle-10-scripted.json')))
+  assert.deepEqual(live.cognition.models, { ordinary: 'gpt-5.4-nano', pivotal: 'gpt-5.4' })
+  assert.equal(live.cognition.backend, 'openai')
+  assert.equal(scripted.cognition.backend, 'scripted')
+  const manifest = validateProspectiveManifest(live, SOURCE)
+  assert.equal(manifest.protocol.profile, 'held-objective-follow-up-10m-10')
+  // 130 pivotal calls at $0.19456 and 248 ordinary at $0.0156672, under the unchanged ceiling.
+  assert.equal(manifest.cognition.worstCaseConfiguredSpendUsd, 29.1782656)
+  assert.equal(manifest.cognition.maxExternalSpendUsd, 29.19)
+  assert.equal(manifest.cognition.pivotalCallCeiling, 130)
+  // One more pivotal call, or every call priced as pivotal, would exceed it: refused at preflight.
+  const dearer = structuredClone(live)
+  dearer.cognition.pivotalCallCeiling = 131
+  assert.ok(validateRunConfig(dearer).some((error) => error.includes('worst-case')), 'a 131-pivotal mix is refused')
+  const untiered = structuredClone(live)
+  delete untiered.cognition.pivotalCallCeiling
+  assert.ok(validateRunConfig(untiered).some((error) => error.includes('worst-case')), '378 calls all priced pivotal are refused')
+
+  const drifts = [
+    (config) => { config.agents.pop() },
+    (config) => { config.primaryBehavior.initialPositions['tribe-alpha'] = [12.5, 104, 0.5] },
+    (config) => { config.primaryBehavior.scene = 'r5-neutral' },
+    (config) => { config.world.seed = '76192346017' },
+    (config) => { config.world.difficulty = 'peaceful' },
+    (config) => { config.world.mobSpawning = false },
+    (config) => { config.world.worldBorderDiameterBlocks = 256 },
+    (config) => { config.world.viewDistanceChunks = 5 },
+    (config) => { config.primaryBehavior.initialWorldClock.timeOfDay = 9000 },
+    (config) => { config.primaryBehavior.startingInventories = 'kit' },
+    (config) => { config.primaryBehavior.injectedDirectives.roles = true },
+    (config) => { config.primaryBehavior.externalCognitionStimuli = 'operatorThink' },
+    (config) => { config.bounds.runDurationSeconds = 601 },
+    (config) => { config.bounds.simulationTickCeiling = 12_001 },
+    (config) => { config.primaryBehavior.nativeGoalReviewSchedule.expectedReviewsPerAgent = 6 },
+    (config) => { config.cognition.perAgentCallCeiling = 25 },
+    (config) => { config.cognition.globalCallCeiling = 151 },
+    (config) => { config.cognition.globalOutstandingCeiling = 7 },
+    (config) => { config.cognition.maxExternalSpendUsd = 29.2 },
+    (config) => { config.cognition.maxExternalSpendUsd = 29.18 },
+    (config) => { config.cognition.models.ordinary = 'gpt-5.4' },
+    (config) => { config.cognition.models.pivotal = 'gpt-5.4-nano' },
+    (config) => { config.cognition.prompts.routine = 'routine-v12' },
+    (config) => { config.cognition.maxOutputTokens = 4096 },
+    (config) => { config.cognition.maxRequestBytes = 131_072 },
+    (config) => { config.featureFlags.speech = false },
+    (config) => { config.bounds.evidenceRecords = 20_000 },
+    (config) => { config.bounds.logBytes *= 2 },
+    (config) => { config.bounds.artifactBytes *= 2 },
+    (config) => { config.runtime.paperMemoryMiB = 1024 },
+    (config) => { config.primaryBehavior.profile = 'two-cycle-10' },
+    (config) => { config.mode = 'routine-v13-goal-continuity' }
+  ]
+  for (const drift of drifts) {
+    const config = read('tribe-held-objective-10m-10.json')
+    drift(config)
+    assert.notDeepEqual(validateRunConfig(config), [], drift.toString())
+  }
+  // Review 6 is due at tick 12,000 itself; a ten-minute window ending just short owes five.
+  const schedule = { cadenceTicks: 2400, sliceTicks: 100, expectedReviewsPerAgent: 6 }
+  assert.deepEqual(reviewWindowBounds(schedule, 10, 12_000), { minimum: 5, maximum: 6 })
+  assert.deepEqual(reviewWindowBounds(schedule, 10, 11_999), { minimum: 5, maximum: 5 })
+})
+
+test('the README question names the configured population and profile', () => {
+  const read = (file) => readJson(path.join(__dirname, '..', 'config', file))
+  // The pilot wording every committed pilot README carries is unchanged.
+  assert.match(
+    readmeQuestion(read('first-tribe-routine-v13-agency-pilot.json')),
+    /^Can three independently embodied Loom agents complete the bounded routine-v13 pilot using/
+  )
+  // A ten-agent shakedown was once described as the three-agent pilot.
+  const shakedown = readmeQuestion(read('tribe-shakedown-10m-10.json'))
+  assert.match(shakedown, /^Can ten independently embodied Loom agents complete the bounded routine-v13 shakedown-10m-10 profile using/)
+  assert.doesNotMatch(shakedown, /three|pilot/)
+  assert.match(readmeQuestion(read('tribe-two-cycle-3.json')), /^Can three .* two-cycle-3 profile using/)
+})
+
+test('the balanced profile keeps every survival-envelope bound and pre-registers its exposure exactly', () => {
+  const { PROFILES, SCENES, exposureOf } = require('../lib/profiles.js')
+  const balanced = PROFILES['balanced-envelope-10m-10']
+  const envelope = PROFILES['survival-envelope-10m-10']
+  assert.deepEqual({ ...balanced, scene: envelope.scene, exposure: undefined }, { ...envelope, exposure: undefined })
+  const from = SCENES['e2-balanced-ring']
+  const was = SCENES['e1-explore-ring']
+  assert.deepEqual({ ...from, initialTimeOfDay: was.initialTimeOfDay }, { ...was })
+  assert.equal(from.initialTimeOfDay, 6000)
+  // 7000 daylight ticks of pursuit before dusk at 13000, then 5000 night ticks of natural danger.
+  assert.deepEqual(exposureOf(from.initialTimeOfDay, balanced.simulationTickCeiling), { daylightTicks: 7000, nightTicks: 5000 })
+  assert.deepEqual({ ...balanced.exposure }, { daylightTicks: 7000, nightTicks: 5000 })
+  // r33's start would have held 4000 daylight ticks and 8000 night ones: refused for this profile.
+  assert.deepEqual(exposureOf(was.initialTimeOfDay, balanced.simulationTickCeiling), { daylightTicks: 4000, nightTicks: 8000 })
+  const late = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'tribe-held-objective-10m-10.json'), 'utf8'))
+  late.primaryBehavior.initialWorldClock.timeOfDay = 9000
+  assert.ok(validateRunConfig(late).some((error) => error.includes('initialWorldClock')), 'a 9000 start is refused')
+})
+
+test('every committed artifact validates, a pre-harness generation by its schema alone', () => {
+  const experiments = path.join(__dirname, '..', 'experiments')
+  for (const entry of fs.readdirSync(experiments, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const validation = validateArtifact(path.join(experiments, entry.name))
+    assert.deepEqual(validation.errors, [], entry.name)
+    assert.equal(validation.ok, true, entry.name)
+  }
 })

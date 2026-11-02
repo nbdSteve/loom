@@ -1,0 +1,626 @@
+package dev.loom.plugin
+
+import dev.loom.body.AgentId
+import dev.loom.body.BodyEvent
+import dev.loom.body.EventTag
+import dev.loom.body.GoalEvidence
+import dev.loom.contract.Bearing
+import dev.loom.contract.DropFate
+import dev.loom.contract.GoalChoice
+import dev.loom.contract.GoalDisposition
+import dev.loom.contract.GoalReason
+import dev.loom.contract.GoalStepResult
+import dev.loom.contract.Intent
+import dev.loom.contract.ObservationKind
+import dev.loom.contract.Perception
+import dev.loom.contract.StepEvidence
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Files
+import java.nio.file.Path
+
+/**
+ * The goal-pursuit paths r17 never exercised, each driven offline end to end through the real JVM
+ * ledger, cognition, actuation and fleet to real Node bodies, provider-free and with no goal
+ * injected into any live profile: a scripted mind stands in for the model, and the scene is the
+ * whole of what it is given.
+ *
+ * - two objectives no one step meets: planks crafted from a held log and a log dug, then sticks
+ *   crafted from those planks and dug from bushes, the first completed at its original total and
+ *   the second adopted in the same answer, then revised for more;
+ * - an agent with nothing in sight worth doing walks to a cell at the edge of sight to look
+ *   further, rather than idling;
+ * - a goal at the stall bound with nothing in sight to replace it by is abandoned, and an
+ *   achievable one may not be;
+ * - a collect without approach of an item a block below the feet is refused by the body, because
+ *   vanilla would never pick it up from there;
+ * - an own drop still lying past the 4800-tick retention is still told and offered, then told as
+ *   taken when a peer takes it, and forgotten a retention after that;
+ * - a goal sight cannot meet is continued by a walk to the edge of sight, credited as revealed
+ *   when the walk brings a bush into sight, and a revise to another item is refused.
+ */
+class GoalPursuitEndToEndTest {
+    @TempDir
+    lateinit var temporary: Path
+
+    private val closers = ArrayList<() -> Unit>()
+
+    @AfterEach
+    fun cleanUp() {
+        closers.asReversed().forEach { runCatching(it) }
+    }
+
+    @Test
+    fun `planks then sticks are two objectives no one step meets, and the met stick goal is revised for more`() {
+        // The r39 offline audit: a planks goal one craft of the held logs met, and a stick goal its
+        // paired craft met, each counted as an objective. Here each asks past what one step gives.
+        val bushes = listOf(Cell(10, 64, 10, "dead_bush"), Cell(7, 64, 8, "dead_bush"), Cell(8, 64, 10, "dead_bush"))
+        val scene =
+            Scene(
+                listOf(Stand(ALPHA, 8.5, 64.0, 8.5)),
+                blocks = listOf(Cell(10, 64, 8, "oak_log")) + bushes,
+                inventory = listOf(SceneStack(36, "oak_log", 1)),
+                serveCrafts = true,
+                serveBreaks = true,
+                dropsOnBreak = true,
+                woodRecipes = true,
+            )
+        val world = world(scene)
+        world.mind.answer = ::planksThenSticks
+        for (review in 1..6) {
+            world.review(ALPHA)
+            world.awaitDecided(review)
+            world.awaitApplied(review)
+        }
+        val start = world.mind.seen[0]
+        assertTrue(PLANKS in start.selfState.craftingOptions.map { it.what }, "planks are craftable from the held log")
+        val decided = world.records.filter { it.event == BodyEvent.DECIDED }
+        assertEquals(
+            listOf(
+                GoalEvidence.ADOPTED,
+                GoalEvidence.CONTINUED,
+                GoalEvidence.CONTINUED,
+                GoalEvidence.COMPLETED_ADOPTED,
+                GoalEvidence.CONTINUED,
+                GoalEvidence.REVISED,
+            ),
+            decided.map { it.goal?.outcome },
+        )
+        assertEquals(decided[3].requestId, decided[5].goal?.goalId)
+        val applied = world.records.filter { it.event == BodyEvent.INTENT_APPLIED }.map { it.outcome }
+        assertEquals(List(6) { EventTag.ACCEPTED }, applied)
+        val held = world.mind.seen[5].selfState.inventorySummary.associate { it.what to it.count }
+        assertEquals(null, held[PLANKS], "the sixteen sticks took all eight planks")
+        assertEquals(17L, held[STICK])
+        // The planks goal was completed at its original total; the stick goal, met, is still held,
+        // so it is no completion yet.
+        val pursuit =
+            world
+                .readiness(GATE_GENERATION)
+                .getValue("goalCoherence")
+                .jsonObject
+                .getValue("pursuit")
+                .jsonObject
+                .getValue("measured")
+                .jsonObject
+        assertEquals(1, pursuit.getValue("originalTargetCompletions").jsonPrimitive.int)
+    }
+
+    /** The planks-then-sticks chain's [index]th answer to [seen]. */
+    private fun planksThenSticks(
+        seen: Perception,
+        index: Int,
+    ): Pair<Intent, GoalChoice?> {
+        val first = { what: String -> seen.surroundings.first { it.what == what }.ref }
+        return when (index) {
+            // One craft of the held log makes four planks: the objective asks five.
+            0 -> craft(seen, PLANKS, 1) to target(GoalDisposition.ADOPT, PLANKS, 5)
+            1 -> Intent.Dig(first("block.minecraft.oak_log")) to continuing()
+            2 -> craft(seen, PLANKS, 1) to continuing()
+            // Eight planks held: complete that goal and adopt seventeen sticks, past the sixteen one
+            // craft of every application makes.
+            3 -> craft(seen, STICK, 4) to target(GoalDisposition.REPLACE, STICK, 17).copy(reason = GoalReason.COMPLETED)
+            4 -> Intent.Dig(first("block.minecraft.dead_bush")) to continuing()
+            // Seventeen sticks held with two bushes still in sight: more sticks are a revise, which
+            // keeps the goal rather than replacing it with itself.
+            else -> Intent.Dig(first("block.minecraft.dead_bush")) to target(GoalDisposition.REVISE, STICK, 19)
+        }
+    }
+
+    @Test
+    fun `an agent with nothing in sight worth doing walks to the edge of sight to look further`() {
+        // r17 eta idled three reviews with a dead bush 5.4 blocks off, just past what it saw.
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5))))
+        world.mind.answer = { seen, _ -> Intent.MoveTo(seen.explore.first().ref) to null }
+        world.review(ALPHA)
+        world.awaitDecided(1)
+        val moved = world.awaitRecord { it.event == BodyEvent.MOVED }
+        assertEquals(EventTag.MOVEMENT_ARRIVED, moved.outcome)
+        val offered = world.mind.seen.single().explore
+        assertEquals(8, offered.size, "one cell per compass bearing on open ground")
+        assertTrue(offered.all { it.distance > 8.0 }, "every cell lies past what the body sees: $offered")
+    }
+
+    @Test
+    fun `a stalled goal with nothing to replace it by is abandoned, and an achievable one may not be`() {
+        // Every bush stands in dig reach, so a walk onto one is no arrival anywhere a dig could not
+        // already reach (r18: all seven credited walks were onto bushes in reach).
+        val bushes = listOf(BUSH, Cell(7, 64, 10, "dead_bush"), Cell(10, 64, 10, "dead_bush"))
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = bushes))
+        world.mind.answer = { seen, index ->
+            val bush =
+                seen.surroundings
+                    .filter { it.what == "block.minecraft.dead_bush" && it.direction != Bearing.HERE }
+                    .sortedBy { it.ref }
+                    .let { it[index % it.size] }
+            when (index) {
+                0 -> Intent.MoveTo(bush.ref) to target(GoalDisposition.ADOPT, STICK, 2)
+                // An abandon of a goal the bushes can still meet is refused, whatever it claims.
+                1 ->
+                    Intent.Idle to
+                        GoalChoice(
+                            GoalDisposition.ABANDON,
+                            stepResult = GoalStepResult.NO_PROGRESS,
+                            reason = GoalReason.IMPOSSIBLE,
+                        )
+                2, 3 -> Intent.MoveTo(bush.ref) to continuing()
+                // At the bound only sticks are in sight, and a stalled stick goal may not be set
+                // again, so nothing replaces it: it is abandoned as stale, walking on to look
+                // further, since no review beside the edge of sight may idle.
+                else ->
+                    Intent.MoveTo(seen.explore.first().ref) to
+                        GoalChoice(
+                            GoalDisposition.ABANDON,
+                            stepResult = GoalStepResult.NO_PROGRESS,
+                            reason = GoalReason.STALE,
+                        )
+            }
+        }
+        for (review in 1..5) {
+            world.review(ALPHA)
+            world.awaitDecided(review)
+            world.awaitApplied(review)
+        }
+        val outcomes = world.records.filter { it.event == BodyEvent.DECIDED }.map { it.goal?.outcome }
+        assertEquals(
+            listOf(
+                GoalEvidence.ADOPTED,
+                GoalEvidence.ABANDONED_ACHIEVABLE,
+                GoalEvidence.CONTINUED,
+                GoalEvidence.CONTINUED,
+                GoalEvidence.ABANDONED,
+            ),
+            outcomes,
+        )
+        assertEquals(3L, world.mind.seen[4].goal?.progress?.stepsWithoutProgress)
+    }
+
+    @Test
+    fun `a collect without approach of an item a block below the feet is refused by the body`() {
+        // The v25 rehearsal's theta: 1.9 away, one block below, never picked up by vanilla.
+        val stick = SceneItem(STICK_ID, "stick", 1, 8.5, 63.0, 9.9)
+        val scene =
+            Scene(
+                listOf(Stand(ALPHA, 8.5, 64.0, 8.5)),
+                blocks = listOf(Cell(8, 63, 9, "air"), Cell(8, 62, 9, "stone")),
+                items = listOf(stick),
+            )
+        val world = world(scene)
+        world.mind.answer = { seen, _ ->
+            val item = seen.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }
+            Intent.Collect(item.ref, approach = false) to null
+        }
+        world.review(ALPHA)
+        val refused = world.awaitRecord { it.event == BodyEvent.INTENT_APPLIED }
+        assertEquals(EventTag.COLLECT_OUT_OF_RANGE, refused.outcome)
+    }
+
+    @Test
+    fun `an own drop still lying is told past retention, then its fate, then forgotten`() {
+        // r17 epsilon's stick lay 2322 ticks, under the 4800 boundary no run has crossed.
+        val stick = SceneItem(STICK_ID, "stick", 2, 10.5, 64.0, 10.5)
+        val scene =
+            Scene(
+                listOf(Stand(ALPHA, 8.5, 64.0, 8.5), Stand(BETA, 4.5, 64.0, 4.5)),
+                items = listOf(stick),
+                trackDrops = true,
+            )
+        val world = world(scene)
+        world.mind.answer = { _, _ -> Intent.Idle to null }
+        world.dropped(ALPHA, "req-dig", stick, listOf(10, 64, 10))
+        world.advance(OWN_DROP_RETENTION_TICKS + 200)
+        world.review(ALPHA)
+        world.awaitDecided(1)
+        val lying = world.mind.seen[0]
+        val own = lying.selfState.ownDrops.single()
+        assertEquals(DropFate.LYING, own.fate)
+        assertEquals(2L, own.count)
+        val offered = lying.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }
+        assertEquals(offered.ref, own.ref, "a drop still lying stays offered by its observation's ref")
+        // beta takes it, as gamma took beta's in r17: told as taken, from when its fate was known.
+        world.taken(stick, BETA)
+        world.advance(OWN_DROP_RETENTION_TICKS - 200)
+        world.review(ALPHA)
+        world.awaitDecided(2)
+        assertEquals(listOf(DropFate.TAKEN), world.mind.seen[1].selfState.ownDrops.map { it.fate })
+        world.advance(OWN_DROP_RETENTION_TICKS)
+        world.review(ALPHA)
+        world.awaitDecided(3)
+        assertEquals(emptyList<DropFate>(), world.mind.seen[2].selfState.ownDrops.map { it.fate })
+    }
+
+    @Test
+    fun `a goal sight cannot meet is continued by a walk to look, credited when it reveals a bush`() {
+        // r18 gamma body:00000069, delta 127 and 485 abandoned their goals to walk to the edge of
+        // sight. The two near bushes are broken by the first digs; the far one lies past what is
+        // sensed, beside the cell east at the edge of sight.
+        val far = Cell(22, 64, 8, "dead_bush")
+        val near = Cell(8, 64, 10, "dead_bush")
+        val scene = Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(BUSH, near, far), serveBreaks = true)
+        val world = world(scene)
+        world.mind.answer = { seen, index ->
+            val bush = { seen.surroundings.first { it.what == "block.minecraft.dead_bush" }.ref }
+            when (index) {
+                0 -> Intent.Dig(bush()) to target(GoalDisposition.ADOPT, STICK, 2)
+                1 -> Intent.Dig(bush()) to continuing()
+                2 -> Intent.MoveTo(seen.explore.single { it.direction == Bearing.EAST }.ref) to continuing()
+                // The revealed bush is in reach: it is dug, never walked away from (r23 epsilon).
+                else ->
+                    Intent.Dig(seen.surroundings.first { it.what == "block.minecraft.dead_bush" }.ref) to continuing()
+            }
+        }
+        for (review in 1..4) {
+            world.review(ALPHA)
+            world.awaitDecided(review)
+            world.awaitApplied(review)
+            if (review == 3) world.awaitRecord { it.event == BodyEvent.MOVED }
+        }
+        val seen = world.mind.seen
+        assertTrue(seen[2].surroundings.none { it.what == "block.minecraft.dead_bush" }, "the near bushes are gone")
+        assertTrue(seen[3].surroundings.any { it.what == "block.minecraft.dead_bush" }, "the far bush is in sight")
+        val decided = world.records.filter { it.event == BodyEvent.DECIDED }.map { it.goal }
+        assertEquals(GoalEvidence.CONTINUED, decided[2]?.outcome)
+        assertEquals(StepEvidence.REVEALED, decided[3]?.stepEvidence)
+        assertEquals(0L, decided[3]?.stepsWithoutProgress)
+        // The gate reads both walks as goal steps, and no review idled beside a cell to look from.
+        val pursuit =
+            world.readiness(WOODED_GENERATION).getValue("goalCoherence").jsonObject.getValue("pursuit").jsonObject
+        val measured = pursuit.getValue("measured").jsonObject
+        assertEquals(0, measured.getValue("idleBesideExploration").jsonPrimitive.int)
+        assertEquals("1", measured.getValue("goalActiveReviewShare").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `a revise to another item is refused before the body acts, and the gate counts it`() {
+        // r18 zeta body:00000569 revised a scute goal into sticks under the same goal.
+        val dirt = Cell(10, 64, 6, "dirt")
+        val bushes = listOf(BUSH, Cell(8, 64, 10, "dead_bush"))
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = bushes + dirt))
+        world.mind.answer = { seen, index ->
+            when (index) {
+                0 ->
+                    Intent.MoveTo(seen.surroundings.first { it.what == "block.minecraft.dead_bush" }.ref) to
+                        target(GoalDisposition.ADOPT, STICK, 2)
+                else ->
+                    Intent.MoveTo(seen.surroundings.first { it.what == "block.minecraft.dirt" }.ref) to
+                        target(GoalDisposition.REVISE, "item.minecraft.dirt", 1)
+            }
+        }
+        for (review in 1..2) {
+            world.review(ALPHA)
+            world.awaitDecided(review)
+            world.awaitApplied(review)
+        }
+        val refused = world.records.filter { it.event == BodyEvent.INTENT_APPLIED }[1]
+        assertEquals(GoalEvidence.REVISE_ITEM_CHANGED, refused.outcome)
+        assertTrue(world.records.none { it.event == BodyEvent.MOVED && it.requestId == refused.requestId })
+        val classes =
+            world.readiness(WOODED_GENERATION).getValue("actions").jsonObject.getValue("byClass").jsonObject
+        assertEquals(1, classes.getValue("goalIncoherent").jsonPrimitive.int)
+    }
+
+    @Test
+    fun `a horizon goal asks past the one log in sight while the dirt beside the feet may not crowd out looking`() {
+        // r22: every goal was dirt from underfoot or a single seed, and no agent looked for wood.
+        val dirt = Cell(9, 64, 8, "dirt")
+        val log = Cell(11, 64, 10, "oak_log")
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = listOf(dirt, log)))
+
+        fun refOf(
+            seen: Perception,
+            what: String,
+        ) = seen.surroundings.first { it.what == "block.minecraft.$what" }.ref
+        world.mind.answer = { seen, index ->
+            when (index) {
+                0 -> Intent.Dig(refOf(seen, "dirt")) to target(GoalDisposition.ADOPT, DIRT, 1)
+                1 -> Intent.Dig(refOf(seen, "oak_log")) to target(GoalDisposition.ADOPT, LOG, 4)
+                else -> Intent.MoveTo(seen.explore.first().ref) to continuing()
+            }
+        }
+        for (review in 1..3) {
+            world.review(ALPHA)
+            world.awaitDecided(review)
+            world.awaitApplied(review)
+        }
+        val horizon = world.mind.seen[0].horizon.associateBy { it.what }
+        // The perceived record is the perception as the mind was shown it, horizon and all (r23:
+        // every perceived record carried no horizon).
+        val recorded = world.records.first { it.event == BodyEvent.PERCEIVED }.perception
+        assertEquals(world.mind.seen[0].horizon, recorded?.horizon)
+        assertEquals(world.mind.seen[0].importance, recorded?.importance)
+        assertEquals(setOf(LOG), horizon.keys, "the dirt beside the feet grounds nothing: $horizon")
+        assertEquals(1L + dev.loom.mind.HORIZON_SPAN, horizon.getValue(LOG).most)
+        assertTrue(horizon.getValue(LOG).frontier)
+        val outcomes = world.records.filter { it.event == BodyEvent.DECIDED }.map { it.goal?.outcome }
+        assertEquals(listOf(GoalEvidence.CROWDS_EXPLORATION, GoalEvidence.ADOPTED, GoalEvidence.CONTINUED), outcomes)
+        val readiness = world.readiness(HORIZON_GENERATION)
+        val measured =
+            readiness
+                .getValue("goalCoherence")
+                .jsonObject
+                .getValue("pursuit")
+                .jsonObject
+                .getValue("measured")
+                .jsonObject
+        assertEquals(1, measured.getValue("horizonGoals").jsonPrimitive.int)
+        assertEquals(1, measured.getValue("crowdedGoals").jsonPrimitive.int)
+        val classes = readiness.getValue("actions").jsonObject.getValue("byClass").jsonObject
+        assertEquals(1, classes.getValue("goalIncoherent").jsonPrimitive.int)
+    }
+
+    /** Reviews alpha for its [step]th walk and waits for the walk and the follow-up it owes (r24). */
+    private fun walkAndSettle(
+        world: ScenarioWorld,
+        step: Int,
+    ) {
+        world.review(ALPHA)
+        world.awaitDecided(step)
+        world.awaitApplied(step)
+        world.awaitRecord { it.event == BodyEvent.MOVED && it.requestId == world.mind.seen[step - 1].requestId }
+        val until = System.nanoTime() + SETTLE_WAIT_NANOS
+        while (world.settlements.count { it.first == ALPHA } < step && System.nanoTime() < until) {
+            Thread.sleep(POLL_MILLIS)
+        }
+        val owed = world.settlements.count { (agent, _, owing) -> agent == ALPHA && owing }
+        assertTrue(owed >= step, "${world.settlements}")
+    }
+
+    @Test
+    fun `with nothing grounded a discovery goal walks to the edge of sight, reveals a log and becomes a log goal`() {
+        // r23: 17 of 70 reviews could set no goal at all. The tree stands past the cell east at the
+        // edge of sight, beyond what even a goal review's sense looks for from where alpha starts.
+        val trunk = listOf(Cell(30, 64, 8, "oak_log"), Cell(30, 65, 8, "oak_log"))
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = trunk, serveBreaks = true))
+        world.mind.answer = { seen, index ->
+            when (index) {
+                0 ->
+                    Intent.MoveTo(seen.explore.single { it.direction == Bearing.EAST }.ref) to
+                        GoalChoice(GoalDisposition.ADOPT, discover = true)
+                // r34 zeta: the log in sight beyond dig reach is walked to by the cell beside it.
+                1 ->
+                    Intent.MoveTo(seen.explore.filter { it.direction == Bearing.EAST }.minBy { it.distance }.ref) to
+                        target(GoalDisposition.REPLACE, LOG, 2).copy(reason = GoalReason.COMPLETED)
+                else ->
+                    Intent.Dig(seen.surroundings.first { it.what == "block.minecraft.oak_log" }.ref) to
+                        GoalChoice(GoalDisposition.CONTINUE, stepResult = GoalStepResult.PROGRESSING)
+            }
+        }
+        for (step in 1..2) walkAndSettle(world, step)
+        world.review(ALPHA)
+        world.awaitDecided(3)
+        world.awaitApplied(3)
+        world.awaitRecord { it.event == BodyEvent.WORLD_INTERACTION }
+        assertTrue(world.mind.seen[0].horizon.isEmpty(), "nothing grounds an item goal where alpha starts")
+        assertTrue(world.mind.seen[1].horizon.any { it.what == LOG }, "the walk brought the log into sight")
+        // The ground it walked from is not offered again while other bearings are (r24 alpha, iota).
+        val back =
+            world.mind.seen[1].explore.filter {
+                it.direction == Bearing.WEST && kotlin.math.abs(it.distance - 12.0) < 0.2
+            }
+        assertTrue(back.isEmpty(), "the cell back where it stood is withheld: $back")
+        // The cell east is beside the log now in sight, not the twelve blocks past it.
+        assertTrue(world.mind.seen[1].explore.any { it.direction == Bearing.EAST && it.distance < 9.0 })
+        val decided = world.records.filter { it.event == BodyEvent.DECIDED }
+        assertEquals(GoalEvidence.ADOPTED, decided[0].goal?.outcome)
+        assertEquals(true, decided[0].goal?.discovery)
+        val became = requireNotNull(decided[1].goal)
+        assertEquals(GoalEvidence.COMPLETED_ADOPTED, became.outcome)
+        assertEquals(StepEvidence.REVEALED, became.stepEvidence)
+        assertEquals(true, became.presentedDiscovery)
+        assertEquals(decided[0].requestId, became.discoveredFrom)
+        // The walk beside the log brought it within a dig's reach: arrived, and progress.
+        val beside = requireNotNull(decided[2].goal)
+        assertEquals(GoalEvidence.CONTINUED, beside.outcome)
+        assertEquals(StepEvidence.ARRIVED, beside.stepEvidence)
+        assertEquals(0L, beside.stepsWithoutProgress)
+        // The dig the log goal took is the server's to confirm.
+        val dug = world.records.single { it.event == BodyEvent.WORLD_INTERACTION }
+        assertEquals(decided[2].requestId, dug.requestId)
+        assertEquals("serverEffectConfirmed", dug.outcome)
+        val measured =
+            world
+                .readiness(DISCOVERY_GENERATION)
+                .getValue("goalCoherence")
+                .jsonObject
+                .getValue("pursuit")
+                .jsonObject
+                .getValue("measured")
+                .jsonObject
+        assertEquals(1, measured.getValue("discoveryGoals").jsonPrimitive.int)
+        assertEquals(1, measured.getValue("discoveryReveals").jsonPrimitive.int)
+        assertEquals(1, measured.getValue("discoveryTransitions").jsonPrimitive.int)
+    }
+
+    @Test
+    fun `a hunter beside a review owed a discovery goal is fled first, the goal deferred and its review owed`() {
+        // Discovery is mandatory with nothing grounded, but never ahead of a survival response.
+        val zombie =
+            kotlinx.serialization.json.buildJsonObject {
+                put("id", kotlinx.serialization.json.JsonPrimitive(ZOMBIE_ID))
+                put("what", kotlinx.serialization.json.JsonPrimitive("zombie"))
+                put("x", kotlinx.serialization.json.JsonPrimitive(4.5))
+                put("y", kotlinx.serialization.json.JsonPrimitive(64.0))
+                put("z", kotlinx.serialization.json.JsonPrimitive(8.5))
+            }
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), entities = listOf(zombie)))
+        world.mind.answer = { seen, index ->
+            when (index) {
+                0 -> Intent.Flee(seen.surroundings.first { it.what == "entity.minecraft.zombie" }.ref) to null
+                else ->
+                    Intent.MoveTo(seen.explore.first().ref) to GoalChoice(GoalDisposition.ADOPT, discover = true)
+            }
+        }
+        world.review(ALPHA)
+        world.awaitDecided(1)
+        world.awaitApplied(1)
+        assertTrue(world.mind.seen[0].horizon.isEmpty(), "the review owed a discovery goal")
+        val deferred = world.records.first { it.event == BodyEvent.DECIDED }
+        assertEquals(GoalEvidence.DEFERRED, deferred.goal?.outcome)
+        assertEquals(null, deferred.goal?.goalId, "no goal was set or credited by the flight")
+        val applied = world.records.first { it.event == BodyEvent.INTENT_APPLIED }
+        assertEquals(EventTag.ACCEPTED, applied.outcome)
+        // The flight settled, and the review it deferred is owed again.
+        val until = System.nanoTime() + SETTLE_WAIT_NANOS
+        while (world.settlements.none { it.first == ALPHA } && System.nanoTime() < until) Thread.sleep(POLL_MILLIS)
+        assertTrue(world.settlements.any { (agent, _, owed) -> agent == ALPHA && owed }, "${world.settlements}")
+        world.review(ALPHA)
+        world.awaitDecided(2)
+        val adopted = world.records.filter { it.event == BodyEvent.DECIDED }[1].goal
+        assertEquals(GoalEvidence.ADOPTED, adopted?.outcome)
+        assertEquals(true, adopted?.discovery)
+        // The gate counts the flight as a deferral, never as the discovery's progress.
+        val measured =
+            world
+                .readiness(DISCOVERY_GENERATION)
+                .getValue("goalCoherence")
+                .jsonObject
+                .getValue("pursuit")
+                .jsonObject
+                .getValue("measured")
+                .jsonObject
+        assertEquals(1, measured.getValue("deferredReviews").jsonPrimitive.int)
+        assertEquals(0, measured.getValue("discoveryReveals").jsonPrimitive.int)
+    }
+
+    @Test
+    fun `a dig that drops its goal's own item makes one bounded pickup through the body, then asks the mind`() {
+        // r24: all three of epsilon's logs were taken by idle peers before its follow-up came.
+        val stick = SceneItem(STICK_ID, "stick", 1, 10.5, 64.0, 8.5)
+        val scene =
+            Scene(
+                listOf(Stand(ALPHA, 8.5, 64.0, 8.5)),
+                blocks = listOf(BUSH),
+                items = listOf(stick),
+                serveBreaks = true,
+                trackDrops = true,
+                servePickups = true,
+            )
+        val world = world(scene)
+        world.mind.answer = { seen, index ->
+            if (index == 0) {
+                // The server's drop for this very dig, attributed to its request.
+                // Off the thread answering, which may be the main thread the drop is filed on.
+                Thread { world.droppedAt(ALPHA, stick, listOf(10, 64, 8)) }.start()
+                Intent.Dig(seen.surroundings.first { it.what == "block.minecraft.dead_bush" }.ref) to
+                    target(GoalDisposition.ADOPT, STICK, 2)
+            } else {
+                Intent.Idle to null
+            }
+        }
+        world.review(ALPHA)
+        world.awaitDecided(1)
+        world.awaitApplied(1)
+        // One attempt only, then a review is owed once the client has heard the inventory change.
+        val until = System.nanoTime() + SETTLE_WAIT_NANOS
+        while (world.settlements.none { it.first == ALPHA && it.third } && System.nanoTime() < until) Thread.sleep(
+            POLL_MILLIS,
+        )
+        assertTrue(world.settlements.any { (agent, _, owed) -> agent == ALPHA && owed }, "${world.settlements}")
+        val pickup = world.records.single { it.event == BodyEvent.OWN_DROP_PICKUP }
+        assertEquals(world.records.first { it.event == BodyEvent.DECIDED }.requestId, pickup.requestId)
+        assertEquals(EventTag.ACCEPTED, pickup.outcome, "the server picked it up: ${pickup.detail}")
+        assertEquals(1, world.records.count { it.event == BodyEvent.OWN_DROP_PICKUP })
+        // Generation 15 describes it by its terminal, and counts it as no action of its own.
+        val pursuit =
+            world
+                .readiness(SURVIVAL_GENERATION)
+                .getValue("goalCoherence")
+                .jsonObject
+                .getValue("pursuit")
+                .jsonObject
+        val pickups = pursuit.getValue("description").jsonObject.getValue("ownDropPickups").jsonObject
+        assertEquals(1, pickups.getValue(EventTag.ACCEPTED).jsonPrimitive.int)
+    }
+
+    @Test
+    fun `a tree among a floor of more blocks than the body reports is still in the perception`() {
+        // r24 eta: on plains 48 grass blocks hid a trunk 3.8 blocks off. Here the stone floor and
+        // a ring of dirt fill far more than the body's 48 places, and the one log still reaches
+        // the mind through the real body, the JVM's cut and the perception.
+        val dirt =
+            (5..12).flatMap {
+                    x ->
+                (5..12).map { z -> Cell(x, 64, z, "dirt") }
+            }.filter { it.x != 8 || it.z != 8 }
+        val log = Cell(11, 65, 8, "oak_log")
+        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 65.0, 8.5)), blocks = dirt + log))
+        world.mind.answer = { _, _ -> Intent.Idle to null }
+        world.review(ALPHA)
+        world.awaitDecided(1)
+        val seen = world.mind.seen[0]
+        assertTrue(seen.surroundingsOmitted > 0, "the cut is still a bounded count")
+        assertTrue(seen.surroundings.any { it.what == "block.minecraft.oak_log" }, "the trunk is reported")
+    }
+
+    private fun world(scene: Scene): ScenarioWorld {
+        val node = nodeOrNull()
+        assumeTrue(node != null && Files.isDirectory(REPO.resolve("body/node_modules")), "node and body deps")
+        return ScenarioWorld(requireNotNull(node), scene, temporary, closers)
+    }
+
+    private companion object {
+        const val GATE_GENERATION = 9
+        const val WOODED_GENERATION = 10
+        const val HORIZON_GENERATION = 13
+        const val DISCOVERY_GENERATION = 14
+        const val SURVIVAL_GENERATION = 15
+        const val DIRT = "item.minecraft.dirt"
+        const val LOG = "item.minecraft.oak_log"
+        const val STICK_ID = 70
+        const val ZOMBIE_ID = 71
+        const val SETTLE_WAIT_NANOS = 5_000_000_000L
+        const val POLL_MILLIS = 20L
+        const val STICK = "item.minecraft.stick"
+        const val PLANKS = "item.minecraft.oak_planks"
+        val ALPHA = AgentId("agent-alpha")
+        val BETA = AgentId("agent-beta")
+        val BUSH = Cell(10, 64, 8, "dead_bush")
+
+        fun target(
+            disposition: GoalDisposition,
+            item: String,
+            count: Long,
+        ) = GoalChoice(
+            disposition = disposition,
+            successItem = item,
+            successCount = count,
+            stepResult = GoalStepResult.DONE.takeIf { disposition != GoalDisposition.ADOPT },
+        )
+
+        fun continuing() = GoalChoice(GoalDisposition.CONTINUE, stepResult = GoalStepResult.NO_PROGRESS)
+
+        /** A craft of the recipe [seen] offers for [what], [crafts] times. */
+        fun craft(
+            seen: Perception,
+            what: String,
+            crafts: Long,
+        ): Intent = Intent.Craft(seen.selfState.craftingOptions.first { it.what == what }.ref, crafts)
+    }
+}

@@ -36,6 +36,48 @@ class GoalReviewScheduleTest {
         }
 
     @Test
+    @DisplayName("a held review delays only itself, and is reported once")
+    fun aHeldReviewDelaysOnlyItself() {
+        // v32 plains rehearsal 14: held reviews pushed every later one back, and three agents
+        // ended owing reviews their schedule never asked for.
+        val living = agents(1)
+        val held = mutableListOf<AgentId>()
+        schedule.claim(living, now)
+        now = CADENCE
+        repeat(3) {
+            assertEquals(emptyList<AgentId>(), schedule.claim(living, now, { false }, held::add))
+            now += schedule.sliceTicks
+        }
+        assertEquals(living.toList(), held, "reported the first time it was held, and only then")
+        assertEquals(living.toList(), schedule.claim(living, now))
+        // The next is due a cadence after this one was due, not after it was handed out.
+        now = 2 * CADENCE - schedule.sliceTicks
+        assertEquals(emptyList<AgentId>(), schedule.claim(living, now))
+        now = 2 * CADENCE
+        assertEquals(living.toList(), schedule.claim(living, now))
+        // A review held again is reported again.
+        now = 3 * CADENCE
+        schedule.claim(living, now, { false }, held::add)
+        assertEquals(2, held.size)
+    }
+
+    @Test
+    @DisplayName("a review held a whole cadence restarts the schedule, so none ever fall due at once")
+    fun aLongHeldReviewRestartsTheSchedule() {
+        val living = agents(1)
+        schedule.claim(living, now)
+        now = 2 * CADENCE + schedule.sliceTicks
+        schedule.claim(living, now, { false })
+        now += schedule.sliceTicks
+        assertEquals(living.toList(), schedule.claim(living, now))
+        // Not again at once: the schedule counts from now, a cadence on.
+        now += schedule.sliceTicks
+        assertEquals(emptyList<AgentId>(), schedule.claim(living, now))
+        now += CADENCE - schedule.sliceTicks
+        assertEquals(living.toList(), schedule.claim(living, now))
+    }
+
+    @Test
     @DisplayName("an agent that has never reviewed is due at once")
     fun aNewAgentThinksImmediately() {
         // What keeps a demo watchable: a body that has just been spawned acts on the
@@ -152,5 +194,83 @@ class GoalReviewScheduleTest {
         // agents must not cost more than a call every few seconds.
         val perAgent = DEFAULT_GOAL_REVIEW_CADENCE_TICKS / 20
         assertTrue(perAgent >= 100L, "a 20-agent population would think every $perAgent ticks")
+    }
+
+    @Test
+    @DisplayName("a settled goal step owes one follow-up review soon after, once per scheduled review")
+    fun aSettledStepIsFollowedUpOncePerScheduledReview() {
+        val agent = AgentId("agent-1")
+        val living = setOf(agent)
+        // Never reviewed: nothing to follow up.
+        schedule.settled(agent, now, owed = false)
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(living, now + FOLLOW_UP_DELAY_TICKS))
+        assertEquals(listOf(agent), schedule.claim(living, now))
+        schedule.settled(agent, now + 5, owed = false)
+        // Not before the drop of a dig can land and be picked up.
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(living, now + 5 + FOLLOW_UP_DELAY_TICKS - 1))
+        assertEquals(listOf(agent), schedule.claimFollowUps(living, now + 5 + FOLLOW_UP_DELAY_TICKS))
+        // The follow-up's own step settling owes nothing more until the next scheduled review.
+        schedule.settled(agent, now + 60, owed = false)
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(living, now + CADENCE - 1))
+        // And the follow-up never moved the cadence.
+        assertEquals(emptyList<AgentId>(), schedule.claim(living, now + CADENCE - 1))
+        assertEquals(listOf(agent), schedule.claim(living, now + CADENCE))
+        schedule.settled(agent, now + CADENCE, owed = false)
+        assertEquals(listOf(agent), schedule.claimFollowUps(living, now + CADENCE + FOLLOW_UP_DELAY_TICKS))
+    }
+
+    @Test
+    @DisplayName("a plan of two follow-ups a review spends both on ordinary steps, past the reserve")
+    fun aPlanOfTwoFollowUpsSpendsBothOnOrdinarySteps() {
+        // r35's plan of one left every agent's first cycle no ordinary follow-up, and 26 of its 60
+        // day steps waited a whole cadence for their next review.
+        val agent = AgentId("agent-1")
+        val living = setOf(agent)
+        val follow = { planned: GoalReviewSchedule, at: Long ->
+            planned.settled(agent, at, owed = false)
+            planned.claimFollowUps(living, at + FOLLOW_UP_DELAY_TICKS)
+        }
+        val one = GoalReviewSchedule(CADENCE, SLICES, followUpsPerReview = 1)
+        one.claim(living, 0)
+        assertEquals(emptyList<AgentId>(), follow(one, 5), "the one it earned is kept for an owed review")
+        one.claim(living, CADENCE)
+        assertEquals(listOf(agent), follow(one, CADENCE + 5))
+        assertEquals(emptyList<AgentId>(), follow(one, CADENCE + 60), "one ordinary follow-up a review")
+        val two = GoalReviewSchedule(CADENCE, SLICES, followUpsPerReview = 2)
+        two.claim(living, 0)
+        assertEquals(listOf(agent), follow(two, 5))
+        assertEquals(emptyList<AgentId>(), follow(two, 60), "the last earned is kept for an owed review")
+        two.claim(living, CADENCE)
+        assertEquals(listOf(agent), follow(two, CADENCE + 5))
+        assertEquals(listOf(agent), follow(two, CADENCE + 60))
+        assertEquals(emptyList<AgentId>(), follow(two, CADENCE + 100), "two ordinary follow-ups a review")
+    }
+
+    @Test
+    @DisplayName("an owed follow-up waits for a mind that is busy, and is dropped with its agent")
+    fun anOwedFollowUpWaitsAndIsForgotten() {
+        val agent = AgentId("agent-1")
+        schedule.claim(setOf(agent), 0)
+        schedule.settled(agent, 0, owed = false)
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(agent), 100) { false })
+        assertEquals(listOf(agent), schedule.claimFollowUps(setOf(agent), 101))
+        val other = AgentId("agent-2")
+        schedule.claim(setOf(agent, other), CADENCE)
+        schedule.settled(other, CADENCE, owed = false)
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(agent), CADENCE + 100))
+        assertEquals(emptyList<AgentId>(), schedule.claimFollowUps(setOf(agent, other), CADENCE + 100))
+    }
+
+    @Test
+    @DisplayName("a goal a survival response deferred is owed its review past the ordinary follow-up")
+    fun aDeferredGoalIsOwedItsReview() {
+        val agent = AgentId("agent-1")
+        val living = setOf(agent)
+        schedule.claim(living, now)
+        schedule.settled(agent, now, owed = false)
+        assertEquals(listOf(agent), schedule.claimFollowUps(living, now + FOLLOW_UP_DELAY_TICKS))
+        // The flight that deferred the goal settles: its review is owed all the same.
+        schedule.settled(agent, now + 100, owed = true)
+        assertEquals(listOf(agent), schedule.claimFollowUps(living, now + 100 + FOLLOW_UP_DELAY_TICKS))
     }
 }

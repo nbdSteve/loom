@@ -1,1 +1,1 @@
-{"op":"moveTo","protocol":5,"requestId":"req-41","agentId":"agent-alpha","state":"ready","outcome":"searchOverBudget","from":[12.5,71.5,-40.5],"position":[12.5,71.5,-40.5],"travelled":0.25,"elapsedMs":518}
+{"op":"moveTo","protocol":8,"requestId":"req-41","agentId":"agent-alpha","state":"ready","outcome":"searchOverBudget","from":[12.5,71.5,-40.5],"position":[12.5,71.5,-40.5],"travelled":0.25,"elapsedMs":518}

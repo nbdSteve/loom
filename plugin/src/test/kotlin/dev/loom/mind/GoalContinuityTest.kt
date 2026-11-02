@@ -45,7 +45,7 @@ private class NumberingBody(
         trigger: Trigger,
     ): CompletableFuture<Perception?> =
         CompletableFuture.completedFuture(
-            perception(requestId = "r${++next}", agentId = agentId.value, trigger = trigger),
+            perceptionNearBush(requestId = "r${++next}", agentId = agentId.value, trigger = trigger),
         )
 
     override fun senseThreat(agentId: AgentId): CompletableFuture<Perception?> = fail("not under test")
@@ -70,7 +70,7 @@ class GoalContinuityTest {
             NumberingBody(outcome),
             mind = { p ->
                 seen.add(p)
-                CompletableFuture.completedFuture(decisionFor(p, Intent.Idle).copy(goal = answers.next()))
+                CompletableFuture.completedFuture(decisionFor(p, Intent.Dig("bush")).copy(goal = answers.next()))
             },
             mainThread = main,
             journal = DecisionJournal(BodyEventLog { records.add(it) }, currentTick = { 0L }),
@@ -84,7 +84,7 @@ class GoalContinuityTest {
         val mind =
             cognition(
                 IntentOutcome.Accepted("standing still"),
-                listOf(GoalChoice(GoalDisposition.ADOPT, "find shelter"), GoalChoice(GoalDisposition.CONTINUE)),
+                listOf(goalChoice(GoalDisposition.ADOPT), goalChoice(GoalDisposition.CONTINUE)),
             )
         mind.consider(agent, Trigger.GoalReview)
         main.drain()
@@ -94,8 +94,8 @@ class GoalContinuityTest {
         assertNull(seen[0].goal)
         val carried = seen[1].goal
         assertEquals("r1", carried?.goalId)
-        assertEquals("find shelter", carried?.statement)
-        assertEquals(GoalStep("r1", EventTag.IDLE, EventTag.ACCEPTED), carried?.lastStep)
+        assertEquals("hold 2 item.minecraft.stick", carried?.statement)
+        assertEquals(GoalStep("r1", EventTag.DIG, EventTag.ACCEPTED), carried?.lastStep)
 
         val (first, second) = decidedGoals()
         assertEquals(GoalEvidence.ADOPTED, first?.outcome)
@@ -108,14 +108,15 @@ class GoalContinuityTest {
         val mind =
             cognition(
                 IntentOutcome.Rejected("busy", EventTag.CONTROL_NOT_READY),
-                listOf(GoalChoice(GoalDisposition.ADOPT, "find shelter"), GoalChoice(GoalDisposition.ABANDON)),
+                listOf(goalChoice(GoalDisposition.ADOPT), goalChoice(GoalDisposition.ABANDON)),
             )
         repeat(2) {
             mind.consider(agent, Trigger.GoalReview)
             main.drain()
         }
         assertEquals(EventTag.CONTROL_NOT_READY, seen[1].goal?.lastStep?.outcome)
-        assertEquals(GoalEvidence.ABANDONED, decidedGoals()[1]?.outcome)
+        // A goal the bush in sight can still meet is pursued, not abandoned (from routine-v26).
+        assertEquals(GoalEvidence.ABANDONED_ACHIEVABLE, decidedGoals()[1]?.outcome)
     }
 
     @Test
@@ -123,7 +124,7 @@ class GoalContinuityTest {
         val mind =
             cognition(
                 IntentOutcome.Accepted("ok"),
-                listOf(GoalChoice(GoalDisposition.ADOPT, "find shelter"), null),
+                listOf(goalChoice(GoalDisposition.ADOPT), null),
             )
         mind.consider(agent, Trigger.GoalReview)
         main.drain()

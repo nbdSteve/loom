@@ -302,6 +302,52 @@ test('a dropped item on open ground is offered and one behind a wall is not offe
   assert.deepEqual(hidden.itemOffers, [])
 })
 
+test('an item behind a wall is reported out of sight only when the controller named it', async () => {
+  // r15 iota: its own stick lay 5.4 blocks off out of sight, told of and never collectable.
+  const seeds = { id: 77, what: 'wheat_seeds', x: 11.5, y: FEET.y, z: 8.5 }
+  const walled = await standing({ walls: [{ x: 10, y: FEET.y, z: 8 }] })
+  droppedAt(walled.client, seeds)
+  await settled()
+  const uuid = walled.bot.entities[77].uuid
+  assert.equal(typeof uuid, 'string')
+  const named = senseReading(walled.bot, { radius: RADIUS, limit: LIMIT, retainItems: [uuid] })
+  assert.deepEqual(named.reading.items, [
+    { what: 'wheat_seeds', count: 1, position: [11.5, FEET.y, 8.5], visible: false }
+  ])
+  assert.equal(named.itemOffers.length, 1)
+  // Another uuid names nothing here, and the unseen item stays unlisted.
+  const other = senseReading(walled.bot, {
+    radius: RADIUS, limit: LIMIT, retainItems: ['00000000-0000-4000-8000-000000000999']
+  })
+  assert.deepEqual(other.reading.items, [])
+})
+
+test('an entity the controller named is reported past nearer ones that fill the limit', async () => {
+  // v32 plains rehearsal 15: the skeleton that shot epsilon stood past the creatures it could
+  // name. Three pigs fill a limit of three; the skeleton farther off is cut unless it is named.
+  const given = await standing()
+  for (const [index, x] of [9.5, 10.5, 11.5].entries()) {
+    spotted(given.client, { id: 50 + index, what: 'pig', x, y: FEET.y, z: 8.5 })
+  }
+  spotted(given.client, { id: 60, what: 'skeleton', x: 12.5, y: FEET.y, z: 8.5 })
+  await settled()
+  const uuid = given.bot.entities[60].uuid
+  const cut = senseReading(given.bot, { radius: RADIUS, limit: LIMIT })
+  assert.deepEqual(cut.reading.entities.map((entity) => entity.what), ['pig', 'pig', 'pig'])
+  assert.equal(cut.reading.entitiesOmitted, 1)
+  const named = senseReading(given.bot, { radius: RADIUS, limit: LIMIT, retainEntities: [uuid] })
+  // It takes the place of the farthest pig, the order stays the distance order, and the omission
+  // count still says one was cut.
+  assert.deepEqual(named.reading.entities.map((entity) => entity.what), ['pig', 'pig', 'skeleton'])
+  assert.equal(named.reading.entitiesOmitted, 1)
+  assert.equal(named.entityOffers[2].entity, given.bot.entities[60])
+  // A uuid naming nothing here changes nothing.
+  const other = senseReading(given.bot, {
+    radius: RADIUS, limit: LIMIT, retainEntities: ['00000000-0000-4000-8000-000000000999']
+  })
+  assert.deepEqual(other.reading.entities, cut.reading.entities)
+})
+
 test('open floor blocks are seen through their top faces and a buried block is not listed', async () => {
   const { bot } = await standing({ walls: [{ x: 12, y: GROUND_LEVEL + 1, z: 8 }] })
   const sensed = senseReading(bot, { radius: RADIUS, limit: 48 })
@@ -646,6 +692,33 @@ test('a whole sense answer for a crowded scene fits one frame', async () => {
   assert.equal(frame.entitiesOmitted, 6)
   assert.ok(bytes < MAX_FRAME_BYTES, `${bytes} bytes of ${MAX_FRAME_BYTES}`)
   assert.ok(bot.entity !== undefined)
+  peer.stop()
+  await body.stop()
+})
+
+test('a sense reads the inventory only after the server answers a round trip, so an update it sent first is in the claim', async () => {
+  // The path rehearsal's epsilon claimed one log 4 ticks after the server had picked up its second:
+  // the library had not read the server's inventory update when the sense was answered, and the
+  // witness disputed the claim.
+  const { body, client, port } = await inTheWorld(await embodied())
+  stocked(client, [[BREAD_SLOT, 'bread', 1]])
+  await settled()
+  client.answersStatistics = false
+  const peer = await handshaken(port)
+  let answered
+  peer.answer(request('sense', 's1', { radius: RADIUS, limit: LIMIT })).then((frame) => { answered = frame })
+  await settled()
+  assert.equal(answered, undefined, 'nothing is read before the round trip')
+  const asked = client.writes.filter(({ name }) => name === 'client_command')
+  assert.deepEqual(asked.map(({ parameters }) => parameters), [{ actionId: 1 }])
+  // The server's pickup update, sent before its answer to the round trip.
+  stocked(client, [[BREAD_SLOT, 'bread', 2]])
+  client.emit('statistics', { entries: [] })
+  const frame = await promptly(new Promise((resolve) => {
+    const poll = setInterval(() => { if (answered !== undefined) { clearInterval(poll); resolve(answered) } }, 5)
+  }), 'the sense answer')
+  assert.equal(frame.op, 'sense')
+  assert.deepEqual(frame.inventory.find((entry) => entry.slot === BREAD_SLOT), { slot: BREAD_SLOT, what: 'bread', count: 2 })
   peer.stop()
   await body.stop()
 })
@@ -1159,4 +1232,57 @@ test('a starving body eats nothing and asks for no respawn of its own accord', a
   await settled(WATCHED_MS)
   assert.deepEqual(client.writes, [])
   await body.stop()
+})
+
+/** Puts a block of [what] at each cell, over whatever the column held. */
+function placed (bot, what, cells) {
+  const { Vec3 } = require('vec3')
+  for (const { x, y, z } of cells) bot.world.setBlockStateId(new Vec3(x, y, z), registry.blocksByName[what].defaultState)
+}
+
+/** The blocks of a reading beyond dig reach of the eyes at FEET. */
+function beyondReach (reading) {
+  const eyes = [FEET.x, FEET.y + EYE_HEIGHT, FEET.z]
+  return reading.blocks.filter(({ position }) =>
+    Math.hypot(position[0] + 0.5 - eyes[0], position[1] + 0.5 - eyes[1], position[2] + 0.5 - eyes[2]) > 5.1)
+}
+
+test('a sought kind is reported beyond dig reach, and only when sought', async () => {
+  // r34 zeta: logs 6.6 to 8 blocks off were only ever recalled, never in sight.
+  const { bot } = await standing()
+  placed(bot, 'oak_log', [{ x: 15, y: FEET.y, z: 8 }])
+  const plain = senseReading(bot, { radius: 16, limit: 48 }).reading
+  assert.deepEqual(beyondReach(plain), [])
+  const seeking = senseReading(bot, { radius: 16, limit: 48, seek: ['oak_log'] }).reading
+  assert.deepEqual(beyondReach(seeking), [{ what: 'oak_log', position: [15, FEET.y, 8], visible: true }])
+  // The omission count is only about what a dig could reach: the sought log took one place from
+  // the nearer blocks, which is the one more counted omitted, and is never counted itself.
+  assert.equal(seeking.blocksOmitted, plain.blocksOmitted + 1)
+  // A radius inside dig reach looks no further, whatever is sought.
+  const near = senseReading(bot, { radius: 5, limit: 48, seek: ['oak_log'] }).reading
+  assert.deepEqual(beyondReach(near), [])
+})
+
+test('a sought block out of sight is neither reported nor counted', async () => {
+  const { bot } = await standing({ walls: [{ x: 12, y: FEET.y, z: 8 }, { x: 12, y: FEET.y + 1, z: 8 }] })
+  placed(bot, 'oak_log', [{ x: 15, y: FEET.y, z: 8 }])
+  const reading = senseReading(bot, { radius: 16, limit: 48, seek: ['oak_log'] }).reading
+  assert.deepEqual(beyondReach(reading).filter(({ what }) => what === 'oak_log'), [])
+})
+
+test('sought kinds share a quarter of the list fairly, each kind\'s nearest first', async () => {
+  const { bot } = await standing()
+  // Three oak logs east, nearest first, and one birch log west, farther than all of them.
+  placed(bot, 'oak_log', [{ x: 14, y: FEET.y, z: 8 }, { x: 15, y: FEET.y, z: 8 }, { x: 15, y: FEET.y, z: 9 }])
+  placed(bot, 'birch_log', [{ x: 0, y: FEET.y, z: 8 }])
+  // A list of eight leaves two places beyond reach: the oak's nearest and the birch, never two oaks.
+  const reading = senseReading(bot, { radius: 16, limit: 8, seek: ['oak_log', 'birch_log', 'pale_oak_log'] }).reading
+  assert.deepEqual(beyondReach(reading), [
+    { what: 'oak_log', position: [14, FEET.y, 8], visible: true },
+    { what: 'birch_log', position: [0, FEET.y, 8], visible: true }
+  ])
+  assert.ok(reading.blocks.length <= 8)
+  // A list too short for a quarter of it seeks nothing.
+  const short = senseReading(bot, { radius: 16, limit: 3, seek: ['oak_log'] }).reading
+  assert.deepEqual(beyondReach(short), [])
 })

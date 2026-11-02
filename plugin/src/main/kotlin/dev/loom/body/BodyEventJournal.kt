@@ -106,25 +106,23 @@ class BodyEventJournal(
     /** Records the server-authoritative end of one bounded native interaction. */
     fun recordWorldInteraction(
         agentId: AgentId,
-        witness: WitnessedPlayer,
-        detail: String,
-        requestId: String?,
-        confirmed: Boolean,
+        interaction: WorldInteractionRecord,
     ) {
         eventLog.append(
             BodyEventRecord(
                 tick = currentTick(),
                 agentId = agentId.value,
                 event = BodyEvent.WORLD_INTERACTION,
-                detail = detail,
-                requestId = requestId,
+                detail = interaction.detail,
+                requestId = interaction.requestId,
                 outcome =
-                    if (confirmed) {
+                    if (interaction.confirmed) {
                         EventTag.SERVER_EFFECT_CONFIRMED
                     } else {
                         EventTag.DISPUTED_WORLD_INTERACTION
                     },
-                witness = witness,
+                witness = interaction.witness,
+                movement = interaction.movement,
             ),
         )
     }
@@ -167,6 +165,7 @@ class BodyEventJournal(
      * would leave a run unable to say whether the cadence, the state comparison or the
      * night's ceiling is what kept an agent from reacting to something hunting it.
      */
+
     fun recordSuppressedThreat(
         agentId: AgentId,
         suppression: ThreatSuppression,
@@ -186,20 +185,59 @@ class BodyEventJournal(
      * opposite facts about the run - an agent that got away, one whose threat vanished,
      * and one left standing in range - and only the tag tells them apart.
      */
+
     fun recordRetreat(
         agentId: AgentId,
         detail: String,
         outcome: String,
+        requestId: String? = null,
+        retreat: RetreatEvidence? = null,
     ) {
-        classified(agentId, BodyEvent.RETREATING, detail, outcome)
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.RETREATING,
+                detail = detail,
+                requestId = requestId,
+                outcome = outcome,
+                retreat = retreat,
+            ),
+        )
+    }
+
+    /**
+     * Records how far one walk or flight moved the body and how it ended, under the request
+     * that asked for it, so a movement's terminal is a typed fact joined by id rather than a
+     * nearby record read out of prose.
+     */
+    fun recordMovement(
+        agentId: AgentId,
+        detail: String,
+        requestId: String?,
+        outcome: String,
+        movement: MovementEvidence? = null,
+    ) {
+        eventLog.append(
+            BodyEventRecord(
+                tick = currentTick(),
+                agentId = agentId.value,
+                event = BodyEvent.MOVED,
+                detail = detail,
+                requestId = requestId,
+                outcome = outcome,
+                movement = movement,
+            ),
+        )
     }
 
     /** Appends an [event] whose meaning is carried by a short stable [outcome] tag. */
-    private fun classified(
+    fun classified(
         agentId: AgentId,
         event: BodyEvent,
         detail: String,
         outcome: String,
+        requestId: String? = null,
     ) {
         eventLog.append(
             BodyEventRecord(
@@ -207,8 +245,86 @@ class BodyEventJournal(
                 agentId = agentId.value,
                 event = event,
                 detail = detail,
+                requestId = requestId,
                 outcome = outcome,
             ),
         )
     }
 }
+
+/**
+ * Perception records held until the mind is shown their perception, so each is written as shown:
+ * classified, and with its horizon (r23: every perceived record read ROUTINE and carried no
+ * horizon, because it was written before either). A perception the mind is never shown is written
+ * as captured when its request ends, and the oldest beyond [MAX_PENDING_PERCEPTIONS] the same way,
+ * so no perception goes unrecorded. Main thread only.
+ */
+class PendingPerceptions(
+    private val journal: BodyEventJournal,
+) {
+    /** What a perception record says beside the perception itself. */
+    data class Captured(
+        val detail: String,
+        val audit: PerceptionAudit,
+        val vitals: AgentVitals?,
+    )
+
+    private class Pending(
+        val agentId: AgentId,
+        val perception: Perception,
+        val captured: Captured,
+        val after: () -> Unit,
+    )
+
+    private val pending = linkedMapOf<String, Pending>()
+
+    /** Holds [perception]'s record until [shown] or [release] writes it, then runs [after]. */
+    fun hold(
+        agentId: AgentId,
+        perception: Perception,
+        captured: Captured,
+        after: () -> Unit = {},
+    ) {
+        pending[perception.requestId] = Pending(agentId, perception, captured, after)
+        while (pending.size > MAX_PENDING_PERCEPTIONS) write(pending.keys.first(), null)
+    }
+
+    /** Writes the record of the perception [shown] is, as the mind is shown it. */
+    fun shown(shown: Perception) = write(shown.requestId, shown)
+
+    /** Writes the record of [requestId]'s perception as captured, if the mind was never shown it. */
+    fun release(requestId: String) = write(requestId, null)
+
+    private fun write(
+        requestId: String,
+        shown: Perception?,
+    ) {
+        val held = pending.remove(requestId) ?: return
+        val captured = held.captured
+        journal.recordPerception(
+            held.agentId,
+            captured.detail,
+            shown ?: held.perception,
+            captured.audit,
+            captured.vitals,
+        )
+        held.after()
+    }
+
+    private companion object {
+        const val MAX_PENDING_PERCEPTIONS = 64
+    }
+}
+
+/**
+ * One server-witnessed native interaction as its record states it: the player the server saw, the
+ * rendered detail, the perception it answers, whether vanilla confirmed the body's claim, and what
+ * an approaching interaction's route stated beyond its journey.
+ */
+data class WorldInteractionRecord(
+    val witness: WitnessedPlayer,
+    val detail: String,
+    val requestId: String?,
+    val confirmed: Boolean,
+    val movement: MovementEvidence? = null,
+)

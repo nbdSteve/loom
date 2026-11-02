@@ -94,6 +94,22 @@ class ObserverView(
             BodyEvent.DESPAWNED -> Note("its body was put away", ObserverLevel.CALM)
             BodyEvent.DIED -> Note("DIED. Permadeath: this agent will not return.", ObserverLevel.ALARM)
             BodyEvent.RETREATING -> retreatNote(record.outcome)
+            BodyEvent.OWN_DROP_PICKUP -> Note("tried once to pick up what its dig dropped", ObserverLevel.CALM)
+            BodyEvent.GOAL_REVIEW_DEFERRED ->
+                Note(
+                    "its scheduled review waits until it can be taken",
+                    ObserverLevel.CALM,
+                )
+            BodyEvent.EXPOSURE_ENDED ->
+                Note("the run's exposure ended; nothing new counts from here", ObserverLevel.CALM)
+            BodyEvent.INITIAL_CONDITIONS_WITNESSED ->
+                Note("the run began; the server read where it stood and what it held", ObserverLevel.CALM)
+            BodyEvent.SHELTER_CHANGED ->
+                if (record.outcome == EventTag.SHELTER_SEALED) {
+                    Note("is sealed in a shelter", ObserverLevel.CALM)
+                } else {
+                    Note("is not sealed in", ObserverLevel.CALM)
+                }
             BodyEvent.WITNESS_JOINED -> Note("connected to the server and has a body now", ObserverLevel.CALM)
             BodyEvent.WITNESS_QUIT ->
                 Note("disconnected. It is not dead; the agent continues.", ObserverLevel.CALM)
@@ -118,6 +134,10 @@ class ObserverView(
             // with the one thing that did *not* happen. What an operator needs to see is
             // the sighting that fired, which arrives as the `perceived` note above.
             BodyEvent.THREAT_SUPPRESSED -> null
+            // Evidence of a bound, like a suppression; the review it cost is the line's news.
+            BodyEvent.PERCEPTION_REFUSED -> null
+            // Evidence of a bound; the answer it routed arrives as its own `decided` note.
+            BodyEvent.COGNITION_TIER_FALLBACK -> null
             // Evidence only; health and the `perceived` note already say it.
             BodyEvent.DAMAGE_WITNESSED -> null
         }
@@ -146,10 +166,17 @@ class ObserverView(
             BodyEvent.DESPAWNED,
             BodyEvent.DIED,
             BodyEvent.RETREATING,
+            BodyEvent.OWN_DROP_PICKUP,
+            BodyEvent.GOAL_REVIEW_DEFERRED,
+            BodyEvent.EXPOSURE_ENDED,
+            BodyEvent.INITIAL_CONDITIONS_WITNESSED,
+            BodyEvent.SHELTER_CHANGED,
             // Names the creature and the request-scoped handle it was seen under. Neither
             // is a secret, and neither is a line: the bound that refused it is the whole
             // meaning, and that is a countable tag rather than prose.
             BodyEvent.THREAT_SUPPRESSED,
+            BodyEvent.PERCEPTION_REFUSED,
+            BodyEvent.COGNITION_TIER_FALLBACK,
             BodyEvent.DAMAGE_WITNESSED,
             // The five witness events carry the one kind of detail in Loom that was written
             // by neither Loom nor a model: a server death message names the weapon that did
@@ -372,6 +399,7 @@ class ObserverView(
         fun retreatNote(outcome: String?): Note =
             when (outcome) {
                 EventTag.RETREAT_SAFE -> Note("got away from the threat", ObserverLevel.CALM)
+                EventTag.RETREAT_SHORT -> Note("ran, but the threat kept pace", ObserverLevel.CONCERN)
                 // Worded to hold for a flight that never started as well as one that did:
                 // this tag is also what a Flee naming a creature the world no longer holds
                 // is filed under, and there the agent was never running from anything.
@@ -383,6 +411,8 @@ class ObserverView(
                     Note("was told to run from something it was never told about", ObserverLevel.CONCERN)
                 EventTag.RETREAT_SUPERSEDED ->
                     Note("stopped running: a later decision took over", ObserverLevel.CONCERN)
+                EventTag.RETREAT_STALE ->
+                    Note("an older flight gave way to a newer danger answer", ObserverLevel.CONCERN)
                 // RETREAT_FAILED, and anything a later version adds without saying so here:
                 // the agent is still in range of something hunting it and has been left
                 // standing, which is the reading an unrecognised tag must not be softer than.

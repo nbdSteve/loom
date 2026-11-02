@@ -9,11 +9,15 @@ import dev.loom.body.BodyInspection
 import dev.loom.body.BodyPort
 import dev.loom.body.BodySpawnResult
 import dev.loom.body.EventTag
+import dev.loom.body.HeldPerceptions
 import dev.loom.body.IntentOutcome
+import dev.loom.body.PendingPerceptions
+import dev.loom.body.ThreatWatch
 import dev.loom.body.completedBodyOperation
 import dev.loom.contract.Intent
 import dev.loom.contract.Perception
 import dev.loom.contract.Trigger
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 
@@ -83,10 +87,65 @@ class PlayerBodyPort(
         trigger: Trigger,
     ): CompletionStage<Perception?> = instances[agentId]?.perceive(agentId, trigger) ?: completedBodyOperation(null)
 
+    override val damage: dev.loom.body.DamagePerception =
+        dev.loom.body.DamagePerception { agentId, trigger, attacker ->
+            instances[agentId]?.perceive(agentId, trigger, attacker?.let(::uuidOrNull)) ?: completedBodyOperation(null)
+        }
+
     override fun senseThreat(agentId: AgentId): CompletionStage<Perception?> =
         instances[agentId]?.senseThreat(agentId) ?: completedBodyOperation(null)
 
+    override val pickups: dev.loom.body.OwnDropCollector =
+        dev.loom.body.OwnDropCollector { agentId, requestId, item ->
+            instances[agentId]?.pickup?.attempt(agentId, requestId, item) ?: completedBodyOperation(null)
+        }
+
+    override val halts: dev.loom.body.BodyHalt =
+        dev.loom.body.BodyHalt { agentId, decidedBy ->
+            instances[agentId]?.halts?.halt(agentId, decidedBy) ?: completedBodyOperation(false)
+        }
+
+    override val held: HeldPerceptions =
+        object : HeldPerceptions {
+            override fun release(
+                agentId: AgentId,
+                requestId: String,
+            ) {
+                instances[agentId]?.release(agentId, requestId)
+            }
+
+            override fun shown(
+                agentId: AgentId,
+                perception: Perception,
+            ) {
+                // Recorded as the mind is shown it, and its decision dated by that moment, the order the
+                // research record writes perceptions in.
+                instances[agentId]?.let {
+                    it.perceptions.shown(perception)
+                    it.decisions.asked(perception.requestId)
+                }
+            }
+
+            override fun dangerSubjectOf(
+                agentId: AgentId,
+                requestId: String,
+            ): String? = instances[agentId]?.threatSubjects?.get(requestId)
+
+            override fun unsent(
+                agentId: AgentId,
+                perception: Perception,
+                waited: Boolean,
+            ) {
+                val instance = instances[agentId] ?: return
+                (perception.trigger as? Trigger.ThreatSighted)?.let {
+                    val subject = instance.threatSubjects[perception.requestId]?.let(UUID::fromString)
+                    instance.threatWatch.refund(agentId, it, subject, waited)
+                }
+            }
+        }
+
     override fun tick(tick: Long) {
+        authority.serverState.onTick()
         instances.values.forEach { it.tick(tick) }
     }
 
@@ -143,6 +202,15 @@ private class PlayerBodyInstance(
 
     val agentId: AgentId get() = infrastructure.identity.agentId
 
+    /** This agent's threat watch, so a sighting that never reached the mind is refunded. */
+    val threatWatch: ThreatWatch get() = context.threatWatch
+
+    /** This agent's held perception records, written as the mind is shown each. */
+    val perceptions: PendingPerceptions get() = context.perceptions
+
+    /** The order this agent's perceptions were asked in, which dates each decision applied. */
+    val decisions: NewestDecisions get() = actuation.newest
+
     fun spawn(agentId: AgentId): CompletionStage<BodySpawnResult> = lifecycle.spawn(agentId)
 
     fun despawn(agentId: AgentId): CompletionStage<Boolean> = lifecycle.despawn(agentId)
@@ -153,15 +221,35 @@ private class PlayerBodyInstance(
         requestId: String?,
     ): CompletionStage<IntentOutcome> = actuation.apply(agentId, intent, requestId)
 
+    /** This agent's halt, for a newer danger answer that takes the body from an older flight. */
+    val halts: dev.loom.body.BodyHalt get() = dev.loom.body.BodyHalt(actuation::halt)
+
     fun perceive(
         agentId: AgentId,
         trigger: Trigger,
-    ): CompletionStage<Perception?> = perception.perceive(agentId, trigger)
+        attacker: java.util.UUID? = null,
+    ): CompletionStage<Perception?> = perception.perceive(agentId, trigger, attacker)
 
     fun senseThreat(agentId: AgentId): CompletionStage<Perception?> = perception.senseThreat(agentId)
 
+    val threatSubjects: ThreatSubjects get() = perception.subjects
+
+    val pickup by lazy { OwnDropPickup(context, registry, sessions, perception) }
+
+    private val shelter = ShelterWitness(context, registry)
+
+    fun release(
+        agentId: AgentId,
+        requestId: String,
+    ) {
+        context.perceptions.release(requestId)
+        sessions.settle(agentId, requestId, expected = null)
+    }
+
     fun tick(tick: Long) {
         lifecycle.tick(tick)
+        pickup.tick(tick)
+        shelter.tick(tick)
     }
 
     fun liveBodies(): Set<AgentId> = registry.liveBodies()
@@ -217,3 +305,6 @@ private class FleetStarter(
         }
     }
 }
+
+/** [text] as a uuid, or `null` when it is not one. */
+private fun uuidOrNull(text: String): java.util.UUID? = runCatching { java.util.UUID.fromString(text) }.getOrNull()

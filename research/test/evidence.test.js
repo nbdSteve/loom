@@ -430,6 +430,69 @@ test('goal continuity is derived from typed goal evidence rather than prose', ()
   assert.deepEqual(deriveMetrics(elsewhere.records).goalContinuity.agentsWithContinuity, [])
 })
 
+test('every accepted end states its reason, counted from routine-v36, and an unknown one is refused', () => {
+  const goals = {
+    'tribe-gamma:sense-1': { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'sense-1', revision: 0 },
+    'tribe-gamma:sense-2': {
+      outcome: 'goalCompletedAdopted',
+      disposition: 'replace',
+      presentedGoalId: 'sense-1',
+      presentedRevision: 0,
+      goalId: 'sense-2',
+      revision: 0,
+      reason: 'completed'
+    },
+    'tribe-beta:sense-1': { outcome: 'goalAdopted', disposition: 'adopt', goalId: 'sense-1', revision: 0 },
+    'tribe-beta:sense-2': { outcome: 'goalAbandoned', disposition: 'abandon', presentedGoalId: 'sense-1', presentedRevision: 0, reason: 'impossible' },
+    // A refused end states a reason too, and is no end.
+    'tribe-alpha:sense-1': { outcome: 'goalReasonUnsupported', disposition: 'abandon', reason: 'stale' }
+  }
+  const normalized = normalizedWithGoals((record) => {
+    const goal = goals[`${record.agentId}:${record.requestId}`]
+    if (record.event === 'decided' && goal !== undefined) record.goal = goal
+  })
+  const metrics = deriveMetrics(normalized.records)
+  assert.deepEqual(metrics.goalContinuity.endReasons, { completed: 1, impossible: 1 })
+  assert.equal(metrics.goalContinuity.byOutcome.goalReasonUnsupported, 1)
+  // Evidence from before routine-v36 states none, and derives no such measure.
+  const before = normalizedWithGoals((record) => {
+    if (record.event === 'decided' && record.agentId === 'tribe-beta' && record.requestId === 'sense-1') {
+      record.goal = goals['tribe-beta:sense-1']
+    }
+  })
+  assert.equal(deriveMetrics(before.records).goalContinuity.endReasons, undefined)
+  assert.throws(() => normalizedWithGoals((record) => {
+    if (record.event === 'decided' && record.agentId === 'tribe-beta' && record.requestId === 'sense-2') {
+      record.goal = { ...goals['tribe-beta:sense-2'], reason: 'bored' }
+    }
+  }), /unknown goal end reason/)
+})
+
+test('a shelter goal\'s typed cover is kept and a malformed one refused at normalization', () => {
+  const step = {
+    outcome: 'goalContinued',
+    disposition: 'continue',
+    presentedGoalId: 'sense-1',
+    presentedRevision: 0,
+    goalId: 'sense-1',
+    revision: 0,
+    presentedShelter: true,
+    stepEvidence: 'covered',
+    cover: { closed: 8, closable: 1, sealed: false }
+  }
+  const normalized = normalizedWithGoals((record) => {
+    if (record.event === 'decided' && record.agentId === 'tribe-beta' && record.requestId === 'sense-2') record.goal = step
+  })
+  const kept = normalized.records.find((record) => record.requestKey === 'tribe-beta:sense-2' && record.event === 'decided')
+  assert.deepEqual(kept.goal.cover, step.cover)
+  for (const cover of [null, [], { closed: 10, closable: 0, sealed: false }, { closed: 8, closable: -1, sealed: false },
+    { closed: 8, closable: 1, sealed: 'no' }]) {
+    assert.throws(() => normalizedWithGoals((record) => {
+      if (record.event === 'decided' && record.agentId === 'tribe-beta') record.goal = { ...step, cover }
+    }), /cover/)
+  }
+})
+
 test('evidence without goal records derives no goal continuity section', () => {
   const metrics = deriveMetrics(normalizedWithGoals(() => {}).records)
   assert.equal(metrics.goalContinuity, undefined)

@@ -32,6 +32,9 @@ object EventTag {
     /** A scheduled goal review: the agent's own cadence, not the world's prompting. */
     const val GOAL_REVIEW: String = "goalReview"
 
+    /** The held goal's last step ended, prompting one follow-up goal review. */
+    const val STEP_SETTLED: String = "stepSettled"
+
     /** Somebody spoke to the agent. */
     const val SPOKEN: String = "spoken"
 
@@ -156,6 +159,21 @@ object EventTag {
      */
     const val THREAT_OVER_NIGHTLY_CAP: String = "threatOverNightlyCap"
 
+    /** A hunter out of sight and beyond [THREAT_NEAR_BLOCKS], not worth a flight. */
+    const val THREAT_DISTANT_UNSEEN: String = "threatDistantUnseen"
+
+    /** A hunter in sight but beyond [THREAT_SIGHT_NEWS_BLOCKS], not worth a flight. */
+    const val THREAT_DISTANT_SEEN: String = "threatDistantSeen"
+
+    /** The server's ground seals the agent in, read at its server position (`ShelterWitness`). */
+    const val SHELTER_SEALED: String = "sheltered"
+
+    /** The server's ground no longer seals the agent in. */
+    const val SHELTER_OPEN: String = "exposed"
+
+    /** A hunter seen while the agent stands sealed in, which nothing it hunts with can reach. */
+    const val THREAT_SHELTERED: String = "threatSheltered"
+
     /** A witnessed server damage event reached cognition as one `damaged` trigger. */
     const val DAMAGE_SUBMITTED: String = "damageSubmitted"
 
@@ -164,6 +182,48 @@ object EventTag {
      * already deciding or acting on the same threat, or did so moments ago.
      */
     const val DANGER_COALESCED: String = "dangerCoalesced"
+
+    /** Urgent danger sent at the ordinary tier because the pivotal ceiling no longer fits it. */
+    const val TIER_FALLBACK: String = "tierFallback"
+
+    /**
+     * A danger decision discarded unapplied, because newer damage from another attacker or at low
+     * health was sent while it was with the mind and that newer answer governs the body now.
+     */
+    const val DANGER_PREEMPTED: String = "dangerPreempted"
+
+    /** A dig's one pickup attempt found its own goal-item drop nowhere in a fresh sense. */
+    const val OWN_DROP_NOT_SENSED: String = "ownDropNotSensed"
+
+    /**
+     * A dig's one pickup not tried: its body already found no way to that drop - no route, or a
+     * route it stalled on from this same cell over this same ground (r34 delta: three collects of
+     * its own logs stalled from one stuck cell, and a pickup was forced into the same stall).
+     */
+    const val OWN_DROP_UNREACHABLE: String = "ownDropUnreachable"
+
+    /** A due scheduled review waits behind a review or follow-up of the agent's still with the mind. */
+    const val REVIEW_IN_FLIGHT: String = "reviewInFlight"
+
+    /** A due scheduled review waits while the body carries out the agent's flight. */
+    const val FLEEING: String = "fleeing"
+
+    /** A due scheduled review waits while the mind decides a danger of the agent's. */
+    const val DANGER_DECIDING: String = "dangerDeciding"
+
+    /** A due scheduled review waits behind a follow-up the same sweep claimed for the agent. */
+    const val FOLLOW_UP_CLAIMED: String = "followUpClaimed"
+
+    /** An event decision that took no survival response while a hunter was immediate danger (r24). */
+    const val SURVIVAL_REQUIRED: String = "survivalRequired"
+
+    /**
+     * A perception the mind was not asked about because the agent already has cognition in
+     * flight for the same kind of trigger: one scheduled goal review, and one event, at a time.
+     * A redundant event folds into the answer already coming instead of spending the agent's
+     * outstanding-request budget, and a review is never refused, only deferred until it fits.
+     */
+    const val COGNITION_COALESCED: String = "cognitionCoalesced"
 
     /** A perception still waiting for the mind when the plugin shut down; it was never answered. */
     const val COGNITION_SHUTDOWN: String = "cognitionShutdown"
@@ -183,11 +243,21 @@ object EventTag {
     /** The body could not capture a perception for the damage. */
     const val DAMAGE_NOT_PERCEIVED: String = "damageNotPerceived"
 
+    /** A perception refused because the body already held as many senses as it keeps. */
+    const val SENSE_AT_CAPACITY: String = "senseAtCapacity"
+
     /** Damage witnessed while Loom was shutting down. */
     const val DAMAGE_SHUTDOWN: String = "damageShutdown"
 
     /** The agent got beyond what it can perceive of the threat. It ran away. */
     const val RETREAT_SAFE: String = "retreatSafe"
+
+    /**
+     * The flight reached ground beyond the requested distance from where the threat stood, but
+     * the threat kept pace: the live separation at its end is short of that distance (r22: eight
+     * "safe" flights ended under 12 of the 24 asked for, and the bites resumed 40 ticks later).
+     */
+    const val RETREAT_SHORT: String = "retreatShort"
 
     /**
      * The threat died, despawned, or left the world. The running was not what ended it.
@@ -217,8 +287,89 @@ object EventTag {
      */
     const val RETREAT_THREAT_UNNAMED: String = "retreatThreatUnnamed"
 
+    /**
+     * A walk named the block to stand on through a handle the agent no longer holds bindings
+     * for: the decision arrived after the request that minted it had been evicted.
+     */
+    const val MOVE_SENSE_FORGOTTEN: String = "moveSenseForgotten"
+
+    /**
+     * A walk named a block the request that answered it never issued a handle for, which is a
+     * mind naming something it was never given rather than Loom's latency.
+     */
+    const val MOVE_BLOCK_UNNAMED: String = "moveBlockUnnamed"
+
+    /**
+     * A walk named a block in the agent's own column - the one under its feet, or a plant it
+     * stands in - which goes nowhere: refused rather than answered as an arrival that moved
+     * nothing. Never offered to a walk, so this is a mind that ignored its offer.
+     */
+    const val MOVE_OWN_SPOT: String = "moveOwnSpot"
+
+    /**
+     * A walk named a block no body can stand at - a solid block with a solid cell over it, or a
+     * plant with nothing under it - so the ground could only refuse it. Never offered to a walk.
+     */
+    const val MOVE_NOT_STANDABLE: String = "moveNotStandable"
+
+    /** A walk whose destination lies beyond the body's movement reach. */
+    const val MOVE_OUT_OF_RANGE: String = "moveOutOfRange"
+
+    /** A walk the ground gave no route for. */
+    const val MOVE_NO_ROUTE: String = "moveNoRoute"
+
+    /** A walk whose route search the body's own budget stopped before it learned the ground. */
+    const val MOVE_SEARCH_OVER_BUDGET: String = "moveSearchOverBudget"
+
+    /** A flight from a threat beyond the body's movement reach. */
+    const val RETREAT_OUT_OF_RANGE: String = "retreatOutOfRange"
+
+    /** A flight the ground gave no route for. */
+    const val RETREAT_NO_ROUTE: String = "retreatNoRoute"
+
+    /** A flight whose route search the body's own budget stopped before it learned the ground. */
+    const val RETREAT_SEARCH_OVER_BUDGET: String = "retreatSearchOverBudget"
+
+    /** How a walk or flight that moved the body ended, on its `moved` record. */
+    const val MOVEMENT_ARRIVED: String = "movementArrived"
+
+    /** The movement started and then made no further progress. */
+    const val MOVEMENT_STALLED: String = "movementStalled"
+
+    /** The movement reached its travel bound before arriving. */
+    const val MOVEMENT_OVER_TRAVELLED: String = "movementOverTravelled"
+
+    /** The movement reached its time bound before arriving. */
+    const val MOVEMENT_TIMED_OUT: String = "movementTimedOut"
+
+    /** A halt or a later intent stopped the movement after it had moved the body. */
+    const val MOVEMENT_CANCELLED: String = "movementCancelled"
+
+    /** The movement moved the body and then ended without a route, reach or named threat. */
+    const val MOVEMENT_REFUSED: String = "movementRefused"
+
     /** A later intent that was not a flight took the body over. */
     const val RETREAT_SUPERSEDED: String = "retreatSuperseded"
+
+    /**
+     * The run's experiment exposure had ended: a perception captured before the end and an answer
+     * already with the mind end here rather than reach the mind or the body (`ExposureGate`).
+     */
+    const val EXPOSURE_ENDED: String = "exposureEnded"
+
+    /** The server read the agent's player when the run began (`InitialConditionsWitness`). */
+    const val INITIAL_CONDITIONS_WITNESSED: String = "initialConditionsWitnessed"
+
+    /** The agent had no player on the server when the run began, so there was nothing to read. */
+    const val INITIAL_CONDITIONS_ABSENT: String = "initialConditionsAbsent"
+
+    /**
+     * An older flight that a newer danger answer of the same agent's was applied after, ended before
+     * it could take the body: refused behind the newer one, or displaced from its takeover before it
+     * began. Never halts the newer answer (r34 beta: an older sighting's flight, retried after
+     * notReady, halted the newer damage's flight and ran in its place).
+     */
+    const val RETREAT_STALE: String = "retreatStale"
 
     /**
      * The flight ended with the agent still in range of the threat.
@@ -261,8 +412,35 @@ object EventTag {
     const val EAT_SLOT_INACCESSIBLE: String = "eatSlotInaccessible"
 
     const val DIG_SENSE_FORGOTTEN: String = "digSenseForgotten"
+
+/**
+     * A dig of the block underfoot that would leave the body in a hole it cannot leave: refused
+     * before the body is asked. Never offered, because the block observation says digSafe false.
+     */
+    const val DIG_WOULD_TRAP: String = "digWouldTrap"
+
+    /**
+     * A dig below the feet whose drop would land where no body can step down to collect it:
+     * refused before the body is asked, and never offered, because the observation says digSafe
+     * false (r19 beta body:00000441, kappa 00000383).
+     */
+    const val DIG_DROP_UNREACHABLE: String = "digDropUnreachable"
+
+    /**
+     * A dig that would let water flood a cell the body occupies: refused before the body is asked,
+     * and never offered, because the observation says digSafe false (r27 epsilon drowned).
+     */
+    const val DIG_FLOODS_BODY: String = "digFloodsBody"
+
     const val DIG_BLOCK_UNNAMED: String = "digBlockUnnamed"
     const val DIG_BLOCK_GONE: String = "digBlockGone"
+
+    /**
+     * A dig whose finish crossed another managed player's in the server: the body saw the block
+     * go after its own finish, and the server's break event names the other player. Neither client
+     * can tell the two apart, so the server's attribution is the outcome (r23 rehearsal, iota).
+     */
+    const val DIG_CONTEST_GONE: String = "digContestGone"
     const val DIG_BLOCK_CHANGED: String = "digBlockChanged"
     const val DIG_OUT_OF_REACH: String = "digOutOfReach"
     const val DIG_NOT_VISIBLE: String = "digNotVisible"
@@ -343,6 +521,9 @@ object EventTag {
     const val ATTACK_SLOT_CHANGED: String = "attackSlotChanged"
     const val ATTACK_HEALTH_BOUND: String = "attackHealthBound"
     const val ATTACK_OUT_OF_RANGE: String = "attackOutOfRange"
+
+    /** A strike landed and the target was then out of range: it was knocked or walked off (r22 delta). */
+    const val ATTACK_TARGET_ESCAPED: String = "attackTargetEscaped"
     const val ATTACK_NO_ROUTE: String = "attackNoRoute"
     const val ATTACK_SEARCH_OVER_BUDGET: String = "attackSearchOverBudget"
     const val ATTACK_STALLED: String = "attackStalled"
@@ -475,6 +656,7 @@ object EventTag {
 fun tagOf(trigger: Trigger): String =
     when (trigger) {
         is Trigger.GoalReview -> EventTag.GOAL_REVIEW
+        is Trigger.StepSettled -> EventTag.STEP_SETTLED
         is Trigger.Spoken -> EventTag.SPOKEN
         is Trigger.Damaged -> EventTag.DAMAGED
         is Trigger.ThreatSighted -> EventTag.THREAT_SIGHTED
@@ -508,6 +690,11 @@ fun tagOf(intent: Intent): String =
 val INTENT_REFUSAL_TAGS: Set<String> =
     setOf(
         EventTag.REJECTED,
+        GoalEvidence.CONDITION_MET_IGNORED,
+        GoalEvidence.COMPLETION_UNMET,
+        GoalEvidence.SUCCESS_UNOBTAINABLE,
+        GoalEvidence.ALREADY_MET,
+        GoalEvidence.STEP_IDLE,
         EventTag.CONTROL_UNAVAILABLE,
         EventTag.CONTROL_NOT_READY,
         EventTag.EAT_SLOT_FORGOTTEN,
@@ -520,9 +707,24 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.RETREAT_THREAT_FORGOTTEN,
         EventTag.RETREAT_THREAT_UNNAMED,
         EventTag.RETREAT_THREAT_GONE,
+        EventTag.RETREAT_STALE,
+        EventTag.MOVE_SENSE_FORGOTTEN,
+        EventTag.MOVE_BLOCK_UNNAMED,
+        EventTag.MOVE_OWN_SPOT,
+        EventTag.MOVE_NOT_STANDABLE,
+        EventTag.MOVE_OUT_OF_RANGE,
+        EventTag.MOVE_NO_ROUTE,
+        EventTag.MOVE_SEARCH_OVER_BUDGET,
+        EventTag.RETREAT_OUT_OF_RANGE,
+        EventTag.RETREAT_NO_ROUTE,
+        EventTag.RETREAT_SEARCH_OVER_BUDGET,
         EventTag.DIG_SENSE_FORGOTTEN,
         EventTag.DIG_BLOCK_UNNAMED,
+        EventTag.DIG_WOULD_TRAP,
+        EventTag.DIG_DROP_UNREACHABLE,
+        EventTag.DIG_FLOODS_BODY,
         EventTag.DIG_BLOCK_GONE,
+        EventTag.DIG_CONTEST_GONE,
         EventTag.DIG_BLOCK_CHANGED,
         EventTag.DIG_OUT_OF_REACH,
         EventTag.DIG_NOT_VISIBLE,
@@ -592,6 +794,7 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         EventTag.ATTACK_SLOT_CHANGED,
         EventTag.ATTACK_HEALTH_BOUND,
         EventTag.ATTACK_OUT_OF_RANGE,
+        EventTag.ATTACK_TARGET_ESCAPED,
         EventTag.ATTACK_NO_ROUTE,
         EventTag.ATTACK_SEARCH_OVER_BUDGET,
         EventTag.ATTACK_STALLED,

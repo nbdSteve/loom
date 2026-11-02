@@ -1,6 +1,7 @@
 'use strict'
 
-const { reviewWindowBounds } = require('./controlled-stop.js')
+const { heldReviewOf, reservedReviewsOf, reviewWindowBounds } = require('./controlled-stop.js')
+const { isExposureEnding, isPreempted } = require('./danger.js')
 
 // A server-witnessed death is an experiment outcome: that agent's chain ends and its
 // peers continue. Only its own disconnect and discarded in-flight decision may follow.
@@ -12,12 +13,24 @@ const AFTER_DEATH_DAMAGE_OUTCOMES = Object.freeze(['damageDiedBeforeCognition', 
 // Permadeath is absolute: after a death nothing new may begin. The one exception is the typed
 // terminal settlement of a request the agent provably decided before it died: its single
 // intentApplied or decisionDiscarded, and at most one movement and one retreat report per
-// such request, because a flight in progress reports how it ended. A server effect first
-// recorded after the death (worldInteraction), a new perception, decision or cognition, and
-// any record for a request not pending at the death stay fatal.
+// such request, because a flight in progress reports how it ended; and, after that request's
+// own intentApplied, at most one server witness of the interaction it ended
+// (worldInteraction), because the JVM audits an interaction when its report arrives and a dead
+// player can take no further action, so that witness can only state what the request did while
+// the agent lived (the v35 shelter rehearsal: delta, trapped and under attack, was killed while
+// the closing it chose was in flight). A server witness of any other request, or one before its
+// settlement, a new perception, decision or cognition, and any record for a request
+// not pending at the death stay fatal.
+//
+// A perception the agent took before it died whose answer came after is pending too, and may
+// end once with the JVM's decisionDiscarded or cognitionUnavailable and nothing else: the JVM
+// records no decision for a dead agent. In r21 gamma's damaged perception at tick 6683 was
+// answered 2.3 s later, after the death, and its decided record stopped the run.
 const SETTLEMENT_REPORTS = Object.freeze(['moved', 'retreating'])
 
 function allowedAfterDeath (record) {
+  // The run's own exposure end is stated on every agent's chain, a dead one's included.
+  if (record.event === 'exposureEnded') return true
   return AFTER_DEATH_EVENTS.includes(record.event) ||
     (record.event === 'damageWitnessed' && AFTER_DEATH_DAMAGE_OUTCOMES.includes(record.outcome))
 }
@@ -25,8 +38,10 @@ function allowedAfterDeath (record) {
 class DeathSettlement {
   constructor () {
     this.pending = new Map()
+    this.perceived = new Map()
     this.reportsLeft = new Map()
     this.settled = new Map()
+    this.witnessable = new Set()
   }
 
   pendingOf (agentId) {
@@ -34,13 +49,24 @@ class DeathSettlement {
     return this.pending.get(agentId)
   }
 
+  perceivedOf (agentId) {
+    if (!this.perceived.has(agentId)) this.perceived.set(agentId, new Set())
+    return this.perceived.get(agentId)
+  }
+
   /** Answers why a record is inadmissible after its agent's death, or null. */
   observe (record, dead) {
     const agentId = record.agentId
     const key = `${agentId}:${record.requestId}`
     const pending = this.pendingOf(agentId)
+    const perceived = this.perceivedOf(agentId)
     if (!dead) {
-      if (record.event === 'decided') pending.add(key)
+      if (record.event === 'perceived') perceived.add(key)
+      if (record.event === 'decided') {
+        perceived.delete(key)
+        pending.add(key)
+      }
+      if (['intentApplied', 'decisionDiscarded', 'cognitionUnavailable'].includes(record.event)) perceived.delete(key)
       if (record.event === 'intentApplied' || record.event === 'decisionDiscarded') pending.delete(key)
       if (record.event === 'died') {
         this.reportsLeft.set(agentId, Object.fromEntries(SETTLEMENT_REPORTS.map((event) => [event, pending.size])))
@@ -48,8 +74,19 @@ class DeathSettlement {
       return null
     }
     if (allowedAfterDeath(record) && record.event !== 'decisionDiscarded') return null
+    if (record.event === 'worldInteraction' && this.witnessable.has(key)) {
+      this.witnessable.delete(key)
+      return null
+    }
     if (['intentApplied', 'decisionDiscarded'].includes(record.event) && pending.has(key)) {
       pending.delete(key)
+      if (!this.settled.has(agentId)) this.settled.set(agentId, [])
+      this.settled.get(agentId).push(key)
+      if (record.event === 'intentApplied') this.witnessable.add(key)
+      return null
+    }
+    if (['decisionDiscarded', 'cognitionUnavailable'].includes(record.event) && perceived.has(key)) {
+      perceived.delete(key)
       if (!this.settled.has(agentId)) this.settled.set(agentId, [])
       this.settled.get(agentId).push(key)
       return null
@@ -86,7 +123,9 @@ function deathViolation (bodyRecords, settlement = new DeathSettlement()) {
       settlement.observe(record, false)
       if (record.event === 'died') {
         dead.set(agentId, record.tick)
-      } else if (AFTER_DEATH_EVENTS.includes(record.event)) {
+      } else if (AFTER_DEATH_EVENTS.includes(record.event) && !isPreempted(record) && !isExposureEnding(record)) {
+        // A danger answer newer damage preempted is a living agent's superseded answer, and
+        // needs no death (v32 plains rehearsal 23: kappa's).
         return `${agentId} recorded ${record.event} without a witnessed death`
       }
       continue
@@ -134,7 +173,9 @@ function deathMetrics (bodyRecords, harnessRecords, firstTick) {
       settledAfterDeath: settlement.settledAfterDeath(agentId),
       attempted: reviews.length,
       completed: reviews.filter((record) => record.event === 'cognitionForwarded' && record.outcome === 'decision').length,
-      ...bounds
+      ...bounds,
+      ...heldReviewOf(bodyRecords, agentId, tick),
+      ...reservedReviewsOf(bodyRecords, agentId, tick)
     }
   }
   return {

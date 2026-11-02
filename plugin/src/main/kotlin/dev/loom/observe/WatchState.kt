@@ -238,9 +238,18 @@ private fun bodilessAfter(
         BodyEvent.ENERGY_CHANGED,
         BodyEvent.HEALTH_CHANGED,
         BodyEvent.RETREATING,
+        BodyEvent.OWN_DROP_PICKUP,
+        BodyEvent.GOAL_REVIEW_DEFERRED,
+        BodyEvent.EXPOSURE_ENDED,
+        // The server's reading at the run's start is a fact about the body it already has.
+        BodyEvent.INITIAL_CONDITIONS_WITNESSED,
+        // Whether the ground seals a body in is a fact about the body it already has.
+        BodyEvent.SHELTER_CHANGED,
         // A body that looked around is a body: the record says nothing either way about
         // whether the agent still has one, so what was already known stands.
         BodyEvent.THREAT_SUPPRESSED,
+        BodyEvent.PERCEPTION_REFUSED,
+        BodyEvent.COGNITION_TIER_FALLBACK,
         BodyEvent.DAMAGE_WITNESSED,
         // A body whose account of itself is wrong is still a body. What is in doubt is the
         // readings, not the embodiment - and the readings are exactly what a display would
@@ -309,11 +318,20 @@ private fun activityAfter(
         // earlier, and every transition after that is about the *state* of the flight
         // rather than about a new thing the body was told to do. The note says which.
         BodyEvent.RETREATING,
+        BodyEvent.OWN_DROP_PICKUP,
+        BodyEvent.GOAL_REVIEW_DEFERRED,
+        BodyEvent.EXPOSURE_ENDED,
+        // The run began around the agent; what it is doing is unchanged.
+        BodyEvent.INITIAL_CONDITIONS_WITNESSED,
+        // The ground closed or opened around the agent; what it is doing is unchanged.
+        BodyEvent.SHELTER_CHANGED,
         -> state.activity
         // Nothing was asked of the body and no mind was woken, so the agent is doing
         // exactly what it was already doing. Saying otherwise would show a suppression as
         // a state change, which is the opposite of what it records.
         BodyEvent.THREAT_SUPPRESSED,
+        BodyEvent.PERCEPTION_REFUSED,
+        BodyEvent.COGNITION_TIER_FALLBACK,
         // The damage's cognition arrives as its own `perceived` record.
         BodyEvent.DAMAGE_WITNESSED,
         -> state.activity

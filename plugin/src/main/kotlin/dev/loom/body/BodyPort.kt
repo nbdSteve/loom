@@ -125,6 +125,21 @@ interface BodyPort : AutoCloseable {
      */
     fun senseThreat(agentId: AgentId): CompletionStage<Perception?>
 
+    /** Where a dig's one pickup of its goal's own dropped item is made; see [OwnDropCollector]. */
+    val pickups: OwnDropCollector get() = OwnDropCollector.NONE
+
+    /** How a newer danger answer that is not a flight takes the body from an older flight; see [BodyHalt]. */
+    val halts: BodyHalt get() = BodyHalt.NONE
+
+    /**
+     * How this body perceives damage that names the creature that dealt it; see [DamagePerception].
+     * A port that cannot name it perceives the damage as [perceive] does.
+     */
+    val damage: DamagePerception get() = DamagePerception { agentId, trigger, _ -> perceive(agentId, trigger) }
+
+    /** The perceptions this body holds open until their decisions settle; see [HeldPerceptions]. */
+    val held: HeldPerceptions get() = HeldPerceptions.NONE
+
     /** Identifiers of every body currently present in the world. */
     fun liveBodies(): Set<AgentId>
 
@@ -167,3 +182,100 @@ interface BodyPort : AutoCloseable {
 
 /** A completed body-port operation, mainly for lightweight test doubles. */
 internal fun <T> completedBodyOperation(value: T): CompletionStage<T> = CompletableFuture.completedFuture(value)
+
+/**
+ * Ends a held perception without an action: its chain ended before the body was asked for
+ * anything - coalesced, refused against its goal, or lost by the mind.
+ *
+ * A perception holds what its request minted until its decision settles, and a body holds only
+ * a few at once, so one that is never acted on must still give them back (r20: 28 coalesced
+ * danger perceptions held the body's four senses for 800 ticks each, and 17 hits on the three
+ * agents that died went unperceived). Main thread only; a no-op for a body that holds nothing
+ * under that request.
+ */
+fun interface HeldPerceptions {
+    fun release(
+        agentId: AgentId,
+        requestId: String,
+    )
+
+    /**
+     * Told that [perception] never reached the mind, so whatever its trigger spent on being asked
+     * is given back, and, when it [waited] behind a nearer threat's answer, that the threat it saw
+     * was never told. Main thread only; a no-op by default.
+     */
+    fun unsent(
+        agentId: AgentId,
+        perception: Perception,
+        waited: Boolean = false,
+    ) = Unit
+
+    /** Told the perception the mind is now shown, classified and with its horizon, to record it so. */
+    fun shown(
+        agentId: AgentId,
+        perception: Perception,
+    ) = Unit
+
+    /**
+     * The server's own identity for the creature a threat sighting [requestId] is about, so danger
+     * is tracked by the creature rather than its kind; `null` when the body cannot say.
+     */
+    fun dangerSubjectOf(
+        agentId: AgentId,
+        requestId: String,
+    ): String? = null
+
+    companion object {
+        /** A body that holds nothing between a perception and its decision. */
+        val NONE: HeldPerceptions = HeldPerceptions { _, _ -> }
+    }
+}
+
+/**
+ * Captures a perception of damage [Trigger.Damaged] that names the creature that dealt it: the
+ * attacker, by the server uuid the witness saw (a projectile's shooter first), is reported however
+ * many creatures stand nearer, and the trigger carries the ref this perception gives it, so the
+ * mind can flee from or strike the one creature that hurt the agent (v32 plains rehearsal 15).
+ */
+fun interface DamagePerception {
+    fun perceive(
+        agentId: AgentId,
+        trigger: Trigger.Damaged,
+        attacker: String?,
+    ): CompletionStage<Perception?>
+}
+
+/**
+ * Stops whatever cancellable movement or interaction one agent's body is carrying out for decision
+ * `decidedBy`, and answers whether anything was stopped: how a newer danger answer that is not itself
+ * a flight takes the body from an older flight of the agent's own, which would otherwise refuse it as
+ * not ready (r34 epsilon's attack behind its own older flight). A decision asked before one the body
+ * already carries out halts nothing of it.
+ */
+fun interface BodyHalt {
+    fun halt(
+        agentId: AgentId,
+        decidedBy: String?,
+    ): CompletionStage<Boolean>
+
+    companion object {
+        /** A port with nothing to halt. */
+        val NONE: BodyHalt = BodyHalt { _, _ -> completedBodyOperation(false) }
+    }
+}
+
+/** Makes the one bounded pickup attempt a model-selected dig owes its goal's own dropped item. */
+fun interface OwnDropCollector {
+    /** Tries once for the [item] dig [requestId] left lying; answers its terminal tag, or `null` for none. */
+    fun attempt(
+        agentId: AgentId,
+        requestId: String,
+        item: String,
+    ): CompletionStage<String?>
+
+    companion object {
+        /** A body that never tries. */
+        val NONE: OwnDropCollector =
+            OwnDropCollector { _, _, _ -> java.util.concurrent.CompletableFuture.completedFuture(null) }
+    }
+}

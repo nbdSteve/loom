@@ -132,10 +132,104 @@ class CorroborationTest {
         val before = ObservedVitals(health = 17.0, food = 20, saturation = 5.0)
         val after = ObservedVitals(health = 12.0, food = 20, saturation = 5.0)
         assertIs<Corroboration.Disputed>(corroborate(claimed, emptyList(), before, emptyList()))
-        assertEquals(Corroboration.Agreed, corroborate(claimed, emptyList(), before, emptyList(), after))
+        assertEquals(
+            Corroboration.Agreed,
+            corroborate(claimed, emptyList(), before, emptyList(), Around(at(after))),
+        )
         // Outside the whole span, plus the tolerance, is still a body contradicting the server.
         val invented = SensedVitals(health = 8.0, food = 20, saturation = 5.0)
-        assertIs<Corroboration.Disputed>(corroborate(invented, emptyList(), before, emptyList(), after))
+        assertIs<Corroboration.Disputed>(
+            corroborate(invented, emptyList(), before, emptyList(), Around(at(after))),
+        )
+    }
+
+    @Test
+    fun aClientNotYetToldOfAPickupAgreesWithTheServerAMomentEarlier() {
+        // r26 stopped on gamma's claim: the server held a pickup at both ends of the round trip,
+        // and the client, told of it only when that tick's packets went out, did not yet.
+        val vitals = SensedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val observed = ObservedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val logs = listOf(ObservedStack(slot = 36, what = "oak_log", count = 2))
+        val atAnswer = ServerReading(observed, logs)
+        assertIs<Corroboration.Disputed>(corroborate(vitals, emptyList(), observed, logs, Around(atAnswer)))
+        val earlier = listOf(InventoryAt(3_127, emptyList()), InventoryAt(3_128, logs))
+        assertEquals(Corroboration.Agreed, corroborate(vitals, emptyList(), observed, logs, Around(atAnswer, earlier)))
+        // A stack the server held at no moment of the window is still invented.
+        val invented = listOf(SensedStack(slot = 36, what = "oak_log", count = 3))
+        assertIs<Corroboration.Disputed>(corroborate(vitals, invented, observed, logs, Around(atAnswer, earlier)))
+    }
+
+    @Test
+    fun aSenseReadAtACraftsSettledBoundaryAgreesWithTheServerAtThatTickOfTheRoundTrip() {
+        // r29 beta (tick 2946), its readings as the failed-run diagnostic kept them: the server held
+        // one dye and two dandelions at the request and three dyes at the answer.
+        val vitals = SensedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val observed = ObservedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val atRequest = listOf(ObservedStack(9, "yellow_dye", 1), ObservedStack(36, "dandelion", 2))
+        val atAnswer = ServerReading(observed, listOf(ObservedStack(9, "yellow_dye", 3)))
+        // The body now reads a mid-craft sense at an application's settled boundary, which the
+        // server held at the end of a tick inside the round trip and at neither end.
+        val boundary = listOf(ObservedStack(9, "yellow_dye", 2), ObservedStack(36, "dandelion", 1))
+        val claimed = listOf(SensedStack(9, "yellow_dye", 2), SensedStack(36, "dandelion", 1))
+        assertIs<Corroboration.Disputed>(corroborate(vitals, claimed, observed, atRequest, Around(atAnswer)))
+        val roundTrip = listOf(InventoryAt(2_946, boundary))
+        assertEquals(
+            Corroboration.Agreed,
+            corroborate(vitals, claimed, observed, atRequest, Around(atAnswer, roundTrip)),
+        )
+        // The claim r29 made, read between two clicks with a dandelion in the crafting grid, matches
+        // no tick the server held, which is why the body may not answer one.
+        val midClick = listOf(SensedStack(4, "dandelion", 1), SensedStack(9, "yellow_dye", 1))
+        assertIs<Corroboration.Disputed>(
+            corroborate(vitals, midClick, observed, atRequest, Around(atAnswer, roundTrip)),
+        )
+    }
+
+    @Test
+    fun aSenseBetweenTwoCraftApplicationsAgreesOnlyWhenTheServerSampledThatBoundary() {
+        // r32 eta (tick 5510), its readings as the failed-run diagnostic kept them: one oak-button
+        // application applied when the body read, and both by the answer.
+        val vitals = SensedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val observed = ObservedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val atRequest = listOf(ObservedStack(9, "oak_log", 2), ObservedStack(10, "oak_planks", 4))
+        val both =
+            listOf(
+                ObservedStack(9, "oak_log", 2),
+                ObservedStack(10, "oak_planks", 2),
+                ObservedStack(11, "oak_button", 2),
+            )
+        val atAnswer = ServerReading(observed, both)
+        val claimed =
+            listOf(SensedStack(9, "oak_log", 2), SensedStack(10, "oak_planks", 3), SensedStack(11, "oak_button", 1))
+        // The server applied both between two tick samples, so no sample held the boundary.
+        val unsampled = listOf(InventoryAt(5_509, atRequest), InventoryAt(5_510, both))
+        val missed = corroborate(vitals, claimed, observed, atRequest, Around(atAnswer, unsampled))
+        assertIs<Corroboration.Disputed>(missed)
+        // The body now holds the next application until a tick sample holds the boundary.
+        val boundary =
+            listOf(
+                ObservedStack(9, "oak_log", 2),
+                ObservedStack(10, "oak_planks", 3),
+                ObservedStack(11, "oak_button", 1),
+            )
+        val sampled = unsampled + InventoryAt(5_510, boundary)
+        assertEquals(Corroboration.Agreed, corroborate(vitals, claimed, observed, atRequest, Around(atAnswer, sampled)))
+    }
+
+    @Test
+    fun anInventoryThatChangedDuringTheRoundTripAgreesWithTheServerAtEitherEnd() {
+        // The path rehearsal: theta picked up a stick while its sense was in flight, and the claim
+        // held the stick the reading from before the request did not.
+        val vitals = SensedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val observed = ObservedVitals(health = 20.0, food = 20, saturation = 5.0)
+        val stick = listOf(SensedStack(slot = 36, what = "stick", count = 1))
+        val held = listOf(ObservedStack(slot = 36, what = "stick", count = 1))
+        assertIs<Corroboration.Disputed>(corroborate(vitals, stick, observed, emptyList()))
+        val atAnswer = ServerReading(observed, held)
+        assertEquals(Corroboration.Agreed, corroborate(vitals, stick, observed, emptyList(), Around(atAnswer)))
+        // A stack the server held at neither end is still invented.
+        val two = listOf(SensedStack(slot = 36, what = "stick", count = 2))
+        assertIs<Corroboration.Disputed>(corroborate(vitals, two, observed, emptyList(), Around(atAnswer)))
     }
 
     @Test
@@ -145,15 +239,25 @@ class CorroborationTest {
         // change or a zero crossing.
         val stale = SensedVitals(health = 20.0, food = 20, saturation = 5.0)
         val drained = ObservedVitals(health = 20.0, food = 20, saturation = 3.0)
-        assertEquals(Corroboration.Agreed, corroborate(stale, emptyList(), drained, emptyList(), drained))
+        assertEquals(
+            Corroboration.Agreed,
+            corroborate(stale, emptyList(), drained, emptyList(), Around(at(drained))),
+        )
         // A peaceful world raised the server to 7.0 with no resend either.
         val raised = ObservedVitals(health = 20.0, food = 20, saturation = 7.0)
-        assertEquals(Corroboration.Agreed, corroborate(stale, emptyList(), raised, emptyList(), raised))
+        assertEquals(
+            Corroboration.Agreed,
+            corroborate(stale, emptyList(), raised, emptyList(), Around(at(raised))),
+        )
         // Zero-ness is what vanilla keeps in step, so disagreeing about it is a contradiction.
         val empty = ObservedVitals(health = 20.0, food = 20, saturation = 0.0)
-        assertIs<Corroboration.Disputed>(corroborate(stale, emptyList(), empty, emptyList(), empty))
+        assertIs<Corroboration.Disputed>(
+            corroborate(stale, emptyList(), empty, emptyList(), Around(at(empty))),
+        )
         val starved = SensedVitals(health = 20.0, food = 20, saturation = 0.0)
-        assertIs<Corroboration.Disputed>(corroborate(starved, emptyList(), drained, emptyList(), drained))
+        assertIs<Corroboration.Disputed>(
+            corroborate(starved, emptyList(), drained, emptyList(), Around(at(drained))),
+        )
     }
 
     @Test
@@ -331,6 +435,43 @@ class CorroborationTest {
     }
 
     @Test
+    fun aDisputeRecordsTheClaimTheReadingsAndTheWindowItWasComparedWith() {
+        // r26's dispute left only its tag, and its cause could only be inferred.
+        val logs = listOf(ObservedStack(slot = 36, what = "oak_log", count = 2))
+        val stick = listOf(ObservedStack(slot = 37, what = "stick", count = 1))
+        val found =
+            under.claims.sawClaim(
+                scout.uuid,
+                scout.username,
+                BodyClaim(WELL_FED, listOf(SensedStack(36, "oak_log", 5))),
+                ServerReading(WELL_FED_TRUTH, logs),
+                Around(
+                    after = ServerReading(WELL_FED_TRUTH, logs + stick),
+                    earlier = listOf(InventoryAt(3_127, emptyList()), InventoryAt(3_128, logs)),
+                    timing = ReadingTimes(requestTick = 3_129, answerTick = 3_131, roundTripMillis = 74),
+                ),
+            )
+        assertIs<Corroboration.Disputed>(found)
+        val evidence = requireNotNull(disputes().single().dispute)
+        assertEquals(
+            dev.loom.body.DisputeEvidence(
+                requestTick = 3_129,
+                answerTick = 3_131,
+                roundTripMillis = 74,
+                claimed = listOf("36 oak_log 5"),
+                atRequest = listOf("36 oak_log 2"),
+                atAnswer = listOf("37 stick 1"),
+                earlier =
+                    listOf(
+                        dev.loom.body.EarlierInventory(3_127, listOf("36 -")),
+                        dev.loom.body.EarlierInventory(3_128, emptyList()),
+                    ),
+            ),
+            evidence,
+        )
+    }
+
+    @Test
     fun anAccountOfAnUnregisteredPlayerIsNotComparedAndIsNotAgreedWithEither() {
         // The same rule every statement after a login follows: an unregistered uuid is not Loom's
         // to have an opinion about, so a stranger's inventory produces no record.
@@ -498,4 +639,7 @@ class CorroborationTest {
 
         assertEquals((0 until FIRST_CORROBORABLE_SLOT).toList(), excluded)
     }
+
+    /** The server's reading when the answer is audited, with the inventory it held then. */
+    private fun at(vitals: ObservedVitals) = ServerReading(vitals, emptyList())
 }

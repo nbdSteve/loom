@@ -1,1 +1,1 @@
-{"op":"moveTo","protocol":5,"requestId":"req-28","agentId":"agent-alpha","state":"ready","outcome":"cancelled","from":[12.5,71.5,-40.5],"position":[14.5,71.5,-39.5],"travelled":3.25,"elapsedMs":900}
+{"op":"moveTo","protocol":8,"requestId":"req-28","agentId":"agent-alpha","state":"ready","outcome":"cancelled","from":[12.5,71.5,-40.5],"position":[14.5,71.5,-39.5],"travelled":3.25,"elapsedMs":900}

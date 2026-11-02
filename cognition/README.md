@@ -25,6 +25,7 @@ That line is the fastest way to tell a running service apart from another one, a
 | --- | --- | --- |
 | `scripted` (default) | A deterministic stand-in. No network, no inference. | No |
 | `openai` | The OpenAI API, at the two configured model tiers. | Yes |
+| `scripted-paths` | The path rehearsal's exerciser (`src/exerciser.rs`): a deterministic role per agent, several of them wrong on purpose so the body, the ledger and the gate must refuse or class them. Stamped `scripted-path-exerciser`. Only `research/tools/path-rehearsal.js` selects it. | No |
 
 The default is `scripted` on purpose, and it is the safe local and test fallback:
 a fresh checkout runs with no credentials at all, the whole test suite is hermetic, and CI's cross-runtime round trip proves the wire without buying an inference.
@@ -92,13 +93,36 @@ strict response schema. It is both a memory bound and the conservative input
 token ceiling used by the research harness when it proves that the configured
 call budget cannot cross the spend ceiling.
 
-The canonical 48-entity, 48-block, 48-item fixture is 20,166 bytes on the cognition
-socket. With `routine-v13`, it renders to 20,439 bytes of prompt text and a 26,500-byte
-serialized provider request; the strict response schema's optional goal choice is most of
-the growth since `routine-v12` (23,931 bytes). The same envelope at a goal review carrying
-the widest legal goal (a 160-character statement, 64-character ids, a 32-character step
-action) renders a 26,855-byte request, 38,681 bytes inside the 65,536-byte quarter of the
-256 KiB ceiling that `openai::wire` tests pin. At `routine-v12`, local `o200k_base`
+The canonical 48-entity, 48-block, 48-item fixture is 22,292 bytes on the cognition
+socket, 816 of them each block's `standable` and 1,296 each block's `yields` and `digSafe`. With `routine-v29`, it renders to 26,737 bytes of system and situation text and a 34,699-byte
+serialized provider request; the strict response schema's goal choice is most of the
+growth since `routine-v12` (23,931 bytes), and v17's working-goal fields (success condition,
+step, step verdict) are most of the 3,566 bytes added to v13's 26,500. v18's per-request
+schema adds each offered namespace once as an enum and drops every action with nothing to
+name, which on this fixture almost exactly offsets the 144 enum values; v19 splits collect and
+attack into one closed variant per approach mode, each naming only what that mode can reach; v20's typed goal adds the success
+item and count and the step's action and ref to the goal variants, and narrows the dispositions a review is offered; v22
+adds the line of what digging would drop and an enum of the success items obtainable now, capped at 48; v23 states each yield's
+random range, what sight could give beyond what is held, and the agent's own drops, and drops the stated success condition and
+typed step from the answer; v24 drops the goal's statement from the answer, gives each success item, now capped at 16, its own
+goal shape with the counts it admits, and words the goal's rules and any refusal; v25 pairs each goal
+choice with the intents it may travel with, defining the intent variants once under `$defs`, and adds
+the replace shapes, which is most of its 4,341 bytes; v26 drops the free-text step from the answer, lets a
+replace complete a met goal and adopt the next, and words the step, replace and abandon rules; v27 offers each goal
+item only its own steps, each under its own `$defs` enums of at most four refs, offers a held goal sight cannot meet a
+continue by a walk to the edge of sight, and offers no idle or rest at a goal review beside such a cell, which on this
+fixture is a net 707 bytes smaller; v28 states each yield's sampled mean, offers a goal's recipe before its digs, splits
+a revise's range around the held total, and words the new refusals, 192 bytes more; the widest goal review the contract
+admits, sixteen items each with its own steps, names 492 of the provider's 500 enum values; v29 names at most the 16 nearest creatures to flight and attack and offers a review a flight from its four nearest hunters, because 48 creatures in reach took a contract-legal review to 539, and the widest review beside 48 hunters, eight recalled sources and eight cells at the edge of sight names 454. The same envelope at
+a goal review carrying the widest legal goal (160-character statement, success condition and
+step, 64-character ids and item names, a 32-character step action, all 46 inventory changes, the widest refusal it can be
+told of, and all eight cells at the edge of sight at the widest number a distance can render) renders a 45,606-byte request,
+19,930 bytes inside the 65,536-byte quarter of the
+256 KiB ceiling that `openai::wire` tests pin. From `routine-v36` `tests/openai_strict_limits.rs`
+also renders and wraps every committed and `LOOM_STRICT_CORPUS` perception exactly as it is sent
+and holds it to the 65,536 bytes every live research configuration pins as
+`cognition.maxRequestBytes`: the widest is r39's `body:00000766` at 60,708 bytes, where routine-v35
+built r39's widest at 63,596, because each end reason is worded only where it may be given. At `routine-v12`, local `o200k_base`
 tokenization measured 4,842 tokens for the system and situation text and 5,895 for the
 serialized request JSON; those are reproducible local tokenizer counts, not a claim about provider-billed chat framing. On an Apple M3
 Pro, Corretto 21 averaged 183 microseconds to decode and 57 microseconds to encode the

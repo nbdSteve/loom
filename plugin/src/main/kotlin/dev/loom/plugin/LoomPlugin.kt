@@ -17,19 +17,19 @@ import dev.loom.body.player.ProcessBodySupervisor
 import dev.loom.body.player.SocketBodyControlConnector
 import dev.loom.mind.AppliedDecision
 import dev.loom.mind.AsyncCognitionBridge
-import dev.loom.mind.AutonomousDriver
+import dev.loom.mind.CallReserve
 import dev.loom.mind.CognitionCallbacks
 import dev.loom.mind.CognitionSettings
-import dev.loom.mind.DAMAGE_EPISODE_TICKS
-import dev.loom.mind.DamageDriver
 import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
+import dev.loom.mind.ExposureGate
 import dev.loom.mind.GoalLedger
 import dev.loom.mind.GoalReviewSchedule
 import dev.loom.mind.PerAgentCognitionBridge
-import dev.loom.mind.THREAT_SCAN_CADENCE
-import dev.loom.mind.ThreatDriver
+import dev.loom.mind.ReservingCognitionBridge
+import dev.loom.mind.StepSettlement
 import dev.loom.mind.tcp.TcpCognitionTransport
+import dev.loom.mind.watching
 import dev.loom.observe.Observatory
 import dev.loom.observe.ObservedEventLog
 import dev.loom.witness.ClaimAudit
@@ -53,16 +53,14 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.logging.Logger
-import kotlin.time.Duration
 
 private const val EVENT_LOG_FILE = "body-events.jsonl"
 private const val DEATH_LEDGER_FILE = "player-deaths.jsonl"
 private const val BODY_COMMAND = "loombody"
 private const val WATCH_COMMAND = "loomwatch"
 private const val OBSERVER_REFRESH_TICKS = 5L
-private const val MILLIS_PER_TICK = 50L
 
-private data class WitnessRuntime(
+internal data class WitnessRuntime(
     val permadeath: DurablePermadeath,
     val claimAudit: ClaimAudit,
     val speech: SpeechWitness,
@@ -79,13 +77,17 @@ class LoomPlugin : JavaPlugin() {
     private var bridge: AsyncCognitionBridge? = null
     private var transport: TcpCognitionTransport? = null
     private var bodyTicks: BukkitTask? = null
-    private var autonomy: BukkitTask? = null
-    private var vigilance: BukkitTask? = null
-    private var damage: AutoCloseable? = null
+    private var nativeSources: AutoCloseable? = null
     private var observatory: Observatory? = null
     private var display: BukkitTask? = null
     private var hearer: ((Heard) -> Unit)? = null
+
+    // One schedule: the mind tells it when a goal's step settles, and the driver claims from it.
+    internal val schedule = GoalReviewSchedule(followUpsPerReview = followUpsPerReviewOf(System.getenv(FOLLOW_UPS_ENV)))
     private var cognition: EmbodiedCognition? = null
+
+    // Whether the run's exposure has ended; read by cognition and by the Bukkit guard.
+    private val exposure = ExposureGate()
 
     /**
      * Exact player identities Loom is authorised to witness.
@@ -110,7 +112,7 @@ class LoomPlugin : JavaPlugin() {
 
         val watched = Observatory()
         observatory = watched
-        val goals = GoalLedger()
+        val goals = goalLedgerOf(this)
         val log =
             ObservedEventLog(goals.watching(file), watched::saw) { failure ->
                 logger.warning("observer display failed: ${failure.message}")
@@ -126,12 +128,15 @@ class LoomPlugin : JavaPlugin() {
         val port = createPlayerBody(witnessed, witness)
         bodyPort = port
 
-        val mind = connectMind(port, witnessed, goals)
+        val mind = connectMind(port, witnessed, goals, schedule, witness.permadeath::isDead)
         cognition = mind
         hearer = hearerOf(port, mind)
+        val native =
+            nativeCognitionStart(port, witnessed) { nativeSources = startNativeSources(port, mind, witnessed, witness) }
+        val ending = guardExposure(port, witnessed)
         bind(
             BODY_COMMAND,
-            BodyCommand(port, mind) { message -> logger.info(message) },
+            BodyCommand(port, mind, { message -> logger.info(message) }, native::begin, ending::end),
             "the body port has no driver",
         )
         bind(WATCH_COMMAND, WatchCommand(watched), "a run cannot be watched")
@@ -154,9 +159,7 @@ class LoomPlugin : JavaPlugin() {
                 OBSERVER_REFRESH_TICKS,
                 OBSERVER_REFRESH_TICKS,
             )
-        driveAgents(port, mind)
-        watchForThreats(port, mind)
-        damage = witnessDamage(port, mind, witnessed, witness.permadeath)
+        native.enable()
         port.reportConfiguredStartup(logger)
 
         logger.info("Loom observation ready: /loomwatch <agentId> follows one agent, read-only")
@@ -164,13 +167,9 @@ class LoomPlugin : JavaPlugin() {
 
     override fun onDisable() {
         // Stop every source of new body or cognition work first.
-        autonomy?.cancel()
-        autonomy = null
+        nativeSources?.close()
+        nativeSources = null
         hearer = null
-        vigilance?.cancel()
-        vigilance = null
-        damage?.close()
-        damage = null
         bodyTicks?.cancel()
         bodyTicks = null
 
@@ -195,6 +194,27 @@ class LoomPlugin : JavaPlugin() {
         bodyPort = null
         eventLog?.close()
         eventLog = null
+    }
+
+    /** Registers the exposure guard and answers the one step that ends the run's exposure. */
+    private fun guardExposure(
+        port: PlayerBodyPort,
+        eventLog: BodyEventLog,
+    ): ExposureEnd {
+        server.pluginManager.registerEvents(
+            BukkitExposureGuard(exposure) { uuid -> managedPlayers.byUuid(uuid) != null },
+            this,
+        )
+        return ExposureEnd(
+            exposure = exposure,
+            eventLog = eventLog,
+            agents = { port.inspections().map { it.agentId } },
+            currentTick = { server.currentTick.toLong() },
+            stopSources = {
+                nativeSources?.close()
+                nativeSources = null
+            },
+        )
     }
 
     private fun bind(
@@ -226,18 +246,12 @@ class LoomPlugin : JavaPlugin() {
                 fleet.deployments.map { it.identity.uuid }.toSet(),
             )
         server.pluginManager.registerEvents(interactionEvents, this)
+        val ownDrops = BukkitOwnDrops(server, fleet.deployments.map { it.identity.uuid }.toSet())
+        server.pluginManager.registerEvents(ownDrops, this)
         val authority =
             PlayerBodyAuthority(
                 main = Executor { command -> bukkitMain.execute { command.run() } },
-                registerIdentity = { identity ->
-                    managedPlayers.register(
-                        ManagedIdentity(
-                            identity.agentId,
-                            identity.username,
-                            identity.uuid,
-                        ),
-                    )
-                },
+                registerIdentity = { managedPlayers.register(ManagedIdentity(it.agentId, it.username, it.uuid)) },
                 serverState =
                     BukkitPlayerServerState(
                         server = server,
@@ -248,6 +262,12 @@ class LoomPlugin : JavaPlugin() {
                 eventLog = eventLog,
                 currentTick = { server.currentTick.toLong() },
                 speechClaims = sentSpeechOf(witness.speech, bukkitMain) { server.currentTick.toLong() },
+                ground = BukkitBlockGround(server),
+                yields = BukkitBlockYields(server),
+                edibility = BukkitItemEdibility,
+                ownDrops = ownDrops,
+                solidity = BukkitItemSolidity.readFrom(server.worlds.first()),
+                players = BukkitServerPlayerView(server),
             )
         val infrastructures =
             fleet.deployments.map { deployment ->
@@ -267,6 +287,16 @@ class LoomPlugin : JavaPlugin() {
         return port
     }
 
+    /** [bridge] behind the run's call reserve, each tier fallback it makes journalled. */
+    private fun reserving(
+        bridge: dev.loom.mind.CognitionBridge,
+        journal: DecisionJournal,
+        isDead: (dev.loom.body.AgentId) -> Boolean,
+    ): dev.loom.mind.CognitionBridge =
+        ReservingCognitionBridge(bridge, CallReserve.fromEnvironment(isDead = isDead)) {
+            journal.tierFallback(dev.loom.body.AgentId(it.agentId), it)
+        }
+
     /**
      * Builds the one perception -> cognition -> action path.
      *
@@ -274,10 +304,13 @@ class LoomPlugin : JavaPlugin() {
      * from existing, and its first request fails through the ordinary recorded
      * `cognitionUnavailable` path.
      */
+
     private fun connectMind(
         bodies: BodyPort,
         eventLog: BodyEventLog,
         goals: GoalLedger,
+        settlement: StepSettlement,
+        isDead: (dev.loom.body.AgentId) -> Boolean,
     ): EmbodiedCognition {
         val settings = CognitionSettings.fromEnvironment()
         val wire =
@@ -315,27 +348,36 @@ class LoomPlugin : JavaPlugin() {
                 "${settings.workers} worker(s), queue ${settings.queueDepth}, " +
                 "${settings.perAgentPending} outstanding request(s) per agent",
         )
+        val journal = DecisionJournal(eventLog, currentTick = { server.currentTick.toLong() })
         return EmbodiedCognition(
             bodies = bodies,
-            mind = fair,
+            mind = reserving(fair, journal, isDead),
             mainThread = BukkitMainThread(this),
-            journal = DecisionJournal(eventLog, currentTick = { server.currentTick.toLong() }),
+            journal = journal,
             goals = goals,
-            callbacks =
-                CognitionCallbacks(
-                    onApplied = ::reportApplied,
-                    onUnavailable = { perception, failure ->
-                        logger.warning(
-                            "no decision for ${perception.agentId} " +
-                                "(request ${perception.requestId}): ${failure::class.simpleName}",
-                        )
-                    },
-                    onBodyUnavailable = { agent, failure ->
-                        logger.warning("body unavailable for $agent: ${failure::class.simpleName}")
-                    },
-                ),
+            callbacks = cognitionCallbacks(settlement, isDead),
         )
     }
+
+    /** What cognition tells the plugin: settled steps, the death rule, and failures to log. */
+    private fun cognitionCallbacks(
+        settlement: StepSettlement,
+        isDead: (dev.loom.body.AgentId) -> Boolean,
+    ) = CognitionCallbacks(
+        onStepSettled = settlement,
+        isDead = isDead,
+        exposure = exposure,
+        onApplied = ::reportApplied,
+        onUnavailable = { perception, failure ->
+            logger.warning(
+                "no decision for ${perception.agentId} " +
+                    "(request ${perception.requestId}): ${failure::class.simpleName}",
+            )
+        },
+        onBodyUnavailable = { agent, failure ->
+            logger.warning("body unavailable for $agent: ${failure::class.simpleName}")
+        },
+    )
 
     /**
      * Replays tombstones, installs the server witness, and exposes the same ledger
@@ -377,60 +419,6 @@ class LoomPlugin : JavaPlugin() {
         return WitnessRuntime(permadeath, claims, speech)
     }
 
-    /**
-     * Schedules goal reviews by authoritative simulation ticks.
-     *
-     * Both the timer period and the elapsed reading are server ticks, so a paused
-     * server advances no review and a tick sprint advances the same sequence with
-     * no dependence on how much wall time it consumed.
-     */
-    private fun driveAgents(
-        bodies: BodyPort,
-        mind: EmbodiedCognition,
-    ) {
-        val schedule = GoalReviewSchedule()
-        val driver =
-            AutonomousDriver(
-                bodies = bodies,
-                mind = mind,
-                schedule = schedule,
-                currentTick = { server.currentTick.toLong() },
-            )
-        val period = schedule.sliceTicks
-        autonomy =
-            server.scheduler.runTaskTimer(
-                this,
-                Runnable { driver.sweep() },
-                period,
-                period,
-            )
-        logger.info(
-            "Loom autonomy running: each agent reviews its goals every " +
-                "${schedule.cadenceTicks} server ticks",
-        )
-    }
-
-    private fun watchForThreats(
-        bodies: BodyPort,
-        mind: EmbodiedCognition,
-    ) {
-        val driver = ThreatDriver(bodies, mind)
-        val period = ticks(THREAT_SCAN_CADENCE)
-        vigilance =
-            server.scheduler.runTaskTimer(
-                this,
-                Runnable { driver.sweep() },
-                period,
-                period,
-            )
-        logger.info("Loom vigilance running: each agent looks for a threat every $THREAT_SCAN_CADENCE")
-    }
-
-    private fun ticks(duration: Duration): Long {
-        val whole = (duration.inWholeMilliseconds + MILLIS_PER_TICK - 1) / MILLIS_PER_TICK
-        return maxOf(1L, whole)
-    }
-
     private fun reportApplied(applied: AppliedDecision) {
         val decision = applied.decision
         logger.info(
@@ -438,41 +426,6 @@ class LoomPlugin : JavaPlugin() {
                 "(${decision.provenance.model}/${decision.provenance.promptVersion} " +
                 "at ${decision.provenance.tier}) -> ${applied.outcome}",
         )
-    }
-}
-
-/**
- * Registers the server-authoritative `damaged` producer after the witness.
- *
- * The returned handle unregisters the listener, then stops the driver.
- */
-private fun LoomPlugin.witnessDamage(
-    bodies: BodyPort,
-    mind: EmbodiedCognition,
-    eventLog: BodyEventLog,
-    permadeath: DurablePermadeath,
-): AutoCloseable {
-    val currentTick = { server.currentTick.toLong() }
-    val driver =
-        DamageDriver(
-            bodies = bodies,
-            mind = mind,
-            mainThread = BukkitMainThread(this),
-            isDead = permadeath::isDead,
-            eventLog = eventLog,
-            currentTick = currentTick,
-        )
-    val listener =
-        BukkitDamageEvents(
-            agentOf = { uuid -> managedPlayers.byUuid(uuid)?.agentId },
-            currentTick = currentTick,
-            sink = driver::witnessed,
-        )
-    server.pluginManager.registerEvents(listener, this)
-    logger.info("Loom damage witness running: one pivotal review per agent per $DAMAGE_EPISODE_TICKS-tick episode")
-    return AutoCloseable {
-        listener.close()
-        driver.close()
     }
 }
 
@@ -534,4 +487,17 @@ private fun namedDaemonThreads(prefix: String): ThreadFactory {
             isDaemon = true
         }
     }
+}
+
+/**
+ * The goal ledger, judging by a recipe index read from [plugin]'s server at enable, on the main
+ * thread before any review, and again after every datapack reload, each logged with its build time.
+ */
+private fun goalLedgerOf(plugin: JavaPlugin): GoalLedger {
+    val recipes = BukkitRecipeInputs(plugin.server)
+    plugin.logger.info(
+        "Loom recipe index ready: ${recipes.recipes} server recipes read once in ${recipes.buildMillis} ms",
+    )
+    plugin.server.pluginManager.registerEvents(RecipeIndexReload(recipes, plugin.logger), plugin)
+    return GoalLedger(recipes = recipes)
 }

@@ -13,12 +13,11 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 
 use loom_cognition::mind::Mind;
-use loom_cognition::model::{ScriptedBackend, SCRIPTED_GOAL_STATEMENT};
+use loom_cognition::model::ScriptedBackend;
+use loom_cognition::offered::OfferedRefs;
 use loom_cognition::router::{ModelCatalog, Router};
 use loom_cognition::server::serve;
-use loom_contract::{
-    Decision, DecisionImportance, GoalChoice, GoalDisposition, Perception, Trigger,
-};
+use loom_contract::{Decision, DecisionImportance, GoalDisposition, Perception};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
@@ -128,19 +127,27 @@ async fn every_shared_perception_fixture_gets_a_routed_decision_over_a_socket() 
                 "a routine perception must never be answered by the deep model"
             );
         }
-        // The stand-in adopts where nothing is held and continues a carried goal, and
-        // that choice must survive the socket exactly as the mind made it.
-        let expected = (sent.trigger == Trigger::GoalReview).then(|| match sent.goal {
-            None => GoalChoice {
-                disposition: GoalDisposition::Adopt,
-                statement: Some(SCRIPTED_GOAL_STATEMENT.to_owned()),
-            },
-            Some(_) => GoalChoice {
-                disposition: GoalDisposition::Continue,
-                statement: None,
-            },
-        });
-        assert_eq!(decision.goal, expected, "{}", fixture.display());
+        // The stand-in's intent and goal choice must survive the socket exactly as the mind
+        // made them: what it would decide for this perception directly is what arrived.
+        let router = Router::new(ModelCatalog::new(FAST_MODEL, DEEP_MODEL));
+        let direct = ScriptedBackend::draft_now(&router.route(sent.importance), &sent);
+        assert_eq!(decision.intent, direct.intent, "{}", fixture.display());
+        assert_eq!(decision.goal, direct.goal, "{}", fixture.display());
+        if sent.trigger.reviews_goal() && sent.goal.is_none() {
+            // An adopted goal names one more than is held of what the dug block can drop.
+            if let Some(goal) = &decision.goal {
+                assert_eq!(goal.disposition, GoalDisposition::Adopt);
+                // No free-text step, as the strict schema offers none: the body words it.
+                assert_eq!(goal.step, None);
+                // Or, with nothing grounding an item goal, a discovery goal names no item.
+                match goal.success_item.as_deref() {
+                    Some(item) => assert!(OfferedRefs::of(&sent).capacity_of(item) >= 1),
+                    None => assert!(
+                        goal.discover == Some(true) && OfferedRefs::of(&sent).discovery_offered()
+                    ),
+                }
+            }
+        }
     }
 }
 

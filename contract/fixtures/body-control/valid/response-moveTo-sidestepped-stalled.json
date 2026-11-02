@@ -1,0 +1,1 @@
+{"op":"moveTo","protocol":8,"requestId":"req-25","agentId":"agent-alpha","state":"ready","outcome":"stalled","from":[12.5,71.5,-40.5],"position":[-8.5,66.5,-26.5],"travelled":1.25,"elapsedMs":11500,"recovery":{"kind":"sidestep","cause":"firstMoveStuck","from":[-8.434705761507354,66.5,-27.5],"to":[-8.5,66.5,-26.5]}}

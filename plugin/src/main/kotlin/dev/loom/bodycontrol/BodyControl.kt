@@ -920,11 +920,30 @@ sealed interface BodyRequest {
         override val agentId: String,
         val radius: Int,
         val limit: Int,
+        /**
+         * Dropped-item entities, by server uuid, to report even when out of sight: the caller
+         * names them, as Loom names an agent's own dig drops, so the body chooses nothing.
+         */
+        val retainItems: List<String>? = null,
+        /**
+         * Entities, by server uuid, to report however many nearer ones fill the limit: the
+         * caller names them, as Loom names the creature that just hurt the agent, so the body
+         * chooses nothing.
+         */
+        val retainEntities: List<String>? = null,
+        /**
+         * Block kinds to look for beyond interaction reach: the caller names them, as Loom names
+         * the wood a goal can be grounded in, so the body chooses nothing (r34).
+         */
+        val seek: List<String>? = null,
     ) : BodyRequest {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireWithin("radius", radius, 1..MAX_SENSE_RADIUS)
             requireWithin("limit", limit, 1..MAX_SENSE_OFFERS_PER_KIND)
+            retainItems?.let { requireRetained("retainItems", it, MAX_RETAINED_ITEMS) }
+            retainEntities?.let { requireRetained("retainEntities", it, MAX_RETAINED_ENTITIES) }
+            seek?.let(::requireSought)
         }
     }
 
@@ -1026,6 +1045,10 @@ sealed interface BodyRequest {
         val distance: Int,
         val timeoutMs: Int,
         val sprint: Boolean,
+        /** Other creatures of the same answer the flight must end clear of, by its own ordering. */
+        val avoid: List<Int>? = null,
+        /** Whether this flight may take over from a running flight once its threat checks out. */
+        val replace: Boolean? = null,
     ) : BodyRequest {
         init {
             requireEnvelope(protocol, requestId, agentId)
@@ -1033,6 +1056,11 @@ sealed interface BodyRequest {
             requireWithin("entity", entity, 0..MAX_ENTITY_INDEX)
             requireWithin("distance", distance, 1..MAX_RETREAT_DISTANCE)
             requireWithin("timeoutMs", timeoutMs, 1..MAX_MOVE_DEADLINE_MS)
+            avoid?.let { others ->
+                require(others.size <= MAX_FLIGHT_AVOID) { "avoid names at most $MAX_FLIGHT_AVOID creatures" }
+                require(others.toSet().size == others.size) { "avoid names each creature once" }
+                require(others.all { it in 0..MAX_ENTITY_INDEX && it != entity }) { "avoid names other entity indexes" }
+            }
         }
     }
 
@@ -1506,12 +1534,17 @@ sealed interface BodyResponse {
         @Serializable(with = CanonicalDistance::class)
         val travelled: Double,
         val elapsedMs: Long,
+        /** What the arrival's check found; present exactly on an arrival the body could simulate. */
+        val departure: Departure? = null,
+        /** The one correction the walk made, when it made one. */
+        val recovery: MovementRecovery? = null,
     ) : BodyResponse {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireReady(state, "a walk")
             require(outcome !in THREAT_REFUSALS) { "a walk names no threat, so it cannot answer $outcome" }
             requireJourney(outcome, from, position, travelled, elapsedMs)
+            requireCorrection(outcome, departure, recovery)
         }
     }
 
@@ -1549,11 +1582,16 @@ sealed interface BodyResponse {
         val elapsedMs: Long,
         val separation: Double? = null,
         val separationGained: Double? = null,
+        /** What the arrival's check found; present exactly on an arrival the body could simulate. */
+        val departure: Departure? = null,
+        /** The one correction the flight made, when it made one. */
+        val recovery: MovementRecovery? = null,
     ) : BodyResponse {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireReady(state, "a flight")
             requireJourney(outcome, from, position, travelled, elapsedMs)
+            requireCorrection(outcome, departure, recovery)
             val measured = outcome !in THREAT_REFUSALS
             require((separation != null) == measured) {
                 "separation is present exactly when a threat was resolved"
@@ -1591,7 +1629,10 @@ sealed interface BodyResponse {
                         DigOutcome.CANCELLED,
                         DigOutcome.LIBRARY_FAILURE,
                     )
-            require(attempted == handedToMineflayer) {
+            // From generation 6 a block another player broke mid-dig is blockGone, attempted, and
+            // from generation 7 one the world turned into another mid-dig is blockChanged.
+            val midDig = setOf(DigOutcome.BLOCK_GONE, DigOutcome.BLOCK_CHANGED)
+            require(attempted == handedToMineflayer || outcome in midDig) {
                 "attempted is true exactly when the dig was handed to Mineflayer"
             }
             require(tool == null || attempted) {
@@ -1617,10 +1658,13 @@ sealed interface BodyResponse {
         val elapsedMs: Long,
         val what: String? = null,
         val count: Int? = null,
+        /** The sidestep the approach's route made, when it made one. */
+        val recovery: MovementRecovery? = null,
     ) : BodyResponse {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireReady(state, "a collection")
+            requireApproachCorrection(recovery)
             requireWorldPosition("from", from)
             requireWorldPosition("position", position)
             requireReal("travelled", travelled, MAX_TRAVEL_DISTANCE)
@@ -1767,10 +1811,13 @@ sealed interface BodyResponse {
         val travelled: Double,
         val elapsedMs: Long,
         val attacks: Int,
+        /** The sidestep the approach's route made, when it made one. */
+        val recovery: MovementRecovery? = null,
     ) : BodyResponse {
         init {
             requireEnvelope(protocol, requestId, agentId)
             requireReady(state, "an attack")
+            requireApproachCorrection(recovery)
             requireWorldPosition("from", from)
             requireWorldPosition("position", position)
             requireReal("travelled", travelled, MAX_TRAVEL_DISTANCE)
@@ -1917,3 +1964,26 @@ data class BodyError(
         requireBoundedControlId("agentId", agentId)
     }
 }
+
+/** Most dropped items one sense may ask to have reported out of sight. */
+const val MAX_RETAINED_ITEMS = 8
+
+/** Most entities one sense may ask to have reported however many stand nearer. */
+const val MAX_RETAINED_ENTITIES = 4
+
+/** Refuses a [field] naming more than [most] uuids, one twice, or anything but an entity uuid. */
+private fun requireRetained(
+    field: String,
+    uuids: List<String>,
+    most: Int,
+) {
+    require(uuids.size <= most) { "$field names at most $most entities" }
+    require(uuids.toSet().size == uuids.size) { "$field names each entity once" }
+    require(uuids.all(ENTITY_UUID::matches)) { "$field names entity uuids" }
+}
+
+/** Most other creatures a flight may be asked to end clear of; `MAX_FLIGHT_AVOID` in the body. */
+const val MAX_FLIGHT_AVOID = 16
+
+/** An entity uuid as the server spawns it: lower-case and hyphenated. */
+private val ENTITY_UUID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")

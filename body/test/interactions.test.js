@@ -22,10 +22,14 @@ const {
   offeredTarget
 } = require('../src/combat')
 const {
+  CRAFT_SETTLE_MS,
+  applicationStarted,
   craftOfferedRecipe,
-  recipeReading
+  recipeReading,
+  whenInventorySettled
 } = require('../src/crafting')
-const { digOfferedBlock } = require('../src/digging')
+const { serverHandledEarlierPackets } = require('../src/server-order')
+const { descentCentreOf, digOfferedBlock } = require('../src/digging')
 const { equipOfferedStack } = require('../src/equipping')
 const { stackDetail } = require('../src/interaction')
 const { placeHeldBlock } = require('../src/placing')
@@ -129,6 +133,10 @@ function worldBot (bot = new EventEmitter()) {
   bot._client.writes = []
   bot._client.write = (name, parameters) => {
     bot._client.writes.push({ name, parameters })
+    // A vanilla server answers a statistics request after every packet written before it.
+    if (name === 'client_command' && parameters?.actionId === 1 && bot._client.answersStatistics !== false) {
+      setImmediate(() => bot._client.emit('statistics', { entries: [] }))
+    }
   }
   bot.clickWindow = bot.clickWindow ?? (async () => {})
   bot.blockAt = (position) => blocks.get(blockKey(position)) ?? airBlock(position)
@@ -155,6 +163,19 @@ function worldBot (bot = new EventEmitter()) {
     blocks.delete(blockKey(position))
   }
   return bot
+}
+
+/** A dig the server accepted: the block goes, and the server says so at that position. */
+/** What Mineflayer does as a dig finishes: write this client's finish, and predict air locally. */
+function predicted (bot, position) {
+  bot._client.write('block_dig', { status: 2, location: { x: position.x, y: position.y, z: position.z }, face: 1 })
+  bot.removeBlock(position)
+}
+
+/** This client's finish, and the server's answer that took it. */
+function serverBroke (bot, position) {
+  predicted(bot, position)
+  bot._client.emit('block_change', { location: { x: position.x, y: position.y, z: position.z }, type: 0 })
 }
 
 function blockOffer (block) {
@@ -380,6 +401,17 @@ test('sense memory scopes every offered authority to its connection and bounded 
   memory.spendItem(first, 'sense-1', 0)
   assert.equal(memory.recall(first, 'sense-1').blockOffers[0], undefined)
   assert.equal(memory.recall(first, 'sense-1').itemOffers[0], undefined)
+  // A spent offer leaves a hole, and Mineflayer's entity_destroy that follows every pickup
+  // reaches these listeners from inside its packet handler: a throw there is the client's
+  // `error`, which failed the whole body and stopped its packets after every collection.
+  const second = droppedEntity(41, new Vec3(2, 64, 1), itemStack('apple', 1))
+  memory.remember(first, 'sense-2', { ...offers, entityOffers: [], itemOffers: [itemOffer(second)] })
+  memory.spendItem(first, 'sense-2', 0)
+  memory.remember(first, 'sense-3', { ...offers, itemOffers: [itemOffer(second)] })
+  assert.doesNotThrow(() => memory.sawEntityGone(item))
+  assert.doesNotThrow(() => memory.sawEntityGone(second))
+  assert.doesNotThrow(() => memory.sawEntityDead(second))
+  assert.equal(memory.recall(first, 'sense-3').itemOffers[0].gone, true)
 
   for (let at = 2; at <= 6; at += 1) {
     memory.remember(first, `sense-${at}`, offers)
@@ -396,7 +428,7 @@ test('dig revalidates the exact block, reach, sight, and tool before one attempt
   let dug
   bot.dig = async (block, face) => {
     dug = { block, face }
-    bot.removeBlock(block.position)
+    serverBroke(bot, block.position)
   }
   bot.stopDigging = () => {}
 
@@ -441,6 +473,213 @@ test('dig revalidates the exact block, reach, sight, and tool before one attempt
     block: 0,
     timeoutMs: 100
   }))).outcome, 'notVisible')
+})
+
+test('a dig is dug only once the server itself has removed the block', async () => {
+  const bot = worldBot()
+  const target = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))
+  const offered = [blockOffer(target)]
+  bot.digTime = () => 25
+  bot.stopDigging = () => {}
+
+  // Mineflayer's prediction alone: the block is air locally and nothing from the server.
+  bot.dig = async (block) => { predicted(bot, block.position) }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 100 }))).outcome,
+    'libraryFailure')
+
+  // The server refused the finish and put the block back.
+  bot.putBlock(target)
+  bot.dig = async (block) => {
+    predicted(bot, block.position)
+    setImmediate(() => {
+      bot.putBlock(target)
+      bot._client.emit('block_change', { location: { x: 1, y: 64, z: 0 }, type: target.stateId })
+    })
+  }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome,
+    'libraryFailure')
+
+  // The server's own answer arrives after the prediction and confirms it.
+  bot.dig = async (block) => {
+    predicted(bot, block.position)
+    setImmediate(() => bot._client.emit('block_change', { location: { x: 1, y: 64, z: 0 }, type: 0 }))
+  }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome, 'dug')
+})
+
+test('a server multi-block change at the offered position confirms a dig, and one elsewhere does not', async () => {
+  const bot = worldBot()
+  bot.supportFeature = (feature) => ['usesMultiblockSingleLong', 'usesMultiblock3DChunkCoords'].includes(feature)
+  const target = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))
+  const offered = [blockOffer(target)]
+  bot.digTime = () => 25
+  bot.stopDigging = () => {}
+  // One record packs a section-local position as x << 8 | z << 4 | y and the state above it.
+  const record = (x, y, z, state) => (state << 12) | (x << 8) | (z << 4) | y
+  const section = { x: 0, y: 4, z: 0 }
+  bot.dig = async (block) => {
+    predicted(bot, block.position)
+    setImmediate(() => {
+      // A neighbour's change first, which says nothing about the offered block.
+      bot._client.emit('multi_block_change', { chunkCoordinates: section, records: [record(2, 0, 0, 0)] })
+      setImmediate(() => bot._client.emit('multi_block_change', {
+        chunkCoordinates: section,
+        records: [record(5, 0, 5, 1), record(1, 0, 0, 0)]
+      }))
+    })
+  }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome, 'dug')
+  // A neighbour's change alone leaves the prediction unconfirmed.
+  bot.putBlock(target)
+  bot.dig = async (block) => {
+    predicted(bot, block.position)
+    setImmediate(() => bot._client.emit('multi_block_change', { chunkCoordinates: section, records: [record(2, 0, 0, 0)] }))
+  }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 200 }))).outcome, 'libraryFailure')
+  // A body on an older wire, whose records spell the position as fields.
+  bot.putBlock(target)
+  bot.supportFeature = () => false
+  bot.dig = async (block) => {
+    predicted(bot, block.position)
+    setImmediate(() => bot._client.emit('multi_block_change', {
+      chunkX: 0, chunkZ: 0, records: [{ horizontalPos: (1 << 4) | 0, y: 64, blockId: 0 }]
+    }))
+  }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome, 'dug')
+})
+
+test('a block another player broke is gone, and a finish already written is not halted', async () => {
+  // The r23 rehearsal, tick 3268: iota reported dug for a block kappa broke, and kappa reported
+  // cancelled for its own break because a halt arrived before the server's answer.
+  const bot = worldBot()
+  const target = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))
+  const offered = [blockOffer(target)]
+  bot.digTime = () => 25
+  bot.stopDigging = () => {}
+  // Another player's break reaches this client before it finishes: Mineflayer resolves anyway.
+  bot.dig = async (block) => {
+    bot.removeBlock(block.position)
+    bot._client.emit('block_change', { location: { x: 1, y: 64, z: 0 }, type: 0 })
+  }
+  const taken = await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))
+  assert.equal(taken.outcome, 'blockGone')
+  assert.equal(taken.attempted, true)
+
+  // This client wrote its finish; the halt comes before the server's answer.
+  bot.putBlock(target)
+  let answer
+  bot.dig = async (block) => {
+    predicted(bot, block.position)
+    answer = () => bot._client.emit('block_change', { location: { x: 1, y: 64, z: 0 }, type: 0 })
+  }
+  const running = digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(running.cancel(), false, 'a written finish cannot be taken back')
+  answer()
+  assert.equal((await reportOf(running)).outcome, 'dug')
+
+  // Halted before its finish, the dig is cancelled as before.
+  bot.putBlock(target)
+  bot.dig = () => new Promise(() => {})
+  const halted = digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(halted.cancel(), true)
+  assert.equal((await reportOf(halted)).outcome, 'cancelled')
+})
+
+test('a block the world turns into another before this body finishes is changed, not dug', async () => {
+  // The v28 plains rehearsal, tick 2982: grass spread onto the dirt at the bottom of epsilon's own
+  // pit between its sense and its break, and the server broke a grass_block offered as dirt.
+  const bot = worldBot()
+  const at = new Vec3(-10, 63, 7)
+  const dirt = bot.putBlock(solidBlock(at, 'dirt', { type: 10, stateId: 10 }))
+  const grass = solidBlock(at, 'grass_block', { type: 9, stateId: 9 })
+  const offered = [blockOffer(dirt)]
+  bot.entity.position = new Vec3(-9.5, 64, 7.5)
+  bot.inventory.slots[HOTBAR_SLOT] = itemStack('iron_shovel', 1)
+  bot.digTime = () => 750
+  let stopped = 0
+  bot.stopDigging = () => { stopped += 1 }
+  const finishes = []
+  const write = bot._client.write
+  bot._client.write = (name, parameters) => {
+    if (name === 'block_dig' && parameters?.status === 2) finishes.push(parameters.location)
+    return write?.call(bot._client, name, parameters)
+  }
+  // Mid-dig, the server says the dirt is now grass; Mineflayer would dig on and finish it.
+  bot.dig = () => new Promise((resolve, reject) => {
+    setImmediate(() => {
+      bot.putBlock(grass)
+      bot._client.emit('block_change', { location: { x: -10, y: 63, z: 7 }, type: grass.stateId })
+    })
+    bot.stopDigging = () => { stopped += 1; reject(new Error('Digging aborted')) }
+  })
+  const report = await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))
+  assert.deepEqual(report, {
+    outcome: 'blockChanged',
+    elapsedMs: report.elapsedMs,
+    attempted: true,
+    tool: 'iron_shovel'
+  })
+  assert.equal(stopped, 1, 'the dig of the changed block is stopped')
+  assert.deepEqual(finishes, [], 'no finish of the changed block is written')
+
+  // A server update that only repeats the offered state changes nothing, and the dig is dug.
+  bot.putBlock(dirt)
+  bot.dig = async (block) => {
+    bot._client.emit('block_change', { location: { x: -10, y: 63, z: 7 }, type: dirt.stateId })
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    serverBroke(bot, block.position)
+  }
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000 }))).outcome, 'dug')
+})
+
+test('a descent by a body off its centre steps to the centre first, so it drops into the cell it dug', async () => {
+  // The provider-free v36 rehearsal's delta dug the block under its feet 0.3 off its centre, was
+  // held up by the column beside it, and hung above its own hole for the rest of the run.
+  const bot = worldBot()
+  const under = bot.putBlock({ ...solidBlock(new Vec3(0, 63, 0), 'dirt', { type: 3 }), shapes: [[0, 0, 0, 1, 1, 1]] })
+  const offered = [blockOffer(under)]
+  bot.digTime = () => 25
+  const order = []
+  bot.dig = async (block) => {
+    order.push(['dig', bot.entity.position.x])
+    serverBroke(bot, block.position)
+  }
+  bot.stopDigging = () => {}
+  const movement = {
+    finalApproach ({ point }) {
+      order.push(['step', point])
+      bot.entity.position = new Vec3(point[0], point[1], point[2])
+      return Promise.resolve({ outcome: 'arrived' })
+    },
+    halt () { order.push(['halt']) }
+  }
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  const report = await reportOf(digOfferedBlock(bot, { offered, block: 0, timeoutMs: 1000, movement }))
+  assert.equal(report.outcome, 'dug', JSON.stringify(report))
+  assert.deepEqual(order, [['step', [0.5, 64, 0.5]], ['dig', 0.5]], 'the step to its own centre, then the dig')
+  // Near its centre, or digging any block but the one under its feet, it digs where it stands.
+  assert.equal(descentCentreOf({ entity: { position: new Vec3(0.65, 64, 0.4) } }, under), undefined)
+  assert.equal(descentCentreOf({ entity: { position: new Vec3(0.8, 64, 0.5) } }, solidBlock(new Vec3(1, 64, 0))), undefined)
+  // A halt while the step is in flight ends the request with nothing dug.
+  const again = bot.putBlock({ ...solidBlock(new Vec3(0, 63, 0), 'dirt', { type: 3 }), shapes: [[0, 0, 0, 1, 1, 1]] })
+  let resolveStep
+  order.length = 0
+  movement.finalApproach = () => new Promise((resolve) => { resolveStep = resolve })
+  movement.halt = () => { order.push(['halt']); resolveStep({ outcome: 'cancelled' }) }
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  const halted = digOfferedBlock(bot, { offered: [blockOffer(again)], block: 0, timeoutMs: 1000, movement })
+  assert.equal(halted.cancel(), true)
+  const stopped = await reportOf(halted)
+  assert.deepEqual([stopped.outcome, stopped.attempted], ['cancelled', false])
+  assert.deepEqual(order, [['halt']])
+  // A bare bot with no movement digs where it stands, as it always did.
+  order.length = 0
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  assert.equal((await reportOf(digOfferedBlock(bot, { offered: [blockOffer(again)], block: 0, timeoutMs: 1000 }))).outcome, 'dug')
+  assert.deepEqual(order, [['dig', 0.8]])
 })
 
 test('dig timeout, halt, and teardown all stop the same bounded task', async () => {
@@ -750,6 +989,312 @@ test('place refuses blocked or remote support and bounds an unacknowledged packe
   assert.equal((await reportOf(aborted)).outcome, 'cancelled')
 })
 
+/** The library's one placement packet, written as Mineflayer writes it: its sequence always 0. */
+function writePlacement (bot) {
+  bot._client.write('block_place', { sequence: 0 })
+}
+
+/** The server's acknowledgement of the last placement packet the body wrote, as the server sent it. */
+function acknowledge (bot) {
+  const placed = bot._client.writes.filter((write) => write.name === 'block_place').at(-1)
+  bot._client.emit('acknowledge_player_digging', { sequenceId: placed?.parameters.sequence ?? 0 })
+}
+
+test('place settles at the server acknowledgement, placed or refused, and never waits out its deadline', async () => {
+  // r39 iota: on real Paper the server refused a placement into a cell the player's own box
+  // reached into, resent the destination as air and acknowledged it 54 ms after the packet.
+  const bot = worldBot()
+  const held = itemStack('dirt', 2)
+  bot.inventory.slots[HOTBAR_SLOT] = held
+  const support = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))
+  const common = {
+    blockOffers: [blockOffer(support)],
+    slots: slotOffers(HOTBAR_SLOT, held),
+    block: 0,
+    slot: HOTBAR_SLOT,
+    face: 'up',
+    timeoutMs: 60_000
+  }
+  const destination = new Vec3(1, 65, 0)
+  const answer = (placed) => {
+    bot._genericPlace = async () => {
+      writePlacement(bot)
+      setImmediate(() => {
+        if (placed) {
+          const block = bot.putBlock(solidBlock(destination, 'dirt', { type: 3 }))
+          bot.emit(`blockUpdate:${destination}`, airBlock(destination), block)
+        } else {
+          bot.emit(`blockUpdate:${destination}`, airBlock(destination), airBlock(destination))
+        }
+        acknowledge(bot)
+      })
+    }
+  }
+  const started = Date.now()
+  answer(false)
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'libraryFailure')
+  // A creature that walked into the cell after the check is the refusal the server saw.
+  bot.entities[8] = { id: 8, type: 'hostile', position: new Vec3(1.5, 65, 0.5), width: 0.6, height: 1.95 }
+  bot._genericPlace = async () => {
+    writePlacement(bot)
+    setImmediate(() => acknowledge(bot))
+  }
+  // The pre-packet check sees the creature first and sends nothing.
+  bot._client.writes.length = 0
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'destinationBlocked')
+  delete bot.entities[8]
+  let raced = false
+  bot._genericPlace = async () => {
+    raced = true
+    writePlacement(bot)
+    bot.entities[8] = { id: 8, type: 'hostile', position: new Vec3(1.5, 65, 0.5), width: 0.6, height: 1.95 }
+    setImmediate(() => acknowledge(bot))
+  }
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'destinationBlocked')
+  assert.equal(raced, true)
+  delete bot.entities[8]
+  answer(true)
+  const placed = await reportOf(placeHeldBlock(bot, common))
+  assert.equal(placed.outcome, 'placed')
+  assert.ok(Date.now() - started < 1000, 'every answer settled at its acknowledgement, not its deadline')
+  // A late update after settlement changes nothing it reported.
+  bot.emit(`blockUpdate:${destination}`, airBlock(destination), airBlock(destination))
+  bot._client.emit('acknowledge_player_digging', { sequenceId: 0 })
+  assert.equal(placed.outcome, 'placed')
+})
+
+test('place settles only at the acknowledgement of its own packet, never at an earlier one', async () => {
+  // The r39 offline audit: Mineflayer writes every block sequence as 0, and the server acknowledges
+  // the highest sequence it handled in a tick, so the acknowledgement of a dig cancelled for this
+  // placement, handled a tick before the placement's packet, ended it as a libraryFailure.
+  const bot = worldBot()
+  const held = itemStack('dirt', 2)
+  bot.inventory.slots[HOTBAR_SLOT] = held
+  const support = bot.putBlock(solidBlock(new Vec3(1, 64, 0)))
+  const common = {
+    blockOffers: [blockOffer(support)],
+    slots: slotOffers(HOTBAR_SLOT, held),
+    block: 0,
+    slot: HOTBAR_SLOT,
+    face: 'up',
+    timeoutMs: 60_000
+  }
+  const destination = new Vec3(1, 65, 0)
+  bot._genericPlace = async () => {
+    writePlacement(bot)
+    setImmediate(() => {
+      bot._client.emit('acknowledge_player_digging', { sequenceId: 0 })
+      setImmediate(() => {
+        const block = bot.putBlock(solidBlock(destination, 'dirt', { type: 3 }))
+        bot.emit(`blockUpdate:${destination}`, airBlock(destination), block)
+        acknowledge(bot)
+      })
+    })
+  }
+  bot._client.writes.length = 0
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'placed')
+  bot.removeBlock(destination)
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'placed')
+  const sequences = bot._client.writes.filter((write) => write.name === 'block_place').map((write) => write.parameters.sequence)
+  assert.equal(sequences.length, 2)
+  assert.ok(sequences[0] > 0 && sequences[1] > sequences[0], `each packet carries a fresh sequence: ${sequences}`)
+})
+
+test('place holds the shift key for its one packet and releases it at settlement, whatever ends it', async () => {
+  // The v36 rehearsal: delta closed its shelter against its own crafting table twelve times, and
+  // on real Paper an unshifted use of a table opens its window and places nothing.
+  const bot = worldBot()
+  bot.entity.id = 41
+  const held = itemStack('dirt', 3)
+  bot.inventory.slots[HOTBAR_SLOT] = held
+  const support = bot.putBlock(solidBlock(new Vec3(1, 64, 0), 'crafting_table'))
+  const common = {
+    blockOffers: [blockOffer(support)],
+    slots: slotOffers(HOTBAR_SLOT, held),
+    block: 0,
+    slot: HOTBAR_SLOT,
+    face: 'up',
+    timeoutMs: 60_000
+  }
+  const shifts = () => bot._client.writes
+    .filter((write) => write.name === 'entity_action')
+    .map((write) => [write.parameters.actionId, write.parameters.entityId])
+  let order
+  bot._genericPlace = async () => {
+    order = shifts().length
+    writePlacement(bot)
+    setImmediate(() => acknowledge(bot))
+  }
+  bot._client.writes.length = 0
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'libraryFailure')
+  assert.equal(order, 1, 'the shift is held before the packet')
+  assert.deepEqual(shifts(), [[0, 41], [1, 41]])
+  // Aborted in flight, as teardown does, the release is still written, and only once.
+  bot._genericPlace = async () => {}
+  bot._client.writes.length = 0
+  const aborted = placeHeldBlock(bot, { ...common, slots: slotOffers(HOTBAR_SLOT, held) })
+  assert.equal(aborted.abort(), true)
+  assert.equal((await reportOf(aborted)).outcome, 'cancelled')
+  assert.deepEqual(shifts(), [[0, 41], [1, 41]])
+  // A refusal before any packet holds no shift at all.
+  bot.entity.position = new Vec3(1.5, 65, 0.5)
+  bot._client.writes.length = 0
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'destinationBlocked')
+  assert.deepEqual(shifts(), [])
+})
+
+test('place refuses a destination its own body or a creature stands in, before any packet', async () => {
+  const bot = worldBot()
+  const held = itemStack('dirt', 1)
+  bot.inventory.slots[HOTBAR_SLOT] = held
+  // The body stands 0.227 of a block past its feet cell's north edge, as r39 iota did: its box
+  // reaches the cell north of its feet.
+  bot.entity.position = new Vec3(0.5, 64, -0.073)
+  const support = bot.putBlock(solidBlock(new Vec3(0, 63, -1)))
+  let packets = 0
+  bot._genericPlace = async () => { packets += 1 }
+  const own = {
+    blockOffers: [blockOffer(support)],
+    slots: slotOffers(HOTBAR_SLOT, held),
+    block: 0,
+    slot: HOTBAR_SLOT,
+    face: 'up',
+    timeoutMs: 100
+  }
+  assert.equal((await reportOf(placeHeldBlock(bot, own))).outcome, 'destinationBlocked')
+  // Standing back at its cell's centre, the same cell is clear of it, and a packet is sent.
+  bot.entity.position = new Vec3(0.5, 64, 0.5)
+  bot._genericPlace = async () => {
+    packets += 1
+    writePlacement(bot)
+    setImmediate(() => acknowledge(bot))
+  }
+  assert.equal((await reportOf(placeHeldBlock(bot, own))).outcome, 'libraryFailure')
+  assert.equal(packets, 1)
+  // An item lying in the cell is no body: vanilla places over it.
+  bot.entities[9] = { id: 9, type: 'object', name: 'item', position: new Vec3(0.5, 64, -0.5), width: 0.25, height: 0.25 }
+  assert.equal((await reportOf(placeHeldBlock(bot, own))).outcome, 'libraryFailure')
+  assert.equal(packets, 2)
+})
+
+test('place steps to its own cell centre when only its own box reaches the destination, then places', async () => {
+  // The provider-free v36 rehearsal's delta stood 0.3 off its centre after a pickup, its box 0.1
+  // into the cell east of its feet: no closing there could be placed, and it died in the open.
+  const bot = worldBot()
+  const held = itemStack('dirt', 3)
+  bot.inventory.slots[HOTBAR_SLOT] = held
+  // The ground under the feet cell, a full block whose top is the feet.
+  bot.putBlock({ ...solidBlock(new Vec3(0, 63, 0)), shapes: [[0, 0, 0, 1, 1, 1]] })
+  const support = bot.putBlock({ ...solidBlock(new Vec3(1, 63, 0)), shapes: [[0, 0, 0, 1, 1, 1]] })
+  const steps = []
+  const movement = {
+    finalApproach ({ point }) {
+      steps.push(point)
+      bot.entity.position = new Vec3(point[0], point[1], point[2])
+      return Promise.resolve({ outcome: 'arrived' })
+    },
+    halt () { steps.push('halt') }
+  }
+  bot._genericPlace = async () => {
+    writePlacement(bot)
+    bot.putBlock(solidBlock(new Vec3(1, 64, 0), 'dirt', { type: 3 }))
+    bot.emit('blockUpdate:(1, 64, 0)')
+    setImmediate(() => acknowledge(bot))
+  }
+  const east = {
+    blockOffers: [blockOffer(support)],
+    slots: slotOffers(HOTBAR_SLOT, held),
+    block: 0,
+    slot: HOTBAR_SLOT,
+    face: 'up',
+    timeoutMs: 1000,
+    movement
+  }
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  const placed = await reportOf(placeHeldBlock(bot, east))
+  assert.equal(placed.outcome, 'placed', JSON.stringify(placed))
+  assert.deepEqual(steps, [[0.5, 64, 0.5]], 'one step, to the centre of its own cell')
+  // Off the centre over no support of its own, the step is not taken and nothing is sent.
+  bot.removeBlock(new Vec3(1, 64, 0))
+  bot.removeBlock(new Vec3(0, 63, 0))
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  steps.length = 0
+  assert.equal((await reportOf(placeHeldBlock(bot, east))).outcome, 'destinationBlocked')
+  assert.deepEqual(steps, [])
+  bot.putBlock({ ...solidBlock(new Vec3(0, 63, 0)), shapes: [[0, 0, 0, 1, 1, 1]] })
+  // A creature that walked into the cell during the step is refused before any packet.
+  let packets = 0
+  bot._genericPlace = async () => { packets += 1 }
+  movement.finalApproach = ({ point }) => {
+    bot.entity.position = new Vec3(point[0], point[1], point[2])
+    bot.entities[8] = { id: 8, type: 'hostile', position: new Vec3(1.5, 64, 0.5), width: 0.6, height: 1.95 }
+    return Promise.resolve({ outcome: 'arrived' })
+  }
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  assert.equal((await reportOf(placeHeldBlock(bot, east))).outcome, 'destinationBlocked')
+  assert.equal(packets, 0)
+  delete bot.entities[8]
+  // A halt while the step is in flight stops it cleanly: nothing reached the server.
+  let resolveStep
+  steps.length = 0
+  movement.finalApproach = () => new Promise((resolve) => { resolveStep = resolve })
+  movement.halt = () => { steps.push('halt'); resolveStep({ outcome: 'cancelled' }) }
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  const halted = placeHeldBlock(bot, east)
+  assert.equal(halted.cancel(), true)
+  assert.equal((await reportOf(halted)).outcome, 'cancelled')
+  assert.deepEqual(steps, ['halt'])
+  assert.equal(packets, 0)
+  // Without a movement to take the step, the old refusal stands.
+  bot.entity.position = new Vec3(0.8, 64, 0.5)
+  assert.equal((await reportOf(placeHeldBlock(bot, { ...east, movement: undefined }))).outcome, 'destinationBlocked')
+})
+
+test('place lands in a cell vanilla replaces, short grass or one snow layer, and never in a flower', async () => {
+  const bot = worldBot()
+  const held = itemStack('dirt', 3)
+  bot.inventory.slots[HOTBAR_SLOT] = held
+  const support = bot.putBlock(solidBlock(new Vec3(1, 63, 0)))
+  const destination = new Vec3(1, 64, 0)
+  let packets = 0
+  bot._genericPlace = async () => {
+    packets += 1
+    writePlacement(bot)
+    bot.putBlock(solidBlock(destination, 'dirt', { type: 3 }))
+    setImmediate(() => acknowledge(bot))
+  }
+  const common = {
+    blockOffers: [blockOffer(support)],
+    slots: slotOffers(HOTBAR_SLOT, held),
+    block: 0,
+    slot: HOTBAR_SLOT,
+    face: 'up',
+    timeoutMs: 1000
+  }
+  bot.putBlock({ name: 'short_grass', type: 31, stateId: 2000, diggable: true, position: destination })
+  const grass = await reportOf(placeHeldBlock(bot, common))
+  assert.equal(grass.outcome, 'placed', JSON.stringify(grass))
+  assert.equal(grass.what, 'dirt')
+  // A server that keeps the grass places nothing, and the grass is no placed block.
+  bot.putBlock({ name: 'short_grass', type: 31, stateId: 2000, diggable: true, position: destination })
+  bot._genericPlace = async () => {
+    packets += 1
+    writePlacement(bot)
+    setImmediate(() => acknowledge(bot))
+  }
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'libraryFailure')
+  const snow = (layers) => ({ name: 'snow', type: 78, stateId: 5000 + layers, diggable: true, position: destination, getProperties: () => ({ layers }) })
+  bot.putBlock(snow(2))
+  const sent = packets
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'destinationBlocked')
+  bot.putBlock({ name: 'dandelion', type: 37, stateId: 3000, diggable: true, position: destination })
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'destinationBlocked')
+  assert.equal(packets, sent, 'neither a deep snow nor a flower is sent at all')
+  bot.putBlock(snow(1))
+  assert.equal((await reportOf(placeHeldBlock(bot, common))).outcome, 'libraryFailure')
+  assert.equal(packets, sent + 1, 'a single snow layer is sent')
+})
+
 test('equip revalidates one offered stack and reports Mineflayer actual destination slot', async () => {
   const bot = worldBot()
   const offered = itemStack('iron_helmet', 1)
@@ -856,7 +1401,9 @@ test('craft applies only one retained recipe and revalidates ingredients and wor
       offered: stale.reading.recipeOffers,
       recipe: 0,
       crafts: 1,
-      timeoutMs: 100
+      timeoutMs: 100,
+      // A stopped clock: a loaded host takes measurable time to fingerprint the inventory.
+      now: () => 0
     })),
     {
       outcome: 'ingredientsChanged',
@@ -877,6 +1424,163 @@ test('craft applies only one retained recipe and revalidates ingredients and wor
     crafts: 1,
     timeoutMs: 100
   }))).outcome, 'recipeUnnamed')
+})
+
+test('craft answers only once the server has handled the clicks its applications wrote', async () => {
+  // Mineflayer predicts a craft in the client's own window, so the delta shows before the
+  // server has handled a click: answered there, the witness disputed a craft Paper then applied
+  // (path rehearsal run-rd3c1K alpha body:00000229).
+  const bot = worldBot()
+  const { reading } = craftingSetup(bot, { logs: 2 })
+  bot._client.answersStatistics = false
+  bot.currentWindow = null
+  bot.closeWindow = () => {}
+  bot.craft = async () => {
+    bot._client.write('window_click', { slot: 1 })
+    applyCraft(bot)
+  }
+  let answered
+  const running = craftOfferedRecipe(bot, {
+    offered: reading.recipeOffers,
+    recipe: 0,
+    crafts: 2,
+    timeoutMs: 2000
+  })
+  running.promise.then((report) => { answered = report })
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  assert.equal(answered, undefined, 'the predicted craft is not answered before the server')
+  // Each application waits for the server before its boundary is read or the next one starts.
+  const names = () => bot._client.writes.map((write) => write.name)
+  assert.deepEqual(names(), ['window_click', 'client_command'])
+  // Action 1 asks for statistics; action 0 would be the vanilla respawn.
+  assert.deepEqual(bot._client.writes.at(-1).parameters, { actionId: 1 })
+  bot._client.emit('statistics', { entries: [] })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(answered, undefined)
+  assert.deepEqual(names(), ['window_click', 'client_command', 'window_click', 'client_command'])
+  bot._client.emit('statistics', { entries: [] })
+  const report = await reportOf(running)
+  assert.equal(report.outcome, 'crafted')
+  assert.equal(report.count, 8)
+  assert.equal(bot._client.listenerCount('statistics'), 0)
+  assert.equal(bot._client.listenerCount('end'), 0)
+
+  // A server that never answers is bounded, and the witness states what the server did.
+  const silentBot = worldBot()
+  const silent = craftingSetup(silentBot)
+  silentBot._client.answersStatistics = false
+  silentBot.craft = async () => applyCraft(silentBot)
+  const started = Date.now()
+  const unanswered = await reportOf(craftOfferedRecipe(silentBot, {
+    offered: silent.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 2000,
+    serverOrderMs: 40
+  }))
+  assert.equal(unanswered.outcome, 'crafted')
+  assert.ok(Date.now() - started >= 35, 'it waited out its bound')
+  // The answer it is still owed is counted when it comes, and only then does listening stop.
+  assert.equal(silentBot._client.listenerCount('statistics'), 1)
+  silentBot._client.emit('statistics', { entries: [] })
+  assert.equal(silentBot._client.listenerCount('statistics'), 0)
+  assert.equal(silentBot._client.listenerCount('end'), 0)
+
+  // A halt while the server is asked ends the request at once.
+  const haltedBot = worldBot()
+  const halted = craftingSetup(haltedBot)
+  haltedBot._client.answersStatistics = false
+  haltedBot.craft = async () => applyCraft(haltedBot)
+  const haltedRun = craftOfferedRecipe(haltedBot, {
+    offered: halted.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 2000
+  })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(haltedBot._client.writes.at(-1)?.name, 'client_command')
+  assert.equal(haltedRun.cancel(), true)
+  assert.equal((await reportOf(haltedRun)).outcome, 'cancelled')
+
+  // A connection lost while the server is asked ends the wait at once.
+  const lostBot = worldBot()
+  const lost = craftingSetup(lostBot)
+  lostBot._client.answersStatistics = false
+  lostBot.craft = async () => applyCraft(lostBot)
+  const lostRun = craftOfferedRecipe(lostBot, {
+    offered: lost.reading.recipeOffers,
+    recipe: 0,
+    crafts: 1,
+    timeoutMs: 2000
+  })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  const ended = Date.now()
+  lostBot._client.emit('end')
+  assert.equal((await reportOf(lostRun)).outcome, 'crafted')
+  assert.ok(Date.now() - ended < 200, 'a lost connection does not wait out the bound')
+  assert.equal(lostBot._client.listenerCount('end'), 0)
+})
+
+test('a late statistics answer to a wait that timed out never releases the next one', async () => {
+  // The round 3 offline audit: an answer names no request, so one owed to an earlier wait could
+  // answer a later craft before the server had handled that craft's clicks.
+  const bot = worldBot()
+  bot._client.answersStatistics = false
+  assert.equal(await serverHandledEarlierPackets(bot, 20), false)
+  let released
+  const next = serverHandledEarlierPackets(bot, 2000).then((handled) => { released = handled })
+  // The answer the first request was owed arrives after the second is written.
+  bot._client.emit('statistics', { entries: [] })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(released, undefined, 'the earlier request\'s answer does not release the later wait')
+  bot._client.emit('statistics', { entries: [] })
+  await next
+  assert.equal(released, true)
+  // Nothing more is owed, so counting has stopped, and a wait asked now is its own answer's.
+  assert.equal(bot._client.listenerCount('statistics'), 0)
+  const third = serverHandledEarlierPackets(bot, 2000)
+  bot._client.emit('statistics', { entries: [] })
+  assert.equal(await third, true)
+  const actions = bot._client.writes.filter(({ name }) => name === 'client_command')
+  assert.deepEqual(actions.map(({ parameters }) => parameters.actionId), [1, 1, 1])
+})
+
+test('an unanswered server-order wait answers false at its bound with nothing else keeping the process alive', () => {
+  // CI run 41368662092: the wait's timer was unref'd, so on Node 22 an event loop with nothing else
+  // in it left the wait above pending for good and cancelled the rest of this file. A process whose
+  // only work is one wait the server never answers must still hear it end.
+  const script = [
+    "const { EventEmitter } = require('node:events')",
+    `const { serverHandledEarlierPackets } = require(${JSON.stringify(require.resolve('../src/server-order'))})`,
+    'const client = new EventEmitter()',
+    'client.write = () => {}',
+    'serverHandledEarlierPackets({ _client: client }, 20).then((handled) => process.stdout.write(String(handled)))'
+  ].join('\n')
+  const run = require('node:child_process').spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10_000 })
+  assert.equal(run.status, 0, run.stderr)
+  assert.equal(run.stdout, 'false', 'the wait ends at its bound rather than being dropped with the event loop')
+})
+
+test('a craft ended while it waited for the server serves no later application\'s waiting senses', async () => {
+  // The round 4 offline audit: a halted craft's loop resumed when its late statistics answer
+  // came and released the boundary of whatever application owned the inventory by then.
+  const bot = worldBot()
+  const { reading } = craftingSetup(bot, { logs: 2 })
+  bot._client.answersStatistics = false
+  bot.craft = async () => applyCraft(bot)
+  const first = craftOfferedRecipe(bot, { offered: reading.recipeOffers, recipe: 0, crafts: 1, timeoutMs: 2000 })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(bot._client.writes.at(-1)?.name, 'client_command', 'the first craft waits for the server')
+  assert.equal(first.cancel(), true)
+  assert.equal((await reportOf(first)).outcome, 'cancelled')
+  // A newer application owns the inventory, and a sense waits for its boundary.
+  applicationStarted(bot)
+  let read = false
+  whenInventorySettled(bot, () => { read = true }, 5000)
+  // The first craft's late answer arrives.
+  bot._client.emit('statistics', { entries: [] })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(read, false, 'the ended craft served no boundary it no longer owned')
 })
 
 test('craft refuses a missing, changed, remote, or hidden retained workstation', async () => {
@@ -925,7 +1629,11 @@ test('craft refuses a missing, changed, remote, or hidden retained workstation',
   }))).outcome, 'workstationNotVisible')
 })
 
+const SETTLE_DEADLINE_MS = CRAFT_SETTLE_MS + 1500
+
 test('craft confirms the exact recipe inventory delta before reporting success', async () => {
+  // A mismatch is a failure only once the server's late slots have had the settle bound to
+  // arrive, so each request outlives it.
   const unchangedBot = worldBot()
   const unchanged = craftingSetup(unchangedBot)
   unchangedBot.craft = async () => {}
@@ -933,7 +1641,7 @@ test('craft confirms the exact recipe inventory delta before reporting success',
     offered: unchanged.reading.recipeOffers,
     recipe: 0,
     crafts: 1,
-    timeoutMs: 100
+    timeoutMs: SETTLE_DEADLINE_MS
   }))).outcome, 'libraryFailure')
 
   const collateralBot = worldBot()
@@ -946,7 +1654,7 @@ test('craft confirms the exact recipe inventory delta before reporting success',
     offered: collateral.reading.recipeOffers,
     recipe: 0,
     crafts: 1,
-    timeoutMs: 100
+    timeoutMs: SETTLE_DEADLINE_MS
   }))).outcome, 'libraryFailure')
 
   const mutatedBot = worldBot()
@@ -960,7 +1668,7 @@ test('craft confirms the exact recipe inventory delta before reporting success',
     offered: mutated.reading.recipeOffers,
     recipe: 0,
     crafts: 1,
-    timeoutMs: 100
+    timeoutMs: SETTLE_DEADLINE_MS
   }))).outcome, 'libraryFailure')
 })
 
@@ -1490,7 +2198,8 @@ test('survival teardown preserves the exact death and disconnect causes', async 
     offered: craft.reading.recipeOffers,
     recipe: 0,
     crafts: 1,
-    timeoutMs: 1000
+    timeoutMs: 1000,
+    now: () => 0
   })
   assert.equal(dyingCraft.abort('bodyDied'), true)
   assert.deepEqual(await reportOf(dyingCraft), {
@@ -1564,7 +2273,7 @@ test('all four original operations cross the wire using only one connection own 
   bot.digTime = () => 1
   bot.stopDigging = () => {}
   bot.dig = async (block) => {
-    bot.removeBlock(block.position)
+    serverBroke(bot, block.position)
   }
   bot.equip = async (stack, destination) => {
     const to = bot.getEquipmentDestSlot(destination)
@@ -1938,4 +2647,20 @@ test('conflicting requests are refused and halt, death, and shutdown clean an ow
     peer.stop()
     await body.stop()
   }
+})
+
+test('a block kind is never hidden behind the grass around the feet (r24 eta: a trunk 3.8 off went unreported)', () => {
+  const bot = worldBot()
+  for (let x = -5; x <= 5; x += 1) {
+    for (let z = -5; z <= 5; z += 1) bot.putBlock(solidBlock(new Vec3(x, 63, z), 'grass_block', { type: 9 }))
+  }
+  bot.putBlock(solidBlock(new Vec3(3, 64, 2), 'oak_log', { type: 46 }))
+  const sensed = senseReading(bot, { radius: 24, limit: MAX_SENSE_OFFERS_PER_KIND })
+  assert.equal(sensed.reading.blocks.length, MAX_SENSE_OFFERS_PER_KIND)
+  assert.ok(sensed.reading.blocksOmitted > 0, 'the grass still fills the rest and is cut')
+  assert.ok(sensed.reading.blocks.some((block) => block.what === 'oak_log'), 'the trunk is reported')
+  // Still nearest first.
+  const eyes = new Vec3(0.5, 64 + 1.62, 0.5)
+  const away = sensed.reading.blocks.map(({ position: [x, y, z] }) => new Vec3(x + 0.5, y + 0.5, z + 0.5).distanceTo(eyes))
+  assert.deepEqual(away, [...away].sort((one, other) => one - other))
 })

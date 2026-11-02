@@ -93,14 +93,16 @@ const { attackOfferedTarget } = require('./combat')
 const {
   craftOfferedRecipe,
   installCrafting,
-  recipeReading
+  recipeReading,
+  whenInventorySettled
 } = require('./crafting')
 const { digOfferedBlock, installDigging } = require('./digging')
 const { eatFromSlot } = require('./eating')
 const { equipOfferedStack } = require('./equipping')
 const { installMovement } = require('./movement')
 const { installPlacing, placeHeldBlock } = require('./placing')
-const { senseMemory } = require('./senses')
+const { SERVER_ORDER_MS, serverHandledEarlierPackets } = require('./server-order')
+const { MAX_REMEMBERED_SENSES, senseMemory } = require('./senses')
 const { createSpeech } = require('./speaking')
 const { senseReading, vitalsOf } = require('./sensing')
 const { installSleeping, sleepInOfferedBed } = require('./sleeping')
@@ -145,6 +147,13 @@ const MAX_TRACKED_REQUESTS = 64
  * `duplicateRequestId` and the rest - which is what its rationale above is about.
  * `notReady` is not one of them and has [MAX_NOT_READY_PER_CONNECTION] instead.
  */
+/**
+ * How long a replacing flight waits for the flight it cancelled to release the path: a cancelled
+ * flight answers once its physics frame has drained and the body is at rest, which is bounded by
+ * movement's own rest settle, so one second is generous on a loopback server.
+ */
+const REPLACE_SETTLE_MS = 1_000
+
 const MAX_REFUSALS_PER_CONNECTION = 8
 
 /**
@@ -514,6 +523,8 @@ function createBody (options) {
   // process allows may each sense under one id, and a handle that meant different things on
   // two sockets would be a handle that named nothing. `senses.js` carries why.
   const offered = senseMemory()
+  // Senses waiting for their server round trip or a craft's boundary, across every connection.
+  let sensesWaiting = 0
   // The request-scoped wrapper around the pathfinder, built with the client and holding at
   // most one accepted movement. Undefined until then, so a movement request that arrives
   // before the body is `ready` is refused by the state check rather than by its absence.
@@ -645,10 +656,21 @@ function createBody (options) {
     follow(bot)
   }
 
-  /** Starts both process channels in their required order. */
+  /**
+   * Starts both process channels in their required order.
+   *
+   * A client that cannot be started stops the control channel already listening before the
+   * failure is reported, so a failed start leaves nothing open: a throw here once left one
+   * listener per failed start holding the test process open with no timer to end it.
+   */
   async function start () {
     const started = await startControl()
-    startClient()
+    try {
+      startClient()
+    } catch (failure) {
+      await stop()
+      throw failure
+    }
     return started
   }
 
@@ -772,8 +794,13 @@ function createBody (options) {
    * watching its connection drop and having to guess.
    */
   function closeSocket (socket) {
-    if (socket.destroyed || socket.writableEnded) return
+    if (finishedWith(socket)) return
     socket.end(() => socket.destroy())
+  }
+
+  /** Whether this process has ended [socket], or it is gone. */
+  function finishedWith (socket) {
+    return socket.destroyed || socket.writableEnded
   }
 
   /** Takes one control connection, with every per-connection bound it has. */
@@ -837,12 +864,15 @@ function createBody (options) {
    * before the socket the answers go on is closed.
    */
   function receive (socket, session, chunk) {
+    // A connection this process has finished with reads nothing more, whatever arrives before
+    // the close completes: a deferred answer can end it outside this loop.
+    if (finishedWith(socket)) return
     session.pending += chunk
     let terminator = session.pending.indexOf(FRAME_TERMINATOR)
     while (terminator !== -1) {
       const line = session.pending.slice(0, terminator)
       session.pending = session.pending.slice(terminator + 1)
-      if (!handle(socket, session, line)) break
+      if (!handle(socket, session, line) || finishedWith(socket)) break
       terminator = session.pending.indexOf(FRAME_TERMINATOR)
     }
     if (Buffer.byteLength(session.pending) > MAX_FRAME_BYTES) {
@@ -987,8 +1017,38 @@ function createBody (options) {
    * went out leaves no slot handle behind: an eat naming it is then `senseForgotten`,
    * which is true, rather than a meal resolved against an inventory no controller was
    * ever shown.
+   *
+   * A sense that arrives while this body's own craft application owns the inventory is read at
+   * that application's settled boundary instead, bounded by `SENSE_SETTLE_MAX_MS`
+   * (`crafting.js` states why), and answered then; the request is still one round trip.
+   *
+   * Every sense first waits for one ordered round trip to the server (`server-order.js`), bounded
+   * by `SERVER_ORDER_MS`: the client's inventory and vitals trail the server's by every packet the
+   * library has not yet read, and the witness compares the claim with the server's own state from
+   * just before the request. The path rehearsal's epsilon claimed one log 4 ticks after the server
+   * had picked up its second, with a 694 ms round trip, and the dispute would have stopped a
+   * primary run. The wait reads the client's state no earlier than the server's at the request.
    */
   function sense (socket, session, request, requestId) {
+    // At most as many senses wait as the memory keeps answers of, across every connection, so a
+    // flood is refused here and spends its own budget at once rather than queueing round trips
+    // to the server (the r39 round 5 offline audit: every deferred sense answered `true`, and a
+    // flood was read to the end of its buffer before any refusal could stop it).
+    if (sensesWaiting >= MAX_REMEMBERED_SENSES) {
+      return refuse(socket, session, { code: 'notReady', requestId })
+    }
+    sensesWaiting += 1
+    serverHandledEarlierPackets(bot, SERVER_ORDER_MS).then(() => {
+      whenInventorySettled(bot, () => {
+        sensesWaiting -= 1
+        senseNow(socket, session, request, requestId)
+      })
+    })
+    // A deferred answer leaves the connection open until it is written.
+    return true
+  }
+
+  function senseNow (socket, session, request, requestId) {
     const answer = senseAnswer(request, requestId)
     if (answer === undefined) {
       return refuse(socket, session, { code: 'notReady', requestId })
@@ -1034,7 +1094,13 @@ function createBody (options) {
   function senseAnswer (request, requestId) {
     if (state !== 'ready') return undefined
     try {
-      const read = senseReading(bot, { radius: request.radius, limit: request.limit })
+      const read = senseReading(bot, {
+        radius: request.radius,
+        limit: request.limit,
+        retainItems: request.retainItems,
+        retainEntities: request.retainEntities,
+        seek: request.seek
+      })
       if (read === undefined) return undefined
       const { reading, entityOffers, blockOffers, itemOffers, slotOffers } = read
       const recipes = recipeReading(bot, { blockOffers, limit: request.limit })
@@ -1183,6 +1249,8 @@ function createBody (options) {
         offered: remembered?.blockOffers,
         block: request.block,
         timeoutMs: request.timeoutMs,
+        movement,
+        owner,
         now
       })
     } else if (request.op === 'collect') {
@@ -1203,6 +1271,8 @@ function createBody (options) {
         slot: request.slot,
         face: request.face,
         timeoutMs: request.timeoutMs,
+        movement,
+        owner,
         now
       })
     } else if (request.op === 'equip') {
@@ -1321,6 +1391,40 @@ function createBody (options) {
    * that answer: its slot offers are a meal's.
    */
   function move (socket, session, request, requestId) {
+    const replacing = request.op === 'flee' && request.replace === true && state === 'ready' &&
+      movement !== undefined && !eating && actionOwner?.kind === 'movement'
+    if (replacing) {
+      // A flight that may take over is checked first, and a refused one leaves the running
+      // flight alone (r33: gamma's refused flight halted the flight it meant to replace).
+      const refused = movement.fleeRefusal({
+        offered: offered.recall(session, request.senseId)?.entityOffers,
+        entity: request.entity
+      })
+      if (refused !== undefined) {
+        settleMovement(socket, session, request, requestId, refused, {}).catch(() => {})
+        return true
+      }
+      // The running flight ends as cancelled, and this one holds the body from that moment until
+      // the cancelled flight has drained, so nothing else can take the body between them.
+      const owned = actionOwner
+      owned.cancel()
+      // A takeover still waiting is displaced by this newer one rather than racing it: it answers
+      // `cancelled` before it began, and only the newest flight takes the body (r34 beta).
+      const reserved = {
+        token: {},
+        kind: 'movement',
+        session,
+        displaced: false,
+        cancel: () => {
+          reserved.displaced = true
+          return true
+        },
+        abort: () => false
+      }
+      actionOwner = reserved
+      takeOver(socket, session, request, requestId, reserved).catch(() => {})
+      return true
+    }
     if (state !== 'ready' || movement === undefined || eating || actionOwner !== undefined) {
       return refuse(socket, session, { code: 'notReady', requestId })
     }
@@ -1339,6 +1443,7 @@ function createBody (options) {
       : movement.flee({
         offered: offered.recall(session, request.senseId)?.entityOffers,
         entity: request.entity,
+        avoid: request.avoid ?? [],
         distance: request.distance,
         timeoutMs: request.timeoutMs,
         sprint: request.sprint,
@@ -1354,6 +1459,31 @@ function createBody (options) {
     // become an unhandled rejection.
     settleMovement(socket, session, request, requestId, walking, owner).catch(() => {})
     return true
+  }
+
+  /**
+   * Starts a replacing flight once the flight it cancelled has released the path, holding the
+   * body under [reserved] meanwhile, within [REPLACE_SETTLE_MS]; a path still held after that is
+   * `notReady`, the answer a flight behind running work always had. A takeover a newer replacing
+   * flight or a halt displaced while it waited answers `cancelled` without having moved, measured
+   * against its threat where it stands, so an older flight can never start after a newer one.
+   */
+  async function takeOver (socket, session, request, requestId, reserved) {
+    const until = Date.now() + REPLACE_SETTLE_MS
+    while (movement?.busy() === true && Date.now() < until && !reserved.displaced) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    if (reserved.displaced) {
+      if (actionOwner === reserved) actionOwner = undefined
+      const unstarted = movement?.unstarted({
+        offered: offered.recall(session, request.senseId)?.entityOffers,
+        entity: request.entity
+      })
+      return settleMovement(socket, session, request, requestId, unstarted, reserved.token)
+    }
+    if (actionOwner !== reserved) return refuse(socket, session, { code: 'notReady', requestId })
+    actionOwner = undefined
+    return move(socket, session, { ...request, replace: false }, requestId)
   }
 
   /**

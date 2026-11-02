@@ -38,6 +38,12 @@ fun interface CognitionBridge {
      * state must be marshalled onto the main thread first - see [MainThread].
      */
     fun submit(perception: Perception): CompletableFuture<Decision>
+
+    /**
+     * How many requests one agent may have outstanding through this bridge before a further one
+     * is refused: unbounded unless a bridge in the chain bounds it ([PerAgentCognitionBridge]).
+     */
+    val outstandingPerAgent: Int get() = Int.MAX_VALUE
 }
 
 /**

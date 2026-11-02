@@ -19,6 +19,7 @@ const {
   MAX_STACK_COUNT,
   isResourceName
 } = require('./protocol')
+const { SERVER_ORDER_MS, serverHandledEarlierPackets } = require('./server-order')
 const {
   blockWithinReach,
   elapsedSince,
@@ -39,14 +40,119 @@ const MAX_RECIPE_CANDIDATES = 2048
  */
 const CRAFT_CLEANUP_GRACE_MS = 500
 
+/**
+ * How long one application's result may take to reach Mineflayer's inventory.
+ *
+ * Mineflayer's craft resolves once its last click is written, and a real server's restated
+ * slots can trail it: in r19 two crafts of two applications (theta body:00000310, epsilon
+ * 352) judged the second application before the first one's result had arrived, saw a log
+ * consumed and no planks gained, and ended libraryFailure. Ten vanilla ticks is generous on a
+ * loopback server; a delta still unmatched after it is a real failure.
+ */
+const CRAFT_SETTLE_MS = 500
+
+/** How often a settling inventory is read again. */
+const CRAFT_SETTLE_POLL_MS = 25
+
 /** The packet Mineflayer's crafting primitive writes for every inventory click. */
 const CRAFT_PACKET = 'window_click'
+
+/**
+ * How long each craft application waits for the server to have handled the clicks it wrote, before
+ * a waiting sense reads its boundary or the craft answers: see `server-order.js`.
+ *
+ * Mineflayer predicts a craft in the client's own window (its craft plugin writes the result
+ * slot itself before it takes the result), so the inventory shows the recipe's delta before the
+ * server has handled a single click. Answered there, the report could reach the plugin before
+ * Paper fired the craft's `CraftItemEvent`, and the witness disputed a craft the server then
+ * applied (path rehearsal run-rd3c1K alpha body:00000229).
+ */
+const CRAFT_SERVER_ORDER_MS = SERVER_ORDER_MS
 
 /** The one installation each player gets; a second would replace craft state. */
 const installations = new WeakSet()
 
 /** A stopped gate is retained here until its bot disconnects. */
 const activeCraftGates = new WeakSet()
+
+/**
+ * How long a sense waits for its body's own craft application to settle before it reads anyway.
+ *
+ * A craft moves its ingredients through the crafting grid, which the server's witness cannot
+ * address, and a client mid-application states an inventory the server only passes through
+ * inside one tick: r29 beta's sense, answered between the clicks of its own yellow-dye craft,
+ * claimed a dandelion in the grid and none in the hotbar, and was disputed. One application's
+ * drain, settle and wait for the server together are bounded by [CRAFT_CLEANUP_GRACE_MS],
+ * [CRAFT_SETTLE_MS] and [CRAFT_SERVER_ORDER_MS], and the controller's three-second request timeout
+ * leaves a second and a half beside this wait.
+ */
+const SENSE_SETTLE_MAX_MS = CRAFT_CLEANUP_GRACE_MS + CRAFT_SETTLE_MS + CRAFT_SERVER_ORDER_MS
+
+/**
+ * How long a craft holds its next application after a sense read its settled boundary.
+ *
+ * The server applies a click as soon as its packet arrives, between ticks, while its witness samples
+ * the inventory once a tick: r32 eta's sense, read between two oak-button applications, described a
+ * boundary the server held for less than one tick, because the next application's clicks followed the
+ * answer at once. Three vanilla ticks leave at least two tick samples of that boundary.
+ */
+const SENSE_BOUNDARY_HOLD_MS = 150
+
+/** Per bot: whether a craft application owns the inventory, and the reads waiting for it. */
+const applications = new WeakMap()
+
+function applicationOf (bot) {
+  if (!applications.has(bot)) applications.set(bot, { applying: false, readers: [] })
+  return applications.get(bot)
+}
+
+/**
+ * Runs [read] where the inventory is not mid-application: at once when no craft application
+ * owns it, else synchronously at the application's settled boundary, before the next
+ * application starts, or after [maxMs] at the latest so a stuck craft cannot hold a sense.
+ */
+function whenInventorySettled (bot, read, maxMs = SENSE_SETTLE_MAX_MS) {
+  const state = applicationOf(bot)
+  if (!state.applying) return read()
+  let done = false
+  const once = () => {
+    if (done) return
+    done = true
+    clearTimeout(timer)
+    read()
+  }
+  const timer = setTimeout(() => {
+    state.readers = state.readers.filter((reader) => reader !== once)
+    once()
+  }, maxMs)
+  timer.unref?.()
+  state.readers.push(once)
+  return undefined
+}
+
+/** Marks [bot]'s inventory as owned by one craft application. */
+function applicationStarted (bot) {
+  applicationOf(bot).applying = true
+}
+
+/**
+ * Ends the application's ownership and serves every waiting read, in order, at this boundary.
+ * Answers how many reads it served.
+ */
+function applicationSettled (bot) {
+  const state = applicationOf(bot)
+  state.applying = false
+  const readers = state.readers
+  state.readers = []
+  for (const reader of readers) {
+    try {
+      reader()
+    } catch {
+      // A read answers for itself; a fault in one must not leave the craft or another read.
+    }
+  }
+  return readers.length
+}
 
 function installCrafting (bot) {
   if (installations.has(bot)) return
@@ -221,6 +327,26 @@ function inventoryState (bot) {
     })
   }
   return { fingerprint: JSON.stringify(held), totals }
+}
+
+/**
+ * The inventory once it shows exactly one `delta` since `before`, read again every
+ * [CRAFT_SETTLE_POLL_MS] for at most `settleMs`, or undefined when it never does or cannot be
+ * read. `stopped` ends the wait early for a request that has already reached a terminal.
+ */
+async function settledApplication (bot, before, delta, {
+  settleMs = CRAFT_SETTLE_MS,
+  pollMs = CRAFT_SETTLE_POLL_MS,
+  now = () => performance.now(),
+  stopped = () => false
+} = {}) {
+  const deadline = now() + settleMs
+  for (;;) {
+    const after = inventoryState(bot)
+    if (after !== undefined && inventoryMatchesRecipeDelta(before, after, delta)) return after
+    if (stopped() || now() >= deadline) return undefined
+    await delay(pollMs)
+  }
 }
 
 /** The exact slot fingerprint retained by a sense offer. */
@@ -470,6 +596,7 @@ function craftOfferedRecipe (bot, {
   crafts,
   timeoutMs,
   cleanupGraceMs = CRAFT_CLEANUP_GRACE_MS,
+  serverOrderMs = CRAFT_SERVER_ORDER_MS,
   now = () => performance.now()
 }) {
   const startedAt = now()
@@ -523,6 +650,7 @@ function craftOfferedRecipe (bot, {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      applicationSettled(bot)
       if (restore) gate.restore()
       resolve({
         outcome,
@@ -567,6 +695,7 @@ function craftOfferedRecipe (bot, {
           break
         }
         attempted = true
+        applicationStarted(bot)
         activeCraft = Promise.resolve().then(
           () => bot.craft(offer.recipe, 1, currentTable.table)
         )
@@ -586,17 +715,33 @@ function craftOfferedRecipe (bot, {
           return
         }
         activeCraft = undefined
-        const resultingInventory = inventoryState(bot)
-        if (resultingInventory === undefined) {
-          terminal = 'libraryFailure'
-          break
+        const resultingInventory = await settledApplication(bot, inventory, offer.delta, {
+          now,
+          stopped: () => settled || terminal !== undefined
+        })
+        // The client's inventory is Mineflayer's prediction until the server has handled this
+        // application's clicks, so a sense waiting for this boundary, and the witness reading the
+        // server for it, would otherwise describe two different inventories.
+        if (!settled && terminal === undefined) {
+          await serverHandledEarlierPackets(bot, Math.min(serverOrderMs, timeoutMs - elapsedSince(startedAt, now)))
         }
-        if (!inventoryMatchesRecipeDelta(inventory, resultingInventory, offer.delta)) {
+        // A request ended while it waited has already been answered and given the inventory up: the
+        // waiting senses it served then are no longer this request's to serve, and a newer
+        // application may own the inventory now (the round 4 offline audit).
+        if (settled || terminal !== undefined) break
+        // The client now states what the server has confirmed, so a waiting sense reads here, and
+        // the next application waits until the server has sampled the state that sense described.
+        const served = applicationSettled(bot)
+        if (served > 0 && completed + 1 < crafts) await delay(SENSE_BOUNDARY_HOLD_MS)
+        if (settled || terminal !== undefined) break
+        if (resultingInventory === undefined) {
           terminal = 'libraryFailure'
           break
         }
         expectedInventory = resultingInventory.fingerprint
       }
+      // Every application that settled waited for the server to handle its clicks, so the witness
+      // reading the server's craft events when this answer arrives finds them.
       finish(terminal ?? 'crafted')
     }).catch(() => {
       if (activeCraft === undefined) return finish(terminal ?? 'libraryFailure')
@@ -620,11 +765,19 @@ function craftOfferedRecipe (bot, {
 }
 
 module.exports = {
+  applicationStarted,
   CRAFT_CLEANUP_GRACE_MS,
+  CRAFT_SERVER_ORDER_MS,
+  CRAFT_SETTLE_MS,
   MAX_RECIPE_CANDIDATES,
+  SENSE_BOUNDARY_HOLD_MS,
+  SENSE_SETTLE_MAX_MS,
   craftOfferedRecipe,
   installCrafting,
   inventoryFingerprint,
+  inventoryState,
   recipeFingerprint,
-  recipeReading
+  recipeReading,
+  settledApplication,
+  whenInventorySettled
 }

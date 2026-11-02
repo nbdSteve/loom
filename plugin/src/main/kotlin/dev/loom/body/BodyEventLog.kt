@@ -16,6 +16,9 @@
 package dev.loom.body
 
 import dev.loom.contract.Decision
+import dev.loom.contract.GoalRefusal
+import dev.loom.contract.GoalSummary
+import dev.loom.contract.HorizonGoal
 import dev.loom.contract.LoomJson
 import dev.loom.contract.Perception
 import dev.loom.contract.Provenance
@@ -145,6 +148,141 @@ data class BodyEventRecord(
     val decision: Decision? = null,
     /** How [decision]'s goal choice was resolved. Present on [BodyEvent.DECIDED] for goal reviews. */
     val goal: GoalEvidence? = null,
+    /**
+     * The goal and the refusal the answered perception carried to cognition, exactly as the mind
+     * was shown them. Present on [BodyEvent.DECIDED] for goal reviews, which is the one place the
+     * held goal and a refusal's explanation are added to a perception after it is recorded as
+     * [BodyEvent.PERCEIVED] (r16: no record kept either, so what the mind was told could not be
+     * audited).
+     */
+    val shown: ShownGoal? = null,
+    /** What a flight measured, on [BodyEvent.RETREATING]: how far from its threat it ended and gained. */
+    val retreat: RetreatEvidence? = null,
+    /** What an inventory dispute compared, on [BodyEvent.WITNESS_DISPUTED]; see [DisputeEvidence]. */
+    val dispute: DisputeEvidence? = null,
+    /** What a walk, flight or approach stated beyond its journey; on movement and interaction records. */
+    val movement: MovementEvidence? = null,
+    /** What the server's ground says of a collect the body found no route for; see [TerrainEvidence]. */
+    val terrain: TerrainEvidence? = null,
+    /** Whether the server's ground sealed the agent in, and its cover then; see [ShelterEvidence]. */
+    val shelter: ShelterEvidence? = null,
+    /** The server's reading of the agent when the run began; see [InitialConditionsEvidence]. */
+    val initial: InitialConditionsEvidence? = null,
+)
+
+/**
+ * The server's own reading of an agent's player at `/loombody begin`, the tick a research run's
+ * pinned initial conditions must hold: its [position] and how many [inventoryStacks] it holds.
+ */
+@Serializable
+data class InitialConditionsEvidence(
+    val position: List<Double>,
+    val inventoryStacks: Int,
+)
+
+/**
+ * The server's ground around an agent's server position at a change in whether it is sealed in:
+ * [sealed] as `Cover.sealed` reads it, and [closed] of the nine faces around its body.
+ */
+@Serializable
+data class ShelterEvidence(
+    val sealed: Boolean,
+    val closed: Long,
+)
+
+/**
+ * The server's own reading of the ground a collect's `noRoute` was about: how many cells a body
+ * stands in from which vanilla would pick the item up (`pickupCellsOf`), and, when there are any,
+ * whether a walk from where the body stood reaches one (`walkReaches`; absent when the search
+ * outgrew its bound). No cell, or no walk to one, verifies the ground's answer; a walk the server
+ * finds leaves the `noRoute` the body's claim (r34: one log lodged under a canopy drew three
+ * `noRoute`s and nothing said whether a route could exist).
+ */
+@Serializable
+data class TerrainEvidence(
+    val pickupCells: Int,
+    val walkable: Boolean? = null,
+)
+
+/**
+ * What one walk, flight or approaching interaction stated beyond its journey, as the body typed
+ * it: the [departure] an arrival's check found - whether the library's own executor could start
+ * another route from where the body came to rest - and the one correction it made, absent when it
+ * made none. r34 delta stood still under an oak's leaves for four requests and no record said why.
+ */
+@Serializable
+data class MovementEvidence(
+    /** `clear` or `blocked`, on an arrival the body could simulate; absent otherwise. */
+    val departure: String? = null,
+    val recovery: RecoveryEvidence? = null,
+)
+
+/** One movement's one correction: a `recentre` for a blocked departure, or a `sidestep` for a first move stuck. */
+@Serializable
+data class RecoveryEvidence(
+    val kind: String,
+    val cause: String,
+    val from: List<Double>,
+    val to: List<Double>,
+)
+
+/**
+ * Everything one inventory dispute compared, so a failed run's diagnostic can say why without the
+ * raw evidence: the body's exact claim, the server's inventory when the sense was requested, how
+ * it differed when the answer was audited and at each earlier tick of the lag window, and when
+ * each was read. Every stack is `"slot item count"` and an emptied slot `"slot -"`, item names and
+ * slots only - no position, text or identity.
+ */
+@Serializable
+data class DisputeEvidence(
+    /** The server tick the sense was requested at, and the one its answer was audited at. */
+    val requestTick: Long,
+    val answerTick: Long,
+    /** Wall milliseconds from the request's server reading to the answer's. */
+    val roundTripMillis: Long,
+    val claimed: List<String>,
+    val atRequest: List<String>,
+    /** The slots that differed from [atRequest] when the answer was audited. */
+    val atAnswer: List<String>,
+    /** The window's earlier server readings, oldest first, each as its slots that differ from [atRequest]. */
+    val earlier: List<EarlierInventory>,
+)
+
+/** One earlier server reading of a lag window: its tick and the slots that differ from the request's. */
+@Serializable
+data class EarlierInventory(
+    val tick: Long,
+    val changed: List<String>,
+)
+
+/**
+ * A flight's measured separation from the threat it fled: where it ended and how much it gained,
+ * both absent when the body could not measure them. Typed so a flight that ran from a threat far
+ * out of sight and gained nothing is read from fields (r17: nine flights from mobs 22 blocks away
+ * gained under six blocks each).
+ */
+@Serializable
+data class RetreatEvidence(
+    val separation: Double? = null,
+    val separationGained: Double? = null,
+    /** How many other hunters the flight was told to end clear of, beside the one it ran from (r24). */
+    val avoided: Int? = null,
+    /** How far the flight ended from the nearest of its threat and those hunters, where each was sensed. */
+    val leastSeparation: Double? = null,
+    /** Whether the flight sprinted, which spends food, and the `SprintReason` that chose it (r34). */
+    val sprint: Boolean? = null,
+    val sprintReason: String? = null,
+)
+
+/** What one goal review showed cognition beyond the body's own perception. */
+@Serializable
+data class ShownGoal(
+    /** The held goal the perception carried, or `null` when it carried none. */
+    val goal: GoalSummary? = null,
+    /** Why the agent's previous goal decision was refused, told once, or `null`. */
+    val lastRefusal: GoalRefusal? = null,
+    /** The horizon goals the review was offered, past what sight alone gives (r22). */
+    val horizon: List<HorizonGoal> = emptyList(),
 )
 
 /**
@@ -216,6 +354,24 @@ enum class BodyEvent {
     THREAT_SUPPRESSED,
 
     /**
+     * A perception the body could not take because it already held as many sense answers as
+     * it keeps at once. `outcome` is [EventTag.SENSE_AT_CAPACITY] and `detail` names what asked:
+     * a goal review, a threat scan or damage. Without it a review at capacity was lost with no
+     * record at all (r20 beta's third scheduled review).
+     */
+    @SerialName("perceptionRefused")
+    PERCEPTION_REFUSED,
+
+    /**
+     * Urgent danger sent at the ordinary tier because the pivotal ceiling no longer fits it, while
+     * the per-agent and global ceilings still do. `outcome` is [EventTag.TIER_FALLBACK]; the answer's
+     * own provenance names the ordinary model it was routed to (r33: alpha's damage was refused at
+     * the pivotal ceiling with 138 global calls unspent).
+     */
+    @SerialName("cognitionTierFallback")
+    COGNITION_TIER_FALLBACK,
+
+    /**
      * The server witnessed positive damage to a managed agent's player.
      *
      * One record per witnessed event. `outcome` is one of `EventTag`'s `DAMAGE_` tags;
@@ -235,6 +391,52 @@ enum class BodyEvent {
      */
     @SerialName("retreating")
     RETREATING,
+
+    /**
+     * The one bounded pickup attempt a dig makes for its goal's own dropped item, after the dig
+     * settled: its body terminal is `outcome` (a collect tag, or `ownDropNotSensed`), the approach
+     * and server-confirmed inventory change are in `detail`, and it joins the dig by `requestId`.
+     * It is no decision and no second terminal of the dig: control returns to the mind after it.
+     */
+    @SerialName("ownDropPickup")
+    OWN_DROP_PICKUP,
+
+    /**
+     * A scheduled goal review fell due while the agent could not take one, and waits: `outcome`
+     * says why (`reviewInFlight`, `fleeing`, `dangerDeciding` or `followUpClaimed`). Once per due
+     * review, never per sweep, so the record proves the schedule ran and the review is owed rather
+     * than lost. No perception was taken and no mind was asked.
+     */
+    @SerialName("goalReviewDeferred")
+    GOAL_REVIEW_DEFERRED,
+
+    /**
+     * The run's experiment exposure ended for this agent, at the tick cognition admission closed:
+     * from here no new perception, decision, damage, targeting or death counts toward the run, and
+     * only work already admitted drains to its typed terminals (`ExposureGate`). One per agent, all
+     * on one tick, so each agent's chain states its own end.
+     */
+    @SerialName("exposureEnded")
+    EXPOSURE_ENDED,
+
+    /**
+     * Whether the server's ground seals an agent in changed, read at the server's own position for
+     * its player once a second (`ShelterWitness`): how long a shelter held, and whether damage
+     * reached an agent inside one, are sums over these.
+     */
+    @SerialName("shelterChanged")
+    SHELTER_CHANGED,
+
+    /**
+     * The server's reading of an agent's player when a held run began (`InitialConditionsWitness`):
+     * where it stood and what it held at `/loombody begin`, the one tick the run's pinned initial
+     * conditions must hold, before any native cognition source starts. One per agent, all on that
+     * tick. An agent's first perception can come a thousand ticks later, behind the review stagger,
+     * and vanilla may change an idle body in between (r38: gamma, beside chickens, failed the old
+     * first-perception check 666 ticks after begin).
+     */
+    @SerialName("initialConditionsWitnessed")
+    INITIAL_CONDITIONS_WITNESSED,
 
     /**
      * The mind answered a perception, and the body was about to be asked to act.

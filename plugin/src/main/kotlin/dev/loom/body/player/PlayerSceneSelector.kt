@@ -6,6 +6,7 @@ package dev.loom.body.player
 import dev.loom.body.BODY_SENSE_MAX_OFFERS_PER_KIND
 import dev.loom.body.PERCEPTION_MAX_OBSERVATIONS
 import dev.loom.body.blocksApart
+import dev.loom.contract.BlockYield
 import dev.loom.contract.ObservationKind
 import java.util.UUID
 
@@ -24,6 +25,12 @@ internal data class SceneOffer(
     val visible: Boolean,
     val subject: UUID? = null,
     val count: Long? = null,
+    val standable: Boolean? = null,
+    val yields: List<BlockYield>? = null,
+    val digSafe: Boolean? = null,
+    val routeRefused: Boolean? = null,
+    /** For a standable block, the closed faces around the cell a body would stand in there. */
+    val cover: Long? = null,
 ) {
     val key: Pair<ObservationKind, Int> = kind to sourceIndex
 }
@@ -46,28 +53,39 @@ internal object PlayerSceneSelector {
             ObservationKind.DROPPED_ITEM,
         )
 
+    /**
+     * The offers that fit, nearest first, each kind kept to its bound and the whole to the scene's;
+     * every [reserved] offer - the creature that just hurt the agent - is kept whatever stands
+     * nearer, in place of the farthest one the bounds would otherwise have kept.
+     */
     fun select(
         origin: List<Double>,
         offers: List<SceneOffer>,
+        reserved: Set<Pair<ObservationKind, Int>> = emptySet(),
     ): List<SceneOffer> {
         require(offers.map(SceneOffer::key).distinct().size == offers.size) {
             "scene offer keys must be unique"
         }
         val ordered = offers.sortedWith(orderFrom(origin))
-        val retainedByKind = mutableMapOf<ObservationKind, Int>()
+        val retainedByKind =
+            ordered.filter { it.key in reserved }.groupingBy(
+                SceneOffer::kind,
+            ).eachCount().toMutableMap()
         val kindBounded =
             ordered.filter { offer ->
                 val retained = retainedByKind.getOrDefault(offer.kind, 0)
-                if (retained == BODY_SENSE_MAX_OFFERS_PER_KIND) {
-                    false
-                } else {
-                    retainedByKind[offer.kind] = retained + 1
-                    true
+                when {
+                    offer.key in reserved -> true
+                    retained >= BODY_SENSE_MAX_OFFERS_PER_KIND -> false
+                    else -> {
+                        retainedByKind[offer.kind] = retained + 1
+                        true
+                    }
                 }
             }
         if (kindBounded.size <= PERCEPTION_MAX_OBSERVATIONS) return kindBounded
 
-        val selected = mutableSetOf<Pair<ObservationKind, Int>>()
+        val selected = kindBounded.filter { it.key in reserved }.map(SceneOffer::key).toMutableSet()
         representedKinds.forEach { kind ->
             kindBounded.firstOrNull { it.kind == kind }?.let { selected += it.key }
         }
