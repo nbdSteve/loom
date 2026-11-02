@@ -1,7 +1,7 @@
 {
-  "experimentId": "2026-10-16-scripted-routine-v37-agency-pilot-rehearsal",
-  "title": "Credential-free routine-v37 goal-continuity dry run",
-  "mode": "routine-v37-persistent-objective",
+  "experimentId": "2026-10-16-scripted-routine-v38-agency-pilot-rehearsal",
+  "title": "Credential-free routine-v38 goal-continuity dry run",
+  "mode": "routine-v38-reliable-source",
   "agents": [
     "tribe-alpha",
     "tribe-beta",
@@ -53,9 +53,9 @@
       "pivotal": "scripted-stand-in"
     },
     "prompts": {
-      "routine": "routine-v37",
-      "notable": "notable-v37",
-      "pivotal": "pivotal-v37"
+      "routine": "routine-v38",
+      "notable": "notable-v38",
+      "pivotal": "pivotal-v38"
     },
     "eventDrivenOnly": true,
     "socialRolesInjected": false,

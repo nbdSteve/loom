@@ -148,20 +148,20 @@ test('every feature flag must be true because no runtime route reads one', () =>
   }
 })
 
-test('the routine-v37 pilot preflights under the v12 treatment plus v37 prompts and category fairness', () => {
+test('the routine-v38 pilot preflights under the v12 treatment plus v38 prompts and category fairness', () => {
   const config = openAiGoalContinuityConfig()
   assert.deepEqual(validateRunConfig(config), [])
   assert.deepEqual(validateRunConfig(goalContinuityConfig()), [])
   const manifest = validateProspectiveManifest(config, SOURCE)
-  assert.equal(manifest.protocol.mode, 'routine-v37-persistent-objective')
+  assert.equal(manifest.protocol.mode, 'routine-v38-reliable-source')
   assert.equal(manifest.protocol.categoryFairSelection, true)
   assert.equal(manifest.protocol.controlledBodyCrashPlanned, false)
   assert.deepEqual(manifest.provenance.prompts, {
-    routine: 'routine-v37',
-    notable: 'notable-v37',
-    pivotal: 'pivotal-v37'
+    routine: 'routine-v38',
+    notable: 'notable-v38',
+    pivotal: 'pivotal-v38'
   })
-  // The v37 pilot (its file still named for v36) is the v13 pilot with only its mode, prompts, identity, the follow-up reviews a
+  // The v38 pilot (its file still named for v36) is the v13 pilot with only its mode, prompts, identity, the follow-up reviews a
   // settled goal step owes, and the global and spend ceilings that hold them moved.
   for (const suffix of ['', '-scripted']) {
     const read = (version) => {
@@ -208,7 +208,7 @@ test('each native-scheduler pilot refuses the other pilot prompts or fairness at
 
   const v13OldPrompts = goalContinuityConfig()
   v13OldPrompts.cognition.prompts = { routine: 'routine-v13', notable: 'notable-v13', pivotal: 'pivotal-v13' }
-  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v37')))
+  assert.ok(validateRunConfig(v13OldPrompts).some((error) => error.includes('routine-v38')))
   const v13 = readJson(path.join(__dirname, '..', 'config', 'first-tribe-routine-v13-agency-pilot-scripted.json'))
   assert.ok(validateRunConfig(v13).some((error) => error.includes('mode routine-v13-goal-continuity is historical')))
 
@@ -249,7 +249,7 @@ test('the scripted v32 publication carries adoption then continuity without clai
   assert.deepEqual(validation.errors, [])
   assert.equal(published.metrics.spatial.playerSightings, 1)
   assert.ok(published.metrics.findings.observations.includes('1 perception(s) showed another player within eight blocks'))
-  assert.equal(published.manifest.protocol.mode, 'routine-v37-persistent-objective')
+  assert.equal(published.manifest.protocol.mode, 'routine-v38-reliable-source')
   assert.equal(published.manifest.protocol.categoryFairSelection, true)
   assert.equal(published.manifest.perceptionAudit.byKind.entities.jvmCutOmittedCount, 0)
   assert.equal(published.metrics.goalContinuity.byOutcome.goalAdopted, 3)
@@ -259,7 +259,7 @@ test('the scripted v32 publication carries adoption then continuity without clai
     ['tribe-alpha', 'tribe-beta', 'tribe-gamma']
   )
   const readme = fs.readFileSync(path.join(published.artifactDirectory, 'README.md'), 'utf8')
-  assert.match(readme, /routine-v37 pilot/)
+  assert.match(readme, /routine-v38 pilot/)
   assert.match(readme, /It is not a model-behavior result/)
   // The current gate generation states readiness and lists every action that did not succeed.
   const readiness = published.metrics.behaviorGate.readiness
@@ -778,7 +778,7 @@ test('the ten-minute shakedown is the ten-agent two-cycle profile with only its 
   const scripted = read('tribe-held-objective-10m-10-scripted.json')
   const base = read('tribe-two-cycle-10.json')
   assert.match(live.experimentId, /^2026-10-16-openai-10-agent-10m-r[0-9]+$/)
-  assert.equal(live.mode, 'routine-v37-persistent-objective')
+  assert.equal(live.mode, 'routine-v38-reliable-source')
   for (const config of [live, scripted]) {
     assert.deepEqual(validateRunConfig(config), [], config.experimentId)
     assert.equal(config.primaryBehavior.profile, 'held-objective-follow-up-10m-10')

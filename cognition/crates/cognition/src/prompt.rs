@@ -39,13 +39,13 @@ use crate::config::bounded_to;
 use crate::router::ModelRoute;
 
 /// Prompt version for [`DecisionImportance::Routine`].
-pub const ROUTINE_PROMPT_VERSION: &str = "routine-v37";
+pub const ROUTINE_PROMPT_VERSION: &str = "routine-v38";
 
 /// Prompt version for [`DecisionImportance::Notable`].
-pub const NOTABLE_PROMPT_VERSION: &str = "notable-v37";
+pub const NOTABLE_PROMPT_VERSION: &str = "notable-v38";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
-pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v37";
+pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v38";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -240,9 +240,10 @@ continue and revise; only replace with a different item, abandon, or complete wh
 offered then. When your success condition is met you must complete the goal, replace it with \
 the next, or revise it to a total you do not yet hold, at that review; anything else is refused \
 with your action.
-A failed step does not end a goal sight or its horizon can still meet: take another offered step \
-for it. Prefer a recipe or a high-yield block over a low-yield dig, such as grass, or a drop not \
-your own, which others may take first. Once a goal is met, make the next one use what it gave you.
+A failed step does not end a goal a reliable source can meet: take another offered step. A rare \
+drop, such as seeds from grass, is no such source: while it is all sight gives, set no goal and \
+walk to the edge of sight. Prefer a recipe or high-yield block. Once a goal is met, make the next \
+one use what it gave you.
 
 Night brings creatures that hunt you, and open ground gives them every side to reach you from. \
 You are told your cover: how many of the nine sides around your body - four beside your feet, \
@@ -2612,15 +2613,17 @@ mod tests {
     fn the_brief_holds_a_feasible_goal_through_a_failed_step() {
         // r48: 36.5% of agent time went to 93 new goals before their first advance, and the
         // twelve that never advanced were low-yield grass digs, collects a peer won first and
-        // walks. The brief asks for persistence, reliable sources and a chain; the schema still
-        // offers every choice it did, so the model still decides.
+        // walks. r49 (v37): 45.2% did, eight seed goals were held 12061 ticks and six never
+        // advanced, most adopted with only grass in sight. The brief keeps persistence to a
+        // reliable source and sends a sight of rare drops to look further, which the schema
+        // already offers as a walk with no goal; the model still decides.
         let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
         let prompt = render(&router().route(seen.importance), &seen);
         for expected in [
-            "A failed step does not end a goal sight or its horizon can still meet",
-            "take another offered step for it",
-            "Prefer a recipe or a high-yield block over a low-yield dig",
-            "which others may take first",
+            "A failed step does not end a goal a reliable source can meet",
+            "seeds from grass, is no such source",
+            "set no goal and walk to the edge of sight",
+            "Prefer a recipe or high-yield block",
             "make the next one use what it gave you",
         ] {
             assert!(

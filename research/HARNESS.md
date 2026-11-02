@@ -6,7 +6,7 @@ and publishes only a small sanitized artifact. It controls experimental
 conditions, not agent goals. It never assigns roles, partners, hierarchy,
 territory, conflict, cooperation, resource policy, or a story outcome.
 
-The runnable configurations are the routine-v37 persistent-objective pilot (its files keep their v36 names),
+The runnable configurations are the routine-v38 reliable-source pilot (its files keep their v36 names),
 `research/config/first-tribe-routine-v36-agency-pilot.json`, and its
 provider-free twin, `research/config/first-tribe-routine-v36-agency-pilot-scripted.json`.
 This primary behavior mode has no controlled crash and sends no `/loombody think`
@@ -349,7 +349,7 @@ From r36 the shakedown runs the `balanced-follow-up-10m-10` profile, configured 
 From r37 it runs the `shelter-goal-10m-10` profile, configured by `research/config/tribe-shelter-goal-10m-10.json` and its provider-free twin under the routine-v35 mode, and the r36 configurations are historical: the balanced follow-up profile's scene, bounds, exposure, plan and every bar unchanged, with one bar pre-registered beside them before any run, `shelterProgressAgentsBeforeNight` at 3, because all ten of r36's agents died at night in the open and none ever held a goal a hiding place could meet.
 r37 was consumed integrity-invalid and unpublished by a 265 s host idle sleep 11 s before its window's end, so r38 runs the same configuration under its own fresh id.
 r38 was consumed integrity-invalid 33 s in, when gamma's first perception no longer matched its pinned conditions after an idle wait beside chickens, so the server now witnesses those conditions at `begin` and r39 runs the same configuration under its own fresh id.
-From r40 it runs the `held-objective-10m-10` profile, configured by `research/config/tribe-held-objective-10m-10.json` and its provider-free twin under the routine-v36 mode and, from r49, the routine-v37 mode, and the r37 to r39 configurations are historical: the shelter-goal profile's scene, bounds, exposure, plan and every bar unchanged, under a name of its own, because r39 met every structural bar and missed progressing held time with goals that never stayed held.
+From r40 it runs the `held-objective-10m-10` profile, configured by `research/config/tribe-held-objective-10m-10.json` and its provider-free twin under the routine-v36 mode and, from r49, the routine-v37 mode and, from r50, the routine-v38 mode, and the r37 to r39 configurations are historical: the shelter-goal profile's scene, bounds, exposure, plan and every bar unchanged, under a name of its own, because r39 met every structural bar and missed progressing held time with goals that never stayed held.
 A profile may pin its own `followUpsPerReview` in place of its mode's, and the JVM spends up to that many on ordinary steps a review, past the one it keeps for an owed review.
 
 ## Tier fallback

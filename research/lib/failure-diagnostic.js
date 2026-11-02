@@ -52,7 +52,8 @@ const MODES = new Set([
   'routine-v34-reached-source',
   'routine-v35-shelter-goal',
   'routine-v36-held-objective',
-  'routine-v37-persistent-objective'
+  'routine-v37-persistent-objective',
+  'routine-v38-reliable-source'
 ])
 const MAX_INPUT_LINE_BYTES = 256 * 1024
 const BODY_EVENTS = new Set([
