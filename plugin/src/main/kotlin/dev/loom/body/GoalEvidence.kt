@@ -85,6 +85,8 @@ data class GoalEvidence(
     val cover: CoverProgress? = null,
     /** Why the decision's replace or abandon ended the held goal, as the mind stated it. */
     val reason: GoalReason? = null,
+    /** The coherence rule this decision broke, recorded only: the choice and its intent still applied. */
+    val flagged: String? = null,
 ) {
     /** The tags [outcome] takes. */
     companion object {

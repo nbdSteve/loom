@@ -35,10 +35,7 @@ class R24DeathChainTest {
         val reserve =
             CallReserve(
                 perAgentCeiling = 40,
-                scheduledPerAgent = 5,
                 globalCeiling = 378,
-                agents = 10,
-                isDead = { it in dead },
                 pivotalCeiling = 130,
             )
         val endings =

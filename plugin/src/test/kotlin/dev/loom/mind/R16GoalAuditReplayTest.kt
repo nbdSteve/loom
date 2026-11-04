@@ -4,20 +4,13 @@ import dev.loom.body.AgentId
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
 import dev.loom.body.tagOf
-import dev.loom.contract.Bearing
-import dev.loom.contract.BlockYield
-import dev.loom.contract.DropFate
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.Intent
-import dev.loom.contract.Observation
-import dev.loom.contract.ObservationKind
-import dev.loom.contract.OwnDrop
 import dev.loom.contract.StepEvidence
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -80,24 +73,6 @@ class R16GoalAuditReplayTest {
     private val dig = Intent.Dig("bush")
 
     @Test
-    fun `alpha's dig beside its own lying sticks is refused and the collect is the step`() {
-        // alpha body:00000023 dug a bush that dropped two own sticks; body:00000032 and 00000105
-        // dug again while they lay offered as dda.
-        review("alpha-23", Scene(), sticks(GoalDisposition.ADOPT, 2), dig)
-        val lying = Scene(ownDrops = mapOf("dda" to STICK), dropped = setOf("alpha-23"), gives = GIVES)
-        val (_, refused) = review("alpha-32", lying, goalChoice(GoalDisposition.CONTINUE), dig)
-        assertEquals(GoalEvidence.OWN_DROP_IGNORED, refused?.outcome)
-        assertTrue(GoalEvidence.OWN_DROP_IGNORED in GoalEvidence.REFUSING)
-        val (_, collecting) =
-            review("alpha-33", lying, goalChoice(GoalDisposition.CONTINUE), Intent.Collect("dda", approach = true))
-        assertEquals(GoalEvidence.CONTINUED, collecting?.outcome)
-        val (collected, _) =
-            review("alpha-34", Scene(inventory = mapOf(STICK to 2L)), goalChoice(GoalDisposition.COMPLETE), Intent.Idle)
-        assertEquals(StepEvidence.GAINED, collected?.progress?.stepEvidence)
-        assertEquals(true, collected?.progress?.conditionMet)
-    }
-
-    @Test
     fun `kappa's dig that dropped two sticks is no stall while they lie, and the collect is the step`() {
         // kappa body:00000077, 086 and 141 dug, the last dropping two own sticks; under r16's rules
         // that third dig reached the stall bound and the continue that collected them at
@@ -122,90 +97,6 @@ class R16GoalAuditReplayTest {
             )
         assertEquals(0L, gained?.progress?.stepsWithoutProgress)
         assertEquals(GoalEvidence.COMPLETED, completed?.outcome)
-    }
-
-    @Test
-    fun `delta's walk onto terracotta is refused, and a walk onto a bush counts only out of reach`() {
-        // delta body:00000178 walked 0.8 block onto terracotta and body:00000184 credited the
-        // arrival; a walk onto what cannot give the goal's item is no step (r18 theta
-        // body:00000240 walked onto terracotta with four bushes in sight).
-        val terracotta = mapOf("b00" to emptySet<String>(), "b01" to emptySet(), "bush" to setOf(STICK))
-        val start = Scene(inventory = mapOf(STICK to 2L), gives = terracotta, at = listOf(8.97, 100.0, 7.01))
-        val (_, refused) = review("delta-178", start, sticks(GoalDisposition.ADOPT, 4), Intent.MoveTo("b00"))
-        assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, refused?.outcome)
-        // A walk onto the bush out of dig reach, somewhere new, is the arrival.
-        review("delta-184", start, sticks(GoalDisposition.ADOPT, 4), Intent.MoveTo("bush"))
-        val (bush, _) =
-            review(
-                "delta-239",
-                start.copy(at = listOf(12.5, 100.0, 3.5)),
-                goalChoice(GoalDisposition.CONTINUE),
-                Intent.Idle,
-            )
-        assertEquals(StepEvidence.ARRIVED, bush?.progress?.stepEvidence)
-        // r18: all seven arrivals were onto bushes already in dig reach; such a walk is none.
-        val near = start.copy(inReach = setOf("bush"))
-        review("theta-504", near, sticks(GoalDisposition.ADOPT, 4), Intent.MoveTo("bush"))
-        val (walked, _) =
-            review(
-                "theta-512",
-                near.copy(at = listOf(12.5, 100.0, 3.5)),
-                goalChoice(GoalDisposition.CONTINUE),
-                Intent.Idle,
-            )
-        assertEquals(StepEvidence.NONE, walked?.progress?.stepEvidence)
-        assertEquals(1L, walked?.progress?.stepsWithoutProgress)
-    }
-
-    @Test
-    fun `a goal sized to a bush's best case is beyond what sight can be counted on to give`() {
-        // beta body:00000228: three sticks held and one bush of nought to two in sight; a goal of
-        // five needed two maximum rolls and failed. Replayed beside a second such bush, since from
-        // routine-v36 the one stick one bush gives is no objective: six needs best cases, and five
-        // is met by one dig at a bush's most.
-        val bush =
-            Observation(
-                kind = ObservationKind.BLOCK,
-                what = "block.minecraft.dead_bush",
-                distance = 2.0,
-                direction = Bearing.NORTH,
-                verticalOffset = 0.0,
-                visible = true,
-                ref = "b1",
-                standable = true,
-                yields = listOf(BlockYield(STICK, 0, 2, 100)),
-                digSafe = true,
-            )
-        val seen =
-            perception().let {
-                it.copy(
-                    surroundings = listOf(bush, bush.copy(ref = "b2", direction = Bearing.SOUTH)),
-                    selfState =
-                        it.selfState.copy(
-                            inventorySummary = listOf(dev.loom.contract.InventoryStack("i1", STICK, 3)),
-                            ownDrops =
-                                listOf(
-                                    OwnDrop("beta-1", STICK, 1, DropFate.TAKEN),
-                                ),
-                        ),
-                )
-            }
-        val observed = GoalObservation.of(seen)
-        assertEquals(mapOf(STICK to 2L), observed.capacity)
-        val beta = AgentId("beta")
-        ledger.present(beta, "beta-228", 228, observed)
-        val decision = decisionFor(perception(requestId = "beta-228", agentId = "beta"), Intent.Dig("b1"))
-        val six = ledger.resolve(beta, decision.copy(goal = sticks(GoalDisposition.ADOPT, 6)))
-        assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, six?.outcome)
-        ledger.present(beta, "beta-229", 229, observed)
-        val five =
-            ledger.resolve(
-                beta,
-                decision.copy(requestId = "beta-229", goal = sticks(GoalDisposition.ADOPT, 5)),
-            )
-        // Five is all sight can be counted on for, and one dig at the bush's most gives the two it
-        // asks past the three held: one step meets it, so it is no objective (the r39 offline audit).
-        assertEquals(GoalEvidence.TRIVIAL, five?.outcome)
     }
 
     private companion object {

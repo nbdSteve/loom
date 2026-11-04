@@ -14,7 +14,6 @@ import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.BodyPort
 import dev.loom.body.EventTag
-import dev.loom.body.GoalEvidence
 import dev.loom.body.HeldPerceptions
 import dev.loom.body.IntentOutcome
 import dev.loom.body.describe
@@ -520,34 +519,6 @@ class EmbodiedCognitionTest {
     }
 
     @Test
-    @DisplayName("a decision pursuing its goal by idling is refused before the body sees it")
-    fun aDecisionIncoherentWithItsGoalNeverReachesTheBody() {
-        val records = mutableListOf<BodyEventRecord>()
-        val body = recordingBodyInto(records)
-        val applied = mutableListOf<AppliedDecision>()
-        // r14 eta, body:00000197: a goal adopted with an idle step.
-        val adopting = goalChoice(GoalDisposition.ADOPT)
-        val cognition =
-            EmbodiedCognition(
-                body,
-                mind = { p -> CompletableFuture.completedFuture(decisionFor(p, Intent.Idle).copy(goal = adopting)) },
-                mainThread = main,
-                journal = journalInto(records),
-                callbacks = CognitionCallbacks(onApplied = { applied.add(it) }),
-            )
-
-        cognition.consider(agent, Trigger.GoalReview)
-        main.drain()
-
-        assertTrue(body.applied.isEmpty(), "a refused decision must not reach the body")
-        assertEquals(listOf(BodyEvent.PERCEIVED, BodyEvent.DECIDED, BodyEvent.INTENT_APPLIED), records.map { it.event })
-        assertEquals(GoalEvidence.STEP_IDLE, records[1].goal?.outcome)
-        assertEquals(GoalEvidence.STEP_IDLE, records[2].outcome)
-        assertEquals("req-1", records[2].requestId)
-        assertEquals(GoalEvidence.STEP_IDLE, (applied.single().outcome as IntentOutcome.Rejected).tag)
-    }
-
-    @Test
     @DisplayName("only an accepted step of the held goal settles, once, into a follow-up review")
     fun anAcceptedGoalStepIsTheOneSettlement() {
         val settled = mutableListOf<Pair<AgentId, Long>>()
@@ -788,6 +759,8 @@ class EmbodiedCognitionTest {
                         } else {
                             null
                         }
+                    // Only the first dig drops the stick, so the follow-up's answer leaves nothing lying.
+                    if (triggers.size > 1) body.dropped = emptySet()
                     CompletableFuture.completedFuture(decisionFor(p, Intent.Dig("bush")).copy(goal = goal))
                 },
                 mainThread = main,
@@ -799,45 +772,6 @@ class EmbodiedCognitionTest {
         main.drain()
         // The dig settled with a stick lying: one review is asked for at once, not owed for later.
         assertEquals(listOf<Trigger>(Trigger.GoalReview, Trigger.StepSettled), triggers.take(2))
-        assertEquals(emptyList<Boolean>(), settled, "nothing owed: the review was taken now")
-    }
-
-    @Test
-    @DisplayName("urgent damage is sent ahead of the reviews still due, and a follow-up is held for them")
-    fun urgentDamagePreemptsTheReviewsStillDue() {
-        // r24: theta's damage at health 1 was refused to keep calls for reviews it never lived to hold.
-        val records = mutableListOf<BodyEventRecord>()
-        val body =
-            RecordingBody(
-                { trigger -> perceptionNearBush(agentId = agent.value).copy(trigger = trigger) },
-                main::drainingThread,
-                events = BodyEventLog { records.add(it) },
-                currentTick = { tick },
-            )
-        val asked = mutableListOf<Trigger>()
-        val reserve = CallReserve(perAgentCeiling = 4, scheduledPerAgent = 2)
-        val cognition =
-            EmbodiedCognition(
-                body,
-                mind =
-                    ReservingCognitionBridge(
-                        { p ->
-                            asked.add(p.trigger)
-                            CompletableFuture.completedFuture(decisionFor(p, Intent.Idle))
-                        },
-                        reserve,
-                    ),
-                mainThread = main,
-                journal = journalInto(records),
-            )
-        cognition.consider(agent, Trigger.GoalReview)
-        main.drain()
-        cognition.consider(agent, Trigger.StepSettled)
-        main.drain()
-        cognition.consider(agent, Trigger.Damaged(3, "zombie"))
-        main.drain()
-        assertEquals(listOf(Trigger.GoalReview, Trigger.Damaged(3, "zombie")), asked)
-        val held = records.single { it.event == BodyEvent.COGNITION_UNAVAILABLE }
-        assertEquals("callReserved", held.outcome, "the follow-up, not the damage, is held for the review still due")
+        assertEquals(listOf(false), settled, "the follow-up's own settled answer owes nothing")
     }
 }

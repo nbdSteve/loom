@@ -502,6 +502,12 @@ pub fn request_offers_an_answer(perception: &Perception) -> bool {
 /// always present, so the union is never empty.
 #[must_use]
 pub fn decision_schema_for(offered: &OfferedRefs, phase: GoalPhase) -> Value {
+    // Every goal review offers every disposition; refs stay the perception's own.
+    let phase = if phase == GoalPhase::Event {
+        GoalPhase::Event
+    } else {
+        GoalPhase::Any
+    };
     build_decision_schema(Some(offered), phase)
 }
 
@@ -903,30 +909,15 @@ fn attack_variants(offered: Option<&OfferedRefs>) -> Vec<Option<Value>> {
         .collect()
 }
 
-/// One goal disposition, as closed objects carrying exactly the fields it requires.
-///
-/// A disposition that sets a success condition is one shape per item a request may name, each
-/// bounding its count to what that item admits now: one more than is held, and no more than is
-/// held plus what is in sight could give. The reference shape has one, with the contract's own
-/// bounds. A request that offers no success item offers no such disposition.
-fn goal_variants(
-    disposition: GoalDisposition,
-    name: &str,
-    description: &str,
-    offered: Option<&OfferedRefs>,
-) -> Vec<Value> {
+/// One goal disposition, as closed objects carrying exactly the fields it requires. A success
+/// condition names any item at the contract's own count bounds.
+fn goal_variants(disposition: GoalDisposition, name: &str, description: &str) -> Vec<Value> {
     let fields = goal_fields(disposition);
-    let targets: Vec<(Value, i64, i64)> = if !fields.targeted {
-        vec![(Value::Null, 0, 0)]
-    } else if let Some(refs) = offered {
-        refs.count_bounds
-            .iter()
-            .map(|(item, fewest, most)| {
-                (json!({ "type": "string", "enum": [item] }), *fewest, *most)
-            })
-            .collect()
-    } else {
+    // Any item at any total: the ledger records, it does not narrow.
+    let targets: Vec<(Value, i64, i64)> = if fields.targeted {
         vec![(json!({ "type": "string" }), 1, MAX_SUCCESS_COUNT)]
+    } else {
+        vec![(Value::Null, 0, 0)]
     };
     targets
         .into_iter()
@@ -1208,8 +1199,7 @@ const SHELTER: &str = "Set a shelter goal as night nears: seal the space you sta
 /// replaced by a goal for another item in the same answer (r16: four answers past the bound
 /// continued or revised; r18: three replaces relabelled the stalled goal at one more).
 fn goal_offer(phase: GoalPhase, offered: Option<&OfferedRefs>) -> GoalOffer {
-    let variants =
-        |disposition, name, description| goal_variants(disposition, name, description, offered);
+    let variants = |disposition, name, description| goal_variants(disposition, name, description);
     let complete = || {
         variants(
             GoalDisposition::Complete,
@@ -1779,6 +1769,11 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
     } else if let Some(refs) = offered.filter(|_| phase.coupled()) {
         coupled_schema(variants, &offer, refs, &reasoning, &mut defs)
     } else {
+        let mut variants = variants;
+        // The cover's closings name refs the cover reading offered, so they are offered too.
+        if let (Some(refs), Some(table)) = (offered, defs.as_object_mut()) {
+            variants.extend(closing_variants(refs, table, "shelterClosing"));
+        }
         let choices = offer.all();
         json!({
             "type": "object",

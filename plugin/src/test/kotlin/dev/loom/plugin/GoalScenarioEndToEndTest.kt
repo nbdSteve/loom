@@ -3,10 +3,7 @@ package dev.loom.plugin
 import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.EventTag
-import dev.loom.body.GoalEvidence
 import dev.loom.contract.DecisionImportance
-import dev.loom.contract.GoalChoice
-import dev.loom.contract.GoalDisposition
 import dev.loom.contract.Intent
 import dev.loom.contract.ObservationKind
 import dev.loom.contract.Trigger
@@ -17,7 +14,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -47,38 +43,6 @@ class GoalScenarioEndToEndTest {
     @AfterEach
     fun cleanUp() {
         closers.asReversed().forEach { runCatching(it) }
-    }
-
-    @Test
-    fun `a goal pursued by idling is refused before the body acts and told at the next review`() {
-        val bushes = listOf(Cell(10, 64, 8, "dead_bush"), Cell(10, 64, 10, "dead_bush"))
-        val world = world(Scene(listOf(Stand(ALPHA, 8.5, 64.0, 8.5)), blocks = bushes))
-        world.mind.answer = { seen, index ->
-            // Adopted beside an idle, which takes no step (r14 eta, untested in r15), for the two
-            // sticks two bushes give; after it, a walk to look further with no goal, since no review
-            // beside the edge of sight may idle.
-            val adopted = GoalChoice(GoalDisposition.ADOPT, STICK, 2, step = "wait for a stick")
-            if (index == 0) Intent.Idle to adopted else Intent.MoveTo(seen.explore.first().ref) to null
-        }
-        world.review(ALPHA)
-        val refused = world.awaitRecord { it.event == BodyEvent.INTENT_APPLIED }
-        assertEquals(GoalEvidence.STEP_IDLE, refused.outcome)
-        val decided = world.records.single { it.event == BodyEvent.DECIDED }
-        assertEquals(GoalEvidence.STEP_IDLE, decided.goal?.outcome)
-
-        world.review(ALPHA)
-        world.awaitDecided(2)
-        val told = world.mind.seen[1].lastRefusal
-        assertEquals(world.mind.seen[0].requestId, told?.requestId)
-        assertEquals(GoalEvidence.STEP_IDLE, told?.outcome)
-        assertEquals(STICK, told?.successItem)
-        assertEquals(0L, told?.held)
-        assertEquals(2L, told?.capacity)
-        // Told once.
-        world.review(ALPHA)
-        world.awaitDecided(3)
-        assertNull(world.mind.seen[2].lastRefusal)
-        assertTrue(world.digWrites().isEmpty(), "the body was never asked to act")
     }
 
     @Test
@@ -319,47 +283,6 @@ class GoalScenarioEndToEndTest {
         assertEquals(EventTag.SERVER_EFFECT_CONFIRMED, witnessed.outcome)
         val readiness = world.readiness(GATE_GENERATION)
         assertEquals(0, readiness["blockers"]!!.jsonObject["protocolError"]!!.jsonPrimitive.int)
-    }
-
-    @Test
-    fun `beside an immediate hunter a dig is withheld before the body is asked, and a flight is taken`() {
-        // r24: seven reviews beside a near hunter dug, crafted or walked; delta's crafted beside a spider.
-        val zombie =
-            buildJsonObject {
-                put("id", ZOMBIE_ID)
-                put("what", "zombie")
-                put("x", 8.5)
-                put("y", 64.0)
-                put("z", 12.5)
-            }
-        val scene =
-            Scene(
-                listOf(Stand(ALPHA, 8.5, 64.0, 8.5)),
-                blocks = listOf(Cell(9, 64, 8, "dirt")),
-                entities = listOf(zombie),
-                timeOfDay = NIGHT,
-            )
-        val world = world(scene)
-        world.mind.answer = { perception, index ->
-            val hunter = perception.surroundings.first { it.what == "entity.minecraft.zombie" }
-            if (index == 0) {
-                Intent.Dig(perception.surroundings.first { it.what == "block.minecraft.dirt" }.ref) to null
-            } else {
-                Intent.Flee(hunter.ref) to null
-            }
-        }
-        world.review(ALPHA)
-        val refused = world.awaitRecord { it.event == BodyEvent.INTENT_APPLIED }
-        assertEquals(GoalEvidence.SURVIVAL_REQUIRED, refused.outcome)
-        assertTrue(world.digWrites().isEmpty(), "the body was never asked to dig")
-        assertEquals(DecisionImportance.PIVOTAL, world.mind.seen[0].importance)
-        world.review(ALPHA)
-        world.awaitDecided(2)
-        world.awaitApplied(2)
-        val fled = world.records.filter { it.event == BodyEvent.INTENT_APPLIED }[1]
-        assertEquals(EventTag.ACCEPTED, fled.outcome)
-        val answered = world.records.filter { it.event == BodyEvent.DECIDED }[1].goal?.outcome
-        assertTrue(answered !in GoalEvidence.REFUSING, "the flight is taken: $answered")
     }
 
     private fun world(scene: Scene): ScenarioWorld {

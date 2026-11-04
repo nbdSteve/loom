@@ -4,7 +4,6 @@ import dev.loom.body.AgentId
 import dev.loom.body.BodyEvent
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
-import dev.loom.body.ShownGoal
 import dev.loom.contract.Bearing
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
@@ -51,68 +50,6 @@ class GoalRefusalEndToEndTest {
     }
 
     @Test
-    fun `refused goal decisions are told once with their numbers, and every review records what it showed`() {
-        val scene =
-            Scene(
-                listOf(Stand(ALPHA, 8.5, 64.0, 8.5)),
-                blocks = listOf(BUSH, SECOND_BUSH, TERRACOTTA),
-                inventory = listOf(SceneStack(36, "stick", 2)),
-            )
-        val world = world(scene)
-        world.mind.answer = { seen, index ->
-            when (index) {
-                // Thirteen sticks: two held, two bushes expected to give one each, and the eight a
-                // horizon may reach past them onto the frontier cannot reach it.
-                0 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 13)
-                // Two sticks are already held.
-                1 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 2)
-                2 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 4)
-                // An action beside no goal choice while a goal is held.
-                3 -> walkTo(seen, "terracotta") to null
-                else ->
-                    Intent.Idle to
-                        GoalChoice(
-                            GoalDisposition.ABANDON,
-                            stepResult = GoalStepResult.NO_PROGRESS,
-                            reason = GoalReason.IMPOSSIBLE,
-                        )
-            }
-        }
-        for (review in 1..5) {
-            world.review(ALPHA)
-            world.awaitDecided(review)
-            world.awaitApplied(review)
-        }
-        val outcomes = world.records.filter { it.event == BodyEvent.DECIDED }.map { it.goal?.outcome }
-        assertEquals(
-            listOf(
-                GoalEvidence.SUCCESS_UNOBTAINABLE,
-                GoalEvidence.ALREADY_MET,
-                GoalEvidence.ADOPTED,
-                GoalEvidence.CHOICE_MISSING,
-                // Four sticks with two held and two bushes in sight is still achievable (r17 theta),
-                // whatever reason the abandon claims.
-                GoalEvidence.ABANDONED_ACHIEVABLE,
-            ),
-            outcomes,
-        )
-        val told = world.mind.seen.map { it.lastRefusal }
-        assertEquals(null, told[0])
-        assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, told[1]?.outcome)
-        assertEquals(listOf(13L, 2L, 2L), listOf(told[1]?.asked, told[1]?.held, told[1]?.capacity))
-        assertEquals(GoalEvidence.ALREADY_MET, told[2]?.outcome)
-        assertEquals(null, told[3])
-        assertEquals(GoalEvidence.CHOICE_MISSING, told[4]?.outcome)
-        // Exactly what each review showed the mind, on its own decided record.
-        val shown = world.records.filter { it.event == BodyEvent.DECIDED }.map { it.shown }
-        assertEquals(world.mind.seen.map { ShownGoal(it.goal, it.lastRefusal, it.horizon) }, shown)
-        // Four of the five answers are refused, and no refusal reached the body.
-        val readiness = world.readiness(GATE_GENERATION)
-        val classes = readiness.getValue("actions").jsonObject.getValue("byClass").jsonObject
-        assertEquals(4, classes.getValue("goalIncoherent").jsonPrimitive.int)
-    }
-
-    @Test
     fun `a collect with no route is the ground's answer, and the item is never offered again`() {
         // r15: five collects of one stick no body could stand beside; r16 never met one.
         val pillar = (64..66).map { Cell(12, it, 8, "stone") }
@@ -146,40 +83,6 @@ class GoalRefusalEndToEndTest {
         assertEquals(1, classes.getValue("terrain").jsonPrimitive.int)
         val rates = readiness.getValue("rates").jsonObject
         assertEquals("1", rates.getValue("decisionValidity").jsonPrimitive.content)
-    }
-
-    @Test
-    fun `a continue that walks away from the agent's own lying stick is refused`() {
-        // r16: in 11 of 21 reviews with its own stick on offer the agent dug again or idled.
-        val stick = SceneItem(STICK_ID, "stick", 1, 10.5, 64.0, 10.5)
-        val scene =
-            Scene(
-                listOf(Stand(ALPHA, 8.5, 64.0, 8.5)),
-                blocks = listOf(BUSH, SECOND_BUSH, TERRACOTTA),
-                items = listOf(stick),
-                ownDrops = mapOf("req-old" to stick),
-            )
-        val world = world(scene)
-        world.mind.answer = { seen, index ->
-            when (index) {
-                // A walk onto the bush is a step toward sticks, though no arrival: three, two past
-                // the agent's own stick lying.
-                0 -> walkTo(seen, "dead_bush") to sticks(GoalDisposition.ADOPT, 3)
-                1 -> walkTo(seen, "dead_bush") to goalChoice(GoalDisposition.CONTINUE)
-                else -> Intent.Idle to GoalChoice(GoalDisposition.ABANDON, stepResult = GoalStepResult.NO_PROGRESS)
-            }
-        }
-        for (review in 1..2) {
-            world.review(ALPHA)
-            world.awaitDecided(review)
-            world.awaitApplied(review)
-        }
-        val second = world.mind.seen[1]
-        val own = second.selfState.ownDrops.single()
-        val offered = second.surroundings.single { it.kind == ObservationKind.DROPPED_ITEM }
-        assertEquals(offered.ref, own.ref, "the own drop is offered by the ref of its observation")
-        val refused = world.records.filter { it.event == BodyEvent.DECIDED }[1]
-        assertEquals(GoalEvidence.OWN_DROP_IGNORED, refused.goal?.outcome)
     }
 
     @Test

@@ -140,33 +140,6 @@ class R18GoalAuditReplayTest {
     }
 
     @Test
-    fun `zeta's revise of a scute goal into sticks is refused, a replace is the way`() {
-        // zeta body:00000543 adopted one armadillo scute; body:00000569 revised it to four sticks.
-        // Replayed with two scutes in sight and a goal of both, the fewest an objective asks.
-        val scute = "item.minecraft.armadillo_scute"
-        val sight =
-            Scene(
-                capacity = mapOf(scute to 2L, STICK to 4L),
-                gives = mapOf("bush" to setOf(STICK), "drop" to setOf(scute)),
-            )
-        review(
-            "zeta-543",
-            sight,
-            GoalChoice(GoalDisposition.ADOPT, successItem = scute, successCount = 2),
-            Intent.Collect("drop", true),
-        )
-        val (_, refused) = review("zeta-569", sight, sticks(GoalDisposition.REVISE, 4), dig)
-        assertEquals(GoalEvidence.REVISE_ITEM_CHANGED, refused?.outcome)
-        // A replace is the way, and says why: a different objective, chosen while the scutes are unmet.
-        val (_, unstated) = review("zeta-570", sight, sticks(GoalDisposition.REPLACE, 4), dig)
-        assertEquals(GoalEvidence.REASON_MISSING, unstated?.outcome)
-        val (_, replaced) =
-            review("zeta-571", sight, sticks(GoalDisposition.REPLACE, 4).copy(reason = GoalReason.SUPERSEDED), dig)
-        assertEquals(GoalEvidence.REPLACED, replaced?.outcome)
-        assertEquals(GoalReason.SUPERSEDED, replaced?.reason)
-    }
-
-    @Test
     fun `delta's cut from three to two states what sight could give, so the gate reads it as forced`() {
         // delta body:00000053 revised three sticks to two: it held none and sight could give one.
         // Replayed two higher, as routine-v36 asks: four cut to the two sight could give.
@@ -175,17 +148,6 @@ class R18GoalAuditReplayTest {
         assertEquals(GoalEvidence.REVISED, cut?.outcome)
         assertEquals(0L, cut?.targetHeld)
         assertEquals(2L, cut?.targetCapacity)
-    }
-
-    @Test
-    fun `epsilon's dig of terracotta for a stick goal is refused, and theta's walk onto it`() {
-        // epsilon body:00000046 adopted a stick goal and dug terracotta; theta body:00000240 walked
-        // onto terracotta with four bushes in sight.
-        val (_, dug) = review("epsilon-46", Scene(), sticks(GoalDisposition.ADOPT, 2), Intent.Dig("terra"))
-        assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, dug?.outcome)
-        review("theta-162", Scene(), sticks(GoalDisposition.ADOPT, 2), dig)
-        val (_, walked) = review("theta-240", Scene(), judged(GoalDisposition.CONTINUE), Intent.MoveTo("terra"))
-        assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, walked?.outcome)
     }
 
     @Test

@@ -6,14 +6,9 @@ import dev.loom.body.GoalEvidence
 import dev.loom.body.tagOf
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
-import dev.loom.contract.GoalReason
-import dev.loom.contract.GoalReason.COMPLETED
-import dev.loom.contract.GoalReason.IMPOSSIBLE
-import dev.loom.contract.GoalReason.STALE
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.Intent
-import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
@@ -69,89 +64,6 @@ class R17GoalAuditReplayTest {
         successCount = count,
         stepResult = GoalStepResult.NO_PROGRESS.takeIf { disposition != GoalDisposition.ADOPT },
     )
-
-    private fun judged(disposition: GoalDisposition) = GoalChoice(disposition, stepResult = GoalStepResult.NO_PROGRESS)
-
-    private fun GoalChoice.stating(reason: GoalReason) = copy(reason = reason)
-
-    private val dig = Intent.Dig("bush")
-
-    /** alpha's three barren digs at body:00000036, 107 and 112, which bring its goal to the bound. */
-    private fun stallAlpha(): GoalSummary? {
-        review("alpha-36", Scene(), sticks(GoalDisposition.ADOPT, 2), dig)
-        review("alpha-107", Scene(), judged(GoalDisposition.CONTINUE), dig)
-        review("alpha-112", Scene(), judged(GoalDisposition.CONTINUE), dig)
-        return ledger.present(
-            AgentId("alpha"),
-            "alpha-probe",
-            150,
-            GoalObservation(emptyMap(), listOf(0.5, 100.0, 0.5)),
-        )
-            .also { ledger.forget(AgentId("alpha"), "alpha-probe") }
-    }
-
-    @Test
-    fun `alpha's replace of hold 2 stick with hold 2 stick is refused, and the stalled goal stays held`() {
-        // alpha body:00000163 cleared its stall bound by replacing a goal with itself. From
-        // routine-v36 a replace never names the held goal's own item (r39: alpha and kappa replaced
-        // a met dirt goal by the same item one higher at every step).
-        assertEquals(MAX_GOAL_STEPS_WITHOUT_PROGRESS, stallAlpha()?.progress?.stepsWithoutProgress)
-        val (_, relabelled) = review("alpha-163", Scene(), sticks(GoalDisposition.REPLACE, 2).stating(STALE), dig)
-        assertEquals(GoalEvidence.REPLACE_SAME_ITEM, relabelled?.outcome)
-        val (after, _) = review("alpha-164", Scene(), judged(GoalDisposition.ABANDON).stating(STALE), Intent.Idle)
-        assertEquals("alpha-36", after?.goalId)
-        assertEquals(MAX_GOAL_STEPS_WITHOUT_PROGRESS, after?.progress?.stepsWithoutProgress)
-    }
-
-    @Test
-    fun `a replace of the same item at a higher total is refused too`() {
-        // r18 beta body:00000282, epsilon 203 and kappa 241 each replaced a stalled stick goal at
-        // one more stick, which reset the count r17's fix kept only for the same or a lower total.
-        stallAlpha()
-        val (_, raised) = review("alpha-163", Scene(), sticks(GoalDisposition.REPLACE, 3).stating(STALE), dig)
-        assertEquals(GoalEvidence.REPLACE_SAME_ITEM, raised?.outcome)
-        val (after, _) = review("alpha-164", Scene(), judged(GoalDisposition.ABANDON).stating(STALE), Intent.Idle)
-        assertEquals("alpha-36", after?.goalId)
-    }
-
-    @Test
-    fun `theta's abandon one stick short with a bush in sight is refused`() {
-        // theta body:00000275 to 333: four of five sticks held, a bush 4.7 blocks off, abandoned.
-        val scene = Scene(inventory = mapOf(STICK to 3L))
-        review("theta-275", scene, sticks(GoalDisposition.ADOPT, 5), dig)
-        val (_, refused) =
-            review(
-                "theta-333",
-                scene.copy(inventory = mapOf(STICK to 4L)),
-                judged(GoalDisposition.ABANDON).stating(IMPOSSIBLE),
-                dig,
-            )
-        assertEquals(GoalEvidence.ABANDONED_ACHIEVABLE, refused?.outcome)
-        // Once sight can no longer meet it, it may be abandoned.
-        val (_, ended) =
-            review(
-                "theta-334",
-                Scene(inventory = mapOf(STICK to 4L), capacity = emptyMap()),
-                judged(GoalDisposition.ABANDON).stating(IMPOSSIBLE),
-                Intent.Idle,
-            )
-        assertEquals(GoalEvidence.ABANDONED, ended?.outcome)
-    }
-
-    @Test
-    fun `kappa's met goal moves on in the same answer, by a revise for more of its own item`() {
-        // kappa body:00000142 completed beside idle and waited a full cycle for its next goal. From
-        // routine-v36 more of the same item is a revise, which keeps the goal and what it advanced.
-        review("kappa-79", Scene(), sticks(GoalDisposition.ADOPT, 2), dig)
-        val met = Scene(inventory = mapOf(STICK to 2L))
-        val (_, relabelled) = review("kappa-141", met, sticks(GoalDisposition.REPLACE, 4).stating(COMPLETED), dig)
-        assertEquals(GoalEvidence.REPLACE_SAME_ITEM, relabelled?.outcome)
-        val (carried, more) = review("kappa-142", met, sticks(GoalDisposition.REVISE, 4), dig)
-        assertEquals(true, carried?.progress?.conditionMet)
-        assertEquals(GoalEvidence.REVISED, more?.outcome)
-        assertEquals("kappa-79", more?.presentedGoalId)
-        assertEquals("kappa-79", more?.goalId)
-    }
 
     @Test
     fun `epsilon's step is worded from its intent, not from its text`() {

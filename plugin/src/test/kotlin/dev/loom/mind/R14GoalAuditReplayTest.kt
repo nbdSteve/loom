@@ -66,31 +66,6 @@ class R14GoalAuditReplayTest {
     ) = goalChoice(disposition, success = STICK to count)
 
     @Test
-    fun `three goals met when they were adopted are refused, not completed`() {
-        // theta body:00000174, delta body:00000187 and eta body:00000197: each held two sticks
-        // and adopted a goal of one, then "completed" it at the next review.
-        val holding = Scene(inventory = mapOf(STICK to 2L), capacity = mapOf(STICK to 2L))
-        for ((review, intent) in listOf(
-            "theta-174" to Intent.Dig("bakm"),
-            "delta-187" to Intent.MoveTo("be00"),
-            "eta-197" to Intent.Idle,
-        )) {
-            val (_, refused) = review(review, holding, sticks(GoalDisposition.ADOPT, 1), intent)
-            assertEquals(GoalEvidence.ALREADY_MET, refused?.outcome, review)
-        }
-        // eta's idle step is refused on its own too, for a goal not yet met, at the two sticks an
-        // objective asks from routine-v36.
-        val (_, idled) =
-            review(
-                "eta-198",
-                Scene(capacity = mapOf(STICK to 2L)),
-                sticks(GoalDisposition.ADOPT, 2),
-                Intent.Idle,
-            )
-        assertEquals(GoalEvidence.STEP_IDLE, idled?.outcome)
-    }
-
-    @Test
     fun `a condition is the typed item and count, and words claiming another are no part of a choice`() {
         // delta body:00000187: the words said a log, the typed item was the stick it already held.
         val stated =
@@ -154,26 +129,6 @@ class R14GoalAuditReplayTest {
         // From routine-v24 a drop not yet held is no progress: it counts toward the stall bound
         // (r15 iota was credited five drops and never held a stick).
         assertEquals(2L, yielded?.progress?.stepsWithoutProgress)
-    }
-
-    @Test
-    fun `a goal raised past what sight could give is refused`() {
-        // kappa body:00000208 held one stick with a bush in sight and set two; at body:00000243 no
-        // bush or drop was in sight and it revised to two again.
-        review(
-            "kappa-208",
-            Scene(inventory = mapOf(STICK to 1L), capacity = mapOf(STICK to 2L)),
-            sticks(GoalDisposition.ADOPT, 2),
-            Intent.Dig("bcyg"),
-        )
-        val (_, refused) =
-            review(
-                "kappa-243",
-                Scene(inventory = mapOf(STICK to 1L)),
-                sticks(GoalDisposition.REVISE, 2),
-                Intent.MoveTo("bgao"),
-            )
-        assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, refused?.outcome)
     }
 
     @Test

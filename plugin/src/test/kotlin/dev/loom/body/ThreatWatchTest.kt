@@ -145,39 +145,12 @@ class ThreatWatchTest {
     fun `every suppression names the tag the append-only log counts by`() {
         assertEquals(EventTag.THREAT_DEBOUNCED, ThreatSuppressionReason.DEBOUNCED.tag)
         assertEquals(EventTag.THREAT_UNCHANGED, ThreatSuppressionReason.UNCHANGED.tag)
-        assertEquals(EventTag.THREAT_OVER_NIGHTLY_CAP, ThreatSuppressionReason.OVER_NIGHTLY_CAP.tag)
         // Three distinct facts about why an agent was not asked. Sharing one tag they would
         // be a single uncountable reason, and a run could not say whether it was its bounds
         // or its budget that kept an agent from reacting to something hunting it.
         assertEquals(
             ThreatSuppressionReason.entries.size,
             ThreatSuppressionReason.entries.map { it.tag }.toSet().size,
-        )
-    }
-
-    @Test
-    fun `an agent gets exactly eight pivotal sightings a night, and the ninth is refused`() {
-        assertEquals(
-            8,
-            MAX_PIVOTAL_THREAT_CALLS_PER_NIGHT,
-            "this number is the run's inference bill per agent per night; changing it is a decision",
-        )
-        assertEquals(MAX_PIVOTAL_THREAT_CALLS_PER_NIGHT, watch.pivotalCallsRemaining(alpha))
-
-        // A different zombie each time, which is the scene the ceiling exists for: every one
-        // is a first sight, so the debounce refuses none of them and only the ceiling can.
-        repeat(MAX_PIVOTAL_THREAT_CALLS_PER_NIGHT) { met ->
-            val outcome = watch.consider(alpha, listOf(zombie("e$met")), aRoute())
-            assertNotNull(outcome.sighted, "sighting ${met + 1} is inside the night's allowance")
-        }
-
-        assertEquals(0, watch.pivotalCallsRemaining(alpha))
-        val ninth = watch.consider(alpha, listOf(zombie("e-ninth")), aRoute())
-        assertNull(ninth.sighted, "the ninth is refused outright rather than answered by a cheaper model")
-        assertEquals(
-            listOf(ThreatSuppression(ZOMBIE, "e-ninth", ThreatSuppressionReason.OVER_NIGHTLY_CAP)),
-            ninth.suppressed,
-            "and the record says Loom stopped paying, not that the agent decided to stand there",
         )
     }
 
@@ -251,7 +224,6 @@ class ThreatWatchTest {
         clock.now += TICKS_IN_A_WORLD_DAY
 
         assertEquals(0, watch.pivotalCallsRemaining(alpha))
-        assertNull(watch.consider(alpha, listOf(zombie("e-late")), aRoute()).sighted)
     }
 
     @Test

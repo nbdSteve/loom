@@ -93,14 +93,6 @@ sealed interface CognitionFailure {
         override val tag: String get() = "budgetRefused"
     }
 
-    /**
-     * Not sent: the agent's remaining share of the run's calls is kept for its scheduled reviews
-     * still due ([CallReserve]).
-     */
-    data object CallReserved : CognitionFailure {
-        override val tag: String get() = "callReserved"
-    }
-
     /** The mind was reached but failed, refused, or answered unusably. */
     data class Failed(
         val reason: String,
@@ -288,7 +280,6 @@ class AsyncCognitionBridge(
                 is CognitionFailure.AgentBudgetExhausted ->
                     "was refused: this agent already has ${failure.limit} request(s) outstanding"
                 CognitionFailure.BudgetRefused -> "was refused at the research harness's call or spend ceiling"
-                CognitionFailure.CallReserved -> "was not sent: its remaining calls are kept for its scheduled reviews"
                 is CognitionFailure.Failed -> "failed: ${failure.reason}"
             }
 

@@ -390,26 +390,6 @@ class GoalLedger(
                 ?: resumedBy(basis, choice, decision, evidence)
                 ?: applied(basis, choice, decision, evidence, recipes)
 
-        /**
-         * Ends the held goal at the stall bound, and answers the evidence: a stalled resource subgoal
-         * hands back the shelter goal it fed, with no step yet.
-         */
-        fun stalled(
-            basis: Basis,
-            decision: Decision,
-            evidence: GoalEvidence,
-        ): GoalEvidence {
-            val moved = movementSince(basis, decision.requestId)
-            val parent = held?.parent?.resumed(basis.capturedTick, decision.requestId, basis.observed, null, moved)
-            held = parent
-            return evidence.copy(
-                outcome = GoalEvidence.STALLED,
-                goalId = parent?.summary?.goalId,
-                revision = parent?.summary?.revision,
-                resumed = parent?.summary?.goalId,
-            )
-        }
-
         /** The goal [choice] leaves held once applied to [basis], and the evidence of it. */
         fun applied(
             basis: Basis,
@@ -564,21 +544,21 @@ class GoalLedger(
             basis.session == goals.session &&
                 current?.goalId == basis.presented?.goalId &&
                 current?.revision == basis.presented?.revision
-        val incoherent =
+        // Rules are recorded, never enforced: the choice applies and its intent reaches the body.
+        val flagged =
             if (unchanged) {
                 stalledOf(basis.presented, choice)
                     ?: incoherenceOf(basis.presented, choice, decision.intent, basis.observed, recipes)
             } else {
                 null
             }
+        val applying = choice?.let { normalized(basis.presented, it) }
         val resolved =
             when {
-                incoherent == GoalEvidence.STALLED -> goals.stalled(basis, decision, evidence)
-                incoherent != null -> evidence.copy(outcome = incoherent)
-                choice == null -> evidence.copy(outcome = basis.unanswered(decision.intent))
+                applying == null -> evidence.copy(outcome = basis.unanswered(decision.intent))
                 !unchanged -> evidence.copy(outcome = GoalEvidence.STALE)
-                else -> goals.answered(basis, choice, decision, evidence, recipes)
-            }
+                else -> goals.answered(basis, applying, decision, evidence, recipes)
+            }.copy(flagged = flagged)
         if (resolved.outcome !in GoalEvidence.TOLD_NOTHING) {
             goals.refusal = refusalOf(decision.requestId, resolved.outcome, basis.presented, choice, basis.observed)
         }
@@ -742,7 +722,20 @@ private fun shapeRefusalOf(
     }
 }
 
-/** A continue or revise of a goal at the no-progress bound, which ends it, or `null`. */
+/** [choice] as it can apply to [presented]: an adopt over a held goal replaces it, and a replace of none adopts. */
+private fun normalized(
+    presented: GoalSummary?,
+    choice: GoalChoice,
+): GoalChoice =
+    when {
+        choice.disposition == GoalDisposition.ADOPT && presented != null && !feeds(choice) ->
+            choice.copy(disposition = GoalDisposition.REPLACE)
+        choice.disposition == GoalDisposition.REPLACE && presented == null ->
+            choice.copy(disposition = GoalDisposition.ADOPT)
+        else -> choice
+    }
+
+/** A continue or revise of a goal at the no-progress bound, recorded as stalled, or `null`. */
 private fun stalledOf(
     presented: GoalSummary?,
     choice: GoalChoice?,
