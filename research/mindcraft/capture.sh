@@ -15,6 +15,7 @@ run="$(cd "$1" && pwd)"
 cache="$here/.cache"
 
 git -C "$cache/mindcraft" rev-parse HEAD > "$run/mindcraft-commit.txt"
+git -C "$cache/mindcraft" diff > "$run/mindcraft-local.diff"
 cp "$cache/deps.txt" "$run/mindcraft-deps.txt"
 cp "$here/prices.json" "$run/prices.json"
 git -C "$here" rev-parse HEAD > "$run/loom-commit.txt"

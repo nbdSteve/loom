@@ -47,8 +47,14 @@ if [ ! -d "$cache/mindcraft/.git" ]; then
   git -C "$cache/mindcraft" remote add origin https://github.com/mindcraft-bots/mindcraft.git
 fi
 git -C "$cache/mindcraft" fetch -q --depth 1 origin "$commit"
-git -C "$cache/mindcraft" checkout -q --detach "$commit"
+git -C "$cache/mindcraft" checkout -q -f --detach "$commit"
 echo "mindcraft $(git -C "$cache/mindcraft" rev-parse HEAD)"
+
+# Loom's own fixes to Mindcraft, on top of the pinned commit (patches/).
+for patch in "$here"/patches/*.patch; do
+  git -C "$cache/mindcraft" apply "$patch"
+  echo "applied $(basename "$patch")"
+done
 
 cd "$cache/mindcraft"
 npm install --registry="$registry" > "$cache/npm-install.log" 2>&1 || {
