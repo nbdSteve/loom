@@ -42,7 +42,7 @@ const { writeFailureDiagnostic } = require('./failure-diagnostic.js')
 const { JsonLinesTail, maximumOf } = require('./log-tail.js')
 const { PaperClock } = require('./paper-clock.js')
 const { SuspensionWatch, seedPaperRuntime } = require('./paper-runtime.js')
-const { drawWorldSeed, profileOf, ticksPerSecondOf } = require('./profiles.js')
+const { VANILLA_BORDER_DIAMETER_BLOCKS, drawWorldSeed, profileOf, ticksPerSecondOf } = require('./profiles.js')
 const { DeathSettlement } = require('./witnessed-death.js')
 const { INITIAL_CONDITIONS_EVENT, heldAtBegin } = require('./initial-conditions.js')
 const {
@@ -668,9 +668,13 @@ async function verifyNoListeners (config, phase = 'cleanup') {
 // volume; running out mid-run loses the run, so refuse to start without headroom.
 const MIN_FREE_DISK_BYTES = 2 * 1024 * 1024 * 1024
 
+// An unbordered world grows as its agents explore; its save gets this much room of its own.
+const UNBORDERED_WORLD_BYTES = 16 * 1024 * 1024 * 1024
+
 function requiredFreeDiskBytes (config) {
   const logs = config.bounds.logBytes * (configuredAgents(config).length + 3)
-  return Math.max(MIN_FREE_DISK_BYTES, 4 * logs + 2 * config.bounds.artifactBytes)
+  const world = config.world?.worldBorderDiameterBlocks >= VANILLA_BORDER_DIAMETER_BLOCKS ? UNBORDERED_WORLD_BYTES : 0
+  return Math.max(MIN_FREE_DISK_BYTES, 4 * logs + 2 * config.bounds.artifactBytes + world)
 }
 
 function verifyFreeDisk (directory, config, statfs = fs.statfsSync) {
@@ -1264,11 +1268,14 @@ async function runHeldExperiment ({
 
     paperCommand(paper, `gamerule doMobSpawning ${config.world.mobSpawning}`)
     paperCommand(paper, `difficulty ${config.world.difficulty}`)
-    // The console stands at the world spawn, so a drawn world's border is centred where its agents spawn.
-    if (config.primaryBehavior?.initialPositions === undefined && isPrimaryBehaviorMode(config)) {
-      paperCommand(paper, 'worldborder center ~ ~')
+    // Vanilla's own border is none of Loom's, so no border is set.
+    if (config.world.worldBorderDiameterBlocks < VANILLA_BORDER_DIAMETER_BLOCKS) {
+      // The console stands at the world spawn, so a drawn world's border is centred where its agents spawn.
+      if (config.primaryBehavior?.initialPositions === undefined && isPrimaryBehaviorMode(config)) {
+        paperCommand(paper, 'worldborder center ~ ~')
+      }
+      paperCommand(paper, `worldborder set ${config.world.worldBorderDiameterBlocks}`)
     }
-    paperCommand(paper, `worldborder set ${config.world.worldBorderDiameterBlocks}`)
     if (
       isPrimaryBehaviorMode(config) &&
       bodyEvents(rawBodyEvidence).some((record) => record.event === 'perceived')

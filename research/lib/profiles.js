@@ -1,5 +1,8 @@
 'use strict'
 
+/** Vanilla's own world border diameter: a world with this border has none of Loom's. */
+const VANILLA_BORDER_DIAMETER_BLOCKS = 59_999_968
+
 // Named, frozen primary-behavior profiles. A profile pins the scene, population, duration,
 // review plan, call envelope and runtime bounds a run uses; a mode pins only its prompts and
 // selector attestation. Nothing here is a behavior policy: positions are measured placement
@@ -446,6 +449,8 @@ PROFILES['solo-1'] = Object.freeze({
   agents: 1,
   scene: 'random-world',
   exposure: undefined,
+  // A vanilla world: no border, vanilla's max world size, and ten-chunk distances.
+  world: Object.freeze({ borderDiameterBlocks: VANILLA_BORDER_DIAMETER_BLOCKS, viewDistanceChunks: 10, simulationDistanceChunks: 10 }),
   durationScaled: Object.freeze({
     reviewsPerHour: 1200,
     callsPerHour: 1800,
@@ -510,6 +515,7 @@ function placementOf (profile) {
 }
 
 module.exports = {
+  VANILLA_BORDER_DIAMETER_BLOCKS,
   AGENT_ORDER,
   drawWorldSeed,
   profileFor,

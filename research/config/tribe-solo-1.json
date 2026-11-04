@@ -18,10 +18,10 @@
     "seed": "random",
     "difficulty": "normal",
     "mobSpawning": true,
-    "maxWorldSizeBlocks": 256,
-    "worldBorderDiameterBlocks": 128,
-    "viewDistanceChunks": 4,
-    "simulationDistanceChunks": 4
+    "maxWorldSizeBlocks": 29999984,
+    "worldBorderDiameterBlocks": 59999968,
+    "viewDistanceChunks": 10,
+    "simulationDistanceChunks": 10
   },
   "network": {
     "host": "127.0.0.1",

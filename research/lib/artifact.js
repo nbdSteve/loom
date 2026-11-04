@@ -340,11 +340,11 @@ function primaryBehaviorErrors (config) {
     (scene.seed === null ? !/^(-?[0-9]+|random)$/.test(config.world?.seed ?? '') : config.world?.seed !== scene.seed) ||
     config.world?.difficulty !== (profile.world?.difficulty ?? 'normal') ||
     config.world?.mobSpawning !== (profile.world?.mobSpawning ?? true) ||
-    config.world?.worldBorderDiameterBlocks !== 128 ||
-    config.world?.viewDistanceChunks !== 4 ||
-    config.world?.simulationDistanceChunks !== 4
+    config.world?.worldBorderDiameterBlocks !== (profile.world?.borderDiameterBlocks ?? 128) ||
+    config.world?.viewDistanceChunks !== (profile.world?.viewDistanceChunks ?? 4) ||
+    config.world?.simulationDistanceChunks !== (profile.world?.simulationDistanceChunks ?? 4)
   ) {
-    errors.push(`profile ${behavior.profile} must use the ${profile.scene} seed, its pinned difficulty and mob rule, 128-block border, and 4-chunk distances`)
+    errors.push(`profile ${behavior.profile} must use the ${profile.scene} seed, its pinned difficulty and mob rule, border, and distances`)
   }
   if (
     config.bounds?.runDurationSeconds !== profile.runDurationSeconds ||
@@ -514,7 +514,7 @@ function validateRunConfig (config) {
   if (typeof config.world?.mobSpawning !== 'boolean') {
     errors.push('world.mobSpawning must be a boolean')
   }
-  if (config.world?.worldBorderDiameterBlocks > config.world?.maxWorldSizeBlocks) {
+  if (config.world?.worldBorderDiameterBlocks > 2 * config.world?.maxWorldSizeBlocks) {
     errors.push('world border diameter exceeds max world size')
   }
   if (!['scripted', 'openai'].includes(config.cognition?.backend)) {
@@ -1985,7 +1985,7 @@ function semanticErrors (artifactDirectory, manifest) {
       errors.push('the drain after the admission end exceeded its bound')
     }
   }
-  if (manifest.environment.world.worldBorderDiameterBlocks > manifest.environment.world.maxWorldSizeBlocks) {
+  if (manifest.environment.world.worldBorderDiameterBlocks > 2 * manifest.environment.world.maxWorldSizeBlocks) {
     errors.push('world border diameter exceeds max world size')
   }
   if (primaryBehaviorModeOf(manifest.protocol.mode) !== undefined) {
