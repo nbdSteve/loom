@@ -34,7 +34,7 @@ const { equipOfferedStack } = require('../src/equipping')
 const { stackDetail } = require('../src/interaction')
 const { placeHeldBlock } = require('../src/placing')
 const { MAX_SENSE_OFFERS_PER_KIND } = require('../src/protocol')
-const { senseMemory } = require('../src/senses')
+const { MAX_REMEMBERED_SENSES, senseMemory } = require('../src/senses')
 const { INTERACTION_REACH_BLOCKS, senseReading } = require('../src/sensing')
 const { sleepInOfferedBed } = require('../src/sleeping')
 const {
@@ -413,7 +413,7 @@ test('sense memory scopes every offered authority to its connection and bounded 
   assert.doesNotThrow(() => memory.sawEntityDead(second))
   assert.equal(memory.recall(first, 'sense-3').itemOffers[0].gone, true)
 
-  for (let at = 2; at <= 6; at += 1) {
+  for (let at = 2; at <= MAX_REMEMBERED_SENSES + 2; at += 1) {
     memory.remember(first, `sense-${at}`, offers)
   }
   assert.equal(memory.recall(first, 'sense-1'), undefined)

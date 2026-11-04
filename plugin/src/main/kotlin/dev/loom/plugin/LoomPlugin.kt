@@ -24,7 +24,6 @@ import dev.loom.mind.DecisionJournal
 import dev.loom.mind.EmbodiedCognition
 import dev.loom.mind.ExposureGate
 import dev.loom.mind.GoalLedger
-import dev.loom.mind.GoalReviewSchedule
 import dev.loom.mind.PerAgentCognitionBridge
 import dev.loom.mind.ReservingCognitionBridge
 import dev.loom.mind.StepSettlement
@@ -84,7 +83,7 @@ class LoomPlugin : JavaPlugin() {
     private var hearer: ((Heard) -> Unit)? = null
 
     // One schedule: the mind tells it when a goal's step settles, and the driver claims from it.
-    internal val schedule = GoalReviewSchedule(followUpsPerReview = followUpsPerReviewOf(System.getenv(FOLLOW_UPS_ENV)))
+    internal val schedule = reviewScheduleOf(System::getenv)
     private var cognition: EmbodiedCognition? = null
 
     // Whether the run's exposure has ended; read by cognition and by the Bukkit guard.
@@ -357,7 +356,10 @@ class LoomPlugin : JavaPlugin() {
             journal = journal,
             goals = goals,
             callbacks = cognitionCallbacks(settlement, isDead),
-        )
+        ).also {
+            // A periodic schedule keeps one of each agent's outstanding slots for an event.
+            if (schedule.periodic) it.reviewsInFlight = maxOf(1, settings.perAgentPending - 1)
+        }
     }
 
     /** What cognition tells the plugin: settled steps, the death rule, and failures to log. */

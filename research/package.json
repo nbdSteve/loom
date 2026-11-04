@@ -14,7 +14,7 @@
     "lint": "standard",
     "format": "standard --fix",
     "check": "npm run lint && npm test",
-    "tribe": "node bin/loom-tribe.js"
+    "tribe": "node --max-old-space-size=12288 bin/loom-tribe.js"
   },
   "dependencies": {
     "ajv": "8.20.0"

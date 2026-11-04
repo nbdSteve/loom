@@ -263,6 +263,14 @@ A spectator counts for no mob spawning or despawning and no sleep vote, Loom cle
 The plugin writes each observer join and leave to `plugins/Loom/observers.jsonl`, and after Paper stops the harness journals them as `observerJoined` and `observerLeft` harness records with the server tick, username and uuid; `clientPresence.interactiveObservers` counts the observers that joined.
 Harness records carry no `agentId`, so observer records count toward no agent metric, readiness bar or integrity check.
 
+## Periodic cognition
+
+A profile may pin a periodic `cadence` (`periodic-60m-10`, `periodic-10m-10`): `nativeGoalReviewSchedule.cadenceTicks` is the interval between one agent's reviews (60 ticks, one call every 3 s), and the harness hands it to the JVM as `LOOM_GOAL_REVIEW_CADENCE_TICKS`.
+A periodic schedule reviews whatever the body is doing, earns no follow-ups, and lets an agent hold its outstanding slots but one with the mind (`reviewsInFlightPerAgent`, `perAgentPending` minus one kept for an event); danger is still sent at once.
+The body applies only the newest answer: one asked before an answer already applied is dropped as `decisionSuperseded`, one naming the walk, dig, sleep or collect already running lets it continue, and a different one halts and replaces it.
+Its review windows owe no minimum count, since a review held behind a flight or danger is taken late rather than twice.
+A run builds without its test suites (CI tests every commit), and the harness runs with a 12 GiB Node heap so publication can read an hour of evidence.
+
 ## Bounds and call accounting
 
 The run configuration limits:
@@ -376,7 +384,8 @@ No ceiling is raised, and a perception no ceiling fits is still a typed `callRes
 
 In primary behavior mode two outcomes end a run without making it an integrity failure.
 A typed `perAgentCall`, `globalCall`, `globalOutstanding`, or `spend` refusal is a `cognitionBudgetExhausted` stop.
-A provider failure that cognition classified as `providerTimeout`, `providerConnection`, `providerResponseRead`, `providerTransport`, `providerRateLimit`, or `providerServer` is a `providerUnavailable` stop.
+A provider failure that cognition classified as `providerConnection`, `providerResponseRead`, `providerTransport`, or `providerServer` is a `providerUnavailable` stop.
+A `providerRateLimit` (HTTP 429) or a `providerTimeout` is that one call's recorded failure and the run goes on; published stops of either kind still validate.
 An HTTP 401 or 403, a rejected credential, and a usage journal cognition could not write (`providerUsageJournal`, lost spend evidence) still stop the run immediately as a failure, and so does loss of the cognition process or its upstream.
 Any other single cognition failure neither stops nor ends the run: a request the provider refused as invalid, an answer it cut off or that did not parse, or an answer the mind itself refused, such as one naming a ref its perception did not offer.
 The proxy marks that forwarded record `recordedFailure: true` (a provider refusal also keeps its older `providerRefusedRequest: true`), the JVM ends that one perception `cognitionUnavailable` with outcome `failed`, every agent goes on to the run's duration, and the artifact publishes with that perception counted as a cognition failure, so readiness and the pilot gate fail closed (R40: one refused follow-up review stopped a ten-agent run 403 s into its window; the hour run's R1: one mind refusal stopped it at 249 s).

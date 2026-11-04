@@ -266,13 +266,15 @@ function primaryBehaviorErrors (config) {
     errors.push(`profile ${behavior.profile} must hold ${JSON.stringify(profile.exposure)} ticks of daylight and night`)
   }
   const schedule = behavior.nativeGoalReviewSchedule
+  const cadence = profile.cadence ?? CADENCE
   if (
-    schedule?.cadenceTicks !== CADENCE.cadenceTicks ||
-    schedule?.sliceTicks !== CADENCE.sliceTicks ||
+    schedule?.cadenceTicks !== cadence.cadenceTicks ||
+    schedule?.sliceTicks !== cadence.sliceTicks ||
+    schedule?.reviewsInFlightPerAgent !== cadence.reviewsInFlightPerAgent ||
     schedule?.expectedReviewsPerAgent !== profile.expectedReviewsPerAgent
   ) {
     errors.push(
-      `primaryBehavior.nativeGoalReviewSchedule must pin ${CADENCE.cadenceTicks}/${CADENCE.sliceTicks} ticks and ` +
+      `primaryBehavior.nativeGoalReviewSchedule must pin ${cadence.cadenceTicks}/${cadence.sliceTicks} ticks and ` +
         `${profile.expectedReviewsPerAgent} reviews per agent for ${behavior.profile}`
     )
   }

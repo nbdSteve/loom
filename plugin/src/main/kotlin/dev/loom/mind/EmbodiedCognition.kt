@@ -88,6 +88,9 @@ class EmbodiedCognition(
     private val callbacks: CognitionCallbacks = CognitionCallbacks(),
     private val goals: GoalLedger = GoalLedger(),
 ) {
+    /** Reviews one agent may have with the mind at once; a periodic schedule sets more than one. */
+    var reviewsInFlight: Int = 1
+
     private val exposure: ExposureGate get() = callbacks.exposure
 
     private val danger = DangerEpisodes(journal::tick)
@@ -235,7 +238,7 @@ class EmbodiedCognition(
      */
     fun reviewHoldOf(agentId: AgentId): String? =
         when {
-            inFlightFor(agentId, review = true) > 0 -> EventTag.REVIEW_IN_FLIGHT
+            inFlightFor(agentId, review = true) >= reviewsInFlight -> EventTag.REVIEW_IN_FLIGHT
             fleeing.holds(agentId) -> EventTag.FLEEING
             inFlight.values.any { (agent, seen) -> agent == agentId && dangerKeyOf(seen.trigger) != null } ->
                 EventTag.DANGER_DECIDING

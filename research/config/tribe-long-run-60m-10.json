@@ -1,6 +1,6 @@
 {
-  "experimentId": "2026-11-04-openai-10-agent-60m-r2",
-  "title": "10-agent one-hour routine-v38 long run r2",
+  "experimentId": "2026-11-04-openai-10-agent-60m-r3",
+  "title": "10-agent one-hour routine-v38 periodic-cognition run r3",
   "mode": "routine-v38-reliable-source",
   "agents": [
     "tribe-alpha",
@@ -50,9 +50,9 @@
     "cognitionBridge": {
       "timeoutMillis": 30000,
       "connectTimeoutMillis": 500,
-      "workers": 6,
-      "queueDepth": 16,
-      "perAgentPending": 2
+      "workers": 50,
+      "queueDepth": 100,
+      "perAgentPending": 5
     }
   },
   "cognition": {
@@ -72,12 +72,12 @@
     "providerEndpoint": "https://api.openai.com/v1",
     "providerTimeoutMillis": 12000,
     "maxRequestBytes": 65536,
-    "perAgentCallCeiling": 240,
-    "globalCallCeiling": 2268,
-    "pivotalCallCeiling": 780,
-    "globalOutstandingCeiling": 6,
+    "perAgentCallCeiling": 1800,
+    "globalCallCeiling": 18000,
+    "pivotalCallCeiling": 1800,
+    "globalOutstandingCeiling": 50,
     "maxOutputTokens": 2048,
-    "maxExternalSpendUsd": 175.08,
+    "maxExternalSpendUsd": 604.02,
     "pricing": {
       "currency": "USD",
       "effectiveDate": "2026-10-12",
@@ -103,12 +103,12 @@
     "simulationTickCeiling": 72000,
     "startupAttempts": 2,
     "shutdownSeconds": 20,
-    "logBytes": 134217728,
-    "artifactBytes": 100663296,
-    "evidenceRecords": 64000
+    "logBytes": 1073741824,
+    "artifactBytes": 1073741824,
+    "evidenceRecords": 1000000
   },
   "primaryBehavior": {
-    "profile": "long-run-60m-10",
+    "profile": "periodic-60m-10",
     "initialPositions": {
       "tribe-alpha": [
         12.5,
@@ -167,10 +167,11 @@
       "isDay": true
     },
     "nativeGoalReviewSchedule": {
-      "cadenceTicks": 2400,
-      "sliceTicks": 100,
-      "expectedReviewsPerAgent": 30,
-      "followUpsPerReview": 4
+      "cadenceTicks": 60,
+      "sliceTicks": 3,
+      "expectedReviewsPerAgent": 1200,
+      "followUpsPerReview": 0,
+      "reviewsInFlightPerAgent": 4
     },
     "externalCognitionStimuli": "none",
     "startingInventories": "empty",

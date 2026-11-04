@@ -386,9 +386,9 @@ test('a provider unavailability is journalled with a closed public flag beside i
     providerType: null,
     providerCode: null,
     responseShape: 'noHttpResponse',
-    mapping: 'providerTimeout'
+    mapping: 'providerConnection'
   }
-  const upstream = await startRefusingUpstream('cognition failed: the model provider did not answer in time', failure)
+  const upstream = await startRefusingUpstream('cognition failed: the model provider could not be reached', failure)
   const events = []
   const proxy = new CognitionBudgetProxy({
     listen: { host: '127.0.0.1', port: 0 },
@@ -406,7 +406,7 @@ test('a provider unavailability is journalled with a closed public flag beside i
     assert.equal(forwarded.providerUnavailable, true)
     assert.equal(forwarded.providerRefusedRequest, undefined)
     assert.equal(forwarded.recordedFailure, undefined, 'an outage is a controlled stop, not a recorded failure')
-    assert.equal(forwarded.failureReason, 'providerTimeout')
+    assert.equal(forwarded.failureReason, 'providerConnection')
     assert.deepEqual(forwarded.failure, failure)
   } finally {
     await proxy.close()

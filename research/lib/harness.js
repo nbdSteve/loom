@@ -185,12 +185,6 @@ async function buildComponents (repositoryRoot, java, skipBuild, signal) {
       timeout: 180_000,
       signal
     })
-    await runBuild('npm', ['run', 'check'], {
-      cwd: path.join(repositoryRoot, 'body'),
-      env: process.env,
-      timeout: 300_000,
-      signal
-    })
     await runBuild('cargo', ['build', '--release', '--bin', 'loom-cognition'], {
       cwd: path.join(repositoryRoot, 'cognition'),
       env: process.env,
@@ -198,7 +192,8 @@ async function buildComponents (repositoryRoot, java, skipBuild, signal) {
       signal
     })
     const javaHome = path.dirname(path.dirname(path.resolve(java)))
-    await runBuild('./gradlew', ['check', 'shadowJar'], {
+    // CI tests every commit, so a run builds and does not test.
+    await runBuild('./gradlew', ['shadowJar'], {
       cwd: path.join(repositoryRoot, 'plugin'),
       env: { ...process.env, JAVA_HOME: javaHome },
       timeout: 600_000,
@@ -392,6 +387,11 @@ function followUpsEnvironmentOf (config) {
   const bounded = agents > 0 && Number.isInteger(global) && Number.isInteger(perAgent)
   return {
     ...(Number.isInteger(followUps) ? { LOOM_GOAL_FOLLOW_UPS_PER_REVIEW: String(followUps) } : {}),
+    // A periodic schedule: one review per agent every `cadenceTicks`, with as many reviews in flight
+    // as the agent's outstanding slots but one (`EmbodiedCognition.reviewsInFlight`).
+    ...(Number.isInteger(schedule?.reviewsInFlightPerAgent)
+      ? { LOOM_GOAL_REVIEW_CADENCE_TICKS: String(schedule.cadenceTicks) }
+      : {}),
     ...(bounded && Number.isInteger(schedule?.expectedReviewsPerAgent)
       ? {
           LOOM_COGNITION_CALLS_PER_AGENT: String(perAgent),
