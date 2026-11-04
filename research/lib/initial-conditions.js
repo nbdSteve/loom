@@ -30,10 +30,12 @@ function samePosition (position, pinned) {
     position.every((coordinate, index) => coordinate === pinned[index])
 }
 
-/** Whether one reading at begin shows the agent at [pinned] holding nothing. */
+/** Whether one reading at begin shows the agent at [pinned] (anywhere it was placed, when none is pinned) holding nothing. */
 function heldAtBegin (entry, pinned) {
-  return entry !== undefined && entry.outcome === INITIAL_CONDITIONS_HELD &&
-    samePosition(entry.position, pinned) && entry.inventoryStacks === 0
+  const placed = pinned === undefined
+    ? Array.isArray(entry?.position) && entry.position.length === 3
+    : samePosition(entry?.position, pinned)
+  return entry !== undefined && entry.outcome === INITIAL_CONDITIONS_HELD && placed && entry.inventoryStacks === 0
 }
 
 /** Whether every configured agent has exactly one reading at begin, and each shows its pinned conditions. */
@@ -41,7 +43,7 @@ function everyHeldAtBegin (witnessed, agents, positions) {
   if (witnessed.length !== agents.length) return false
   const byAgent = new Map(witnessed.map((entry) => [entry.agentId, entry]))
   return byAgent.size === agents.length &&
-    agents.every((agentId) => heldAtBegin(byAgent.get(agentId), positions[agentId]))
+    agents.every((agentId) => heldAtBegin(byAgent.get(agentId), positions?.[agentId]))
 }
 
 module.exports = {

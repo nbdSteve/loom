@@ -35,7 +35,7 @@ const {
 } = require('./evidence.js')
 const { isCoalesced, isExposureEnding, isShutdownEnding, unansweredAccountedFor } = require('./danger.js')
 const { everyHeldAtBegin, heldAtBegin } = require('./initial-conditions.js')
-const { CADENCE, PROFILES, SCENES, exposureOf, placementOf, profileOf, ticksPerSecondOf } = require('./profiles.js')
+const { CADENCE, PROFILES, SCENES, exposureOf, placementOf, profileFor, profileOf, ticksPerSecondOf } = require('./profiles.js')
 const { RunFailure } = require('./lifecycle.js')
 const {
   CRASH_CONTAINMENT_MODE,
@@ -231,7 +231,7 @@ function primaryBehaviorErrors (config) {
   if (behavior === null || typeof behavior !== 'object' || Array.isArray(behavior)) {
     return ['primaryBehavior must configure the research-only behavior mode']
   }
-  const profile = profileOf(behavior.profile)
+  const profile = profileFor(profileOf(behavior.profile), config)
   if (profile === undefined) {
     return [`primaryBehavior.profile must be one of ${Object.keys(PROFILES).join(', ')}`]
   }
@@ -337,7 +337,7 @@ function primaryBehaviorErrors (config) {
     errors.push('the primary behavior mode cannot configure crash or operator-think proof traffic')
   }
   if (
-    config.world?.seed !== scene.seed ||
+    (scene.seed === null ? !/^(-?[0-9]+|random)$/.test(config.world?.seed ?? '') : config.world?.seed !== scene.seed) ||
     config.world?.difficulty !== (profile.world?.difficulty ?? 'normal') ||
     config.world?.mobSpawning !== (profile.world?.mobSpawning ?? true) ||
     config.world?.worldBorderDiameterBlocks !== 128 ||
@@ -424,8 +424,8 @@ function validateRunConfig (config) {
   for (const [flag, value] of Object.entries(config.featureFlags ?? {})) {
     if (value !== true) errors.push(`featureFlags.${flag} must be true: no runtime route can switch it off`)
   }
-  if (!Array.isArray(config.agents) || config.agents.length < 3 || config.agents.length > 16) {
-    errors.push('agents must contain 3..16 agent ids')
+  if (!Array.isArray(config.agents) || config.agents.length < 1 || config.agents.length > 16) {
+    errors.push('agents must contain 1..16 agent ids')
   } else {
     if (new Set(config.agents).size !== config.agents.length) errors.push('agents contains a duplicate')
     for (const agent of config.agents) {
@@ -504,8 +504,9 @@ function validateRunConfig (config) {
   ) {
     errors.push('cognition bridge timeout cannot leave each retry a one-millisecond read')
   }
-  if (config.world?.seed === undefined || !/^-?[0-9]+$/.test(String(config.world.seed))) {
-    errors.push('world.seed must be an explicit integer string')
+  // `random` asks the harness to draw a fresh seed at launch (a drawn world's config only).
+  if (config.world?.seed === undefined || !/^(-?[0-9]+|random)$/.test(String(config.world.seed))) {
+    errors.push('world.seed must be an explicit integer string or random')
   }
   if (!['peaceful', 'easy', 'normal', 'hard'].includes(config.world?.difficulty)) {
     errors.push('world.difficulty must be peaceful, easy, normal, or hard')
@@ -811,7 +812,7 @@ function initialConditionsMatch (config, metrics) {
     metrics.primaryBehavior?.initialConditionAttestations !== 1 ||
     !sameJson(
       metrics.primaryBehavior.configuredInitialPositions,
-      config.primaryBehavior.initialPositions
+      config.primaryBehavior.initialPositions ?? null
     ) ||
     !sameJson(
       metrics.primaryBehavior.configuredInitialWorldClock,
@@ -829,7 +830,8 @@ function initialConditionsMatch (config, metrics) {
       observed.every((entry) => entry.worldClock !== undefined)
   }
   return observed.every((entry) =>
-    sameJson(entry.position, config.primaryBehavior.initialPositions[entry.agentId]) &&
+    (config.primaryBehavior.initialPositions === undefined ||
+      sameJson(entry.position, config.primaryBehavior.initialPositions[entry.agentId])) &&
     entry.inventoryStacks === 0 &&
     entry.worldClock !== undefined
   )
@@ -1364,7 +1366,7 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
     ) ||
     !sameJson(
       primary?.configuredInitialPositions,
-      protocol.initialConditions?.configuredPositions
+      protocol.initialConditions?.configuredPositions ?? null
     ) ||
     !sameJson(
       primary?.configuredInitialWorldClock,

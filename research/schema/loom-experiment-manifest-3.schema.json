@@ -445,7 +445,7 @@
     },
     "agents": {
       "type": "array",
-      "minItems": 3,
+      "minItems": 1,
       "maxItems": 16,
       "items": {
         "type": "object",
@@ -636,17 +636,17 @@
         "maxExternalSpendUsd": {
           "type": "number",
           "minimum": 0,
-          "maximum": 1000
+          "maximum": 100000
         },
         "worstCaseConfiguredSpendUsd": {
           "type": "number",
           "minimum": 0,
-          "maximum": 1000
+          "maximum": 100000
         },
         "actualExternalSpendUsd": {
           "type": "number",
           "minimum": 0,
-          "maximum": 1000
+          "maximum": 100000
         },
         "spendAccounting": {
           "type": "string",
@@ -840,7 +840,7 @@
         },
         "agents": {
           "type": "array",
-          "minItems": 3,
+          "minItems": 1,
           "items": {
             "$ref": "#/$defs/recordCensus"
           }

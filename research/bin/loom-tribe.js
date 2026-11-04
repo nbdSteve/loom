@@ -11,6 +11,7 @@ const {
   sourceIdentity
 } = require('../lib/harness.js')
 const { RunFailure } = require('../lib/lifecycle.js')
+const { drawWorldSeed } = require('../lib/profiles.js')
 const { readJson } = require('../lib/util.js')
 
 function usage () {
@@ -56,6 +57,8 @@ async function main () {
   if (!fs.existsSync(configFile)) throw new Error(`configuration does not exist: ${configFile}`)
   if (command === 'preflight') {
     const config = readJson(configFile)
+    // A drawn world is checked under a seed drawn the same way a run draws its own.
+    if (config.world?.seed === 'random') config.world.seed = drawWorldSeed()
     validateProspectiveManifest(config, sourceIdentity(repositoryRoot))
     console.log(`valid prospective manifest for ${config.experimentId}`)
     return

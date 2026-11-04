@@ -29,7 +29,7 @@ const SCENES = Object.freeze({
   }),
   // The first seed of the sequence from 10001 whose ring around the origin is dry land among trees
   // with wood to dig and craft (r18's terracotta badlands gave only sticks): an oak and birch
-  // forest. Surveyed by `research/tools/survey-ring.js` from a fresh Paper 1.21.1 world, slot by
+  // forest. Surveyed by the since-retired ring survey from a fresh Paper 1.21.1 world, slot by
   // slot at ten even bearings: each slot is the first radius from 12 to 16 whose column's highest
   // non-leaf collision block is ground, not a log, with two passable cells above it. Every body
   // stands on grass with 90 to 135 logs within sixteen blocks.
@@ -42,7 +42,7 @@ const SCENES = Object.freeze({
     coverRule: 'A collision-free, non-fluid cover block (short_grass, a peony) in the feet cell counts as passable; leaves above a slot are passed through to the ground beneath them. Nothing is cleared or placed.'
   }),
   // The first seed of the sequence from 20001 whose ring around the origin is flat dry land with
-  // most slots' nearest log beyond what a body senses, surveyed by `tools/survey-ring.js`: one
+  // most slots' nearest log beyond what a body senses, surveyed by the since-retired ring survey: one
   // tree stands west of the ring, 3.6 and 6.1 blocks from two slots, and the woods lie 10.8 to
   // 25.7 blocks from the rest, so wood must be looked for. Every slot stands on grass_block with
   // air in its feet cell. The run starts at time 9000, so dusk falls about 3500 ticks in and
@@ -70,11 +70,18 @@ const SCENES = Object.freeze({
     coverRule: null
   }),
   // A seed drawn at random, as a signed 64-bit integer from eight bytes of Node's
-  // `crypto.randomBytes`, and accepted as the first draw whose ring `tools/survey-ring.js` placed in
+  // `crypto.randomBytes`, and accepted as the first draw whose ring the since-retired survey placed in
   // full, whatever its resources; no draw was rejected. Each slot is the survey's first radius from
   // 12 to 16 at its bearing (all twelve) whose column's highest non-leaf collision block is ground,
   // not a log, with two passable cells above it. Nine slots stand on grass_block and one on a
   // pumpkin, with 66 to 125 logs within sixteen blocks. It starts at dawn.
+  // A world drawn fresh for every run: the harness draws its seed at launch (`drawWorldSeed`),
+  // vanilla places each agent at a safe spot near the world spawn, and the border is centred there.
+  'random-world': Object.freeze({
+    seed: null,
+    positions: null,
+    coverRule: 'Vanilla spawn placement within its spawn radius of the world spawn. Nothing is cleared or placed.'
+  }),
   'x1-random-ring': Object.freeze({
     seed: '1441207653247942039',
     positions: Object.freeze([
@@ -430,7 +437,54 @@ PROFILES['periodic-10m-10'] = Object.freeze({
   maxExternalSpendUsd: 100.67,
   bounds: Object.freeze({ logBytes: 256 * 1024 * 1024, evidenceRecords: 200_000, artifactBytes: 256 * 1024 * 1024 })
 })
+// One agent on a world drawn fresh every run, thinking every 3 s, for as long as its config says:
+// `durationScaled` profiles take the run's duration from the config and scale their plan, ceilings
+// and bounds by the hour (`profileFor`). Per hour: 1,200 reviews, 1,800 calls (a third left to
+// events), no separate pivotal cap, so every call at the pivotal worst case is $350.208.
+PROFILES['solo-1'] = Object.freeze({
+  ...PROFILES['periodic-60m-10'],
+  agents: 1,
+  scene: 'random-world',
+  exposure: undefined,
+  durationScaled: Object.freeze({
+    reviewsPerHour: 1200,
+    callsPerHour: 1800,
+    outstanding: 5,
+    logBytesPerHour: 128 * 1024 * 1024,
+    evidenceRecordsPerHour: 120_000
+  })
+})
 Object.freeze(PROFILES)
+
+/** [profile] as [config] runs it: a duration-scaled profile takes the config's duration. */
+function profileFor (profile, config) {
+  const scaled = profile?.durationScaled
+  const seconds = config?.bounds?.runDurationSeconds
+  if (scaled === undefined || !Number.isInteger(seconds) || seconds < 1 || seconds % 3600 !== 0) return profile
+  const hours = seconds / 3600
+  const calls = scaled.callsPerHour * hours
+  const ticks = seconds * ticksPerSecondOf(profile)
+  // Every call at the pivotal worst case, to the cent above.
+  const worstNanoUsd = calls * 194_560_000
+  return {
+    ...profile,
+    runDurationSeconds: seconds,
+    simulationTickCeiling: ticks,
+    expectedReviewsPerAgent: scaled.reviewsPerHour * hours,
+    callCeilings: { perAgent: calls, global: calls, outstanding: scaled.outstanding, pivotal: calls },
+    maxExternalSpendUsd: Math.ceil(worstNanoUsd / 10_000_000) / 100,
+    bounds: {
+      logBytes: Math.min(1024 * 1024 * 1024, scaled.logBytesPerHour * hours),
+      evidenceRecords: Math.min(1_000_000, scaled.evidenceRecordsPerHour * hours),
+      artifactBytes: Math.min(1024 * 1024 * 1024, scaled.logBytesPerHour * hours)
+    }
+  }
+}
+
+/** A fresh signed 64-bit world seed, as Minecraft reads `level-seed`. */
+function drawWorldSeed () {
+  return require('node:crypto').randomBytes(8).readBigInt64BE().toString()
+}
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */
 function ticksPerSecondOf (profile) {
@@ -447,12 +501,17 @@ function placementOf (profile) {
   const agents = AGENT_ORDER.slice(0, profile.agents)
   return {
     agents,
-    positions: Object.fromEntries(agents.map((agentId, slot) => [agentId, [...scene.positions[slot]]]))
+    // A drawn world pins no positions: vanilla places each agent near the world spawn.
+    positions: scene.positions === null
+      ? undefined
+      : Object.fromEntries(agents.map((agentId, slot) => [agentId, [...scene.positions[slot]]]))
   }
 }
 
 module.exports = {
   AGENT_ORDER,
+  drawWorldSeed,
+  profileFor,
   exposureOf,
   CADENCE,
   PROFILES,

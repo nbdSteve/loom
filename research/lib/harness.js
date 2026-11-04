@@ -42,7 +42,7 @@ const { writeFailureDiagnostic } = require('./failure-diagnostic.js')
 const { JsonLinesTail, maximumOf } = require('./log-tail.js')
 const { PaperClock } = require('./paper-clock.js')
 const { SuspensionWatch, seedPaperRuntime } = require('./paper-runtime.js')
-const { profileOf, ticksPerSecondOf } = require('./profiles.js')
+const { drawWorldSeed, profileOf, ticksPerSecondOf } = require('./profiles.js')
 const { DeathSettlement } = require('./witnessed-death.js')
 const { INITIAL_CONDITIONS_EVENT, heldAtBegin } = require('./initial-conditions.js')
 const {
@@ -345,12 +345,14 @@ function applyPrimaryBehaviorInitialConditions (paper, config, journal) {
   if (!isPrimaryBehaviorMode(config)) return
   paperCommand(paper, 'gamerule doDaylightCycle true')
   paperCommand(paper, `time set ${config.primaryBehavior.initialWorldClock.timeOfDay}`)
-  const positions = {}
+  const pinned = config.primaryBehavior.initialPositions
+  const positions = pinned === undefined ? undefined : {}
   for (const agent of configuredAgents(config)) {
-    const position = config.primaryBehavior.initialPositions[agent.agentId]
-    positions[agent.agentId] = position
     paperCommand(paper, `clear ${agent.username}`)
-    paperCommand(paper, `tp ${agent.username} ${position.join(' ')}`)
+    // A drawn world leaves each agent where vanilla spawned it; the begin reading records where.
+    if (pinned === undefined) continue
+    positions[agent.agentId] = pinned[agent.agentId]
+    paperCommand(paper, `tp ${agent.username} ${pinned[agent.agentId].join(' ')}`)
   }
   const ticksPerSecond = ticksPerSecondOf(profileOf(config.primaryBehavior.profile) ?? {})
   if (ticksPerSecond !== 20) {
@@ -358,7 +360,7 @@ function applyPrimaryBehaviorInitialConditions (paper, config, journal) {
     journal.append('serverTickRateAttested', { ticksPerSecond })
   }
   journal.append('initialConditionsAttested', {
-    positions,
+    ...(positions === undefined ? { worldSeed: config.world.seed } : { positions }),
     worldClock: config.primaryBehavior.initialWorldClock,
     startingInventories: config.primaryBehavior.startingInventories
   })
@@ -997,6 +999,8 @@ async function runHeldExperiment ({
 }) {
   const absoluteRoot = path.resolve(repositoryRoot)
   const config = readJson(path.resolve(configFile))
+  // A drawn world takes a fresh seed every run; the manifest and the evidence both record it.
+  if (config.world?.seed === 'random') config.world.seed = drawWorldSeed()
   assertRunConfig(config)
   config.configFile = path.resolve(configFile)
   const source = sourceIdentity(absoluteRoot)
@@ -1255,6 +1259,10 @@ async function runHeldExperiment ({
 
     paperCommand(paper, `gamerule doMobSpawning ${config.world.mobSpawning}`)
     paperCommand(paper, `difficulty ${config.world.difficulty}`)
+    // The console stands at the world spawn, so a drawn world's border is centred where its agents spawn.
+    if (config.primaryBehavior?.initialPositions === undefined && isPrimaryBehaviorMode(config)) {
+      paperCommand(paper, 'worldborder center ~ ~')
+    }
     paperCommand(paper, `worldborder set ${config.world.worldBorderDiameterBlocks}`)
     if (
       isPrimaryBehaviorMode(config) &&
