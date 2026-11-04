@@ -202,6 +202,24 @@ fn an_action_with_nothing_offered_to_name_is_not_offered() {
 }
 
 #[test]
+fn a_craft_is_offered_no_more_applications_than_its_recipe_allows() {
+    // r35 alpha: two applications of a recipe its planks made once.
+    let mut seen = fixture("perception-crafting");
+    let once = CraftingOption {
+        recipe_ref: "r2".to_owned(),
+        max_crafts: 1,
+        ..seen.self_state.crafting_options[0].clone()
+    };
+    seen.self_state.crafting_options.push(once);
+    let schema = decision_schema_for(&OfferedRefs::of(&seen), GoalPhase::of(&seen));
+    let craft = |recipe: &str, crafts: i64| json!({ "action": "craft", "recipe": recipe, "crafts": crafts });
+    assert!(accepts(&schema, &craft("r1", 3)));
+    assert!(!accepts(&schema, &craft("r1", 4)));
+    assert!(accepts(&schema, &craft("r2", 1)));
+    assert!(!accepts(&schema, &craft("r2", 2)));
+}
+
+#[test]
 fn every_offered_ref_is_one_enum_once_whichever_actions_spend_it() {
     let offered = OfferedRefs::of(&fixture("perception-max-observations"));
     let schema = decision_schema_for(&offered, GoalPhase::Any);

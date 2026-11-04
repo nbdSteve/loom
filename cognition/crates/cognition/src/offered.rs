@@ -1553,11 +1553,15 @@ fn serves_chain(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{OfferedRefs, ATTACK_REACH_BLOCKS, INTERACTION_REACH_BLOCKS, MAX_PURSUIT_BLOCKS};
+    use super::{
+        OfferedRefs, ATTACK_REACH_BLOCKS, IMMEDIATE_DANGER_BLOCKS, INTERACTION_REACH_BLOCKS,
+        LOW_HEALTH, MAX_PURSUIT_BLOCKS,
+    };
     use crate::prompt::{MAX_CRAFTING_LINES, MAX_INVENTORY_LINES};
     use loom_contract::{
-        Bearing, BlockFace, CraftingOption, EquipmentDestination, Intent, InventoryStack,
-        Observation, ObservationKind, Perception,
+        Bearing, BlockFace, CraftingOption, EquipmentDestination, HorizonGoal, HorizonGrounding,
+        Intent, InventoryStack, Observation, ObservationKind, Perception, Trigger,
+        MAX_CRAFTS_PER_INTENT,
     };
 
     fn fixture(name: &str) -> Perception {
@@ -1623,6 +1627,23 @@ mod tests {
             max_crafts: 1,
             requires_table: false,
         });
+        perception
+    }
+
+    /// `perception` as a goal review holding "hold `count` `item`".
+    fn holding(mut perception: Perception, item: &str, count: i64) -> Perception {
+        perception.trigger = Trigger::GoalReview;
+        perception.goal = Some(
+            serde_json::from_value(serde_json::json!({
+                "goalId": "req-goal-1",
+                "statement": "hold the goal's item",
+                "revision": 0,
+                "adoptedTick": 0,
+                "successItem": item,
+                "successCount": count,
+            }))
+            .unwrap(),
+        );
         perception
     }
 
@@ -2010,5 +2031,181 @@ mod tests {
             .obtainable
             .contains(&"item.minecraft.stick".to_owned()));
         assert_eq!(offered.obtainable[0], "item.minecraft.thing_0_0");
+    }
+
+    #[test]
+    fn at_low_health_every_near_hunter_is_immediate_danger() {
+        // r27 theta crafted twice at 2.2 health beside a spider and two zombies 10 to 11 blocks off.
+        let mut zombie = seen(
+            ObservationKind::Entity,
+            "z1",
+            IMMEDIATE_DANGER_BLOCKS + 2.0,
+            0.0,
+        );
+        zombie.what = "zombie".to_owned();
+        zombie.hunts = Some(true);
+        let mut review = scene(vec![zombie]);
+        review.trigger = Trigger::GoalReview;
+        review.self_state.health = LOW_HEALTH + 0.5;
+        let offered = OfferedRefs::of(&review);
+        assert_eq!(offered.danger, handles(&["z1"]));
+        assert!(!offered.in_immediate_danger(), "{:?}", offered.immediate);
+        review.self_state.health = LOW_HEALTH;
+        assert_eq!(OfferedRefs::of(&review).immediate, handles(&["z1"]));
+    }
+
+    #[test]
+    fn a_craft_asks_no_more_applications_than_its_recipe_allows() {
+        // r35 alpha asked two applications of a recipe its planks made once.
+        let mut perception = scene(Vec::new());
+        let option = perception.self_state.crafting_options[0].clone();
+        for (recipe, most) in [("r3", 3), ("r0", 0), ("r9", MAX_CRAFTS_PER_INTENT + 1)] {
+            perception.self_state.crafting_options.push(CraftingOption {
+                recipe_ref: recipe.to_owned(),
+                max_crafts: most,
+                ..option.clone()
+            });
+        }
+        let offered = OfferedRefs::of(&perception);
+        assert_eq!(offered.crafts_of("r1"), 1);
+        assert_eq!(offered.crafts_of("r3"), 3);
+        assert_eq!(offered.crafts_of("r0"), 1);
+        assert_eq!(offered.crafts_of("r9"), MAX_CRAFTS_PER_INTENT);
+        assert_eq!(offered.crafts_of("unshown"), 0);
+        let craft = |recipe: &str, crafts| Intent::Craft {
+            recipe: recipe.to_owned(),
+            crafts,
+        };
+        assert!(offered.admits(&craft("r1", 1)));
+        assert!(!offered.admits(&craft("r1", 2)));
+        assert!(offered.admits(&craft("r3", 3)));
+        assert!(!offered.admits(&craft("r3", 4)));
+        assert!(!offered.admits(&craft("unshown", 1)));
+    }
+
+    #[test]
+    fn more_of_a_held_item_serves_a_chain_only_when_a_grounded_recipe_is_made_from_it() {
+        // R41: theta's met dirt goal grew with nothing to use dirt on; iota's planks fed recipes.
+        const PLANKS: &str = "item.minecraft.oak_planks";
+        let made_from = |via: &str| HorizonGoal {
+            what: "item.minecraft.crafting_table".to_owned(),
+            grounding: HorizonGrounding::Recipe,
+            via: Some(via.to_owned()),
+            most: 2,
+            frontier: false,
+        };
+        let mut review = holding(scene(Vec::new()), PLANKS, 4);
+        assert!(!OfferedRefs::of(&review).held_serves_chain);
+        review.horizon = vec![made_from("item.minecraft.oak_log")];
+        assert!(!OfferedRefs::of(&review).held_serves_chain);
+        review.horizon = vec![made_from(PLANKS)];
+        assert!(OfferedRefs::of(&review).held_serves_chain);
+        // A horizon goal of the held item itself is no chain.
+        review.horizon = vec![HorizonGoal {
+            what: PLANKS.to_owned(),
+            ..made_from(PLANKS)
+        }];
+        assert!(!OfferedRefs::of(&review).held_serves_chain);
+    }
+
+    #[test]
+    fn a_placement_names_only_the_stack_in_the_main_hand() {
+        // R44 theta placed its oak wood while its main hand held oak planks.
+        let mut perception = scene(vec![seen(ObservationKind::Block, "b1", 2.0, -0.5)]);
+        for (slot, held) in [("i2", Some(false)), ("i3", None)] {
+            perception
+                .self_state
+                .inventory_summary
+                .push(InventoryStack {
+                    slot_ref: slot.to_owned(),
+                    what: "item.minecraft.oak_planks".to_owned(),
+                    count: 4,
+                    edible: None,
+                    solid: Some(true),
+                    held,
+                });
+        }
+        let offered = OfferedRefs::of(&perception);
+        assert!(!offered.shelter.sealed() && offered.shelter.closings.is_empty());
+        assert_eq!(offered.held_stacks, handles(&["i1"]));
+        let place = |item: &str| Intent::Place {
+            block: "b1".to_owned(),
+            item: item.to_owned(),
+            face: BlockFace::Up,
+        };
+        assert!(offered.admits(&place("i1")));
+        assert!(!offered.admits(&place("i2")));
+        assert!(!offered.admits(&place("i3")));
+        // Any stack may still be put in hand first.
+        assert!(offered.admits(&Intent::Equip {
+            item: "i2".to_owned(),
+            destination: EquipmentDestination::Hand,
+        }));
+    }
+
+    #[test]
+    fn a_dig_is_a_sure_source_of_a_held_goal_only_at_one_item_a_dig_or_more() {
+        // r24 theta: 13% grass counted as a source, so the walk to look further was withheld.
+        const SEEDS: &str = "item.minecraft.wheat_seeds";
+        let grass = |handle: &str, per_hundred| {
+            let mut grass = seen(ObservationKind::Block, handle, 1.0, 0.0);
+            grass.yields = Some(vec![loom_contract::BlockYield {
+                per_hundred,
+                ..yielding(SEEDS)
+            }]);
+            grass
+        };
+        let review = holding(scene(vec![grass("g99", 99), grass("g100", 100)]), SEEDS, 10);
+        let offered = OfferedRefs::of(&review);
+        assert_eq!(offered.dig_blocks, handles(&["g99", "g100"]));
+        assert_eq!(offered.productive, handles(&["g100"]));
+    }
+
+    #[test]
+    fn another_item_is_stepped_by_its_own_digs_while_the_held_goal_narrows_to_its_own() {
+        // R49 zeta: a held stick goal left its oak wood replace only walks past an oak log in reach.
+        const STICK: &str = "item.minecraft.stick";
+        const LOG: &str = "item.minecraft.oak_log";
+        const WOOD: &str = "item.minecraft.oak_wood";
+        let block = |handle: &str, item: &str, distance| {
+            let mut block = seen(ObservationKind::Block, handle, distance, 0.0);
+            block.yields = Some(vec![yielding(item)]);
+            block
+        };
+        let mut review = holding(
+            scene(vec![
+                block("bush", STICK, 1.0),
+                block("log", LOG, 2.0),
+                block("far", LOG, INTERACTION_REACH_BLOCKS + 1.0),
+            ]),
+            STICK,
+            32,
+        );
+        review.self_state.inventory_summary.push(InventoryStack {
+            slot_ref: "i2".to_owned(),
+            what: LOG.to_owned(),
+            count: 1,
+            edible: None,
+            solid: Some(true),
+            held: None,
+        });
+        review.horizon = vec![HorizonGoal {
+            what: WOOD.to_owned(),
+            grounding: HorizonGrounding::Recipe,
+            via: Some(LOG.to_owned()),
+            most: 12,
+            frontier: false,
+        }];
+        let offered = OfferedRefs::of(&review);
+        assert_eq!(offered.dig_blocks, handles(&["bush"]));
+        let steps = |item: &str| {
+            offered
+                .item_steps
+                .iter()
+                .find(|steps| steps.item == item)
+                .unwrap_or_else(|| panic!("no steps for {item}: {:?}", offered.item_steps))
+        };
+        assert_eq!(steps(WOOD).dig, handles(&["log"]));
+        assert_eq!(steps(STICK).dig, handles(&["bush"]));
     }
 }

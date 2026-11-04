@@ -415,6 +415,7 @@ The load-bearing rule is that a published generation may only ever be **loosened
 - CI runs all four suites plus the live cross-runtime round trip: `.github/workflows/contract.yml`.
 - Coverage: `tools/coverage/run.sh` runs JaCoCo, `cargo-llvm-cov`, and c8 for body and research, then checks `tools/coverage/floors.json`; `tools/coverage/README.md` owns the baseline, floor rule and every exclusion. CI fails below a floor, so raise floors with coverage and never lower one to admit a regression.
 
+- Rust audit replays of committed run evidence live in one `cognition/crates/cognition/tests/audit_replays.rs`, in modules by behavior with run, agent and record ids as provenance. Add a case there through its `CommittedEvidence` rather than a new `rN_replay.rs`, and pin the rule it guards with a synthetic test in `src/offered.rs` or `tests/openai_offered_schema.rs` so the replay is a second witness, not the only one.
 - Add durable project-specific notes here as they are discovered through real work.
 
 ## Maintaining this file
