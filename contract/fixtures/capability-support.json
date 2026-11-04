@@ -369,6 +369,9 @@
     },
     "tribe-periodic-10m-10.json": {
       "status": "runnable"
+    },
+    "tribe-solo-1.json": {
+      "status": "runnable"
     }
   }
 }

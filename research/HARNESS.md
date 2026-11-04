@@ -156,7 +156,7 @@ pursued anything could fail, configured by `research/config/tribe-night-goal-10m
 The plains scene is seed `20011`, the first seed from 20001 whose ring around the origin is flat
 dry land with most slots' nearest log beyond what a body senses: one tree stands 3.6 and 6.1
 blocks from two slots and the woods lie 10.8 to 25.7 blocks from the other eight, so wood must be
-looked for. Its ten slots were surveyed by `research/tools/survey-ring.js` from a fresh world,
+looked for. Its ten slots were surveyed by the since-retired ring survey from a fresh world,
 and the survey reproduces them exactly. It is the one scene that does not start at dawn: its
 `initialTimeOfDay` is 9000, so dusk falls about 3,500 ticks in and the hostile creatures night
 spawns on open ground are part of the run; nothing is summoned and no goal or item is given.
@@ -270,6 +270,12 @@ A periodic schedule reviews whatever the body is doing, earns no follow-ups, and
 The body applies only the newest answer: one asked before an answer already applied is dropped as `decisionSuperseded`, one naming the walk, dig, sleep or collect already running lets it continue, and a different one halts and replaces it.
 Its review windows owe no minimum count, since a review held behind a flight or danger is taken late rather than twice.
 A run builds without its test suites (CI tests every commit), and the harness runs with a 12 GiB Node heap so publication can read an hour of evidence.
+
+## A drawn world
+
+The `random-world` scene (`solo-1`) has no pinned seed or positions: config `world.seed` is `random`, and the harness draws a fresh signed 64-bit seed at launch (`drawWorldSeed`), which the manifest records and the `initialConditionsAttested` record states as `worldSeed`.
+Vanilla places each agent at a safe spot within its spawn radius of the world spawn, the console centres the border there (`worldborder center ~ ~`), and each agent's `initialConditionsWitnessed` record states where it stood at begin.
+`solo-1` takes the run's duration from `bounds.runDurationSeconds` (whole hours) and scales its plan, ceilings and bounds by the hour (`profileFor`): 1,200 reviews and 1,800 calls an hour, a tenth of them pivotal, and the hard ceiling at that worst case ($60.41 an hour).
 
 ## Bounds and call accounting
 
