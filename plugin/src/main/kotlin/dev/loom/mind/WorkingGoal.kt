@@ -44,6 +44,7 @@ import dev.loom.contract.ObservationKind
 import dev.loom.contract.Perception
 import dev.loom.contract.SelfState
 import dev.loom.contract.StepEvidence
+import dev.loom.contract.asStep
 import dev.loom.contract.isItemName
 import kotlin.math.floor
 
@@ -198,7 +199,7 @@ data class GoalObservation(
         intent: Intent,
         toward: Set<String>,
     ): Boolean =
-        intent is Intent.MoveTo && intent.onto in explore &&
+        intent.asStep.let { it is Intent.MoveTo && it.onto in explore } &&
             productive.values.any { items -> items.any { it in toward } }
 
     /** The block cell the agent stood in. */

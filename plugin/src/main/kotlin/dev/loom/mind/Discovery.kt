@@ -20,6 +20,7 @@ import dev.loom.contract.GoalProgress
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.Intent
 import dev.loom.contract.StepEvidence
+import dev.loom.contract.asStep
 
 /** Whether [choice] sets a discovery goal. */
 internal fun discovers(choice: GoalChoice?): Boolean = choice?.discover == true
@@ -81,7 +82,7 @@ private fun offeredTo(
 private fun walksToLook(
     intent: Intent,
     observed: GoalObservation?,
-): Boolean = intent is Intent.MoveTo && intent.onto in observed?.explore.orEmpty()
+): Boolean = intent.asStep.let { it is Intent.MoveTo && it.onto in observed?.explore.orEmpty() }
 
 /** The discovery goal a decision [requestId] sets, its perception taken at [capturedTick] and its step [intent]. */
 internal fun discoveryGoalOf(
@@ -96,7 +97,7 @@ internal fun discoveryGoalOf(
         adoptedTick = capturedTick,
         step = stepOf(intent),
         stepAction = dev.loom.contract.IntentAction.MOVE_TO,
-        stepRef = (intent as? Intent.MoveTo)?.onto,
+        stepRef = (intent.asStep as? Intent.MoveTo)?.onto,
         discovery = true,
     )
 

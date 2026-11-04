@@ -65,8 +65,8 @@ internal class PlayerEvidenceRecorder(
         requestId: String?,
         execution: ActionExecution,
     ): IntentOutcome {
-        if (intent is Intent.DigSequence && execution.steps.isNotEmpty()) {
-            return auditSequence(runtime, intent, requestId, execution.steps)
+        if (intent is Intent.Walk || (intent is Intent.DigSequence && execution.steps.isNotEmpty())) {
+            return auditSteps(runtime, intent, requestId, execution)
         }
         val step = auditInteraction(runtime, intent, requestId, execution)
         val outcome = step.outcome
@@ -117,7 +117,7 @@ internal class PlayerEvidenceRecorder(
         ) { audited?.let { recordInteraction(runtime, intent, requestId, it, drops) } }
     }
 
-    private fun recordWalk(
+    internal fun recordWalk(
         runtime: PlayerRuntime,
         requestId: String?,
         execution: ActionExecution,

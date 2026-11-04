@@ -35,7 +35,7 @@ private fun continues(
 ): Boolean = last.outcome is IntentOutcome.Accepted && !preemption.outdated(applied.runtime, applied.requestId)
 
 /** Audits each dig a sequence ran as its own interaction; the sequence is one action. */
-internal fun PlayerEvidenceRecorder.auditSequence(
+private fun PlayerEvidenceRecorder.auditSequence(
     runtime: PlayerRuntime,
     intent: Intent.DigSequence,
     requestId: String?,
@@ -60,4 +60,17 @@ internal fun PlayerEvidenceRecorder.auditSequence(
     recordAction(runtime.identity.agentId, intent, requestId, outcome)
     audited.forEach { it.record() }
     return outcome
+}
+
+/** A sequence's evidence: one action record, then each dig's interaction or each hop's movement. */
+internal fun PlayerEvidenceRecorder.auditSteps(
+    runtime: PlayerRuntime,
+    intent: Intent,
+    requestId: String?,
+    execution: ActionExecution,
+): IntentOutcome {
+    if (intent is Intent.DigSequence) return auditSequence(runtime, intent, requestId, execution.steps)
+    recordAction(runtime.identity.agentId, intent, requestId, execution.outcome)
+    execution.steps.forEach { recordWalk(runtime, requestId, it) }
+    return execution.outcome
 }

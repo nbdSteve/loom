@@ -748,7 +748,7 @@ class CrossLayerActionFlowTest {
 
         fun stack(suffix: String) = p.selfState.inventorySummary.first { it.what.endsWith(suffix) }.ref
         return when (fixture) {
-            is Intent.Say, Intent.Rest, Intent.Idle, is Intent.MoveTo -> fixture
+            is Intent.Say, Intent.Rest, Intent.Idle, is Intent.MoveTo, is Intent.Walk -> fixture
             is Intent.Flee -> Intent.Flee(entity)
             is Intent.Eat -> Intent.Eat(stack("bread"))
             is Intent.Dig, is Intent.DigSequence -> blockIntent(fixture, block)

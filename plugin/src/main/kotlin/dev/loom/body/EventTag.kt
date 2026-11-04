@@ -671,7 +671,7 @@ fun tagOf(intent: Intent): String =
     when (intent) {
         is Intent.Rest -> EventTag.REST
         is Intent.Idle -> EventTag.IDLE
-        is Intent.MoveTo -> EventTag.MOVE_TO
+        is Intent.MoveTo, is Intent.Walk -> EventTag.MOVE_TO
         is Intent.Say -> EventTag.SAY
         is Intent.Flee -> EventTag.FLEE
         is Intent.Eat -> EventTag.EAT
