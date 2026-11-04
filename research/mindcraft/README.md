@@ -46,6 +46,13 @@ Agents:
 - All agents start in one Mindcraft process, so they share one MindServer and can talk to each other.
 - `LOG_ALL=true`, `base_profile: survival`, and an `init_message` that asks each agent to choose a long-term goal with `!goal` and to talk to the others when it helps.
 - Set `LOOM_MINDCRAFT_MODEL=gpt-5.4-nano` for a cheaper run.
+- Set `LOOM_MINDCRAFT_INIT_MESSAGE` to give every agent one shared start message instead.
+
+Example society run with no assigned roles:
+
+```
+LOOM_MINDCRAFT_INIT_MESSAGE="You and the others have just arrived in this world. Together, survive and build a thriving community. Talk with the others to coordinate." research/mindcraft/run.sh 10 20 15
+```
 
 Every model call goes through `proxy.js`, a loopback spend-cap proxy:
 
@@ -56,7 +63,7 @@ Every model call goes through `proxy.js`, a loopback spend-cap proxy:
 
 `watchdog.js` keeps every agent in the world. Mindcraft restarts an agent only when its process exits, and never if it exits within 10 s of its last restart. On 2026-11-05 an agent's process froze inside `collectBlocks` (run `20261104T213950Z`), was timed out by the server at 07:46:21, and never came back.
 
-The watchdog follows Paper's log instead. An agent off the server for longer than `LOOM_MINDCRAFT_GRACE_SECONDS` (default 60) is killed if it has a process. If Mindcraft does not start it again within 8 s, the MindServer is asked to. Mindcraft restarts it from its saved memory, and if that memory shows no running goal loop the agent is told to resume its goal. If Mindcraft's main process exits, `run.sh` starts it again with `load_memory`.
+The watchdog follows Paper's log instead. An agent off the server for longer than `LOOM_MINDCRAFT_GRACE_SECONDS` (default 60; at least 180 before its first join) is killed if it has a process. If Mindcraft does not start it again within 8 s, the MindServer is asked to. Mindcraft restarts it from its saved memory, and if that memory shows no running goal loop the agent is told to resume its goal. If Mindcraft's main process exits, `run.sh` starts it again with `load_memory`.
 
 All of these paths were tested with the mock, each back in the world with its goal running:
 

@@ -26,6 +26,9 @@ const { execFileSync } = require('node:child_process')
 const POLL_MS = 2000
 const START_CHECK_MS = 8000
 const RESUME_AFTER_JOIN_MS = 15000
+// Before an agent's first join it is still starting (ten agents load their
+// examples through one proxy at once), so it gets at least this long.
+const STARTUP_GRACE_MS = 180000
 const RESUME_MESSAGE = 'You were disconnected and have reconnected. Your memory above has your long-term goal. If your goal is not running, set it again with !goal and continue working toward it.'
 
 function parseArgs (argv) {
@@ -66,7 +69,7 @@ function main () {
 
   const started = Date.now()
   const agents = Object.fromEntries(roster.map((name) => [name, {
-    inGame: false, missingSince: started, lastAction: 0, revived: false
+    inGame: false, missingSince: started, lastAction: 0, revived: false, everJoined: false
   }]))
   let offset = 0
   let partial = ''
@@ -94,6 +97,7 @@ function main () {
       const agent = agents[name]
       if (agent === undefined) continue
       agent.inGame = change === 'joined'
+      if (agent.inGame) agent.everJoined = true
       agent.missingSince = agent.inGame ? null : Date.now()
       record({ kind: change, agent: name })
       if (agent.inGame && agent.revived) {
@@ -130,7 +134,8 @@ function main () {
     const now = Date.now()
     for (const [name, agent] of Object.entries(agents)) {
       if (agent.inGame || agent.missingSince === null) continue
-      if (now - agent.missingSince >= graceMs && now - agent.lastAction >= graceMs) revive(name)
+      const allowed = agent.everJoined ? graceMs : Math.max(graceMs, STARTUP_GRACE_MS)
+      if (now - agent.missingSince >= allowed && now - agent.lastAction >= graceMs) revive(name)
     }
   }, POLL_MS)
 

@@ -12,6 +12,8 @@
 #   LOOM_MINDCRAFT_MODEL         default gpt-5.4
 #   LOOM_MINDCRAFT_PROXY_PORT    default 18565
 #   LOOM_MINDCRAFT_MINDSERVER_PORT  default 8080
+#   LOOM_MINDCRAFT_INIT_MESSAGE     the start message every agent gets; the default
+#                                   names the others and asks each for a !goal
 #   LOOM_MINDCRAFT_GRACE_SECONDS    how long an agent may be off the server before
 #                                   watchdog.js restarts it, default 60
 set -euo pipefail
@@ -121,7 +123,7 @@ EOF
   profiles+=("\"$run/profiles/$name.json\"")
 done
 others="$(IFS=,; echo "${roster[*]}" | sed 's/,/, /g')"
-init_message="You live in this world with these other agents: $others. Choose a long-term goal for yourself and set it with !goal. Talk to the others with !startConversation when it helps."
+init_message="${LOOM_MINDCRAFT_INIT_MESSAGE:-You live in this world with these other agents: $others. Choose a long-term goal for yourself and set it with !goal. Talk to the others with !startConversation when it helps.}"
 settings="$("$node_bin" -e 'console.log(JSON.stringify({
   host: "127.0.0.1", minecraft_version: process.argv[2], auth: "offline",
   base_profile: "survival", auto_open_ui: false, load_memory: false,
