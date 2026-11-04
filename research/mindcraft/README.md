@@ -54,11 +54,23 @@ Every model call goes through `proxy.js`, a loopback spend-cap proxy:
 - It refuses with HTTP 429 any call whose worst case could take spend past `<ceiling-usd>`. Each call reserves every request byte as an input token plus `max_completion_tokens` (set to 8192 when absent) of output, so the ceiling holds before the bill and not after.
 - When refused, Mindcraft answers "My brain disconnected", and after three of those an agent stops its goal loop. That is how spend stops at the ceiling.
 
+`watchdog.js` keeps every agent in the world. Mindcraft restarts an agent only when its process exits, and never if it exits within 10 s of its last restart. On 2026-11-05 an agent's process froze inside `collectBlocks` (run `20261104T213950Z`), was timed out by the server at 07:46:21, and never came back.
+
+The watchdog follows Paper's log instead. An agent off the server for longer than `LOOM_MINDCRAFT_GRACE_SECONDS` (default 60) is killed if it has a process. If Mindcraft does not start it again within 8 s, the MindServer is asked to. Mindcraft restarts it from its saved memory, and if that memory shows no running goal loop the agent is told to resume its goal. If Mindcraft's main process exits, `run.sh` starts it again with `load_memory`.
+
+All of these paths were tested with the mock, each back in the world with its goal running:
+
+- A frozen agent (`SIGSTOP`).
+- Two kills within 10 s.
+- A killed main process.
+
+The watchdog also puts `nbdSteve` in spectator mode on every join, as an operator.
+
 The run stops by itself after `<minutes>`, or on Ctrl-C. It stops Mindcraft, then the proxy, then Paper (`stop`), and then runs `capture.sh`.
 
 While it runs:
 
-- Join with Minecraft Java Edition **1.21.6**, Multiplayer, server address `localhost:25565`, user name `nbdSteve`. The server binds `127.0.0.1` only, so join from this machine.
+- Join with Minecraft Java Edition **1.21.6**, Multiplayer, server address `localhost:25565`, user name `nbdSteve`. You arrive in spectator mode and stay an operator. The server binds `127.0.0.1` only, so join from this machine.
 - The MindServer UI is at `http://localhost:8080`.
 - Type server console commands with `echo "time set day" > research/mindcraft/runs/<run>/paper-console`.
 
@@ -74,14 +86,16 @@ Offline test, with no key and no paid call: start a loopback OpenAI mock and set
 | What did it remember, and which goal was active? | `bots/<agent>/memory.json`, `bots/<agent>/histories/*.json` |
 | Who did what, as the server saw it? | `server/logs/latest.log`: joins, quits, deaths, and every agent chat line. Agents announce each command in chat, so this is a server-timestamped action record. |
 | What did it cost? | `proxy-calls.jsonl`, `proxy-summary.json` |
-| All of it, in time order | `events.jsonl` (`join.js`): `joined`, `left`, `said`, `died` from Paper; `decided` and `memSaving` from the model logs; `call` from the proxy |
+| When was an agent out of the world, and how did it come back? | `watchdog.jsonl` (`joined`, `left`, `missing`, `killed`, `restartedByMindcraft`, `startRequested`, `goalResumedFromMemory`, `toldToResumeGoal`, `observerSpectator`), `mindcraft-relaunches.txt` |
+| All of it, in time order | `events.jsonl` (`join.js`): `joined`, `left`, `said`, `died` from Paper; `decided` and `memSaving` from the model logs; `call` from the proxy; `watchdog:*` from the watchdog |
 | What ran | `run.json`, `settings.json`, `profiles/`, `server/server.properties`, `seed.txt`, `mindcraft-commit.txt`, `mindcraft-deps.txt`, `prices.json`, `loom-commit.txt`, `node-version.txt`, `files.sha256` |
 
 `mindcraft-stdout.log` is kept too. Its lines from all agents are interleaved, and the `Agent executed` lines carry no agent name, so the per-agent files are the authority.
 
 ## Known limits
 
-- An agent whose goal loop stopped (three answers with no command, which three provider errors in a row also cause) stays idle until somebody talks to it.
+- An agent whose goal loop stopped (three answers with no command, which three provider errors in a row also cause) stays idle until somebody talks to it. It is still in the world, so the watchdog does not act on it.
+- What froze the agent's event loop in `collectBlocks("acacia_log", 8)` is not known. It came right after the server's "ada_ash moved wrongly!" correction. A blocked process cannot be asked for its stack, so the watchdog only recovers from a freeze. It cannot explain one.
 - Mindcraft has no tier router: one model per agent for every call.
 - How Mindcraft behaves as a hardcore spectator after a death has not been watched yet.
 

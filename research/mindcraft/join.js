@@ -74,9 +74,18 @@ function costEvents (run) {
   })
 }
 
+function watchdogEvents (run) {
+  const logPath = path.join(run, 'watchdog.jsonl')
+  if (!fs.existsSync(logPath)) return []
+  return fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean).map((line) => {
+    const entry = JSON.parse(line)
+    return { ...entry, kind: `watchdog:${entry.kind}`, source: 'watchdog' }
+  })
+}
+
 function join (run) {
   const roster = fs.readFileSync(path.join(run, 'roster.txt'), 'utf8').split('\n').filter(Boolean)
-  return [...serverEvents(run, roster), ...decisionEvents(run, roster), ...costEvents(run)]
+  return [...serverEvents(run, roster), ...decisionEvents(run, roster), ...costEvents(run), ...watchdogEvents(run)]
     .sort((a, b) => a.t.localeCompare(b.t))
 }
 

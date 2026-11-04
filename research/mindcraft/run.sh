@@ -12,6 +12,8 @@
 #   LOOM_MINDCRAFT_MODEL         default gpt-5.4
 #   LOOM_MINDCRAFT_PROXY_PORT    default 18565
 #   LOOM_MINDCRAFT_MINDSERVER_PORT  default 8080
+#   LOOM_MINDCRAFT_GRACE_SECONDS    how long an agent may be off the server before
+#                                   watchdog.js restarts it, default 60
 set -euo pipefail
 
 usage() { echo "usage: $0 <agents 1-16> <minutes> <ceiling-usd>" >&2; exit 2; }
@@ -28,6 +30,7 @@ node_bin="$cache/node/bin/node"
 model="${LOOM_MINDCRAFT_MODEL:-gpt-5.4}"
 proxy_port="${LOOM_MINDCRAFT_PROXY_PORT:-18565}"
 mindserver_port="${LOOM_MINDCRAFT_MINDSERVER_PORT:-8080}"
+grace="${LOOM_MINDCRAFT_GRACE_SECONDS:-60}"
 upstream="${LOOM_MINDCRAFT_UPSTREAM:-https://api.openai.com}"
 # Paper 1.21.6 build 48, the newest stable build of the Minecraft version
 # Mindcraft recommends, which its patched mineflayer 4.33.0 supports.
@@ -131,12 +134,14 @@ cat > "$run/run.json" <<EOF
 {"agents":$agents,"minutes":$minutes,"ceilingUsd":$ceiling,"model":"$model","upstream":"$upstream","mindcraftCommit":"$(git -C "$mindcraft" rev-parse HEAD)","minecraftVersion":"$minecraft_version","paperJar":"$paper_jar_name","paperSha256":"$paper_sha","seed":"$seed"}
 EOF
 
-paper_pid="" proxy_pid="" mindcraft_pid=""
+paper_pid="" proxy_pid="" mindcraft_pid="" watchdog_pid=""
 cleaned=0
 cleanup() {
   [ "$cleaned" -eq 1 ] && return
   cleaned=1
   echo "stopping run $run"
+  # The watchdog goes first, so it cannot restart an agent that is being stopped.
+  if [ -n "$watchdog_pid" ]; then kill -TERM "$watchdog_pid" 2> /dev/null || true; wait "$watchdog_pid" 2> /dev/null || true; fi
   if [ -n "$mindcraft_pid" ] && kill -0 "$mindcraft_pid" 2> /dev/null; then
     kill -INT "$mindcraft_pid" 2> /dev/null || true
     for _ in $(seq 1 15); do kill -0 "$mindcraft_pid" 2> /dev/null || break; sleep 1; done
@@ -193,16 +198,29 @@ for name in "${roster[@]}"; do
   ln -s "$run/bots/$name" "$mindcraft/bots/$name"
 done
 profiles_json="[$(IFS=,; echo "${profiles[*]}")]"
-(cd "$mindcraft" && exec env OPENAI_API_KEY=sk-loom-proxy-holds-the-key LOG_ALL=true \
-  MINECRAFT_PORT=25565 MINDSERVER_PORT="$mindserver_port" PROFILES="$profiles_json" SETTINGS_JSON="$settings" \
-  "$node_bin" main.js > "$run/mindcraft-stdout.log" 2>&1) &
-mindcraft_pid=$!
+start_mindcraft() {
+  (cd "$mindcraft" && exec env OPENAI_API_KEY=sk-loom-proxy-holds-the-key LOG_ALL=true \
+    MINECRAFT_PORT=25565 MINDSERVER_PORT="$mindserver_port" PROFILES="$profiles_json" SETTINGS_JSON="$1" \
+    "$node_bin" main.js >> "$run/mindcraft-stdout.log" 2>&1) &
+  mindcraft_pid=$!
+}
+start_mindcraft "$settings"
+"$node_bin" "$here/watchdog.js" --run "$run" --mindcraft "$mindcraft" --mindserver-port "$mindserver_port" \
+  --roster "$(IFS=,; echo "${roster[*]}")" --console "$run/paper-console" --observer "$operator" \
+  --grace-seconds "$grace" > "$run/watchdog-stdout.log" 2>&1 &
+watchdog_pid=$!
 echo "mindcraft started: ${roster[*]} on $model, ceiling \$$ceiling, $minutes min"
-echo "join with Minecraft Java $minecraft_version at localhost:25565 as $operator (operator); MindServer UI http://localhost:$mindserver_port"
+echo "join with Minecraft Java $minecraft_version at localhost:25565 as $operator (operator, put in spectator on join); MindServer UI http://localhost:$mindserver_port"
 
 deadline=$(($(date +%s) + minutes * 60))
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  kill -0 "$mindcraft_pid" 2> /dev/null || { echo "mindcraft exited early" >&2; break; }
+  if ! kill -0 "$mindcraft_pid" 2> /dev/null; then
+    # Mindcraft itself went away: start it again, every agent from its memory.
+    echo "mindcraft exited early; starting it again from saved memory" >&2
+    date -u +%Y-%m-%dT%H:%M:%SZ >> "$run/mindcraft-relaunches.txt"
+    start_mindcraft "$("$node_bin" -e 'const s = JSON.parse(process.argv[1]); s.load_memory = true; s.init_message = "Agent process restarted."; console.log(JSON.stringify(s))' "$settings")"
+    sleep 10
+  fi
   kill -0 "$paper_pid" 2> /dev/null || { echo "paper exited early" >&2; break; }
   sleep 5
 done
