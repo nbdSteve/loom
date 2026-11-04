@@ -531,8 +531,10 @@ class PrimaryBehaviorGuard {
   // The server's reading at begin is where the pinned conditions must hold, so one that does not
   // hold them stops the run there, and the agent's first perception is then held to its clock only.
   beginFailure (witnessed) {
-    const expected = this.config.primaryBehavior.initialPositions[witnessed.agentId]
-    if (expected === undefined) return null
+    // A drawn world pins no positions, so its reading at begin is held to an empty inventory alone.
+    const positions = this.config.primaryBehavior.initialPositions
+    const expected = positions?.[witnessed.agentId]
+    if (positions !== undefined && expected === undefined) return null
     if (this.witnessedAtBegin.has(witnessed.agentId)) {
       return new RunFailure('startupFailed', `${witnessed.agentId} was read twice when the run began`)
     }
@@ -552,8 +554,9 @@ class PrimaryBehaviorGuard {
   }
 
   firstPerceptionFailure (first) {
-    const expected = this.config.primaryBehavior.initialPositions[first.agentId]
-    if (expected === undefined) return null
+    const positions = this.config.primaryBehavior.initialPositions
+    const expected = positions?.[first.agentId]
+    if (positions !== undefined && expected === undefined) return null
     const position = first.perception?.selfState?.position
     const inventory = first.perception?.selfState?.inventorySummary
     const worldClock = first.perceptionAudit?.worldClock
@@ -565,8 +568,10 @@ class PrimaryBehaviorGuard {
     }
     if (
       !Array.isArray(position) ||
-      position.length !== expected.length ||
-      position.some((coordinate, index) => coordinate !== expected[index]) ||
+      (expected !== undefined && (
+        position.length !== expected.length ||
+        position.some((coordinate, index) => coordinate !== expected[index])
+      )) ||
       !Array.isArray(inventory) ||
       inventory.length !== 0 ||
       worldClock === null ||

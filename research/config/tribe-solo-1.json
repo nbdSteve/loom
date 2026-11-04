@@ -1,5 +1,5 @@
 {
-  "experimentId": "2026-11-04-openai-1-agent-solo-r1",
+  "experimentId": "2026-11-04-openai-1-agent-solo-r2",
   "title": "One agent on a freshly drawn world, thinking every 3 s",
   "mode": "routine-v38-reliable-source",
   "agents": [
