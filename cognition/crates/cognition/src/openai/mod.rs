@@ -53,7 +53,6 @@ use crate::config::{bounded, ConfigError};
 use crate::model::{
     BackendError, BackendFailure, BackendFailureMapping, BackendResponseShape, Draft, ModelBackend,
 };
-use crate::offered::OfferedRefs;
 use crate::prompt::render;
 use crate::router::ModelRoute;
 
@@ -168,10 +167,7 @@ impl OpenAiBackend {
             route.model(),
             &prompt,
             self.config.max_output_tokens(),
-            wire::decision_schema_for(
-                &OfferedRefs::of(perception),
-                wire::GoalPhase::of(perception),
-            ),
+            wire::request_schema(perception),
         );
         let request_bytes = serde_json::to_vec(&request).map_err(|_| {
             openai_failure(
@@ -222,7 +218,12 @@ impl OpenAiBackend {
         }
         let parsed = Self::response_from_body(route.model(), status, &body)?;
         self.usage.append(route, perception, status, parsed.usage)?;
-        self.draft_from_response(route.model(), status, parsed)
+        self.draft_from_response(
+            route.model(),
+            status,
+            parsed,
+            wire::is_plan_review(perception),
+        )
     }
 
     /// Reads a response body, refusing one that will not fit.
@@ -286,6 +287,7 @@ impl OpenAiBackend {
         model: &str,
         status: StatusCode,
         parsed: wire::ChatResponse,
+        planning: bool,
     ) -> Result<Draft, BackendError> {
         let choice = parsed.choices.into_iter().next().ok_or_else(|| {
             openai_failure(
@@ -341,7 +343,12 @@ impl OpenAiBackend {
                     BackendFailureMapping::ProviderAnswerEmpty,
                 )
             })?;
-        wire::draft_from_answer(&content).map_err(|message| {
+        let drafted = if planning {
+            wire::planning_draft_from_answer(&content)
+        } else {
+            wire::draft_from_answer(&content)
+        };
+        drafted.map_err(|message| {
             openai_failure(
                 message,
                 model,
@@ -360,8 +367,9 @@ impl OpenAiBackend {
     /// configured usage evidence can be made durable before answer validation.
     #[cfg(test)]
     fn draft_from_body(&self, body: &[u8]) -> Result<Draft, BackendError> {
-        Self::response_from_body("test-model", StatusCode::OK, body)
-            .and_then(|parsed| self.draft_from_response("test-model", StatusCode::OK, parsed))
+        Self::response_from_body("test-model", StatusCode::OK, body).and_then(|parsed| {
+            self.draft_from_response("test-model", StatusCode::OK, parsed, false)
+        })
     }
 
     /// Why a request never produced a response, in Loom's own words.
@@ -481,10 +489,11 @@ fn status_failure(
         ),
         404 => (
             format!(
-                "the model provider does not know the model '{model}' (HTTP 404{told}); check {fast} and {deep}",
+                "the model provider does not know the model '{model}' (HTTP 404{told}); check {fast}, {deep} and {planning}",
                 model = bounded(model),
                 fast = settings::FAST_MODEL_VAR,
-                deep = settings::DEEP_MODEL_VAR
+                deep = settings::DEEP_MODEL_VAR,
+                planning = settings::PLANNING_MODEL_VAR
             ),
             BackendFailureMapping::ProviderModel,
         ),

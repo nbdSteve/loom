@@ -92,7 +92,9 @@ impl ModelBackend for PathExerciser {
         // As the scripted stand-in does: a request schema the provider would refuse fails here.
         std::future::ready(
             if crate::openai::wire::request_offers_an_answer(perception) {
-                Ok(Self::draft_now(route, perception))
+                Ok(crate::model::stand_in_draft(perception, || {
+                    Self::draft_now(route, perception)
+                }))
             } else {
                 Err(BackendError::new(crate::model::NO_ANSWER_OFFERED))
             },
@@ -103,6 +105,7 @@ impl ModelBackend for PathExerciser {
 /// One answer, worded as the exerciser's.
 fn answer(intent: Intent, goal: Option<GoalChoice>, why: &str) -> Draft {
     Draft {
+        plan: None,
         intent,
         reasoning: format!("path exerciser: {why}"),
         goal,
@@ -1726,10 +1729,7 @@ mod tests {
             Some(loom_contract::GoalStepResult::NoProgress)
         );
         // The answer is one its own request schema offers.
-        let schema = crate::openai::wire::decision_schema_for(
-            &OfferedRefs::of(&seen),
-            crate::openai::wire::GoalPhase::of(&seen),
-        );
+        let schema = crate::openai::wire::decision_schema_for(&OfferedRefs::of(&seen));
         assert!(crate::openai::instance::admits(
             &schema,
             &crate::openai::instance::answer_of(&schema, &stale)

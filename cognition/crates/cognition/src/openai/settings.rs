@@ -37,6 +37,12 @@ pub const FAST_MODEL_VAR: &str = "LOOM_OPENAI_FAST_MODEL";
 /// Environment variable naming the model that answers pivotal decisions.
 pub const DEEP_MODEL_VAR: &str = "LOOM_OPENAI_DEEP_MODEL";
 
+/// Environment variable naming the planning model.
+pub const PLANNING_MODEL_VAR: &str = "LOOM_OPENAI_PLANNING_MODEL";
+
+/// The planning model when [`PLANNING_MODEL_VAR`] is unset.
+pub const DEFAULT_PLANNING_MODEL: &str = "gpt-5.4";
+
 /// Environment variable bounding how long one provider call may take.
 pub const TIMEOUT_MS_VAR: &str = "LOOM_OPENAI_TIMEOUT_MS";
 
@@ -202,7 +208,8 @@ impl OpenAiConfig {
             catalog: ModelCatalog::new(
                 &env.or_default(FAST_MODEL_VAR, DEFAULT_FAST_MODEL)?,
                 &env.or_default(DEEP_MODEL_VAR, DEFAULT_DEEP_MODEL)?,
-            ),
+            )
+            .with_planning(&env.or_default(PLANNING_MODEL_VAR, DEFAULT_PLANNING_MODEL)?),
             request_timeout: env.positive_millis(TIMEOUT_MS_VAR, DEFAULT_TIMEOUT_MS)?,
             max_output_tokens: env
                 .positive_u32(MAX_OUTPUT_TOKENS_VAR, DEFAULT_MAX_OUTPUT_TOKENS)?,

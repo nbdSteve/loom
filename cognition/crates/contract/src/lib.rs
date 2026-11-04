@@ -24,6 +24,8 @@ pub enum DecisionImportance {
     Notable,
     #[serde(rename = "PIVOTAL")]
     Pivotal,
+    #[serde(rename = "PLANNING")]
+    Planning,
 }
 
 /// A horizontal compass bearing from the agent to something it can see.
@@ -1143,6 +1145,13 @@ pub enum Trigger {
     /// A notable block came into the agent's view.
     #[serde(rename = "blockSighted")]
     BlockSighted { block: String },
+    /// A planning call: the agent's objective, subgoals and current steps are set.
+    #[serde(rename = "planReview")]
+    PlanReview {
+        cause: PlanCause,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
     /// A scheduled prompt for the agent to reconsider its goals.
     #[serde(rename = "goalReview")]
     GoalReview,
@@ -1224,6 +1233,85 @@ pub struct Perception {
         deserialize_with = "bounded_horizon"
     )]
     pub horizon: Vec<HorizonGoal>,
+    /// The agent's own plan, kept by the body from its earlier answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<Plan>,
+    /// The agent's latest actions, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent: Vec<RecentAction>,
+}
+
+/// Most steps one plan holds.
+pub const MAX_PLAN_STEPS: usize = 8;
+
+/// Most recent actions one perception carries.
+pub const MAX_RECENT_ACTIONS: usize = 10;
+
+/// A model-owned plan in three levels: a long-term objective, its ordered subgoals, and the
+/// ordered steps of the current subgoal. Subgoals before `subgoal` and steps before `step` are done.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Plan {
+    pub objective: String,
+    pub subgoals: Vec<String>,
+    pub subgoal: i64,
+    pub steps: Vec<String>,
+    pub step: i64,
+}
+
+/// One past action: its action tag, the body's outcome tag, and the inventory change after it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecentAction {
+    pub action: String,
+    pub outcome: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<ItemChange>,
+}
+
+/// How many of one item the inventory gained (positive) or lost (negative).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ItemChange {
+    pub item: String,
+    pub delta: i64,
+}
+
+/// Why a planning call was made.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanCause {
+    #[serde(rename = "start")]
+    Start,
+    #[serde(rename = "subgoalDone")]
+    SubgoalDone,
+    #[serde(rename = "blocked")]
+    Blocked,
+    #[serde(rename = "checkIn")]
+    CheckIn,
+}
+
+/// What a decision does to the agent's plan. Step calls continue, mark a step done or ask for a
+/// replan; only a planning call sets the objective and subgoals.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "update")]
+pub enum PlanUpdate {
+    /// Keep the plan; the decision works on the current step.
+    #[serde(rename = "continue")]
+    Continue,
+    /// The current step is done; the decision starts the next.
+    #[serde(rename = "stepDone")]
+    StepDone,
+    /// The current subgoal is blocked; ask the planner for a new plan.
+    #[serde(rename = "replan")]
+    Replan { reason: String },
+    /// The objective, the ordered remaining subgoals (the first is current) and its steps.
+    #[serde(rename = "replacePlan")]
+    ReplacePlan {
+        objective: String,
+        subgoals: Vec<String>,
+        steps: Vec<String>,
+        reason: String,
+    },
 }
 
 /// Most recalled sources one perception carries.
@@ -2108,4 +2196,7 @@ pub struct Decision {
     /// The decision's explicit goal choice; absent leaves any held goal unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal: Option<GoalChoice>,
+    /// What this decision does to the agent's plan; absent is a continue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PlanUpdate>,
 }

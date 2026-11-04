@@ -27,13 +27,10 @@
 //! give a second, driftable statement of the same thing.
 
 use loom_contract::{
-    Bearing, CraftingOption, DayPhase, DecisionImportance, DropFate, ExploreTarget, GoalRefusal,
-    GoalSummary, IntentAction, InventoryChange, InventoryStack, Observation, ObservationKind,
-    OwnDrop, Perception, SelfState, StepEvidence, Trigger, WorldState,
-    MAX_GOAL_STEPS_WITHOUT_PROGRESS, MAX_OWN_DROPS, MAX_PERCEPTION_OBSERVATIONS,
+    Bearing, CraftingOption, DayPhase, DecisionImportance, DropFate, ExploreTarget, InventoryStack,
+    Observation, ObservationKind, OwnDrop, Perception, Plan, PlanCause, RecentAction, SelfState,
+    Trigger, WorldState, MAX_OWN_DROPS, MAX_PERCEPTION_OBSERVATIONS,
 };
-
-use std::fmt::Write as _;
 
 use crate::config::bounded_to;
 use crate::router::ModelRoute;
@@ -46,6 +43,9 @@ pub const NOTABLE_PROMPT_VERSION: &str = "notable-v38";
 
 /// Prompt version for [`DecisionImportance::Pivotal`].
 pub const PIVOTAL_PROMPT_VERSION: &str = "pivotal-v38";
+
+/// Version of the planning prompt template.
+pub const PLANNING_PROMPT_VERSION: &str = "planning-v1";
 
 /// How many surroundings entries reach the prompt.
 ///
@@ -165,103 +165,43 @@ to turn to look at something.
 - You are also told what part of the world's day it is and how long is left \
 before nightfall. Night is more dangerous than day, and a plan that needs \
 daylight needs to fit in the daylight that is left.
-- Your body validates what you ask for and may refuse it. Ask for one clear, \
-achievable thing rather than a plan.
+- Your body validates what you ask for and may refuse it. Each answer is one clear, \
+achievable action; your plan says where it leads.
 - Your reasoning is recorded permanently for research. Say what actually drove \
 the choice, briefly and honestly.
-
-You may hold one short-term goal of your own, and only a goal review can change it: a \
-scheduled one, or the one that follows soon after a step your goal took has ended. A goal is \
-achieved by holding something: its success condition is an item, named exactly as a stack or a \
-dropped item shows it, and the total of it you must carry, counting what you carry already; your \
-body words the goal from those two and measures it from your own inventory. At a goal review you \
-are shown the goal you hold, if any: its success condition and whether it is met, how your \
-inventory changed since your last step, the step you last took and what showed for it, and how \
-many steps in a row advanced nothing. If your body refused your last goal decision, you are told \
-why, once. Judge it against that evidence, not against a wish to look busy:
-- adopt: take up a new goal when you hold none and the evidence gives you one worth having. Name \
-the item and the total of it you must hold; your action is the step, which your body words. The \
-total must be more than you hold and no more than you hold plus what sight can be counted on to \
-give you, as you are told; only items something in sight could give are offered. A goal one \
-step could meet is not offered: ask two or more beyond what you hold and your own drops of it \
-lying. Holding no goal is a legitimate state. With none held you may make no goal choice.
-- continue: keep the held goal, judge the previous step, and take its next step with this \
-answer's action. The step is one toward a source of its item, collecting your own drop of it \
-first; while what you hold plus what is in sight could not meet all of it, the step may instead be a \
-walk to the edge of sight to look for more, which advances the goal only when it brings a source \
-into sight.
-- revise: change the held goal's total, never its item, and its step, when the evidence showed \
-the old target will not work, or for more of the same item once met, and judge the previous \
-step. A revise keeps the goal, so more of the same item is never a replace. Revising keeps the \
-count of steps that advanced nothing.
-- replace: drop the held goal and take up one for a different item in the same answer - name \
-it and its total, take its step with this answer's action, judge the previous step, and state \
-why the held goal ends. Once the held goal \
-has advanced nothing for three steps in a row, replace with a goal for a different item is the \
-only way to keep acting toward a goal, and an item made from the stalled one is not offered, \
-because it needs the same source first; a replace made from an unmet goal's item keeps its count \
-of steps that advanced nothing. When the held goal's condition is met, replace completes \
-it and adopts the next in one answer, so finishing one goal need not cost a review.
-- complete: drop the held goal because your body shows its success condition met, when nothing \
-in sight gives a next goal; while something does, replace it with the next goal instead.
-- abandon: drop the held goal, stating why, because sight can no longer meet it and looking \
-further has not found a source, or it stalled. A goal sight can still meet is pursued, not \
-abandoned.
-While you hold a goal every answer must say what it does with it, and your action is the goal's \
-step. Each goal item is offered only its own steps: digging a block in reach that can drop it, \
-collecting a drop of it, crafting it, or walking onto a block out of dig reach that can drop it. \
-Adopt, continue, revise or replace beside idle or rest takes no step and is not offered, as is a \
-total you already hold or one beyond what sight can be counted on to give. At a goal review \
-with cells at the edge of sight offered, idle and rest are not offered at all: when nothing in \
-sight is worth doing, walk to look further. There is something to collect \
-only when a dropped item is listed, and a dropped item your body found no way to from where \
-you stand is not offered. Your body sees only the nearest blocks, except that at a goal review it \
-also looks further for logs and berry bushes: one seen further off is out of dig reach, a place to \
-walk toward by the cell at the edge of sight in its direction, never one to dig from where you \
-stand. A dig the server saw drop something for you is told to you with where that drop is now, \
-and a drop of yours still lying is offered to collect by its ref, in sight or not. While your own \
-drop of the goal's item lies in reach, the goal's next step is to collect it, with approach true \
-when it is not beside you; digging for more is not offered until you hold it, because a drop left \
-lying is one another agent can take. Only evidence advances a goal: the held count of its item \
-rising, or the step you took carried out with evidence - an action after which you hold more, a \
-walk onto a block out of dig reach that drops the goal's item, reaching it somewhere the goal has \
-not already been, a walk to the cell beside a source in sight out of dig reach that brings it \
-within reach of a dig, or a walk to the edge of sight that brings a source of the item into a sight \
-that showed none. A drop is not progress until you hold it, but while it lies in reach it does \
-not count toward the three steps either, because its collect is the next step; a walk to \
-anything else is no step. What a \
-block drops is random: you are told the fewest and the most one dig has dropped and how many one \
-dig drops on average in the server's own sampled rolls. The most is only its best case and a dig \
-may drop none, so what sight can be counted on to give is that average, which for a rare drop - \
-a stick from leaves - is far below the middle of its range. A dig that drops nothing, a \
-drop someone else takes, moving about, falling or walking back is not progress, and revising is \
-not progress either. After three steps in a row that advanced nothing, your body refuses \
-continue and revise; only replace with a different item, abandon, or complete when met, is \
-offered then. When your success condition is met you must complete the goal, replace it with \
-the next, or revise it to a total you do not yet hold, at that review; anything else is refused \
-with your action.
-A failed step does not end a goal a reliable source can meet: take another offered step. A rare \
-drop, such as seeds from grass, is no such source: while it is all sight gives, set no goal and \
-walk to the edge of sight. Prefer a recipe or high-yield block. Once a goal is met, make the next \
-one use what it gave you.
 
 Night brings creatures that hunt you, and open ground gives them every side to reach you from. \
 You are told your cover: how many of the nine sides around your body - four beside your feet, \
 four beside your head, and the one over your head - are closed, read from the ground itself, \
 and whether the space you stand in is sealed, closed on every side so nothing can walk, climb or \
-swim in. As night nears, and through the night, you may set a shelter goal instead of an item \
-goal: its success condition is being sealed in, measured from the ground and never from what you \
-say. It is stepped only by what your cover offers: digging the block under your feet when that \
-drops you into more enclosed ground - three digs down on open grass leave one side open, over \
-your head, closable from inside - placing a solid block you hold against a named support so it \
-closes an open side, equipping a solid block into your main hand first when none is there, or \
-walking onto a block whose cell is more enclosed than yours, which is natural cover. A step \
-counts only when the ground then shows you more enclosed than the shelter goal had yet been where \
-you stand, so moving away and back counts nothing. When sides are left to close and you hold \
-nothing solid, digging a block that drops a solid block, never a side of your shelter or the block \
-under you, or collecting one lying near, is a step of the shelter goal itself. Once \
-sealed in, complete the shelter goal and stay: rest is a fine answer then, and creatures outside \
+swim in. You can deepen it by digging the block under your feet, close an open side by placing a \
+solid block you hold against a named support, or walk onto more enclosed ground. Once sealed in, \
+rest is a fine answer, and creatures outside \
 are not news. In a pit you cannot walk out of, no flight is offered; closing it is your defence.";
+
+/// The step model's plan instruction.
+const STEP_BRIEF: &str = "\
+Your planner keeps your plan, shown to you on every call with done marks: an objective in plain \
+words, its ordered subgoals, and the current subgoal's ordered steps. You are also shown your last \
+ten actions, what your body answered to each, and how your inventory changed after it. Pick the \
+action for the current step, and make exactly one plan update: continue while this action works on \
+the current step; stepDone when that step is finished and this action starts the next; replan, with \
+the reason, only when the current subgoal is blocked or impossible. You never change the objective, \
+the subgoals or the steps yourself. A failed action is not a reason to replan: try another way to \
+do the same step.";
+
+/// The planner's instruction.
+const PLANNING_BRIEF: &str = "\
+You are this agent's planner. You do not act: you keep the plan a faster step model follows one \
+action at a time. You are shown the situation, the current plan with done marks, the agent's last \
+ten actions with what its body answered and how its inventory changed, why the plan is up for \
+review, and the step model's reason when it asked for a new plan. Answer with the whole plan: the \
+objective in plain words, the ordered remaining subgoals with the first being the current one, \
+that subgoal's short ordered steps, and what changed and why. Keep the objective and the remaining \
+subgoals stable unless they are done, impossible, or danger forces a change. Each step is one or a \
+few actions the body can take. Build on what the agent already holds: logs, then planks, then a \
+crafting table, then a wooden pickaxe, then stone tools, then a shelter. Ask for amounts the next \
+thing made needs, not large round numbers.";
 
 /// The per-tier closing instruction.
 ///
@@ -272,7 +212,7 @@ const fn tier_brief(tier: DecisionImportance) -> &'static str {
     match tier {
         DecisionImportance::Routine => {
             "Keep this routine decision simple and cheap. If one safe, reversible \
-             action can advance a self-chosen short-term goal or reduce relevant \
+             action can advance your plan's current step or reduce relevant \
              uncertainty, take that action. An empty inventory still permits movement \
              and any offered block-ref dig. When nothing in sight is worth doing, \
              look further; idle is correct only when nowhere is offered to look. \
@@ -288,6 +228,9 @@ const fn tier_brief(tier: DecisionImportance) -> &'static str {
              you and what you can reach, then choose the action most likely to \
              leave you alive."
         }
+        DecisionImportance::Planning => {
+            "Plan carefully: the step model follows your plan until you are asked again."
+        }
     }
 }
 
@@ -298,8 +241,20 @@ const fn tier_brief(tier: DecisionImportance) -> &'static str {
 /// recording.
 #[must_use]
 pub fn render(route: &ModelRoute, perception: &Perception) -> Prompt {
+    if crate::openai::wire::is_plan_review(perception) {
+        return Prompt {
+            system: format!(
+                "{AGENT_BRIEF}\n\n{PLANNING_BRIEF}\n\n{tier}",
+                tier = tier_brief(DecisionImportance::Planning)
+            ),
+            situation: situation_of(perception),
+        };
+    }
     Prompt {
-        system: format!("{AGENT_BRIEF}\n\n{tier}", tier = tier_brief(route.tier())),
+        system: format!(
+            "{AGENT_BRIEF}\n\n{STEP_BRIEF}\n\n{tier}",
+            tier = tier_brief(route.tier())
+        ),
         situation: situation_of(perception),
     }
 }
@@ -329,24 +284,76 @@ fn situation_of(perception: &Perception) -> String {
     lines.extend(explore_line(&perception.explore));
     lines.extend(recalled_line(&perception.recalled));
     if perception.trigger.reviews_goal() {
-        lines.extend(horizon_line(
-            &perception.horizon,
-            !perception.explore.is_empty(),
-        ));
         lines.extend(danger_line(perception));
         lines.extend(hunger_line(perception));
     }
     lines.extend(no_dropped_item_line(&perception.surroundings));
-    let last_step = perception
-        .goal
-        .as_ref()
-        .and_then(|goal| goal.last_step.as_ref())
-        .map(|step| step.request_id.as_str());
-    lines.extend(own_drops_line(&perception.self_state.own_drops, last_step));
-    if perception.trigger.reviews_goal() {
-        lines.push(capacity_line(perception));
-        lines.extend(perception.last_refusal.as_ref().map(refusal_line));
-        lines.push(goal_line(perception.goal.as_ref()));
+    lines.extend(own_drops_line(&perception.self_state.own_drops, None));
+    lines.push(recent_line(&perception.recent));
+    lines.push(plan_line(perception.plan.as_ref()));
+    lines.join("\n")
+}
+
+/// The plan with done marks: the objective, each subgoal, and the current subgoal's steps.
+fn plan_line(plan: Option<&Plan>) -> String {
+    let Some(plan) = plan else {
+        return "Your plan: none yet; your planner sets one.".to_owned();
+    };
+    let mark = |index: usize, current: i64| match usize::try_from(current) {
+        Ok(now) if index < now => "[done]",
+        Ok(now) if index == now => "[now]",
+        _ => "[ ]",
+    };
+    let mut lines = vec![format!("Your plan: {}", field(&plan.objective))];
+    for (index, subgoal) in plan.subgoals.iter().enumerate() {
+        lines.push(format!(
+            "  {} subgoal {}: {}",
+            mark(index, plan.subgoal),
+            index + 1,
+            field(subgoal)
+        ));
+    }
+    if usize::try_from(plan.subgoal).is_ok_and(|now| now >= plan.subgoals.len()) {
+        lines.push("  Every subgoal is done; your planner sets what comes next.".to_owned());
+        return lines.join("\n");
+    }
+    lines.push("  Steps of the current subgoal:".to_owned());
+    for (index, step) in plan.steps.iter().enumerate() {
+        lines.push(format!(
+            "    {} step {}: {}",
+            mark(index, plan.step),
+            index + 1,
+            field(step)
+        ));
+    }
+    if usize::try_from(plan.step).is_ok_and(|now| now >= plan.steps.len()) {
+        lines.push("    Every step is done; your planner sets what comes next.".to_owned());
+    }
+    lines.join("\n")
+}
+
+/// The latest actions, oldest first, each with the body's answer and the inventory change after it.
+fn recent_line(recent: &[RecentAction]) -> String {
+    if recent.is_empty() {
+        return "Your recent actions: none yet.".to_owned();
+    }
+    let mut lines = vec!["Your recent actions, oldest first:".to_owned()];
+    for action in recent {
+        let changes: Vec<String> = action
+            .changes
+            .iter()
+            .map(|change| format!("{:+} {}", change.delta, field(&change.item)))
+            .collect();
+        let after = if changes.is_empty() {
+            "inventory unchanged".to_owned()
+        } else {
+            changes.join(", ")
+        };
+        lines.push(format!(
+            "  {} -> {}; {after}",
+            field(&action.action),
+            field(&action.outcome)
+        ));
     }
     lines.join("\n")
 }
@@ -354,6 +361,21 @@ fn situation_of(perception: &Perception) -> String {
 /// The trigger, as a sentence.
 fn trigger_line(trigger: &Trigger) -> String {
     match trigger {
+        Trigger::PlanReview { cause, reason } => {
+            let why = match cause {
+                PlanCause::Start => "there is no plan yet",
+                PlanCause::SubgoalDone => "the current subgoal's steps are all done",
+                PlanCause::Blocked => "the step model found the current subgoal blocked",
+                PlanCause::CheckIn => "it is time to check the plan",
+            };
+            match reason {
+                Some(reason) => format!(
+                    "your plan is up for review: {why}. The step model said: \"{}\"",
+                    field(reason)
+                ),
+                None => format!("your plan is up for review: {why}."),
+            }
+        }
         Trigger::Spoken { from, text } => format!(
             "{who} spoke to you and said: \"{what}\"",
             who = field(from),
@@ -433,281 +455,6 @@ fn trigger_line(trigger: &Trigger) -> String {
              showed."
                 .to_owned()
         }
-    }
-}
-
-/// A discovery goal's success condition and, once met, what must follow it.
-fn discovery_condition(goal: &GoalSummary) -> Vec<String> {
-    let mut parts = Vec::new();
-    if goal.discovery {
-        let met = goal
-            .progress
-            .as_ref()
-            .is_some_and(|progress| progress.condition_met);
-        parts.push(format!(
-            "Success condition: a walk to the edge of sight brings into view a useful resource your footing does not give; it is {status}.",
-            status = if met { "MET" } else { "not met yet" }
-        ));
-        if met {
-            parts.push(
-                "Because it is met, replace it in this same answer with a goal for a resource it revealed."
-                    .to_owned(),
-            );
-        }
-    }
-    parts
-}
-
-/// A shelter goal's success condition and its measured cover, and the shelter a subgoal feeds.
-fn shelter_condition(goal: &GoalSummary) -> Vec<String> {
-    let mut parts = Vec::new();
-    if goal.shelter {
-        let progress = goal.progress.as_ref();
-        let met = progress.is_some_and(|progress| progress.condition_met);
-        parts.push(format!(
-            "Success condition: the ground seals the space you stand in; it is {status}{cover}.",
-            status = if met { "MET" } else { "not met yet" },
-            cover = progress.and_then(|progress| progress.cover).map_or_else(String::new, |cover| {
-                format!(
-                    ", with {closed} of 9 sides closed and {closable} more closable from where you stand at the last measure",
-                    closed = cover.closed,
-                    closable = cover.closable
-                )
-            })
-        ));
-        if met {
-            parts.push(
-                "Because it is met, complete this goal and stay sealed in, or replace it with an item goal sight gives."
-                    .to_owned(),
-            );
-        }
-    }
-    if let Some(shelter) = &goal.feeds {
-        parts.push(format!(
-            "This is a resource subgoal feeding your shelter goal {shelter}: complete it once met, or abandon it, and the shelter goal is held again with that answer's action as its step.",
-            shelter = field(shelter)
-        ));
-    }
-    parts
-}
-
-/// The held goal, its revision, and the body's answer to the last step under it.
-///
-/// Rendered at a goal review only, because that is the only perception the body
-/// carries a goal into and the only one whose goal choice the ledger resolves.
-/// Every value is this agent's own: the summary is the one its own perception
-/// carried, and nothing here reads beyond the perception being rendered.
-fn goal_line(goal: Option<&GoalSummary>) -> String {
-    let Some(goal) = goal else {
-        return "Your goal: you hold no short-term goal.".to_owned();
-    };
-    let step = goal.last_step.as_ref().map_or_else(
-        || "no step under it has been answered yet".to_owned(),
-        |step| {
-            format!(
-                "your last step under it was {action} and your body reported {outcome}",
-                action = field(&step.action),
-                outcome = field(&step.outcome)
-            )
-        },
-    );
-    let mut parts = vec![format!(
-        "Your goal: \"{statement}\" (revision {revision}, adopted at tick {tick}); {step}.",
-        statement = field(&goal.statement),
-        revision = goal.revision,
-        tick = goal.adopted_tick
-    )];
-    parts.extend(discovery_condition(goal));
-    parts.extend(shelter_condition(goal));
-    if let (Some(item), Some(count)) = (&goal.success_item, goal.success_count) {
-        let held = goal
-            .progress
-            .as_ref()
-            .map_or(0, |progress| progress.condition_held);
-        let met = goal
-            .progress
-            .as_ref()
-            .is_some_and(|progress| progress.condition_met);
-        parts.push(format!(
-            "Success condition: hold {count} {item} in total; you hold {held} now, so it is {status}.",
-            item = field(item),
-            status = if met { "MET" } else { "not met yet" }
-        ));
-        if met {
-            parts.push(
-                "Because it is met, you must complete this goal now, replace it with your next goal in this same answer, or revise it to a target you do not yet hold."
-                    .to_owned(),
-            );
-        }
-    }
-    if let Some(chosen) = &goal.step {
-        let typed = goal.step_action.map_or_else(String::new, |action| {
-            format!(
-                " ({action} on {target})",
-                action = action_word(action),
-                target = goal.step_ref.as_deref().map_or("nothing".to_owned(), field)
-            )
-        });
-        parts.push(format!(
-            "The step you chose last time: \"{}\"{typed}.",
-            field(chosen)
-        ));
-    }
-    if let Some(progress) = &goal.progress {
-        parts.push(format!(
-            "Since then your inventory {delta}; the success condition {advanced}, and your step \
-             {carried}; {count} step{plural} in a row advanced nothing (continue and revise are \
-             refused at {bound}).",
-            delta = delta_phrase(&progress.inventory_delta),
-            advanced = if progress.condition_advanced {
-                "advanced"
-            } else {
-                "did not advance"
-            },
-            carried = match progress.step_evidence {
-                StepEvidence::Arrived => "reached the target you named",
-                StepEvidence::Gained => "gained you the goal's item",
-                StepEvidence::GainedInput => {
-                    "gained you an item a recipe for the goal's item is made from"
-                }
-                StepEvidence::Dropped => {
-                    "made a drop the server saw your dig make, which is not progress until you hold it"
-                }
-                StepEvidence::Revealed => {
-                    "walked to the edge of sight and brought a source of the goal's item into sight"
-                }
-                StepEvidence::Covered => {
-                    "left you more enclosed than this shelter goal had yet been"
-                }
-                StepEvidence::None => "showed no evidence and advanced nothing",
-            },
-            count = progress.steps_without_progress,
-            plural = if progress.steps_without_progress == 1 {
-                ""
-            } else {
-                "s"
-            },
-            bound = MAX_GOAL_STEPS_WITHOUT_PROGRESS,
-        ));
-    }
-    parts.join(" ")
-}
-
-/// Why the body refused the agent's previous goal decision, with the numbers it judged by, so the
-/// next answer can correct the decision rather than repeat it (r15: eight success counts were
-/// refused as unobtainable and the next review was told nothing of it).
-fn refusal_line(refusal: &GoalRefusal) -> String {
-    let why = match refusal.outcome.as_str() {
-        "goalSuccessUnobtainable" => "its total was more than you held plus what sight could give",
-        "goalAlreadyMet" => "its total was one you already held",
-        "goalStepIdle" => "it pursued the goal while idling or resting, which is no step",
-        "goalConditionMetIgnored" => {
-            "it neither completed nor revised a goal whose condition was met"
-        }
-        "goalCompletionUnmet" => "it completed a goal your inventory did not show met",
-        "goalChoiceMissing" => "it acted while you held a goal and said nothing of the goal",
-        "goalStepUnproductive" => {
-            "its action could not give the goal's item, or was no step your cover offered a shelter goal"
-        }
-        "goalOwnDropIgnored" => {
-            "it did not collect your own drop of the goal's item that lay in reach"
-        }
-        "goalAbandonedAchievable" => {
-            "it abandoned a goal that what you held and saw could still meet"
-        }
-        "goalReviseItemChanged" => {
-            "it revised the goal to a different item, which is a new goal: replace instead"
-        }
-        "goalReviseUnchanged" => {
-            "it revised the goal to the total it already had, which changes nothing: continue instead"
-        }
-        "goalCrowdsExploration" => {
-            "it set a goal sight hands over whole while there was ground to look further at: set a goal past what sight gives, or walk to look"
-        }
-        "goalCompletedWithoutNext" => {
-            "it completed a met goal while sight gave a next one: replace it with the next instead"
-        }
-        "goalDiscoveryNotOffered" => {
-            "it set a discovery goal while something in sight, memory or hand grounded an item goal, or nowhere was offered to look"
-        }
-        "goalStalled" => "the goal had advanced nothing for three steps in a row, so it ended",
-        "goalShelterNotOffered" => {
-            "it set a shelter goal where none was offered: night was not near, you were already sealed in, or your cover offered no step"
-        }
-        "goalFeedsNotOffered" => {
-            "it adopted a resource subgoal under a shelter, which is no goal of its own: gather a closer as a step of the shelter goal instead"
-        }
-        "goalTrivial" => {
-            "its total was one step's worth: ask more than one craft, dig or collect could give, and at least two more than you hold and your own drops of it lying"
-        }
-        "goalPassiveBesideExploration" => {
-            "it idled or rested while cells at the edge of sight were offered: walk to one to look further instead"
-        }
-        "goalReplaceSameItem" => {
-            "it replaced the goal with more of its own item, which is a new goal for nothing new: revise it instead"
-        }
-        "goalReasonMissing" => "it ended the held goal without saying why",
-        "goalReasonUnsupported" => {
-            "the reason it gave for ending the held goal was not true of what your body measured"
-        }
-        "goalSubgoalReplaced" => {
-            "it replaced a resource subgoal, which would drop the shelter goal it feeds: complete or abandon it instead"
-        }
-        "goalSuccessTargetMissing" => "it set a goal without its item and total",
-        "goalStepResultMissing" => "it did not judge the previous step",
-        _ => "it broke a goal rule",
-    };
-    let mut line = format!(
-        "Your body refused your last goal decision before acting, because {why} ({outcome}).",
-        outcome = field(&refusal.outcome)
-    );
-    if let (Some(item), Some(asked)) = (&refusal.success_item, refusal.asked) {
-        let _ = write!(
-            line,
-            " It asked to hold {asked} {item} in total; you held {held}, and sight could give {capacity} more.",
-            item = field(item),
-            held = refusal.held.unwrap_or(0),
-            capacity = refusal.capacity.unwrap_or(0),
-        );
-    }
-    line
-}
-
-/// How the inventory changed, item by item, or that it did not.
-fn delta_phrase(delta: &[InventoryChange]) -> String {
-    if delta.is_empty() {
-        return "did not change".to_owned();
-    }
-    let changes = delta
-        .iter()
-        .map(|change| {
-            format!(
-                "{change:+} {what}",
-                change = change.change,
-                what = field(&change.what)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("changed by {changes}")
-}
-
-/// The action tag a typed step names.
-const fn action_word(action: IntentAction) -> &'static str {
-    match action {
-        IntentAction::Say => "say",
-        IntentAction::MoveTo => "moveTo",
-        IntentAction::Flee => "flee",
-        IntentAction::Eat => "eat",
-        IntentAction::Dig => "dig",
-        IntentAction::Collect => "collect",
-        IntentAction::Place => "place",
-        IntentAction::Equip => "equip",
-        IntentAction::Craft => "craft",
-        IntentAction::Attack => "attack",
-        IntentAction::Sleep => "sleep",
-        IntentAction::Rest => "rest",
-        IntentAction::Idle => "idle",
     }
 }
 
@@ -987,80 +734,6 @@ fn own_drops_line(drops: &[OwnDrop], last_step: Option<&str>) -> Option<String> 
     Some(format!("What your own digs dropped: {told}."))
 }
 
-/// How many more of each item what is in sight could give: the most a success count may ask
-/// beyond what is held (r14 kappa raised a stick goal with nothing in sight to give one).
-fn capacity_line(perception: &Perception) -> String {
-    let offered = crate::offered::OfferedRefs::of(perception);
-    let mut lines = Vec::new();
-    if offered.capacity.is_empty() {
-        lines.push(if offered.explore_targets.is_empty() {
-            "Nothing in sight can be counted on to give you more of any item, so no goal can be set now."
-                .to_owned()
-        } else {
-            "Nothing in sight can be counted on to give you more of any item, so no item goal can be set now: walk to the edge of sight to look further."
-                .to_owned()
-        });
-    } else {
-        let shown = offered
-            .capacity
-            .iter()
-            .take(MAX_YIELD_ITEMS)
-            .map(|(item, count)| {
-                let best = offered
-                    .best_case
-                    .iter()
-                    .find(|(name, _)| name == item)
-                    .map_or(*count, |(_, best)| *best);
-                format!("{count} more {} (at best {best})", field(item))
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        lines.push(format!(
-            "What is in sight can be counted on to give you {shown}{}, beyond what you hold; a goal may count only on the first number.",
-            omitted(
-                hidden_beyond(offered.capacity.len(), MAX_YIELD_ITEMS),
-                "more item",
-                "more items"
-            )
-        ));
-    }
-    if offered.discovery_offered() {
-        lines.push(
-            "Nothing you see, remember or hold grounds an item goal: set a discovery goal (discover: true) and walk to a cell at the edge of sight; it is met when a useful resource comes into view."
-                .to_owned(),
-        );
-    }
-    if offered.collect_required {
-        let refs: Vec<&str> = offered
-            .own_drops
-            .iter()
-            .map(|(handle, _)| handle.as_str())
-            .collect();
-        lines.push(format!(
-            "Your own drop of your goal's item lies in reach ({}): collect it now; no dig is offered until you hold it.",
-            some_refs(&refs)
-        ));
-    }
-    if offered.stalled {
-        lines.push(
-            "Your goal advanced nothing for three steps in a row: replace it as stale with a goal for a different item in this answer, whose step is your action, or abandon it as stale."
-                .to_owned(),
-        );
-    }
-    if offered.explore_continue() && offered.discovering() {
-        lines.push(
-            "Continue your discovery goal by walking to a cell at the edge of sight you have not looked from."
-                .to_owned(),
-        );
-    } else if offered.explore_continue() {
-        lines.push(
-            "Nothing in sight can give the rest of your goal's item: continue the goal by walking to the edge of sight to look for a source, or abandon it as impossible."
-                .to_owned(),
-        );
-    }
-    lines.join(" ")
-}
-
 /// The nearest [`MAX_YIELD_REFS`] of `refs`, saying how many more there are.
 fn some_refs(refs: &[&str]) -> String {
     let shown = refs
@@ -1135,48 +808,6 @@ fn recalled_line(sources: &[loom_contract::RecalledSource]) -> Option<String> {
         .join("; ");
     Some(format!(
         "Out of sight now, you recently saw sources of: {named}. A goal for one of them is walked toward by the cell at the edge of sight in its direction."
-    ))
-}
-
-/// The goals a review may set past what sight alone gives, each with what grounds it and the most
-/// it may ask, or nothing (r22: every goal was dirt from underfoot, and no agent looked for wood).
-fn horizon_line(goals: &[loom_contract::HorizonGoal], exploring: bool) -> Option<String> {
-    if goals.is_empty() {
-        return None;
-    }
-    let named = goals
-        .iter()
-        .take(loom_contract::MAX_HORIZON_GOALS)
-        .map(|goal| {
-            let ground = match (goal.grounding, goal.via.as_deref()) {
-                (loom_contract::HorizonGrounding::Recipe, Some(via)) => {
-                    format!("made from {}", field(via))
-                }
-                (loom_contract::HorizonGrounding::Recalled, _) => {
-                    "from a source you saw recently".to_owned()
-                }
-                _ => "from what you see".to_owned(),
-            };
-            let past = if goal.frontier {
-                ", the rest beyond the edge of sight"
-            } else {
-                ""
-            };
-            format!(
-                "{} up to {} in all, {ground}{past}",
-                field(&goal.what),
-                goal.most
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("; ");
-    let crowd = if exploring {
-        " While there is ground to look further at, a goal sight hands you whole - the dirt under your feet - is offered only when one of these is made from it."
-    } else {
-        ""
-    };
-    Some(format!(
-        "Goals you may set past what sight alone gives: {named}. Take one step toward it now - a dig, a collect, a craft, or a walk to look further - and keep its total: it counts when what you find, or make, carries it there.{crowd}"
     ))
 }
 
@@ -1565,9 +1196,9 @@ mod tests {
     };
     use crate::router::{ModelCatalog, Router};
     use loom_contract::{
-        Bearing, CraftingOption, DayPhase, DecisionImportance, DropFate, ExploreTarget,
-        GoalRefusal, GoalStep, GoalSummary, InventoryStack, Observation, ObservationKind, OwnDrop,
-        Perception, SelfState, Trigger, WorldState, MAX_OWN_DROPS,
+        Bearing, CraftingOption, DayPhase, DecisionImportance, DropFate, ExploreTarget, GoalStep,
+        GoalSummary, InventoryStack, Observation, ObservationKind, OwnDrop, Perception, SelfState,
+        Trigger, WorldState, MAX_OWN_DROPS,
     };
 
     fn router() -> Router {
@@ -1632,6 +1263,8 @@ mod tests {
             explore: vec![],
             recalled: vec![],
             horizon: vec![],
+            plan: None,
+            recent: Vec::new(),
         }
     }
 
@@ -1718,130 +1351,6 @@ mod tests {
     }
 
     #[test]
-    fn a_goal_review_with_no_goal_says_none_is_held_and_invents_none() {
-        let rendered = situation(&goal_review_holding(None));
-        assert!(
-            rendered.contains("Your goal: you hold no short-term goal."),
-            "got {rendered}"
-        );
-        assert!(!rendered.contains("revision"), "got {rendered}");
-    }
-
-    #[test]
-    fn a_held_goal_renders_its_exact_statement_revision_and_unanswered_step() {
-        let rendered = situation(&goal_review_holding(Some(held(
-            "gather wood for a shelter before night",
-            0,
-            None,
-        ))));
-        assert!(
-            rendered.contains(
-                "Your goal: \"gather wood for a shelter before night\" (revision 0, adopted \
-                 at tick 1200); no step under it has been answered yet."
-            ),
-            "got {rendered}"
-        );
-    }
-
-    #[test]
-    fn a_revised_goal_renders_its_revision_prior_action_and_body_outcome() {
-        let rendered = situation(&goal_review_holding(Some(held(
-            "gather wood to the north",
-            2,
-            Some(("moveTo", "accepted")),
-        ))));
-        assert!(
-            rendered.contains(
-                "Your goal: \"gather wood to the north\" (revision 2, adopted at tick 1200); \
-                 your last step under it was moveTo and your body reported accepted."
-            ),
-            "got {rendered}"
-        );
-    }
-
-    #[test]
-    fn a_refused_prior_step_is_shown_beside_the_current_evidence() {
-        let rendered = situation(&goal_review_holding(Some(held(
-            "dig the stone to the east",
-            0,
-            Some(("dig", "refusedOutOfReach")),
-        ))));
-        assert!(
-            rendered.contains(
-                "your last step under it was dig and your body reported refusedOutOfReach"
-            ),
-            "got {rendered}"
-        );
-        // The step is history; the evidence it is weighed against is this moment's.
-        for current in ["health 12.5", "zombie", "(ref i1)"] {
-            assert!(
-                rendered.contains(current),
-                "missing {current:?} in {rendered}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_working_goal_renders_its_condition_step_and_measured_progress() {
-        let mut goal = held("gather wood", 0, Some(("dig", "digTimedOut")));
-        goal.step = Some("cut the oak log in reach".to_owned());
-        goal.progress = Some(loom_contract::GoalProgress {
-            condition_met: false,
-            condition_held: 0,
-            inventory_delta: vec![],
-            condition_advanced: false,
-            step_advanced: false,
-            step_evidence: loom_contract::StepEvidence::None,
-            steps_without_progress: 2,
-            cover: None,
-        });
-        let rendered = situation(&goal_review_holding(Some(goal.clone())));
-        assert!(rendered.contains("The step you chose last time: \"cut the oak log in reach\"."));
-        assert!(
-            rendered.contains(
-                "Since then your inventory did not change; the success condition did not advance, \
-                 and your step showed no evidence and advanced nothing; 2 steps in a row advanced \
-                 nothing (continue and revise are refused at 3)."
-            ),
-            "{rendered}"
-        );
-        // Typed, the condition states its status and the step its action and ref.
-        goal.success_item = Some("item.minecraft.oak_log".to_owned());
-        goal.success_count = Some(8);
-        goal.step_action = Some(loom_contract::IntentAction::Dig);
-        goal.step_ref = Some("b4".to_owned());
-        goal.progress = Some(loom_contract::GoalProgress {
-            condition_met: true,
-            condition_held: 8,
-            inventory_delta: vec![
-                loom_contract::InventoryChange {
-                    what: "item.minecraft.oak_log".to_owned(),
-                    change: 3,
-                },
-                loom_contract::InventoryChange {
-                    what: "item.minecraft.dirt".to_owned(),
-                    change: -1,
-                },
-            ],
-            condition_advanced: true,
-            step_advanced: true,
-            step_evidence: loom_contract::StepEvidence::Gained,
-            steps_without_progress: 0,
-            cover: None,
-        });
-        let met = situation(&goal_review_holding(Some(goal)));
-        for expected in [
-            "Success condition: hold 8 item.minecraft.oak_log in total; you hold 8 now, so it is MET.",
-            "you must complete this goal now, replace it with your next goal in this same answer, or revise it to a target you do not yet hold",
-            "\"cut the oak log in reach\" (dig on b4).",
-            "changed by +3 item.minecraft.oak_log, -1 item.minecraft.dirt",
-            "the success condition advanced, and your step gained you the goal's item",
-        ] {
-            assert!(met.contains(expected), "missing {expected:?} in {met}");
-        }
-    }
-
-    #[test]
     fn the_plant_an_agent_stands_in_is_named_on_its_own_line_as_a_dig() {
         // r12 theta, body:00000062: standing in dead bush b1mo, the step named it as a walk.
         let seen: Perception = serde_json::from_str(include_str!(
@@ -1910,96 +1419,6 @@ mod tests {
     }
 
     #[test]
-    fn a_digger_is_told_its_own_drops_wherever_they_went() {
-        // r14 beta body:00000105: its dig dropped two sticks that delta took before beta's next
-        // review, and beta judged a dig that yielded as having yielded nothing.
-        let mut goal = held("gather sticks", 0, Some(("dig", "accepted")));
-        goal.success_item = Some("item.minecraft.stick".to_owned());
-        goal.success_count = Some(2);
-        let mut seen = goal_review_holding(Some(goal));
-        seen.self_state.own_drops = vec![
-            OwnDrop {
-                request_id: "req-step".to_owned(),
-                what: "item.minecraft.stick".to_owned(),
-                count: 2,
-                fate: DropFate::Taken,
-                distance: None,
-                direction: None,
-                vertical_offset: None,
-                drop_ref: None,
-            },
-            OwnDrop {
-                request_id: "req-earlier".to_owned(),
-                what: "item.minecraft.stick".to_owned(),
-                count: 1,
-                fate: DropFate::Lying,
-                distance: Some(3.5),
-                direction: Some(Bearing::East),
-                vertical_offset: Some(0.0),
-                drop_ref: None,
-            },
-        ];
-        let rendered = situation(&seen);
-        assert!(
-            rendered.contains(
-                "What your own digs dropped: 2 item.minecraft.stick from the dig of your last step, \
-                 which another player picked up; 1 item.minecraft.stick from an earlier dig, still \
-                 lying about 3.5 blocks away to the east"
-            ),
-            "{rendered}"
-        );
-        seen.self_state.own_drops.clear();
-        assert!(!situation(&seen).contains("What your own digs dropped"));
-    }
-
-    #[test]
-    fn a_review_states_what_sight_could_give_and_a_settled_step_is_a_review() {
-        // r14 kappa body:00000243: a stick goal raised with nothing in sight to give one.
-        let mut seen = goal_review_holding(None);
-        assert!(situation(&seen).contains(
-            "Nothing in sight can be counted on to give you more of any item, so no goal can be set now."
-        ));
-        seen.surroundings.push(Observation {
-            kind: ObservationKind::Block,
-            what: "block.minecraft.dead_bush".to_owned(),
-            distance: 1.0,
-            direction: Bearing::North,
-            vertical_offset: 0.0,
-            visible: true,
-            target_ref: "b9".to_owned(),
-            count: None,
-            standable: Some(true),
-            yields: Some(vec![loom_contract::BlockYield {
-                what: "item.minecraft.stick".to_owned(),
-                least: 0,
-                most: 2,
-                per_hundred: 100,
-            }]),
-            dig_safe: Some(true),
-            route_refused: None,
-            hunts: None,
-            cover: None,
-        });
-        assert!(situation(&seen)
-            .contains("What is in sight can be counted on to give you 1 more item.minecraft.stick (at best 2), beyond what you hold; a goal may count only on the first number."));
-        // A settled step carries the goal and is answered as a review of it.
-        seen.trigger = Trigger::StepSettled;
-        seen.goal = Some(held("gather sticks", 0, Some(("dig", "accepted"))));
-        let settled = situation(&seen);
-        assert!(settled.contains("The step your goal took has ended: review your goal now"));
-        assert!(settled.contains("Your goal: \"gather sticks\""));
-        // No other trigger carries a goal or what sight could give.
-        seen.trigger = Trigger::Damaged {
-            amount: 2,
-            source: "zombie".to_owned(),
-            attacker_ref: None,
-            health_before: None,
-            health_after: None,
-        };
-        assert!(!situation(&seen).contains("counted on to give you"));
-    }
-
-    #[test]
     fn a_hit_states_the_servers_health_before_and_after_it() {
         // r34 alpha body:00001342: 14 from a creeper at 20 health, shown as 20 with 6 left.
         let seen: Perception = serde_json::from_str(include_str!(
@@ -2045,43 +1464,6 @@ mod tests {
             cover: None,
         });
         assert!(!situation(&with_one).contains("No dropped item"));
-    }
-
-    #[test]
-    fn a_refused_decision_is_explained_once_with_the_numbers_it_was_judged_by() {
-        // r15: iota's revise to four sticks was refused three times as unobtainable, and no
-        // review after it said so.
-        let mut seen = goal_review_holding(Some(held("hold 4 item.minecraft.stick", 0, None)));
-        seen.last_refusal = Some(GoalRefusal {
-            request_id: "req-203".to_owned(),
-            outcome: "goalSuccessUnobtainable".to_owned(),
-            success_item: Some("item.minecraft.stick".to_owned()),
-            asked: Some(4),
-            held: Some(0),
-            capacity: Some(3),
-        });
-        let rendered = situation(&seen);
-        assert!(
-            rendered.contains(
-                "Your body refused your last goal decision before acting, because its total was more \
-                 than you held plus what sight could give (goalSuccessUnobtainable). It asked to hold 4 \
-                 item.minecraft.stick in total; you held 0, and sight could give 3 more."
-            ),
-            "{rendered}"
-        );
-        seen.last_refusal = Some(GoalRefusal {
-            request_id: "req-204".to_owned(),
-            outcome: "goalStepIdle".to_owned(),
-            success_item: None,
-            asked: None,
-            held: None,
-            capacity: None,
-        });
-        assert!(situation(&seen).contains(
-            "because it pursued the goal while idling or resting, which is no step (goalStepIdle)."
-        ));
-        seen.last_refusal = None;
-        assert!(!situation(&seen).contains("refused your last goal decision"));
     }
 
     #[test]
@@ -2144,46 +1526,6 @@ mod tests {
     }
 
     #[test]
-    fn the_brief_offers_every_disposition_and_keeps_no_goal_legitimate() {
-        let seen = goal_review_holding(None);
-        let system = render(&router().route(seen.importance), &seen).system;
-        for disposition in [
-            "- adopt:",
-            "- continue:",
-            "- revise:",
-            "- complete:",
-            "- abandon:",
-        ] {
-            assert!(system.contains(disposition), "missing {disposition:?}");
-        }
-        assert!(system.contains("With none held you may make no goal choice."));
-        assert!(system.contains("Holding no goal is a legitimate state."));
-        assert!(system.contains("not against a wish to look busy"));
-        assert!(system.contains("idle is correct only when nowhere is offered to look"));
-    }
-
-    #[test]
-    fn the_brief_holds_one_objective_across_its_steps_and_ends_it_only_for_a_stated_reason() {
-        // r39: alpha and kappa replaced a met dirt goal by the same item one higher at every step,
-        // gamma abandoned shelters while taking their own steps, and alpha's dirt subgoal dug its
-        // own shelter's wall.
-        let seen = goal_review_holding(None);
-        let system = render(&router().route(seen.importance), &seen).system;
-        for rule in [
-            "A goal one step could meet is not offered",
-            "more of the same item is never a replace",
-            "state why the held goal ends",
-            "- abandon: drop the held goal, stating why",
-            "is a step of the shelter goal itself",
-        ] {
-            assert!(system.contains(rule), "missing {rule:?}");
-        }
-        for retired in ["resource subgoal", "A one-more goal"] {
-            assert!(!system.contains(retired), "still says {retired:?}");
-        }
-    }
-
-    #[test]
     fn an_r5_shaped_goal_review_asks_for_a_self_chosen_short_term_goal() {
         let seen = r5_goal_review_perception();
         let prompt = render(&router().route(seen.importance), &seen);
@@ -2196,25 +1538,6 @@ mod tests {
             "a goal review must ask the agent to choose its own near-term aim, got {situation}",
             situation = prompt.situation
         );
-    }
-
-    #[test]
-    fn an_r5_shaped_goal_review_favours_one_safe_reversible_grounded_step() {
-        let seen = r5_goal_review_perception();
-        let prompt = render(&router().route(seen.importance), &seen);
-
-        for expected in [
-            "one safe, reversible action",
-            "advance a self-chosen short-term goal",
-            "reduce relevant uncertainty",
-            "take that action",
-        ] {
-            assert!(
-                prompt.system.contains(expected),
-                "the routine instruction must permit {expected:?}, got {system}",
-                system = prompt.system
-            );
-        }
     }
 
     #[test]
@@ -2600,31 +1923,6 @@ mod tests {
             "not a field of view",
             "which way your body happens to be facing",
             "ahead of you or behind you",
-        ] {
-            assert!(
-                prompt.system.contains(expected),
-                "the brief must say {expected:?}, got {system}",
-                system = prompt.system
-            );
-        }
-    }
-
-    #[test]
-    fn the_brief_holds_a_feasible_goal_through_a_failed_step() {
-        // r48: 36.5% of agent time went to 93 new goals before their first advance, and the
-        // twelve that never advanced were low-yield grass digs, collects a peer won first and
-        // walks. r49 (v37): 45.2% did, eight seed goals were held 12061 ticks and six never
-        // advanced, most adopted with only grass in sight. The brief keeps persistence to a
-        // reliable source and sends a sight of rare drops to look further, which the schema
-        // already offers as a walk with no goal; the model still decides.
-        let seen = perception(Trigger::GoalReview, DecisionImportance::Routine);
-        let prompt = render(&router().route(seen.importance), &seen);
-        for expected in [
-            "A failed step does not end a goal a reliable source can meet",
-            "seeds from grass, is no such source",
-            "set no goal and walk to the edge of sight",
-            "Prefer a recipe or high-yield block",
-            "make the next one use what it gave you",
         ] {
             assert!(
                 prompt.system.contains(expected),
@@ -3079,50 +2377,5 @@ mod tests {
             !situation.contains(&format!("x{}", loom_contract::MAX_EXPLORE_TARGETS)),
             "the bound must cut: {situation}"
         );
-    }
-
-    #[test]
-    fn a_goal_review_names_its_horizon_goals_and_what_grounds_each_and_an_event_names_none() {
-        // r22: every goal was dirt from underfoot, and no agent looked for wood.
-        let mut seen = goal_review_holding(None);
-        seen.explore = vec![ExploreTarget {
-            target_ref: "x1".to_owned(),
-            distance: 12.0,
-            direction: Bearing::East,
-            vertical_offset: 0.0,
-        }];
-        seen.horizon = vec![
-            loom_contract::HorizonGoal {
-                what: "item.minecraft.oak_log".to_owned(),
-                grounding: loom_contract::HorizonGrounding::Recalled,
-                via: None,
-                most: 13,
-                frontier: true,
-            },
-            loom_contract::HorizonGoal {
-                what: "item.minecraft.oak_planks".to_owned(),
-                grounding: loom_contract::HorizonGrounding::Recipe,
-                via: Some("item.minecraft.oak_log".to_owned()),
-                most: 8,
-                frontier: false,
-            },
-        ];
-        let shown = situation(&seen);
-        assert!(
-            shown.contains("Goals you may set past what sight alone gives"),
-            "{shown}"
-        );
-        assert!(shown.contains("up to 13 in all, from a source you saw recently, the rest beyond the edge of sight"), "{shown}");
-        assert!(shown.contains("up to 8 in all, made from"), "{shown}");
-        assert!(shown.contains("the dirt under your feet"), "{shown}");
-        let mut event = seen.clone();
-        event.trigger = Trigger::Damaged {
-            amount: 2,
-            source: "zombie".to_owned(),
-            attacker_ref: None,
-            health_before: None,
-            health_after: None,
-        };
-        assert!(!situation(&event).contains("Goals you may set"));
     }
 }

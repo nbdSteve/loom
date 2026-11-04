@@ -153,7 +153,8 @@ class CognitionBudgetProxy {
   // What one call of `importance` reserves of the spend ceiling.
   callNanoUsd (importance) {
     if (this.spend?.tier === undefined) return this.spend?.worstCaseCallNanoUsd ?? 0
-    return importance === 'PIVOTAL' ? this.spend.tier.pivotal : this.spend.tier.ordinary
+    // A planning call is priced as the frontier tier it is routed to.
+    return importance === 'PIVOTAL' || importance === 'PLANNING' ? this.spend.tier.pivotal : this.spend.tier.ordinary
   }
 
   crossedBound (agentId, agentCalls, importance, borrowing = false) {

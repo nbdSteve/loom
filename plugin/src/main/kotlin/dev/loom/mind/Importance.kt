@@ -45,6 +45,7 @@ import dev.loom.contract.reviewsGoal
  */
 fun importanceOf(trigger: Trigger): DecisionImportance =
     when (trigger) {
+        is Trigger.PlanReview -> DecisionImportance.PLANNING
         is Trigger.GoalReview -> DecisionImportance.ROUTINE
         is Trigger.StepSettled -> DecisionImportance.ROUTINE
         is Trigger.BlockSighted -> DecisionImportance.ROUTINE

@@ -59,6 +59,8 @@ data class CognitionCallbacks(
     val isDead: (AgentId) -> Boolean = { false },
     /** Whether the run's exposure has ended, after which nothing new is sent, applied or owed. */
     val exposure: ExposureGate = ExposureGate(),
+    /** The agents' model-owned plans; none, and no planning call is made or plan shown. */
+    val plans: PlanLedger? = null,
 )
 
 /**
@@ -90,6 +92,8 @@ class EmbodiedCognition(
 ) {
     /** Reviews one agent may have with the mind at once; a periodic schedule sets more than one. */
     var reviewsInFlight: Int = 1
+
+    private val plans: PlanLedger? get() = callbacks.plans
 
     private val exposure: ExposureGate get() = callbacks.exposure
 
@@ -178,7 +182,8 @@ class EmbodiedCognition(
             bodies.held.unsent(agentId, perception, waited = coalesced.second == WAITED_BEHIND_NEARER)
             return
         }
-        val carried = goals.carried(agentId, shown)
+        // Every call shows the agent's own plan and its latest actions.
+        val carried = goals.carried(agentId, shown).let { plans?.shown(agentId, it) ?: it }
         inFlight[carried.requestId] = agentId to carried
         preemption.sent(carried, subject)
         mind.submit(carried).whenComplete { decision, failure ->
@@ -358,8 +363,20 @@ class EmbodiedCognition(
         shown: ShownGoal?,
         carried: Perception? = null,
     ) {
+        val planning = carried?.trigger is Trigger.PlanReview
+        val plan = plans?.resolve(agentId, decision, planning, journal.tick())
+        // A planning call sets the plan; its intent never reaches the body.
+        if (planning) {
+            journal.decided(agentId, decision, plan = plan)
+            journal.withheld(agentId, decision, EventTag.PLANNED, "a planning call sets the plan, not an action")
+            bodies.held.release(agentId, decision.requestId)
+            callbacks.onApplied(AppliedDecision(decision, IntentOutcome.NoSuchBody))
+            return
+        }
         val goal = goals.resolve(agentId, decision)
-        journal.decided(agentId, decision, goal, shown)
+        journal.decided(agentId, decision, goal, shown, plan)
+        // A step call that finished a subgoal or asked for a replan, or a plan due a check-in, owes a planning call.
+        plans?.due(agentId, journal.tick())?.let { review -> consider(agentId, review) }
         val answersDanger = carried != null && dangerKeyOf(carried.trigger) != null
         // A plain completion or an abandon leaves no goal held: it owes a review soon after, so the
         // next goal is not a whole cadence away (r19: six completions left their agent goal-less
@@ -394,6 +411,7 @@ class EmbodiedCognition(
                         (applied as? IntentOutcome.Accepted)?.reached,
                     )
                 goals.settledAt(agentId, decision.requestId, journal.tick())
+                plans?.acted(agentId, decision.requestId, tagOf(decision.intent), tagOf(applied))
                 // One immediate review owed to the goal item a step left lying, then control returns.
                 followUp(agentId, decision.requestId, goal, goalStep, applied)
                 val held = danger.settledDamage(agentId, decision.requestId, fled = decision.intent is Intent.Flee)

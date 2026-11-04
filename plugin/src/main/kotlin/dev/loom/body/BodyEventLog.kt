@@ -148,6 +148,8 @@ data class BodyEventRecord(
     val decision: Decision? = null,
     /** How [decision]'s goal choice was resolved. Present on [BodyEvent.DECIDED] for goal reviews. */
     val goal: GoalEvidence? = null,
+    /** How [decision]'s plan update was applied. Present on [BodyEvent.DECIDED]. */
+    val plan: PlanEvidence? = null,
     /**
      * The goal and the refusal the answered perception carried to cognition, exactly as the mind
      * was shown them. Present on [BodyEvent.DECIDED] for goal reviews, which is the one place the

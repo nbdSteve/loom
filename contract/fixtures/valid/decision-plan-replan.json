@@ -1,0 +1,1 @@
+{"requestId":"req-plan-1","agentId":"agent-delta","intent":{"action":"idle"},"reasoning":"no oak in sight","provenance":{"tier":"ROUTINE","model":"gpt-5.4-nano","promptVersion":"routine-v2"},"plan":{"update":"replan","reason":"no oak in sight"}}

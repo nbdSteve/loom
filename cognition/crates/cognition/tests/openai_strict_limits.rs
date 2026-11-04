@@ -15,7 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use loom_cognition::offered::OfferedRefs;
-use loom_cognition::openai::wire::{chat_request, decision_schema_for, GoalPhase};
+use loom_cognition::openai::wire::{chat_request, decision_schema_for};
 use loom_cognition::prompt::render;
 use loom_cognition::router::{ModelCatalog, Router};
 use loom_contract::Perception;
@@ -287,7 +287,7 @@ fn every_request_schema_a_perception_produces_is_one_strict_mode_accepts() {
     let mut broken = Vec::new();
     let mut widest = (0, 0, 0, 0);
     for (id, perception) in &corpus {
-        let schema = decision_schema_for(&OfferedRefs::of(perception), GoalPhase::of(perception));
+        let schema = decision_schema_for(&OfferedRefs::of(perception));
         let mut found = violations(&schema);
         if !loom_cognition::openai::wire::request_offers_an_answer(perception) {
             found.push("the stand-ins would refuse it as offering no answer".to_owned());
@@ -337,7 +337,7 @@ fn every_request_a_perception_produces_fits_the_live_request_bound() {
     let mut over = Vec::new();
     for (id, perception) in &corpus() {
         let route = router.route(perception.importance);
-        let schema = decision_schema_for(&OfferedRefs::of(perception), GoalPhase::of(perception));
+        let schema = decision_schema_for(&OfferedRefs::of(perception));
         let prompt = render(&route, perception);
         let request = chat_request(route.model(), &prompt, LIVE_MAX_OUTPUT_TOKENS, schema);
         let bytes = serde_json::to_vec(&request).unwrap().len();
@@ -375,7 +375,7 @@ fn every_answer_the_scripted_stand_in_gives_is_one_its_own_request_offers() {
         if !loom_cognition::openai::wire::request_offers_an_answer(perception) {
             continue;
         }
-        let schema = decision_schema_for(&OfferedRefs::of(perception), GoalPhase::of(perception));
+        let schema = decision_schema_for(&OfferedRefs::of(perception));
         let validator = jsonschema::validator_for(&schema).unwrap();
         let draft = loom_cognition::model::ScriptedBackend::draft_now(&route, perception);
         answered += 1;

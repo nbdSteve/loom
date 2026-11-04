@@ -176,6 +176,8 @@ pub struct Draft {
     /// The explicit goal choice, carried into the decision unchanged; `None`
     /// leaves any held goal as it is.
     pub goal: Option<GoalChoice>,
+    /// What the decision does to the agent's plan; `None` is a continue.
+    pub plan: Option<loom_contract::PlanUpdate>,
 }
 
 /// Why a backend could not produce a draft.
@@ -346,10 +348,7 @@ pub fn offered_answer(perception: &Perception, draft: Draft) -> Draft {
     const REPAIRED_ANSWER: &str =
         "repaired: the stand-in's own answer was not one its schema offers";
     use crate::openai::{instance, wire};
-    let schema = wire::decision_schema_for(
-        &crate::offered::OfferedRefs::of(perception),
-        wire::GoalPhase::of(perception),
-    );
+    let schema = wire::request_schema(perception);
     if instance::admits(&schema, &instance::answer_of(&schema, &draft)) {
         return draft;
     }
@@ -360,54 +359,63 @@ pub fn offered_answer(perception: &Perception, draft: Draft) -> Draft {
         .or_else(|| instance::first_instance(&schema))
         .and_then(|mut answer| {
             answer["reasoning"] = reasoning;
-            wire::draft_from_answer(&answer.to_string()).ok()
+            wire::request_draft_from_answer(perception, &answer.to_string()).ok()
         })
         .unwrap_or(draft)
 }
 
-/// The answer `schema` offers with `draft`'s own intent, its goal choice the first offered beside
-/// that intent, of the draft's own disposition where one is.
+/// The answer `schema` offers with `draft`'s own intent and plan update.
 fn beside_its_intent(schema: &Value, draft: &Draft) -> Option<Value> {
     use crate::openai::instance;
-    let intent = serde_json::to_value(&draft.intent).ok()?;
-    let disposition = draft
-        .goal
-        .as_ref()
-        .and_then(|choice| serde_json::to_value(choice.disposition).ok());
-    let goal_of = |goals: &Value| {
-        let options = goals["anyOf"]
-            .as_array()
-            .cloned()
-            .unwrap_or_else(|| vec![goals.clone()]);
-        let own = options.iter().find(|option| {
-            let offered =
-                &instance::resolved_part(schema, option)["properties"]["disposition"]["enum"];
-            match &disposition {
-                Some(disposition) => offered
-                    .as_array()
-                    .is_some_and(|names| names.contains(disposition)),
-                None => instance::admits_part(schema, option, &Value::Null),
-            }
-        });
-        own.into_iter()
-            .chain(options.iter())
-            .find_map(|option| instance::first_part_instance(schema, option))
-    };
-    if let Some(pairings) = schema["properties"]["decision"]["anyOf"].as_array() {
-        return pairings.iter().find_map(|pairing| {
-            let pairing = instance::resolved_part(schema, pairing);
-            if !instance::admits_part(schema, &pairing["properties"]["intent"], &intent) {
-                return None;
-            }
-            let goal = goal_of(&pairing["properties"]["goal"])?;
-            Some(serde_json::json!({ "decision": { "intent": intent, "goal": goal }, "reasoning": "" }))
-        });
+    let answer = instance::answer_of(schema, draft);
+    instance::admits_part(schema, &schema["properties"]["intent"], &answer["intent"])
+        .then_some(answer)
+}
+
+/// The stand-ins' answer: at a plan review an idle beside a short plan, else `step` with a continue.
+pub fn stand_in_draft(perception: &Perception, step: impl FnOnce() -> Draft) -> Draft {
+    if crate::openai::wire::is_plan_review(perception) {
+        return Draft {
+            intent: Intent::Idle,
+            reasoning: "scripted stand-in: a plan to start from".to_owned(),
+            goal: None,
+            plan: Some(stand_in_plan(perception)),
+        };
     }
-    if !instance::admits_part(schema, &schema["properties"]["intent"], &intent) {
-        return None;
+    Draft {
+        plan: Some(loom_contract::PlanUpdate::Continue),
+        ..step()
     }
-    let goal = goal_of(&schema["properties"]["goal"])?;
-    Some(serde_json::json!({ "intent": intent, "goal": goal, "reasoning": "" }))
+}
+
+/// A draft's choices left empty, for the stand-ins' literals.
+const BARE_DRAFT: Draft = Draft {
+    intent: Intent::Idle,
+    reasoning: String::new(),
+    goal: None,
+    plan: None,
+};
+
+/// The plan update the scripted stand-ins give: a short plan at a plan review, else a continue.
+#[must_use]
+pub fn stand_in_plan(perception: &Perception) -> loom_contract::PlanUpdate {
+    if !crate::openai::wire::is_plan_review(perception) {
+        return loom_contract::PlanUpdate::Continue;
+    }
+    loom_contract::PlanUpdate::ReplacePlan {
+        objective: "survive and build a home".to_owned(),
+        subgoals: vec![
+            "get a wooden pickaxe".to_owned(),
+            "get stone tools".to_owned(),
+            "build a shelter".to_owned(),
+        ],
+        steps: vec![
+            "dig logs".to_owned(),
+            "craft planks".to_owned(),
+            "craft a crafting table".to_owned(),
+        ],
+        reason: "a plan to start from".to_owned(),
+    }
 }
 
 /// `draft` as a goal review beside the edge of sight may answer it: the strict schema offers no idle
@@ -526,6 +534,7 @@ impl ScriptedBackend {
             reason,
         };
         let answer = |intent, goal, why: &str| Draft {
+            plan: None,
             intent,
             reasoning: format!("scripted stand-in: {why}"),
             goal,
@@ -828,22 +837,21 @@ impl ScriptedBackend {
     /// The per-trigger action rule, before any goal choice is attached.
     fn step_now(route: &ModelRoute, perception: &Perception) -> Draft {
         // Danger where no walk leads out is answered by closing the cover, never by a flight.
-        if matches!(
+        let danger = matches!(
             perception.trigger,
             Trigger::Damaged { .. } | Trigger::ThreatSighted { .. }
-        ) {
-            if let Some(closing) = cornered(perception) {
-                return closing;
-            }
+        );
+        if let Some(closing) = cornered(perception).filter(|_| danger) {
+            return closing;
         }
         match &perception.trigger {
             // Never a reply: two stand-ins answering speech with speech would be a chat loop.
             Trigger::Spoken { from, text } => Draft {
-                goal: None,
                 intent: Intent::Idle,
                 reasoning: format!(
                     "{from} said {text:?}; the scripted stand-in never speaks, so it does not reply"
                 ),
+                ..BARE_DRAFT
             },
             // The health is rounded for the same reason the reserve below is: this
             // reasoning is the one field carried verbatim to an operator's screen,
@@ -871,20 +879,20 @@ impl ScriptedBackend {
                 .or_else(|| nearest_ref(perception, source))
             {
                 Some(handle) => Draft {
-                    goal: None,
                     intent: Intent::Flee { from: handle },
                     reasoning: format!(
                         "took {amount} damage from {source} at health {health:.1}; disengage",
                         health = perception.self_state.health
                     ),
+                    ..BARE_DRAFT
                 },
                 None => Draft {
-                    goal: None,
                     intent: Intent::Idle,
                     reasoning: format!(
                         "took {amount} damage from {source} at health {health:.1}, and nothing in sight can be named to flee from",
                         health = perception.self_state.health
                     ),
+                    ..BARE_DRAFT
                 },
             },
             // A threat sighting carries its own ref, so unlike the damage rule
@@ -894,17 +902,17 @@ impl ScriptedBackend {
             Trigger::ThreatSighted {
                 threat, entity_ref, ..
             } if fleeable(perception, entity_ref) => Draft {
-                goal: None,
                 intent: Intent::Flee {
                     from: entity_ref.clone(),
                 },
                 reasoning: format!("{threat} hunts my kind and is in view; retreat from it"),
+                ..BARE_DRAFT
             },
             // Sealed in, nothing can reach the agent and no flight is offered.
             Trigger::ThreatSighted { threat, .. } => Draft {
-                goal: None,
                 intent: Intent::Idle,
                 reasoning: format!("{threat} is in view, but no flight from it is offered; hold still"),
+                ..BARE_DRAFT
             },
             // A walk names a block the body observed, so the stand-in walks onto the
             // nearest observation of the sighted kind. It has no spatial reasoning:
@@ -913,14 +921,14 @@ impl ScriptedBackend {
             // by a coordinate nothing in the perception grounds.
             Trigger::BlockSighted { block } => match nearest_block_ref(perception, block) {
                 Some(handle) => Draft {
-                    goal: None,
                     intent: Intent::MoveTo { onto: handle },
                     reasoning: format!("{block} sighted nearby; walk onto it to reach it"),
+                    ..BARE_DRAFT
                 },
                 None => Draft {
-                    goal: None,
                     intent: Intent::Idle,
                     reasoning: format!("{block} sighted, but no observed block of it can be named"),
+                    ..BARE_DRAFT
                 },
             },
             // The one survival rule the stand-in has. Vanilla hunger is reported
@@ -943,7 +951,6 @@ impl ScriptedBackend {
                 let saturation = perception.self_state.saturation;
                 match perception.self_state.inventory_summary.first() {
                     Some(stack) => Draft {
-                        goal: None,
                         intent: Intent::Eat {
                             slot_ref: stack.slot_ref.clone(),
                         },
@@ -951,19 +958,22 @@ impl ScriptedBackend {
                             "food is {food} of 20 with saturation {saturation:.1}; eating the {what} may restore it",
                             what = stack.what
                         ),
+                        ..BARE_DRAFT
                     },
                     None => Draft {
-                        goal: None,
                         intent: Intent::Rest,
                         reasoning: format!(
                             "food is {food} of 20 with saturation {saturation:.1} and there is nothing to eat; holding position"
                         ),
+                        ..BARE_DRAFT
                     },
                 }
             }
             // The stand-in's one routine step: dig the nearest offered block that can drop
             // something, the held goal's item first, or do nothing when no such block is in reach.
-            Trigger::GoalReview | Trigger::StepSettled => Self::review_step(route, perception),
+            Trigger::GoalReview | Trigger::StepSettled | Trigger::PlanReview { .. } => {
+                Self::review_step(route, perception)
+            }
         }
     }
 }
@@ -984,6 +994,7 @@ impl ScriptedBackend {
                 return closing;
             }
             return Draft {
+                plan: None,
                 goal: None,
                 intent: Intent::Flee { from },
                 reasoning: format!(
@@ -994,6 +1005,7 @@ impl ScriptedBackend {
         }
         if let Some((item, approach)) = own_goal_drop(perception) {
             return Draft {
+                plan: None,
                 goal: None,
                 intent: Intent::Collect { item, approach },
                 reasoning: format!(
@@ -1033,6 +1045,7 @@ impl ScriptedBackend {
         }
         if let Some((recipe, item)) = offered_craft(perception, wanted) {
             return Draft {
+                plan: None,
                 goal: None,
                 intent: Intent::Craft { recipe, crafts: 1 },
                 reasoning: format!(
@@ -1043,6 +1056,7 @@ impl ScriptedBackend {
         }
         match nearest_yielding_dig(perception, wanted) {
             Some((block, item)) => Draft {
+                plan: None,
                 goal: None,
                 intent: Intent::Dig { block },
                 reasoning: format!(
@@ -1055,6 +1069,7 @@ impl ScriptedBackend {
             // idling where it stands.
             None => match nearest_source_walk(perception, wanted) {
                 Some((onto, item)) => Draft {
+                    plan: None,
                     goal: None,
                     intent: Intent::MoveTo { onto },
                     reasoning: format!(
@@ -1071,6 +1086,7 @@ impl ScriptedBackend {
     fn look_further(route: &ModelRoute, perception: &Perception) -> Draft {
         match perception.explore.first() {
                 Some(target) => Draft {
+                    plan: None,
                     goal: None,
                     intent: Intent::MoveTo {
                         onto: target.target_ref.clone(),
@@ -1081,6 +1097,7 @@ impl ScriptedBackend {
                     ),
                 },
                 None => Draft {
+                    plan: None,
                     goal: None,
                     intent: Intent::Idle,
                     reasoning: format!(
@@ -1196,7 +1213,9 @@ impl ModelBackend for ScriptedBackend {
         // provider would refuse is refused here too, so a rehearsal meets it before a paid run.
         std::future::ready(
             if crate::openai::wire::request_offers_an_answer(perception) {
-                Ok(Self::draft_now(route, perception))
+                Ok(stand_in_draft(perception, || {
+                    Self::draft_now(route, perception)
+                }))
             } else {
                 Err(BackendError::new(NO_ANSWER_OFFERED))
             },
@@ -1263,11 +1282,13 @@ pub(crate) fn cornered(perception: &Perception) -> Option<Draft> {
     Some(
         match placed.or_else(readied).filter(|intent| offered.admits(intent)) {
             Some(intent) => Draft {
+                plan: None,
                 goal: None,
                 intent,
                 reasoning: "no walk leads out of where I stand, so I close my cover against what hunts me".to_owned(),
             },
             None => Draft {
+                plan: None,
                 goal: None,
                 intent: Intent::Idle,
                 reasoning: "no walk leads out of where I stand and nothing I hold closes my cover, so I hold still".to_owned(),
@@ -1346,6 +1367,8 @@ mod tests {
             explore: vec![],
             recalled: vec![],
             horizon: vec![],
+            plan: None,
+            recent: Vec::new(),
         }
     }
 
@@ -1743,6 +1766,7 @@ mod tests {
             vertical_offset: 0.0,
         }];
         let wait = |goal: Option<loom_contract::GoalChoice>| super::Draft {
+            plan: None,
             intent: Intent::Idle,
             reasoning: "wait".to_owned(),
             goal,
