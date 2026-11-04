@@ -83,6 +83,7 @@ const BODY_EVENTS = new Set([
   'initialConditionsWitnessed'
 ])
 const HARNESS_EVENTS = new Set([
+  'cognitionDrainTimedOut',
   'cleanupVerified',
   'cognitionForwarded',
   'cognitionProxyReady',

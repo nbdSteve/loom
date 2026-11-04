@@ -616,9 +616,9 @@ test('the controlled-stop drain waits for settled chains, is bounded, and stops 
   fs.writeFileSync(file, `${JSON.stringify(bodyRecord(1, 'a', 'perceived', 'x', { requestId: 'one' }))}\n`)
   let outstanding = 1
   const proxy = { snapshot: () => ({ outstandingCalls: outstanding }) }
-  await assert.rejects(
-    drainControlledStop({ proxy, ...drainer(), timeoutMilliseconds: 250 }),
-    (cause) => cause.code === 'cognitionDrainTimedOut'
+  assert.deepEqual(
+    await drainControlledStop({ proxy, ...drainer(), timeoutMilliseconds: 250 }),
+    { timedOut: true, unsettled: 1, outstanding: 1 }
   )
   const settling = drainer()
   setTimeout(() => {
@@ -665,9 +665,9 @@ test('admitted work that drains after the exposure ended is typed, and the drain
   setTimeout(() => { recorded = true }, 150)
   await drainControlledStop({ proxy, ...settled, exposureRecorded: () => recorded, timeoutMilliseconds: 2000 })
   assert.equal(recorded, true)
-  await assert.rejects(
-    drainControlledStop({ proxy, ...settled, exposureRecorded: () => false, timeoutMilliseconds: 250 }),
-    (cause) => cause.code === 'cognitionDrainTimedOut'
+  assert.equal(
+    (await drainControlledStop({ proxy, ...settled, exposureRecorded: () => false, timeoutMilliseconds: 250 })).timedOut,
+    true
   )
 })
 

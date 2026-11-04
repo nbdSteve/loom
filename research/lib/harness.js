@@ -1398,13 +1398,17 @@ async function runHeldExperiment ({
     if (controlledStop !== undefined || isPrimaryBehaviorMode(config)) {
       if (controlledStop !== undefined) stopReason = CONTROLLED_STOP_REASON
       try {
-        await drainControlledStop({
+        const drained = await drainControlledStop({
           proxy,
           poll: () => explained(null) ?? pollEvidence(),
           settlement,
           exposureRecorded: () => !isPrimaryBehaviorMode(config) || config.agents.every((agentId) => guard.exposureEnded.has(agentId)),
           signal: controller.signal
         })
+        if (drained.timedOut) {
+          journal.append('cognitionDrainTimedOut', { unsettled: drained.unsettled, outstanding: drained.outstanding })
+          console.error(`cognition did not settle within the drain bound (${drained.unsettled} unsettled, ${drained.outstanding} outstanding); continuing`)
+        }
       } catch (cause) {
         throw explained(cause)
       }
@@ -1556,13 +1560,11 @@ async function drainControlledStop ({
     })
   } catch (cause) {
     if (signal?.aborted) throw cause
-    throw new RunFailure(
-      'cognitionFailed',
-      'already-forwarded cognition did not settle within the drain bound',
-      'cognitionDrainTimedOut'
-    )
+    // A slow or stuck call is recorded and the run goes on to its shutdown, never failed for it.
+    return { timedOut: true, unsettled: settlement.unsettled.size, outstanding: proxy.snapshot().outstandingCalls }
   }
   if (invalid !== null) throw invalid
+  return { timedOut: false }
 }
 
 function paperWarnings (logFile) {
