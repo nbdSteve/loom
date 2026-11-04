@@ -10,10 +10,29 @@ It does not use Loom's body, mind or plugin. Mindcraft brings its own agents: on
 |---|---|---|
 | Minecraft | 1.21.6 | The version Mindcraft's README recommends, and one its patched mineflayer 4.33.0 is tested on. The newest Minecraft is 26.3 and Mindcraft claims up to 1.21.11, but on Paper 1.21.11 with mineflayer 4.39.0 (the only mineflayer that speaks 1.21.11) a body stopped under oak leaves was teleported back by the server on every tick and could not move, so its collects stalled until Mindcraft killed the agent (smoke run 20261104T211535Z). |
 | Paper | 1.21.6 build 48, sha256 `35e2dfa66b3491b9d2f0bb033679fa5aca1e1fdf097e7a06a80ce8afeda5c214` | The newest stable build for 1.21.6 on the PaperMC fill API. `run.sh` downloads it once and checks the hash every run. |
-| Mindcraft | commit `e1c1fc3ffa481506c2445fc639e16dba504b5920` (2026-10-26), plus `patches/` | Mindcraft ships no lockfile, so the commit and `.cache/deps.txt` are the pin. `setup.sh` applies Loom's fixes in `patches/` on top. There is one fix, `mindserver-null-socket.patch`: Mindcraft's MindServer crashed its whole process (`mindserver.js:206`, `TypeError` on `null.emit`) when one agent messaged another that was restarting, which disconnected every agent (society run `20261104T223720Z`). It now drops that one message. Each run records the local diff in `mindcraft-local.diff`. |
+| Mindcraft | commit `e1c1fc3ffa481506c2445fc639e16dba504b5920` (2026-10-26), plus `patches/` | Mindcraft ships no lockfile, so the commit and `.cache/deps.txt` are the pin. `setup.sh` applies Loom's fixes in `patches/` after the dependency install; each run records the local source diff in `mindcraft-local.diff`. See "Loom's patches" below. |
 | mineflayer | 4.33.0, with all six of Mindcraft's `patches/` applied | The version those patches were made against. A fresh install resolves 4.39.0, on which the mineflayer patch fails. |
 | Node | 20 LTS, downloaded and checksum-verified into `.cache/node` | Mindcraft's native `gl` dependency does not compile on Node 24 or newer. |
 | Java | 21 | What Paper 1.21.6 needs. |
+
+## Loom's patches
+
+`setup.sh` applies each file in `patches/` to the Mindcraft checkout, after Mindcraft's own patches. Paths are relative to the checkout, so one patch can fix Mindcraft's source or a dependency in `node_modules`.
+
+- **`mindserver-null-socket.patch`.** Mindcraft's MindServer crashed its whole process when one agent messaged another that was restarting (`mindserver.js:206`, `TypeError` on `null.emit`). That disconnected every agent (society run `20261104T223720Z`). It now drops that one message.
+- **`mineflayer-entity-velocity.patch`.**
+  - The fault: with Mindcraft's unpinned dependencies, minecraft-data resolves to 3.119.0. That version describes 1.21.6's `entity_velocity` and `spawn_entity` velocity as one `velocity: {x, y, z}` field, but mineflayer 4.33.0 reads `velocityX/Y/Z`, which are undefined.
+  - The effect: any knockback gave the bot a NaN velocity, physics then made its position NaN, and Paper kicked it with "Invalid move player packet received". That was 49 kicks in the society run's 20 minutes, and 16 in a 6-minute offline night test.
+  - The fix: the patch reads either shape, as later mineflayer releases do.
+  - Proof: a bot hit by a summoned zombie was kicked on the first hit without the patch. With it, the bot took five hits and was never kicked.
+
+## Code writing
+
+`run.sh` sets Mindcraft's `allow_insecure_coding: true`, so agents can use `!newAction`: they write JavaScript that Mindcraft runs to build. This is the captain's decision for this laptop.
+
+The code is written by the model and runs inside the Mindcraft process on this host. Mindcraft runs it in an SES compartment that exposes only its skills library, and it has no time limit (`code_timeout_mins: -1`).
+
+Run it only on a machine where that is acceptable. The society run before this change refused about 20 `!newAction` attempts, and nothing was built.
 
 ## Set up (once, about 3 minutes)
 
@@ -47,6 +66,7 @@ Agents:
 - `LOG_ALL=true`, `base_profile: survival`, and an `init_message` that asks each agent to choose a long-term goal with `!goal` and to talk to the others when it helps.
 - Set `LOOM_MINDCRAFT_MODEL=gpt-5.4-nano` for a cheaper run.
 - Set `LOOM_MINDCRAFT_INIT_MESSAGE` to give every agent one shared start message instead.
+- Port 25565 is for real runs only, because observers join it. An offline test with a mock upstream must set another port, such as `LOOM_MINDCRAFT_SERVER_PORT=25599`. `run.sh` refuses to start a mock run on 25565.
 
 Example society run with no assigned roles:
 
@@ -71,6 +91,13 @@ All of these paths were tested with the mock, each back in the world with its go
 - Two kills within 10 s.
 - A killed main process.
 
+Two more rules:
+
+- **A death is final.** The world is hardcore, so a dead agent would otherwise come back as a spectator and keep acting. On its death message in Paper's log, the watchdog stops the agent for good: it sends SIGINT, which Mindcraft does not restart. It lists the agent in `dead-agents.txt`, which `run.sh` leaves out if it relaunches Mindcraft, and it stops the agent again if it ever rejoins.
+- **An idle agent is told to set its goal again.** This applies to an agent in the world whose goal loop has stopped (not merely paused for a conversation) and that has made no model call for 90 s. The goal loop stops after three answers with no command, or three provider errors.
+
+Both rules were tested offline: `kill ada_ash` left its process gone and never rejoined, and an idle agent was told after 91 s and made its next call.
+
 The watchdog also puts `nbdSteve` in spectator mode on every join, as an operator.
 
 The run stops by itself after `<minutes>`, or on Ctrl-C. It stops Mindcraft, then the proxy, then Paper (`stop`), and then runs `capture.sh`.
@@ -93,7 +120,7 @@ Offline test, with no key and no paid call: start a loopback OpenAI mock and set
 | What did it remember, and which goal was active? | `bots/<agent>/memory.json`, `bots/<agent>/histories/*.json` |
 | Who did what, as the server saw it? | `server/logs/latest.log`: joins, quits, deaths, and every agent chat line. Agents announce each command in chat, so this is a server-timestamped action record. |
 | What did it cost? | `proxy-calls.jsonl`, `proxy-summary.json` |
-| When was an agent out of the world, and how did it come back? | `watchdog.jsonl` (`joined`, `left`, `missing`, `killed`, `restartedByMindcraft`, `startRequested`, `goalResumedFromMemory`, `toldToResumeGoal`, `observerSpectator`), `mindcraft-relaunches.txt` |
+| When was an agent out of the world, and how did it come back? | `watchdog.jsonl` (`joined`, `left`, `missing`, `killed`, `restartedByMindcraft`, `startRequested`, `goalResumedFromMemory`, `toldToResumeGoal`, `goalLoopRestarted`, `died`, `stoppedForGood`, `observerSpectator`), `mindcraft-relaunches.txt`, `dead-agents.txt` |
 | All of it, in time order | `events.jsonl` (`join.js`): `joined`, `left`, `said`, `died` from Paper; `decided` and `memSaving` from the model logs; `call` from the proxy; `watchdog:*` from the watchdog |
 | What ran | `run.json`, `settings.json`, `profiles/`, `server/server.properties`, `seed.txt`, `mindcraft-commit.txt`, `mindcraft-deps.txt`, `prices.json`, `loom-commit.txt`, `node-version.txt`, `files.sha256` |
 
@@ -101,10 +128,8 @@ Offline test, with no key and no paid call: start a loopback OpenAI mock and set
 
 ## Known limits
 
-- An agent whose goal loop stopped (three answers with no command, which three provider errors in a row also cause) stays idle until somebody talks to it. It is still in the world, so the watchdog does not act on it.
 - What froze the agent's event loop in `collectBlocks("acacia_log", 8)` is not known. It came right after the server's "ada_ash moved wrongly!" correction. A blocked process cannot be asked for its stack, so the watchdog only recovers from a freeze. It cannot explain one.
 - Mindcraft has no tier router: one model per agent for every call.
-- How Mindcraft behaves as a hardcore spectator after a death has not been watched yet.
 
 ## License
 

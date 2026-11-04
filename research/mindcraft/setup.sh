@@ -50,11 +50,6 @@ git -C "$cache/mindcraft" fetch -q --depth 1 origin "$commit"
 git -C "$cache/mindcraft" checkout -q -f --detach "$commit"
 echo "mindcraft $(git -C "$cache/mindcraft" rev-parse HEAD)"
 
-# Loom's own fixes to Mindcraft, on top of the pinned commit (patches/).
-for patch in "$here"/patches/*.patch; do
-  git -C "$cache/mindcraft" apply "$patch"
-  echo "applied $(basename "$patch")"
-done
 
 cd "$cache/mindcraft"
 npm install --registry="$registry" > "$cache/npm-install.log" 2>&1 || {
@@ -69,6 +64,18 @@ if echo "$patches" | grep -q ERROR || [ "$(echo "$patches" | grep -c '✔')" -ne
   echo "not every Mindcraft patch applied" >&2
   exit 1
 fi
+# Loom's own fixes, on top of the pinned commit and its installed dependencies
+# (patches/, paths relative to the Mindcraft checkout). A patch already in place
+# (node_modules survives a rerun; tracked files were reset by the checkout) is
+# left as it is.
+for patch in "$here"/patches/*.patch; do
+  if git -C "$cache/mindcraft" apply --reverse --check "$patch" 2> /dev/null; then
+    echo "already applied $(basename "$patch")"
+  else
+    git -C "$cache/mindcraft" apply "$patch"
+    echo "applied $(basename "$patch")"
+  fi
+done
 npm ls --all > "$cache/deps.txt" 2>/dev/null || true
 echo "mineflayer $(node -p 'require("./node_modules/mineflayer/package.json").version')"
 echo "setup done; dependency tree in $cache/deps.txt"

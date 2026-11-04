@@ -14,6 +14,9 @@
 #   LOOM_MINDCRAFT_MINDSERVER_PORT  default 8080
 #   LOOM_MINDCRAFT_INIT_MESSAGE     the start message every agent gets; the default
 #                                   names the others and asks each for a !goal
+#   LOOM_MINDCRAFT_SERVER_PORT      default 25565, which is for real runs only; an
+#                                   offline test (mock upstream) must use another
+#                                   port, such as 25599, and is refused on 25565
 #   LOOM_MINDCRAFT_GRACE_SECONDS    how long an agent may be off the server before
 #                                   watchdog.js restarts it, default 60
 set -euo pipefail
@@ -33,7 +36,12 @@ model="${LOOM_MINDCRAFT_MODEL:-gpt-5.4}"
 proxy_port="${LOOM_MINDCRAFT_PROXY_PORT:-18565}"
 mindserver_port="${LOOM_MINDCRAFT_MINDSERVER_PORT:-8080}"
 grace="${LOOM_MINDCRAFT_GRACE_SECONDS:-60}"
+server_port="${LOOM_MINDCRAFT_SERVER_PORT:-25565}"
 upstream="${LOOM_MINDCRAFT_UPSTREAM:-https://api.openai.com}"
+if [ "$server_port" = 25565 ] && [ "$upstream" != "https://api.openai.com" ]; then
+  echo "an offline test may not use port 25565, which observers join for real runs; set LOOM_MINDCRAFT_SERVER_PORT=25599" >&2
+  exit 2
+fi
 # Paper 1.21.6 build 48, the newest stable build of the Minecraft version
 # Mindcraft recommends, which its patched mineflayer 4.33.0 supports.
 minecraft_version=1.21.6
@@ -45,7 +53,7 @@ names=(ada_ash bram_oak cora_fen dov_hale elin_moss finn_reed gwen_vale hugo_bir
   iris_dale jon_marsh kira_stone leo_brook mira_glen nils_ford orla_heath piet_wren)
 
 [ -x "$node_bin" ] && [ -d "$mindcraft/node_modules" ] || { echo "run setup.sh first" >&2; exit 1; }
-for port in 25565 "$proxy_port" "$mindserver_port"; do
+for port in "$server_port" "$proxy_port" "$mindserver_port"; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN > /dev/null 2>&1; then
     echo "port $port is already in use" >&2; exit 1
   fi
@@ -78,7 +86,7 @@ echo "eula=true" > "$server/eula.txt"
 cat > "$server/server.properties" <<EOF
 online-mode=false
 server-ip=127.0.0.1
-server-port=25565
+server-port=$server_port
 hardcore=true
 difficulty=normal
 level-seed=$seed
@@ -127,7 +135,7 @@ init_message="${LOOM_MINDCRAFT_INIT_MESSAGE:-You live in this world with these o
 settings="$("$node_bin" -e 'console.log(JSON.stringify({
   host: "127.0.0.1", minecraft_version: process.argv[2], auth: "offline",
   base_profile: "survival", auto_open_ui: false, load_memory: false,
-  allow_insecure_coding: false, init_message: process.argv[1]
+  allow_insecure_coding: true, init_message: process.argv[1]
 }))' "$init_message" "$minecraft_version")"
 echo "$settings" > "$run/settings.json"
 printf '%s\n' "$agents" > "$run/agents.txt"
@@ -200,9 +208,10 @@ for name in "${roster[@]}"; do
   ln -s "$run/bots/$name" "$mindcraft/bots/$name"
 done
 profiles_json="[$(IFS=,; echo "${profiles[*]}")]"
+all_profiles_json="$profiles_json"
 start_mindcraft() {
   (cd "$mindcraft" && exec env OPENAI_API_KEY=sk-loom-proxy-holds-the-key LOG_ALL=true \
-    MINECRAFT_PORT=25565 MINDSERVER_PORT="$mindserver_port" PROFILES="$profiles_json" SETTINGS_JSON="$1" \
+    MINECRAFT_PORT="$server_port" MINDSERVER_PORT="$mindserver_port" PROFILES="$profiles_json" SETTINGS_JSON="$1" \
     "$node_bin" main.js >> "$run/mindcraft-stdout.log" 2>&1) &
   mindcraft_pid=$!
 }
@@ -212,7 +221,7 @@ start_mindcraft "$settings"
   --grace-seconds "$grace" > "$run/watchdog-stdout.log" 2>&1 &
 watchdog_pid=$!
 echo "mindcraft started: ${roster[*]} on $model, ceiling \$$ceiling, $minutes min"
-echo "join with Minecraft Java $minecraft_version at localhost:25565 as $operator (operator, put in spectator on join); MindServer UI http://localhost:$mindserver_port"
+echo "join with Minecraft Java $minecraft_version at localhost:$server_port as $operator (operator, put in spectator on join); MindServer UI http://localhost:$mindserver_port"
 
 deadline=$(($(date +%s) + minutes * 60))
 while [ "$(date +%s)" -lt "$deadline" ]; do
@@ -220,6 +229,12 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     # Mindcraft itself went away: start it again, every agent from its memory.
     echo "mindcraft exited early; starting it again from saved memory" >&2
     date -u +%Y-%m-%dT%H:%M:%SZ >> "$run/mindcraft-relaunches.txt"
+    # Dead agents stay dead: their profiles are left out (watchdog.js lists them).
+    profiles_json="$("$node_bin" -e '
+const fs = require("fs")
+const dead = fs.existsSync(process.argv[2]) ? fs.readFileSync(process.argv[2], "utf8").split("\n").filter(Boolean) : []
+console.log(JSON.stringify(JSON.parse(process.argv[1]).filter((p) => !dead.some((d) => p.endsWith("/" + d + ".json")))))
+' "$all_profiles_json" "$run/dead-agents.txt")"
     start_mindcraft "$("$node_bin" -e 'const s = JSON.parse(process.argv[1]); s.load_memory = true; s.init_message = "Agent process restarted."; console.log(JSON.stringify(s))' "$settings")"
     sleep 10
   fi
