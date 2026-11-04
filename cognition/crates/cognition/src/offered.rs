@@ -1489,6 +1489,7 @@ impl OfferedRefs {
         let held = |list: &[String], handle: &str| list.iter().any(|offered| offered == handle);
         match intent {
             Intent::MoveTo { onto } => held(&self.walk_targets, onto),
+            Intent::Walk { toward, .. } => held(&self.explore_targets, toward),
             Intent::Flee { from } => held(&self.flee_targets, from),
             Intent::Eat { slot_ref } => held(&self.stacks, slot_ref),
             Intent::Dig { block } => held(&self.dig_blocks, block),

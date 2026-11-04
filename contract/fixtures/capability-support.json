@@ -11,6 +11,11 @@
       "bodyOperation": "moveTo",
       "serverEvidence": "movement"
     },
+    "walk": {
+      "status": "supported",
+      "bodyOperation": "moveTo",
+      "serverEvidence": "movement"
+    },
     "flee": {
       "status": "supported",
       "bodyOperation": "flee",

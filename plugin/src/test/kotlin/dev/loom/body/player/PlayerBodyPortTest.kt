@@ -3181,3 +3181,72 @@ class PlayerWalkResolutionTest {
         assertEquals(EventTag.MOVEMENT_STALLED, moved.outcome)
     }
 }
+
+class PlayerLongWalkTest {
+    @TempDir
+    lateinit var temporary: Path
+
+    private val harnesses = mutableListOf<PortHarness>()
+    private val tick = AtomicLong(500)
+
+    @AfterEach
+    fun cleanUp() {
+        harnesses.forEach { runCatching(it.port::close) }
+    }
+
+    private fun harness(
+        agent: AgentId,
+        options: HarnessOptions = HarnessOptions(),
+    ): PortHarness = buildPortHarness(temporary, tick, agent, options).also(harnesses::add)
+
+    @Test
+    fun `a long walk hops along its bearing until it arrives or stalls`() {
+        val agent = AgentId("agent-long-walk")
+        var at = SENSE_POSITION
+        var stallAfter = Int.MAX_VALUE
+        var moves = 0
+        // Open air around the body, so it has a way out and cells at the edge of sight.
+        val open = FakePlayerServerState()
+        open.passable +=
+            (-14..16).flatMap {
+                    x ->
+                (-13..17).flatMap { z -> listOf(listOf(x, 64, z), listOf(x, 65, z)) }
+            }
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    server = open,
+                    intercept = { request ->
+                        (request as? BodyRequest.MoveTo)?.let {
+                            val from = at
+                            if (++moves <= stallAfter) at = it.destination
+                            fakeMove(it).copy(from = from, position = at)
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val walk = { blocks: Long ->
+            val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+            val toward = requireNotNull(perception.explore.firstOrNull()).ref
+            harness.port.apply(
+                agent,
+                Intent.Walk(toward, blocks),
+                perception.requestId,
+            ).await() as IntentOutcome.Accepted
+        }
+
+        val arrived = walk(30)
+        assertEquals(true, arrived.reached, arrived.effect)
+        assertEquals(3, moves, "two full hops and a short last one")
+
+        moves = 0
+        stallAfter = 1
+        val stalled = walk(30)
+        assertEquals(false, stalled.reached, stalled.effect)
+        assertTrue(stalled.effect.endsWith("stalled: no headway"), stalled.effect)
+        assertEquals(2, moves)
+        assertEquals(2, harness.records.count { it.event == BodyEvent.INTENT_APPLIED })
+    }
+}

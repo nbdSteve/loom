@@ -161,7 +161,7 @@ internal fun exploreOf(
 }
 
 /** The highest cell a body stands in at column ([x], [z]), within a few blocks of [feetY]. */
-private fun standableNear(
+internal fun standableNear(
     ground: BlockGround,
     x: Int,
     feetY: Int,

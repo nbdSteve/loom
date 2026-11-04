@@ -95,9 +95,6 @@ const val MAX_PERCEPTION_OBSERVATIONS: Int = 144
 /** The most applications one craft intent may request. */
 const val MAX_CRAFTS_PER_INTENT: Long = 8
 
-/** The most blocks one [Intent.DigSequence] names. */
-const val MAX_DIG_SEQUENCE_BLOCKS: Int = 5
-
 /** Vanilla's largest result stack from one recipe application. */
 private const val MAX_RECIPE_RESULT_COUNT: Long = 64
 
@@ -1229,7 +1226,7 @@ val Intent.action: IntentAction
     get() =
         when (this) {
             is Intent.Say -> IntentAction.SAY
-            is Intent.MoveTo -> IntentAction.MOVE_TO
+            is Intent.MoveTo, is Intent.Walk -> IntentAction.MOVE_TO
             is Intent.Flee -> IntentAction.FLEE
             is Intent.Eat -> IntentAction.EAT
             is Intent.Dig, is Intent.DigSequence -> IntentAction.DIG
@@ -1243,6 +1240,10 @@ val Intent.action: IntentAction
             Intent.Idle -> IntentAction.IDLE
         }
 
+/** The single step a goal judges this intent as: a long walk is its exploration walk to the cell it heads along. */
+val Intent.asStep: Intent
+    get() = if (this is Intent.Walk) Intent.MoveTo(toward) else this
+
 /**
  * The one target ref a goal step names for this intent, or `null` for an action that names
  * nothing; mirrors the Rust contract's `Intent::target_ref`. A placement's target is its support
@@ -1252,6 +1253,7 @@ val Intent.targetRef: String?
     get() =
         when (this) {
             is Intent.MoveTo -> onto
+            is Intent.Walk -> toward
             is Intent.Flee -> from
             is Intent.Eat -> ref
             is Intent.Dig -> block
@@ -1454,15 +1456,23 @@ sealed interface Intent {
         }
     }
 
-    /** Dig up to five offered blocks in order, stopping at the first that is not dug. */
+    /** Dig offered blocks in order, stopping at the first that is not dug. */
     @Serializable
     @SerialName("digSequence")
     data class DigSequence(val blocks: List<String>) : Intent {
         init {
-            require(blocks.size in 1..MAX_DIG_SEQUENCE_BLOCKS) {
-                "a dig sequence names 1..$MAX_DIG_SEQUENCE_BLOCKS blocks, got ${blocks.size}"
-            }
+            require(blocks.isNotEmpty()) { "a dig sequence names at least one block" }
             blocks.forEach(::requireBoundedRef)
+        }
+    }
+
+    /** Walk [blocks] along the bearing of one offered edge-of-sight cell, in bounded hops. */
+    @Serializable
+    @SerialName("walk")
+    data class Walk(val toward: String, val blocks: Long) : Intent {
+        init {
+            requireBoundedRef(toward)
+            require(blocks >= 1) { "a walk goes at least one block, got $blocks" }
         }
     }
 

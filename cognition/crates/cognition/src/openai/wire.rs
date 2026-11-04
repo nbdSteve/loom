@@ -756,12 +756,50 @@ fn namespace_defs(offered: &OfferedRefs) -> Value {
     Value::Object(defs)
 }
 
+/// The walks an exploring goal review offers: one to an edge-of-sight cell, or a long walk along its bearing.
+fn explore_walks() -> Vec<Value> {
+    let cell = json!({ "$ref": "#/$defs/exploreTargetRef" });
+    let walk = intent_variant(
+        "moveTo",
+        vec![(
+            "onto",
+            Some(json!({
+                "description": "The ref of the cell at the edge of sight to walk to.",
+                "anyOf": [cell],
+            })),
+        )],
+    );
+    let far = intent_variant(
+        "walk",
+        vec![
+            (
+                "toward",
+                Some(json!({ "description": WALK_TOWARD, "anyOf": [cell] })),
+            ),
+            ("blocks", Some(walk_blocks())),
+        ],
+    );
+    walk.into_iter().chain(far).collect()
+}
+
+const WALK_TOWARD: &str =
+    "The ref of a cell at the edge of sight whose compass bearing to walk along.";
+
+/// A long walk's `blocks`.
+fn walk_blocks() -> Value {
+    json!({
+        "type": "integer",
+        "minimum": 1,
+        "description": "How many blocks to walk along that bearing, in one decision; the body walks in hops and stops on arrival, at a hop that makes no headway (the world border included), or when danger takes the body."
+    })
+}
+
 /// A dig sequence's `blocks`: an array of `block`, bounded by the contract type since strict mode cannot.
 fn dig_sequence(block: &Value) -> Value {
     json!({
         "type": "array",
         "items": block,
-        "description": "One to five distinct block refs to dig in order, in one decision; the body stops at the first it cannot dig. More than five is refused."
+        "description": "One or more distinct block refs to dig in order, in one decision; the body stops at the first it cannot dig."
     })
 }
 
@@ -1701,6 +1739,8 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
             "description": "One line of player chat heard by agents nearby: at most 128 characters and 256 UTF-8 bytes, words separated by single spaces, no leading or trailing space, no leading '/', and no control, formatting or bidirectional characters. Text outside these bounds is refused and never sent."
         })))]),
         intent_variant("moveTo", vec![("onto", walk_targets("The ref of the one nearby block to walk to: the body stands on top of a solid block, or in the own space of a block it can walk through such as a dead bush or grass. A block ref from this message outside your own spot, never coordinates or an invented one."))]),
+        // A request offers a long walk only beside its exploration walk, reusing the edge-of-sight refs.
+        offered.map_or_else(|| Some(json!({ "type": "string", "description": WALK_TOWARD })), |_| None).and_then(|toward| intent_variant("walk", vec![("toward", Some(toward)), ("blocks", Some(walk_blocks()))])),
         intent_variant("flee", vec![("from", creatures("The ref of the one living thing to move away from. A creature ref given in this message, never a name, a type, or an invented one."))]),
         intent_variant("eat", vec![("ref", stacks("The ref of the one stack in your own inventory to eat one item from. A stack ref given in this message, never an item name or an invented one."))]),
         intent_variant("dig", vec![("block", dig_blocks("The ref of the exact nearby block to dig once. A block ref from this message, never coordinates or an item name."))]),
@@ -1846,20 +1886,7 @@ fn coupled_schema(
                 "description": "A cell at the edge of sight offered in this message, to look further from.",
             }),
         );
-        let walk = intent_variant(
-            "moveTo",
-            vec![(
-                "onto",
-                Some(json!({
-                    "description": "The ref of the cell at the edge of sight to walk to.",
-                    "anyOf": [reference("exploreTargetRef")],
-                })),
-            )],
-        );
-        pairings.push(pairing(
-            json!(walk.into_iter().collect::<Vec<_>>()),
-            &offer.exploring,
-        ));
+        pairings.push(pairing(json!(explore_walks()), &offer.exploring));
     }
     if !offer.sheltering.is_empty() {
         let steps = shelter_step_variants(offered, table);
@@ -2423,7 +2450,7 @@ mod tests {
     fn every_intent_variant_is_a_closed_tagged_object() {
         let schema = decision_schema();
         let variants = schema["properties"]["intent"]["anyOf"].as_array().unwrap();
-        assert_eq!(variants.len(), 14, "one per contract Intent variant");
+        assert_eq!(variants.len(), 15, "one per contract Intent variant");
         let mut actions = Vec::new();
         for variant in variants {
             assert_eq!(variant["additionalProperties"], false);
@@ -2441,6 +2468,7 @@ mod tests {
             vec![
                 "say",
                 "moveTo",
+                "walk",
                 "flee",
                 "eat",
                 "dig",

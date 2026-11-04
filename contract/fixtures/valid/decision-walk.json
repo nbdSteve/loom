@@ -1,0 +1,1 @@
+{"requestId":"req-explore-1","agentId":"agent-alpha","intent":{"action":"walk","toward":"x1","blocks":40},"reasoning":"nothing worth doing in sight; walk forty blocks north to look further","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}

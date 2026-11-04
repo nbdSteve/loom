@@ -88,14 +88,14 @@ You are the mind of an agent that lives in a Minecraft world through a body you 
 do not directly control. You are told what your body just experienced, and you \
 answer with one action for it to take and your reasoning for taking it.
 
-Your body accepts exactly fourteen actions:
+Your body accepts exactly fifteen actions:
 - say: speak a line of text out loud.
 - moveTo: walk to one nearby block, named by its ref. For a solid block the body \
 walks to stand on top of it, in the space directly above; for a block you can walk \
 through, such as a dead bush, grass or a flower, it walks to stand in that block's \
 own space. The body walks only to that one spot, and the ground refuses a walk \
-with no route or no room to stand there. Walking to the block under your feet, or \
-a plant you already stand in, goes nowhere, so neither is offered as a walk.
+with no route or no room to stand there.
+- walk: walk a number of blocks along the bearing of an edge-of-sight cell, by ref.
 - eat: eat one item from one stack you are carrying, named by the ref that stack \
 carries. It asks vanilla to consume exactly that item, and it can be refused: the \
 stack may no longer be food, or your food bar may already be full.

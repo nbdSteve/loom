@@ -425,9 +425,6 @@ pub const MAX_PERCEPTION_OBSERVATIONS: usize = 144;
 /// The most applications one craft intent may request.
 pub const MAX_CRAFTS_PER_INTENT: i64 = 8;
 
-/// The most blocks one [`Intent::DigSequence`] names.
-pub const MAX_DIG_SEQUENCE_BLOCKS: usize = 5;
-
 /// The most swings one attack intent may request.
 pub const MAX_ATTACKS_PER_INTENT: i64 = 4;
 
@@ -583,15 +580,29 @@ where
 /// Refuses an out-of-bounds ref on an intent, where the field is required.
 ///
 /// Only decoding is narrowed, as with [`bounded_optional_ref`].
+fn bounded_walk<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let blocks = i64::deserialize(deserializer)?;
+    if blocks < 1 {
+        return Err(de::Error::invalid_value(
+            de::Unexpected::Signed(blocks),
+            &"a walk of at least one block",
+        ));
+    }
+    Ok(blocks)
+}
+
 fn bounded_dig_blocks<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let blocks = Vec::<String>::deserialize(deserializer)?;
-    if !(1..=MAX_DIG_SEQUENCE_BLOCKS).contains(&blocks.len()) {
+    if blocks.is_empty() {
         return Err(de::Error::invalid_length(
-            blocks.len(),
-            &"a dig sequence of 1 to 5 blocks",
+            0,
+            &"a dig sequence of at least one block",
         ));
     }
     for block in &blocks {
@@ -1987,7 +1998,15 @@ pub enum Intent {
         #[serde(deserialize_with = "bounded_ref")]
         block: String,
     },
-    /// Dig up to five offered blocks in order, stopping at the first that is not dug.
+    /// Walk `blocks` along the bearing of one offered edge-of-sight cell, in bounded hops.
+    #[serde(rename = "walk")]
+    Walk {
+        #[serde(deserialize_with = "bounded_ref")]
+        toward: String,
+        #[serde(deserialize_with = "bounded_walk")]
+        blocks: i64,
+    },
+    /// Dig offered blocks in order, stopping at the first that is not dug.
     #[serde(rename = "digSequence")]
     DigSequence {
         #[serde(deserialize_with = "bounded_dig_blocks")]

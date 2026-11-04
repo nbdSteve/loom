@@ -14,11 +14,11 @@ import dev.loom.contract.Intent
 fun describe(intent: Intent): String =
     when (intent) {
         is Intent.MoveTo -> "moveTo onto ${intent.onto}"
+        is Intent.Walk -> "walk ${intent.blocks} blocks toward ${intent.toward}"
         is Intent.Say -> "say"
         is Intent.Flee -> "flee from ${intent.from}"
         is Intent.Eat -> "eat ${intent.ref}"
-        is Intent.Dig -> "dig ${intent.block}"
-        is Intent.DigSequence -> "dig ${intent.blocks.joinToString(" then ")}"
+        is Intent.Dig, is Intent.DigSequence -> "dig ${dug(intent)}"
         is Intent.Collect -> "collect ${intent.item}"
         is Intent.Place -> "place ${intent.item} at ${intent.block}/${intent.face.name.lowercase()}"
         is Intent.Equip -> "equip ${intent.item} as ${intent.destination.name.lowercase()}"
@@ -37,3 +37,6 @@ fun describe(outcome: IntentOutcome): String =
         is IntentOutcome.Unsupported -> "unsupported: ${outcome.action}"
         IntentOutcome.NoSuchBody -> "no such body"
     }
+
+private fun dug(intent: Intent): String =
+    (intent as? Intent.DigSequence)?.blocks?.joinToString(" then ") ?: (intent as Intent.Dig).block

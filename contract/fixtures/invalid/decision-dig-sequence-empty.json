@@ -1,0 +1,1 @@
+{"requestId":"req-block-1","agentId":"agent-gamma","intent":{"action":"digSequence","blocks":[]},"reasoning":"a sequence of nothing","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}
