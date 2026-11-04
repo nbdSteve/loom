@@ -55,11 +55,58 @@ internal class PlayerActuation(
         requestId: String?,
     ): CompletionStage<IntentOutcome> {
         val runtime = registry.ready(agentId) ?: return completedBodyOperation(IntentOutcome.NoSuchBody)
-        // The newest decision applied governs the body: an older flight still being carried out
-        // never halts or replaces it (r34 beta).
-        requestId?.let { preparer.newest.applied(agentId, it) }
         val sense = requestId?.let { sessions.get(agentId, it) }
-        sense?.stopKeepalive()
+        return shortcut(agentId, intent, requestId, sense)?.let { completedBodyOperation(it) }
+            ?: start(runtime, intent, requestId, sense)
+    }
+
+    /**
+     * The outcome of an answer that needs no body request: one asked before the newest answer already
+     * applied is dropped, and one naming the action already running lets it continue.
+     */
+    private fun shortcut(
+        agentId: AgentId,
+        intent: Intent,
+        requestId: String?,
+        sense: HeldSense?,
+    ): IntentOutcome? {
+        requestId ?: return null
+        val outcome =
+            if (preparer.newest.outdated(agentId, requestId)) {
+                IntentOutcome.Rejected("a newer decision already governs the body", EventTag.DECISION_SUPERSEDED)
+            } else {
+                // The newest decision applied governs the body: an older flight still being carried out
+                // never halts or replaces it (r34 beta).
+                preparer.newest.applied(agentId, requestId)
+                sense?.stopKeepalive()
+                continuing(agentId, requestId, intent, sense)
+            }
+        outcome?.let { sessions.settle(agentId, requestId, sense) }
+        return outcome
+    }
+
+    /** Lets the running action continue when [intent] names it, else records [intent] as the one running. */
+    private fun continuing(
+        agentId: AgentId,
+        requestId: String,
+        intent: Intent,
+        sense: HeldSense?,
+    ): IntentOutcome? {
+        val signature = signatureOf(agentId, requestId, intent, sense)
+        if (signature != null && running[agentId]?.second == signature) {
+            return IntentOutcome.Accepted("the running action continues")
+        }
+        if (signature != null) running[agentId] = requestId to signature else running.remove(agentId)
+        return null
+    }
+
+    private fun start(
+        runtime: PlayerRuntime,
+        intent: Intent,
+        requestId: String?,
+        sense: HeldSense?,
+    ): CompletionStage<IntentOutcome> {
+        val agentId = runtime.identity.agentId
         val answer = CompletableFuture<IntentOutcome>()
         val pending = PendingAction(agentId, intent, requestId, runtime, sense, answer)
         CompletableFuture
@@ -76,6 +123,51 @@ internal class PlayerActuation(
 
     /** The order this agent's perceptions were asked in, which dates each decision applied. */
     val newest: NewestDecisions get() = preparer.newest
+
+    // Each agent's running action: the decision that asked for it and what it acts on. Main thread only.
+    private val running = HashMap<AgentId, Pair<String, String>>()
+
+    /** What [intent] acts on, through [requestId]'s refs, for an action that runs over ticks; `null` otherwise. */
+    private fun signatureOf(
+        agentId: AgentId,
+        requestId: String,
+        intent: Intent,
+        sense: HeldSense?,
+    ): String? {
+        sense ?: return null
+        val target =
+            when (intent) {
+                is Intent.MoveTo ->
+                    sense.targets.exploreCells[intent.onto]?.joinToString(",")
+                        ?: blockAt(agentId, requestId, intent.onto, sense)
+                is Intent.Dig -> blockAt(agentId, requestId, intent.block, sense)
+                is Intent.Sleep -> blockAt(agentId, requestId, intent.bed, sense)
+                is Intent.Collect -> itemAt(agentId, requestId, intent.item, sense)?.let { "$it:${intent.approach}" }
+                else -> null
+            }
+        return target?.let { "${intent::class.simpleName}:$it" }
+    }
+
+    private fun blockAt(
+        agentId: AgentId,
+        requestId: String,
+        ref: String,
+        sense: HeldSense,
+    ): String? {
+        val bound = context.refs.blocks.resolve(agentId, requestId, ref, context.authority.currentTick())
+        return (bound as? WorldTargetResolution.Bound)
+            ?.let { sense.raw.report.blocks.getOrNull(it.index)?.position?.joinToString(",") }
+    }
+
+    private fun itemAt(
+        agentId: AgentId,
+        requestId: String,
+        ref: String,
+        sense: HeldSense,
+    ): String? {
+        val bound = context.refs.droppedItems.resolve(agentId, requestId, ref, context.authority.currentTick())
+        return (bound as? WorldTargetResolution.Bound)?.let { sense.droppedItemSubjects[it.index]?.toString() }
+    }
 
     /**
      * Stops whatever cancellable work [agentId]'s body is carrying out for decision [decidedBy], off
@@ -101,6 +193,7 @@ internal class PlayerActuation(
     ) {
         pending.requestId?.let {
             sessions.settle(pending.agentId, it, pending.sense)
+            if (running[pending.agentId]?.first == it) running.remove(pending.agentId)
         }
         when {
             failure != null -> {

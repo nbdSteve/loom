@@ -124,7 +124,8 @@ class PlayerSpeechPortTest {
         val agent = AgentId("agent-crowded")
         val harness = harness(agent)
         harness.port.spawn(agent).await()
-        val held = (1..4).map { requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await()) }
+        val held =
+            (1..BODY_SENSE_MEMORY).map { requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await()) }
         assertEquals(null, harness.port.perceive(agent, Trigger.GoalReview).await())
         val refused = harness.records.single { it.event == BodyEvent.PERCEPTION_REFUSED }
         assertEquals(EventTag.SENSE_AT_CAPACITY, refused.outcome)
@@ -1179,17 +1180,17 @@ class PlayerSceneSelectionIntegrationTest {
         assertEquals(BODY_SENSE_MAX_OFFERS_PER_KIND, senseRequest.limit)
 
         val second = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
-        val wrongRequest =
-            harness.port
-                .apply(agent, Intent.Collect(item.ref, approach = false), second.requestId)
-                .await() as IntentOutcome.Rejected
-        assertEquals(EventTag.COLLECT_ITEM_UNNAMED, wrongRequest.tag)
         assertEquals(
             IntentOutcome.Accepted("collected 1 minecraft:apple"),
             harness.port
                 .apply(agent, Intent.Collect(item.ref, approach = false), first.requestId)
                 .await(),
         )
+        val wrongRequest =
+            harness.port
+                .apply(agent, Intent.Collect(item.ref, approach = false), second.requestId)
+                .await() as IntentOutcome.Rejected
+        assertEquals(EventTag.COLLECT_ITEM_UNNAMED, wrongRequest.tag)
 
         val collect = harness.connector.requests.filterIsInstance<BodyRequest.Collect>().single()
         assertEquals(first.requestId, collect.senseId)
@@ -3057,11 +3058,11 @@ class PlayerWalkResolutionTest {
         val idled = harness.port.apply(agent, Intent.Idle, idling.requestId).await()
 
         assertTrue(fled is IntentOutcome.Accepted, fled.toString())
-        assertEquals(EventTag.CONTROL_NOT_READY, (dug as IntentOutcome.Rejected).tag)
-        assertEquals(IntentOutcome.Accepted("left a newer decision's work running"), idled)
-        // Neither older answer halted the flight, and the refused dig was not asked again.
+        // Only the newest answer applies: both older answers are dropped before the body is asked.
+        assertEquals(EventTag.DECISION_SUPERSEDED, (dug as IntentOutcome.Rejected).tag)
+        assertEquals(EventTag.DECISION_SUPERSEDED, (idled as IntentOutcome.Rejected).tag)
         assertTrue(harness.connector.requests.none { it is BodyRequest.Halt }, "${harness.connector.requests}")
-        assertEquals(1, harness.connector.requests.count { it is BodyRequest.Dig })
+        assertEquals(0, harness.connector.requests.count { it is BodyRequest.Dig })
         assertEquals(false, harness.port.halts.halt(agent, digging.requestId).await(), "nor does its own halt")
     }
 
@@ -3085,7 +3086,7 @@ class PlayerWalkResolutionTest {
         val older = harness.port.apply(agent, Intent.Flee(threatIn(review)), review.requestId).await()
 
         assertTrue(newer is IntentOutcome.Accepted, newer.toString())
-        assertEquals(EventTag.RETREAT_STALE, (older as IntentOutcome.Rejected).tag)
+        assertEquals(EventTag.DECISION_SUPERSEDED, (older as IntentOutcome.Rejected).tag)
         assertEquals(1, harness.connector.requests.count { it is BodyRequest.Flee }, "the older flight was never sent")
     }
 

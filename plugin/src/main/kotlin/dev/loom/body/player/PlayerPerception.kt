@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
 
 private const val PLAYER_FOOD_CAPACITY = 20.0
 private const val PLAYER_HEALTH_CAPACITY = 20.0
-private const val BODY_SENSE_MEMORY = 4
+internal const val BODY_SENSE_MEMORY = 12
 private const val KEEPALIVE_SECONDS = 10L
 
 /**

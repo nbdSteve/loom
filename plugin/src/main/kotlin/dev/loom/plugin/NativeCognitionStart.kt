@@ -12,6 +12,8 @@
 package dev.loom.plugin
 
 import dev.loom.mind.DEFAULT_FOLLOW_UPS_PER_REVIEW
+import dev.loom.mind.DEFAULT_GOAL_REVIEW_CADENCE_TICKS
+import dev.loom.mind.GoalReviewSchedule
 import dev.loom.mind.MAX_FOLLOW_UPS_PER_REVIEW
 
 /** The environment setting that selects when native cognition begins. */
@@ -19,6 +21,35 @@ const val NATIVE_COGNITION_ENV: String = "LOOM_NATIVE_COGNITION"
 
 /** The environment setting that bounds how many follow-ups each scheduled review earns. */
 const val FOLLOW_UPS_ENV: String = "LOOM_GOAL_FOLLOW_UPS_PER_REVIEW"
+
+/** The environment setting that makes the review schedule periodic: one review per agent every this many ticks. */
+const val REVIEW_CADENCE_ENV: String = "LOOM_GOAL_REVIEW_CADENCE_TICKS"
+
+/** A positive tick count up to [DEFAULT_GOAL_REVIEW_CADENCE_TICKS] from [value], or `null` when unset. */
+fun reviewCadenceOf(value: String?): Long? {
+    if (value == null) return null
+    val ticks = value.trim().toLongOrNull()
+    require(ticks != null && ticks in 1..DEFAULT_GOAL_REVIEW_CADENCE_TICKS) {
+        "$REVIEW_CADENCE_ENV must be a tick count in 1..$DEFAULT_GOAL_REVIEW_CADENCE_TICKS, was \"$value\""
+    }
+    return ticks
+}
+
+/** The schedule the environment asks for: periodic at [REVIEW_CADENCE_ENV] ticks when set. */
+fun reviewScheduleOf(environment: (String) -> String?): GoalReviewSchedule {
+    val followUps = followUpsPerReviewOf(environment(FOLLOW_UPS_ENV))
+    val cadence =
+        reviewCadenceOf(environment(REVIEW_CADENCE_ENV))
+            ?: return GoalReviewSchedule(followUpsPerReview = followUps)
+    return GoalReviewSchedule(
+        cadenceTicks = cadence,
+        slicesPerCadence = minOf(cadence, PERIODIC_SLICES).toInt(),
+        followUpsPerReview = followUps,
+        periodic = true,
+    )
+}
+
+private const val PERIODIC_SLICES = 24L
 
 /**
  * The follow-ups each scheduled review earns, from [value]: absent is the schedule's own

@@ -55,11 +55,16 @@ function budgetStopFor (refusal) {
   }
 }
 
+// A rate-limit refusal (HTTP 429) or a timeout is that one call's typed failure and the run goes
+// on; published stops of either kind still validate against `PROVIDER_UNAVAILABLE_MAPPINGS`.
+const CONTINUING_PROVIDER_MAPPINGS = Object.freeze(['providerRateLimit', 'providerTimeout'])
+
 function providerStopFor (request, classified) {
   if (
     classified === null ||
     classified === undefined ||
     !PROVIDER_UNAVAILABLE_MAPPINGS.includes(classified.mapping) ||
+    CONTINUING_PROVIDER_MAPPINGS.includes(classified.mapping) ||
     classified.httpStatus === 401 ||
     classified.httpStatus === 403
   ) {
@@ -139,7 +144,7 @@ function reviewWindowBounds (schedule, agentCount, windowTicks) {
     if (earliest <= windowTicks) maximum += 1
     if (earliest + stagger <= windowTicks) minimum += 1
   }
-  return { minimum, maximum }
+  return { minimum: schedule.reviewsInFlightPerAgent > 1 ? 0 : minimum, maximum }
 }
 
 function sumUsage (records) {

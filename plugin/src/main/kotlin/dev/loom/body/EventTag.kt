@@ -132,6 +132,9 @@ object EventTag {
      */
     const val CONTROL_NOT_READY: String = "controlNotReady"
 
+    /** An answer asked before the newest one already applied to its agent's body, dropped unapplied. */
+    const val DECISION_SUPERSEDED: String = "decisionSuperseded"
+
     /**
      * A threat was seen again too soon after the last one Loom reported.
      *
@@ -697,6 +700,7 @@ val INTENT_REFUSAL_TAGS: Set<String> =
         GoalEvidence.STEP_IDLE,
         EventTag.CONTROL_UNAVAILABLE,
         EventTag.CONTROL_NOT_READY,
+        EventTag.DECISION_SUPERSEDED,
         EventTag.EAT_SLOT_FORGOTTEN,
         EventTag.EAT_SLOT_UNNAMED,
         EventTag.EAT_SLOT_EMPTY,

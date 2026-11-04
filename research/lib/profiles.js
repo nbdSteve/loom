@@ -404,6 +404,32 @@ PROFILES['long-run-60m-10'] = Object.freeze({
   maxExternalSpendUsd: 175.08,
   bounds: Object.freeze({ logBytes: 128 * 1024 * 1024, evidenceRecords: 64_000, artifactBytes: 96 * 1024 * 1024 })
 })
+// The long-run profile with periodic cognition: one review per agent every 60 ticks (3 s) whatever
+// the body is doing, up to four with the mind at once (the 12 s provider timeout over the 3 s
+// interval), no follow-ups, and only the newest answer applied. 1,200 reviews an agent leave a
+// third of 18,000 calls to events; 1,800 pivotal and 16,200 ordinary calls at their worst case
+// are $604.01664. The 50 outstanding are ten agents' four reviews and one event each.
+const PERIODIC_CADENCE = Object.freeze({ cadenceTicks: 60, sliceTicks: 3, reviewsInFlightPerAgent: 4 })
+PROFILES['periodic-60m-10'] = Object.freeze({
+  ...PROFILES['long-run-60m-10'],
+  cadence: PERIODIC_CADENCE,
+  followUpsPerReview: 0,
+  expectedReviewsPerAgent: 1200,
+  callCeilings: Object.freeze({ perAgent: 1800, global: 18_000, outstanding: 50, pivotal: 1800 }),
+  maxExternalSpendUsd: 604.02,
+  bounds: Object.freeze({ logBytes: 1024 * 1024 * 1024, evidenceRecords: 1_000_000, artifactBytes: 1024 * 1024 * 1024 })
+})
+// The same over ten minutes: 200 reviews an agent, $100.66944 at worst.
+PROFILES['periodic-10m-10'] = Object.freeze({
+  ...PROFILES['periodic-60m-10'],
+  runDurationSeconds: 600,
+  simulationTickCeiling: 12_000,
+  expectedReviewsPerAgent: 200,
+  exposure: undefined,
+  callCeilings: Object.freeze({ perAgent: 300, global: 3000, outstanding: 50, pivotal: 300 }),
+  maxExternalSpendUsd: 100.67,
+  bounds: Object.freeze({ logBytes: 256 * 1024 * 1024, evidenceRecords: 200_000, artifactBytes: 256 * 1024 * 1024 })
+})
 Object.freeze(PROFILES)
 
 /** The server tick rate a profile runs at; vanilla's 20 unless the profile accelerates it. */

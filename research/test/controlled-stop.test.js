@@ -418,8 +418,12 @@ test('provider classification selects a controlled stop while 401 and 403 stay f
     responseShape: 'apiErrorEnvelope',
     mapping
   })
-  for (const mapping of ['providerTimeout', 'providerRateLimit', 'providerServer', 'providerConnection']) {
+  for (const mapping of ['providerServer', 'providerConnection']) {
     assert.equal(providerStopFor(request, classified(mapping, 503)).kind, 'providerUnavailable')
+  }
+  // A rate limit or a timeout is that call's own failure and the run goes on.
+  for (const mapping of ['providerTimeout', 'providerRateLimit']) {
+    assert.equal(providerStopFor(request, classified(mapping, 429)), null)
   }
   for (const mapping of ['providerDecisionParse', 'providerUsageMissing', 'providerSafetyRefusal']) {
     assert.equal(providerStopFor(request, classified(mapping, 200)), null)
@@ -978,7 +982,7 @@ test('any other single cognition failure is recorded and the run goes on to its 
   const request = { agentId: 'tribe-alpha', requestId: 'native-1', trigger: 'goalReview', importance: 'ROUTINE' }
   // R1 of the hour run: one mind refusal with no provider classification stopped the run at 249 s.
   assert.equal(cognitionFailureAction(config, MIND_REFUSAL, null, request), null)
-  for (const mapping of ['providerDecisionParse', 'providerAnswerCutOff', 'providerSafetyRefusal', 'providerModel', 'requestBound']) {
+  for (const mapping of ['providerDecisionParse', 'providerAnswerCutOff', 'providerSafetyRefusal', 'providerModel', 'requestBound', 'providerRateLimit', 'providerTimeout']) {
     assert.equal(cognitionFailureAction(config, 'failed', { ...PROVIDER_REFUSED, httpStatus: 200, mapping }, request), null, mapping)
   }
   // Continuing is unsafe past a rejected credential or lost spend evidence, and an outage still stops.
@@ -988,7 +992,7 @@ test('any other single cognition failure is recorded and the run goes on to its 
   assert.equal(cognitionFailureAction(config, 'failed', forbidden, request).abort.code, 'cognitionDecisionFailed')
   const unrecognised = "cognition failed: the model provider rejected Loom's credential (HTTP 401)"
   assert.equal(cognitionFailureAction(config, unrecognised, null, request).abort.code, 'providerAuthenticationRejected')
-  for (const mapping of ['providerTimeout', 'providerConnection', 'providerRateLimit', 'providerServer']) {
+  for (const mapping of ['providerConnection', 'providerServer']) {
     const stop = cognitionFailureAction(config, 'failed', { ...PROVIDER_REFUSED, httpStatus: null, mapping }, request).stop
     assert.equal(stop.kind, 'providerUnavailable', mapping)
   }

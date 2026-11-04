@@ -153,6 +153,8 @@ class GoalReviewSchedule(
      * 100 follow-ups planned against a ceiling of 150 left nothing for 49 danger calls).
      */
     private val followUpsPerReview: Int = DEFAULT_FOLLOW_UPS_PER_REVIEW,
+    /** A periodic schedule reviews every [cadenceTicks] whatever the body does, so no step is followed up. */
+    val periodic: Boolean = false,
 ) : StepSettlement {
     init {
         require(followUpsPerReview in 0..MAX_FOLLOW_UPS_PER_REVIEW) {
@@ -246,7 +248,8 @@ class GoalReviewSchedule(
                 .sortedWith(longestWaitingFirst)
                 .take(perSlice(living.size))
         claimed.forEach {
-            lastReview[it] = anchorOf(it, now)
+            // A periodic review counts from when it was taken, so a held one never brings a burst after it.
+            lastReview[it] = if (periodic) now else anchorOf(it, now)
             heldReviews.remove(it)
             // A scheduled review answers whatever a follow-up was owed for, and owes one anew.
             followUpDue.remove(it)
@@ -274,6 +277,7 @@ class GoalReviewSchedule(
         tick: Long,
         owed: Boolean,
     ) {
+        if (periodic) return
         val spentHere = followUps[agent] ?: 0
         val earned = allowance[agent] ?: 0
         // An ordinary follow-up leaves the last earned one to a review that is owed (r19: the
@@ -293,6 +297,7 @@ class GoalReviewSchedule(
         tick: Long,
     ) {
         val spent = discoveryFollowUps[agent] ?: 0
+        if (periodic) return
         if (agent !in lastReview || spent >= MAX_DISCOVERY_FOLLOW_UPS) return
         if (followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS) == null) {
             discoveryFollowUps[agent] = spent + 1
@@ -312,6 +317,7 @@ class GoalReviewSchedule(
         tick: Long,
     ) {
         val spent = shelterFollowUps[agent] ?: 0
+        if (periodic) return
         if (agent !in lastReview || spent >= MAX_SHELTER_FOLLOW_UPS) return
         if (followUpDue.putIfAbsent(agent, tick + FOLLOW_UP_DELAY_TICKS) == null) {
             shelterFollowUps[agent] = spent + 1

@@ -361,6 +361,9 @@
     },
     "tribe-long-run-60m-10.json": {
       "status": "runnable"
+    },
+    "tribe-periodic-10m-10.json": {
+      "status": "runnable"
     }
   }
 }

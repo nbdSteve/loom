@@ -287,6 +287,8 @@ const PROTOCOL_TAGS = new Set(['rejected', 'controlUnavailable', 'unsupported', 
 function refusalClass (tag, generation = 12) {
   if (goalIncoherentTagsOf(generation).has(tag)) return 'goalIncoherent'
   if (generation >= 18 && tag === 'retreatStale') return 'superseded'
+  // An answer asked before the newest one already applied to the body, dropped unapplied.
+  if (tag === 'decisionSuperseded') return 'superseded'
   if (generation >= 18 && APPROACH_MOVEMENT_TAGS.has(tag)) return 'incompleteMovement'
   if (generation >= 7 && TERRAIN_TAGS.has(tag)) return TERRAIN_CLASS
   if (generation >= 5 && tag === 'digWouldTrap') return 'inapplicable'

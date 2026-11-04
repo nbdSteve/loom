@@ -43,7 +43,7 @@
  * name for a slot whose contents the body has already contradicted twice, or for a place
  * in a list of a scene that has moved.
  */
-const MAX_REMEMBERED_SENSES = 4
+const MAX_REMEMBERED_SENSES = 12
 
 /**
  * The bounded memory itself.
