@@ -154,8 +154,6 @@ internal class PlayerActuation(
     }
 }
 
-private val PASSIVE_EFFECTS: Map<Intent, String> = mapOf(Intent.Idle to "standing still", Intent.Rest to "resting")
-
 /** Resolves main-thread handles before returning one immutable I/O operation. */
 internal class PlayerActionPreparer(
     private val context: PlayerBodyContext,
@@ -170,6 +168,8 @@ internal class PlayerActionPreparer(
     private val interactions = PlayerInteractionPreparer(context, preemption)
     private val survival = PlayerSurvivalPreparer(context, preemption)
 
+    // One branch per intent: a dispatch table, which body/test/capability-completeness.test.js reads.
+    @Suppress("CyclomaticComplexMethod")
     fun prepare(
         runtime: PlayerRuntime,
         intent: Intent,
@@ -183,8 +183,11 @@ internal class PlayerActionPreparer(
                         connection.request(request, context.infrastructure.settings.requestTimeout)
                     }
                 }
-            is Intent.Idle, Intent.Rest -> {
-                { halt(runtime, PASSIVE_EFFECTS.getValue(intent), requestId) }
+            is Intent.Idle -> {
+                { halt(runtime, "standing still", requestId) }
+            }
+            is Intent.Rest -> {
+                { halt(runtime, "resting", requestId) }
             }
             is Intent.MoveTo -> prepareMove(runtime, intent, requestId, sense)
             is Intent.Eat -> prepareEat(runtime, intent, requestId, sense)

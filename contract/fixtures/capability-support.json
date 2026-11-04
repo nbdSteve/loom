@@ -26,6 +26,11 @@
       "bodyOperation": "dig",
       "serverEvidence": "interaction"
     },
+    "digSequence": {
+      "status": "supported",
+      "bodyOperation": "dig",
+      "serverEvidence": "interaction"
+    },
     "collect": {
       "status": "supported",
       "bodyOperation": "collect",
