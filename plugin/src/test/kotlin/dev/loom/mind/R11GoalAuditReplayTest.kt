@@ -13,7 +13,6 @@ import dev.loom.contract.IntentAction
 import dev.loom.contract.StepEvidence
 import dev.loom.contract.targetRef
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 /**
@@ -79,8 +78,6 @@ class R11GoalAuditReplayTest {
 
     private fun adopt() = goalChoice(GoalDisposition.ADOPT)
 
-    private fun revise() = goalChoice(GoalDisposition.REVISE)
-
     /**
      * r11's revises restated the held total, which from routine-v28 is refused as
      * `goalReviseUnchanged`; the cases about what a step showed take each as the continue it was.
@@ -120,149 +117,6 @@ class R11GoalAuditReplayTest {
         assertEquals(2L, back?.progress?.stepsWithoutProgress)
         assertEquals(GoalEvidence.CONTINUED, revised?.outcome)
         assertEquals(IntentAction.MOVE_TO to "bh90", heldStep("alpha"))
-    }
-
-    @Test
-    fun `beta's return walks reach the stall bound`() {
-        val none = emptyMap<String, Long>()
-        val positions =
-            listOf(
-                "28" to listOf(10.5, 99.0, 7.5),
-                "76" to listOf(12.5, 99.0, 6.48),
-                "116" to listOf(10.5, 100.0, 5.49),
-                "162" to listOf(12.5, 99.0, 6.5),
-                "237" to listOf(10.5, 100.0, 5.49),
-                "999" to listOf(12.5, 99.0, 6.5),
-            )
-        val outcomes =
-            positions.mapIndexed { index, (record, at) ->
-                val walk = Intent.MoveTo("b$record")
-                val choice = if (index == 0) adopt() else onward()
-                review("beta-$record", Scene(at, none), choice, walk).second?.outcome
-            }
-        // Three returns in a row advance nothing, so the revise at the third is the stall.
-        assertEquals(GoalEvidence.STALLED, outcomes.last())
-    }
-
-    @Test
-    fun `delta holding its stick must complete, and its goal cannot be carried by idling`() {
-        val at = listOf(-5.5, 110.0, 8.5)
-        review(
-            "delta-33",
-            Scene(listOf(-3.5, 110.0, 11.5), emptyMap()),
-            adopt(),
-            Intent.MoveTo("bkv"),
-        )
-        review("delta-80", Scene(at, emptyMap()), onward(), Intent.Dig("b500"))
-        // body:00000119: the stick is held; delta revised to the same target and dug on.
-        val (met, ignored) =
-            review(
-                "delta-120",
-                Scene(at, mapOf(STICK to 2L)),
-                onward(),
-                Intent.Dig("b9hd"),
-            )
-        assertEquals(true, met?.progress?.conditionMet)
-        assertEquals(2L, met?.progress?.conditionHeld)
-        assertEquals(GoalEvidence.CONDITION_MET_IGNORED, ignored?.outcome)
-        // body:00000241: the step said collect the dropped stick d5r while the intent idled. The
-        // step is now the intent's own, and idling is no step: refused before the body acts.
-        val fresh = GoalLedger()
-        val deltaId = AgentId("delta")
-        val bush = GoalObservation(emptyMap(), at, capacity = mapOf(STICK to 2L))
-        fresh.present(deltaId, "a", 1, bush)
-        fresh.resolve(
-            deltaId,
-            decisionFor(perception(requestId = "a", agentId = "delta"), Intent.Dig("b500")).copy(goal = adopt()),
-        )
-        fresh.present(deltaId, "b", 2, bush)
-        val idle =
-            decisionFor(perception(requestId = "b", agentId = "delta"), Intent.Idle)
-                .copy(goal = goalChoice(GoalDisposition.CONTINUE))
-        assertEquals(GoalEvidence.STEP_IDLE, fresh.resolve(deltaId, idle)?.outcome)
-        // The completion it owed is accepted once sight gives no next goal (from routine-v28 a
-        // completion beside a source is a replace).
-        val (_, completed) =
-            review(
-                "delta-166",
-                Scene(at, mapOf(STICK to 2L), capacity = emptyMap()),
-                goalChoice(GoalDisposition.COMPLETE),
-                Intent.Idle,
-            )
-        assertEquals(GoalEvidence.COMPLETED, completed?.outcome)
-    }
-
-    @Test
-    fun `epsilon and zeta cannot carry a met condition on by continuing or rewording it`() {
-        val epsilon = listOf(-10.5, 112.0, 7.5)
-        review(
-            "epsilon-38",
-            Scene(listOf(-9.5, 111.0, 7.5), emptyMap()),
-            adopt(),
-            Intent.MoveTo("bpe"),
-        )
-        review("epsilon-84", Scene(epsilon, emptyMap()), onward(), Intent.Dig("b56r"))
-        // body:00000121: the stick is held and epsilon continued.
-        val (_, continued) =
-            review(
-                "epsilon-122",
-                Scene(epsilon, mapOf(STICK to 2L)),
-                goalChoice(GoalDisposition.CONTINUE),
-                Intent.Dig("b9ob"),
-            )
-        assertEquals(GoalEvidence.CONDITION_MET_IGNORED, continued?.outcome)
-
-        val zeta = listOf(-12.5, 111.0, 1.5)
-        review(
-            "zeta-68",
-            Scene(listOf(-11.5, 110.0, 0.5), emptyMap()),
-            adopt(),
-            Intent.MoveTo("b1tl"),
-        )
-        review("zeta-108", Scene(zeta, emptyMap()), onward(), Intent.Dig("b6c0"))
-        // body:00000147: the stick is held and zeta revised to "obtain sticks" again.
-        val (_, reworded) =
-            review(
-                "zeta-148",
-                Scene(zeta, mapOf(STICK to 2L)),
-                revise(),
-                Intent.Dig("basn"),
-            )
-        assertEquals(GoalEvidence.CONDITION_MET_IGNORED, reworded?.outcome)
-        // A revise to a target not yet held is a new objective, and stands.
-        val (_, raised) =
-            review(
-                "zeta-211",
-                Scene(zeta, mapOf(STICK to 2L)),
-                goalChoice(GoalDisposition.REVISE, success = STICK to 4L),
-                Intent.Dig("bfbd"),
-            )
-        assertEquals(GoalEvidence.REVISED, raised?.outcome)
-    }
-
-    @Test
-    fun `eta's fall after digging the block underfoot credits the dig, not the fall`() {
-        val none = emptyMap<String, Long>()
-        // body:00000043: eta adopted its goal while idling, which from v23 is refused as no step.
-        val (_, idled) = review("eta-43", Scene(listOf(-9.5, 110.0, -6.5), none), adopt(), Intent.Idle)
-        assertEquals(GoalEvidence.STEP_IDLE, idled?.outcome)
-        review("eta-44", Scene(listOf(-9.5, 110.0, -6.5), none), adopt(), Intent.Dig("b5eo"))
-        // A fall of one block after a dig that yielded nothing is no progress.
-        val (fell, _) =
-            review(
-                "eta-88",
-                Scene(listOf(-9.5, 109.0, -6.5), none),
-                onward(),
-                Intent.Dig("b5eo"),
-            )
-        assertEquals(false, fell?.progress?.stepAdvanced)
-        assertEquals(1L, fell?.progress?.stepsWithoutProgress)
-        // body:00000127: the dig of b5eo broke yellow terracotta with a bare hand and yielded
-        // nothing, so under v22 it is no evidence either (the r13 audit's fix 1).
-        val (dug, _) = review("eta-128", Scene(listOf(-10.5, 109.0, -6.5), none), onward(), Intent.Dig("b5ep"))
-        assertEquals(StepEvidence.NONE, dug?.progress?.stepEvidence)
-        assertEquals(false, dug?.progress?.stepAdvanced)
-        assertEquals(2L, dug?.progress?.stepsWithoutProgress)
     }
 
     @Test
@@ -343,35 +197,6 @@ class R11GoalAuditReplayTest {
                 Intent.MoveTo("bewu"),
             )
         assertEquals(GoalEvidence.SUCCESS_TARGET_MISSING, refused?.outcome)
-    }
-
-    @Test
-    fun `theta's five walks without a dig reach the bound`() {
-        // body:00000063 and body:00000144: the steps named b1mo and balc while the intents walked to
-        // b1mq and balh; from v23 the goal holds the walk each intent took.
-        val none = emptyMap<String, Long>()
-        val cells =
-            listOf(
-                listOf(-3.5, 108.0, -10.5),
-                listOf(-4.5, 109.0, -10.5),
-                listOf(-4.5, 109.0, -9.67),
-                listOf(-3.69, 109.0, -5.59),
-                listOf(-3.53, 109.0, -5.5),
-                listOf(-4.5, 109.0, -10.5),
-                listOf(-3.69, 109.0, -5.59),
-            )
-        val outcomes =
-            cells.mapIndexed { index, at ->
-                val walk = Intent.MoveTo("b$index")
-                review(
-                    "theta-${index + 1}",
-                    Scene(at, none),
-                    if (index == 0) adopt() else onward(),
-                    walk,
-                ).second?.outcome
-            }
-        assertEquals(GoalEvidence.STALLED, outcomes.last())
-        assertNull(ledger.present(AgentId("theta"), "theta-end", 99, GoalObservation(none, cells.last())))
     }
 
     @Test

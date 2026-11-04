@@ -338,7 +338,7 @@ class EmbodiedCognition(
         )?.let { tell(agentId, it.trigger, it.attacker) }
         bodies.held.release(agentId, perception.requestId)
         val classified = failureOf(failure)
-        if (classified == CognitionFailure.CallReserved) bodies.held.unsent(agentId, perception)
+        if (classified == CognitionFailure.BudgetRefused) bodies.held.unsent(agentId, perception)
         journal.unavailable(agentId, perception, classified.tag, failure.message ?: classified.toString())
         callbacks.onUnavailable(perception, failure)
     }
@@ -361,22 +361,6 @@ class EmbodiedCognition(
         val goal = goals.resolve(agentId, decision)
         journal.decided(agentId, decision, goal, shown)
         val answersDanger = carried != null && dangerKeyOf(carried.trigger) != null
-        val refusing = refusalOf(goal, carried, decision.intent)
-        // A decision incoherent with its own goal is refused here, before the body is asked:
-        // its typed step is not its intent, or it ignored a met success condition.
-        if (refusing != null) {
-            val refused = IntentOutcome.Rejected("the decision contradicts its own goal or danger: $refusing", refusing)
-            journal.refused(agentId, decision, refusing)
-            goals.stepped(agentId, decision.requestId, tagOf(decision.intent), refusing)
-            danger.settledDamage(
-                agentId,
-                decision.requestId,
-                fled = decision.intent is Intent.Flee,
-            )?.let { tell(agentId, it.trigger, it.attacker) }
-            bodies.held.release(agentId, decision.requestId)
-            callbacks.onApplied(AppliedDecision(decision, refused))
-            return
-        }
         // A plain completion or an abandon leaves no goal held: it owes a review soon after, so the
         // next goal is not a whole cadence away (r19: six completions left their agent goal-less
         // for 2100 to 2400 ticks; r39: zeta held nothing for 2291 ticks after its abandon at 3611).
@@ -561,20 +545,6 @@ private fun GoalLedger.carried(
     } else {
         shown
     }
-
-/**
- * Why a decision is refused before the body acts, or `null`: its own goal refused it, or - in an
- * event, which carries no goal choice - it took no survival response beside an immediate hunter.
- */
-private fun refusalOf(
-    goal: GoalEvidence?,
-    carried: Perception?,
-    intent: Intent,
-): String? =
-    goal?.outcome?.takeIf { it in GoalEvidence.REFUSING }
-        ?: EventTag.SURVIVAL_REQUIRED.takeIf {
-            goal == null && carried != null && SurvivalOffer.of(carried).withholds(intent)
-        }
 
 /** Whether this settled step is a discovery's: its walk, or the first step of the goal it became. */
 private fun GoalSummary.discoveryChain(goal: GoalEvidence?): Boolean = discovery || goal?.discoveredFrom != null

@@ -98,27 +98,7 @@ const val THREAT_DEBOUNCE_TICKS: Long = 100
  */
 const val PIVOTAL_THREAT_DISTANCE_BLOCKS: Double = 8.0
 
-/**
- * How many pivotal threat sightings one agent's night may pay for.
- *
- * A hard ceiling rather than a rate: a night with many hostiles about is exactly when
- * the debounce is least effective, because each new one is a first sight and fires at
- * once. Eight is enough that an agent meeting a group is asked about the first several
- * of them and cheap enough that a bad night cannot become a bill nobody chose.
- *
- * Per agent rather than server-wide. A model call is a cost to the *run*, and an
- * agent that has spent nothing
- * tonight has done nothing to deserve being refused because its neighbour was busy
- * being hunted - which, with one shared ceiling, is exactly what would happen in the
- * scene the trigger exists for. The consequence is deliberate and worth stating: the
- * whole population's ceiling grows with its head count, so an operator sizing a run's
- * inference bill multiplies this by the agents, not by the server.
- *
- * Reached, the sighting is suppressed rather than downgraded to a cheaper tier. A
- * pivotal moment answered by a routine model would look in the record like a decision
- * the agent made, when what actually happened is that Loom stopped paying - and
- * [ThreatSuppressionReason.OVER_NIGHTLY_CAP] says so in its own record.
- */
+/** Pivotal threat sightings one agent's night is counted against; counted only, never refused. */
 const val MAX_PIVOTAL_THREAT_CALLS_PER_NIGHT: Int = 8
 
 /** Why a sighting the body saw did not reach the mind. */
@@ -143,9 +123,6 @@ enum class ThreatSuppressionReason(
      * absence of events. The scheduled goal review still reaches the agent meanwhile.
      */
     UNCHANGED(EventTag.THREAT_UNCHANGED),
-
-    /** This agent's pivotal threat budget for the night is spent. */
-    OVER_NIGHTLY_CAP(EventTag.THREAT_OVER_NIGHTLY_CAP),
 
     /**
      * The hunter is out of sight and further than [THREAT_NEAR_BLOCKS]: nothing a flight could
@@ -344,11 +321,12 @@ class ThreatWatch(
                 refused += ThreatSuppression(candidate.what, candidate.ref, distant)
                 continue
             }
-            when (val verdict = examine(agent, candidate, memories[candidate.subject], reachable)) {
+            when (val verdict = examine(candidate, memories[candidate.subject], reachable)) {
                 is Examination.Refused -> refused += ThreatSuppression(candidate.what, candidate.ref, verdict.reason)
                 is Examination.Report -> {
                     memories[candidate.subject] = verdict.memory
                     if (verdict.pivotal) {
+                        rollBudgetToToday()
                         pivotalCalls[agent] = spentBy(agent) + 1
                     }
                     return ThreatOutcome(sighted = verdict.trigger, suppressed = refused)
@@ -423,7 +401,6 @@ class ThreatWatch(
     }
 
     private fun examine(
-        agent: AgentId,
         candidate: ThreatCandidate,
         last: ThreatMemory?,
         reachable: (ThreatCandidate) -> Boolean?,
@@ -436,7 +413,6 @@ class ThreatWatch(
         }
         // Only now is a path search worth paying for.
         return verdictOn(
-            agent,
             candidate,
             last,
             ThreatMemory(
@@ -457,7 +433,6 @@ class ThreatWatch(
      * state comparison happens after the search rather than before it.
      */
     private fun verdictOn(
-        agent: AgentId,
         candidate: ThreatCandidate,
         last: ThreatMemory?,
         fresh: ThreatMemory,
@@ -473,8 +448,6 @@ class ThreatWatch(
             // A null `last` never matches, so a first sight always passes here.
             last?.copy(firedTick = fresh.firedTick) == fresh ->
                 Examination.Refused(ThreatSuppressionReason.UNCHANGED)
-            pivotal && pivotalCallsRemaining(agent) <= 0 ->
-                Examination.Refused(ThreatSuppressionReason.OVER_NIGHTLY_CAP)
             else ->
                 Examination.Report(
                     trigger =

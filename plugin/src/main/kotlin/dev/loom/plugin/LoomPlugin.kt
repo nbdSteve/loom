@@ -291,9 +291,8 @@ class LoomPlugin : JavaPlugin() {
     private fun reserving(
         bridge: dev.loom.mind.CognitionBridge,
         journal: DecisionJournal,
-        isDead: (dev.loom.body.AgentId) -> Boolean,
     ): dev.loom.mind.CognitionBridge =
-        ReservingCognitionBridge(bridge, CallReserve.fromEnvironment(isDead = isDead)) {
+        ReservingCognitionBridge(bridge, CallReserve.fromEnvironment()) {
             journal.tierFallback(dev.loom.body.AgentId(it.agentId), it)
         }
 
@@ -351,7 +350,7 @@ class LoomPlugin : JavaPlugin() {
         val journal = DecisionJournal(eventLog, currentTick = { server.currentTick.toLong() })
         return EmbodiedCognition(
             bodies = bodies,
-            mind = reserving(fair, journal, isDead),
+            mind = reserving(fair, journal),
             mainThread = BukkitMainThread(this),
             journal = journal,
             goals = goals,

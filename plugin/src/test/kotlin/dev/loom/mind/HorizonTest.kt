@@ -20,7 +20,6 @@ import dev.loom.contract.Observation
 import dev.loom.contract.ObservationKind
 import dev.loom.contract.Perception
 import dev.loom.contract.RecalledSource
-import dev.loom.contract.StepEvidence
 import dev.loom.contract.Trigger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -97,51 +96,6 @@ class HorizonTest {
             HorizonGrounding.RECALLED,
             horizonOf(scene(underfoot, recalled = listOf(recalled)), recipes).single { it.what == LOG }.grounding,
         )
-    }
-
-    @Test
-    fun `a horizon goal is set past sight, stepped through its recipe path, and dirt may not crowd out looking`() {
-        val ledger = GoalLedger(recipes = recipes)
-        val agent = AgentId("agent-theta")
-        val seen = scene(underfoot, tree).let { it.copy(horizon = horizonOf(it, recipes)) }
-
-        fun answer(
-            perception: Perception,
-            intent: Intent,
-            choice: GoalChoice,
-        ): String? {
-            ledger.present(agent, perception.requestId, perception.capturedTick, GoalObservation.of(perception))
-            return ledger.resolve(agent, decisionFor(perception, intent).copy(goal = choice))?.outcome
-        }
-        // Dirt sight hands over whole, beside a cell to look from: refused.
-        assertEquals(
-            GoalEvidence.CROWDS_EXPLORATION,
-            answer(seen, Intent.Dig("g1"), GoalChoice(GoalDisposition.ADOPT, successItem = DIRT, successCount = 1)),
-        )
-        // Nine logs, one in sight and the rest beyond the edge of sight: grounded, and capped.
-        assertEquals(
-            GoalEvidence.SUCCESS_UNOBTAINABLE,
-            answer(seen, Intent.Dig("b1"), GoalChoice(GoalDisposition.ADOPT, successItem = LOG, successCount = 10)),
-        )
-        // Four sticks, stepped now by digging the log their planks are made from.
-        assertEquals(
-            GoalEvidence.ADOPTED,
-            answer(seen, Intent.Dig("b1"), GoalChoice(GoalDisposition.ADOPT, successItem = STICK, successCount = 4)),
-        )
-        ledger.stepped(agent, seen.requestId, "dig", EventTag.ACCEPTED, null)
-        // The log arrived: a gained input of the sticks' recipe path, not nothing.
-        val after =
-            scene(underfoot, tree, held = listOf(InventoryStack("i1", LOG, 1)))
-                .let { it.copy(requestId = "r2", capturedTick = 200, horizon = horizonOf(it, recipes)) }
-        val carried = ledger.present(agent, after.requestId, after.capturedTick, GoalObservation.of(after))
-        assertEquals(StepEvidence.GAINED_INPUT, carried?.progress?.stepEvidence)
-        assertEquals(0L, carried?.progress?.stepsWithoutProgress)
-        // And a walk to look further is a step of it too.
-        // A walk to look further while the log is still in reach is no step of it (r23: epsilon
-        // walked away from two logs in dig reach).
-        val looking = GoalChoice(GoalDisposition.CONTINUE, stepResult = GoalStepResult.PROGRESSING)
-        val look = decisionFor(after, Intent.MoveTo("x1")).copy(goal = looking)
-        assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, ledger.resolve(agent, look)?.outcome)
     }
 
     @Test

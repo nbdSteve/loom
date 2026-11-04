@@ -560,7 +560,6 @@ internal fun missingFieldOf(choice: GoalChoice): String? {
     // The step is the decision's own intent and the body words it, so no choice must state one.
     return when {
         worded && (choice.successItem == null || choice.successCount == null) -> GoalEvidence.SUCCESS_TARGET_MISSING
-        !adopting && choice.stepResult == null -> GoalEvidence.STEP_RESULT_MISSING
         else -> null
     }
 }

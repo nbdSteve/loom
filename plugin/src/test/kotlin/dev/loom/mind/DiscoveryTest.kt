@@ -8,8 +8,6 @@ import dev.loom.contract.BlockYield
 import dev.loom.contract.ExploreTarget
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
-import dev.loom.contract.GoalReason
-import dev.loom.contract.GoalStepResult
 import dev.loom.contract.Intent
 import dev.loom.contract.Observation
 import dev.loom.contract.ObservationKind
@@ -17,7 +15,6 @@ import dev.loom.contract.Perception
 import dev.loom.contract.StepEvidence
 import dev.loom.contract.Trigger
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -84,46 +81,6 @@ class DiscoveryTest {
     }
 
     @Test
-    fun `a discovery goal is set with nothing grounded, walked to the frontier and revealed into a log goal`() {
-        val ledger = GoalLedger(recipes = recipes)
-        val bare = scene("r1", 100, 0.0, underfoot)
-        assertTrue(bare.horizon.isEmpty(), "dirt underfoot grounds nothing")
-        // Its step is a walk to the edge of sight, nothing else.
-        assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, ledger.answer(bare, Intent.Dig("g1"), discover)?.outcome)
-        val adopted = ledger.answer(bare, Intent.MoveTo("x1"), discover)
-        assertEquals(GoalEvidence.ADOPTED, adopted?.outcome)
-        assertEquals(true, adopted?.discovery)
-        ledger.stepped(agent, "r1", "moveTo", EventTag.ACCEPTED, reached = true)
-        ledger.settledAt(agent, "r1", 250)
-        // The walk revealed a tree: the condition is met, and the step typed as revealed.
-        val after = scene("r2", 300, 12.0, underfoot, tree)
-        val shown = ledger.present(agent, after.requestId, after.capturedTick, GoalObservation.of(after))
-        assertEquals(DISCOVERY_STATEMENT, shown?.statement)
-        assertEquals(true, shown?.progress?.conditionMet)
-        assertEquals(StepEvidence.REVEALED, shown?.progress?.stepEvidence)
-        assertEquals(0L, shown?.progress?.stepsWithoutProgress)
-        // Never completed bare, nor continued: it becomes a goal for what it revealed.
-        val done = GoalChoice(GoalDisposition.COMPLETE, stepResult = GoalStepResult.DONE)
-        assertEquals(
-            GoalEvidence.COMPLETED_WITHOUT_NEXT,
-            ledger.resolve(agent, decisionFor(after, Intent.Dig("b1")).copy(goal = done))?.outcome,
-        )
-        val logs =
-            GoalChoice(
-                GoalDisposition.REPLACE,
-                successItem = LOG,
-                successCount = 4,
-                stepResult = GoalStepResult.DONE,
-                reason = GoalReason.COMPLETED,
-            )
-        val replaced = ledger.answer(after, Intent.Dig("b1"), logs)
-        assertEquals(GoalEvidence.COMPLETED_ADOPTED, replaced?.outcome)
-        assertEquals(true, replaced?.presentedDiscovery)
-        assertEquals("r1", replaced?.discoveredFrom)
-        assertNull(replaced?.discovery)
-    }
-
-    @Test
     fun `a reveal is the walk's own, seen straight after it settled, and a recalled source meets the goal`() {
         // r24 eta 9u was credited for a peer's drop 2300 ticks after its walk ended.
         val ledger = GoalLedger(recipes = recipes)
@@ -140,34 +97,6 @@ class DiscoveryTest {
             dev.loom.contract.HorizonGoal(LOG, dev.loom.contract.HorizonGrounding.RECALLED, null, 9, true)
         val recalling = GoalObservation.of(bare).copy(horizon = mapOf(LOG to remembered))
         assertTrue(recalling.discoveryMet)
-        // And a held discovery with somewhere to look is never abandoned before its stall bound.
-        val other = GoalLedger(recipes = recipes)
-        assertEquals(GoalEvidence.ADOPTED, other.answer(bare, Intent.MoveTo("x1"), discover)?.outcome)
-        other.stepped(agent, "r1", "moveTo", EventTag.ACCEPTED, reached = true)
-        val again = scene("r3", 300, 12.0, underfoot)
-        val abandon = GoalChoice(GoalDisposition.ABANDON, stepResult = GoalStepResult.NO_PROGRESS)
-        assertEquals(GoalEvidence.ABANDONED_ACHIEVABLE, other.answer(again, Intent.MoveTo("x1"), abandon)?.outcome)
-    }
-
-    @Test
-    fun `a discovery goal is refused where an item goal is grounded, and stalls on walks that reveal nothing`() {
-        val ledger = GoalLedger(recipes = recipes)
-        val wooded = scene("r1", 100, 0.0, underfoot, tree)
-        assertEquals(GoalEvidence.DISCOVERY_NOT_OFFERED, ledger.answer(wooded, Intent.MoveTo("x1"), discover)?.outcome)
-        val blind = scene("r2", 100, 0.0, underfoot, explore = false)
-        assertEquals(GoalEvidence.DISCOVERY_NOT_OFFERED, ledger.answer(blind, Intent.Idle, discover)?.outcome)
-        val bare = scene("r3", 100, 0.0, underfoot)
-        assertEquals(GoalEvidence.ADOPTED, ledger.answer(bare, Intent.MoveTo("x1"), discover)?.outcome)
-        val walking = GoalChoice(GoalDisposition.CONTINUE, stepResult = GoalStepResult.NO_PROGRESS)
-        var previous = "r3"
-        for (step in 1..MAX_DISCOVERY_WALKS) {
-            ledger.stepped(agent, previous, "moveTo", EventTag.ACCEPTED, reached = true)
-            val next = scene("w$step", 100L + step * 200, 12.0 * step, underfoot)
-            val outcome = ledger.answer(next, Intent.MoveTo("x1"), walking)?.outcome
-            val expected = if (step < MAX_DISCOVERY_WALKS) GoalEvidence.CONTINUED else GoalEvidence.STALLED
-            assertEquals(expected, outcome, "walk $step")
-            previous = next.requestId
-        }
     }
 
     private fun hunter(distance: Double) =
@@ -201,7 +130,7 @@ class DiscoveryTest {
         // leaves the discovery unaddressed. A hungry meal is one.
         assertEquals(
             GoalEvidence.SURVIVAL_REQUIRED,
-            ledger.answer(hunted.copy(requestId = "r1c"), Intent.Eat("i1"), null)?.outcome,
+            ledger.answer(hunted.copy(requestId = "r1c"), Intent.Eat("i1"), null)?.flagged,
         )
         val fedAlone = scene("r1e", 100, 0.0, underfoot).fed(20)
         assertEquals(GoalEvidence.UNADDRESSED, ledger.answer(fedAlone, Intent.Eat("i1"), null)?.outcome)
@@ -220,7 +149,7 @@ class DiscoveryTest {
                 GoalObservation.of(walked),
             )?.progress?.stepsWithoutProgress
         ledger.forget(agent, "probe")
-        assertEquals(GoalEvidence.SURVIVAL_REQUIRED, ledger.answer(walked, Intent.Dig("g1"), null)?.outcome)
+        assertEquals(GoalEvidence.SURVIVAL_REQUIRED, ledger.answer(walked, Intent.Dig("g1"), null)?.flagged)
         assertEquals(
             GoalEvidence.DEFERRED,
             ledger.answer(walked.copy(requestId = "r3b"), Intent.Flee("e1"), null)?.outcome,

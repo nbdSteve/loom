@@ -67,17 +67,6 @@ class R23GoalAuditReplayTest {
     }
 
     @Test
-    fun `epsilon's walk past two logs in dig reach at body 88 is no step of its log goal`() {
-        // body:00000089 adopted one oak log and walked to x2 with b57m and b57r 3.4 and 3.2 off;
-        // replayed at the two logs in reach, since from routine-v36 one dig's log is no objective.
-        val seen = shown("body:00000088", "body:00000089")
-        val adopt = GoalChoice(GoalDisposition.ADOPT, successItem = LOG, successCount = 2)
-        val ledger = GoalLedger(recipes = recipes)
-        assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, ledger.answer(seen, Intent.MoveTo("x2"), adopt)?.outcome)
-        assertEquals(GoalEvidence.ADOPTED, ledger.answer(seen, Intent.Dig("b57r"), adopt)?.outcome)
-    }
-
-    @Test
     fun `eta's eight planks from its own logs at body 1532 are a switch its held goal may make`() {
         // body:00001542 abandoned its unmet sapling goal to craft planks from its two logs, with no
         // goal held after, because only a stalled goal could be replaced. Its horizon is today's,

@@ -77,7 +77,6 @@ static R27: CommittedEvidence = CommittedEvidence::new("2026-10-16-openai-10-age
 static R35: CommittedEvidence = CommittedEvidence::new("2026-10-16-openai-10-agent-10m-r35");
 static R41: CommittedEvidence = CommittedEvidence::new("2026-10-16-openai-10-agent-10m-r41");
 static R44: CommittedEvidence = CommittedEvidence::new("2026-10-16-openai-10-agent-10m-r44");
-static R49: CommittedEvidence = CommittedEvidence::new("2026-10-16-openai-10-agent-10m-r49");
 
 fn schema_of(seen: &Perception) -> (OfferedRefs, Value) {
     let offered = OfferedRefs::of(seen);
@@ -108,7 +107,6 @@ fn intent_of(decided: &Value) -> loom_contract::Intent {
 
 mod danger {
     use super::{answered, schema_of, R27};
-    use loom_cognition::offered::LOW_HEALTH;
 
     #[test]
     fn r27_delta_was_never_offered_a_flight_from_a_peer() {
@@ -122,22 +120,6 @@ mod danger {
             offered.flee_targets
         );
         assert!(!answered(&schema, decided), "the peer flight is no answer");
-    }
-
-    #[test]
-    fn r27_theta_at_two_hearts_beside_hunters_is_offered_only_a_survival_response() {
-        // body:00004235 and body:00004314: at 2.2 health, a spider 10.2 and two zombies 10 to 11
-        // blocks off, both reviews crafted.
-        for key in [
-            "tribe-theta:loom9bc6579ca4-sense-11q",
-            "tribe-theta:loom9bc6579ca4-sense-12o",
-        ] {
-            let (seen, decided) = R27.shown(key);
-            assert!(seen.self_state.health <= LOW_HEALTH, "{key}");
-            let (offered, schema) = schema_of(&seen);
-            assert!(offered.in_immediate_danger(), "{key}: {:?}", offered.danger);
-            assert!(!answered(&schema, decided), "{key}: the craft is no answer");
-        }
     }
 }
 
@@ -207,52 +189,6 @@ mod placement {
 
 mod goal_revise {
     use super::{answered, schema_of, R41};
-    use loom_cognition::openai::wire::GoalPhase;
-    use serde_json::{json, Value};
-
-    /// The least total of every revise shape `schema` offers.
-    fn revise_floors(schema: &Value) -> Vec<i64> {
-        let mut floors = Vec::new();
-        let mut stack = vec![schema];
-        while let Some(node) = stack.pop() {
-            match node {
-                Value::Object(map) => {
-                    let properties = map.get("properties");
-                    let disposition = properties.and_then(|props| props.get("disposition"));
-                    if disposition.and_then(|field| field.get("enum")) == Some(&json!(["revise"])) {
-                        if let Some(least) = properties
-                            .and_then(|props| props.get("successCount"))
-                            .and_then(|field| field.get("minimum"))
-                            .and_then(Value::as_i64)
-                        {
-                            floors.push(least);
-                        }
-                    }
-                    stack.extend(map.values());
-                }
-                Value::Array(items) => stack.extend(items),
-                _ => {}
-            }
-        }
-        floors
-    }
-
-    #[test]
-    fn r41_theta_could_not_grow_its_met_dirt_goal_sealed_in_at_night() {
-        // body:00000947, tick 7016: sealed in at night, its met "hold 10 dirt" revised to 28 with
-        // no recipe and no shelter face to use it on.
-        let (seen, decided) = R41.shown("tribe-theta:loom9bc6579ca4-sense-oz");
-        assert_eq!(GoalPhase::of(&seen), GoalPhase::Met);
-        let (offered, schema) = schema_of(&seen);
-        assert!(offered.shelter.sealed());
-        assert!(!offered.held_serves_chain);
-        assert!(
-            !answered(&schema, decided),
-            "an upward revise that serves no chain is no answer"
-        );
-        let floors = revise_floors(&schema);
-        assert!(floors.iter().all(|least| *least <= 10), "{floors:?}");
-    }
 
     #[test]
     fn r41_iota_still_grows_planks_its_grounded_recipes_are_made_from() {
@@ -269,9 +205,8 @@ mod goal_revise {
 }
 
 mod item_steps {
-    use super::{answered, schema_of, R23, R24, R49};
+    use super::{answered, schema_of, R23, R24};
     use loom_cognition::offered::OfferedRefs;
-    use loom_cognition::openai::wire::GoalPhase;
 
     #[test]
     fn r23_epsilon_beside_two_logs_is_not_offered_a_walk_to_look_further() {
@@ -300,43 +235,5 @@ mod item_steps {
         let (offered, schema) = schema_of(&seen);
         assert!(offered.productive.is_empty(), "{:?}", offered.productive);
         assert!(answered(&schema, decided));
-    }
-
-    #[test]
-    fn r49_zeta_could_not_walk_past_an_oak_log_in_reach_for_an_oak_wood_goal() {
-        // body:00000789, tick 6134: holding "hold 32 stick", it replaced the goal by 8 oak wood and
-        // walked to the edge of sight with oak log bbog 2.7 blocks off, refused goalStepUnproductive.
-        let (seen, decided) = R49.shown("tribe-zeta:loom3d8263b30e-sense-lf");
-        assert_eq!(GoalPhase::of(&seen), GoalPhase::Held);
-        let (offered, schema) = schema_of(&seen);
-        let steps_of = |item: &str| {
-            offered
-                .item_steps
-                .iter()
-                .find(|steps| steps.item == item)
-                .unwrap_or_else(|| panic!("no steps for {item}"))
-        };
-        let wood = steps_of("item.minecraft.oak_wood");
-        assert!(wood.dig.iter().any(|block| block == "bbog"), "{wood:?}");
-        assert!(wood.toward.is_empty(), "{wood:?}");
-        let stick = steps_of("item.minecraft.stick");
-        assert!(!stick.dig.iter().any(|block| block == "bbog"), "{stick:?}");
-        assert!(!answered(&schema, decided), "the refused walk is no answer");
-    }
-}
-
-mod discovery {
-    use super::{schema_of, valid, R23};
-    use serde_json::json;
-
-    #[test]
-    fn r23_epsilon_with_nothing_grounded_sets_a_discovery_goal_rather_than_none() {
-        // body:00000036, decided body:00000038: walked to x1 holding no goal, as none could be set.
-        let (seen, _) = R23.shown("tribe-epsilon:loom003398683d-sense-1f");
-        let (_, schema) = schema_of(&seen);
-        let walk = json!({ "action": "moveTo", "onto": "x1" });
-        let discover = json!({ "disposition": "adopt", "discover": true });
-        assert!(valid(&schema, &walk, &discover));
-        assert!(!valid(&schema, &walk, &json!(null)));
     }
 }

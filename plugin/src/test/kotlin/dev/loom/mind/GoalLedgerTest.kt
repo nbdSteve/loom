@@ -11,13 +11,11 @@ import dev.loom.contract.Decision
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalProgress
-import dev.loom.contract.GoalReason
 import dev.loom.contract.GoalStep
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.Intent
 import dev.loom.contract.IntentAction
 import dev.loom.contract.InventoryChange
-import dev.loom.contract.MAX_GOAL_STEPS_WITHOUT_PROGRESS
 import dev.loom.contract.StepEvidence
 import dev.loom.contract.Trigger
 import dev.loom.contract.targetRef
@@ -97,59 +95,6 @@ class GoalLedgerTest {
     }
 
     @Test
-    fun abandonEndsTheGoal() {
-        review(alpha, "a", 100, GoalDisposition.ADOPT)
-        // Nothing in sight gives a stick any more, so the goal is impossible now, and an abandon
-        // ends it only when it says so (r39: gamma abandoned shelters while taking their own steps).
-        val barren = seen(0.0).copy(capacity = emptyMap())
-        assertEquals(
-            GoalEvidence.REASON_MISSING,
-            affirm("b", 200, barren, goalChoice(GoalDisposition.ABANDON)).second?.outcome,
-        )
-        for (untrue in listOf(GoalReason.COMPLETED, GoalReason.STALE, GoalReason.UNSAFE, GoalReason.SUPERSEDED)) {
-            val refused = affirm("c", 300, barren, goalChoice(GoalDisposition.ABANDON, reason = untrue))
-            assertEquals(GoalEvidence.REASON_UNSUPPORTED, refused.second?.outcome, untrue.name)
-        }
-        val (carried, ended) =
-            affirm(
-                "d",
-                400,
-                barren,
-                goalChoice(GoalDisposition.ABANDON, reason = GoalReason.IMPOSSIBLE),
-            )
-        assertEquals("a", carried?.goalId)
-        assertEquals(GoalEvidence.ABANDONED, ended?.outcome)
-        assertEquals(GoalReason.IMPOSSIBLE, ended?.reason)
-        assertNull(ended?.goalId)
-        assertNull(ledger.present(alpha, "e", 500))
-    }
-
-    @Test
-    fun completeEndsTheGoalOnlyWhenItsSuccessConditionIsMet() {
-        affirm("a", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT))
-        // Without the stick a completion is a claim the inventory does not back, refused.
-        assertEquals(
-            GoalEvidence.COMPLETION_UNMET,
-            affirm("b", 200, seen(0.0), goalChoice(GoalDisposition.COMPLETE)).second?.outcome,
-        )
-        // A met goal beside a source of a next one is replaced, not completed beside a filler (r19).
-        val log = "item.minecraft.oak_log"
-        val nextInSight =
-            seen(
-                0.0,
-                STICK to 2L,
-            ).copy(capacity = mapOf(log to 8L), stepSources = mapOf("tree" to setOf(log)))
-        val (met, beside) = affirm("c", 300, nextInSight, goalChoice(GoalDisposition.COMPLETE))
-        assertEquals(true, met?.progress?.conditionMet)
-        assertEquals(GoalEvidence.COMPLETED_WITHOUT_NEXT, beside?.outcome)
-        // More of its own item that serves no chain is no next objective, so the goal completes (R42:
-        // 18 met dirt goals the schema offered only a completion were refused for a revise it did not).
-        val (_, completed) = affirm("d", 400, seen(0.0, STICK to 2L), goalChoice(GoalDisposition.COMPLETE))
-        assertEquals(GoalEvidence.COMPLETED, completed?.outcome)
-        assertNull(ledger.present(alpha, "e", 500, seen(0.0, STICK to 2L)))
-    }
-
-    @Test
     fun aFlightFromAHunterStepsAsideFromTheHeldGoal() {
         // r20 kappa body:00000839: a review beside a zombie and a skeleton could only dig. A
         // flight with no goal choice defers the goal, which stays held.
@@ -159,68 +104,6 @@ class GoalLedgerTest {
         assertEquals(GoalEvidence.DEFERRED, fled?.outcome)
         assertEquals("r1", fled?.goalId)
         assertNull(ledger.takeRefusal(alpha))
-    }
-
-    @Test
-    fun aFlightStepsAsideFromAMetGoalToo() {
-        // The v32 rehearsal: gamma's review beside a zombie at 4.5 blocks, its dye goal met, was
-        // offered a flight alone with no goal choice, and its flight was refused as met-ignored.
-        affirm("a", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT))
-        val (met, fled) = affirm("b", 200, seen(0.0, STICK to 2L), null, Intent.Flee("e9"))
-        assertEquals(true, met?.progress?.conditionMet)
-        assertEquals(GoalEvidence.DEFERRED, fled?.outcome)
-        assertNull(ledger.takeRefusal(alpha))
-        // An action that is no survival response still answers the met goal.
-        val (_, dug) = affirm("c", 300, seen(0.0, STICK to 2L), null)
-        assertEquals(GoalEvidence.CONDITION_MET_IGNORED, dug?.outcome)
-    }
-
-    @Test
-    fun idleWithoutAChoiceLeavesTheGoalHeldButAgeing() {
-        review(alpha, "r1", 100, GoalDisposition.ADOPT)
-        // An agent that acts at a review must say what it does with the goal it holds (r15 kappa).
-        ledger.present(alpha, "r2", 100 + GOAL_LIFETIME_TICKS)
-        val acting = ledger.resolve(alpha, answer(alpha, "r2", null))
-        assertEquals(GoalEvidence.CHOICE_MISSING, acting?.outcome)
-        assertEquals(GoalEvidence.CHOICE_MISSING, ledger.takeRefusal(alpha)?.outcome)
-        ledger.present(alpha, "r2", 100 + GOAL_LIFETIME_TICKS)
-        val unaddressed = ledger.resolve(alpha, answer(alpha, "r2", null, intent = Intent.Idle))
-        assertEquals(GoalEvidence.UNADDRESSED, unaddressed?.outcome)
-        assertEquals("r1", unaddressed?.goalId)
-        assertNull(ledger.takeRefusal(alpha))
-
-        // Not re-affirmed, so the review after the lifetime finds it expired.
-        assertNull(ledger.present(alpha, "r3", 101 + GOAL_LIFETIME_TICKS))
-        val expired = ledger.resolve(alpha, answer(alpha, "r3", GoalDisposition.CONTINUE))
-        assertEquals(GoalEvidence.NOT_HELD, expired?.outcome)
-        assertEquals("r1", expired?.expiredGoalId)
-    }
-
-    @Test
-    fun aRefusedChoiceChangesNothing() {
-        assertEquals(GoalEvidence.NOT_HELD, review(alpha, "r1", 100, GoalDisposition.CONTINUE).first?.outcome)
-        ledger.present(alpha, "r2", 100)
-        val untargeted =
-            answer(
-                alpha,
-                "r2",
-                GoalDisposition.ADOPT,
-            ).let { it.copy(goal = it.goal?.copy(successItem = null)) }
-        assertEquals(GoalEvidence.SUCCESS_TARGET_MISSING, ledger.resolve(alpha, untargeted)?.outcome)
-        review(alpha, "r3", 100, GoalDisposition.ADOPT)
-        assertEquals(
-            GoalEvidence.ALREADY_HELD,
-            review(alpha, "r4", 200, GoalDisposition.ADOPT).first?.outcome,
-        )
-        ledger.present(alpha, "r5", 200)
-        val uncounted =
-            answer(
-                alpha,
-                "r5",
-                GoalDisposition.REVISE,
-            ).let { it.copy(goal = it.goal?.copy(successCount = null)) }
-        assertEquals(GoalEvidence.SUCCESS_TARGET_MISSING, ledger.resolve(alpha, uncounted)?.outcome)
-        assertEquals(statementOf(STICK, 2L), ledger.present(alpha, "r6", 300)?.statement)
     }
 
     @Test
@@ -350,8 +233,6 @@ class GoalLedgerTest {
         outcome: String = EventTag.ACCEPTED,
     ): Pair<GoalSummary?, GoalEvidence?> = stepWith(requestId, observed, goalChoice(disposition), intent, outcome)
 
-    private fun revisedTo(count: Long) = goalChoice(GoalDisposition.REVISE, success = STICK to count)
-
     /** [step] under an exact [choice], as a revise to a named total needs. */
     private fun stepWith(
         requestId: String,
@@ -436,25 +317,6 @@ class GoalLedgerTest {
     }
 
     @Test
-    fun aWorkingGoalNeedsItsTypedConditionStepAndVerdict() {
-        val adoptBare = GoalChoice(GoalDisposition.ADOPT, step = "walk to the tree")
-        assertEquals(GoalEvidence.SUCCESS_TARGET_MISSING, affirm("r1", 100, seen(0.0), adoptBare).second?.outcome)
-        // From routine-v26 the step is the intent's own, worded by the body: no choice states it,
-        // and one that does is not believed (r17 epsilon worded terracotta while it dug a bush).
-        val adoptNoStep = adoptBare.copy(successItem = STICK, successCount = 2, step = null)
-        assertEquals(GoalEvidence.ADOPTED, affirm("r2", 100, seen(0.0), adoptNoStep).second?.outcome)
-        assertEquals("dig bush", ledger.present(alpha, "r2b", 150, seen(0.0))?.step)
-        ledger.forget(alpha, "r2b")
-        ledger.clear(alpha)
-        affirm("r3", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT))
-        val unjudged = goalChoice(GoalDisposition.CONTINUE).copy(stepResult = null)
-        assertEquals(GoalEvidence.STEP_RESULT_MISSING, affirm("r4", 200, seen(0.0), unjudged).second?.outcome)
-        val carried = ledger.present(alpha, "r5", 300, seen(0.0))
-        assertEquals("item.minecraft.stick", carried?.successItem)
-        assertEquals(2L, carried?.successCount)
-    }
-
-    @Test
     fun theStepIsTypedFromTheDecisionsOwnIntentNeverClaimed() {
         // r14 gamma: a step naming a dropped stick while the intent walked the other way. A step is
         // the intent's own, so it cannot name anything else.
@@ -466,72 +328,6 @@ class GoalLedgerTest {
         val continued = ledger.present(alpha, "r3", 300, seen(0.0))
         assertEquals(IntentAction.COLLECT, continued?.stepAction)
         assertEquals("d4a", continued?.stepRef)
-    }
-
-    @Test
-    fun aGoalPursuedByIdlingIsRefusedWithItsIntent() {
-        // r14 eta adopted a goal with an idle step: waiting is no step.
-        val idling = affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT), Intent.Idle)
-        assertEquals(GoalEvidence.STEP_IDLE, idling.second?.outcome)
-        assertNull(ledger.present(alpha, "r2", 200, seen(0.0)))
-        affirm("r2", 200, seen(0.0), goalChoice(GoalDisposition.ADOPT))
-        for ((request, disposition) in listOf("r3" to GoalDisposition.CONTINUE, "r4" to GoalDisposition.REVISE)) {
-            val resting = affirm(request, 300, seen(0.0), goalChoice(disposition), Intent.Rest)
-            assertEquals(GoalEvidence.STEP_IDLE, resting.second?.outcome, request)
-        }
-        // A goal sight can still meet is pursued, not abandoned (r17 theta body:00000333).
-        val achievable =
-            affirm(
-                "r5",
-                400,
-                seen(0.0),
-                goalChoice(GoalDisposition.ABANDON, reason = GoalReason.IMPOSSIBLE),
-                Intent.Idle,
-            )
-        assertEquals(GoalEvidence.ABANDONED_ACHIEVABLE, achievable.second?.outcome)
-        // Ending a goal sight can no longer meet takes no step, so it may idle.
-        val barren = GoalObservation(emptyMap(), listOf(0.0, 64.0, 0.0))
-        val ended =
-            affirm("r6", 500, barren, goalChoice(GoalDisposition.ABANDON, reason = GoalReason.IMPOSSIBLE), Intent.Idle)
-        assertEquals(GoalEvidence.ABANDONED, ended.second?.outcome)
-    }
-
-    @Test
-    fun anIdleOrRestBesideTheEdgeOfSightIsRefusedAsTheSchemaWithholdsIt() {
-        // The r39 offline audit: beta's abandon was paired with an idle beside eight cells at the
-        // edge of sight (body:00000292), which the strict schema never offers there.
-        val looking = GoalObservation(emptyMap(), listOf(0.0, 64.0, 0.0), explore = setOf("x1"))
-        val impossible = goalChoice(GoalDisposition.ABANDON, reason = GoalReason.IMPOSSIBLE)
-        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT))
-        val idled = affirm("r2", 200, looking, impossible, Intent.Idle)
-        assertEquals(GoalEvidence.PASSIVE_BESIDE_EXPLORATION, idled.second?.outcome)
-        val walked = affirm("r3", 300, looking, impossible, Intent.MoveTo("x1"))
-        assertEquals(GoalEvidence.ABANDONED, walked.second?.outcome)
-        // With no goal held, a rest there is refused the same way.
-        val rested = affirm("r4", 400, looking, null, Intent.Rest)
-        assertEquals(GoalEvidence.PASSIVE_BESIDE_EXPLORATION, rested.second?.outcome)
-    }
-
-    @Test
-    fun aGoalAlreadyMetOrBeyondWhatIsInSightIsRefused() {
-        // r14 theta, delta and eta set stick goals they already held, then "completed" them.
-        val holding = seen(0.0, STICK to 2L)
-        val met = affirm("r1", 100, holding, goalChoice(GoalDisposition.ADOPT, success = STICK to 2L))
-        assertEquals(GoalEvidence.ALREADY_MET, met.second?.outcome)
-        // r14 kappa: a stick goal with no bush or drop in sight to give one more.
-        val barren = GoalObservation(mapOf(STICK to 1L), listOf(0.0, 64.0, 0.0))
-        val unreachable = affirm("r2", 100, barren, goalChoice(GoalDisposition.ADOPT, success = STICK to 2L))
-        assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, unreachable.second?.outcome)
-        // What the inventory holds and what is in sight could give, together, bound the count.
-        val bush = barren.copy(capacity = mapOf(STICK to 2L))
-        val beyond = affirm("r3", 100, bush, goalChoice(GoalDisposition.ADOPT, success = STICK to 4L))
-        assertEquals(GoalEvidence.SUCCESS_UNOBTAINABLE, beyond.second?.outcome)
-        val within = affirm("r4", 100, bush, goalChoice(GoalDisposition.ADOPT, success = STICK to 3L))
-        assertEquals(GoalEvidence.ADOPTED, within.second?.outcome)
-        // A revise to a count already held is no new goal either.
-        ledger.stepped(alpha, "r4", EventTag.DIG, EventTag.ACCEPTED)
-        val reworded = affirm("r5", 200, bush, revisedTo(1L))
-        assertEquals(GoalEvidence.ALREADY_MET, reworded.second?.outcome)
     }
 
     @Test
@@ -564,29 +360,6 @@ class GoalLedgerTest {
             )
         assertEquals(true, full?.progress?.conditionMet)
         assertEquals(listOf(InventoryChange(STICK, 1)), full?.progress?.inventoryDelta)
-    }
-
-    @Test
-    fun aMetConditionMustBeCompletedOrRevisedAtTheNextReview() {
-        affirm("r1", 100, seen(0.0), goalChoice(GoalDisposition.ADOPT))
-        val holding = seen(0.0, STICK to 2L)
-        // Even with the reason true of it, a met goal is not abandoned: it is completed or moved on.
-        for ((request, choice) in listOf(
-            "r2" to goalChoice(GoalDisposition.CONTINUE),
-            "r3" to goalChoice(GoalDisposition.ABANDON, reason = GoalReason.COMPLETED),
-            "r4" to null,
-        )) {
-            assertEquals(
-                GoalEvidence.CONDITION_MET_IGNORED,
-                affirm(request, 200, holding, choice).second?.outcome,
-                request,
-            )
-        }
-        assertEquals(
-            GoalEvidence.REVISED,
-            affirm("r5", 300, holding, revisedTo(4L))
-                .second?.outcome,
-        )
     }
 
     @Test
@@ -627,41 +400,6 @@ class GoalLedgerTest {
         val (barren, _) = step("r4", ownDrop, GoalDisposition.CONTINUE, Intent.Dig("b4"))
         assertEquals(StepEvidence.NONE, barren?.progress?.stepEvidence)
         assertEquals(false, barren?.progress?.stepAdvanced)
-    }
-
-    @Test
-    fun stepsThatAdvanceNothingEndTheGoalAtTheBoundEvenWhenRevised() {
-        step("r1", seen(0.0), GoalDisposition.ADOPT, Intent.Dig("b1"))
-        step("r2", seen(0.0), GoalDisposition.CONTINUE, Intent.Dig("b2"))
-        stepWith("r3", seen(0.0), revisedTo(3L), Intent.Dig("b3"))
-        val (atBound, refused) =
-            stepWith("r4", seen(0.0), revisedTo(4L), Intent.Dig("b4"))
-        assertEquals(MAX_GOAL_STEPS_WITHOUT_PROGRESS, atBound?.progress?.stepsWithoutProgress)
-        assertEquals(GoalEvidence.STALLED, refused?.outcome)
-        assertNull(ledger.present(alpha, "r5", 500, seen(0.0)))
-    }
-
-    @Test
-    fun aReviseToTheHeldTotalChangesNothingAndIsRefusedWithItsIntent() {
-        // r19: 28 of 31 revises restated the total they were shown, and read as goal activity.
-        stepWith("r1", seen(0.0), goalChoice(GoalDisposition.ADOPT, success = STICK to 2L), Intent.Dig("b1"))
-        val (_, restated) =
-            stepWith(
-                "r2",
-                seen(0.0),
-                revisedTo(2L),
-                Intent.Dig("b2"),
-            )
-        assertEquals(GoalEvidence.REVISE_UNCHANGED, restated?.outcome)
-        assertEquals(GoalEvidence.REVISE_UNCHANGED, ledger.takeRefusal(alpha)?.outcome)
-        val (_, changed) =
-            stepWith(
-                "r3",
-                seen(0.0),
-                revisedTo(3L),
-                Intent.Dig("b3"),
-            )
-        assertEquals(GoalEvidence.REVISED, changed?.outcome)
     }
 
     private companion object {

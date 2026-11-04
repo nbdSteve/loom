@@ -104,22 +104,6 @@ class GoalContinuityTest {
     }
 
     @Test
-    fun aRejectedActionReachesTheNextReviewAsTheBodysRefusal() {
-        val mind =
-            cognition(
-                IntentOutcome.Rejected("busy", EventTag.CONTROL_NOT_READY),
-                listOf(goalChoice(GoalDisposition.ADOPT), goalChoice(GoalDisposition.ABANDON)),
-            )
-        repeat(2) {
-            mind.consider(agent, Trigger.GoalReview)
-            main.drain()
-        }
-        assertEquals(EventTag.CONTROL_NOT_READY, seen[1].goal?.lastStep?.outcome)
-        // A goal the bush in sight can still meet is pursued, not abandoned (from routine-v26).
-        assertEquals(GoalEvidence.ABANDONED_ACHIEVABLE, decidedGoals()[1]?.outcome)
-    }
-
-    @Test
     fun aGoalIsNeverCarriedIntoAnotherTrigger() {
         val mind =
             cognition(

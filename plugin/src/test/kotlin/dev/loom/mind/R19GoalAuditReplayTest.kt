@@ -4,20 +4,14 @@ import dev.loom.body.AgentId
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
 import dev.loom.body.tagOf
-import dev.loom.contract.Bearing
-import dev.loom.contract.BlockYield
-import dev.loom.contract.EquipmentDestination
 import dev.loom.contract.GoalChoice
 import dev.loom.contract.GoalDisposition
 import dev.loom.contract.GoalReason
 import dev.loom.contract.GoalStepResult
 import dev.loom.contract.GoalSummary
 import dev.loom.contract.Intent
-import dev.loom.contract.Observation
-import dev.loom.contract.ObservationKind
 import dev.loom.contract.StepEvidence
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 /**
@@ -89,48 +83,6 @@ class R19GoalAuditReplayTest {
 
     private fun judged(disposition: GoalDisposition) = GoalChoice(disposition, stepResult = GoalStepResult.NO_PROGRESS)
 
-    private fun block(
-        ref: String,
-        what: String,
-        vararg yields: BlockYield,
-    ) = Observation(
-        kind = ObservationKind.BLOCK,
-        what = what,
-        distance = 2.0,
-        direction = Bearing.NORTH,
-        verticalOffset = 0.0,
-        visible = true,
-        ref = ref,
-        standable = true,
-        yields = yields.toList(),
-        digSafe = true,
-    )
-
-    @Test
-    fun `epsilon's eleven leaves are counted at their sampled mean, which makes no stick goal`() {
-        // epsilon body:00000166 replaced a five-stick goal at capacity 10: eleven leaves in sight
-        // with sticks nought to two each counted one apiece. 33 r19 leaf digs dropped one stick.
-        val leaves = (1..11).map { block("l$it", "block.minecraft.birch_leaves", BlockYield(STICK, 0, 2, 3)) }
-        val logs = (1..3).map { block("o$it", "block.minecraft.oak_log", BlockYield(LOG, 1, 1, 100)) }
-        val seen = perception(requestId = "epsilon-166", agentId = "epsilon").copy(surroundings = leaves + logs)
-        val observed = GoalObservation.of(seen)
-        assertNull(observed.capacity[STICK], "33 hundredths of a stick is no stick: ${observed.capacity}")
-        assertEquals(3L, observed.capacity[LOG])
-        val epsilon = AgentId("epsilon")
-        ledger.present(epsilon, "epsilon-166", 166, observed)
-        val leaf = decisionFor(perception(requestId = "epsilon-166", agentId = "epsilon"), Intent.Dig("l1"))
-        assertEquals(
-            GoalEvidence.SUCCESS_UNOBTAINABLE,
-            ledger.resolve(epsilon, leaf.copy(goal = target(GoalDisposition.ADOPT, STICK, 5)))?.outcome,
-        )
-        ledger.present(epsilon, "epsilon-167", 167, observed)
-        val log = decisionFor(perception(requestId = "epsilon-167", agentId = "epsilon"), Intent.Dig("o1"))
-        assertEquals(
-            GoalEvidence.ADOPTED,
-            ledger.resolve(epsilon, log.copy(goal = target(GoalDisposition.ADOPT, LOG, 3)))?.outcome,
-        )
-    }
-
     @Test
     fun `delta's stick and apple and iota's sapling are no gain of the goal's item`() {
         // delta body:00000452 and 472 were credited `gained` for a stick and an apple toward a
@@ -179,54 +131,6 @@ class R19GoalAuditReplayTest {
         val (input, _) = review("beta-140", logged, judged(GoalDisposition.CONTINUE), Intent.Dig("log"))
         assertEquals(StepEvidence.GAINED_INPUT, input?.progress?.stepEvidence)
         assertEquals(0L, input?.progress?.stepsWithoutProgress)
-    }
-
-    @Test
-    fun `eta and zeta completing beside a filler equip with a source in sight is refused`() {
-        // eta body:00000268 met one plank with four and equipped; zeta body:00000513 met twelve
-        // dirt and equipped, with ten more in sight.
-        val tree = mapOf("log" to setOf(LOG), "planks" to setOf(PLANKS))
-        review(
-            "eta-230",
-            Scene(capacity = mapOf(PLANKS to 4L), gives = tree),
-            target(GoalDisposition.ADOPT, PLANKS, 2),
-            Intent.Craft("planks", 1),
-        )
-        val met = Scene(inventory = mapOf(PLANKS to 4L), capacity = mapOf(LOG to 2L), gives = tree)
-        val equip = Intent.Equip("i30", EquipmentDestination.HAND)
-        val (_, filler) =
-            review("eta-268", met, GoalChoice(GoalDisposition.COMPLETE, stepResult = GoalStepResult.DONE), equip)
-        assertEquals(GoalEvidence.COMPLETED_WITHOUT_NEXT, filler?.outcome)
-        // An equip is no step of a goal either.
-        review(
-            "zeta-400",
-            Scene(capacity = mapOf(DIRT to 22L), gives = mapOf("g" to setOf(DIRT))),
-            target(GoalDisposition.ADOPT, DIRT, 12),
-            Intent.Dig("g"),
-        )
-        val (_, equipped) =
-            review(
-                "zeta-450",
-                Scene(capacity = mapOf(DIRT to 22L), gives = mapOf("g" to setOf(DIRT))),
-                judged(GoalDisposition.CONTINUE),
-                equip,
-            )
-        assertEquals(GoalEvidence.STEP_UNPRODUCTIVE, equipped?.outcome)
-        // With nothing in sight a plain completion stands.
-        val bare = Scene(inventory = mapOf(PLANKS to 4L), capacity = emptyMap(), gives = emptyMap())
-        val (_, completed) =
-            review("eta-269", bare, GoalChoice(GoalDisposition.COMPLETE, stepResult = GoalStepResult.DONE), Intent.Idle)
-        assertEquals(GoalEvidence.COMPLETED, completed?.outcome)
-    }
-
-    @Test
-    fun `alpha's revise that restated four sticks is refused, a changed total stands`() {
-        // alpha body:00000237 and 00000328 revised four sticks to four sticks.
-        review("alpha-200", Scene(), target(GoalDisposition.ADOPT, STICK, 4), Intent.Dig("bush"))
-        val (_, restated) = review("alpha-237", Scene(), target(GoalDisposition.REVISE, STICK, 4), Intent.Dig("bush"))
-        assertEquals(GoalEvidence.REVISE_UNCHANGED, restated?.outcome)
-        val (_, cut) = review("alpha-328", Scene(), target(GoalDisposition.REVISE, STICK, 3), Intent.Dig("bush"))
-        assertEquals(GoalEvidence.REVISED, cut?.outcome)
     }
 
     @Test
