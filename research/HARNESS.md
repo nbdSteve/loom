@@ -275,7 +275,7 @@ A run builds without its test suites (CI tests every commit), and the harness ru
 
 The `random-world` scene (`solo-1`) has no pinned seed or positions: config `world.seed` is `random`, and the harness draws a fresh signed 64-bit seed at launch (`drawWorldSeed`), which the manifest records and the `initialConditionsAttested` record states as `worldSeed`.
 Vanilla places each agent at a safe spot within its spawn radius of the world spawn, the console centres the border there (`worldborder center ~ ~`), and each agent's `initialConditionsWitnessed` record states where it stood at begin.
-`solo-1` takes the run's duration from `bounds.runDurationSeconds` (whole hours) and scales its plan, ceilings and bounds by the hour (`profileFor`): 1,200 reviews and 1,800 calls an hour, no separate pivotal cap, and the hard ceiling at every call's pivotal worst case ($350.21 an hour).
+`solo-1` takes the run's duration from `bounds.runDurationSeconds` (whole hours) and scales its plan, ceilings and bounds by the hour (`profileFor`): 1,200 reviews and 1,800 calls an hour, a tenth of them pivotal, and the hard ceiling at that worst case ($60.41 an hour).
 
 ## Bounds and call accounting
 

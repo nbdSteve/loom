@@ -65,10 +65,10 @@
     "maxRequestBytes": 65536,
     "perAgentCallCeiling": 1800,
     "globalCallCeiling": 1800,
-    "pivotalCallCeiling": 1800,
+    "pivotalCallCeiling": 180,
     "globalOutstandingCeiling": 5,
     "maxOutputTokens": 2048,
-    "maxExternalSpendUsd": 350.21,
+    "maxExternalSpendUsd": 60.41,
     "pricing": {
       "currency": "USD",
       "effectiveDate": "2026-10-12",

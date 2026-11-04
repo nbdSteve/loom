@@ -440,7 +440,7 @@ PROFILES['periodic-10m-10'] = Object.freeze({
 // One agent on a world drawn fresh every run, thinking every 3 s, for as long as its config says:
 // `durationScaled` profiles take the run's duration from the config and scale their plan, ceilings
 // and bounds by the hour (`profileFor`). Per hour: 1,200 reviews, 1,800 calls (a third left to
-// events), no separate pivotal cap, so every call at the pivotal worst case is $350.208.
+// events), a tenth of them pivotal: 180 pivotal and 1,620 ordinary calls at their worst are $60.401664.
 PROFILES['solo-1'] = Object.freeze({
   ...PROFILES['periodic-60m-10'],
   agents: 1,
@@ -463,15 +463,16 @@ function profileFor (profile, config) {
   if (scaled === undefined || !Number.isInteger(seconds) || seconds < 1 || seconds % 3600 !== 0) return profile
   const hours = seconds / 3600
   const calls = scaled.callsPerHour * hours
+  const pivotal = calls / 10
   const ticks = seconds * ticksPerSecondOf(profile)
-  // Every call at the pivotal worst case, to the cent above.
-  const worstNanoUsd = calls * 194_560_000
+  // The pivotal tenth and the ordinary rest at their worst case, to the cent above.
+  const worstNanoUsd = pivotal * 194_560_000 + (calls - pivotal) * 15_667_200
   return {
     ...profile,
     runDurationSeconds: seconds,
     simulationTickCeiling: ticks,
     expectedReviewsPerAgent: scaled.reviewsPerHour * hours,
-    callCeilings: { perAgent: calls, global: calls, outstanding: scaled.outstanding, pivotal: calls },
+    callCeilings: { perAgent: calls, global: calls, outstanding: scaled.outstanding, pivotal },
     maxExternalSpendUsd: Math.ceil(worstNanoUsd / 10_000_000) / 100,
     bounds: {
       logBytes: Math.min(1024 * 1024 * 1024, scaled.logBytesPerHour * hours),
