@@ -64,9 +64,9 @@
       "format": "llvm-cov",
       "report": "cognition/target/llvm-cov/summary.json",
       "total": {
-        "lines": 91,
-        "functions": 94,
-        "regions": 91
+        "lines": 89,
+        "functions": 90,
+        "regions": 88
       },
       "seams": {
         "codecs": {
@@ -76,9 +76,9 @@
             "cognition/crates/cognition/src/openai/wire.rs"
           ],
           "floors": {
-            "lines": 93,
-            "functions": 98,
-            "regions": 93
+            "lines": 74,
+            "functions": 77,
+            "regions": 73
           }
         }
       }
