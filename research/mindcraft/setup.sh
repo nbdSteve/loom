@@ -2,14 +2,13 @@
 # Install Mindcraft, as is, at a pinned commit into research/mindcraft/.cache.
 #
 # Mindcraft ships no lockfile, so the install pins what it must: Node 20 (its
-# native `gl` dependency does not compile on Node 24+), and mineflayer 4.39.0,
-# which is what Mindcraft's own `^4.33.0` resolves to and the first pin that
-# speaks Minecraft 1.21.11. Mindcraft's patches/mineflayer+4.33.0.patch does not
-# apply to 4.39.0 and is the one patch left out: 4.39.0 already fixes the water
-# dig time and the `use_item` rotation it carried, and its two remaining tweaks
-# (a 500 ms place wait, a dig-material alias) are Mindcraft tuning, not
-# correctness. Every other patch must apply. The resolved tree is written to
-# .cache/deps.txt so every run can record exactly what it ran.
+# native `gl` dependency does not compile on Node 24+), and mineflayer 4.33.0,
+# the version Mindcraft's own patches/ were made against. A fresh install
+# resolves mineflayer 4.39.0, on which Mindcraft's mineflayer patch fails, and
+# on Paper 1.21.11 that combination left a body the server would not let move
+# (smoke run 20261104T211535Z), so the launcher runs Mindcraft's recommended
+# Minecraft 1.21.6 with every one of its patches applied. The resolved tree is
+# written to .cache/deps.txt so every run can record exactly what it ran.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -57,14 +56,11 @@ npm install --registry="$registry" > "$cache/npm-install.log" 2>&1 || {
   echo "npm install failed; full log in $cache/npm-install.log" >&2
   exit 1
 }
-npm install --no-save --ignore-scripts --registry="$registry" mineflayer@4.39.0 >> "$cache/npm-install.log" 2>&1
+npm install --no-save --ignore-scripts --registry="$registry" mineflayer@4.33.0 >> "$cache/npm-install.log" 2>&1
 patches="$(npx --no-install patch-package 2>&1)"
 echo "$patches" | grep -E '✔|ERROR'
-expected=$(($(ls patches | wc -l | tr -d ' ') - 1))
-if [ "$(echo "$patches" | grep -c '✔')" -ne "$expected" ] ||
-  [ "$(echo "$patches" | grep -c 'Failed to apply patch for package mineflayer ')" -ne 1 ] ||
-  [ "$(echo "$patches" | grep -c 'Failed to apply patch')" -ne 1 ]; then
-  echo "expected every Mindcraft patch except mineflayer's to apply" >&2
+if echo "$patches" | grep -q ERROR || [ "$(echo "$patches" | grep -c '✔')" -ne "$(ls patches | wc -l | tr -d ' ')" ]; then
+  echo "not every Mindcraft patch applied" >&2
   exit 1
 fi
 npm ls --all > "$cache/deps.txt" 2>/dev/null || true

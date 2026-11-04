@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run Mindcraft agents, as is, on a fresh plain Paper 1.21.11 world.
+# Run Mindcraft agents, as is, on a fresh plain Paper 1.21.6 world.
 #
 #   research/mindcraft/run.sh <agents> <minutes> <ceiling-usd>
 #
@@ -29,11 +29,11 @@ model="${LOOM_MINDCRAFT_MODEL:-gpt-5.4}"
 proxy_port="${LOOM_MINDCRAFT_PROXY_PORT:-18565}"
 mindserver_port="${LOOM_MINDCRAFT_MINDSERVER_PORT:-8080}"
 upstream="${LOOM_MINDCRAFT_UPSTREAM:-https://api.openai.com}"
-# Paper 1.21.11 build 132, the newest stable build for the newest Minecraft that
-# Mindcraft (README: up to 1.21.11) and mineflayer 4.39.0 both support.
-minecraft_version=1.21.11
-paper_jar_name=paper-1.21.11-132.jar
-paper_sha=5ffef465eeeb5f2a3c23a24419d97c51afd7dbb4923ff42df9a3f58bba1ccfba
+# Paper 1.21.6 build 48, the newest stable build of the Minecraft version
+# Mindcraft recommends, which its patched mineflayer 4.33.0 supports.
+minecraft_version=1.21.6
+paper_jar_name=paper-1.21.6-48.jar
+paper_sha=35e2dfa66b3491b9d2f0bb033679fa5aca1e1fdf097e7a06a80ce8afeda5c214
 paper_url=https://fill-data.papermc.io/v1/objects/$paper_sha/$paper_jar_name
 operator=nbdSteve
 names=(ada_ash bram_oak cora_fen dov_hale elin_moss finn_reed gwen_vale hugo_birch

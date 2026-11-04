@@ -8,12 +8,12 @@ It does not use Loom's body, mind or plugin. Mindcraft brings its own agents: on
 
 | Part | Pinned | Why |
 |---|---|---|
-| Minecraft | 1.21.11 | The newest release that both Mindcraft (README: "up to v1.21.11") and mineflayer 4.39.0 (tested up to 26.1) support. The newest Minecraft is 26.3, which no Mindcraft release claims. |
-| Paper | 1.21.11 build 132, sha256 `5ffef465eeeb5f2a3c23a24419d97c51afd7dbb4923ff42df9a3f58bba1ccfba` | The newest stable build for 1.21.11 on the PaperMC fill API. `run.sh` downloads it once and checks the hash every run. |
+| Minecraft | 1.21.6 | The version Mindcraft's README recommends, and one its patched mineflayer 4.33.0 is tested on. The newest Minecraft is 26.3 and Mindcraft claims up to 1.21.11, but on Paper 1.21.11 with mineflayer 4.39.0 (the only mineflayer that speaks 1.21.11) a body stopped under oak leaves was teleported back by the server on every tick and could not move, so its collects stalled until Mindcraft killed the agent (smoke run 20261104T211535Z). |
+| Paper | 1.21.6 build 48, sha256 `35e2dfa66b3491b9d2f0bb033679fa5aca1e1fdf097e7a06a80ce8afeda5c214` | The newest stable build for 1.21.6 on the PaperMC fill API. `run.sh` downloads it once and checks the hash every run. |
 | Mindcraft | commit `e1c1fc3ffa481506c2445fc639e16dba504b5920` (2026-10-26) | Mindcraft ships no lockfile, so the commit and `.cache/deps.txt` are the pin. |
-| mineflayer | 4.39.0 | What Mindcraft's own `^4.33.0` resolves to. Mindcraft's `patches/mineflayer+4.33.0.patch` does not apply to it and is left out: 4.39.0 already fixes the water dig time and the `use_item` rotation that patch carried. Every other Mindcraft patch applies. |
+| mineflayer | 4.33.0, with all six of Mindcraft's `patches/` applied | The version those patches were made against. A fresh install resolves 4.39.0, on which the mineflayer patch fails. |
 | Node | 20 LTS, downloaded and checksum-verified into `.cache/node` | Mindcraft's native `gl` dependency does not compile on Node 24 or newer. |
-| Java | 21 | What Paper 1.21.11 needs. |
+| Java | 21 | What Paper 1.21.6 needs. |
 
 ## Set up (once, about 3 minutes)
 
@@ -58,7 +58,7 @@ The run stops by itself after `<minutes>`, or on Ctrl-C. It stops Mindcraft, the
 
 While it runs:
 
-- Join with Minecraft Java Edition **1.21.11**, Multiplayer, server address `localhost:25565`, user name `nbdSteve`. The server binds `127.0.0.1` only, so join from this machine.
+- Join with Minecraft Java Edition **1.21.6**, Multiplayer, server address `localhost:25565`, user name `nbdSteve`. The server binds `127.0.0.1` only, so join from this machine.
 - The MindServer UI is at `http://localhost:8080`.
 - Type server console commands with `echo "time set day" > research/mindcraft/runs/<run>/paper-console`.
 
