@@ -696,6 +696,7 @@ the configured spend ceiling is $3.51.
 The paid two-cycle profiles use the same routing and bounds. Three agents at
 64/192/3 calls make the worst case $37.35552 against a $37.36 ceiling; ten agents
 at 64/640/6 make it $124.5184 against $124.52. The ten-minute shakedown at 24/150/6 makes it $29.184 against $29.19.
+The one-hour `long-run-60m-10` profile at 240/2,268/6 with 780 pivotal calls makes it $175.0695936 against $175.08.
 Each needs its own exact approval.
 
 After explicit approval, replace the proposal placeholder with the approved

@@ -358,6 +358,9 @@
     },
     "tribe-held-objective-10m-10-scripted.json": {
       "status": "runnable"
+    },
+    "tribe-long-run-60m-10.json": {
+      "status": "runnable"
     }
   }
 }

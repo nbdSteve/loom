@@ -68,6 +68,20 @@ const SCENES = Object.freeze({
     ]),
     initialTimeOfDay: 6000,
     coverRule: null
+  }),
+  // A seed drawn at random, as a signed 64-bit integer from eight bytes of Node's
+  // `crypto.randomBytes`, and accepted as the first draw whose ring `tools/survey-ring.js` placed in
+  // full, whatever its resources; no draw was rejected. Each slot is the survey's first radius from
+  // 12 to 16 at its bearing (all twelve) whose column's highest non-leaf collision block is ground,
+  // not a log, with two passable cells above it. Nine slots stand on grass_block and one on a
+  // pumpkin, with 66 to 125 logs within sixteen blocks. It starts at dawn.
+  'x1-random-ring': Object.freeze({
+    seed: '1441207653247942039',
+    positions: Object.freeze([
+      [12.5, 86, 0.5], [9.5, 85, 7.5], [3.5, 80, 11.5], [-3.5, 78, 11.5], [-9.5, 79, 7.5],
+      [-11.5, 80, 0.5], [-9.5, 83, -7.5], [-3.5, 85, -11.5], [3.5, 86, -11.5], [9.5, 85, -7.5]
+    ]),
+    coverRule: 'A collision-free, non-fluid cover block (short_grass) in the feet cell counts as passable. Nothing is cleared or placed.'
   })
 })
 
@@ -373,6 +387,22 @@ PROFILES['held-objective-10m-10'] = Object.freeze({ ...PROFILES['shelter-goal-10
 PROFILES['held-objective-follow-up-10m-10'] = Object.freeze({
   ...PROFILES['held-objective-10m-10'],
   followUpsPerReview: 4
+})
+// The held-objective follow-up profile's plan and bars over one real-clock hour on the random
+// x1-random-ring scene from dawn: three days and nights. Its per-ten-minute call envelope is scaled by six, so
+// 30 reviews and 120 follow-ups an agent leave 768 of the 2,268 calls to events, and 780 pivotal
+// and 1,488 ordinary calls at their worst case are $175.0695936. The evidence bounds keep the
+// ten-minute margin over six times the largest ten-minute volume, under GitHub's 100 MiB file limit.
+PROFILES['long-run-60m-10'] = Object.freeze({
+  ...PROFILES['held-objective-follow-up-10m-10'],
+  scene: 'x1-random-ring',
+  runDurationSeconds: 3600,
+  simulationTickCeiling: 72_000,
+  expectedReviewsPerAgent: 30,
+  exposure: Object.freeze({ daylightTicks: 42_000, nightTicks: 30_000 }),
+  callCeilings: Object.freeze({ perAgent: 240, global: 2268, outstanding: 6, pivotal: 780 }),
+  maxExternalSpendUsd: 175.08,
+  bounds: Object.freeze({ logBytes: 128 * 1024 * 1024, evidenceRecords: 64_000, artifactBytes: 96 * 1024 * 1024 })
 })
 Object.freeze(PROFILES)
 
