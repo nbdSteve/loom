@@ -1,0 +1,20 @@
+--- a/node_modules/mineflayer/lib/plugins/entities.js
++++ b/node_modules/mineflayer/lib/plugins/entities.js
+@@ -271,7 +271,7 @@
+     entity.pitch = conv.fromNotchianPitchByte(packet.pitch)
+     entity.headPitch = conv.fromNotchianPitchByte(packet.headPitch)
+ 
+-    const notchVel = new Vec3(packet.velocityX, packet.velocityY, packet.velocityZ)
++    const notchVel = packet.velocity ? new Vec3(packet.velocity.x, packet.velocity.y, packet.velocity.z) : new Vec3(packet.velocityX, packet.velocityY, packet.velocityZ)
+     entity.velocity.update(conv.fromNotchVelocity(notchVel))
+     entity.metadata = parseMetadata(packet.metadata, entity.metadata)
+ 
+@@ -281,7 +281,7 @@
+   bot._client.on('entity_velocity', (packet) => {
+     // entity velocity
+     const entity = fetchEntity(packet.entityId)
+-    const notchVel = new Vec3(packet.velocityX, packet.velocityY, packet.velocityZ)
++    const notchVel = packet.velocity ? new Vec3(packet.velocity.x, packet.velocity.y, packet.velocity.z) : new Vec3(packet.velocityX, packet.velocityY, packet.velocityZ)
+     entity.velocity.update(conv.fromNotchVelocity(notchVel))
+   })
+ 
