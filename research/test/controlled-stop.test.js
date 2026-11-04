@@ -889,7 +889,13 @@ test('a slow host that ended before a review was due publishes as a no-go', () =
 
 // R40: one follow-up review the provider refused as invalid (HTTP 400) stopped a ten-agent run 403 s
 // into its 600 s window. `requestId` of `agentId` becomes that refused request in a full-duration run.
-function providerRefusedRaw ({ agentId = 'tribe-alpha', requestId = 'native-1', flagged = true } = {}) {
+function providerRefusedRaw ({
+  agentId = 'tribe-alpha',
+  requestId = 'native-1',
+  flagged = true,
+  failure = PROVIDER_REFUSED,
+  marks = { providerRefusedRequest: true }
+} = {}) {
   const raw = endedRaw()
   const applied = raw.body.find((record) =>
     record.agentId === agentId && record.requestId === requestId && record.event === 'intentApplied')
@@ -907,8 +913,9 @@ function providerRefusedRaw ({ agentId = 'tribe-alpha', requestId = 'native-1', 
     record.event === 'cognitionForwarded' && record.agentId === agentId && record.requestId === requestId)
   forwarded.outcome = 'cognitionFailure'
   delete forwarded.provenance
-  forwarded.failure = PROVIDER_REFUSED
-  if (flagged) forwarded.providerRefusedRequest = true
+  if (failure === null) delete forwarded.failure
+  else forwarded.failure = failure
+  if (flagged) Object.assign(forwarded, marks)
   return raw
 }
 
@@ -926,17 +933,13 @@ const PROVIDER_REFUSED = Object.freeze({
 test('one request the provider refused is recorded and the run goes on to its duration', () => {
   const config = openAiGoalContinuityConfig()
   const request = { agentId: 'tribe-alpha', requestId: 'native-1', trigger: 'goalReview', importance: 'ROUTINE' }
-  // Only the R40 path changes: the refused request continues; a credential, an outage and any other
-  // failure still end or stop the run as before.
+  // The refused request continues; a credential and an outage still end or stop the run.
   assert.equal(cognitionFailureAction(config, 'refused', PROVIDER_REFUSED, request), null)
   assert.equal(cognitionFailureAction(config, 'refused', { ...PROVIDER_REFUSED, httpStatus: 422 }, request), null)
   const credential = { ...PROVIDER_REFUSED, httpStatus: 401, mapping: 'providerAuthentication' }
   assert.equal(cognitionFailureAction(config, 'refused', credential, request).abort.code, 'providerAuthenticationRejected')
   const outage = { ...PROVIDER_REFUSED, httpStatus: 503, mapping: 'providerServer' }
   assert.equal(cognitionFailureAction(config, 'failed', outage, request).stop.kind, 'providerUnavailable')
-  const parse = { ...PROVIDER_REFUSED, httpStatus: 200, mapping: 'providerDecisionParse' }
-  assert.equal(cognitionFailureAction(config, 'failed', parse, request).abort.code, 'cognitionDecisionFailed')
-  assert.equal(cognitionFailureAction(config, 'failed', null, request).abort.code, 'cognitionDecisionFailed')
 
   // The guard reads the refused request's own ending as typed evidence, and the agent's later work goes on.
   const raw = providerRefusedRaw()
@@ -965,7 +968,45 @@ test('one request the provider refused is recorded and the run goes on to its du
   // A flag the body evidence does not answer with a failed perception is refused.
   const unmatched = providerRefusedRaw()
   unmatched.body.find((record) => record.event === 'cognitionUnavailable' && record.outcome === 'failed').outcome = 'mindRefused'
-  rejects(unmatched, /provider-refused request tribe-alpha:native-1 has no matching failed perception chain/)
+  rejects(unmatched, /failed cognition request tribe-alpha:native-1 has no matching failed perception chain/)
+})
+
+const MIND_REFUSAL = 'cognition failed: the answer named a ref this perception did not offer for that action'
+
+test('any other single cognition failure is recorded and the run goes on to its duration', () => {
+  const config = openAiGoalContinuityConfig()
+  const request = { agentId: 'tribe-alpha', requestId: 'native-1', trigger: 'goalReview', importance: 'ROUTINE' }
+  // R1 of the hour run: one mind refusal with no provider classification stopped the run at 249 s.
+  assert.equal(cognitionFailureAction(config, MIND_REFUSAL, null, request), null)
+  for (const mapping of ['providerDecisionParse', 'providerAnswerCutOff', 'providerSafetyRefusal', 'providerModel', 'requestBound']) {
+    assert.equal(cognitionFailureAction(config, 'failed', { ...PROVIDER_REFUSED, httpStatus: 200, mapping }, request), null, mapping)
+  }
+  // Continuing is unsafe past a rejected credential or lost spend evidence, and an outage still stops.
+  const journal = { ...PROVIDER_REFUSED, httpStatus: 200, mapping: 'providerUsageJournal' }
+  assert.equal(cognitionFailureAction(config, 'failed', journal, request).abort.code, 'cognitionDecisionFailed')
+  const forbidden = { ...PROVIDER_REFUSED, httpStatus: 403, mapping: 'providerHttp' }
+  assert.equal(cognitionFailureAction(config, 'failed', forbidden, request).abort.code, 'cognitionDecisionFailed')
+  const unrecognised = "cognition failed: the model provider rejected Loom's credential (HTTP 401)"
+  assert.equal(cognitionFailureAction(config, unrecognised, null, request).abort.code, 'providerAuthenticationRejected')
+  for (const mapping of ['providerTimeout', 'providerConnection', 'providerRateLimit', 'providerServer']) {
+    const stop = cognitionFailureAction(config, 'failed', { ...PROVIDER_REFUSED, httpStatus: null, mapping }, request).stop
+    assert.equal(stop.kind, 'providerUnavailable', mapping)
+  }
+
+  // The mind refusal's own ending is typed evidence, and its closed reason is published.
+  const raw = providerRefusedRaw({ failure: null, marks: { failureReason: 'mindUnofferedRef', recordedFailure: true } })
+  assert.equal(primaryBehaviorRunFailure(goalContinuityConfig(), raw.body, raw.harness), null)
+  const published = publish({ raw, stopReason: 'durationElapsed' })
+  assert.deepEqual(validateArtifact(published.artifactDirectory).errors, [])
+  assert.equal(published.manifest.timing.stopReason, 'durationElapsed')
+  assert.equal(published.metrics.behaviorGate.pilotVerdict, 'no-go')
+  const evidence = fs.readFileSync(path.join(published.artifactDirectory, 'evidence.jsonl'), 'utf8')
+    .trim().split('\n').map((line) => JSON.parse(line))
+  const forwarded = evidence.find((record) =>
+    record.event === 'cognitionForwarded' && record.requestKey === 'tribe-alpha:native-1')
+  assert.equal(forwarded.failureReason, 'mindUnofferedRef')
+  assert.equal(forwarded.recordedFailure, true)
+  assert.equal(forwarded.failure, undefined, 'the private classification stays out of published evidence')
 })
 
 test('a witness dispute, a disputed interaction and a living discard are kept and the run goes on to its duration', () => {

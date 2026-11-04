@@ -25,9 +25,9 @@ const {
   CONTROLLED_STOP_REASON,
   budgetStopFor,
   isProviderDrainFailure,
-  isProviderRefusedEnding,
-  isProviderRefusedRequest,
-  isProviderRequestFailure,
+  isRecordedCognitionFailure,
+  isRecordedFailureEnding,
+  isRecordedFailureRequest,
   providerStopFor
 } = require('./controlled-stop.js')
 const { readJsonLines } = require('./evidence.js')
@@ -435,7 +435,7 @@ class PrimaryBehaviorGuard {
     this.dead = new Set()
     this.settlement = new DeathSettlement()
     this.typed = new Set()
-    this.refusedByProvider = new Set()
+    this.recordedFailures = new Set()
     this.closed = false
     this.providerStopped = false
     this.firstPerceptionChecked = new Set()
@@ -457,7 +457,7 @@ class PrimaryBehaviorGuard {
       }
       // A call the same outage failed while it drained is part of the provider stop.
       if (this.providerStopped && isProviderDrainFailure(record)) this.typed.add(`${record.agentId}:${record.requestId}`)
-      if (isProviderRefusedRequest(record)) this.refusedByProvider.add(`${record.agentId}:${record.requestId}`)
+      if (isRecordedFailureRequest(record)) this.recordedFailures.add(`${record.agentId}:${record.requestId}`)
       if (
         record.event === 'cognitionRefused' &&
         [...BUDGET_STOP_BOUNDS, ADMISSION_CLOSED_BOUND].includes(record.bound) &&
@@ -509,8 +509,8 @@ class PrimaryBehaviorGuard {
       this.closed &&
       this.typed.has(`${record.agentId}:${record.requestId}`)
     ) return null
-    // A request the provider refused ends as that perception's own typed failure; the run goes on.
-    if (isProviderRefusedEnding(record, this.refusedByProvider)) return null
+    // A recorded cognition failure ends as that perception's own typed failure; the run goes on.
+    if (isRecordedFailureEnding(record, this.recordedFailures)) return null
     const detail = PRIMARY_BEHAVIOR_FATAL_EVENTS.get(record.event)
     if (detail !== undefined) {
       // A closed camelCase outcome tag says which kind; free text never reaches the message.
@@ -780,8 +780,8 @@ function authenticationFailure (message, classified) {
 
 /**
  * What one cognition failure does to a run: a rejected credential ends it; in primary behavior
- * mode a classified provider outage stops admission, one request the provider refused as invalid
- * is recorded and the run continues (`isProviderRequestFailure`), and any other failure ends it.
+ * mode a classified provider outage stops admission, an unsafe failure ends it, and any other is
+ * recorded as that request's own failure while the run continues (`isRecordedCognitionFailure`).
  * `null` when the run goes on.
  */
 function cognitionFailureAction (config, message, classified, request) {
@@ -790,11 +790,11 @@ function cognitionFailureAction (config, message, classified, request) {
   if (!isPrimaryBehaviorMode(config)) return null
   const providerStop = request === undefined ? null : providerStopFor(request, classified)
   if (providerStop !== null) return { stop: providerStop }
-  if (isProviderRequestFailure(classified)) return null
+  if (isRecordedCognitionFailure(message, classified)) return null
   return {
     abort: new RunFailure(
       'cognitionFailed',
-      'primary behavior cognition returned a failed decision',
+      `primary behavior cognition failed unsafely (${classified?.mapping ?? 'unclassified'})`,
       'cognitionDecisionFailed'
     )
   }

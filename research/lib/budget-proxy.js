@@ -2,11 +2,12 @@
 
 const net = require('node:net')
 
-const { validatedCognitionFailure } = require('./cognition-failure.js')
+const { failureReasonOf, validatedCognitionFailure } = require('./cognition-failure.js')
 const {
   ADMISSION_CLOSED_EVENT,
   PROXY_REQUEST_TIMEOUT_MILLIS,
   isProviderRequestFailure,
+  isRecordedCognitionFailure,
   providerStopFor
 } = require('./controlled-stop.js')
 
@@ -19,6 +20,17 @@ const REFUSAL_BOUNDS = Object.freeze([
   'postCrashReserve',
   'spend'
 ])
+
+function failureFacts (message, failure) {
+  return {
+    failureReason: failureReasonOf(message, failure),
+    ...(Number.isInteger(failure?.httpStatus) ? { failureHttpStatus: failure.httpStatus } : {}),
+    ...(failure !== null && providerStopFor({}, failure) !== null ? { providerUnavailable: true } : {}),
+    ...(isProviderRequestFailure(failure) ? { providerRefusedRequest: true } : {}),
+    // The run records it and continues past it.
+    ...(isRecordedCognitionFailure(message, failure) ? { recordedFailure: true } : {})
+  }
+}
 
 function refusal (message, code) {
   return `${JSON.stringify({ error: message, ...(code === undefined ? {} : { code }) })}\n`
@@ -371,11 +383,9 @@ class CognitionBudgetProxy {
         ...originField,
         ...(borrowing ? { borrowedCall: true } : {}),
         ...(failure === null ? {} : { failure }),
-        // A closed public fact beside the private classification evidence does not keep, so a
-        // publisher can tell a provider outage's drained calls from a failure of their own.
-        ...(failure !== null && providerStopFor({}, failure) !== null ? { providerUnavailable: true } : {}),
-        // The same for one request the provider refused, which the run records and continues past.
-        ...(isProviderRequestFailure(failure) ? { providerRefusedRequest: true } : {})
+        // Closed public facts beside the private classification evidence does not keep: why it
+        // failed, and whether it was a provider outage's drained call or a failure of its own.
+        ...(cognitionFailed ? failureFacts(parsed.error, failure) : {})
       })
       if (cognitionFailed) {
         this.onCognitionFailure(parsed.error, failure, {

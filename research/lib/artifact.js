@@ -20,9 +20,9 @@ const {
   PROVIDER_UNAVAILABLE_MAPPINGS,
   STOP_KINDS,
   isProviderDrainFailure,
-  isProviderRefusedEnding,
-  isProviderRefusedRequest,
-  providerRefusedKeysOf
+  isRecordedFailureEnding,
+  isRecordedFailureRequest,
+  recordedFailureKeysOf
 } = require('./controlled-stop.js')
 const {
   METRICS_VERSION,
@@ -1303,12 +1303,12 @@ function primaryBehaviorSemanticErrors (manifest, metrics, records) {
       .map((record) => record.requestKey)
   )
   const bodyOnly = records.filter((record) => record.source === 'body')
-  const providerRefusedKeys = providerRefusedKeysOf(records.filter((record) => record.source === 'harness'))
-  errors.push(...providerRefusedErrors(providerRefusedKeys, bodyOnly))
+  const recordedFailureKeys = recordedFailureKeysOf(records.filter((record) => record.source === 'harness'))
+  errors.push(...recordedFailureErrors(recordedFailureKeys, bodyOnly))
   if (
     (!stopped && (
       metrics.cognition.refusedCalls !== refusedAfterEnd ||
-      !unansweredAccountedFor(bodyOnly, { admissionEnded: ended !== undefined, refusedKeys, providerRefusedKeys })
+      !unansweredAccountedFor(bodyOnly, { admissionEnded: ended !== undefined, refusedKeys, recordedFailureKeys })
     ))
   ) {
     errors.push('primary behavior evidence contains a cognition refusal or unavailable decision')
@@ -1464,17 +1464,17 @@ function typedRefusal (record) {
     record.forwarded === false
 }
 
-// Every request the provider refused is one perception the JVM ended as failed, never answered.
-function providerRefusedErrors (providerRefusedKeys, body) {
+// Every recorded cognition failure is one perception the JVM ended as failed, never answered.
+function recordedFailureErrors (recordedFailureKeys, body) {
   const errors = []
-  for (const key of providerRefusedKeys) {
+  for (const key of recordedFailureKeys) {
     const chain = body.filter((record) => record.requestKey === key)
     if (
       !chain.some((record) => record.event === 'perceived') ||
-      !chain.some((record) => isProviderRefusedEnding(record, providerRefusedKeys)) ||
+      !chain.some((record) => isRecordedFailureEnding(record, recordedFailureKeys)) ||
       chain.some((record) => ['decided', 'intentApplied'].includes(record.event))
     ) {
-      errors.push(`provider-refused request ${key} has no matching failed perception chain`)
+      errors.push(`failed cognition request ${key} has no matching failed perception chain`)
     }
   }
   return errors
@@ -1527,11 +1527,11 @@ function admissionEndErrors (manifest, metrics, records) {
       errors.push(`refusal ${record.requestKey} after the run ended has no matching refused chain`)
     }
   }
-  const providerRefusedKeys = providerRefusedKeysOf(harness)
+  const recordedFailureKeys = recordedFailureKeysOf(harness)
   for (const record of body) {
     if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) &&
         !isExposureEnding(record) && !refusedKeys.has(record.requestKey) &&
-        !isProviderRefusedEnding(record, providerRefusedKeys)) {
+        !isRecordedFailureEnding(record, recordedFailureKeys)) {
       errors.push(`unavailable decision ${record.requestKey} has no typed refusal`)
     }
   }
@@ -1634,7 +1634,7 @@ function controlledStopErrors (manifest, metrics, records) {
     }
   }
   if (
-    beforeForwarded.filter((record) => record.outcome !== 'decision' && !isProviderRefusedRequest(record)).length !==
+    beforeForwarded.filter((record) => record.outcome !== 'decision' && !isRecordedFailureRequest(record)).length !==
     (stop.kind === 'providerUnavailable' ? 1 : 0)
   ) {
     errors.push('controlled stop evidence contains an unclassified cognition failure')
@@ -1672,11 +1672,11 @@ function controlledStopErrors (manifest, metrics, records) {
       errors.push(`forwarded request ${record.requestKey} has no earlier perception chain`)
     }
   }
-  const providerRefusedKeys = providerRefusedKeysOf(harness)
+  const recordedFailureKeys = recordedFailureKeysOf(harness)
   for (const record of body) {
     if (record.event === 'cognitionUnavailable' && !isCoalesced(record) && !isShutdownEnding(record) &&
         !isExposureEnding(record) && !typedKeys.has(record.requestKey) &&
-        !isProviderRefusedEnding(record, providerRefusedKeys)) {
+        !isRecordedFailureEnding(record, recordedFailureKeys)) {
       errors.push(`unavailable decision ${record.requestKey} has no typed refusal`)
     }
     if (

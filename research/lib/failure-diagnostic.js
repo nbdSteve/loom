@@ -8,7 +8,7 @@ const { REFUSAL_BOUNDS } = require('./budget-proxy.js')
 const { admissionEndMetrics, controlledStopMetrics } = require('./controlled-stop.js')
 const { INITIAL_CONDITIONS_EVENT, INITIAL_CONDITIONS_HELD, heldAtBegin, samePosition } = require('./initial-conditions.js')
 const { deathMetrics } = require('./witnessed-death.js')
-const { validatedCognitionFailure } = require('./cognition-failure.js')
+const { FAILURE_REASONS, validatedCognitionFailure } = require('./cognition-failure.js')
 const { scanText } = require('./evidence.js')
 const { canonicalJson, sortedValue } = require('./util.js')
 
@@ -656,6 +656,7 @@ function harnessSummary (records, config) {
   let cognitionFailures = 0
   let unclassifiedCognitionFailures = 0
   const classifiedCognitionFailures = new Map()
+  const cognitionFailuresByReason = {}
 
   for (const [index, record] of records.entries()) {
     if (typeof record.event !== 'string') {
@@ -697,6 +698,8 @@ function harnessSummary (records, config) {
       }
       if (COGNITION_FAILURE_OUTCOMES.has(record.outcome)) {
         cognitionFailures += 1
+        // The proxy's closed token, so a mind refusal is named even with no provider classification.
+        increment(cognitionFailuresByReason, FAILURE_REASONS.has(record.failureReason) ? record.failureReason : 'unclassified')
         const classified = validatedCognitionFailure(record.failure, {
           models: config.cognition.models,
           importance: record.importance
@@ -736,6 +739,7 @@ function harnessSummary (records, config) {
         total: cognitionFailures,
         classified: cognitionFailures - unclassifiedCognitionFailures,
         unclassified: unclassifiedCognitionFailures,
+        byReason: cognitionFailuresByReason,
         byClassification: [...classifiedCognitionFailures.entries()]
           .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
           .map(([, value]) => value)

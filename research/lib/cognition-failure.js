@@ -104,7 +104,25 @@ function validatedCognitionFailure (value, { models, importance }) {
   }
 }
 
+// The mind's own refusals carry no provider classification, so each is named by its exact
+// error frame (`server.rs` `answer`, `mind.rs` `decide`, `model.rs` `NO_ANSWER_OFFERED`).
+const MIND_REFUSALS = new Map([
+  ['cognition failed: the answer named a ref this perception did not offer for that action', 'mindUnofferedRef'],
+  ['cognition failed: the request schema for this perception offers no answer', 'mindNoAnswerOffered']
+])
+const FAILURE_REASONS = new Set([...MAPPINGS, ...MIND_REFUSALS.values(), 'unclassified'])
+
+// One closed public token for why cognition failed: the provider mapping when classified, else
+// the mind's refusal, else `unclassified`. Never the message itself.
+function failureReasonOf (message, classified) {
+  if (classified !== null && classified !== undefined) return classified.mapping
+  return MIND_REFUSALS.get(message) ?? 'unclassified'
+}
+
 module.exports = {
   COGNITION_FAILURE_VERSION,
+  FAILURE_REASONS,
+  MIND_REFUSALS,
+  failureReasonOf,
   validatedCognitionFailure
 }

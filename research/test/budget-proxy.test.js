@@ -213,7 +213,10 @@ test('the proxy preserves one sanitized cognition classification for the diagnos
         provenance: null,
         outstandingAtAdmission: 1,
         failure,
-        providerRefusedRequest: true
+        failureReason: 'providerRequest',
+        failureHttpStatus: 400,
+        providerRefusedRequest: true,
+        recordedFailure: true
       }
     )
   } finally {
@@ -266,11 +269,76 @@ test('a request the provider refused is journalled with its public flag and late
     assert.equal((await request(proxy.listen.port, 'alpha', 'one')).error, error)
     assert.equal((await request(proxy.listen.port, 'alpha', 'two')).intent.action, 'idle')
     const forwarded = events.filter((event) => event.event === 'cognitionForwarded')
-    assert.deepEqual(forwarded.map((event) => [event.requestId, event.outcome, event.providerRefusedRequest]), [
-      ['one', 'cognitionFailure', true],
-      ['two', 'decision', undefined]
+    assert.deepEqual(forwarded.map((event) => [event.requestId, event.outcome, event.providerRefusedRequest, event.recordedFailure]), [
+      ['one', 'cognitionFailure', true, true],
+      ['two', 'decision', undefined, undefined]
     ])
     assert.equal(forwarded[0].providerUnavailable, undefined)
+  } finally {
+    await proxy.close()
+    await new Promise((resolve) => upstream.close(resolve))
+  }
+})
+
+test('a mind refusal is journalled with its closed reason and later requests still go through', async () => {
+  // R1 of the hour run: the mind refused one answer naming an unoffered ref, with no provider
+  // classification, and the run stopped at 249 s with the cause nowhere in its evidence.
+  const error = 'cognition failed: the answer named a ref this perception did not offer for that action'
+  const journalLost = {
+    schemaVersion: 'loom-cognition-failure/1',
+    backend: 'openai',
+    model: 'fast-model',
+    httpStatus: 200,
+    providerType: null,
+    providerCode: null,
+    responseShape: 'chatCompletion',
+    mapping: 'providerUsageJournal'
+  }
+  let calls = 0
+  const upstream = net.createServer((socket) => {
+    socket.once('data', (chunk) => {
+      const perception = JSON.parse(chunk.toString('utf8').split('\n')[0])
+      calls += 1
+      const answer = calls === 1
+        ? { error }
+        : calls === 2
+          ? { error: 'cognition failed: the usage journal could not be written', failure: journalLost }
+          : {
+              requestId: perception.requestId,
+              agentId: perception.agentId,
+              intent: { action: 'idle' },
+              reasoning: 'test',
+              provenance: { tier: perception.importance, model: 'fast-model', promptVersion: 'routine-v38' }
+            }
+      socket.end(`${JSON.stringify(answer)}\n`)
+    })
+  })
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+  const events = []
+  const proxy = new CognitionBudgetProxy({
+    listen: { host: '127.0.0.1', port: 0 },
+    upstream: { host: '127.0.0.1', port: upstream.address().port },
+    agents: ['alpha'],
+    models: { ordinary: 'fast-model', pivotal: 'deep-model' },
+    budget: { perAgentCallCeiling: 3, globalCallCeiling: 3, globalOutstandingCeiling: 1 },
+    journal: { append: (event, fields) => events.push({ event, ...fields }) }
+  })
+  await proxy.start()
+  try {
+    assert.equal((await request(proxy.listen.port, 'alpha', 'one')).error, error)
+    await request(proxy.listen.port, 'alpha', 'two')
+    assert.equal((await request(proxy.listen.port, 'alpha', 'three')).intent.action, 'idle')
+    const forwarded = events.filter((event) => event.event === 'cognitionForwarded')
+    assert.deepEqual(
+      forwarded.map((event) => [event.requestId, event.outcome, event.failureReason, event.failureHttpStatus, event.recordedFailure]),
+      [
+        ['one', 'cognitionFailure', 'mindUnofferedRef', undefined, true],
+        // Lost spend evidence is unsafe to continue past, so it is not a recorded failure.
+        ['two', 'cognitionFailure', 'providerUsageJournal', 200, undefined],
+        ['three', 'decision', undefined, undefined, undefined]
+      ]
+    )
+    assert.equal(forwarded[0].failure, undefined)
   } finally {
     await proxy.close()
     await new Promise((resolve) => upstream.close(resolve))
@@ -337,6 +405,8 @@ test('a provider unavailability is journalled with a closed public flag beside i
     assert.equal(forwarded.outcome, 'cognitionFailure')
     assert.equal(forwarded.providerUnavailable, true)
     assert.equal(forwarded.providerRefusedRequest, undefined)
+    assert.equal(forwarded.recordedFailure, undefined, 'an outage is a controlled stop, not a recorded failure')
+    assert.equal(forwarded.failureReason, 'providerTimeout')
     assert.deepEqual(forwarded.failure, failure)
   } finally {
     await proxy.close()

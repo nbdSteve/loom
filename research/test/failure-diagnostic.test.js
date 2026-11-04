@@ -209,7 +209,8 @@ test('classified cognition failures aggregate exactly while legacy refusals stay
       requestId: 'private-request-a',
       importance: 'ROUTINE',
       outcome: 'cognitionFailure',
-      failure: requestRejected
+      failure: requestRejected,
+      failureReason: 'providerRequest'
     },
     {
       event: 'cognitionForwarded',
@@ -217,7 +218,9 @@ test('classified cognition failures aggregate exactly while legacy refusals stay
       requestId: 'private-request-b',
       importance: 'NOTABLE',
       outcome: 'cognitionFailure',
-      failure: requestRejected
+      failure: requestRejected,
+      // Only the closed vocabulary is kept.
+      failureReason: 'private free text'
     },
     {
       event: 'cognitionForwarded',
@@ -225,7 +228,17 @@ test('classified cognition failures aggregate exactly while legacy refusals stay
       requestId: 'private-request-c',
       importance: 'PIVOTAL',
       outcome: 'cognitionFailure',
-      failure: safetyRefusal
+      failure: safetyRefusal,
+      failureReason: 'providerSafetyRefusal'
+    },
+    {
+      event: 'cognitionForwarded',
+      agentId: 'tribe-alpha',
+      requestId: 'private-request-d',
+      importance: 'ROUTINE',
+      outcome: 'cognitionFailure',
+      failureReason: 'mindUnofferedRef',
+      recordedFailure: true
     },
     {
       event: 'cognitionForwarded',
@@ -248,9 +261,16 @@ test('classified cognition failures aggregate exactly while legacy refusals stay
       clock: () => new Date('2026-10-12T00:00:00.000Z')
     })
     const summary = retained.diagnostic.cognition.harness.failureClassifications
-    assert.equal(summary.total, 4)
+    assert.equal(summary.total, 5)
     assert.equal(summary.classified, 3)
-    assert.equal(summary.unclassified, 1)
+    assert.equal(summary.unclassified, 2)
+    // R1 of the hour run: a mind refusal carries no provider classification, so its reason names it.
+    assert.deepEqual(summary.byReason, {
+      mindUnofferedRef: 1,
+      providerRequest: 1,
+      providerSafetyRefusal: 1,
+      unclassified: 2
+    })
     assert.deepEqual(summary.byClassification, [
       {
         ...safetyRefusal,

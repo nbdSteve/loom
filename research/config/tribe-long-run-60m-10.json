@@ -1,6 +1,6 @@
 {
-  "experimentId": "2026-11-04-openai-10-agent-60m-r1",
-  "title": "10-agent one-hour routine-v38 long run",
+  "experimentId": "2026-11-04-openai-10-agent-60m-r2",
+  "title": "10-agent one-hour routine-v38 long run r2",
   "mode": "routine-v38-reliable-source",
   "agents": [
     "tribe-alpha",
