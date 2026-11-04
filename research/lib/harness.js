@@ -810,6 +810,32 @@ function budgetRefusalFailure (refusal) {
   )
 }
 
+const OBSERVER_EVENTS = new Set(['observerJoined', 'observerLeft'])
+
+// Read after Paper has stopped, so the leave its shutdown kick wrote is included.
+function importObserverSessions ({ config, file, journal }) {
+  if (!fs.existsSync(file)) return 0
+  const observers = new Set((config.observers ?? []).map((name) => name.toLowerCase()))
+  const records = readJsonLines(file, {
+    maxBytes: config.bounds.logBytes,
+    maxRecords: config.bounds.evidenceRecords,
+    maxLineBytes: 1024
+  })
+  for (const record of records) {
+    if (
+      !OBSERVER_EVENTS.has(record?.event) ||
+      !Number.isInteger(record.tick) ||
+      typeof record.username !== 'string' ||
+      !observers.has(record.username.toLowerCase()) ||
+      typeof record.uuid !== 'string'
+    ) {
+      throw new RunFailure('paperFailed', 'the observer log named an unconfigured observer')
+    }
+    journal.append(record.event, { serverTick: record.tick, username: record.username, uuid: record.uuid })
+  }
+  return records.length
+}
+
 function importProviderUsage ({ config, file, journal }) {
   if (config.cognition.backend !== 'openai') return 0
   if (!fs.existsSync(file)) {
@@ -1200,6 +1226,8 @@ async function runHeldExperiment ({
         LOOM_COGNITION_QUEUE_DEPTH: String(config.runtime.cognitionBridge.queueDepth),
         LOOM_COGNITION_PENDING_PER_AGENT: String(config.runtime.cognitionBridge.perAgentPending),
         LOOM_NATIVE_COGNITION: nativeCognitionStartOf(config),
+        LOOM_ADMISSION: 'closed',
+        LOOM_OBSERVERS: (config.observers ?? []).join(','),
         ...followUpsEnvironmentOf(config)
       },
       logFile: path.join(runDirectory, 'paper.log'),
@@ -1431,6 +1459,13 @@ async function runHeldExperiment ({
     await cleanupStep(async () => {
       if (proxy !== undefined) await proxy.close()
     })
+    if (journal !== undefined) {
+      await cleanupStep(async () => importObserverSessions({
+        config,
+        file: path.join(runDirectory, 'plugins', 'Loom', 'observers.jsonl'),
+        journal
+      }))
+    }
     if (failure === undefined && journal !== undefined) {
       await cleanupStep(async () => importProviderUsage({
         config,
@@ -1542,6 +1577,7 @@ module.exports = {
   ensurePaper,
   findJava21,
   holdIdleSleepAssertion,
+  importObserverSessions,
   importProviderUsage,
   keychainCredentialProvider,
   nativeCognitionStartOf,

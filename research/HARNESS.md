@@ -245,9 +245,23 @@ from the sorted agent id set. The publisher independently derives the same
 mapping and rejects a manifest that disagrees.
 
 All listeners use the literal `127.0.0.1`, Paper runs in offline mode, and the
-artifact records zero real player accounts. Never relax those properties for
+artifact records zero real player accounts and only the configured observers. Never relax those properties for
 this harness: offline Minecraft identity is safe here only because no listener
 is network-reachable.
+
+## Watching a run as a spectator
+
+A run config may name up to four observer usernames in `observers` (none by default), and the manifest discloses them under `clientPresence.observers`.
+While a run is live the plugin admits only the configured agents and observers (`LOOM_ADMISSION=closed`), and refuses every other login before the witness sees it.
+
+To watch, start a Minecraft Java 1.21.1 client, add the server `localhost:25565`, and join with your configured username; the server is offline mode, so no account sign-in is needed.
+An observer is put in spectator mode on join, before Paper tracks it or tells any client about it, and stays there: a game-mode change is refused, chat is cancelled before the speech witness, every command but `/loomwatch` is refused, and it is never an operator.
+It holds only `loom.observe`, so `/loomwatch <agentId>` follows one agent, `/loomwatch` shows what is being watched and `/loomwatch off` stops.
+
+Agents cannot perceive an observer. Vanilla sends a spectator to no survival client, and Loom also hides each observer from every agent's player, so no body's `sense`, peer list or player list can name it; the server-side creature correlation skips spectators, and the speech witness only hears managed agents.
+A spectator counts for no mob spawning or despawning and no sleep vote, Loom clears its `affectsSpawning`, and the `spectatorsGenerateChunks` gamerule is false, so it ticks no chunk and generates none.
+The plugin writes each observer join and leave to `plugins/Loom/observers.jsonl`, and after Paper stops the harness journals them as `observerJoined` and `observerLeft` harness records with the server tick, username and uuid; `clientPresence.interactiveObservers` counts the observers that joined.
+Harness records carry no `agentId`, so observer records count toward no agent metric, readiness bar or integrity check.
 
 ## Bounds and call accounting
 

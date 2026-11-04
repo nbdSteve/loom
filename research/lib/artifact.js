@@ -85,6 +85,48 @@ function configuredAgents (config) {
     }))
 }
 
+const MAX_OBSERVERS = 4
+const OBSERVER_USERNAME = /^[A-Za-z0-9_]{3,16}$/
+
+function configuredObservers (config) {
+  return config.observers ?? []
+}
+
+function observerErrors (config) {
+  const observers = configuredObservers(config)
+  if (!Array.isArray(observers) || observers.length > MAX_OBSERVERS) {
+    return [`observers must be a list of at most ${MAX_OBSERVERS} usernames`]
+  }
+  const errors = []
+  const keys = observers.map((name) => String(name).toLowerCase())
+  if (new Set(keys).size !== keys.length) errors.push('observers contains a duplicate')
+  const agentUsernames = new Set(
+    (Array.isArray(config.agents) ? config.agents : []).flatMap((agentId) => {
+      try {
+        return [offlineIdentity(agentId).username.toLowerCase()]
+      } catch {
+        return []
+      }
+    })
+  )
+  for (const name of observers) {
+    if (typeof name !== 'string' || !OBSERVER_USERNAME.test(name)) {
+      errors.push(`observer ${JSON.stringify(name)} must be a Minecraft username of 3..16 letters, digits or underscores`)
+    } else if (agentUsernames.has(name.toLowerCase())) {
+      errors.push(`observer ${name} is an agent's username`)
+    }
+  }
+  return errors
+}
+
+function observersWhoJoined (records) {
+  return new Set(
+    records
+      .filter((record) => record.source === 'harness' && record.event === 'observerJoined')
+      .map((record) => record.username.toLowerCase())
+  ).size
+}
+
 function pricingErrors (config) {
   const errors = []
   const pricing = config.cognition?.pricing
@@ -392,6 +434,7 @@ function validateRunConfig (config) {
       }
     }
   }
+  errors.push(...observerErrors(config))
   if (config.network?.host !== '127.0.0.1') errors.push('every listener must use the 127.0.0.1 loopback literal')
   const ports = [
     config.network?.minecraftPort,
@@ -998,7 +1041,8 @@ function buildManifest ({
   evidence,
   metrics,
   warnings,
-  validation
+  validation,
+  observersJoined = 0
 }) {
   const metricValue = metrics.value
   const agents = configuredAgents(config)
@@ -1056,7 +1100,9 @@ function buildManifest ({
     },
     clientPresence: {
       realPlayerAccounts: 0,
-      interactiveObservers: 0
+      interactiveObservers: observersJoined,
+      observers: [...configuredObservers(config)],
+      admission: 'agentsAndObservers'
     },
     network: { ...config.network },
     runtime: structuredClone(config.runtime),
@@ -2075,6 +2121,7 @@ function publishArtifact ({
       },
       metrics: metricMetadata,
       warnings,
+      observersJoined: observersWhoJoined(normalized.records),
       validation: {
         beforeLaunch: true,
         beforePublication: true

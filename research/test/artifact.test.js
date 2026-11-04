@@ -8,6 +8,7 @@ const path = require('node:path')
 
 const {
   componentSourceHashes,
+  configuredAgents,
   publishArtifact,
   readmeQuestion,
   validateArtifact,
@@ -930,4 +931,36 @@ test('every committed artifact validates, a pre-harness generation by its schema
     assert.deepEqual(validation.errors, [], entry.name)
     assert.equal(validation.ok, true, entry.name)
   }
+})
+
+test('observers are validated, disclosed, and never counted toward an agent metric or integrity check', () => {
+  const observed = proofConfig()
+  observed.observers = ['nbdSteve']
+  assert.deepEqual(validateRunConfig(observed), [])
+  const invalid = (observers) => validateRunConfig({ ...proofConfig(), observers })
+  assert.ok(invalid(['nbdSteve', 'NBDSTEVE']).includes('observers contains a duplicate'))
+  assert.ok(invalid(['a b']).some((error) => /must be a Minecraft username/.test(error)))
+  assert.ok(invalid(['one', 'two', 'three', 'four', 'five']).some((error) => /at most 4/.test(error)))
+  const agentName = configuredAgents(proofConfig())[0].username
+  assert.ok(invalid([agentName]).includes(`observer ${agentName} is an agent's username`))
+  assert.deepEqual(validateProspectiveManifest(observed, SOURCE).clientPresence.observers, ['nbdSteve'])
+
+  const plain = publishFixture()
+  const raw = fixedRawRecords()
+  raw.harness.push(
+    { observedAt: '2026-10-12T00:00:27.000Z', event: 'observerJoined', serverTick: 5, username: 'nbdSteve', uuid: '7c3a0f0e-0000-3000-8000-000000000000' },
+    { observedAt: '2026-10-12T00:00:27.500Z', event: 'observerLeft', serverTick: 9, username: 'nbdSteve', uuid: '7c3a0f0e-0000-3000-8000-000000000000' }
+  )
+  const watched = publishFixture({ config: observed, raw })
+  assert.deepEqual(validateArtifact(watched.artifactDirectory).errors, [])
+  assert.deepEqual(watched.manifest.clientPresence, {
+    realPlayerAccounts: 0,
+    interactiveObservers: 1,
+    observers: ['nbdSteve'],
+    admission: 'agentsAndObservers'
+  })
+  assert.equal(plain.manifest.clientPresence.interactiveObservers, 0)
+  assert.deepEqual(watched.metrics.records.agents, plain.metrics.records.agents)
+  assert.deepEqual(watched.manifest.integrityChecks, plain.manifest.integrityChecks)
+  assert.deepEqual(watched.manifest.eventCounts, plain.manifest.eventCounts)
 })

@@ -26,9 +26,11 @@ import dev.loom.witness.WITNESS_LAG_TICKS
 import dev.loom.witness.bukkit.playerStandingOf
 import dev.loom.witness.bukkit.serverReadingOf
 import dev.loom.witness.movementClaimOf
+import org.bukkit.GameMode
 import org.bukkit.Server
 import org.bukkit.entity.Entity
 import org.bukkit.entity.Item
+import org.bukkit.entity.Player
 import java.util.UUID
 
 private const val ENTITY_MATCH_TOLERANCE_BLOCKS = 2.0
@@ -94,7 +96,7 @@ class BukkitPlayerServerState(
             player
                 .getNearbyEntities(reach, reach, reach)
                 .asSequence()
-                .filter { it.uniqueId != identity.uuid }
+                .filter { it.uniqueId != identity.uuid && !isSpectator(it) }
                 .map(::serverSubjectOf)
                 .toList()
         return matchServerSubjects(entities, candidates)
@@ -263,6 +265,9 @@ internal fun matchServerItems(
         matching?.also(remaining::remove)?.uuid
     }
 }
+
+/** A spectator is never sent to a body's client, so it can never be the subject of an observation. */
+internal fun isSpectator(entity: Entity): Boolean = (entity as? Player)?.gameMode == GameMode.SPECTATOR
 
 private fun serverSubjectOf(entity: Entity): ServerEntitySubject {
     val location = entity.location

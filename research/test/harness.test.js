@@ -12,6 +12,7 @@ const {
   authenticationFailure,
   conciseJavaVersion,
   ensurePaper,
+  importObserverSessions,
   importProviderUsage,
   keychainCredentialProvider,
   primaryBehaviorRunFailure,
@@ -606,4 +607,28 @@ test('a perception answered after its agent died ends once with a discard or an 
     if (expected === null) assert.equal(violation, null, JSON.stringify(records))
     else assert.match(violation ?? '', expected, JSON.stringify(records))
   }
+})
+
+test('observer sessions are journalled for configured observers only, after Paper stopped', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-observer-import-'))
+  const file = path.join(directory, 'observers.jsonl')
+  const config = { ...proofConfig(), observers: ['nbdSteve'] }
+  const uuid = '7c3a0f0e-0000-3000-8000-000000000000'
+  writeJsonLines(file, [
+    { event: 'observerJoined', tick: 40, username: 'nbdSteve', uuid },
+    { event: 'observerLeft', tick: 90, username: 'nbdSteve', uuid }
+  ])
+  const events = []
+  const journal = { append: (event, fields) => events.push({ event, ...fields }) }
+  assert.equal(importObserverSessions({ config, file, journal }), 2)
+  assert.deepEqual(events, [
+    { event: 'observerJoined', serverTick: 40, username: 'nbdSteve', uuid },
+    { event: 'observerLeft', serverTick: 90, username: 'nbdSteve', uuid }
+  ])
+  assert.equal(importObserverSessions({ config, file: path.join(directory, 'absent.jsonl'), journal }), 0)
+  writeJsonLines(path.join(directory, 'stranger.jsonl'), [{ event: 'observerJoined', tick: 1, username: 'stranger', uuid }])
+  assert.throws(
+    () => importObserverSessions({ config, file: path.join(directory, 'stranger.jsonl'), journal }),
+    /unconfigured observer/
+  )
 })

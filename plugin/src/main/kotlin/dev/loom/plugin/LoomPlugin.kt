@@ -56,6 +56,7 @@ import java.util.logging.Logger
 
 private const val EVENT_LOG_FILE = "body-events.jsonl"
 private const val DEATH_LEDGER_FILE = "player-deaths.jsonl"
+private const val OBSERVER_LOG_FILE = "observers.jsonl"
 private const val BODY_COMMAND = "loombody"
 private const val WATCH_COMMAND = "loomwatch"
 private const val OBSERVER_REFRESH_TICKS = 5L
@@ -398,6 +399,10 @@ class LoomPlugin : JavaPlugin() {
                 alert = { detail -> logger.severe(detail) },
             )
         server.pluginManager.registerEvents(playerWitnessSeam(witness, this), this)
+        server.pluginManager.registerEvents(
+            spectatorSeam(this, managedPlayers, permadeath, dataFolder.toPath().resolve(OBSERVER_LOG_FILE)),
+            this,
+        )
         val claims =
             ClaimAudit(
                 registry = managedPlayers,
