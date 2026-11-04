@@ -158,6 +158,10 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
+# macOS sleeps an idle host mid-run (Loom lost r37 that way); hold an idle-sleep
+# assertion for exactly this script's lifetime.
+if command -v caffeinate > /dev/null 2>&1; then caffeinate -i -w $$ & fi
+
 # Paper, with a console FIFO so the run can stop it with `stop` and an operator
 # can type commands: echo "say hello" > $run/paper-console
 mkfifo "$run/paper-console"
