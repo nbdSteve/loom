@@ -2947,6 +2947,40 @@ class PlayerWalkResolutionTest {
     }
 
     @Test
+    fun `a dig sequence digs its blocks in order and stops at the first not dug`() {
+        val agent = AgentId("agent-dig-sequence")
+        var digs = 0
+        val harness =
+            harness(
+                agent,
+                HarnessOptions(
+                    intercept = { request ->
+                        when (request) {
+                            is BodyRequest.Sense -> interactionSense(request)
+                            is BodyRequest.Dig ->
+                                fakeDig(
+                                    request,
+                                ).let { if (++digs > 1) it.copy(outcome = DigOutcome.BLOCK_GONE) else it }
+                            else -> null
+                        }
+                    },
+                ),
+            )
+        harness.port.spawn(agent).await()
+        val perception = requireNotNull(harness.port.perceive(agent, Trigger.GoalReview).await())
+        val stone = perception.surroundings.single { it.what == "block.minecraft.stone" }.ref
+
+        val outcome =
+            harness.port.apply(agent, Intent.DigSequence(listOf(stone, stone, stone)), perception.requestId).await()
+
+        val accepted = outcome as IntentOutcome.Accepted
+        assertTrue(accepted.effect.startsWith("dug 1 of 3; stopped: "), accepted.effect)
+        assertEquals(2, harness.connector.requests.count { it is BodyRequest.Dig })
+        assertEquals(1, harness.records.count { it.event == BodyEvent.INTENT_APPLIED })
+        assertEquals(2, harness.records.count { it.event == BodyEvent.WORLD_INTERACTION })
+    }
+
+    @Test
     fun `a flight refused by a busy body halts the routine work and is asked again`() {
         // r13 eta body:00000272: the flee was refused notReady behind a dig decided earlier.
         val agent = AgentId("agent-preempt")

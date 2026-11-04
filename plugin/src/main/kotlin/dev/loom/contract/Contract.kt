@@ -95,6 +95,9 @@ const val MAX_PERCEPTION_OBSERVATIONS: Int = 144
 /** The most applications one craft intent may request. */
 const val MAX_CRAFTS_PER_INTENT: Long = 8
 
+/** The most blocks one [Intent.DigSequence] names. */
+const val MAX_DIG_SEQUENCE_BLOCKS: Int = 5
+
 /** Vanilla's largest result stack from one recipe application. */
 private const val MAX_RECIPE_RESULT_COUNT: Long = 64
 
@@ -1229,7 +1232,7 @@ val Intent.action: IntentAction
             is Intent.MoveTo -> IntentAction.MOVE_TO
             is Intent.Flee -> IntentAction.FLEE
             is Intent.Eat -> IntentAction.EAT
-            is Intent.Dig -> IntentAction.DIG
+            is Intent.Dig, is Intent.DigSequence -> IntentAction.DIG
             is Intent.Collect -> IntentAction.COLLECT
             is Intent.Place -> IntentAction.PLACE
             is Intent.Equip -> IntentAction.EQUIP
@@ -1252,6 +1255,7 @@ val Intent.targetRef: String?
             is Intent.Flee -> from
             is Intent.Eat -> ref
             is Intent.Dig -> block
+            is Intent.DigSequence -> blocks.first()
             is Intent.Collect -> item
             is Intent.Place -> block
             is Intent.Equip -> item
@@ -1447,6 +1451,18 @@ sealed interface Intent {
     data class Dig(val block: String) : Intent {
         init {
             requireBoundedRef(block)
+        }
+    }
+
+    /** Dig up to five offered blocks in order, stopping at the first that is not dug. */
+    @Serializable
+    @SerialName("digSequence")
+    data class DigSequence(val blocks: List<String>) : Intent {
+        init {
+            require(blocks.size in 1..MAX_DIG_SEQUENCE_BLOCKS) {
+                "a dig sequence names 1..$MAX_DIG_SEQUENCE_BLOCKS blocks, got ${blocks.size}"
+            }
+            blocks.forEach(::requireBoundedRef)
         }
     }
 

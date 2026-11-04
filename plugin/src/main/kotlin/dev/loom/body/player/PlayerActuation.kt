@@ -154,6 +154,8 @@ internal class PlayerActuation(
     }
 }
 
+private val PASSIVE_EFFECTS: Map<Intent, String> = mapOf(Intent.Idle to "standing still", Intent.Rest to "resting")
+
 /** Resolves main-thread handles before returning one immutable I/O operation. */
 internal class PlayerActionPreparer(
     private val context: PlayerBodyContext,
@@ -181,16 +183,15 @@ internal class PlayerActionPreparer(
                         connection.request(request, context.infrastructure.settings.requestTimeout)
                     }
                 }
-            is Intent.Idle -> {
-                { halt(runtime, "standing still", requestId) }
-            }
-            is Intent.Rest -> {
-                { halt(runtime, "resting", requestId) }
+            is Intent.Idle, Intent.Rest -> {
+                { halt(runtime, PASSIVE_EFFECTS.getValue(intent), requestId) }
             }
             is Intent.MoveTo -> prepareMove(runtime, intent, requestId, sense)
             is Intent.Eat -> prepareEat(runtime, intent, requestId, sense)
             is Intent.Flee -> prepareFlee(runtime, intent, requestId, sense)
             is Intent.Dig -> interactions.prepare(runtime, intent, requestId, sense)
+            is Intent.DigSequence ->
+                prepareDigSequence(interactions, preemption, AppliedDecision(runtime, sense, requestId), intent)
             is Intent.Collect -> interactions.prepare(runtime, intent, requestId, sense)
             is Intent.Place -> interactions.prepare(runtime, intent, requestId, sense)
             is Intent.Equip -> interactions.prepare(runtime, intent, requestId, sense)

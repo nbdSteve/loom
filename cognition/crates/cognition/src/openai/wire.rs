@@ -756,6 +756,15 @@ fn namespace_defs(offered: &OfferedRefs) -> Value {
     Value::Object(defs)
 }
 
+/// A dig sequence's `blocks`: an array of `block`, bounded by the contract type since strict mode cannot.
+fn dig_sequence(block: &Value) -> Value {
+    json!({
+        "type": "array",
+        "items": block,
+        "description": "One to five distinct block refs to dig in order, in one decision; the body stops at the first it cannot dig. More than five is refused."
+    })
+}
+
 /// A field that is not a ref, present whatever was offered.
 #[allow(clippy::unnecessary_wraps)]
 fn plain(schema: Value) -> Option<Value> {
@@ -1695,6 +1704,8 @@ fn build_decision_schema(offered: Option<&OfferedRefs>, phase: GoalPhase) -> Val
         intent_variant("flee", vec![("from", creatures("The ref of the one living thing to move away from. A creature ref given in this message, never a name, a type, or an invented one."))]),
         intent_variant("eat", vec![("ref", stacks("The ref of the one stack in your own inventory to eat one item from. A stack ref given in this message, never an item name or an invented one."))]),
         intent_variant("dig", vec![("block", dig_blocks("The ref of the exact nearby block to dig once. A block ref from this message, never coordinates or an item name."))]),
+        // A request offers a sequence only as a goal's own step, so the widest request stays inside the provider's enum limit.
+        offered.map_or_else(|| Some(dig_sequence(&json!({ "type": "string" }))), |_| None).and_then(|blocks| intent_variant("digSequence", vec![("blocks", Some(blocks))])),
     ];
     variants.extend(collect_variants(offered));
     variants.extend(handling_variants(offered));
@@ -2178,7 +2189,11 @@ fn item_step_variants(
         "A cell at the edge of sight toward where you last saw a source of this goal's item.",
     );
     [
-        dig.map(|block| intent_variant("dig", vec![("block", Some(block))])),
+        dig.clone()
+            .map(|block| intent_variant("dig", vec![("block", Some(block))])),
+        dig.map(|block| {
+            intent_variant("digSequence", vec![("blocks", Some(dig_sequence(&block)))])
+        }),
         pickup.map(|item| {
             intent_variant(
                 "collect",
@@ -2408,7 +2423,7 @@ mod tests {
     fn every_intent_variant_is_a_closed_tagged_object() {
         let schema = decision_schema();
         let variants = schema["properties"]["intent"]["anyOf"].as_array().unwrap();
-        assert_eq!(variants.len(), 13, "one per contract Intent variant");
+        assert_eq!(variants.len(), 14, "one per contract Intent variant");
         let mut actions = Vec::new();
         for variant in variants {
             assert_eq!(variant["additionalProperties"], false);
@@ -2424,8 +2439,20 @@ mod tests {
         assert_eq!(
             actions,
             vec![
-                "say", "moveTo", "flee", "eat", "dig", "collect", "place", "equip", "craft",
-                "attack", "sleep", "rest", "idle",
+                "say",
+                "moveTo",
+                "flee",
+                "eat",
+                "dig",
+                "digSequence",
+                "collect",
+                "place",
+                "equip",
+                "craft",
+                "attack",
+                "sleep",
+                "rest",
+                "idle",
             ],
             "the tags must be the contract's own action names"
         );

@@ -158,6 +158,7 @@ private fun canGive(
     val target =
         when (intent) {
             is Intent.Dig -> intent.block
+            is Intent.DigSequence -> intent.blocks.first()
             is Intent.Collect -> intent.item
             is Intent.Craft -> intent.recipe
             is Intent.MoveTo -> intent.onto.takeIf { it !in observed?.explore.orEmpty() }

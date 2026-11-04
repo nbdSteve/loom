@@ -39,6 +39,15 @@ internal data class ActionExecution(
     val fleeStale: Boolean = false,
     val eatReport: BodyResponse.EatReport? = null,
     val interaction: ServerInteractionClaim? = null,
+    /** A dig sequence's steps, in the order they ran. */
+    val steps: List<ActionExecution> = emptyList(),
+)
+
+/** One audited execution: its outcome, a collect claim, and its interaction record, written after the action's. */
+internal class AuditedStep(
+    val outcome: IntentOutcome,
+    val collect: ServerInteractionClaim.Collect?,
+    val record: () -> Unit,
 )
 
 /** Records decisions before the movement or vitals evidence they produced. */
@@ -56,7 +65,32 @@ internal class PlayerEvidenceRecorder(
         requestId: String?,
         execution: ActionExecution,
     ): IntentOutcome {
-        val agentId = runtime.identity.agentId
+        if (intent is Intent.DigSequence && execution.steps.isNotEmpty()) {
+            return auditSequence(runtime, intent, requestId, execution.steps)
+        }
+        val step = auditInteraction(runtime, intent, requestId, execution)
+        val outcome = step.outcome
+        recordAction(
+            runtime.identity.agentId,
+            intent,
+            requestId,
+            outcome,
+            terrainOf(context.authority.ground, step.collect),
+        )
+        recordWalk(runtime, requestId, execution)
+        recordFlight(runtime, requestId, execution)
+        recordMeal(runtime.identity.agentId, execution)
+        step.record()
+        return outcome
+    }
+
+    /** One execution's server audit and interaction record, and its outcome as the server attributes it. */
+    internal fun auditInteraction(
+        runtime: PlayerRuntime,
+        intent: Intent,
+        requestId: String?,
+        execution: ActionExecution,
+    ): AuditedStep {
         val audited =
             execution.interaction?.let { it to context.authority.serverState.auditInteraction(runtime.identity, it) }
         val brokenByOther = audited?.second?.brokenByOther == true
@@ -77,12 +111,10 @@ internal class PlayerEvidenceRecorder(
             }
         val collect = execution.interaction as? ServerInteractionClaim.Collect
         collect?.let(context.routeRefusals::remember)
-        recordAction(agentId, intent, requestId, outcome, terrainOf(context.authority.ground, collect))
-        recordWalk(runtime, requestId, execution)
-        recordFlight(runtime, requestId, execution)
-        recordMeal(agentId, execution)
-        audited?.let { recordInteraction(runtime, intent, requestId, it, drops) }
-        return outcome
+        return AuditedStep(
+            outcome,
+            collect,
+        ) { audited?.let { recordInteraction(runtime, intent, requestId, it, drops) } }
     }
 
     private fun recordWalk(

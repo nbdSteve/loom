@@ -757,6 +757,22 @@
           }
         },
         {
+          "title": "DigSequence",
+          "description": "Dig up to five nearby blocks, each named by a request-scoped ref in the perception being answered, in order. Each step is one Dig through the same checks; the sequence stops at the first step that does not dig its block.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "blocks"],
+          "properties": {
+            "action": { "const": "digSequence" },
+            "blocks": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 5,
+              "items": { "$ref": "#/$defs/EntityRef" }
+            }
+          }
+        },
+        {
           "title": "Collect",
           "description": "Collect one nearby dropped-item entity named by the request-scoped ref in the perception being answered. approach explicitly permits one bounded path to the position that exact item occupied when the request was admitted; false permits no movement.",
           "type": "object",
