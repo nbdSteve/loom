@@ -1,0 +1,20 @@
+{
+  "currency": "USD",
+  "unit": "nano-USD per token",
+  "source": "gpt-5.4 and gpt-5.4-nano copied from research/config/tribe-solo-1.json (OpenAI API pricing, effective 2026-10-12, standard processing). text-embedding-3-small at OpenAI's published USD 0.02 per 1M tokens.",
+  "models": {
+    "gpt-5.4": {
+      "inputNanoUsdPerToken": 2500,
+      "cachedInputNanoUsdPerToken": 250,
+      "outputNanoUsdPerToken": 15000
+    },
+    "gpt-5.4-nano": {
+      "inputNanoUsdPerToken": 200,
+      "cachedInputNanoUsdPerToken": 20,
+      "outputNanoUsdPerToken": 1250
+    },
+    "text-embedding-3-small": {
+      "inputNanoUsdPerToken": 20
+    }
+  }
+}
