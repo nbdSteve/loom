@@ -18,14 +18,15 @@ fun describe(intent: Intent): String =
         is Intent.Flee -> "flee from ${intent.from}"
         is Intent.Eat -> "eat ${intent.ref}"
         is Intent.Dig -> "dig ${intent.block}"
+        is Intent.DigSequence -> "dig ${intent.blocks.joinToString(" then ")}"
         is Intent.Collect -> "collect ${intent.item}"
         is Intent.Place -> "place ${intent.item} at ${intent.block}/${intent.face.name.lowercase()}"
         is Intent.Equip -> "equip ${intent.item} as ${intent.destination.name.lowercase()}"
         is Intent.Craft -> "craft ${intent.crafts} of ${intent.recipe}"
         is Intent.Attack -> "attack ${intent.target} with ${intent.weapon} up to ${intent.attacks} times"
         is Intent.Sleep -> "sleep in ${intent.bed}"
-        is Intent.Rest -> "rest"
-        is Intent.Idle -> "idle"
+        // A data object's name is its tag, lowercased.
+        is Intent.Rest, Intent.Idle -> intent.toString().lowercase()
     }
 
 /** Names what the body did with an intent, so gaps are visible in the log. */

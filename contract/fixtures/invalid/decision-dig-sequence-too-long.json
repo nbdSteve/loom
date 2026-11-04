@@ -1,0 +1,1 @@
+{"requestId":"req-block-1","agentId":"agent-gamma","intent":{"action":"digSequence","blocks":["b1","b2","b3","b4","b5","b6"]},"reasoning":"too many blocks for one sequence","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}

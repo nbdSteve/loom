@@ -261,6 +261,8 @@ internal class PlayerActionPreparer(
     private val interactions = PlayerInteractionPreparer(context, preemption)
     private val survival = PlayerSurvivalPreparer(context, preemption)
 
+    // One branch per intent: a dispatch table, which body/test/capability-completeness.test.js reads.
+    @Suppress("CyclomaticComplexMethod")
     fun prepare(
         runtime: PlayerRuntime,
         intent: Intent,
@@ -284,6 +286,8 @@ internal class PlayerActionPreparer(
             is Intent.Eat -> prepareEat(runtime, intent, requestId, sense)
             is Intent.Flee -> prepareFlee(runtime, intent, requestId, sense)
             is Intent.Dig -> interactions.prepare(runtime, intent, requestId, sense)
+            is Intent.DigSequence ->
+                prepareDigSequence(interactions, preemption, AppliedDecision(runtime, sense, requestId), intent)
             is Intent.Collect -> interactions.prepare(runtime, intent, requestId, sense)
             is Intent.Place -> interactions.prepare(runtime, intent, requestId, sense)
             is Intent.Equip -> interactions.prepare(runtime, intent, requestId, sense)

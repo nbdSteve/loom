@@ -1,0 +1,1 @@
+{"requestId":"req-block-1","agentId":"agent-gamma","intent":{"action":"digSequence","blocks":["b1","b2","b3"]},"reasoning":"dig the three offered logs in order","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"}}

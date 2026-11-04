@@ -385,6 +385,7 @@ impl ItemSteps {
         let held = |list: &[String], handle: &str| list.iter().any(|offered| offered == handle);
         match intent {
             Intent::Dig { block } => held(&self.dig, block),
+            Intent::DigSequence { blocks } => blocks.iter().all(|block| held(&self.dig, block)),
             Intent::Collect { item, approach } => {
                 held(if *approach { &self.route } else { &self.pickup }, item)
             }
@@ -1491,6 +1492,9 @@ impl OfferedRefs {
             Intent::Flee { from } => held(&self.flee_targets, from),
             Intent::Eat { slot_ref } => held(&self.stacks, slot_ref),
             Intent::Dig { block } => held(&self.dig_blocks, block),
+            Intent::DigSequence { blocks } => {
+                blocks.iter().all(|block| held(&self.dig_blocks, block))
+            }
             Intent::Collect { item, approach } => held(
                 if *approach {
                     &self.route_items
@@ -1690,6 +1694,16 @@ mod tests {
                 onto: here.to_owned()
             }));
         }
+    }
+
+    #[test]
+    fn a_dig_sequence_is_admitted_only_when_every_block_is_offered_to_dig() {
+        let offered = OfferedRefs::of(&fixture("perception-standing-on"));
+        let sequence = |blocks: &[&str]| Intent::DigSequence {
+            blocks: blocks.iter().map(|&block| block.to_owned()).collect(),
+        };
+        assert!(offered.admits(&sequence(&["b1", "b2"])));
+        assert!(!offered.admits(&sequence(&["b1", "x9"])));
     }
 
     #[test]

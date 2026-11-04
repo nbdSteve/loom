@@ -675,7 +675,7 @@ fun tagOf(intent: Intent): String =
         is Intent.Say -> EventTag.SAY
         is Intent.Flee -> EventTag.FLEE
         is Intent.Eat -> EventTag.EAT
-        is Intent.Dig -> EventTag.DIG
+        is Intent.Dig, is Intent.DigSequence -> EventTag.DIG
         is Intent.Collect -> EventTag.COLLECT
         is Intent.Place -> EventTag.PLACE
         is Intent.Equip -> EventTag.EQUIP

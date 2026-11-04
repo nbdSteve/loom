@@ -751,7 +751,7 @@ class CrossLayerActionFlowTest {
             is Intent.Say, Intent.Rest, Intent.Idle, is Intent.MoveTo -> fixture
             is Intent.Flee -> Intent.Flee(entity)
             is Intent.Eat -> Intent.Eat(stack("bread"))
-            is Intent.Dig -> Intent.Dig(block)
+            is Intent.Dig, is Intent.DigSequence -> blockIntent(fixture, block)
             is Intent.Collect -> Intent.Collect(item, fixture.approach)
             is Intent.Place -> Intent.Place(block, stack("dirt"), BlockFace.UP)
             is Intent.Equip -> Intent.Equip(stack("helmet"), EquipmentDestination.HEAD)
@@ -760,6 +760,11 @@ class CrossLayerActionFlowTest {
             is Intent.Sleep -> Intent.Sleep(bed)
         }
     }
+
+    private fun blockIntent(
+        fixture: Intent,
+        block: String,
+    ): Intent = if (fixture is Intent.Dig) Intent.Dig(block) else Intent.DigSequence(listOf(block))
 
     /** A mind that sees only contract bytes and answers only from a canonical fixture's bytes. */
     private fun cognition(

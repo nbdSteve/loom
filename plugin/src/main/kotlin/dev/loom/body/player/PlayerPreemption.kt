@@ -26,6 +26,12 @@ internal class PlayerPreemption(
     private val nextRequestId: (String) -> String,
     private val halt: (PlayerRuntime) -> Unit,
 ) {
+    /** Whether a newer decision than [decidedBy] now governs [runtime]'s body. */
+    fun outdated(
+        runtime: PlayerRuntime,
+        decidedBy: String?,
+    ): Boolean = decidedBy != null && newest.outdated(runtime.identity.agentId, decidedBy)
+
     /** Sends [request] for [runtime]'s decision [decidedBy] with [send]: the request finally sent, and its answer. */
     fun <R> send(
         runtime: PlayerRuntime,
