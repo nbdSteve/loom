@@ -12,8 +12,8 @@
 use std::fs;
 use std::path::Path;
 
-use loom_cognition::offered::{OfferedRefs, Sheltering};
-use loom_cognition::openai::wire::{decision_schema_for, GoalPhase};
+use loom_cognition::offered::OfferedRefs;
+use loom_cognition::openai::wire::decision_schema_for;
 use loom_contract::Perception;
 use serde_json::{json, Value};
 
@@ -25,15 +25,15 @@ fn scene(name: &str) -> Perception {
 }
 
 fn schema_of(perception: &Perception) -> Value {
-    decision_schema_for(&OfferedRefs::of(perception), GoalPhase::of(perception))
+    decision_schema_for(&OfferedRefs::of(perception))
 }
 
 fn accepts(schema: &Value, intent: &Value, goal: &Value) -> bool {
     let validator = jsonschema::validator_for(schema).expect("the request schema compiles");
     let answer = if schema["properties"].get("decision").is_some() {
-        json!({ "decision": { "intent": intent, "goal": goal }, "reasoning": "a test answer" })
+        json!({ "intent": intent, "reasoning": "a test answer", "plan": { "update": "continue" }, "goal": goal })
     } else {
-        json!({ "intent": intent, "reasoning": "a test answer", "goal": goal })
+        json!({ "intent": intent, "reasoning": "a test answer", "plan": { "update": "continue" } })
     };
     validator.is_valid(&answer)
 }
@@ -51,18 +51,4 @@ fn danger_in_a_pit_is_answered_by_closing_it_never_by_a_flight_that_cannot_run()
         &json!({ "action": "flee", "from": "e1" }),
         &Value::Null
     ));
-}
-
-#[test]
-fn a_met_subgoal_is_completed_and_the_shelter_it_fed_takes_the_closing() {
-    let met = scene("shelter-subgoal-met");
-    let offered = OfferedRefs::of(&met);
-    assert_eq!(offered.sheltering, Sheltering::Feeding);
-    let schema = schema_of(&met);
-    let complete = json!({ "disposition": "complete", "stepResult": "done" });
-    let close = json!({ "action": "place", "block": "b7", "item": "s1", "face": "up" });
-    assert!(accepts(&schema, &close, &complete));
-    // A subgoal is never replaced: that would drop the shelter it feeds.
-    let replace = json!({ "disposition": "replace", "successItem": "item.minecraft.dirt", "successCount": 2, "stepResult": "done" });
-    assert!(!accepts(&schema, &close, &replace));
 }

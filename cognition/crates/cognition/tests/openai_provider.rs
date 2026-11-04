@@ -42,8 +42,8 @@ use loom_cognition::openai::settings::{
 use loom_cognition::openai::{OpenAiBackend, OpenAiConfig, MAX_RESPONSE_BYTES};
 use loom_cognition::router::Router;
 use loom_contract::{
-    DayPhase, Decision, DecisionImportance, GoalChoice, GoalDisposition, GoalStepResult, Intent,
-    InventoryStack, Perception, SelfState, Trigger, WorldState,
+    DayPhase, Decision, DecisionImportance, Intent, InventoryStack, Perception, PlanUpdate,
+    SelfState, Trigger, WorldState,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -375,6 +375,8 @@ fn perception(importance: DecisionImportance) -> Perception {
         explore: vec![],
         recalled: vec![],
         horizon: vec![],
+        plan: None,
+        recent: Vec::new(),
     }
 }
 
@@ -435,7 +437,7 @@ async fn a_decision_comes_back_from_the_provider_and_is_stamped_by_loom() {
     assert_eq!(sent["response_format"]["json_schema"]["strict"], true);
     assert_eq!(
         sent["response_format"]["json_schema"]["schema"]["required"],
-        json!(["intent", "reasoning", "goal"])
+        json!(["intent", "reasoning", "plan"])
     );
     // The schema sent is this perception's: its one stack is the only stack ref, and
     // an action naming a namespace it offers nothing in is not offered at all.
@@ -462,35 +464,22 @@ async fn a_decision_comes_back_from_the_provider_and_is_stamped_by_loom() {
 }
 
 #[tokio::test]
-async fn a_provider_goal_choice_reaches_the_decision_unchanged() {
+async fn a_provider_plan_update_reaches_the_decision_unchanged() {
     let answer = json!({
         "intent": { "action": "idle" },
-        "reasoning": "the held goal is still worth it and nothing to step toward",
-        "goal": {
-            "disposition": "revise",
-            "successItem": "item.minecraft.birch_log",
-            "successCount": 8,
-            "step": "walk to the birch on the hill",
-            "stepResult": "noProgress"
-        }
+        "reasoning": "no log is in reach of this subgoal",
+        "plan": { "update": "replan", "reason": "no trees in sight" }
     });
     let (_provider, decided) =
         decide_with(Reply::completion(&answer), DecisionImportance::Routine).await;
-    let decision = decided.expect("a goal choice is part of a decision");
+    let decision = decided.expect("a plan update is part of a decision");
     assert_eq!(
-        decision.goal,
-        Some(GoalChoice {
-            discover: None,
-            disposition: GoalDisposition::Revise,
-            success_item: Some("item.minecraft.birch_log".to_owned()),
-            success_count: Some(8),
-            step: Some("walk to the birch on the hill".to_owned()),
-            step_result: Some(GoalStepResult::NoProgress),
-            shelter: None,
-            feeds: None,
-            reason: None,
+        decision.plan,
+        Some(PlanUpdate::Replan {
+            reason: "no trees in sight".to_owned()
         })
     );
+    assert_eq!(decision.goal, None);
     assert_eq!(decision.intent, Intent::Idle);
     assert_eq!(decision.provenance.model, FAST_MODEL);
     assert_eq!(decision.provenance.prompt_version, "routine-v38");

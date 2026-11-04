@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 
 use loom_cognition::offered::OfferedRefs;
-use loom_cognition::openai::wire::{decision_schema_for, GoalPhase};
+use loom_cognition::openai::wire::decision_schema_for;
 use loom_contract::{Intent, Perception};
 
 fn fixture(name: &str) -> Perception {
@@ -35,7 +35,7 @@ fn a_hurt_agent_below_the_healing_threshold_is_offered_only_its_food() {
         slot_ref: "i2".to_owned()
     }));
     // The request schema, survival-only beside an immediate hunter, offers the bread as a meal.
-    let schema = decision_schema_for(&offered, GoalPhase::of(&hurt)).to_string();
+    let schema = decision_schema_for(&offered).to_string();
     assert!(schema.contains("\"eat\""), "{schema}");
     assert!(schema.contains("\"i1\""), "{schema}");
 }

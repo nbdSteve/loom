@@ -369,6 +369,7 @@ class LoomPlugin : JavaPlugin() {
         onStepSettled = settlement,
         isDead = isDead,
         exposure = exposure,
+        plans = dev.loom.mind.PlanLedger(),
         onApplied = ::reportApplied,
         onUnavailable = { perception, failure ->
             logger.warning(

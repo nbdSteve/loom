@@ -17,22 +17,36 @@ use crate::model::Draft;
 /// How deep a schema is followed, past strict mode's own nesting bound, so a malformed one ends.
 const MAX_DEPTH: usize = 32;
 
-/// The answer `draft` is, worded as `schema` words one: a goal review's coupled `decision`
-/// pairing its intent with its goal choice, any other answer's intent and goal beside its reasoning.
+/// The answer `draft` is, worded as `schema` words one: its intent and plan update beside its
+/// reasoning, a missing update being a continue.
 #[must_use]
 pub fn answer_of(schema: &Value, draft: &Draft) -> Value {
-    let intent = serde_json::to_value(&draft.intent).unwrap_or(Value::Null);
-    let goal = serde_json::to_value(&draft.goal).unwrap_or(Value::Null);
-    let mut answer = Map::new();
-    if schema["properties"].get("decision").is_some() {
-        let mut decision = Map::new();
-        decision.insert("intent".to_owned(), intent);
-        decision.insert("goal".to_owned(), goal);
-        answer.insert("decision".to_owned(), Value::Object(decision));
-    } else {
-        answer.insert("intent".to_owned(), intent);
-        answer.insert("goal".to_owned(), goal);
+    if schema["properties"].get("intent").is_none() {
+        // The planner's shape: the whole plan beside the reasoning.
+        let plan = match &draft.plan {
+            Some(loom_contract::PlanUpdate::ReplacePlan {
+                objective,
+                subgoals,
+                steps,
+                reason,
+            }) => serde_json::json!({
+                "objective": objective, "subgoals": subgoals, "steps": steps, "reason": reason,
+            }),
+            _ => Value::Null,
+        };
+        return serde_json::json!({ "plan": plan, "reasoning": draft.reasoning });
     }
+    let intent = serde_json::to_value(&draft.intent).unwrap_or(Value::Null);
+    let plan = serde_json::to_value(
+        draft
+            .plan
+            .clone()
+            .unwrap_or(loom_contract::PlanUpdate::Continue),
+    )
+    .unwrap_or(Value::Null);
+    let mut answer = Map::new();
+    answer.insert("intent".to_owned(), intent);
+    answer.insert("plan".to_owned(), plan);
     answer.insert(
         "reasoning".to_owned(),
         Value::String(draft.reasoning.clone()),

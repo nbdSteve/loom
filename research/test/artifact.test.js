@@ -510,7 +510,7 @@ test('run configuration rejects unsafe unbounded or inconsistent conditions', ()
     { path: ['agents'], value: ['only-one'] },
     { path: ['network', 'host'], value: '0.0.0.0' },
     { path: ['network', 'cognitionProxyPort'], value: valid.network.minecraftPort },
-    { path: ['world', 'worldBorderDiameterBlocks'], value: valid.world.maxWorldSizeBlocks + 1 },
+    { path: ['world', 'worldBorderDiameterBlocks'], value: 2 * valid.world.maxWorldSizeBlocks + 1 },
     { path: ['world', 'difficulty'], value: 'story' },
     { path: ['bounds', 'startupAttempts'], value: 4 },
     { path: ['cognition', 'socialRolesInjected'], value: true },

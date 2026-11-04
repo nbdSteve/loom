@@ -169,17 +169,18 @@ test('the pinned library turns these abilities on for itself', () => {
 test('no ability the pinned library offers by default survives the policy', () => {
   const library = movements()
   applyMovementPolicy(library, { sprint: false })
-  assert.equal(library.canDig, false)
+  // Digging is on only for tree blocks: every other block is one a route may not break.
+  assert.equal(library.canDig, true)
+  assert.ok([...library.blocksCantBreak].every((id) => !/_(leaves|log|wood)$/.test(library.bot.registry.blocks[id].name)))
   assert.equal(library.allow1by1towers, false)
   assert.equal(library.allowParkour, false)
   assert.equal(library.allowSprinting, false)
   assert.equal(library.allowEntityDetection, false)
   assert.equal(library.canOpenDoors, false)
   assert.equal(library.allowFreeMotion, false)
-  // A drop is bounded rather than forbidden, because a body that may not step down at all
-  // cannot leave a slope, and the bound is lower than the library's four.
+  // A drop is vanilla's ordinary four, the library's own default.
   assert.equal(library.maxDropDown, MAX_DROP_BLOCKS)
-  assert.ok(MAX_DROP_BLOCKS < PERMISSIVE_DEFAULTS.maxDropDown)
+  assert.equal(MAX_DROP_BLOCKS, PERMISSIVE_DEFAULTS.maxDropDown)
   assert.equal(library.infiniteLiquidDropdownDistance, false)
   // Scaffolding is emptied as well as switched off, which is strictly stronger: a tower
   // needs a block to place, and there is no block a placement could reach for.
@@ -247,8 +248,9 @@ test('sprinting is the one ability the request itself decides', () => {
 test('the registry vocabularies stay the library own', () => {
   const library = movements()
   const before = {}
+  // `blocksCantBreak` is Loom's own: every block but a tree block.
   for (const vocabulary of [
-    'blocksCantBreak', 'liquids', 'gravityBlocks', 'climbables', 'emptyBlocks',
+    'liquids', 'gravityBlocks', 'climbables', 'emptyBlocks',
     'replaceables', 'fences', 'carpets', 'openable', 'interactableBlocks',
     'entitiesToAvoid', 'passableEntities'
   ]) {

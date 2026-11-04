@@ -262,12 +262,21 @@ const NO_SEARCH_SLICE = Number.POSITIVE_INFINITY
 const SEARCH_RADIUS_BLOCKS = 64
 
 /**
- * How far a route may drop in one move, in blocks.
- *
- * Below vanilla's own fall-damage threshold, so a body never hurts itself walking a route
- * Loom asked for. The library's default of four is exactly the height that starts to hurt.
+ * How far a route may drop in one move, in blocks: vanilla's ordinary drop, the library's own
+ * default, so a body on a tree can step off its canopy.
  */
-const MAX_DROP_BLOCKS = 3
+const MAX_DROP_BLOCKS = 4
+
+/** Tree blocks a route may break: leaves on the way, and a canopy or trunk underfoot to get down. */
+const TREE_BLOCK = /_(leaves|log|wood)$/
+
+/** Every block but a tree block, which a route may never break. */
+function untreeBlocks (registry) {
+  return new Set(registry.blocksArray.filter((block) => !TREE_BLOCK.test(block.name)).map((block) => block.id))
+}
+
+/** What breaking a tree block costs a route, so walking round is preferred and digging is the way out. */
+const TREE_DIG_COST = 10
 
 /**
  * Every packet the client writes to say where its own simulation left the body.
@@ -629,8 +638,8 @@ function blocksApart (one, other) {
 function movementPolicyFor (movements, { sprint, border, swim = false }) {
   const water = movements.bot.registry.blocksByName.water.id
   return {
-    // Abilities. Every one of these is a thing a later explicit skill would own.
-    canDig: false,
+    // Abilities. Digging is held to tree blocks (`blocksCantBreak`), so a body can always get down.
+    canDig: true,
     allow1by1towers: false,
     allowParkour: false,
     allowFreeMotion: false,
@@ -645,7 +654,7 @@ function movementPolicyFor (movements, { sprint, border, swim = false }) {
     // The one ability the request itself decides.
     allowSprinting: sprint,
     // Costs. Unread while their abilities are off, and stated rather than defaulted.
-    digCost: 1,
+    digCost: TREE_DIG_COST,
     placeCost: 1,
     liquidCost: 1,
     entityCost: 1,
@@ -658,7 +667,7 @@ function movementPolicyFor (movements, { sprint, border, swim = false }) {
     // starts in water, which may swim out of it (see [EscapeMovements]).
     blocksToAvoid: swim ? new Set(movements.blocksToAvoid) : new Set(movements.blocksToAvoid).add(water),
     // Registry vocabularies, kept exactly as the library derived them for this version.
-    blocksCantBreak: movements.blocksCantBreak,
+    blocksCantBreak: untreeBlocks(movements.bot.registry),
     liquids: movements.liquids,
     gravityBlocks: movements.gravityBlocks,
     climbables: movements.climbables,

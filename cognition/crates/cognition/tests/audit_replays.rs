@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use loom_cognition::offered::OfferedRefs;
-use loom_cognition::openai::wire::{decision_schema_for, GoalPhase};
+use loom_cognition::openai::wire::decision_schema_for;
 use loom_contract::Perception;
 use serde_json::{json, Value};
 
@@ -80,17 +80,15 @@ static R44: CommittedEvidence = CommittedEvidence::new("2026-10-16-openai-10-age
 
 fn schema_of(seen: &Perception) -> (OfferedRefs, Value) {
     let offered = OfferedRefs::of(seen);
-    let schema = decision_schema_for(&offered, GoalPhase::of(seen));
+    let schema = decision_schema_for(&offered);
     (offered, schema)
 }
 
 /// Whether `schema` admits `intent` beside `goal`, in the shape it asks for.
 fn valid(schema: &Value, intent: &Value, goal: &Value) -> bool {
-    let answer = if schema["properties"].get("decision").is_some() {
-        json!({ "decision": { "intent": intent, "goal": goal }, "reasoning": "a replay" })
-    } else {
-        json!({ "intent": intent, "goal": goal, "reasoning": "a replay" })
-    };
+    let _ = goal;
+    let answer =
+        json!({ "intent": intent, "plan": { "update": "continue" }, "reasoning": "a replay" });
     jsonschema::validator_for(schema).unwrap().is_valid(&answer)
 }
 

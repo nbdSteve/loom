@@ -77,6 +77,7 @@ impl<B: ModelBackend> Mind<B> {
             // Carried unchanged: the body's goal ledger resolves it against the exact
             // goal this perception presented, so the mind neither checks nor rewrites it.
             goal: draft.goal,
+            plan: draft.plan,
         })
     }
 }
@@ -114,6 +115,7 @@ mod tests {
             _perception: &Perception,
         ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
             std::future::ready(Ok(Draft {
+                plan: None,
                 goal: None,
                 intent: Intent::Idle,
                 reasoning: format!("answered by {DEEP}, honestly"),
@@ -167,6 +169,8 @@ mod tests {
             explore: vec![],
             recalled: vec![],
             horizon: vec![],
+            plan: None,
+            recent: Vec::new(),
         }
     }
 
@@ -236,6 +240,7 @@ mod tests {
             _perception: &Perception,
         ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
             std::future::ready(Ok(Draft {
+                plan: None,
                 goal: None,
                 intent: self.0.clone(),
                 reasoning: "named whatever it liked".to_owned(),
@@ -303,6 +308,7 @@ mod tests {
             _perception: &Perception,
         ) -> impl Future<Output = Result<Draft, BackendError>> + Send {
             std::future::ready(Ok(Draft {
+                plan: None,
                 goal: Some(self.0.clone()),
                 intent: Intent::Idle,
                 reasoning: "the goal still holds".to_owned(),

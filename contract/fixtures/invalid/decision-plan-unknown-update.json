@@ -1,0 +1,1 @@
+{"requestId":"req-plan-1","agentId":"agent-delta","intent":{"action":"craft","recipe":"r1","crafts":1},"reasoning":"the logs are in hand, so planks are next","provenance":{"tier":"ROUTINE","model":"haiku-4.5","promptVersion":"routine-v2"},"plan":{"update":"skip"}}

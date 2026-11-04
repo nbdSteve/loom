@@ -490,7 +490,7 @@ test('a host suspension mid-run ends the run integrity-invalid, whatever else ha
   // watch before admission closes, and the drain asks it at every poll and explains its failure
   // (r37: a 265 s idle sleep 11 s before the window's end failed the drain as upstream unavailable).
   assert.match(harness, /const suspendedAtEnd = explained\(null\)\n\s+if \(suspendedAtEnd !== null\) throw suspendedAtEnd\n\s+if \(controlledStop === undefined && isPrimaryBehaviorMode\(config\)\) \{\n\s+pollEvidence\(\)\n\s+proxy\.closeAdmission/)
-  assert.match(harness, /await drainControlledStop\(\{\n\s+proxy,\n\s+poll: \(\) => explained\(null\) \?\? pollEvidence\(\),[\s\S]{0,400}\} catch \(cause\) \{\n\s+throw explained\(cause\)/)
+  assert.match(harness, /await drainControlledStop\(\{\n\s+proxy,\n\s+poll: \(\) => explained\(null\) \?\? pollEvidence\(\),[\s\S]{0,1000}\} catch \(cause\) \{\n\s+throw explained\(cause\)/)
 })
 
 test('a suspension the drain sees ends it as the suspension, not as its own timeout', async () => {

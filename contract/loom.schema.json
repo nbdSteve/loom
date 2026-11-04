@@ -8,7 +8,7 @@
     "DecisionImportance": {
       "description": "Importance tier that drives model routing on the mind side and is stamped onto every decision's provenance for the decision log.",
       "type": "string",
-      "enum": ["ROUTINE", "NOTABLE", "PIVOTAL"]
+      "enum": ["ROUTINE", "NOTABLE", "PIVOTAL", "PLANNING"]
     },
 
     "Bearing": {
@@ -556,6 +556,18 @@
           }
         },
         {
+          "title": "PlanReview",
+          "description": "A planning call: the agent's objective, subgoals and current steps are set. cause is start, subgoalDone, blocked or checkIn; reason is the step model's stated reason for asking.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event", "cause"],
+          "properties": {
+            "event": { "const": "planReview" },
+            "cause": { "type": "string", "enum": ["start", "subgoalDone", "blocked", "checkIn"] },
+            "reason": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        },
+        {
           "title": "GoalReview",
           "description": "A scheduled prompt for the agent to reconsider its goals. Empty variant.",
           "type": "object",
@@ -644,9 +656,133 @@
           "type": "array",
           "maxItems": 8,
           "items": { "$ref": "#/$defs/HorizonGoal" }
+        },
+        "plan": {
+          "description": "The agent's own plan, kept by the body from its earlier answers.",
+          "$ref": "#/$defs/Plan"
+        },
+        "recent": {
+          "description": "The agent's latest actions, oldest first, with what the body answered and how its inventory changed after each.",
+          "type": "array",
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/RecentAction" }
         }
       }
     },
+
+    "Plan": {
+      "description": "A model-owned plan in three levels: a long-term objective, its ordered subgoals, and the ordered steps of the current subgoal. Subgoals before 'subgoal' and steps before 'step' are done; 'step' equal to the number of steps means the current subgoal's steps are all done, and 'subgoal' equal to the number of subgoals means the objective's subgoals are all done.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objective", "subgoals", "subgoal", "steps", "step"],
+      "properties": {
+        "objective": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "subgoals": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "type": "string", "minLength": 1, "maxLength": 160 }
+        },
+        "subgoal": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "type": "string", "minLength": 1, "maxLength": 160 }
+        },
+        "step": { "type": "integer", "minimum": 0, "maximum": 8 }
+      }
+    },
+
+    "RecentAction": {
+      "description": "One past action of the agent: the intent's action tag, the body's outcome tag, and the inventory change seen at the next perception.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "outcome"],
+      "properties": {
+        "action": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "outcome": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "changes": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/ItemChange" }
+        }
+      }
+    },
+
+    "ItemChange": {
+      "description": "How many of one item the inventory gained (positive) or lost (negative).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item", "delta"],
+      "properties": {
+        "item": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "delta": { "type": "integer" }
+      }
+    },
+
+    "PlanUpdate": {
+      "description": "What a decision does to the agent's plan. Internally tagged on the 'update' property. Step calls continue, mark a step done or ask for a replan; only a planning call sets the objective and subgoals.",
+      "oneOf": [
+        {
+          "title": "Continue",
+          "description": "Step model: keep the plan; this decision works on the current step.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["update"],
+          "properties": {
+            "update": { "const": "continue" }
+          }
+        },
+        {
+          "title": "StepDone",
+          "description": "Step model: the current step is done; this decision starts the next.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["update"],
+          "properties": {
+            "update": { "const": "stepDone" }
+          }
+        },
+        {
+          "title": "Replan",
+          "description": "Step model: the current subgoal is blocked; ask the planner for a new plan, for the reason given.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["update", "reason"],
+          "properties": {
+            "update": { "const": "replan" },
+            "reason": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        },
+        {
+          "title": "ReplacePlan",
+          "description": "Planner only: the objective, the ordered remaining subgoals (the first is current) and its steps, for the reason given.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["update", "objective", "subgoals", "steps", "reason"],
+          "properties": {
+            "update": { "const": "replacePlan" },
+            "objective": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "subgoals": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": { "type": "string", "minLength": 1, "maxLength": 160 }
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": { "type": "string", "minLength": 1, "maxLength": 160 }
+            },
+            "reason": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        }
+      ]
+    },
+
+
 
     "RecalledSource": {
       "description": "Where the body last saw a source of an item it does not see now, placed from the agent the way an observation is.",
@@ -1119,6 +1255,10 @@
         "goal": {
           "description": "The decision's explicit choice about the agent's short-term goal. Absent means no choice, which leaves any held goal unchanged.",
           "$ref": "#/$defs/GoalChoice"
+        },
+        "plan": {
+          "description": "What this decision does to the agent's plan. Absent is a continue.",
+          "$ref": "#/$defs/PlanUpdate"
         }
       }
     }

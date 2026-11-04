@@ -30,7 +30,7 @@ fn body_unsupported() -> Vec<String> {
 }
 
 fn answer_with(intent: &Value) -> Value {
-    json!({ "intent": intent, "reasoning": "matrix", "goal": Value::Null })
+    json!({ "intent": intent, "reasoning": "matrix", "plan": { "update": "continue" } })
 }
 
 #[test]

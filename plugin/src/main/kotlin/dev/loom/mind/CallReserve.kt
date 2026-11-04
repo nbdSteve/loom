@@ -11,7 +11,8 @@ import java.util.concurrent.CompletableFuture
 
 /**
  * Keeps a run's calls inside its hard ceilings - [perAgentCeiling] for one agent, [globalCeiling]
- * for all of them, [pivotalCeiling] for the costly tier - and nothing more: no calls are kept back
+ * for all of them, [pivotalCeiling] for the costly tier, [planningCeiling] for the planning model -
+ * and nothing more: no calls are kept back
  * for later reviews. An agent past its own ceiling borrows from a configured global one, and a
  * pivotal call past the pivotal ceiling falls back to the ordinary tier. A run without a plan is
  * [UNBOUNDED].
@@ -21,6 +22,8 @@ class CallReserve(
     private val globalCeiling: Int = Int.MAX_VALUE,
     /** The most pivotal calls the run may make, the costly tier's own ceiling; unbounded when absent. */
     private val pivotalCeiling: Int = Int.MAX_VALUE,
+    /** The most planning calls the run may make, the planning model's own ceiling inside the global one. */
+    private val planningCeiling: Int = Int.MAX_VALUE,
 ) {
     init {
         require(perAgentCeiling >= 0 && globalCeiling >= 0) { "a call reserve counts calls, never fewer than none" }
@@ -40,6 +43,7 @@ class CallReserve(
 
     private val sent = mutableMapOf<AgentId, Int>()
     private var pivotalSent = 0L
+    private var planningSent = 0L
 
     /** Whether [perception] may be sent now, at its tier or the ordinary one; records it when it may. */
     @Synchronized
@@ -50,15 +54,18 @@ class CallReserve(
         val calls = sent[agentId] ?: 0
         val total = sent.values.sum()
         val pivotal = perception.importance == DecisionImportance.PIVOTAL
+        val planning = perception.importance == DecisionImportance.PLANNING
         val borrows = globalCeiling != Int.MAX_VALUE
         val admission =
             when {
                 total >= globalCeiling || (calls >= perAgentCeiling && !borrows) -> Admission.REFUSED
+                planning && planningSent >= planningCeiling -> Admission.REFUSED
                 !pivotal || pivotalSent < pivotalCeiling -> Admission.SENT
                 else -> Admission.TIER_FALLBACK
             }
         if (admission != Admission.REFUSED) {
             if (pivotal && admission == Admission.SENT) pivotalSent += 1
+            if (planning) planningSent += 1
             sent[agentId] = calls + 1
         }
         return admission
@@ -77,16 +84,32 @@ class CallReserve(
         /** The environment setting for the run's ceiling on pivotal calls. */
         const val PIVOTAL_ENV: String = "LOOM_COGNITION_CALLS_PIVOTAL"
 
+        /** The environment setting for the run's ceiling on planning calls. */
+        const val PLANNING_ENV: String = "LOOM_COGNITION_CALLS_PLANNING"
+
+        /** The share of a global ceiling planning calls may take when no planning ceiling is set. */
+        const val PLANNING_SHARE_DIVISOR: Int = 10
+
         /** The reserve [environment] states, or [UNBOUNDED] when it states none. */
         fun fromEnvironment(environment: Map<String, String> = System.getenv()): CallReserve {
             val calls = environment[CALLS_ENV]?.trim() ?: return UNBOUNDED
             val ceiling = requireNotNull(calls.toIntOrNull()) { "$CALLS_ENV must be a count, was \"$calls\"" }
 
             fun count(name: String) = environment[name]?.trim()?.toIntOrNull()
+            val global = count(GLOBAL_ENV) ?: Int.MAX_VALUE
+            val planningShare =
+                if (global == Int.MAX_VALUE) {
+                    global
+                } else {
+                    (global / PLANNING_SHARE_DIVISOR).coerceAtLeast(
+                        1,
+                    )
+                }
             return CallReserve(
                 perAgentCeiling = ceiling,
-                globalCeiling = count(GLOBAL_ENV) ?: Int.MAX_VALUE,
+                globalCeiling = global,
                 pivotalCeiling = count(PIVOTAL_ENV) ?: Int.MAX_VALUE,
+                planningCeiling = count(PLANNING_ENV) ?: planningShare,
             )
         }
     }

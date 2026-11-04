@@ -53,6 +53,7 @@ const PROVIDER_IDENTIFIER = /^[A-Za-z0-9_.-]{1,80}$/
 
 function expectedModel (models, importance) {
   if (importance === 'PIVOTAL') return models?.pivotal ?? null
+  if (importance === 'PLANNING') return models?.planning ?? models?.pivotal ?? null
   if (importance === 'ROUTINE' || importance === 'NOTABLE') {
     return models?.ordinary ?? null
   }

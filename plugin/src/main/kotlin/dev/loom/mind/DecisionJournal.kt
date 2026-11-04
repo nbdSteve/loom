@@ -14,6 +14,7 @@ import dev.loom.body.BodyEventLog
 import dev.loom.body.BodyEventRecord
 import dev.loom.body.EventTag
 import dev.loom.body.GoalEvidence
+import dev.loom.body.PlanEvidence
 import dev.loom.body.ShownGoal
 import dev.loom.body.describe
 import dev.loom.body.tagOf
@@ -42,10 +43,11 @@ class DecisionJournal(
         decision: Decision,
         goal: GoalEvidence? = null,
         shown: ShownGoal? = null,
+        plan: PlanEvidence? = null,
     ) {
         eventLog.append(
             recordOf(agentId, decision, BodyEvent.DECIDED, "${describe(decision.intent)}: ${decision.reasoning}")
-                .copy(goal = goal, shown = shown),
+                .copy(goal = goal, shown = shown, plan = plan),
         )
     }
 

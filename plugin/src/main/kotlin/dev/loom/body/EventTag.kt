@@ -153,6 +153,12 @@ object EventTag {
      */
     const val THREAT_UNCHANGED: String = "threatUnchanged"
 
+    /** A planning call: the agent's plan is set. */
+    const val PLAN_REVIEW: String = "planReview"
+
+    /** A planning call's decision: it set the plan and was never applied to the body. */
+    const val PLANNED: String = "planned"
+
     /**
      * A threat was not reported because this agent's pivotal budget for the night is spent.
      *
@@ -664,6 +670,7 @@ fun tagOf(trigger: Trigger): String =
         is Trigger.Damaged -> EventTag.DAMAGED
         is Trigger.ThreatSighted -> EventTag.THREAT_SIGHTED
         is Trigger.BlockSighted -> EventTag.BLOCK_SIGHTED
+        is Trigger.PlanReview -> EventTag.PLAN_REVIEW
     }
 
 /** Names the action the mind chose, without its payload. */

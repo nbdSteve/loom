@@ -115,6 +115,9 @@ enum class DecisionImportance {
 
     @SerialName("PIVOTAL")
     PIVOTAL,
+
+    @SerialName("PLANNING")
+    PLANNING,
 }
 
 /**
@@ -784,6 +787,14 @@ sealed interface Trigger {
     @SerialName("blockSighted")
     data class BlockSighted(val block: String) : Trigger
 
+    /** A planning call: the agent's objective, subgoals and current steps are set. */
+    @Serializable
+    @SerialName("planReview")
+    data class PlanReview(
+        val cause: PlanCause,
+        val reason: String? = null,
+    ) : Trigger
+
     /** A scheduled prompt for the agent to reconsider its goals. */
     @Serializable
     @SerialName("goalReview")
@@ -855,8 +866,13 @@ data class Perception(
      * the most a goal of it may ask.
      */
     val horizon: List<HorizonGoal> = emptyList(),
+    /** The agent's own plan, kept by the body from its earlier answers. */
+    val plan: Plan? = null,
+    /** The agent's latest actions, oldest first. */
+    val recent: List<RecentAction> = emptyList(),
 ) {
     init {
+        require(recent.size <= MAX_RECENT_ACTIONS) { "at most $MAX_RECENT_ACTIONS recent actions" }
         require(recalled.size <= MAX_RECALLED_SOURCES) { "at most $MAX_RECALLED_SOURCES recalled sources" }
         require(horizon.size <= MAX_HORIZON_GOALS) { "at most $MAX_HORIZON_GOALS horizon goals" }
         require(surroundings.size <= MAX_PERCEPTION_OBSERVATIONS) {
@@ -1624,4 +1640,91 @@ data class Decision(
     val provenance: Provenance,
     /** The decision's explicit goal choice; absent leaves any held goal unchanged. */
     val goal: GoalChoice? = null,
+    /** What this decision does to the agent's plan; absent is a continue. */
+    val plan: PlanUpdate? = null,
 )
+
+/** Most subgoals, and most steps, one plan holds. */
+const val MAX_PLAN_STEPS: Int = 8
+
+/** Most recent actions one perception carries. */
+const val MAX_RECENT_ACTIONS: Int = 10
+
+/**
+ * A model-owned plan in three levels: a long-term objective, its ordered subgoals, and the ordered
+ * steps of the current subgoal. Subgoals before [subgoal] and steps before [step] are done.
+ */
+@Serializable
+data class Plan(
+    val objective: String,
+    val subgoals: List<String>,
+    val subgoal: Long,
+    val steps: List<String>,
+    val step: Long,
+)
+
+/** One past action: its action tag, the body's outcome tag, and the inventory change after it. */
+@Serializable
+data class RecentAction(
+    val action: String,
+    val outcome: String,
+    val changes: List<ItemChange> = emptyList(),
+)
+
+/** How many of one item the inventory gained (positive) or lost (negative). */
+@Serializable
+data class ItemChange(
+    val item: String,
+    val delta: Long,
+)
+
+/** Why a planning call was made. */
+@Serializable
+enum class PlanCause {
+    @SerialName("start")
+    START,
+
+    @SerialName("subgoalDone")
+    SUBGOAL_DONE,
+
+    @SerialName("blocked")
+    BLOCKED,
+
+    @SerialName("checkIn")
+    CHECK_IN,
+}
+
+/**
+ * What a decision does to the agent's plan. Step calls continue, mark a step done or ask for a
+ * replan; only a planning call sets the objective and subgoals.
+ */
+@Serializable
+@JsonClassDiscriminator("update")
+sealed interface PlanUpdate {
+    /** Keep the plan; the decision works on the current step. */
+    @Serializable
+    @SerialName("continue")
+    data object Continue : PlanUpdate
+
+    /** The current step is done; the decision starts the next. */
+    @Serializable
+    @SerialName("stepDone")
+    data object StepDone : PlanUpdate
+
+    /** The current subgoal is blocked; ask the planner for a new plan. */
+    @Serializable
+    @SerialName("replan")
+    data class Replan(
+        val reason: String,
+    ) : PlanUpdate
+
+    /** The objective, the ordered remaining subgoals (the first is current) and its steps. */
+    @Serializable
+    @SerialName("replacePlan")
+    data class ReplacePlan(
+        val objective: String,
+        val subgoals: List<String>,
+        val steps: List<String>,
+        val reason: String,
+    ) : PlanUpdate
+}

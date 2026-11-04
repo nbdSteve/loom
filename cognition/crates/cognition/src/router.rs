@@ -31,7 +31,9 @@ use std::sync::Arc;
 
 use loom_contract::DecisionImportance;
 
-use crate::prompt::{NOTABLE_PROMPT_VERSION, PIVOTAL_PROMPT_VERSION, ROUTINE_PROMPT_VERSION};
+use crate::prompt::{
+    NOTABLE_PROMPT_VERSION, PIVOTAL_PROMPT_VERSION, PLANNING_PROMPT_VERSION, ROUTINE_PROMPT_VERSION,
+};
 
 /// How much model a decision is worth.
 ///
@@ -48,6 +50,8 @@ pub enum ModelClass {
     /// The large model. Reserved for decisions an agent may not survive getting
     /// wrong.
     Deep,
+    /// The planner, which keeps the agent's plan.
+    Planning,
 }
 
 impl ModelClass {
@@ -57,6 +61,7 @@ impl ModelClass {
         match self {
             Self::Fast => "fast",
             Self::Deep => "deep",
+            Self::Planning => "planning",
         }
     }
 }
@@ -80,6 +85,7 @@ pub const fn class_of(importance: DecisionImportance) -> ModelClass {
     match importance {
         DecisionImportance::Routine | DecisionImportance::Notable => ModelClass::Fast,
         DecisionImportance::Pivotal => ModelClass::Deep,
+        DecisionImportance::Planning => ModelClass::Planning,
     }
 }
 
@@ -94,6 +100,7 @@ pub const fn prompt_version_of(importance: DecisionImportance) -> &'static str {
         DecisionImportance::Routine => ROUTINE_PROMPT_VERSION,
         DecisionImportance::Notable => NOTABLE_PROMPT_VERSION,
         DecisionImportance::Pivotal => PIVOTAL_PROMPT_VERSION,
+        DecisionImportance::Planning => PLANNING_PROMPT_VERSION,
     }
 }
 
@@ -112,6 +119,7 @@ pub const fn prompt_version_of(importance: DecisionImportance) -> &'static str {
 pub struct ModelCatalog {
     fast: Arc<str>,
     deep: Arc<str>,
+    planning: Arc<str>,
 }
 
 impl ModelCatalog {
@@ -122,6 +130,16 @@ impl ModelCatalog {
         Self {
             fast: Arc::from(fast),
             deep: Arc::from(deep),
+            planning: Arc::from(deep),
+        }
+    }
+
+    /// This catalog with `planning` at [`ModelClass::Planning`]; [`Self::new`] names the deep model there.
+    #[must_use]
+    pub fn with_planning(self, planning: &str) -> Self {
+        Self {
+            planning: Arc::from(planning),
+            ..self
         }
     }
 
@@ -137,6 +155,7 @@ impl ModelCatalog {
         match class {
             ModelClass::Fast => &self.fast,
             ModelClass::Deep => &self.deep,
+            ModelClass::Planning => &self.planning,
         }
     }
 }
