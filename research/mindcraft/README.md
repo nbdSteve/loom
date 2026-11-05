@@ -45,7 +45,7 @@ It installs Mindcraft into `research/mindcraft/.cache/` (ignored by git).
 ## Run
 
 ```
-research/mindcraft/run.sh <agents 1-16> <minutes> <ceiling-usd>
+research/mindcraft/run.sh <agents 1-32> <minutes> <ceiling-usd>
 ```
 
 Example smoke test: `research/mindcraft/run.sh 1 2 1`.
@@ -61,10 +61,11 @@ Each run is a new directory `research/mindcraft/runs/<UTC time>/` (ignored by gi
 
 Agents:
 
-- One Mindcraft profile per agent, all on `gpt-5.4` (`reasoning_effort: low`) with `cooldown` 6000 ms.
+- One Mindcraft profile per agent, all on `gpt-5.4` (`reasoning_effort: low` unless set) with `cooldown` 6000 ms.
 - All agents start in one Mindcraft process, so they share one MindServer and can talk to each other.
 - `LOG_ALL=true`, `base_profile: survival`, and an `init_message` that asks each agent to choose a long-term goal with `!goal` and to talk to the others when it helps.
 - Set `LOOM_MINDCRAFT_MODEL=gpt-5.4-nano` for a cheaper run.
+- Set `LOOM_MINDCRAFT_REASONING_EFFORT` (`none`, `minimal`, `low`, `medium`, `high` or `xhigh`, default `low`) for any gpt-5 model. It is recorded in `run.json`.
 - Set `LOOM_MINDCRAFT_INIT_MESSAGE` to give every agent one shared start message instead.
 - Port 25565 is for real runs only, because observers join it. An offline test with a mock upstream must set another port, such as `LOOM_MINDCRAFT_SERVER_PORT=25599`. `run.sh` refuses to start a mock run on 25565.
 

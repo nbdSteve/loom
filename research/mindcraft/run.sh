@@ -10,6 +10,8 @@
 # Optional environment:
 #   LOOM_MINDCRAFT_UPSTREAM      loopback http mock instead of api.openai.com (no key is read)
 #   LOOM_MINDCRAFT_MODEL         default gpt-5.4
+#   LOOM_MINDCRAFT_REASONING_EFFORT  gpt-5 models only: none, minimal, low, medium,
+#                                    high or xhigh; default low
 #   LOOM_MINDCRAFT_PROXY_PORT    default 18565
 #   LOOM_MINDCRAFT_MINDSERVER_PORT  default 8080
 #   LOOM_MINDCRAFT_INIT_MESSAGE     the start message every agent gets; the default
@@ -21,10 +23,10 @@
 #                                   watchdog.js restarts it, default 60
 set -euo pipefail
 
-usage() { echo "usage: $0 <agents 1-16> <minutes> <ceiling-usd>" >&2; exit 2; }
+usage() { echo "usage: $0 <agents 1-32> <minutes> <ceiling-usd>" >&2; exit 2; }
 [ $# -eq 3 ] || usage
 agents="$1" minutes="$2" ceiling="$3"
-[[ "$agents" =~ ^[0-9]+$ ]] && [ "$agents" -ge 1 ] && [ "$agents" -le 16 ] || usage
+[[ "$agents" =~ ^[0-9]+$ ]] && [ "$agents" -ge 1 ] && [ "$agents" -le 32 ] || usage
 [[ "$minutes" =~ ^[0-9]+$ ]] && [ "$minutes" -ge 1 ] || usage
 [[ "$ceiling" =~ ^[0-9]+(\.[0-9]+)?$ ]] || usage
 
@@ -33,6 +35,8 @@ cache="$here/.cache"
 mindcraft="$cache/mindcraft"
 node_bin="$cache/node/bin/node"
 model="${LOOM_MINDCRAFT_MODEL:-gpt-5.4}"
+effort="${LOOM_MINDCRAFT_REASONING_EFFORT:-low}"
+[[ "$effort" =~ ^(none|minimal|low|medium|high|xhigh)$ ]] || { echo "unknown reasoning effort $effort" >&2; exit 2; }
 proxy_port="${LOOM_MINDCRAFT_PROXY_PORT:-18565}"
 mindserver_port="${LOOM_MINDCRAFT_MINDSERVER_PORT:-8080}"
 grace="${LOOM_MINDCRAFT_GRACE_SECONDS:-60}"
@@ -50,7 +54,9 @@ paper_sha=35e2dfa66b3491b9d2f0bb033679fa5aca1e1fdf097e7a06a80ce8afeda5c214
 paper_url=https://fill-data.papermc.io/v1/objects/$paper_sha/$paper_jar_name
 operator=nbdSteve
 names=(ada_ash bram_oak cora_fen dov_hale elin_moss finn_reed gwen_vale hugo_birch
-  iris_dale jon_marsh kira_stone leo_brook mira_glen nils_ford orla_heath piet_wren)
+  iris_dale jon_marsh kira_stone leo_brook mira_glen nils_ford orla_heath piet_wren
+  ansel_ivy beth_rowan cal_thorn dara_pine emil_heath faye_cedar gil_slate hana_fern
+  ivo_lark juno_wells kai_ridge lena_frost milo_crane nora_hollow oren_maple pia_willow)
 
 [ -x "$node_bin" ] && [ -d "$mindcraft/node_modules" ] || { echo "run setup.sh first" >&2; exit 1; }
 for port in "$server_port" "$proxy_port" "$mindserver_port"; do
@@ -119,7 +125,7 @@ for ((i = 0; i < agents; i++)); do
   roster+=("$name")
   url="http://127.0.0.1:$proxy_port/agent/$name/v1"
   params='{}'
-  [ "$model" = "gpt-5.4" ] && params='{"reasoning_effort":"low"}'
+  [[ "$model" == gpt-5* ]] && params="{\"reasoning_effort\":\"$effort\"}"
   cat > "$run/profiles/$name.json" <<EOF
 {
   "name": "$name",
@@ -141,7 +147,7 @@ echo "$settings" > "$run/settings.json"
 printf '%s\n' "$agents" > "$run/agents.txt"
 printf '%s\n' "${roster[@]}" > "$run/roster.txt"
 cat > "$run/run.json" <<EOF
-{"agents":$agents,"minutes":$minutes,"ceilingUsd":$ceiling,"model":"$model","upstream":"$upstream","mindcraftCommit":"$(git -C "$mindcraft" rev-parse HEAD)","minecraftVersion":"$minecraft_version","paperJar":"$paper_jar_name","paperSha256":"$paper_sha","seed":"$seed"}
+{"agents":$agents,"minutes":$minutes,"ceilingUsd":$ceiling,"model":"$model","reasoningEffort":"$effort","upstream":"$upstream","mindcraftCommit":"$(git -C "$mindcraft" rev-parse HEAD)","minecraftVersion":"$minecraft_version","paperJar":"$paper_jar_name","paperSha256":"$paper_sha","seed":"$seed"}
 EOF
 
 paper_pid="" proxy_pid="" mindcraft_pid="" watchdog_pid=""
@@ -220,7 +226,7 @@ start_mindcraft "$settings"
   --roster "$(IFS=,; echo "${roster[*]}")" --console "$run/paper-console" --observer "$operator" \
   --grace-seconds "$grace" > "$run/watchdog-stdout.log" 2>&1 &
 watchdog_pid=$!
-echo "mindcraft started: ${roster[*]} on $model, ceiling \$$ceiling, $minutes min"
+echo "mindcraft started: ${roster[*]} on $model ($effort effort), ceiling \$$ceiling, $minutes min"
 echo "join with Minecraft Java $minecraft_version at localhost:$server_port as $operator (operator, put in spectator on join); MindServer UI http://localhost:$mindserver_port"
 
 deadline=$(($(date +%s) + minutes * 60))
