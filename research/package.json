@@ -26,6 +26,10 @@
   "standard": {
     "env": [
       "node"
+    ],
+    "ignore": [
+      "mindcraft/runs/",
+      "mindcraft/.cache/"
     ]
   }
 }

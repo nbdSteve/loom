@@ -84,3 +84,35 @@ test('the credential can only go to api.openai.com', () => {
   assert.throws(() => createProxy({ prices, ceilingUsd: 1, logPath, upstream: 'https://api.openai.com' }), /needs a key/)
   assert.throws(() => createProxy({ prices, ceilingUsd: 0, logPath, upstream: 'http://127.0.0.1:9' }), /positive/)
 })
+
+test('a call is reported in flight until its answer arrives', async (t) => {
+  let arrived
+  const received = new Promise((resolve) => { arrived = resolve })
+  const upstream = http.createServer((req, res) => {
+    req.on('data', () => {})
+    req.on('end', () => {
+      arrived(() => {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ choices: [], usage: { prompt_tokens: 1, completion_tokens: 1 } }))
+      })
+    })
+  })
+  const upstreamPort = await listen(upstream)
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindcraft-proxy-'))
+  const inflightPath = path.join(dir, 'inflight.json')
+  const { server } = createProxy({
+    prices, ceilingUsd: 1, logPath: path.join(dir, 'calls.jsonl'), upstream: `http://127.0.0.1:${upstreamPort}`, inflightPath
+  })
+  const port = await listen(server)
+  t.after(() => { server.close(); upstream.close() })
+  const pending = fetch(`http://127.0.0.1:${port}/agent/ada_ash/v1/chat/completions`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'gpt-5.4', messages: [] })
+  })
+  const release = await received
+  const during = JSON.parse(fs.readFileSync(inflightPath, 'utf8')).ada_ash
+  assert.equal(during.inFlight, 1)
+  assert.ok(Date.parse(during.lastStart) > 0)
+  release()
+  assert.equal((await pending).status, 200)
+  assert.equal(JSON.parse(fs.readFileSync(inflightPath, 'utf8')).ada_ash.inFlight, 0)
+})

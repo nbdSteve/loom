@@ -95,7 +95,7 @@ All of these paths were tested with the mock, each back in the world with its go
 Two more rules:
 
 - **A death is final.** The world is hardcore, so a dead agent would otherwise come back as a spectator and keep acting. On its death message in Paper's log, the watchdog stops the agent for good: it sends SIGINT, which Mindcraft does not restart. It lists the agent in `dead-agents.txt`, which `run.sh` leaves out if it relaunches Mindcraft, and it stops the agent again if it ever rejoins.
-- **An idle agent is told to set its goal again.** This applies to an agent in the world whose goal loop has stopped (not merely paused for a conversation) and that has made no model call for 90 s. The goal loop stops after three answers with no command, or three provider errors.
+- **An idle agent is told to set its goal again.** This applies to an agent in the world whose goal loop has stopped (not merely paused for a conversation) and that has made no model call for 90 s. The goal loop stops after three answers with no command, or three provider errors. A call still in flight counts as activity: the proxy keeps `proxy-inflight.json` by agent, and the watchdog never nudges an agent waiting on an answer. In society run r2 (high effort), nudges at 90 s made Mindcraft discard answers still being generated 44 times, most of them code-writing calls.
 
 Both rules were tested offline: `kill ada_ash` left its process gone and never rejoined, and an idle agent was told after 91 s and made its next call.
 
@@ -120,7 +120,7 @@ Offline test, with no key and no paid call: start a loopback OpenAI mock and set
 | What did each model decide? | `bots/<agent>/logs/conversation_<time>.txt`: the full prompt and response of every call |
 | What did it remember, and which goal was active? | `bots/<agent>/memory.json`, `bots/<agent>/histories/*.json` |
 | Who did what, as the server saw it? | `server/logs/latest.log`: joins, quits, deaths, and every agent chat line. Agents announce each command in chat, so this is a server-timestamped action record. |
-| What did it cost? | `proxy-calls.jsonl`, `proxy-summary.json` |
+| What did it cost? | `proxy-calls.jsonl`, `proxy-summary.json` (`proxy-inflight.json` is the live count of calls waiting on an answer) |
 | When was an agent out of the world, and how did it come back? | `watchdog.jsonl` (`joined`, `left`, `missing`, `killed`, `restartedByMindcraft`, `startRequested`, `goalResumedFromMemory`, `toldToResumeGoal`, `goalLoopRestarted`, `died`, `stoppedForGood`, `observerSpectator`), `mindcraft-relaunches.txt`, `dead-agents.txt` |
 | All of it, in time order | `events.jsonl` (`join.js`): `joined`, `left`, `said`, `died` from Paper; `decided` and `memSaving` from the model logs; `call` from the proxy; `watchdog:*` from the watchdog |
 | What ran | `run.json`, `settings.json`, `profiles/`, `server/server.properties`, `seed.txt`, `mindcraft-commit.txt`, `mindcraft-deps.txt`, `prices.json`, `loom-commit.txt`, `node-version.txt`, `files.sha256` |

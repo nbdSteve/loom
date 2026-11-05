@@ -199,6 +199,7 @@ grep -q 'Done (' "$run/paper-stdout.log" || { echo "paper did not start in 300 s
 
 "$node_bin" "$here/proxy.js" --port "$proxy_port" --ceiling-usd "$ceiling" --prices "$here/prices.json" \
   --upstream "$upstream" --log "$run/proxy-calls.jsonl" --summary "$run/proxy-summary.json" \
+  --inflight "$run/proxy-inflight.json" \
   > "$run/proxy-stdout.log" 2>&1 &
 proxy_pid=$!
 for _ in $(seq 1 30); do
