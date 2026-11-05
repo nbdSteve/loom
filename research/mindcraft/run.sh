@@ -10,6 +10,8 @@
 # Optional environment:
 #   LOOM_MINDCRAFT_UPSTREAM      loopback http mock instead of api.openai.com (no key is read)
 #   LOOM_MINDCRAFT_MODEL         default gpt-5.4
+#   LOOM_MINDCRAFT_COOLDOWN_MS       least time between one agent's model calls,
+#                                    default 6000 (Mindcraft's own default is 3000)
 #   LOOM_MINDCRAFT_REASONING_EFFORT  gpt-5 models only: none, minimal, low, medium,
 #                                    high or xhigh; default low
 #   LOOM_MINDCRAFT_PROXY_PORT    default 18565
@@ -36,6 +38,8 @@ mindcraft="$cache/mindcraft"
 node_bin="$cache/node/bin/node"
 model="${LOOM_MINDCRAFT_MODEL:-gpt-5.4}"
 effort="${LOOM_MINDCRAFT_REASONING_EFFORT:-low}"
+cooldown="${LOOM_MINDCRAFT_COOLDOWN_MS:-6000}"
+[[ "$cooldown" =~ ^[0-9]+$ ]] || { echo "LOOM_MINDCRAFT_COOLDOWN_MS must be a whole number of milliseconds" >&2; exit 2; }
 [[ "$effort" =~ ^(none|minimal|low|medium|high|xhigh)$ ]] || { echo "unknown reasoning effort $effort" >&2; exit 2; }
 proxy_port="${LOOM_MINDCRAFT_PROXY_PORT:-18565}"
 mindserver_port="${LOOM_MINDCRAFT_MINDSERVER_PORT:-8080}"
@@ -131,7 +135,7 @@ for ((i = 0; i < agents; i++)); do
   "name": "$name",
   "model": { "api": "openai", "model": "$model", "url": "$url", "params": $params },
   "embedding": { "api": "openai", "model": "text-embedding-3-small", "url": "$url" },
-  "cooldown": 6000
+  "cooldown": $cooldown
 }
 EOF
   profiles+=("\"$run/profiles/$name.json\"")
@@ -147,7 +151,7 @@ echo "$settings" > "$run/settings.json"
 printf '%s\n' "$agents" > "$run/agents.txt"
 printf '%s\n' "${roster[@]}" > "$run/roster.txt"
 cat > "$run/run.json" <<EOF
-{"agents":$agents,"minutes":$minutes,"ceilingUsd":$ceiling,"model":"$model","reasoningEffort":"$effort","upstream":"$upstream","mindcraftCommit":"$(git -C "$mindcraft" rev-parse HEAD)","minecraftVersion":"$minecraft_version","paperJar":"$paper_jar_name","paperSha256":"$paper_sha","seed":"$seed"}
+{"agents":$agents,"minutes":$minutes,"ceilingUsd":$ceiling,"model":"$model","reasoningEffort":"$effort","cooldownMs":$cooldown,"upstream":"$upstream","mindcraftCommit":"$(git -C "$mindcraft" rev-parse HEAD)","minecraftVersion":"$minecraft_version","paperJar":"$paper_jar_name","paperSha256":"$paper_sha","seed":"$seed"}
 EOF
 
 paper_pid="" proxy_pid="" mindcraft_pid="" watchdog_pid=""

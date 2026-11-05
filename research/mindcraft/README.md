@@ -19,12 +19,19 @@ It does not use Loom's body, mind or plugin. Mindcraft brings its own agents: on
 
 `setup.sh` applies each file in `patches/` to the Mindcraft checkout, after Mindcraft's own patches. Paths are relative to the checkout, so one patch can fix Mindcraft's source or a dependency in `node_modules`.
 
-- **`mindserver-null-socket.patch`.** Mindcraft's MindServer crashed its whole process when one agent messaged another that was restarting (`mindserver.js:206`, `TypeError` on `null.emit`). That disconnected every agent (society run `20261104T223720Z`). It now drops that one message.
-- **`mineflayer-entity-velocity.patch`.**
+- **`01-mindserver-null-socket.patch`.** Mindcraft's MindServer crashed its whole process when one agent messaged another that was restarting (`mindserver.js:206`, `TypeError` on `null.emit`). That disconnected every agent (society run `20261104T223720Z`). It now drops that one message.
+- **`02-mineflayer-entity-velocity.patch`.**
   - The fault: with Mindcraft's unpinned dependencies, minecraft-data resolves to 3.119.0. That version describes 1.21.6's `entity_velocity` and `spawn_entity` velocity as one `velocity: {x, y, z}` field, but mineflayer 4.33.0 reads `velocityX/Y/Z`, which are undefined.
   - The effect: any knockback gave the bot a NaN velocity, physics then made its position NaN, and Paper kicked it with "Invalid move player packet received". That was 49 kicks in the society run's 20 minutes, and 16 in a 6-minute offline night test.
   - The fix: the patch reads either shape, as later mineflayer releases do.
   - Proof: a bot hit by a summoned zombie was kicked on the first hit without the patch. With it, the bot took five hits and was never kicked.
+
+- **`03-group-messages.patch`.** Group conversation.
+  - **The command:** Mindcraft lets an agent talk to one partner at a time. This patch adds `!broadcast("...")`, which sends one message to every other agent in the game through the MindServer.
+  - **Receiving:** each agent receives a broadcast as a system message ("GROUP MESSAGE from ... to every agent"), even while it is in a one-to-one conversation, and can answer the group with `!broadcast`.
+  - **Rate limit:** one broadcast per agent every 20 s, so the group cannot loop.
+  - **The record:** a broadcast is also said in public chat as `(To everyone) ...`, so Paper's log records it, and `join.js` writes it as a `groupSaid` event.
+  - **Tested offline on port 25599 with the mock:** `ada_ash` broadcast once. `bram_oak` and `cora_fen` both received it and answered the group; `cora_fen` was mid one-to-one conversation with bram at the time. Paper logged all three, and the rate limit refused one repeat.
 
 ## Code writing
 
@@ -61,7 +68,7 @@ Each run is a new directory `research/mindcraft/runs/<UTC time>/` (ignored by gi
 
 Agents:
 
-- One Mindcraft profile per agent, all on `gpt-5.4` (`reasoning_effort: low` unless set) with `cooldown` 6000 ms.
+- One Mindcraft profile per agent, all on `gpt-5.4` (`reasoning_effort: low` unless set) with `cooldown` 6000 ms unless `LOOM_MINDCRAFT_COOLDOWN_MS` is set (Mindcraft's own default is 3000).
 - All agents start in one Mindcraft process, so they share one MindServer and can talk to each other.
 - `LOG_ALL=true`, `base_profile: survival`, and an `init_message` that asks each agent to choose a long-term goal with `!goal` and to talk to the others when it helps.
 - Set `LOOM_MINDCRAFT_MODEL=gpt-5.4-nano` for a cheaper run.
@@ -122,7 +129,7 @@ Offline test, with no key and no paid call: start a loopback OpenAI mock and set
 | Who did what, as the server saw it? | `server/logs/latest.log`: joins, quits, deaths, and every agent chat line. Agents announce each command in chat, so this is a server-timestamped action record. |
 | What did it cost? | `proxy-calls.jsonl`, `proxy-summary.json` (`proxy-inflight.json` is the live count of calls waiting on an answer) |
 | When was an agent out of the world, and how did it come back? | `watchdog.jsonl` (`joined`, `left`, `missing`, `killed`, `restartedByMindcraft`, `startRequested`, `goalResumedFromMemory`, `toldToResumeGoal`, `goalLoopRestarted`, `died`, `stoppedForGood`, `observerSpectator`), `mindcraft-relaunches.txt`, `dead-agents.txt` |
-| All of it, in time order | `events.jsonl` (`join.js`): `joined`, `left`, `said`, `died` from Paper; `decided` and `memSaving` from the model logs; `call` from the proxy; `watchdog:*` from the watchdog |
+| All of it, in time order | `events.jsonl` (`join.js`): `joined`, `left`, `said`, `groupSaid`, `died` from Paper; `decided` and `memSaving` from the model logs; `call` from the proxy; `watchdog:*` from the watchdog |
 | What ran | `run.json`, `settings.json`, `profiles/`, `server/server.properties`, `seed.txt`, `mindcraft-commit.txt`, `mindcraft-deps.txt`, `prices.json`, `loom-commit.txt`, `node-version.txt`, `files.sha256` |
 
 `mindcraft-stdout.log` is kept too. Its lines from all agents are interleaved, and the `Agent executed` lines carry no agent name, so the per-agent files are the authority.

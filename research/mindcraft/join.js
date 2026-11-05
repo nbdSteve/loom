@@ -28,7 +28,10 @@ function serverEvents (run, roster) {
     const text = m[4]
     const chat = /^(?:\[Not Secure\] )?<([A-Za-z0-9_]{3,16})> (.*)$/.exec(text)
     if (chat !== null) {
-      events.push({ t, agent: chat[1], kind: 'said', text: chat[2].trim(), source: 'paper' })
+      const text = chat[2].trim()
+      // A !broadcast reaches every other agent, and is said in chat as "(To everyone) ...".
+      const group = text.startsWith('(To everyone) ')
+      events.push({ t, agent: chat[1], kind: group ? 'groupSaid' : 'said', text: group ? text.slice(14) : text, source: 'paper' })
       continue
     }
     const agent = roster.find((name) => text.startsWith(`${name} `))
