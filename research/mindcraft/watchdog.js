@@ -114,6 +114,18 @@ function main () {
     }, STOP_CHECK_MS)
   }
 
+  // An agent with a model call in flight is never idle, and a call that started
+  // counts as activity (society run r2: nudges at 90 s discarded high-effort
+  // answers that were still being generated, 44 times).
+  function inflightOf (name) {
+    try {
+      const entry = JSON.parse(fs.readFileSync(path.join(run, 'proxy-inflight.json'), 'utf8'))[name]
+      return entry ?? { inFlight: 0, lastStart: null }
+    } catch {
+      return { inFlight: 0, lastStart: null }
+    }
+  }
+
   function readCalls () {
     const callsPath = path.join(run, 'proxy-calls.jsonl')
     let size
@@ -210,10 +222,12 @@ function main () {
       if (agent.dead) continue
       if (agent.inGame) {
         const state = savedGoalState(run, name)
-        if (state !== 1 && state !== SELF_PROMPT_PAUSED && now - agent.lastCall >= IDLE_MS && now - agent.lastNudge >= IDLE_MS) {
+        const calling = inflightOf(name)
+        const lastActive = Math.max(agent.lastCall, calling.lastStart ? Date.parse(calling.lastStart) : 0)
+        if (state !== 1 && state !== SELF_PROMPT_PAUSED && calling.inFlight === 0 && now - lastActive >= IDLE_MS && now - agent.lastNudge >= IDLE_MS) {
           agent.lastNudge = now
           socket.emit('send-message', name, { from: 'system', message: RESTART_GOAL_MESSAGE })
-          record({ kind: 'goalLoopRestarted', agent: name, idleSeconds: Math.round((now - agent.lastCall) / 1000) })
+          record({ kind: 'goalLoopRestarted', agent: name, idleSeconds: Math.round((now - lastActive) / 1000) })
         }
         continue
       }

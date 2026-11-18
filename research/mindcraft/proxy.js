@@ -57,7 +57,7 @@ function costNanoUsd (rates, usage) {
     (completion * (rates.outputNanoUsdPerToken ?? 0))
 }
 
-function createProxy ({ prices, ceilingUsd, logPath, upstream = OPENAI_UPSTREAM, apiKey = null }) {
+function createProxy ({ prices, ceilingUsd, logPath, upstream = OPENAI_UPSTREAM, apiKey = null, inflightPath = null }) {
   if (upstream !== OPENAI_UPSTREAM && !loopbackHttp(upstream)) {
     throw new Error(`upstream must be ${OPENAI_UPSTREAM} or a loopback http URL, not ${upstream}`)
   }
@@ -65,6 +65,16 @@ function createProxy ({ prices, ceilingUsd, logPath, upstream = OPENAI_UPSTREAM,
   if (!(ceilingUsd > 0)) throw new Error('the ceiling must be a positive number of USD')
   const ceiling = Math.round(ceilingUsd * NANO_USD_PER_USD)
   const state = { spent: 0, reserved: 0, calls: 0, refused: 0 }
+  // Calls sent and not yet answered, by agent, for the watchdog: the call log is
+  // written only when an answer arrives, and a high-effort answer can take
+  // minutes, so without this a long call looks like an idle agent.
+  const inflight = {}
+  const track = (agent, delta) => {
+    const entry = inflight[agent] ?? (inflight[agent] = { inFlight: 0, lastStart: null })
+    entry.inFlight += delta
+    if (delta > 0) entry.lastStart = new Date().toISOString()
+    if (inflightPath !== null) fs.writeFileSync(inflightPath, JSON.stringify(inflight) + '\n')
+  }
 
   const log = (entry) => fs.appendFileSync(logPath, JSON.stringify({
     t: new Date().toISOString(),
@@ -122,6 +132,7 @@ function createProxy ({ prices, ceilingUsd, logPath, upstream = OPENAI_UPSTREAM,
     }
     state.reserved += reserve
     let cost = reserve
+    track(agent, 1)
     try {
       const headers = { 'content-type': 'application/json' }
       if (upstream === OPENAI_UPSTREAM) headers.authorization = `Bearer ${apiKey}`
@@ -153,10 +164,11 @@ function createProxy ({ prices, ceilingUsd, logPath, upstream = OPENAI_UPSTREAM,
       res.end(text)
     } finally {
       state.reserved -= reserve
+      track(agent, -1)
     }
   }
 
-  return { server, state }
+  return { server, state, inflight }
 }
 
 function main (argv) {
@@ -166,7 +178,12 @@ function main (argv) {
   const prices = JSON.parse(fs.readFileSync(args.prices, 'utf8')).models
   const apiKey = upstream === OPENAI_UPSTREAM ? keychainKey(args['keychain-service'] ?? 'loom-openai') : null
   const { server, state } = createProxy({
-    prices, ceilingUsd: Number(args['ceiling-usd']), logPath: args.log, upstream, apiKey
+    prices,
+    ceilingUsd: Number(args['ceiling-usd']),
+    logPath: args.log,
+    upstream,
+    apiKey,
+    inflightPath: args.inflight ?? null
   })
   const stop = () => {
     fs.writeFileSync(args.summary, JSON.stringify({

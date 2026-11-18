@@ -1,0 +1,91 @@
+--- a/src/agent/agent.js
++++ b/src/agent/agent.js
+@@ -249,6 +249,12 @@
+             this.self_prompter.stop(false);
+         }
+         convoManager.endAllConversations();
++    }
++
++    async receiveGroupMessage(from, message) {
++        if (this._disconnectHandled) return;
++        console.log(`${this.name} received group message from ${from}: ${message}`);
++        await this.handleMessage('system', `GROUP MESSAGE from ${from} to every agent: "${message}" You can answer the whole group with !broadcast("your message"), even while you are talking with someone one to one.`, 1);
+     }
+ 
+     async handleMessage(source, message, max_responses=null) {
+--- a/src/agent/mindserver_proxy.js
++++ b/src/agent/mindserver_proxy.js
+@@ -47,6 +47,10 @@
+             convoManager.receiveFromBot(agentName, json);
+         });
+ 
++        this.socket.on('group-message', (agentName, json) => {
++            if (this.agent) this.agent.receiveGroupMessage(agentName, json.message);
++        });
++
+         this.socket.on('agents-status', (agents) => {
+             this.agents = agents;
+             convoManager.updateAgents(agents);
+@@ -130,6 +134,11 @@
+     serverProxy.getSocket().emit('chat-message', agentName, json);
+ }
+ 
++// for one message to every other agent at once
++export function sendGroupMessageToServer(json) {
++    serverProxy.getSocket().emit('group-message', json);
++}
++
+ // for sending general output to server for display
+ export function sendOutputToServer(agentName, message) {
+     serverProxy.getSocket().emit('bot-output', agentName, message);
+--- a/src/agent/commands/actions.js
++++ b/src/agent/commands/actions.js
+@@ -1,6 +1,7 @@
+ import * as skills from '../library/skills.js';
+ import settings from '../settings.js';
+ import convoManager from '../conversation.js';
++import { sendGroupMessageToServer } from '../mindserver_proxy.js';
+ 
+ 
+ function runAsAction (actionFn, resume = false, timeout = -1) {
+@@ -418,6 +419,21 @@
+             else if (convoManager.inConversation(player_name))
+                 agent.history.add('system', 'You are already in conversation with ' + player_name + '. Don\'t use this command to talk to them.');
+             convoManager.startConversation(player_name, message);
++        }
++    },
++    {
++        name: '!broadcast',
++        description: 'Send one message to every other agent at once. Every agent receives it, even while in a one-to-one conversation, and can answer the whole group with !broadcast. At most one broadcast every 20 seconds.',
++        params: {
++            'message': { type: 'string', description: 'The message for every other agent.' }
++        },
++        perform: async function (agent, message) {
++            const now = Date.now();
++            if (agent.last_broadcast && now - agent.last_broadcast < 20000)
++                return 'You broadcast less than 20 seconds ago. Wait before broadcasting again.';
++            agent.last_broadcast = now;
++            sendGroupMessageToServer({ message });
++            agent.openChat(`(To everyone) ${message}`);
+         }
+     },
+     {
+--- a/src/mindcraft/mindserver.js
++++ b/src/mindcraft/mindserver.js
+@@ -208,6 +208,16 @@
+             }
+             console.log(`${curAgentName} sending message to ${agentName}: ${json.message}`);
+             agent_connections[agentName].socket.emit('chat-message', curAgentName, json);
++        });
++
++        // Loom: one message to every other agent at once (patches/03-group-messages.patch).
++        socket.on('group-message', (json) => {
++            const from = curAgentName;
++            console.log(`${from} sending group message to all agents: ${json.message}`);
++            for (const [name, conn] of Object.entries(agent_connections)) {
++                if (name === from || !conn || !conn.socket || !conn.in_game) continue;
++                conn.socket.emit('group-message', from, json);
++            }
+         });
+ 
+         socket.on('set-agent-settings', (agentName, settings) => {
