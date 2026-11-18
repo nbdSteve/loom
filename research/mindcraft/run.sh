@@ -1,28 +1,4 @@
 #!/usr/bin/env bash
-# Run Mindcraft agents, as is, on a fresh plain Paper 1.21.6 world.
-#
-#   research/mindcraft/run.sh <agents> <minutes> <ceiling-usd>
-#
-# Every call goes through the spend-cap proxy (proxy.js), which refuses once
-# <ceiling-usd> could be passed. The run stops by itself after <minutes>, or on
-# Ctrl-C, and then capture.sh writes the record into the run directory.
-#
-# Optional environment:
-#   LOOM_MINDCRAFT_UPSTREAM      loopback http mock instead of api.openai.com (no key is read)
-#   LOOM_MINDCRAFT_MODEL         default gpt-5.4
-#   LOOM_MINDCRAFT_COOLDOWN_MS       least time between one agent's model calls,
-#                                    default 6000 (Mindcraft's own default is 3000)
-#   LOOM_MINDCRAFT_REASONING_EFFORT  gpt-5 models only: none, minimal, low, medium,
-#                                    high or xhigh; default low
-#   LOOM_MINDCRAFT_PROXY_PORT    default 18565
-#   LOOM_MINDCRAFT_MINDSERVER_PORT  default 8080
-#   LOOM_MINDCRAFT_INIT_MESSAGE     the start message every agent gets; the default
-#                                   names the others and asks each for a !goal
-#   LOOM_MINDCRAFT_SERVER_PORT      default 25565, which is for real runs only; an
-#                                   offline test (mock upstream) must use another
-#                                   port, such as 25599, and is refused on 25565
-#   LOOM_MINDCRAFT_GRACE_SECONDS    how long an agent may be off the server before
-#                                   watchdog.js restarts it, default 60
 set -euo pipefail
 
 usage() { echo "usage: $0 <agents 1-32> <minutes> <ceiling-usd>" >&2; exit 2; }
@@ -37,23 +13,25 @@ cache="$here/.cache"
 mindcraft="$cache/mindcraft"
 node_bin="$cache/node/bin/node"
 model="${LOOM_MINDCRAFT_MODEL:-gpt-5.4}"
-effort="${LOOM_MINDCRAFT_REASONING_EFFORT:-low}"
-cooldown="${LOOM_MINDCRAFT_COOLDOWN_MS:-6000}"
-[[ "$cooldown" =~ ^[0-9]+$ ]] || { echo "LOOM_MINDCRAFT_COOLDOWN_MS must be a whole number of milliseconds" >&2; exit 2; }
-[[ "$effort" =~ ^(none|minimal|low|medium|high|xhigh)$ ]] || { echo "unknown reasoning effort $effort" >&2; exit 2; }
+reasoning_effort="${LOOM_MINDCRAFT_REASONING_EFFORT:-low}"
+min_ms_between_agent_model_calls="${LOOM_MINDCRAFT_COOLDOWN_MS:-6000}"
+[[ "$min_ms_between_agent_model_calls" =~ ^[0-9]+$ ]] || { echo "LOOM_MINDCRAFT_COOLDOWN_MS must be a whole number of milliseconds" >&2; exit 2; }
+[[ "$reasoning_effort" =~ ^(none|minimal|low|medium|high|xhigh)$ ]] || { echo "unknown reasoning effort $reasoning_effort" >&2; exit 2; }
 proxy_port="${LOOM_MINDCRAFT_PROXY_PORT:-18565}"
 mindserver_port="${LOOM_MINDCRAFT_MINDSERVER_PORT:-8080}"
-grace="${LOOM_MINDCRAFT_GRACE_SECONDS:-60}"
-server_port="${LOOM_MINDCRAFT_SERVER_PORT:-25565}"
-upstream="${LOOM_MINDCRAFT_UPSTREAM:-https://api.openai.com}"
-if [ "$server_port" = 25565 ] && [ "$upstream" != "https://api.openai.com" ]; then
-  echo "an offline test may not use port 25565, which observers join for real runs; set LOOM_MINDCRAFT_SERVER_PORT=25599" >&2
+seconds_off_server_before_watchdog_restarts_agent="${LOOM_MINDCRAFT_GRACE_SECONDS:-60}"
+real_run_server_port=25565
+offline_test_server_port=25599
+server_port="${LOOM_MINDCRAFT_SERVER_PORT:-$real_run_server_port}"
+openai_upstream=https://api.openai.com
+upstream="${LOOM_MINDCRAFT_UPSTREAM:-$openai_upstream}"
+if [ "$server_port" = "$real_run_server_port" ] && [ "$upstream" != "$openai_upstream" ]; then
+  echo "an offline test may not use port $real_run_server_port, which observers join for real runs; set LOOM_MINDCRAFT_SERVER_PORT=$offline_test_server_port" >&2
   exit 2
 fi
-# Paper 1.21.6 build 48, the newest stable build of the Minecraft version
-# Mindcraft recommends, which its patched mineflayer 4.33.0 supports.
 minecraft_version=1.21.6
-paper_jar_name=paper-1.21.6-48.jar
+paper_build=48
+paper_jar_name=paper-$minecraft_version-$paper_build.jar
 paper_sha=35e2dfa66b3491b9d2f0bb033679fa5aca1e1fdf097e7a06a80ce8afeda5c214
 paper_url=https://fill-data.papermc.io/v1/objects/$paper_sha/$paper_jar_name
 operator=nbdSteve
@@ -88,7 +66,6 @@ mkdir -p "$server" "$run/profiles" "$run/bots"
 date -u +%Y-%m-%dT%H:%M:%SZ > "$run/started-at.txt"
 date +%Y-%m-%d > "$run/started-local-date.txt"
 
-# A fresh world: a random seed, recorded, and no world border beyond vanilla's.
 seed="$(od -An -N7 -tu8 /dev/urandom | tr -d ' ')"
 echo "$seed" > "$run/seed.txt"
 cp "$paper_jar" "$server/paper.jar"
@@ -116,9 +93,7 @@ cat > "$server/ops.json" <<EOF
 [{"uuid":"$operator_uuid","name":"$operator","level":4,"bypassesPlayerLimit":true}]
 EOF
 
-# One profile per agent, every call routed through the proxy under its own name,
-# so the proxy log attributes cost by agent. A url makes Mindcraft use
-# chat.completions, which takes `reasoning_effort` rather than `reasoning`.
+takes_reasoning_effort() { [[ "$1" == gpt-5* ]]; }
 roster=()
 profiles=()
 for ((i = 0; i < agents; i++)); do
@@ -127,15 +102,15 @@ for ((i = 0; i < agents; i++)); do
     echo "$mindcraft/bots/$name is a real directory from an earlier run; move it away first" >&2; exit 1
   fi
   roster+=("$name")
-  url="http://127.0.0.1:$proxy_port/agent/$name/v1"
-  params='{}'
-  [[ "$model" == gpt-5* ]] && params="{\"reasoning_effort\":\"$effort\"}"
+  proxy_url_attributing_calls_to_agent="http://127.0.0.1:$proxy_port/agent/$name/v1"
+  chat_completions_params='{}'
+  takes_reasoning_effort "$model" && chat_completions_params="{\"reasoning_effort\":\"$reasoning_effort\"}"
   cat > "$run/profiles/$name.json" <<EOF
 {
   "name": "$name",
-  "model": { "api": "openai", "model": "$model", "url": "$url", "params": $params },
-  "embedding": { "api": "openai", "model": "text-embedding-3-small", "url": "$url" },
-  "cooldown": $cooldown
+  "model": { "api": "openai", "model": "$model", "url": "$proxy_url_attributing_calls_to_agent", "params": $chat_completions_params },
+  "embedding": { "api": "openai", "model": "text-embedding-3-small", "url": "$proxy_url_attributing_calls_to_agent" },
+  "cooldown": $min_ms_between_agent_model_calls
 }
 EOF
   profiles+=("\"$run/profiles/$name.json\"")
@@ -151,17 +126,19 @@ echo "$settings" > "$run/settings.json"
 printf '%s\n' "$agents" > "$run/agents.txt"
 printf '%s\n' "${roster[@]}" > "$run/roster.txt"
 cat > "$run/run.json" <<EOF
-{"agents":$agents,"minutes":$minutes,"ceilingUsd":$ceiling,"model":"$model","reasoningEffort":"$effort","cooldownMs":$cooldown,"upstream":"$upstream","mindcraftCommit":"$(git -C "$mindcraft" rev-parse HEAD)","minecraftVersion":"$minecraft_version","paperJar":"$paper_jar_name","paperSha256":"$paper_sha","seed":"$seed"}
+{"agents":$agents,"minutes":$minutes,"ceilingUsd":$ceiling,"model":"$model","reasoningEffort":"$reasoning_effort","cooldownMs":$min_ms_between_agent_model_calls,"upstream":"$upstream","mindcraftCommit":"$(git -C "$mindcraft" rev-parse HEAD)","minecraftVersion":"$minecraft_version","paperJar":"$paper_jar_name","paperSha256":"$paper_sha","seed":"$seed"}
 EOF
 
 paper_pid="" proxy_pid="" mindcraft_pid="" watchdog_pid=""
 cleaned=0
+stop_watchdog_before_it_can_restart_a_stopping_agent() {
+  if [ -n "$watchdog_pid" ]; then kill -TERM "$watchdog_pid" 2> /dev/null || true; wait "$watchdog_pid" 2> /dev/null || true; fi
+}
 cleanup() {
   [ "$cleaned" -eq 1 ] && return
   cleaned=1
   echo "stopping run $run"
-  # The watchdog goes first, so it cannot restart an agent that is being stopped.
-  if [ -n "$watchdog_pid" ]; then kill -TERM "$watchdog_pid" 2> /dev/null || true; wait "$watchdog_pid" 2> /dev/null || true; fi
+  stop_watchdog_before_it_can_restart_a_stopping_agent
   if [ -n "$mindcraft_pid" ] && kill -0 "$mindcraft_pid" 2> /dev/null; then
     kill -INT "$mindcraft_pid" 2> /dev/null || true
     for _ in $(seq 1 15); do kill -0 "$mindcraft_pid" 2> /dev/null || break; sleep 1; done
@@ -183,15 +160,15 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-# macOS sleeps an idle host mid-run (Loom lost r37 that way); hold an idle-sleep
-# assertion for exactly this script's lifetime.
-if command -v caffeinate > /dev/null 2>&1; then caffeinate -i -w $$ & fi
+keep_macos_awake_while_this_script_runs() {
+  if command -v caffeinate > /dev/null 2>&1; then caffeinate -i -w $$ & fi
+}
+keep_macos_awake_while_this_script_runs
 
-# Paper, with a console FIFO so the run can stop it with `stop` and an operator
-# can type commands: echo "say hello" > $run/paper-console
-mkfifo "$run/paper-console"
-exec 3<> "$run/paper-console"
-(cd "$server" && exec "$java_bin" -Xms2G -Xmx4G -jar paper.jar nogui < "$run/paper-console" > "$run/paper-stdout.log" 2>&1) &
+paper_console_fifo_for_stop_and_operator_commands="$run/paper-console"
+mkfifo "$paper_console_fifo_for_stop_and_operator_commands"
+exec 3<> "$paper_console_fifo_for_stop_and_operator_commands"
+(cd "$server" && exec "$java_bin" -Xms2G -Xmx4G -jar paper.jar nogui < "$paper_console_fifo_for_stop_and_operator_commands" > "$run/paper-stdout.log" 2>&1) &
 paper_pid=$!
 echo "paper starting (seed $seed)"
 for _ in $(seq 1 300); do
@@ -212,14 +189,24 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 
-# Mindcraft writes bots/<name>/ under its own checkout; point each at the run.
-for name in "${roster[@]}"; do
-  mkdir -p "$run/bots/$name"
-  rm -f "$mindcraft/bots/$name"
-  ln -s "$run/bots/$name" "$mindcraft/bots/$name"
-done
+link_mindcraft_bot_dirs_into_run() {
+  for name in "${roster[@]}"; do
+    mkdir -p "$run/bots/$name"
+    rm -f "$mindcraft/bots/$name"
+    ln -s "$run/bots/$name" "$mindcraft/bots/$name"
+  done
+}
+link_mindcraft_bot_dirs_into_run
 profiles_json="[$(IFS=,; echo "${profiles[*]}")]"
 all_profiles_json="$profiles_json"
+dead_agents_listed_by_watchdog="$run/dead-agents.txt"
+profiles_of_living_agents() {
+  "$node_bin" -e '
+const fs = require("fs")
+const dead = fs.existsSync(process.argv[2]) ? fs.readFileSync(process.argv[2], "utf8").split("\n").filter(Boolean) : []
+console.log(JSON.stringify(JSON.parse(process.argv[1]).filter((p) => !dead.some((d) => p.endsWith("/" + d + ".json")))))
+' "$all_profiles_json" "$dead_agents_listed_by_watchdog"
+}
 start_mindcraft() {
   (cd "$mindcraft" && exec env OPENAI_API_KEY=sk-loom-proxy-holds-the-key LOG_ALL=true \
     MINECRAFT_PORT="$server_port" MINDSERVER_PORT="$mindserver_port" PROFILES="$profiles_json" SETTINGS_JSON="$1" \
@@ -228,24 +215,18 @@ start_mindcraft() {
 }
 start_mindcraft "$settings"
 "$node_bin" "$here/watchdog.js" --run "$run" --mindcraft "$mindcraft" --mindserver-port "$mindserver_port" \
-  --roster "$(IFS=,; echo "${roster[*]}")" --console "$run/paper-console" --observer "$operator" \
-  --grace-seconds "$grace" > "$run/watchdog-stdout.log" 2>&1 &
+  --roster "$(IFS=,; echo "${roster[*]}")" --console "$paper_console_fifo_for_stop_and_operator_commands" --observer "$operator" \
+  --grace-seconds "$seconds_off_server_before_watchdog_restarts_agent" > "$run/watchdog-stdout.log" 2>&1 &
 watchdog_pid=$!
-echo "mindcraft started: ${roster[*]} on $model ($effort effort), ceiling \$$ceiling, $minutes min"
+echo "mindcraft started: ${roster[*]} on $model ($reasoning_effort effort), ceiling \$$ceiling, $minutes min"
 echo "join with Minecraft Java $minecraft_version at localhost:$server_port as $operator (operator, put in spectator on join); MindServer UI http://localhost:$mindserver_port"
 
 deadline=$(($(date +%s) + minutes * 60))
 while [ "$(date +%s)" -lt "$deadline" ]; do
   if ! kill -0 "$mindcraft_pid" 2> /dev/null; then
-    # Mindcraft itself went away: start it again, every agent from its memory.
     echo "mindcraft exited early; starting it again from saved memory" >&2
     date -u +%Y-%m-%dT%H:%M:%SZ >> "$run/mindcraft-relaunches.txt"
-    # Dead agents stay dead: their profiles are left out (watchdog.js lists them).
-    profiles_json="$("$node_bin" -e '
-const fs = require("fs")
-const dead = fs.existsSync(process.argv[2]) ? fs.readFileSync(process.argv[2], "utf8").split("\n").filter(Boolean) : []
-console.log(JSON.stringify(JSON.parse(process.argv[1]).filter((p) => !dead.some((d) => p.endsWith("/" + d + ".json")))))
-' "$all_profiles_json" "$run/dead-agents.txt")"
+    profiles_json="$(profiles_of_living_agents)"
     start_mindcraft "$("$node_bin" -e 'const s = JSON.parse(process.argv[1]); s.load_memory = true; s.init_message = "Agent process restarted."; console.log(JSON.stringify(s))' "$settings")"
     sleep 10
   fi

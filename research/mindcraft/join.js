@@ -1,15 +1,11 @@
 #!/usr/bin/env node
 'use strict'
 
-// Join one Mindcraft run into events.jsonl, one event per line, in time order:
-// what the server saw (joined, left, said, died, from Paper's log) and what each
-// model decided (from Mindcraft's LOG_ALL files) and what each call cost (from
-// the proxy log).
-//
-//   node join.js <run-directory>
-
 const fs = require('node:fs')
 const path = require('node:path')
+
+const USAGE = 'usage: node join.js <run-directory>'
+const BROADCAST_CHAT_PREFIX = '(To everyone) '
 
 function serverEvents (run, roster) {
   const logPath = path.join(run, 'server', 'logs', 'latest.log')
@@ -29,9 +25,14 @@ function serverEvents (run, roster) {
     const chat = /^(?:\[Not Secure\] )?<([A-Za-z0-9_]{3,16})> (.*)$/.exec(text)
     if (chat !== null) {
       const text = chat[2].trim()
-      // A !broadcast reaches every other agent, and is said in chat as "(To everyone) ...".
-      const group = text.startsWith('(To everyone) ')
-      events.push({ t, agent: chat[1], kind: group ? 'groupSaid' : 'said', text: group ? text.slice(14) : text, source: 'paper' })
+      const broadcast = text.startsWith(BROADCAST_CHAT_PREFIX)
+      events.push({
+        t,
+        agent: chat[1],
+        kind: broadcast ? 'groupSaid' : 'said',
+        text: broadcast ? text.slice(BROADCAST_CHAT_PREFIX.length) : text,
+        source: 'paper'
+      })
       continue
     }
     const agent = roster.find((name) => text.startsWith(`${name} `))
@@ -86,7 +87,7 @@ function watchdogEvents (run) {
   })
 }
 
-function join (run) {
+function joinRunEvents (run) {
   const roster = fs.readFileSync(path.join(run, 'roster.txt'), 'utf8').split('\n').filter(Boolean)
   return [...serverEvents(run, roster), ...decisionEvents(run, roster), ...costEvents(run), ...watchdogEvents(run)]
     .sort((a, b) => a.t.localeCompare(b.t))
@@ -94,9 +95,13 @@ function join (run) {
 
 if (require.main === module) {
   const run = process.argv[2]
-  const events = join(run)
+  if (run === undefined) {
+    console.error(USAGE)
+    process.exit(2)
+  }
+  const events = joinRunEvents(run)
   fs.writeFileSync(path.join(run, 'events.jsonl'), events.map((e) => JSON.stringify(e)).join('\n') + '\n')
   console.log(`${events.length} events in ${path.join(run, 'events.jsonl')}`)
 }
 
-module.exports = { join }
+module.exports = { joinRunEvents }

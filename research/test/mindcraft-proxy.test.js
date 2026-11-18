@@ -6,7 +6,7 @@ const http = require('node:http')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { createProxy } = require('../mindcraft/proxy.js')
+const { createProxy, worstCaseNanoUsd } = require('../mindcraft/proxy.js')
 
 const prices = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'mindcraft', 'prices.json'), 'utf8')).models
 
@@ -52,21 +52,34 @@ test('a call is forwarded without a credential, priced from its usage and attrib
   assert.equal(logged.promptTokens, 1000)
   assert.equal(logged.cachedTokens, 400)
   assert.equal(logged.completionTokens, 20)
-  // 600 * 2500 + 400 * 250 + 20 * 15000 nano-USD
-  assert.equal(logged.costUsd, 0.0019)
+  const uncachedInputNanoUsd = 600 * 2500
+  const cachedInputNanoUsd = 400 * 250
+  const outputNanoUsd = 20 * 15000
+  assert.equal(logged.costUsd, (uncachedInputNanoUsd + cachedInputNanoUsd + outputNanoUsd) / 1e9)
 })
 
-test('a call whose worst case could pass the ceiling is refused with 429 and never sent', async (t) => {
-  const { call, calls, seen, state } = await harness(t, 0.1, { prompt_tokens: 10, completion_tokens: 10 })
-  // 8192 reserved output tokens of gpt-5.4 alone cost about $0.12, past a $0.10 ceiling.
+test('a call whose worst case could pass the ceiling is refused with 429 and never sent, while a cheaper one fits', async (t) => {
+  const ceilingUsd = 0.1
+  const reservedOutputUsdOfGpt54 = 8192 * prices['gpt-5.4'].outputNanoUsdPerToken / 1e9
+  assert.ok(reservedOutputUsdOfGpt54 > ceilingUsd)
+  const { call, calls, seen, state } = await harness(t, ceilingUsd, { prompt_tokens: 10, completion_tokens: 10 })
   const reply = await call('ada_ash', { model: 'gpt-5.4', messages: [] })
   assert.equal(reply.status, 429)
   assert.equal(seen.length, 0)
   assert.equal(state.spent, 0)
   assert.equal(calls()[0].refused, 'ceiling')
-  // A nano call's worst case fits, so it still goes through.
   assert.equal((await call('ada_ash', { model: 'gpt-5.4-nano', messages: [] })).status, 200)
   assert.equal(seen.length, 1)
+})
+
+test('an answer with no usage is charged its whole reservation, so an unknown cost can only overstate spend', async (t) => {
+  const { call, calls, state } = await harness(t, 1, undefined)
+  assert.equal((await call('ada_ash', { model: 'gpt-5.4', messages: [] })).status, 200)
+  const sent = JSON.stringify({ model: 'gpt-5.4', messages: [], max_completion_tokens: 8192 })
+  const reserve = worstCaseNanoUsd(prices['gpt-5.4'], sent, 8192)
+  assert.equal(state.spent, reserve)
+  assert.equal(state.reserved, 0)
+  assert.equal(calls()[0].costUsd, reserve / 1e9)
 })
 
 test('an unpriced model, a stream, or an unknown route is refused', async (t) => {

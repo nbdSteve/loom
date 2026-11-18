@@ -17,7 +17,7 @@ It does not use Loom's body, mind or plugin. Mindcraft brings its own agents: on
 
 ## Loom's patches
 
-`setup.sh` applies each file in `patches/` to the Mindcraft checkout, after Mindcraft's own patches. Paths are relative to the checkout, so one patch can fix Mindcraft's source or a dependency in `node_modules`.
+`setup.sh` applies each file in `patches/` to the Mindcraft checkout, after Mindcraft's own patches. Paths are relative to the checkout, so one patch can fix Mindcraft's source or a dependency in `node_modules`. On a rerun, the checkout resets tracked files but `node_modules` survives, so a patch that is already in place is left as it is.
 
 - **`01-mindserver-null-socket.patch`.** Mindcraft's MindServer crashed its whole process when one agent messaged another that was restarting (`mindserver.js:206`, `TypeError` on `null.emit`). That disconnected every agent (society run `20261104T223720Z`). It now drops that one message.
 - **`02-mineflayer-entity-velocity.patch`.**
@@ -74,6 +74,8 @@ Agents:
 - Set `LOOM_MINDCRAFT_MODEL=gpt-5.4-nano` for a cheaper run.
 - Set `LOOM_MINDCRAFT_REASONING_EFFORT` (`none`, `minimal`, `low`, `medium`, `high` or `xhigh`, default `low`) for any gpt-5 model. It is recorded in `run.json`.
 - Set `LOOM_MINDCRAFT_INIT_MESSAGE` to give every agent one shared start message instead.
+- Set `LOOM_MINDCRAFT_PROXY_PORT` (default 18565) or `LOOM_MINDCRAFT_MINDSERVER_PORT` (default 8080) to move the proxy or the MindServer.
+- Each profile's model `url` is the proxy under the agent's own name, so the proxy log attributes cost by agent. A `url` makes Mindcraft use `chat.completions`, which takes `reasoning_effort` rather than `reasoning`.
 - Port 25565 is for real runs only, because observers join it. An offline test with a mock upstream must set another port, such as `LOOM_MINDCRAFT_SERVER_PORT=25599`. `run.sh` refuses to start a mock run on 25565.
 
 Example society run with no assigned roles:
@@ -87,11 +89,12 @@ Every model call goes through `proxy.js`, a loopback spend-cap proxy:
 - It forwards only `chat/completions` and `embeddings` to `api.openai.com`.
 - It prices each answer from its `usage` at `prices.json`, and logs every call (time, agent, model, tokens, cost) to `proxy-calls.jsonl`.
 - It refuses with HTTP 429 any call whose worst case could take spend past `<ceiling-usd>`. Each call reserves every request byte as an input token plus `max_completion_tokens` (set to 8192 when absent) of output, so the ceiling holds before the bill and not after.
+- An answer with no `usage` is charged its whole reservation, so an unknown cost can only overstate spend, never hide it.
 - When refused, Mindcraft answers "My brain disconnected", and after three of those an agent stops its goal loop. That is how spend stops at the ceiling.
 
 `watchdog.js` keeps every agent in the world. Mindcraft restarts an agent only when its process exits, and never if it exits within 10 s of its last restart. On 2026-11-05 an agent's process froze inside `collectBlocks` (run `20261104T213950Z`), was timed out by the server at 07:46:21, and never came back.
 
-The watchdog follows Paper's log instead. An agent off the server for longer than `LOOM_MINDCRAFT_GRACE_SECONDS` (default 60; at least 180 before its first join) is killed if it has a process. If Mindcraft does not start it again within 8 s, the MindServer is asked to. Mindcraft restarts it from its saved memory, and if that memory shows no running goal loop the agent is told to resume its goal. If Mindcraft's main process exits, `run.sh` starts it again with `load_memory`.
+The watchdog follows Paper's log instead. An agent off the server for longer than `LOOM_MINDCRAFT_GRACE_SECONDS` (default 60; at least 180 before its first join, because ten agents load their examples through one proxy at once) is killed with SIGKILL if it has a process. A blocked event loop handles no other signal, and for the same reason a Node diagnostic report cannot be asked of it. If Mindcraft does not start it again within 8 s, the MindServer is asked to. Mindcraft restarts it from its saved memory, and if that memory shows no running goal loop the agent is told to resume its goal. If Mindcraft's main process exits, `run.sh` starts it again with `load_memory`.
 
 All of these paths were tested with the mock, each back in the world with its goal running:
 
@@ -108,7 +111,9 @@ Both rules were tested offline: `kill ada_ash` left its process gone and never r
 
 The watchdog also puts `nbdSteve` in spectator mode on every join, as an operator.
 
-The run stops by itself after `<minutes>`, or on Ctrl-C. It stops Mindcraft, then the proxy, then Paper (`stop`), and then runs `capture.sh`.
+The run stops by itself after `<minutes>`, or on Ctrl-C. It stops the watchdog first, so it cannot restart an agent that is being stopped, then Mindcraft, then the proxy, then Paper (`stop`), and then runs `capture.sh`.
+
+On macOS, `run.sh` holds an idle-sleep assertion (`caffeinate -i`) for exactly its own lifetime, because macOS sleeps an idle host mid-run (Loom lost r37 that way).
 
 While it runs:
 
@@ -120,7 +125,7 @@ Offline test, with no key and no paid call: start a loopback OpenAI mock and set
 
 ## Capture
 
-`capture.sh <run-directory>` runs at the end of every run. You can run it again at any time.
+`capture.sh <run-directory>` runs at the end of every run. You can run it again at any time. It adds what pins the software, joins the whole run into `events.jsonl` with `node join.js <run-directory>`, and lists every file with its sha256 in `files.sha256`.
 
 | Question | File in the run directory |
 |---|---|
