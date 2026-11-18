@@ -1,25 +1,6 @@
 #!/usr/bin/env node
 'use strict'
 
-// The spend-cap proxy between Mindcraft and OpenAI.
-//
-// Each Mindcraft profile points its model `url` at
-// http://127.0.0.1:<port>/agent/<name>/v1, so every call is attributed to the
-// agent that made it. The proxy forwards only `chat/completions` and
-// `embeddings`, prices each answer from its own `usage` at the configured
-// rates, appends one JSON line per call to the call log, and refuses with
-// HTTP 429 when a call could take spend past the hard ceiling.
-//
-// The ceiling holds before a call is sent, not after: each call reserves its
-// worst case (every request byte priced as an input token, plus
-// `max_completion_tokens` output tokens, which the proxy sets when the request
-// does not), and the reservation is replaced by the real cost when the answer
-// arrives. So the sum of what was billed can never pass the ceiling.
-//
-// The credential is read from the Keychain only for the real OpenAI upstream,
-// and only by this process. Any other upstream must be a loopback http URL and
-// receives no credential, which is what the offline mock test uses.
-
 const http = require('node:http')
 const fs = require('node:fs')
 const { spawnSync } = require('node:child_process')
@@ -57,6 +38,16 @@ function costNanoUsd (rates, usage) {
     (completion * (rates.outputNanoUsdPerToken ?? 0))
 }
 
+function worstCaseNanoUsd (rates, sentBody, maxCompletionTokens) {
+  return (Buffer.byteLength(sentBody) * rates.inputNanoUsdPerToken) +
+    ((maxCompletionTokens ?? 0) * (rates.outputNanoUsdPerToken ?? 0))
+}
+
+function answeredCostNanoUsd ({ rates, usage, ok, reserve }) {
+  if (usage !== null) return costNanoUsd(rates, usage)
+  return ok ? reserve : 0
+}
+
 function createProxy ({ prices, ceilingUsd, logPath, upstream = OPENAI_UPSTREAM, apiKey = null, inflightPath = null }) {
   if (upstream !== OPENAI_UPSTREAM && !loopbackHttp(upstream)) {
     throw new Error(`upstream must be ${OPENAI_UPSTREAM} or a loopback http URL, not ${upstream}`)
@@ -65,11 +56,8 @@ function createProxy ({ prices, ceilingUsd, logPath, upstream = OPENAI_UPSTREAM,
   if (!(ceilingUsd > 0)) throw new Error('the ceiling must be a positive number of USD')
   const ceiling = Math.round(ceilingUsd * NANO_USD_PER_USD)
   const state = { spent: 0, reserved: 0, calls: 0, refused: 0 }
-  // Calls sent and not yet answered, by agent, for the watchdog: the call log is
-  // written only when an answer arrives, and a high-effort answer can take
-  // minutes, so without this a long call looks like an idle agent.
   const inflight = {}
-  const track = (agent, delta) => {
+  const trackUnansweredCalls = (agent, delta) => {
     const entry = inflight[agent] ?? (inflight[agent] = { inFlight: 0, lastStart: null })
     entry.inFlight += delta
     if (delta > 0) entry.lastStart = new Date().toISOString()
@@ -123,8 +111,7 @@ function createProxy ({ prices, ceilingUsd, logPath, upstream = OPENAI_UPSTREAM,
       body.max_completion_tokens = DEFAULT_MAX_COMPLETION_TOKENS
     }
     const sent = JSON.stringify(body)
-    const reserve = (Buffer.byteLength(sent) * rates.inputNanoUsdPerToken) +
-      ((body.max_completion_tokens ?? 0) * (rates.outputNanoUsdPerToken ?? 0))
+    const reserve = worstCaseNanoUsd(rates, sent, body.max_completion_tokens)
     if (state.spent + state.reserved + reserve > ceiling) {
       state.refused += 1
       log({ agent, endpoint, model, status: 429, refused: 'ceiling', reserveUsd: reserve / NANO_USD_PER_USD })
@@ -132,7 +119,7 @@ function createProxy ({ prices, ceilingUsd, logPath, upstream = OPENAI_UPSTREAM,
     }
     state.reserved += reserve
     let cost = reserve
-    track(agent, 1)
+    trackUnansweredCalls(agent, 1)
     try {
       const headers = { 'content-type': 'application/json' }
       if (upstream === OPENAI_UPSTREAM) headers.authorization = `Bearer ${apiKey}`
@@ -145,9 +132,7 @@ function createProxy ({ prices, ceilingUsd, logPath, upstream = OPENAI_UPSTREAM,
       const text = await reply.text()
       let usage = null
       try { usage = JSON.parse(text).usage ?? null } catch {}
-      // An answer with no usage is charged its whole reservation, so an unknown
-      // cost can only overstate spend, never hide it.
-      cost = usage === null ? (reply.ok ? reserve : 0) : costNanoUsd(rates, usage)
+      cost = answeredCostNanoUsd({ rates, usage, ok: reply.ok, reserve })
       state.calls += 1
       state.spent += cost
       log({
@@ -164,7 +149,7 @@ function createProxy ({ prices, ceilingUsd, logPath, upstream = OPENAI_UPSTREAM,
       res.end(text)
     } finally {
       state.reserved -= reserve
-      track(agent, -1)
+      trackUnansweredCalls(agent, -1)
     }
   }
 
@@ -205,4 +190,4 @@ function main (argv) {
 
 if (require.main === module) main(process.argv.slice(2))
 
-module.exports = { createProxy, costNanoUsd }
+module.exports = { createProxy, costNanoUsd, worstCaseNanoUsd, answeredCostNanoUsd }

@@ -26,11 +26,10 @@
          this.socket.on('agents-status', (agents) => {
              this.agents = agents;
              convoManager.updateAgents(agents);
-@@ -130,6 +134,11 @@
+@@ -130,6 +134,10 @@
      serverProxy.getSocket().emit('chat-message', agentName, json);
  }
  
-+// for one message to every other agent at once
 +export function sendGroupMessageToServer(json) {
 +    serverProxy.getSocket().emit('group-message', json);
 +}
@@ -72,13 +71,12 @@
      {
 --- a/src/mindcraft/mindserver.js
 +++ b/src/mindcraft/mindserver.js
-@@ -208,6 +208,16 @@
+@@ -208,6 +208,15 @@
              }
              console.log(`${curAgentName} sending message to ${agentName}: ${json.message}`);
              agent_connections[agentName].socket.emit('chat-message', curAgentName, json);
 +        });
 +
-+        // Loom: one message to every other agent at once (patches/03-group-messages.patch).
 +        socket.on('group-message', (json) => {
 +            const from = curAgentName;
 +            console.log(`${from} sending group message to all agents: ${json.message}`);

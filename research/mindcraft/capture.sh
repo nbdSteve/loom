@@ -1,15 +1,7 @@
 #!/usr/bin/env bash
-# Complete the record of one Mindcraft run, inside its own run directory.
-#
-#   research/mindcraft/capture.sh <run-directory>
-#
-# run.sh calls this when a run stops. The run directory already holds the
-# profiles, settings, seed, server.properties, Paper's logs, the proxy's call
-# log and Mindcraft's bots/<name>/ (LOG_ALL prompt and response per call,
-# memory.json, histories/). This adds what pins the software, then joins the
-# whole run into events.jsonl and lists every file with its sha256.
 set -euo pipefail
 
+[ $# -eq 1 ] || { echo "usage: $0 <run-directory>" >&2; exit 2; }
 here="$(cd "$(dirname "$0")" && pwd)"
 run="$(cd "$1" && pwd)"
 cache="$here/.cache"

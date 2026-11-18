@@ -1,34 +1,6 @@
 #!/usr/bin/env node
 'use strict'
 
-// Keeps every Mindcraft agent of one run in the world, and the observer in
-// spectator mode. Mindcraft itself is left as is; this supervises it from the
-// outside, from what the server reports.
-//
-// Mindcraft restarts an agent only when its process exits, and not at all if
-// it exits within 10 s of its last restart. An agent whose event loop blocks
-// (r 20261104T213950Z: frozen inside collectBlocks, timed out by the server,
-// never restarted) never exits, so it never came back. The watchdog follows
-// Paper's log instead: an agent off the server for longer than the grace
-// period is missing, whatever the reason. A missing agent's process, if any,
-// is killed (SIGKILL: a blocked event loop handles no other signal, and for the
-// same reason a Node diagnostic report cannot be asked of it); if Mindcraft does
-// not start it again by itself, the MindServer is asked to. Mindcraft restarts it from its saved memory, and if
-// that memory shows no running goal loop the agent is told to resume its goal.
-//
-// Two more rules (society run 20261104T223720Z):
-// - A death is final. The world is hardcore, so a dead agent would come back as
-//   a spectator and keep "acting"; on its death message the agent is stopped
-//   for good (SIGINT, which Mindcraft does not restart), listed in
-//   dead-agents.txt (which run.sh leaves out of a Mindcraft relaunch), and
-//   stopped again if it ever rejoins.
-// - An agent in the world whose goal loop has stopped (Mindcraft stops it after
-//   three answers with no command) and that has made no model call for
-//   IDLE_SECONDS is told to set its goal again, so it does not sit idle.
-//
-//   node watchdog.js --run <dir> --mindcraft <dir> --mindserver-port <n>
-//     --roster a,b,c --console <fifo> --observer <name> --grace-seconds <n>
-
 const fs = require('node:fs')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
@@ -36,14 +8,13 @@ const { execFileSync } = require('node:child_process')
 const POLL_MS = 2000
 const START_CHECK_MS = 8000
 const RESUME_AFTER_JOIN_MS = 15000
-// Before an agent's first join it is still starting (ten agents load their
-// examples through one proxy at once), so it gets at least this long.
-const STARTUP_GRACE_MS = 180000
+const FIRST_JOIN_GRACE_MS = 180000
 const IDLE_MS = 90000
 const STOP_CHECK_MS = 10000
+const SELF_PROMPT_STOPPED = 0
+const SELF_PROMPT_RUNNING = 1
 const SELF_PROMPT_PAUSED = 2
-// Vanilla death messages all start with the player's name and one of these.
-const DEATH = /^(was |drowned|died|blew up|fell |hit the ground|burned|went up in flames|went off with a bang|tried to swim|suffocated|starved|walked into|froze|experienced kinetic|withered|discovered the floor|left the confines|didn't want to live)/
+const VANILLA_DEATH_MESSAGE_AFTER_PLAYER_NAME = /^(was |drowned|died|blew up|fell |hit the ground|burned|went up in flames|went off with a bang|tried to swim|suffocated|starved|walked into|froze|experienced kinetic|withered|discovered the floor|left the confines|didn't want to live)/
 const RESTART_GOAL_MESSAGE = 'Your goal loop has stopped and you are idle. Choose your long-term goal again and set it now with !goal, then keep working toward it.'
 const RESUME_MESSAGE = 'You were disconnected and have reconnected. Your memory above has your long-term goal. If your goal is not running, set it again with !goal and continue working toward it.'
 
@@ -64,14 +35,14 @@ function agentPids (mindcraft, name, port) {
 function savedGoalState (run, name) {
   try {
     const memory = JSON.parse(fs.readFileSync(path.join(run, 'bots', name, 'memory.json'), 'utf8'))
-    return memory.self_prompt ? memory.self_prompting_state : 0
+    return memory.self_prompt ? memory.self_prompting_state : SELF_PROMPT_STOPPED
   } catch {
-    return 0
+    return SELF_PROMPT_STOPPED
   }
 }
 
 function savedGoalRunning (run, name) {
-  return savedGoalState(run, name) === 1
+  return savedGoalState(run, name) === SELF_PROMPT_RUNNING
 }
 
 function main () {
@@ -114,10 +85,7 @@ function main () {
     }, STOP_CHECK_MS)
   }
 
-  // An agent with a model call in flight is never idle, and a call that started
-  // counts as activity (society run r2: nudges at 90 s discarded high-effort
-  // answers that were still being generated, 44 times).
-  function inflightOf (name) {
+  function unansweredCallsOf (name) {
     try {
       const entry = JSON.parse(fs.readFileSync(path.join(run, 'proxy-inflight.json'), 'utf8'))[name]
       return entry ?? { inFlight: 0, lastStart: null }
@@ -160,7 +128,7 @@ function main () {
     partial = lines.pop()
     for (const line of lines) {
       const death = /\[Server thread\/INFO\]: ([A-Za-z0-9_]{3,16}) (.+)$/.exec(line)
-      if (death !== null && agents[death[1]] && !agents[death[1]].dead && DEATH.test(death[2])) {
+      if (death !== null && agents[death[1]] && !agents[death[1]].dead && VANILLA_DEATH_MESSAGE_AFTER_PLAYER_NAME.test(death[2])) {
         const name = death[1]
         agents[name].dead = true
         fs.appendFileSync(deadPath, name + '\n')
@@ -222,17 +190,19 @@ function main () {
       if (agent.dead) continue
       if (agent.inGame) {
         const state = savedGoalState(run, name)
-        const calling = inflightOf(name)
-        const lastActive = Math.max(agent.lastCall, calling.lastStart ? Date.parse(calling.lastStart) : 0)
-        if (state !== 1 && state !== SELF_PROMPT_PAUSED && calling.inFlight === 0 && now - lastActive >= IDLE_MS && now - agent.lastNudge >= IDLE_MS) {
+        const goalLoopStopped = state !== SELF_PROMPT_RUNNING && state !== SELF_PROMPT_PAUSED
+        const unanswered = unansweredCallsOf(name)
+        const awaitingModelAnswer = unanswered.inFlight > 0
+        const lastCallStartedOrAnswered = Math.max(agent.lastCall, unanswered.lastStart ? Date.parse(unanswered.lastStart) : 0)
+        if (goalLoopStopped && !awaitingModelAnswer && now - lastCallStartedOrAnswered >= IDLE_MS && now - agent.lastNudge >= IDLE_MS) {
           agent.lastNudge = now
           socket.emit('send-message', name, { from: 'system', message: RESTART_GOAL_MESSAGE })
-          record({ kind: 'goalLoopRestarted', agent: name, idleSeconds: Math.round((now - lastActive) / 1000) })
+          record({ kind: 'goalLoopRestarted', agent: name, idleSeconds: Math.round((now - lastCallStartedOrAnswered) / 1000) })
         }
         continue
       }
       if (agent.missingSince === null) continue
-      const allowed = agent.everJoined ? graceMs : Math.max(graceMs, STARTUP_GRACE_MS)
+      const allowed = agent.everJoined ? graceMs : Math.max(graceMs, FIRST_JOIN_GRACE_MS)
       if (now - agent.missingSince >= allowed && now - agent.lastAction >= graceMs) revive(name)
     }
   }, POLL_MS)
